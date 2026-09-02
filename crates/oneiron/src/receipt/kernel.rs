@@ -132,6 +132,68 @@ pub(crate) const FIELD_ESCALATION_BUDGET_BAND: &str = "escalation_budget_band";
 pub(crate) const FIELD_ESCALATION_BAND_CEILING: &str = "escalation_band_ceiling";
 /// Comma-joined receipt ids of the rulings a standing policy was learned from.
 pub(crate) const FIELD_ESCALATION_CITED_RECEIPTS: &str = "escalation_cited_receipts";
+/// The ONE-1449 SKILL-EDIT GATE field class (SKILL-OPT-2).
+///
+/// A held-out score-gate verdict is a gate decision the engine made, so it
+/// projects into the existing `Gate` kind rather than minting one — the
+/// [`FIELD_ESCALATION_SCOPE`] precedent, and these keys are the discriminator
+/// that says which projector wrote a record. `crate::skill_optimize` is the
+/// only writer, and they are `pub(crate)` for the reason that class is: a
+/// second spelling of one key would make the family unjoinable with itself.
+pub(crate) const FIELD_SKILL_EDIT_PROPOSAL: &str = "skill_edit_proposal";
+/// The ACTIVE skill entity the gated proposal revises.
+pub(crate) const FIELD_SKILL_EDIT_SKILL: &str = "skill_edit_skill";
+/// Held-out replay score of the CURRENT instructions, as a decimal numeral.
+///
+/// Deliberately a numeral rather than prose or a digest: the whole point of the
+/// pair is that a reader can compare it, and the receipt family's field ABI is
+/// string-valued. The same two numbers are served already-typed by
+/// `crate::skill_optimize::skill_edit_verdicts`.
+pub(crate) const FIELD_SKILL_EDIT_SCORE_BEFORE: &str = "skill_edit_score_before";
+/// Held-out replay score of the PROPOSED instructions, as a decimal numeral.
+pub(crate) const FIELD_SKILL_EDIT_SCORE_AFTER: &str = "skill_edit_score_after";
+/// The Dreamer cycle the verdict counted against, for the per-cycle accept cap.
+pub(crate) const FIELD_SKILL_EDIT_CYCLE: &str = "skill_edit_cycle";
+/// Comma-joined reserved receipt ids the score pair was computed over.
+///
+/// A bounded DISPLAY list. The complete basis is
+/// [`FIELD_SKILL_EDIT_HELD_OUT_COUNT`] plus
+/// [`FIELD_SKILL_EDIT_HELD_OUT_DIGEST`], and
+/// [`FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED`] says when this list is a prefix of
+/// the truth rather than the whole of it.
+pub(crate) const FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS: &str = "skill_edit_held_out_receipts";
+/// How many reserved receipts the score pair was ACTUALLY computed over.
+///
+/// The count is the completeness check the display list cannot make: a reader
+/// comparing it against `skill_edit_held_out_receipts` learns whether it is
+/// looking at the whole basis or a window on it.
+pub(crate) const FIELD_SKILL_EDIT_HELD_OUT_COUNT: &str = "skill_edit_held_out_count";
+/// Canonical digest of the EXACT scored evidence set, in scored order.
+///
+/// What makes an acceptance auditable after the ledger has moved on: the set
+/// itself cannot be reconstructed from a later read once more outcomes land,
+/// but it can be recomputed and compared against this.
+pub(crate) const FIELD_SKILL_EDIT_HELD_OUT_DIGEST: &str = "skill_edit_held_out_digest";
+/// `"true"` when the display list is a bounded window on a larger basis.
+/// Absent otherwise — hidden truncation is the failure this key exists to end.
+pub(crate) const FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED: &str = "skill_edit_held_out_truncated";
+/// Canonical content digest of the candidate body the scores were computed on.
+pub(crate) const FIELD_SKILL_EDIT_PROPOSAL_DIGEST: &str = "skill_edit_proposal_digest";
+/// Canonical content digest of the predecessor body the scores were computed
+/// against.
+pub(crate) const FIELD_SKILL_EDIT_TARGET_DIGEST: &str = "skill_edit_target_digest";
+/// The accepted verdict row a post-score admission refusal answers.
+///
+/// A refusal reached THROUGH a standing acceptance carries that acceptance's
+/// real score pair and evidence basis, so this key names the ruling it
+/// supersedes rather than leaving a reader to guess which one it was.
+pub(crate) const FIELD_SKILL_EDIT_ACCEPTED_VERDICT: &str = "skill_edit_accepted_verdict";
+/// What the gate ruled (`skill_optimize::SkillEditDisposition`). Also the
+/// receipt's `outcome`; this key keeps one name answering "what was ruled".
+pub(crate) const FIELD_SKILL_EDIT_DISPOSITION: &str = "skill_edit_disposition";
+/// Comma-joined cited `source_messages` ids that no longer resolve, on a
+/// source-liveness refusal.
+pub(crate) const FIELD_SKILL_EDIT_MISSING_SOURCES: &str = "skill_edit_missing_sources";
 pub(super) const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
 pub(super) const FIELD_ENGINE_REGISTER: &str = "engine_register";
 pub(super) const FIELD_CARE_REGISTER: &str = "care_register";

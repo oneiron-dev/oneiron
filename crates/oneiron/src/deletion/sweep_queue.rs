@@ -9,11 +9,35 @@ pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
 pub(crate) const HARD_ERASE_SWEEP_SLA_SECS: u64 = 30 * 86_400;
 
-const HISTORICAL_CARRIER_CLASSES: &[&str] = &[
+/// The ARCH-0038 carrier enumeration every queued hard-erase sweep row is
+/// scoped to.
+///
+/// The redirect table joins the historical carriers on the ARCH-0055 §9 (r6)
+/// ruling — "ARCH-0038's carrier enumeration gains the redirect table" —
+/// because a shell row is erasable content, not just an index: it names the
+/// head an erasure removed, and a shell left readable leaks exactly what the
+/// erasure hid. The class handle is owned by the family that owns the
+/// keyspace, so it is read from there rather than restated here.
+const ARCH0038_CARRIER_CLASSES: &[&str] = &[
     "historical_loro_updates",
     "historical_loro_snapshots",
     "derived_carriers",
+    crate::identity_redirect::REDIRECT_CARRIER_CLASS,
 ];
+
+/// The ARCH-0038 carrier classes a hard erasure must account for — the
+/// enumeration every queued `h:` sweep row carries as its audit scope.
+///
+/// A static read of the contract, not of any one vault: the enumeration is
+/// what the deletion machinery is obliged to cover, and holds before the
+/// first delete as much as after it.
+#[must_use]
+pub fn arch0038_carrier_classes() -> Vec<String> {
+    ARCH0038_CARRIER_CLASSES
+        .iter()
+        .map(|class| (*class).to_owned())
+        .collect()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HardEraseSweepJob {
@@ -69,10 +93,7 @@ pub(crate) fn encode_hard_erase_sweep_job(
             entity_ids: scope.entity_ids,
             revision_ids,
             body_snapshot_refs: extras.body_snapshot_refs,
-            carrier_classes: HISTORICAL_CARRIER_CLASSES
-                .iter()
-                .map(|class| (*class).to_owned())
-                .collect(),
+            carrier_classes: arch0038_carrier_classes(),
         },
         retry_state: HardEraseRetryState {
             attempt_count: 0,

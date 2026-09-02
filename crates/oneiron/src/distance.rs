@@ -1,3 +1,7 @@
+mod prepared;
+
+pub(crate) use self::prepared::PreparedCosine;
+
 pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     1.0 - cosine_similarity(a, b)
 }
@@ -97,6 +101,17 @@ fn cosine_similarity_scalar(a: &[f32], b: &[f32]) -> f32 {
 
 #[inline]
 fn normalize(dot: f32, norm_a: f32, norm_b: f32) -> f32 {
+    normalize_prepared(dot, norm_a, norm_a.sqrt(), norm_b)
+}
+
+/// [`normalize`] with `norm_a.sqrt()` supplied by the caller.
+///
+/// The square root of a loop-invariant norm is itself loop-invariant, so the
+/// prepared path hoists it out of the per-candidate divide. `norm_a_sqrt`
+/// must be exactly `norm_a.sqrt()`; `normalize` is defined in terms of this
+/// function so the two can never drift apart.
+#[inline]
+fn normalize_prepared(dot: f32, norm_a: f32, norm_a_sqrt: f32, norm_b: f32) -> f32 {
     if !dot.is_finite()
         || !norm_a.is_finite()
         || !norm_b.is_finite()
@@ -106,7 +121,7 @@ fn normalize(dot: f32, norm_a: f32, norm_b: f32) -> f32 {
         return 0.0;
     }
 
-    let similarity = dot / (norm_a.sqrt() * norm_b.sqrt());
+    let similarity = dot / (norm_a_sqrt * norm_b.sqrt());
     similarity.clamp(-1.0, 1.0)
 }
 
@@ -253,159 +268,4 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{cosine_distance, cosine_similarity};
-
-    fn approx_eq(a: f32, b: f32, eps: f32) {
-        assert!((a - b).abs() <= eps, "left={a}, right={b}, eps={eps}");
-    }
-
-    fn manual_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        let mut dot = 0.0_f32;
-        let mut norm_a = 0.0_f32;
-        let mut norm_b = 0.0_f32;
-
-        for (&ai, &bi) in a.iter().zip(b.iter()) {
-            dot += ai * bi;
-            norm_a += ai * ai;
-            norm_b += bi * bi;
-        }
-
-        if !dot.is_finite()
-            || !norm_a.is_finite()
-            || !norm_b.is_finite()
-            || norm_a <= 0.0
-            || norm_b <= 0.0
-        {
-            return 0.0;
-        }
-
-        (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(-1.0, 1.0)
-    }
-
-    /// Table of `(a, b, expected_similarity, expected_distance)` pairs
-    /// covering the public `cosine_similarity` / `cosine_distance` contract
-    /// across the originally-separate fixture tests.
-    ///
-    /// Variants:
-    /// - `identical_vectors`: sim==1, dist==0.
-    /// - `orthogonal_vectors`: sim==0, dist==1.
-    /// - `zero_norm_zero_vs_non_zero`: degenerate one-zero pair returns dist==1.
-    /// - `zero_norm_zero_vs_zero`: degenerate both-zero pair returns dist==1.
-    /// - `mismatched_lengths`: short-circuit returns 0/1.
-    /// - `non_finite_inputs_nan`: NaN inputs short-circuit to 0/1.
-    /// - `non_finite_inputs_inf`: ±Inf inputs short-circuit to 0/1.
-    #[test]
-    #[allow(clippy::type_complexity)]
-    fn cosine_distance_cases() {
-        let identical: Vec<f32> = vec![0.1, -0.2, 0.3, 0.4, -0.5];
-        let zero7: Vec<f32> = vec![0.0; 7];
-        let non_zero7: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
-        let nan: Vec<f32> = vec![f32::NAN, 1.0, 2.0, 3.0];
-        let inf: Vec<f32> = vec![f32::INFINITY, 1.0, 2.0, 3.0];
-        let finite4: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
-
-        let cases: Vec<(&str, Vec<f32>, Vec<f32>, f32, f32)> = vec![
-            ("identical_vectors", identical.clone(), identical, 1.0, 0.0),
-            (
-                "orthogonal_vectors",
-                vec![1.0, 0.0, 0.0, 0.0, 0.0],
-                vec![0.0, 1.0, 0.0, 0.0, 0.0],
-                0.0,
-                1.0,
-            ),
-            (
-                "zero_norm_zero_vs_non_zero",
-                zero7.clone(),
-                non_zero7,
-                0.0,
-                1.0,
-            ),
-            ("zero_norm_zero_vs_zero", zero7.clone(), zero7, 0.0, 1.0),
-            (
-                "mismatched_lengths",
-                vec![1.0, 2.0, 3.0],
-                vec![1.0, 2.0],
-                0.0,
-                1.0,
-            ),
-            ("non_finite_inputs_nan", nan, finite4.clone(), 0.0, 1.0),
-            ("non_finite_inputs_inf", inf, finite4, 0.0, 1.0),
-        ];
-
-        for (case_name, a, b, expected_sim, expected_dist) in cases {
-            let sim = cosine_similarity(&a, &b);
-            let dist = cosine_distance(&a, &b);
-            assert!(
-                (sim - expected_sim).abs() <= 1e-6,
-                "case {case_name}: similarity left={sim}, right={expected_sim}"
-            );
-            assert!(
-                (dist - expected_dist).abs() <= 1e-6,
-                "case {case_name}: distance left={dist}, right={expected_dist}"
-            );
-        }
-    }
-
-    #[test]
-    fn cosine_handles_simd_remainder() {
-        let a = vec![0.25_f32; 17];
-        let b = vec![0.5_f32; 17];
-
-        approx_eq(cosine_similarity(&a, &b), 1.0, 1e-6);
-        approx_eq(cosine_distance(&a, &b), 0.0, 1e-6);
-    }
-
-    // mismatched_lengths and non_finite_inputs are folded into
-    // `cosine_distance_cases` above.
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn cosine_avx2_matches_scalar_across_lengths() {
-        // Runtime detection so the test actually runs on default CI builds
-        // (which don't include +avx2/+fma in their target_features), not only
-        // under `-C target-cpu=native`.
-        if !std::arch::is_x86_feature_detected!("avx2")
-            || !std::arch::is_x86_feature_detected!("fma")
-        {
-            // Skip on CPUs without AVX2 + FMA; dispatcher coverage still exercises
-            // the scalar fallback via `cosine_similarity`.
-            return;
-        }
-
-        // Exercise the AVX2 path directly against the scalar reference across
-        // lengths that stress the 8-lane main loop + scalar tail.
-        for len in [1, 4, 7, 8, 15, 16, 17, 31, 32, 33, 64, 129] {
-            let a: Vec<f32> = (0..len).map(|i| (i as f32) * 0.125 - 0.375).collect();
-            let b: Vec<f32> = (0..len).map(|i| ((i as f32) * 0.0625).sin()).collect();
-
-            let scalar = super::cosine_similarity_scalar(&a, &b);
-            // SAFETY: AVX2 + FMA were runtime-detected above; calling the
-            // AVX2 variant is sound. Slice lengths match (constructed equal).
-            let avx = unsafe { super::cosine_similarity_avx2(&a, &b) };
-            approx_eq(avx, scalar, 1e-5);
-        }
-    }
-
-    #[test]
-    fn cosine_matches_manual_formula_across_unroll_boundaries() {
-        let a = [
-            0.5_f32, -0.75, 1.25, 0.125, -1.0, 0.625, 0.875, -0.5, 1.5, -1.25, 0.25, 0.75, -0.375,
-        ];
-        let b = [
-            -0.25_f32, 0.5, 0.75, -1.0, 0.125, 1.25, -0.625, 0.375, -1.5, 0.875, 0.5, -0.25, 1.125,
-        ];
-
-        let expected = manual_cosine_similarity(&a, &b);
-        approx_eq(super::cosine_similarity_scalar(&a, &b), expected, 1e-6);
-        approx_eq(
-            1.0 - super::cosine_similarity_scalar(&a, &b),
-            1.0 - expected,
-            1e-6,
-        );
-
-        // Keep the public dispatcher covered as well.
-        approx_eq(cosine_similarity(&a, &b), expected, 1e-6);
-        approx_eq(cosine_distance(&a, &b), 1.0 - expected, 1e-6);
-    }
-}
+mod tests;

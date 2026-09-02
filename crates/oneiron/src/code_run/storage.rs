@@ -1,4 +1,7 @@
-use crate::off_record::{OffRecordMode, OffRecordSession, SessionWriteRoute};
+use sha2::{Digest, Sha256};
+
+use crate::memory::WitnessReceipt;
+use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
 use crate::store::Store;
 use crate::{EntityId, Error, Result, ScoredEntity, Vault, WriteActor};
 
@@ -10,6 +13,113 @@ use super::support::invalid_code_run_replay;
 
 const CODE_RUN_REPLAY_RECORD_KEY_PREFIX: &[u8] = b"code_run:replay:v1:";
 const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
+
+/// Domain tags for a canonical run's speech identities (ONE-1686).
+///
+/// Executor-owned transcript identity is DERIVED, never minted. A durable
+/// executor passes both the host-bound run ref and `EngineExecutorConfig.run_id`,
+/// so two replay records cannot share transcript rows merely because their
+/// dispatchers reused a ref. The optional run id preserves the original
+/// run-ref-only identity for standalone dispatcher and witness APIs that have no
+/// durable executor config.
+const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: &[u8] = b"oneiron:executor-speech-conversation:v1";
+const EXECUTOR_SPEECH_TURN_DOMAIN: &[u8] = b"oneiron:executor-speech-turn:v1";
+const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] = b"oneiron:executor-speech-message:v1";
+
+/// Derives one deterministic entity id from a domain tag and length-prefixed
+/// material, re-salting past a reserved sentinel rather than truncating into
+/// one.
+fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
+    for salt in 0..=u8::MAX {
+        let mut hasher = Sha256::new();
+        hasher.update(domain);
+        hasher.update([salt]);
+        for part in parts {
+            let len = u64::try_from(part.len())
+                .map_err(|_| Error::ArithmeticOverflow("executor speech id material"))?;
+            hasher.update(len.to_le_bytes());
+            hasher.update(part);
+        }
+        let digest = hasher.finalize();
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        if let Ok(id) = EntityId::from_bytes(bytes) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "executor speech id derivation failed",
+    ))
+}
+
+/// The legacy standalone conversation identity. Runtime executor paths use
+/// [`canonical_speech_conversation_id_for_run`] with their durable run id.
+#[cfg(test)]
+pub(crate) fn canonical_speech_conversation_id(run_ref: &str) -> Result<EntityId> {
+    canonical_speech_conversation_id_for_run(run_ref, None)
+}
+
+/// The conversation a CANONICAL run's speech lands in: one shell per durable
+/// run, create-or-get through the ordinary witness door.
+pub(crate) fn canonical_speech_conversation_id_for_run(
+    run_ref: &str,
+    run_id: Option<EntityId>,
+) -> Result<EntityId> {
+    match run_id {
+        Some(run_id) => derived_executor_id(
+            EXECUTOR_SPEECH_CONVERSATION_DOMAIN,
+            &[run_ref.as_bytes(), run_id.as_bytes()],
+        ),
+        None => derived_executor_id(EXECUTOR_SPEECH_CONVERSATION_DOMAIN, &[run_ref.as_bytes()]),
+    }
+}
+
+/// The turn one run's speech appends to.
+///
+/// ONE turn per run, not one per utterance: a TURN is the maximal consecutive
+/// run of ONE speaker, and every bubble a run emits is the same Companion. The
+/// bubbles' own `order` values carry the interleaving.
+fn executor_speech_turn_id(run_ref: &str, run_id: Option<EntityId>) -> Result<EntityId> {
+    match run_id {
+        Some(run_id) => derived_executor_id(
+            EXECUTOR_SPEECH_TURN_DOMAIN,
+            &[run_ref.as_bytes(), run_id.as_bytes()],
+        ),
+        None => derived_executor_id(EXECUTOR_SPEECH_TURN_DOMAIN, &[run_ref.as_bytes()]),
+    }
+}
+
+/// The legacy standalone MESSAGE identity. Runtime executor paths also fold in
+/// their durable run id through [`executor_speech_message_id_for_run`].
+#[cfg(test)]
+pub(crate) fn executor_speech_message_id(run_ref: &str, order: u32) -> Result<EntityId> {
+    executor_speech_message_id_for_run(run_ref, None, order)
+}
+
+/// The MESSAGE id for one executor bubble: the run identity plus the bubble's
+/// host-owned position.
+///
+/// `order` is the bridge ordering the host stamped (or, for the trailing
+/// fallback, the run's next bridge position), so it is unique within the run
+/// and reproducible from the persisted replay state. That is what makes a
+/// re-emission a re-PUT of the same row rather than a second bubble.
+fn executor_speech_message_id_for_run(
+    run_ref: &str,
+    run_id: Option<EntityId>,
+    order: u32,
+) -> Result<EntityId> {
+    let order_bytes = order.to_le_bytes();
+    match run_id {
+        Some(run_id) => derived_executor_id(
+            EXECUTOR_SPEECH_MESSAGE_DOMAIN,
+            &[run_ref.as_bytes(), run_id.as_bytes(), &order_bytes],
+        ),
+        None => derived_executor_id(
+            EXECUTOR_SPEECH_MESSAGE_DOMAIN,
+            &[run_ref.as_bytes(), &order_bytes],
+        ),
+    }
+}
 
 impl Vault {
     /// Persists the replay record for `record.run_id`.
@@ -133,25 +243,34 @@ pub(crate) struct SessionBinding<'a> {
 }
 
 impl SessionBinding<'_> {
-    /// Records one executor turn through the session-side witness entry.
+    /// Records one host-bound executor turn through the session witness entry.
     ///
-    /// Supplies the run's captured shell and route so the executor never sees
-    /// either, and passes `turn_ref: None` — the only value that entry
-    /// accepts. Widening this to admit a caller-supplied turn ref would be a
-    /// visible API change, which is the point of the typed refusal behind it.
+    /// The deterministic TURN and MESSAGE ids are both derived from the run
+    /// identity before this call. They travel through the distinct host-only
+    /// path; the guest-facing `witness_executor_turn(Some(turn_ref))` refusal
+    /// remains unchanged and unreachable from here.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is a host-owned witness axis; the explicit turn and message ids are the idempotency contract"
+    )]
     pub(crate) fn witness_executor_turn(
         &self,
-        kind: crate::off_record::ExecutorUtterance,
+        kind: ExecutorUtterance,
         text: &str,
         occurred_at: u64,
+        order: u32,
+        message_id: EntityId,
+        turn_id: EntityId,
         actor: WriteActor,
-    ) -> Result<crate::memory::WitnessReceipt> {
-        self.session.witness_executor_turn(
+    ) -> Result<WitnessReceipt> {
+        self.session.witness_host_executor_turn(
             &self.container,
             kind,
             text,
             occurred_at,
-            None,
+            order,
+            message_id,
+            turn_id,
             &self.route,
             actor,
         )
@@ -238,6 +357,69 @@ impl SessionBinding<'_> {
     }
 }
 
+/// Records ONE canonical-run executor turn through ONE-1728's facade witness
+/// door (ONE-1686).
+///
+/// A CALL SITE, not a transcript surface — the same standing the session arm
+/// has. Conversation identity, container resolution, role tags, the approval
+/// ceiling, the `AuthoredBy` edge and the BM25 posting are all the door's; what
+/// this adds is the run-scoped shell and turn a canonical run has no session to
+/// hand it, both derived from the durable run identity so they are the same on
+/// every attempt but distinct from another run that reused the dispatcher ref.
+///
+/// `turn_ref` IS supplied here, unlike on the session arm. The typed refusal
+/// there guards GUEST-named turns inside a room; this id is host-derived from
+/// the run identity, and naming it is exactly what makes a retried step append
+/// to the turn it already opened instead of opening another.
+///
+/// # Errors
+///
+/// Propagates the witness door's refusals, including the ONE-1686 approval
+/// ceiling — preserved as the typed gate denial so the dispatcher records a
+/// `Denied` bridge row rather than an opaque failure.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every parameter is a distinct axis the witness envelope binds; folding them into a \
+              struct would hide which ones the host owns"
+)]
+fn canonical_witness_executor_turn(
+    vault: &Vault,
+    run_ref: &str,
+    run_id: Option<EntityId>,
+    kind: ExecutorUtterance,
+    text: &str,
+    occurred_at: u64,
+    order: u32,
+    message_id: EntityId,
+    actor: WriteActor,
+) -> Result<WitnessReceipt> {
+    let conversation_id = canonical_speech_conversation_id_for_run(run_ref, run_id)?;
+    let turn_id = executor_speech_turn_id(run_ref, run_id)?;
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: conversation_id.to_hex(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages: vec![crate::memory::WitnessMessage {
+                id: Some(message_id.to_hex()),
+                author: crate::memory::WitnessAuthor::Companion,
+                message_type: kind.as_message_type().to_owned(),
+                content: text.to_owned(),
+                metadata: None,
+                is_visible: kind.is_visible(),
+                order,
+            }],
+            occurred_at,
+        })
+        .map_err(|error| {
+            error
+                .gate_denial_error()
+                .unwrap_or(Error::InvariantViolation(
+                    "executor witness door rejected the canonical turn",
+                ))
+        })
+}
+
 /// Where one code run's storage lives: the canonical vault, or a live
 /// off-record session.
 ///
@@ -299,6 +481,71 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.search_text(query, limit),
             Self::Session(binding) => binding.search_text(query, limit),
+        }
+    }
+
+    /// Emits ONE speech bubble through the run's bound storage (ONE-1686).
+    ///
+    /// Returning a [`WitnessReceipt`] rather than a flag is the contract: a
+    /// speech effect either MATERIALIZES its MESSAGE or fails, and the receipt
+    /// is the proof. There is no arm that reports "spoken" with no bubble
+    /// behind it, and no arm that swallows an utterance silently — an earlier
+    /// canonical shortcut did the second, which made `emitted: false` a
+    /// truthful field on an untruthful contract.
+    ///
+    /// The SESSION arm goes through the same captured shell and route every
+    /// other executor turn uses, so a mid-run mode flip refuses the bubble
+    /// instead of splitting the room's speech across the flip.
+    ///
+    /// The CANONICAL arm goes through the same ONE-1728 facade witness door,
+    /// into a conversation and turn DERIVED from the run ref plus the durable
+    /// run id when one exists — one shell and one turn per run, created on first
+    /// speech. It is not a second transcript surface: no schema, no message
+    /// program, and no second write boundary is minted here, only the identity
+    /// a canonical run needs so its bubbles have somewhere to be and stay
+    /// reproducible across a resume.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "run ref/id, utterance envelope, order, and actor are distinct host-owned witness axes"
+    )]
+    pub(crate) fn witness_executor_utterance(
+        &self,
+        run_ref: &str,
+        run_id: Option<EntityId>,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+        actor: WriteActor,
+    ) -> Result<WitnessReceipt> {
+        // HOST-derived, on both arms: durable executors bind the replay run id
+        // as well as the dispatcher ref, while standalone callers retain the
+        // legacy ref-only family. A step re-run after a failed replay-record
+        // persist therefore re-puts THIS run's row instead of adding a second
+        // one or colliding with another durable run.
+        let message_id = executor_speech_message_id_for_run(run_ref, run_id, order)?;
+        let turn_id = executor_speech_turn_id(run_ref, run_id)?;
+        match self {
+            Self::Canonical(vault) => canonical_witness_executor_turn(
+                vault,
+                run_ref,
+                run_id,
+                kind,
+                text,
+                occurred_at,
+                order,
+                message_id,
+                actor,
+            ),
+            Self::Session(binding) => binding.witness_executor_turn(
+                kind,
+                text,
+                occurred_at,
+                order,
+                message_id,
+                turn_id,
+                actor,
+            ),
         }
     }
 

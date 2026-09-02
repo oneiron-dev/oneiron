@@ -5,6 +5,8 @@
 //! [`super::generated_ui`] into an approved, host-stamped write. Selection is
 //! not approval and nothing here is self-executing.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -15,17 +17,20 @@ use crate::{
     registry::ENTITY_TYPE_CLAIM,
 };
 
-use super::atom::{FiniteF64, LensAtom, LensText};
+use super::atom::{
+    FiniteF64, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom,
+    GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection, LensAtom, LensText,
+};
 use super::generated_ui::{
     GeneratedUiActionEvent, GeneratedUiActionTier, GeneratedUiCardPhase, GeneratedUiRender,
     GeneratedUiStateSnapshot, LensElementRef, apply_generated_ui_state_patch,
     validate_generated_ui_state_bindings,
 };
 use super::self_ui::{SelfUiAction, SelfUiValue};
-use super::validate::{validate_lens_collection_len, validate_lens_token};
+use super::validate::{LensBudget, validate_lens_collection_len, validate_lens_token};
 use super::wire_ids::{
-    LensAtomId, LensBackingRefId, LensHandleName, LensHandleRole, LensRenderId, SelfUiActionId,
-    SelfUiOptionValue,
+    LensAtomId, LensBackingRefId, LensHandleName, LensHandleRole, LensRenderId, LensResultSetRowId,
+    SelfUiActionId, SelfUiOptionValue,
 };
 
 /// Host-side outcome of `LensRenderFrame::validate_action_event`. Every variant carries
@@ -418,6 +423,49 @@ impl LensReadHandle {
     }
 }
 
+/// What a proved result-set selection actually reaches. Engine-owned output: it holds
+/// only engine-issued [`LensReadHandle`]s and the deduplicated row-id echo set, so it
+/// has no `Serialize`/`Deserialize` and no client can submit or forge one.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratedUiResultSetScope {
+    Explicit {
+        row_ids: BTreeSet<LensResultSetRowId>,
+        selected: Vec<LensReadHandle>,
+    },
+    Predicate {
+        predicate: LensReadHandle,
+    },
+}
+
+/// A pre-gate validated plan. Ticking rows produces one of these and nothing else: it
+/// has private fields, no public constructor, no `Deserialize`, and no `approve` or
+/// `execute`. Selection is not approval — the receipt is the
+/// [`LensHostMediatedWrite`] that [`LensRenderFrame::dispatch_result_set_action`]
+/// returns after re-proving every handle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedUiResultSetWritePlan {
+    emitter: LensPrincipalBinding,
+    action: GeneratedUiValidatedAction,
+    scope: GeneratedUiResultSetScope,
+}
+
+impl GeneratedUiResultSetWritePlan {
+    #[must_use]
+    pub fn emitter(&self) -> &LensPrincipalBinding {
+        &self.emitter
+    }
+
+    #[must_use]
+    pub fn action(&self) -> &GeneratedUiValidatedAction {
+        &self.action
+    }
+
+    #[must_use]
+    pub fn scope(&self) -> &GeneratedUiResultSetScope {
+        &self.scope
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LensRenderFrame {
     render_id: LensRenderId,
@@ -792,6 +840,282 @@ impl LensRenderFrame {
                     },
                 }
             }
+        })
+    }
+
+    /// Prove a result-set selection against the exact render this frame emitted.
+    ///
+    /// The action itself is validated by the landed ONE-1436 backchannel with this
+    /// frame's own principal as emitter, so a client-supplied actor, command, authority,
+    /// approval, verb, or source field has no field to arrive in. What this adds is the
+    /// *scope*: which rendered rows were ticked, and what reach each one proves right
+    /// now. Nothing is approved and no effect is produced — the returned plan is a plan.
+    pub fn validate_result_set_action(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        event: &GeneratedUiResultSetActionEvent,
+    ) -> Result<GeneratedUiResultSetWritePlan> {
+        // (1) The landed action gate: emitter is the frame's principal, never event JSON.
+        let validated = self.validate_action_event(
+            scoped_read,
+            self.principal(),
+            render,
+            &render.state,
+            &event.action,
+        )?;
+
+        // (2) Only the deterministic Tier 2 write branch may carry a selection, and the
+        // action id has to be allowlisted by exactly one rendered result set.
+        if !matches!(
+            validated,
+            GeneratedUiValidatedAction::DeterministicTool { .. }
+        ) {
+            return Err(Error::InvalidConfig(
+                "result set selections may only ride a deterministic-tool action".to_string(),
+            ));
+        }
+        let (atom_id, result_set) = Self::result_set_for_action(render, &event.action.action_id)?;
+
+        let scope = match &event.selection {
+            // (3) Explicit: opaque row-id echoes, proved against this exact atom.
+            GeneratedUiResultSetSelection::Explicit { row_ids } => {
+                validate_lens_collection_len("result set selection row ids", row_ids.len())?;
+                let mut budget = LensBudget::default();
+                budget.add_collection("result set selection row ids", row_ids.len())?;
+                if row_ids.is_empty() {
+                    return Err(Error::InvalidConfig(
+                        "result set explicit selections must name at least one row".to_string(),
+                    ));
+                }
+                let mut selected_ids = BTreeSet::new();
+                for row_id in row_ids {
+                    if !result_set.rows.iter().any(|row| &row.id == row_id) {
+                        return Err(Error::InvalidConfig(
+                            "result set selections must name rows of this rendered atom"
+                                .to_string(),
+                        ));
+                    }
+                    if !selected_ids.insert(row_id.clone()) {
+                        return Err(Error::InvalidConfig(
+                            "result set selections must not repeat a row id".to_string(),
+                        ));
+                    }
+                }
+
+                // Rows are walked in *rendered* order, so the plan's reach is engine
+                // ordered rather than client ordered.
+                let mut selected = Vec::with_capacity(selected_ids.len());
+                for row in &result_set.rows {
+                    if !selected_ids.contains(&row.id) {
+                        continue;
+                    }
+                    let handle = self.select_atom(
+                        scoped_read,
+                        render,
+                        &LensAtomSelectionRequest {
+                            card_id: render.card_id.clone(),
+                            atom_id: atom_id.clone(),
+                            handle: row.target_handle.clone(),
+                        },
+                    )?;
+                    if !matches!(
+                        handle.reach(),
+                        LensReadReach::ClaimSet | LensReadReach::EntitySet
+                    ) {
+                        return Err(Error::InvalidConfig(
+                            "result set rows must resolve to claim-set or entity-set reach"
+                                .to_string(),
+                        ));
+                    }
+                    selected.push(handle);
+                }
+                GeneratedUiResultSetScope::Explicit {
+                    row_ids: selected_ids,
+                    selected,
+                }
+            }
+            // (4) Select-all: the predicate comes from the rendered atom, never the
+            // event. `Disabled` has no predicate to take, so it rejects.
+            GeneratedUiResultSetSelection::AllWithinFilter {} => {
+                let GeneratedUiResultSetSelectAll::WithinFilter { predicate_handle } =
+                    &result_set.select_all
+                else {
+                    return Err(Error::InvalidConfig(
+                        "result set select-all is disabled on this rendered atom".to_string(),
+                    ));
+                };
+                let predicate = self.select_atom(
+                    scoped_read,
+                    render,
+                    &LensAtomSelectionRequest {
+                        card_id: render.card_id.clone(),
+                        atom_id: atom_id.clone(),
+                        handle: predicate_handle.clone(),
+                    },
+                )?;
+                if predicate.reach() != LensReadReach::QueryResult {
+                    return Err(Error::InvalidConfig(
+                        "result set select-all predicates must resolve to query-result reach"
+                            .to_string(),
+                    ));
+                }
+                GeneratedUiResultSetScope::Predicate { predicate }
+            }
+        };
+
+        // (5) A plan, and only a plan: no receipt, no approved action, no effect.
+        Ok(GeneratedUiResultSetWritePlan {
+            emitter: self.principal.clone(),
+            action: validated,
+            scope,
+        })
+    }
+
+    /// Turn a proved selection into one host-stamped write.
+    ///
+    /// Everything the plan recorded is re-proved against the *current* scope and render
+    /// before a single backing ref is attached: a stale render, a switched principal, a
+    /// removed row, a changed predicate, a cross-render handle, a wrong role, or a
+    /// target that stopped hydrating all fail here. No dispatcher is called, no approval
+    /// is persisted, and no effect is produced — the return value is the receipt.
+    pub fn dispatch_result_set_action(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        event: &GeneratedUiResultSetActionEvent,
+    ) -> Result<LensHostMediatedWrite> {
+        // (6) Re-validate from scratch, then re-resolve every handle the plan holds.
+        let plan = self.validate_result_set_action(scoped_read, render, event)?;
+        self.ensure_scoped_read_actor(scoped_read)?;
+        self.ensure_render_is_ours(render)?;
+        if plan.emitter != self.principal {
+            return Err(Error::InvalidConfig(
+                "lens result set plan must carry this render frame's acting principal".to_string(),
+            ));
+        }
+        let (atom_id, result_set) = Self::result_set_for_action(render, &event.action.action_id)?;
+
+        let mut resolved = Vec::new();
+        match plan.scope() {
+            GeneratedUiResultSetScope::Explicit { row_ids, selected } => {
+                for row_id in row_ids {
+                    if !result_set.rows.iter().any(|row| &row.id == row_id) {
+                        return Err(Error::InvalidConfig(
+                            "result set selections must name rows of this rendered atom"
+                                .to_string(),
+                        ));
+                    }
+                }
+                for handle in selected {
+                    if handle.atom_id() != atom_id {
+                        return Err(Error::InvalidConfig(
+                            "result set reach must belong to the rendered result set".to_string(),
+                        ));
+                    }
+                    if !matches!(
+                        handle.reach(),
+                        LensReadReach::ClaimSet | LensReadReach::EntitySet
+                    ) {
+                        return Err(Error::InvalidConfig(
+                            "result set rows must resolve to claim-set or entity-set reach"
+                                .to_string(),
+                        ));
+                    }
+                    resolved.push(self.resolve_read_handle(scoped_read, render, handle)?);
+                }
+            }
+            GeneratedUiResultSetScope::Predicate { predicate } => {
+                if predicate.atom_id() != atom_id {
+                    return Err(Error::InvalidConfig(
+                        "result set reach must belong to the rendered result set".to_string(),
+                    ));
+                }
+                if predicate.reach() != LensReadReach::QueryResult {
+                    return Err(Error::InvalidConfig(
+                        "result set select-all predicates must resolve to query-result reach"
+                            .to_string(),
+                    ));
+                }
+                resolved.push(self.resolve_read_handle(scoped_read, render, predicate)?);
+            }
+        }
+
+        // (7) Chokepoint derivation over the *freshly* re-resolved targets: a claim
+        // anywhere in scope routes through claim policy, otherwise the gate evaluator.
+        let chokepoint = if resolved
+            .iter()
+            .any(|backing_ref| backing_ref.target().kind() == LensBackingTargetKind::Claim)
+        {
+            LensGateWriteChokepoint::CheckClaimPolicyForWrite
+        } else {
+            LensGateWriteChokepoint::EvaluateGate
+        };
+        let approved =
+            Self::approve_result_set_write(render, &event.action.action_id, &plan, resolved)?;
+        Ok(approved.into_host_mediated_write(chokepoint))
+    }
+
+    /// The one rendered result set that allowlists `action_id`. Absent or ambiguous
+    /// allowlisting resolves to nothing rather than to a guess.
+    fn result_set_for_action<'a>(
+        render: &'a GeneratedUiRender,
+        action_id: &SelfUiActionId,
+    ) -> Result<(&'a LensAtomId, &'a GeneratedUiResultSetAtom)> {
+        let mut hosting = render.nodes.iter().filter_map(|node| {
+            let result_set = node.atom.result_set_payload()?;
+            result_set
+                .action_bar
+                .contains(action_id)
+                .then_some((&node.id, result_set))
+        });
+        let found = hosting.next().ok_or_else(|| {
+            Error::InvalidConfig(
+                "result set action must be allowlisted by a rendered result set".to_string(),
+            )
+        })?;
+        if hosting.next().is_some() {
+            return Err(Error::InvalidConfig(
+                "result set action ids must be allowlisted by exactly one rendered atom"
+                    .to_string(),
+            ));
+        }
+        Ok(found)
+    }
+
+    /// Build the approved action a result-set write carries: the engine-authored action
+    /// id as command, the declaration's frame-validated literal args, and one backing
+    /// ref per freshly re-resolved target. Client data contributes no argument.
+    fn approve_result_set_write(
+        render: &GeneratedUiRender,
+        action_id: &SelfUiActionId,
+        plan: &GeneratedUiResultSetWritePlan,
+        resolved: Vec<LensHostBackingRef>,
+    ) -> Result<LensApprovedAction> {
+        let GeneratedUiValidatedAction::DeterministicTool { action, .. } = plan.action() else {
+            return Err(Error::InvalidConfig(
+                "result set selections may only ride a deterministic-tool action".to_string(),
+            ));
+        };
+        let mut declared = render
+            .actions
+            .iter()
+            .filter(|declaration| &declaration.action_id == action_id);
+        let declaration = declared.next().ok_or_else(|| {
+            Error::InvalidConfig("result set action names an undeclared action".to_string())
+        })?;
+        if declared.next().is_some() {
+            return Err(Error::InvalidConfig(
+                "generated-ui action ids must be declared exactly once".to_string(),
+            ));
+        }
+
+        let mut args = action.args.clone();
+        args.extend(resolved.into_iter().map(LensApprovedActionArg::BackingRef));
+        validate_lens_collection_len("result set approved action args", args.len())?;
+        Ok(LensApprovedAction {
+            command: declaration.action_id.clone(),
+            args,
         })
     }
 

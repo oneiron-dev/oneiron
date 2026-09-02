@@ -6,7 +6,10 @@
 //! the pinned component boundary, and every `self.*` import is routed through a
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,10 +27,10 @@ use crate::{
     FinishReason, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
     code_run::GatedActorWrite, code_run::SelfCall, code_run::SelfDeniedResult,
-    code_run::SelfDispatchOutcome, code_run::SelfDispatcher, code_run::SelfDurableWait,
-    code_run::SelfDurableWaitReason, code_run::SelfEffect, code_run::SelfFailedResult,
-    code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxComponentBoundary,
-    code_sandbox::SandboxGuestLanguage, code_sandbox::SandboxGuestTier,
+    code_run::SelfDispatchOutcome, code_run::SelfDurableWait, code_run::SelfDurableWaitReason,
+    code_run::SelfEffect, code_run::SelfFailedResult, code_sandbox::SandboxBoundaryContract,
+    code_sandbox::SandboxComponentBoundary, code_sandbox::SandboxGuestLanguage,
+    code_sandbox::SandboxGuestTier,
 };
 use crate::{Result, code_sandbox::PLAIN_JS_HOST_VERB_DTS};
 use crate::{
@@ -49,6 +52,10 @@ const SCRIPT_OUTPUT_DIR: &str = "executor/repl";
 const TEXT_OUTPUT_PREFIX: &[u8] = b"oneiron-engine-executor-text-output-v1\n";
 const CONFIG_OUTPUT_PATH: &str = "executor/repl/run.config.json";
 const TERMINAL_OUTPUT_SUFFIX: &str = ".terminal.json";
+/// ONE-1686: the trailing-plaintext fallback's durable emission marker. A
+/// SIBLING suffix of the terminal marker, never the same one:
+/// `is_terminal_output_path` must not read it as a terminal status.
+const FALLBACK_SPEECH_MARKER_SUFFIX: &str = ".fallback-speech.json";
 const REPLAY_METADATA_SCHEMA_VERSION: u64 = 1;
 const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.search",
@@ -57,6 +64,9 @@ const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.put_edge",
     "self.ask_human",
     "self.askHuman",
+    "self.speak",
+    "self.think",
+    "self.express",
 ];
 
 pub type EngineExecutorResult<T> = std::result::Result<T, EngineExecutorError>;
@@ -341,6 +351,10 @@ pub struct EngineNativeExecutor<'a> {
     runtime: &'a mut dyn JsCodeModeRuntime,
     gated_write: &'a GatedActorWrite<'a>,
     legibility: Option<ExecutorLegibility<'a>>,
+    /// Next order for the public compatibility witness door, whose callers do
+    /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
+    /// bypass this allocator and retain their exact order.
+    next_witness_order: AtomicU32,
 }
 
 impl<'a> EngineNativeExecutor<'a> {
@@ -359,6 +373,7 @@ impl<'a> EngineNativeExecutor<'a> {
             runtime,
             gated_write,
             legibility: None,
+            next_witness_order: AtomicU32::new(0),
         }
     }
 
@@ -389,6 +404,7 @@ impl<'a> EngineNativeExecutor<'a> {
             runtime,
             gated_write,
             legibility: None,
+            next_witness_order: AtomicU32::new(0),
         })
     }
 
@@ -409,9 +425,11 @@ impl<'a> EngineNativeExecutor<'a> {
     /// a guest-facing transcript input, and `turn_ref` is not a parameter the
     /// executor has — turn identity comes from the session.
     ///
-    /// A CANONICAL run materializes no transcript (`Ok(None)`); on-record
-    /// executor transcripts are not this ticket's work, which is what keeps
-    /// the of060 fitness pin at zero diff.
+    /// BOTH storage arms materialize the bubble (ONE-1686): a canonical run
+    /// witnesses into the run-scoped shell its dispatcher's run ref derives,
+    /// a session-bound run into the room's captured shell. The `Option` is
+    /// kept for API compatibility and is now always `Some` on success — a
+    /// receipt is the proof that speech happened.
     ///
     /// This is a WRITE-CAPABLE entry point, so it verifies the same
     /// storage/dispatcher binding [`Self::run`] does, before it reads or
@@ -422,22 +440,86 @@ impl<'a> EngineNativeExecutor<'a> {
     /// # Errors
     ///
     /// Returns `Error::InvalidConfig` for a mismatched storage/dispatcher
-    /// pair, and propagates the session's typed refusals, including the
-    /// stale-route family when the room flipped mode after this run's entry.
+    /// pair, and propagates the witness door's typed refusals — the ONE-1686
+    /// approval ceiling and the stale-route family when the room flipped mode
+    /// after this run's entry.
     pub fn witness_turn(
         &self,
         kind: ExecutorUtterance,
         text: &str,
         occurred_at: u64,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        let order = self.allocate_witness_order()?;
+        self.witness_turn_at(kind, text, occurred_at, order)
+    }
+
+    /// [`Self::witness_turn`], carrying an explicit bubble `order`.
+    ///
+    /// The order is the emitter's position in the run's bridge ordering, so a
+    /// turn recorded outside the bridge can still be placed against the calls
+    /// it follows. It is also the bubble's IDENTITY input: the storage door
+    /// derives the MESSAGE id from the run identity and this order, so
+    /// re-emitting the same position converges on the same row.
+    ///
+    /// This explicit door never advances [`Self::witness_turn`]'s compatibility
+    /// allocator. Durable runtime dispatch and fallback use a private sibling
+    /// that also binds [`EngineExecutorConfig::run_id`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::witness_turn`], plus `Error::InvalidConfig` when `order`
+    /// exceeds the witness MESSAGE order ceiling.
+    pub fn witness_turn_at(
+        &self,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+    ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        self.witness_turn_for_run_at(None, kind, text, occurred_at, order)
+    }
+
+    fn allocate_witness_order(&self) -> EngineExecutorResult<u32> {
+        // Relaxed ordering is sufficient: the atomic protects only uniqueness
+        // of the returned integer, not publication of any other memory.
+        self.next_witness_order
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |order| {
+                if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
+                    None
+                } else {
+                    order.checked_add(1)
+                }
+            })
+            .map_err(|_| {
+                Error::InvalidConfig(
+                    "engine executor compatibility witness order exhausted".to_owned(),
+                )
+                .into()
+            })
+    }
+
+    fn witness_turn_for_run_at(
+        &self,
+        run_id: Option<EntityId>,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+    ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
+            return Err(Error::InvalidConfig(
+                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
+            )
+            .into());
+        }
         self.verify_storage_dispatcher_binding()?;
-        let ExecutorStorage::Session(binding) = &self.storage else {
-            return Ok(None);
-        };
-        Ok(Some(binding.witness_executor_turn(
+        Ok(Some(self.storage.witness_executor_utterance(
+            self.gated_write.run_ref(),
+            run_id,
             kind,
             text,
             occurred_at,
+            order,
             self.gated_write.actor(),
         )?))
     }
@@ -516,6 +598,7 @@ impl<'a> EngineNativeExecutor<'a> {
             let bridge_start = record.bridge_calls.len();
             let mut host = RecordingJsHost::new(
                 self.gated_write,
+                config.run_id,
                 bridge_start as u64,
                 config.determinism,
                 self.legibility,
@@ -636,6 +719,9 @@ impl<'a> EngineNativeExecutor<'a> {
                         None
                     }
                 });
+            if matches!(terminal_status, Some(EngineExecutorStatus::Complete)) {
+                self.emit_trailing_speak_fallback(&record, &step_outcome, completed_steps, config)?;
+            }
             if let Some(status) = &terminal_status {
                 record_terminal_output(&self.storage, &mut record, completed_steps, status)?;
             }
@@ -671,6 +757,88 @@ impl<'a> EngineNativeExecutor<'a> {
             }
             expected_generation = Some(next_generation);
         }
+    }
+
+    /// The IMPLICIT speak fallback (ONE-1686): a completed run's trailing
+    /// plaintext becomes its last word, unless it has already been said.
+    ///
+    /// Explicit speech is CANONICAL, and "canonical" is about the TEXT, not
+    /// about whether the run happened to speak at all. A run that spoke and
+    /// then finished with the SAME words has already said them, so a trailing
+    /// bubble would be a duplicate; a run that spoke and then finished with
+    /// DIFFERENT words has a last word nobody has heard, and dropping it loses
+    /// the answer. So the suppression is per-text: the fallback is skipped only
+    /// when an emitted speech row in the durable record carries exactly this
+    /// trailing text. The check is over the DURABLE record, not a per-step
+    /// flag, so a run that spoke in step 0 and completed in step 3 is still
+    /// judged against everything it said.
+    ///
+    /// A speech row that did NOT emit — a barrier-parked wait, a denied or
+    /// failed trap — never suppresses anything: no bubble exists for it, so
+    /// its text was not said.
+    ///
+    /// It fires on `Complete` only: a run parked on a durable wait has not
+    /// finished speaking, and a yielded or step-limited run has not finished
+    /// at all.
+    ///
+    /// # Crash and retry
+    ///
+    /// The witness commits before the step's replay record does, so the window
+    /// between them is real: a `ConcurrentWrite` on the record, or a crash,
+    /// sends the caller back through the same step. Two things close it, and
+    /// both are needed. The DURABLE MARKER below is written straight after the
+    /// bubble, keyed by content into the same routed raw-output store the run
+    /// already uses, and is therefore visible to a retry whose replay record
+    /// never landed — that covers the record-persistence failure the marker
+    /// sits between. And the bubble's own IDENTITY is derived from the durable
+    /// run identity and this order (`code_run::storage`), so even a crash
+    /// landing between the witness and the marker re-puts THAT row rather than
+    /// adding a second one. There is no window in which the transcript grows
+    /// twice.
+    fn emit_trailing_speak_fallback(
+        &self,
+        record: &CodeRunReplayRecord,
+        step_outcome: &JsCodeModeStepOutcome,
+        seq: u64,
+        config: &EngineExecutorConfig,
+    ) -> EngineExecutorResult<()> {
+        let text = step_outcome.observation.trim();
+        if text.is_empty() {
+            return Ok(());
+        }
+        if record
+            .bridge_calls
+            .iter()
+            .filter_map(CodeRunBridgeCall::emitted_visible_speech_text)
+            .any(|spoken| spoken.trim() == text)
+        {
+            return Ok(());
+        }
+        let order = u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX);
+        let (marker, marker_bytes) = fallback_speech_marker(config.run_id, seq, order)?;
+        if self.storage.get_code_run_raw_output(&marker)?.is_some() {
+            return Ok(());
+        }
+        let occurred_at = config
+            .determinism
+            .frozen_unix_ms
+            .saturating_add(u64::from(order))
+            / 1000;
+        self.witness_turn_for_run_at(
+            Some(config.run_id),
+            ExecutorUtterance::Speak,
+            text,
+            occurred_at,
+            order,
+        )?;
+        // Written AFTER the bubble, deliberately: a marker written first and
+        // then orphaned by a crash would silence a run that never spoke, which
+        // is the failure the fallback exists to prevent. Written second, the
+        // worst case is a re-emission that lands on the same derived MESSAGE
+        // id.
+        self.storage
+            .put_code_run_raw_output(&marker, &marker_bytes)?;
+        Ok(())
     }
 
     #[expect(
@@ -839,6 +1007,7 @@ impl<'a> EngineNativeExecutor<'a> {
 
 struct RecordingJsHost<'a> {
     gated_write: &'a GatedActorWrite<'a>,
+    run_id: EntityId,
     next_seq: u64,
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
@@ -854,12 +1023,14 @@ struct RecordingJsHost<'a> {
 impl<'a> RecordingJsHost<'a> {
     fn new(
         gated_write: &'a GatedActorWrite<'a>,
+        run_id: EntityId,
         next_seq: u64,
         determinism: CodeRunDeterminism,
         legibility: Option<ExecutorLegibility<'a>>,
     ) -> Self {
         Self {
             gated_write,
+            run_id,
             next_seq,
             determinism,
             legibility,
@@ -889,6 +1060,12 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
         let seq = self.next_seq;
         self.next_seq += 1;
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
+        // ONE-1686: the speech family's order and timestamp are the BRIDGE's,
+        // stamped here — on the one ordering path every `self.*` call takes —
+        // before the row is recorded or the effect dispatched. Guest code
+        // cannot forge either, and the replay row, the dispatched call and the
+        // emitted bubble all carry the same number.
+        let call = call.with_bridge_stamp(seq, started_at_ms);
         if let Some(wait) = &self.durable_wait {
             let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
             let row =
@@ -909,7 +1086,10 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome));
         }
-        let outcome = match self.gated_write.dispatch(call.clone()) {
+        let outcome = match self
+            .gated_write
+            .dispatch_for_executor_run(self.run_id, call.clone())
+        {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
@@ -954,7 +1134,7 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
                 .map(|reason| (*reason).to_owned())
                 .collect(),
         })),
-        _ if records_failed_write_trap(call.effect()) => {
+        _ if records_failed_effect(call.effect()) => {
             Some(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
                 error: err.to_string(),
@@ -964,11 +1144,18 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
     }
 }
 
-fn records_failed_write_trap(effect: SelfEffect) -> bool {
+/// Effects whose failure is REPLAY-VISIBLE rather than infrastructural.
+///
+/// These cross an audited durable boundary, so a refusal is part of the run's
+/// history: the guest sees a typed `Failed` response, the row lands in the
+/// replay log, and the fail-closed barrier refuses everything after it.
+/// ONE-1686 adds the speech family — a refused bubble (a stale route after a
+/// mid-run mode flip, a door rejection) is exactly that kind of failure.
+fn records_failed_effect(effect: SelfEffect) -> bool {
     matches!(
         effect,
         SelfEffect::MemoryPutClaim | SelfEffect::MemorySupersedeClaim | SelfEffect::MemoryPutEdge
-    )
+    ) || effect.is_speech()
 }
 
 fn executor_boundary_contract() -> EngineExecutorResult<SandboxBoundaryContract> {
@@ -1209,6 +1396,9 @@ fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffect> {
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),
+        "self.speak" => Ok(SelfEffect::Speak),
+        "self.think" => Ok(SelfEffect::Think),
+        "self.express" => Ok(SelfEffect::Express),
         _ => Err(Error::CorruptedIndex("executor replay durable wait effect").into()),
     }
 }
@@ -1483,6 +1673,35 @@ fn load_utf8_output(
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
     decode_text_output(path, raw)
+}
+
+/// The durable "this step already spoke its last word" marker (ONE-1686).
+///
+/// Content-addressed into the run's own routed raw-output store, so its
+/// presence is readable WITHOUT the replay record that a crash or a
+/// `ConcurrentWrite` may have prevented from landing. The bytes name the run,
+/// the step and the bubble's order and nothing else — deliberately not the
+/// text, because "at most one trailing bubble per completed step" must hold
+/// even if a re-run's backend produced a different observation.
+fn fallback_speech_marker(
+    run_id: EntityId,
+    seq: u64,
+    order: u32,
+) -> EngineExecutorResult<(CodeRunRawOutput, Vec<u8>)> {
+    let path = fallback_speech_marker_path(seq);
+    let text = serde_json::to_string(&json!({
+        "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
+        "run_id": run_id.to_hex(),
+        "step_seq": seq,
+        "order": order,
+    }))?;
+    let raw = text_output_bytes(&path, &text);
+    let marker = CodeRunRawOutput::from_bytes(path, &raw)?;
+    Ok((marker, raw))
+}
+
+fn fallback_speech_marker_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}{FALLBACK_SPEECH_MARKER_SUFFIX}")
 }
 
 fn script_output_path(seq: u64) -> String {
