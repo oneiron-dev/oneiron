@@ -15,7 +15,6 @@
 //! The acquisition timestamp is always supplied by the caller. Nothing in this
 //! module reads a host clock.
 
-use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -28,8 +27,8 @@ mod render;
 use self::ladder::{CrawlWalk, FetchResultWire, crawl_failure_reason, require_renderer_slot};
 use self::render::{
     FirecrawlScrapeEnvelope, FirecrawlScrapeRequest, decode_response_body, extract_readable_page,
-    is_web_url, normalize_url, parse_web_url, read_capped_body, redact_url_credentials,
-    redacted_transport_detail, renderer_final_url, renderer_request_url, validated_web_url,
+    parse_web_url, read_capped_body, redact_url_credentials, redacted_transport_detail,
+    renderer_final_url, renderer_request_url, validated_web_url,
 };
 
 /// Domain prefix for the OF-444 content identity.
@@ -55,10 +54,17 @@ const DEFAULT_MAX_RESPONSE_BYTES: NonZeroUsize = match NonZeroUsize::new(8 * 102
     None => NonZeroUsize::MIN,
 };
 
+/// Ceiling on how many raw link entries one page may make the engine inspect.
+///
+/// This is separate from the normalized-link ceiling below. Duplicate, invalid,
+/// and non-HTTP entries still cost parse and join work, and a compact Firecrawl
+/// JSON array can otherwise expand into far more allocations than its wire bytes.
+const MAX_RAW_LINKS_PER_PAGE: usize = 16_384;
+
 /// Ceiling on how many distinct normalized links one page may contribute.
 ///
-/// The peer writes the page, so the peer writes this count too, and the byte
-/// ceiling above bounds what arrives rather than the containers it expands into.
+/// The normalized set is bounded while it is built. It never grows to the
+/// peer-controlled size and gets measured afterward.
 const MAX_DISCOVERED_LINKS_PER_PAGE: usize = 8192;
 
 /// The exact reason literal recorded when a same-site walk lands on a foreign
@@ -194,6 +200,8 @@ pub struct HeadlessDocument {
     pub html: String,
     /// Browser-final URL after navigation and redirects.
     pub final_url: String,
+    /// Target page status observed by the browser navigation.
+    pub status: u16,
 }
 
 /// Host-injected browser boundary. The engine owns no browser process or crate.
@@ -425,37 +433,6 @@ fn content_hash(markdown: &str) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-/// Normalizes, filters to HTTP(S), sorts bytewise, and deduplicates a raw link
-/// list, keeping at most one entry past [`MAX_DISCOVERED_LINKS_PER_PAGE`].
-///
-/// The set is bounded while it is built, not measured once it has grown, so a
-/// hostile page cannot expand a capped body into an uncapped container here. One
-/// link past the ceiling is kept purely to tell "at the ceiling" apart from
-/// "over it" — the [`read_capped_body`] idiom applied to link cardinality. That
-/// over-ceiling list is never walked: the ladder's `bounded_link_list` seam
-/// refuses it rather than admitting a shortened frontier.
-fn normalize_link_list<I, S>(links: I, base: &Url) -> Vec<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let over_ceiling = MAX_DISCOVERED_LINKS_PER_PAGE.saturating_add(1);
-    let mut normalized = BTreeSet::new();
-    for raw in links {
-        if normalized.len() >= over_ceiling {
-            break;
-        }
-        let Ok(joined) = base.join(raw.as_ref().trim()) else {
-            continue;
-        };
-        let candidate = normalize_url(&joined);
-        if is_web_url(&candidate) {
-            normalized.insert(candidate.to_string());
-        }
-    }
-    normalized.into_iter().collect()
-}
-
 // ---------------------------------------------------------------------------
 // Rung adapters
 // ---------------------------------------------------------------------------
@@ -499,23 +476,22 @@ impl Renderer for NativeReadabilityRenderer {
         // check above admitted `target`, but the client may have followed a
         // redirect since, and the URL inside a `reqwest` error is then the
         // peer's `Location` — which nothing here has vouched for.
-        let response = self
-            .client
-            .get(target)
-            .send()
-            .map_err(|error| {
-                RendererError::transport(format!(
-                    "web fetch GET failed: {}",
-                    redacted_transport_detail(error)
-                ))
-            })?
-            .error_for_status()
-            .map_err(|error| {
-                RendererError::transport(format!(
-                    "web fetch GET returned an error status: {}",
-                    redacted_transport_detail(error)
-                ))
-            })?;
+        let response = self.client.get(target).send().map_err(|error| {
+            RendererError::transport(format!(
+                "web fetch GET failed: {}",
+                redacted_transport_detail(error)
+            ))
+        })?;
+        // `error_for_status` accepts 3xx. That is wrong when the injected client
+        // disables redirects: a redirect body is not the requested page. Require
+        // the complete 2xx class explicitly before any response content is read.
+        if !response.status().is_success() {
+            let status = response.status();
+            let target = redact_url_credentials(response.url().as_str());
+            return Err(RendererError::transport(format!(
+                "web fetch GET returned status {status} (target {target})"
+            )));
+        }
         let final_url = renderer_final_url(response.url().as_str())?;
         // The transport's charset statement has to be taken here: reading the
         // body consumes the response, and the header is what decides how the
@@ -537,12 +513,24 @@ impl Renderer for NativeReadabilityRenderer {
 /// Rung 2: a host-provided browser navigation fed through the same extraction.
 pub struct NativeHeadlessRenderer {
     headless: Arc<dyn HeadlessRenderer>,
+    max_response_bytes: NonZeroUsize,
 }
 
 impl NativeHeadlessRenderer {
     #[must_use]
     pub fn new(headless: Arc<dyn HeadlessRenderer>) -> Self {
-        Self { headless }
+        Self {
+            headless,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
+
+    /// Overrides how many rendered HTML bytes this rung will pass into the DOM
+    /// extractor before it fails closed.
+    #[must_use]
+    pub fn with_max_response_bytes(mut self, max_response_bytes: NonZeroUsize) -> Self {
+        self.max_response_bytes = max_response_bytes;
+        self
     }
 }
 
@@ -556,6 +544,18 @@ impl Renderer for NativeHeadlessRenderer {
         // pre-transport check applies before a URL is handed to it.
         let target = renderer_request_url(url)?;
         let document = self.headless.render_html(&target)?;
+        if !(200..300).contains(&document.status) {
+            return Err(RendererError::transport(format!(
+                "headless target returned status {}",
+                document.status
+            )));
+        }
+        let ceiling = self.max_response_bytes.get();
+        if document.html.len() > ceiling {
+            return Err(RendererError::invalid_response(format!(
+                "headless rendered body exceeded the {ceiling} byte ceiling"
+            )));
+        }
         let final_url = renderer_final_url(&document.final_url)?;
         extract_readable_page(&document.html, &final_url)
     }
@@ -740,7 +740,7 @@ impl WebFetcher {
         let seed = parse_web_url(&request.seed_url)?;
         let mut walk = CrawlWalk::new(seed, request.page_budget.get());
 
-        while let Some(current) = walk.frontier.pop_front() {
+        while let Some(current) = walk.pop_frontier() {
             let requested = current.to_string();
             // Dequeue-time seen-set skip: an earlier page already navigated here.
             // Not an attempt, so it charges no budget.
@@ -748,7 +748,7 @@ impl WebFetcher {
                 continue;
             }
             if walk.remaining_budget == 0 {
-                walk.frontier.push_front(current);
+                walk.restore_front(current);
                 return Ok(walk.into_budget_exhausted());
             }
             walk.remaining_budget -= 1;
