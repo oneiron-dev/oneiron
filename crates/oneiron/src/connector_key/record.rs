@@ -665,11 +665,9 @@ pub(super) fn validate_compiled_policy(compiled: &CompiledConnectorPolicy) -> Re
 ///    truncated at its first colon or re-read as a capability.
 ///
 /// Enforcement compares the stored parts by EXACT STRING and NEVER re-normalizes
-/// them, so a hand-forged or imported entry that is merely well-SHAPED but not
-/// canonical (`"Slack:send"`, `" slack:send"`, `"slack:SEND"`, an unmapped
-/// `'-'`) would never match a real dispatch — the prohibition would fail OPEN.
-/// Anything not in canonical form is rejected so a corrupted charter fails
-/// closed at decode.
+/// them. The ordinary channel parser preserves its complete connector bytes,
+/// including `-`, `_`, and colons; only blank or partial-wildcard channels are
+/// rejected so a corrupted charter cannot silently fail open.
 pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
     if let Some(capability_key) = entry.strip_prefix(CAPABILITY_NEVER_ENTRY_TAG) {
         if ScopedCapabilityProvenance::parse_owner_capability_key(capability_key)
@@ -688,16 +686,10 @@ pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
     if channel_part != "*" {
         // A `'*'` anywhere else on the channel side is a partial wildcard: the
         // matcher compares the whole channel part by exact string, so it would
-        // deny nothing (fail-open).
-        if normalize_connector_key(channel_part).is_empty() || channel_part.contains('*') {
+        // deny nothing (fail-open). Ordinary-channel punctuation, including
+        // `-` and `_`, is data and must not be normalized or aliased.
+        if channel_part.trim().is_empty() || channel_part.contains('*') {
             return Err(invalid_body("never_list entry channel invalid"));
-        }
-        // Enforcement compares this stored channel by EXACT string against the
-        // already-normalized whole effect channel, so it must ALREADY be the
-        // canonical form (rejects mixed case, surrounding whitespace, an
-        // unmapped '-'). Mirrors the cap channel_class stored-normalized guard.
-        if channel_part != normalize_connector_key(channel_part) {
-            return Err(invalid_body("never_list entry channel must be canonical"));
         }
     }
     if verb == "*" {

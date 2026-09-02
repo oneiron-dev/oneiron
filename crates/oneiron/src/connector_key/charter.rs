@@ -239,7 +239,7 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
                 let verb = parse_charter_verb(tokens[1])?;
                 // The channel keeps its colons: the entry's verb is its LAST
                 // segment, so the whole `mcp:calendar` string is the channel.
-                let channel = parse_charter_channel(tokens[3])?;
+                let channel = parse_charter_never_channel(tokens[3])?;
                 Ok(CharterDirective::Never(format!("{channel}:{verb}")))
             }
             _ => Err("unrecognized charter directive".to_owned()),
@@ -325,6 +325,16 @@ pub(super) fn parse_charter_verb(token: &str) -> std::result::Result<String, Str
     } else {
         Err("invalid verb".to_owned())
     }
+}
+
+/// Ordinary `never ... on` channels retain their complete connector bytes.
+/// Unlike cap/rate channel classes, this grammar is enforced by whole-string
+/// matching, so a scoped server's `-` and `_` are distinct data.
+fn parse_charter_never_channel(token: &str) -> std::result::Result<String, String> {
+    if token.trim().is_empty() {
+        return Err("invalid channel".to_owned());
+    }
+    Ok(token.to_owned())
 }
 
 fn parse_charter_channel(token: &str) -> std::result::Result<String, String> {

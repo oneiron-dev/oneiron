@@ -6611,6 +6611,71 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xD0);
+    let hyphen_grant = test_id(0xD1);
+    let underscore_grant = test_id(0xD2);
+    vault.mint_scoped_mcp_outbound_grant(
+        &hyphen_grant,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &underscore_grant,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo_bar"),
+        10,
+    )?;
+    let hyphen_key = test_id(0xD3);
+    let underscore_key = test_id(0xD4);
+    vault.register_connector_key(
+        &hyphen_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &hyphen_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    vault.register_connector_key(
+        &underscore_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo_bar", &underscore_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let hyphen_effect = scoped_mcp_effect(principal, "foo-bar");
+    let underscore_effect = scoped_mcp_effect(principal, "foo_bar");
+    assert_eq!(check_effect(&vault, &hyphen_effect, &policy)?.0.outcome(), GateOutcome::Allow);
+    assert_eq!(
+        check_effect(&vault, &underscore_effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+
+    // The ordinary-channel wildcard preserves the complete scoped server
+    // connector. It denies the hyphenated server and never aliases `_` to `-`.
+    for key_id in [hyphen_key, underscore_key] {
+        let pending = vault.propose_connector_charter(
+            &key_id,
+            "never * on mcp:foo-bar",
+            1_001,
+        )?;
+        vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    }
+    let (decision, charge) = check_effect(&vault, &hyphen_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(gate_reason_strs(&decision), vec!["gate.deny.charter_never_list"]);
+    assert!(charge.is_none());
+    let (decision, _) = check_effect(&vault, &underscore_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
 /// One manifest granting `external:send` on each ordinary colon-bearing
 /// channel, so an ordinary dispatch on it reaches the connector-key stage.
 fn ordinary_channels_send_manifest(channels: &[&str]) -> Vec<u8> {
