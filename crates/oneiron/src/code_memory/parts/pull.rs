@@ -147,24 +147,26 @@ type PullNoteCandidates = Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlot
 ///
 /// TWO BOUNDS, BOTH LOAD-BEARING:
 ///
-/// * a denied payload never consumes a place. Admission happens BEFORE the
-///   candidate is counted, and it is the same decision that will still hold
-///   when the result is built — so the sweep keeps scanning and backfills from
-///   lower-ranked slots and symbols instead of returning short;
-/// * slot bodies stream ([`stream_slots_for_symbol`]) and stop as soon as the
-///   candidate set is full, so `request.limit` — not the stored slot count,
-///   which carries no per-symbol ceiling — bounds the decode work and the live
-///   memory. Once the notes are full and no contracts are wanted, the symbol
-///   loop stops too.
+/// * one global `examined_values` budget starts at `request.limit` and spans
+///   ALL retained symbols and slots. Every decoded candidate value consumes
+///   one unit BEFORE visibility admission, so denied or missing payloads also
+///   consume the budget. A denial-heavy pull may therefore return short; it
+///   must not keep scanning indefinitely to backfill lower-ranked symbols;
+/// * slot bodies stream ([`stream_slots_for_symbol`]) and stop before the next
+///   body is decoded once that budget is exhausted. A body itself is bounded
+///   by the fixed [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] cap. Thus candidate
+///   decoding and admission are O(`request.limit`) plus one fixed-cap body,
+///   rather than proportional to an unbounded number of slots or values. The
+///   always-on contract pass remains independent and still visits every
+///   retained symbol when requested.
 ///
-/// STOPPING EARLY CANNOT LOSE A HIGHER-RANKED NOTE, because this sweep visits
-/// candidates in EXACTLY the caller's final order. `ppr::sort_scores` hands
-/// `retained` back as score-descending then id-ascending; a slot prefix cursor
-/// yields slot names ascending; and a decoded slot body is
-/// `CodeMemorySlotValue::sort_key`-ascending (`decode_slot` refuses any other
-/// order). That is the `pull_code_memory` comparator, term for term — so the
-/// first `limit` admitted candidates ARE the top `limit`, not merely the first
-/// ones found.
+/// The examined prefix is visited in EXACTLY the caller's canonical order:
+/// `ppr::sort_scores` hands `retained` back as score-descending then
+/// id-ascending; a slot prefix cursor yields slot names ascending; and a
+/// decoded slot body is `CodeMemorySlotValue::sort_key`-ascending
+/// (`decode_slot` refuses any other order). Admitted values from that prefix
+/// are sorted by the same final comparator below, so denial cannot reorder
+/// what was examined even though it may leave the result short.
 fn collect_pull_candidates(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
@@ -173,6 +175,7 @@ fn collect_pull_candidates(
     retained: &[ScoredEntity],
 ) -> Result<(PullNoteCandidates, Vec<AlwaysOnCodeMemoryContract>)> {
     let note_limit = request.limit;
+    let examined_values = Cell::new(0_usize);
     let mut candidate_notes: PullNoteCandidates = Vec::with_capacity(note_limit);
     let mut candidate_contracts: Vec<AlwaysOnCodeMemoryContract> = Vec::new();
 
@@ -182,19 +185,38 @@ fn collect_pull_candidates(
             break;
         }
         if !notes_full {
-            stream_slots_for_symbol(&vault.store, rtxn, &scored.id, |slot| {
-                let CodeMemorySlot { name, values, .. } = slot;
-                for value in values {
-                    if !payload_visible_in_txn(&vault.store, rtxn, scoped_read, value.payload)? {
-                        continue;
+            stream_slots_for_symbol(
+                &vault.store,
+                rtxn,
+                &scored.id,
+                || examined_values.get() < note_limit,
+                |slot| {
+                    let CodeMemorySlot { name, values, .. } = slot;
+                    for value in values {
+                        if examined_values.get() == note_limit {
+                            return Ok(ControlFlow::Break(()));
+                        }
+                        // Denied or missing payloads consume this global budget
+                        // before the canonical visibility predicate runs. It
+                        // bounds admission work across ALL symbols and slots,
+                        // not merely the number of notes eventually retained.
+                        examined_values.set(examined_values.get() + 1);
+                        if !payload_visible_in_txn(
+                            &vault.store,
+                            rtxn,
+                            scoped_read,
+                            value.payload,
+                        )? {
+                            continue;
+                        }
+                        candidate_notes.push((scored.score, scored.id, name.clone(), value));
+                        if candidate_notes.len() == note_limit {
+                            return Ok(ControlFlow::Break(()));
+                        }
                     }
-                    candidate_notes.push((scored.score, scored.id, name.clone(), value));
-                    if candidate_notes.len() == note_limit {
-                        return Ok(ControlFlow::Break(()));
-                    }
-                }
-                Ok(ControlFlow::Continue(()))
-            })?;
+                    Ok(ControlFlow::Continue(()))
+                },
+            )?;
         }
         if request.include_always_on_contracts {
             candidate_contracts.extend(read_always_on_for_symbol(&vault.store, rtxn, &scored.id)?);
@@ -227,7 +249,11 @@ fn collect_pull_candidates(
 /// 4. resolve slots and always-on registrations for those symbols, and clamp
 ///    every referenced PAYLOAD, all in THAT SAME transaction. The walk gate
 ///    above admits the SYMBOLS a ranking may traverse; the payload clamp stays
-///    as defence in depth for both;
+///    as defence in depth for both. Candidate scanning has one global budget
+///    equal to `request.limit`: each decoded value consumes it before
+///    admission, including denied or missing values. Once exhausted, no later
+///    slot body is decoded, while the independent always-on pass continues;
+///    this intentionally permits a short note list under denial;
 /// 5. sort surviving notes by descending inherited relevance then canonical
 ///    keys, and apply the caller limit exactly once;
 /// 6. label everything `Data`.

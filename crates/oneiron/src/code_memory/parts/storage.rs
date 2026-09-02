@@ -527,32 +527,42 @@ fn write_slot(
 /// Streams `symbol_id`'s slot bodies in canonical order, decoding ONE at a
 /// time and stopping the moment `visit` reports it has what it needs.
 ///
+/// `should_decode` runs after the cursor has yielded a row but BEFORE its body
+/// is decoded. That pre-decode door is load-bearing for bounded callers: a
+/// denied-value budget can stop the next slot from being decoded at all.
+///
 /// THIS IS THE BOUNDED READER. [`read_slots_for_symbol`] materializes EVERY
 /// slot body for the symbol before its caller sees the first one, and there is
 /// no per-symbol slot-count ceiling anywhere in this module — so a reader whose
 /// own work is bounded (the L2 pull's `request.limit`) could still be made to
 /// decode and allocate an unbounded number of stored slot bodies first. A
 /// caller that can stop early must be able to stop the DECODE, not just the
-/// loop over an already-built `Vec`.
+/// loop over an already-built `Vec`. One decoded body is still bounded by the
+/// fixed [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] per-slot value cap.
 ///
 /// CANONICAL ORDER IS PRESERVED, not approximated. A slot key is
 /// `SLOT_KEY_PREFIX | symbol | KEY_SEPARATOR | slot name` ([`slot_key`]) and
 /// [`validate_slot_name`] rejects control characters, so no separator byte can
 /// occur inside a name: the prefix cursor already yields rows in slot-name byte
 /// order, which is exactly the order [`read_slots_for_symbol`] sorts into.
-fn stream_slots_for_symbol<F>(
+fn stream_slots_for_symbol<ShouldDecode, Visit>(
     store: &Store,
     txn: &RoTxn<'_>,
     symbol_id: &EntityId,
-    mut visit: F,
+    mut should_decode: ShouldDecode,
+    mut visit: Visit,
 ) -> Result<()>
 where
-    F: FnMut(CodeMemorySlot) -> Result<ControlFlow<()>>,
+    ShouldDecode: FnMut() -> bool,
+    Visit: FnMut(CodeMemorySlot) -> Result<ControlFlow<()>>,
 {
     for entry in store
         .vault_meta
         .prefix_iter(txn, &slot_symbol_prefix(symbol_id))?
     {
+        if !should_decode() {
+            break;
+        }
         let (_, value) = entry?;
         if visit(decode_slot(&value)?)?.is_break() {
             break;
@@ -573,10 +583,16 @@ pub(crate) fn read_slots_for_symbol(
     symbol_id: &EntityId,
 ) -> Result<Vec<CodeMemorySlot>> {
     let mut slots = Vec::new();
-    stream_slots_for_symbol(store, txn, symbol_id, |slot| {
-        slots.push(slot);
-        Ok(ControlFlow::Continue(()))
-    })?;
+    stream_slots_for_symbol(
+        store,
+        txn,
+        symbol_id,
+        || true,
+        |slot| {
+            slots.push(slot);
+            Ok(ControlFlow::Continue(()))
+        },
+    )?;
     slots.sort_by(|left, right| left.name.as_str().cmp(right.name.as_str()));
     Ok(slots)
 }

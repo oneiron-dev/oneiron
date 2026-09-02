@@ -1364,9 +1364,10 @@ fn all_pulled_values_are_labelled_data() {
 /// The ScopedRead clamp runs on EVERY referenced entity BEFORE the caller's
 /// note limit is applied.
 ///
-/// The denied note is attached FIRST and is canonically smaller, so a
-/// pull that cut to `limit = 1` before clamping would return it and drop the
-/// permitted one. Getting the permitted note back is the ordering proof.
+/// The denied note is attached FIRST and is canonically smaller. With a limit
+/// of TWO, both values fit the global examined-value budget, so the permitted
+/// one survives while the denied one is removed by the same snapshot-local
+/// admission predicate used by the pull.
 #[test]
 fn scoped_read_clamps_before_ranking() {
     let (_dir, vault) = vault();
@@ -1394,7 +1395,7 @@ fn scoped_read_clamps_before_ranking() {
     .expect("attach the permitted note");
 
     let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
-    request.limit = 1;
+    request.limit = 2;
     let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
 
     assert_eq!(pulled.notes.len(), 1);
@@ -1515,15 +1516,16 @@ fn a_header_only_claim_payload_is_skipped_rather_than_failing_the_pull() {
     );
 }
 
-/// A clamp-denied payload never CONSUMES one of the caller's `limit` places.
+/// The global examined-value budget counts denied payloads across slots.
 ///
-/// Admission and the returned set are decided on ONE snapshot, so a candidate
-/// that took a place cannot be discarded afterwards by a second, newer read.
-/// Both denial shapes — an unresolvable ref and a header-only CLAIM shell — are
-/// attached ahead of the readable notes in canonical value order, so a pull
-/// that counted them against the limit first would come back short.
+/// A denial-heavy prefix may therefore return short by design. With two
+/// denials in the first two canonical slots and two readable values after
+/// them, limits 2, 3, and 4 examine exactly that many values globally and
+/// return respectively zero, the first readable value, and both readable
+/// values. This proves that admission cannot run past the budget and that the
+/// admitted prefix keeps canonical slot order.
 #[test]
-fn a_denied_payload_never_consumes_the_pull_limit() {
+fn denied_values_consume_one_global_examined_budget_across_slots() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0xB4);
     let subject = seed(&vault, 0xB5, ENTITY_TYPE_PERSON);
@@ -1533,40 +1535,51 @@ fn a_denied_payload_never_consumes_the_pull_limit() {
     let first = note(&vault);
     let second = note(&vault);
 
-    // The value sort key leads with the actor, so ascending actor ids fix the
-    // order the sweep meets these in: both denials first.
-    for (index, payload) in [unresolvable, shell, first, second].into_iter().enumerate() {
-        let actor = id(u8::try_from(index + 1).expect("small index"));
+    for (index, (slot_name, payload)) in [
+        ("slot.00", unresolvable),
+        ("slot.01", shell),
+        ("slot.02", first),
+        ("slot.03", second),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         attach(
             &vault,
             anchor_symbol,
             "src/a.rs",
-            slot(),
-            value(payload, actor, 0x10, 100),
+            CodeMemorySlotName::new(slot_name).expect("valid slot name"),
+            value(
+                payload,
+                id(u8::try_from(index + 1).expect("small index")),
+                0x10,
+                100,
+            ),
         )
         .expect("attach");
     }
 
-    let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
-    request.limit = 2;
-    let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
-
-    assert_eq!(
-        pulled_payloads(&pulled),
-        vec![first, second],
-        "both denials are skipped and the limit fills from readable notes"
-    );
+    for (limit, expected) in [(2, Vec::new()), (3, vec![first]), (4, vec![first, second])] {
+        let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
+        request.limit = limit;
+        let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
+        assert_eq!(
+            pulled_payloads(&pulled),
+            expected,
+            "denied values consume the global budget before later slots are scanned"
+        );
+    }
 }
 
-/// The bounded slot sweep keeps CANONICAL slot order and still backfills.
+/// The bounded slot sweep keeps CANONICAL order while respecting the global
+/// examined-value budget.
 ///
-/// The pull streams slot bodies and stops as soon as `limit` candidates are
-/// admitted, so no per-symbol slot count can force it to decode more than the
-/// caller asked for. Stopping early may not reorder anything and may not
-/// return short: `slot.00` holds nothing readable, so every limit below must
-/// be filled from the next slots in canonical name order.
+/// The pull streams slot bodies and stops before decoding another slot once
+/// `limit` values have been examined. The first slot is a denied shell, so it
+/// consumes the first unit and can make the result short; later readable slots
+/// still arrive in canonical order only when the budget reaches them.
 #[test]
-fn bounded_slot_streaming_keeps_canonical_order_and_backfills() {
+fn bounded_slot_streaming_keeps_canonical_order_and_respects_denial_budget() {
     let (_dir, vault) = vault();
     let anchor_symbol = symbol(&vault, 0xB8);
     let subject = seed(&vault, 0xB9, ENTITY_TYPE_PERSON);
@@ -1579,7 +1592,7 @@ fn bounded_slot_streaming_keeps_canonical_order_and_backfills() {
         CodeMemorySlotName::new("slot.00").expect("valid slot name"),
         value(denied, id(0x01), 0x01, 100),
     )
-    .expect("the canonically first slot holds nothing readable");
+    .expect("the canonically first slot holds a denied shell");
 
     let mut readable = Vec::new();
     for index in 1..6u8 {
@@ -1595,14 +1608,18 @@ fn bounded_slot_streaming_keeps_canonical_order_and_backfills() {
         .expect("attach one readable note per later slot");
     }
 
-    for limit in 1..=3usize {
+    for (limit, expected) in [
+        (1, Vec::new()),
+        (2, readable[..1].to_vec()),
+        (3, readable[..2].to_vec()),
+    ] {
         let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
         request.limit = limit;
         let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
         assert_eq!(
             pulled_payloads(&pulled),
-            readable[..limit].to_vec(),
-            "a bounded sweep fills from the canonically first READABLE slots"
+            expected,
+            "the global budget preserves canonical admitted order and may return short under denial"
         );
     }
 }

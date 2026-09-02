@@ -36,7 +36,6 @@
 //! no `Store` field, no storage-ABI change. NOTE/L2 payload bodies stay
 //! opaque — this module stores refs and hashes and decodes neither.
 
-
 // Private implementation fragments are included in one module so their original
 // private names, visibility, and cross-section behavior remain unchanged.
 include!("parts/types-and-slots.rs");
