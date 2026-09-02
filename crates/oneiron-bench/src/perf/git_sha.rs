@@ -100,7 +100,10 @@ pub(crate) fn running_executable_blake3() -> ExecutableDigestResolution {
     }
 }
 
-fn hash_file_blake3(path: &Path) -> Result<String, std::io::Error> {
+/// BLAKE3 over the exact bytes of one file. Shared with the ONE-1963
+/// ready-child digest so the parent artifact and its child are hashed the same
+/// way, and a comparison between them is a comparison of like with like.
+pub(crate) fn hash_file_blake3(path: &Path) -> Result<String, std::io::Error> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = blake3::Hasher::new();
     let mut buffer = [0_u8; 64 * 1024];

@@ -16,6 +16,10 @@ rmp-serde.workspace = true
 rmpv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# ONE-1961: the run certificate's blake3 digests are taken over RFC 8785
+# canonical JSON so `oneiron-eval perf-verify` can recompute them with
+# `rfc8785`. See `src/perf/certificate.rs`.
+serde_json_canonicalizer.workspace = true
 sha2 = "0.10"
 tempfile = "3"
 thiserror.workspace = true

@@ -5,12 +5,18 @@
 //! what it says:
 //!
 //! * a FULL run must walk exactly the `[1, 10, 100, 300]` session curve, clear
-//!   the doc/query and gated-write floors, and name a real-traffic cache
-//!   stream;
-//! * `corpus.k` may not exceed `corpus.indexed_docs`, and the binary-prefix
-//!   breadth must stay inside `[k, indexed_docs]`. Clamping either value in one
-//!   axis while the plan hash kept the caller's request would describe a
-//!   different experiment;
+//!   the doc/query and gated-write floors, and name a cache-event stream. That
+//!   stream is OPERATOR-DECLARED evidence and the report treats it as advisory
+//!   (ONE-1961), so naming it is a completeness requirement rather than a
+//!   claim the plan gets to make about the numbers;
+//! * a FULL run may NOT name its own ready-child program (ONE-1963). A full run
+//!   measures the artifact it was built from, and a plan-supplied child would
+//!   make the wake and ready-children axes describe some other binary;
+//! * `corpus.k` and `corpus.queries` may not exceed `corpus.indexed_docs`, and
+//!   the binary-prefix breadth must stay inside `[k, indexed_docs]`. Clamping
+//!   any of them in one axis while the plan hash kept the caller's request
+//!   would describe a different experiment, and more queries than documents
+//!   could only be answered by re-probing documents already queried;
 //! * `wake.hold_ms` must outlast the accept timeout by the ready-children
 //!   sampling margin, so the FIRST child cannot expire while the parent is
 //!   still accepting the tenth.
@@ -124,6 +130,11 @@ pub(crate) struct CachePlan {
     /// be OMITTED from the plan rather than listed and zeroed.
     pub(crate) rungs: Vec<String>,
     /// JSONL cache-event stream, resolved relative to the plan file.
+    ///
+    /// Whoever runs the bench chooses this file and its rows declare their own
+    /// `source`, so it is OPERATOR-DECLARED evidence (see `perf/trust.rs`) and
+    /// the cache axis it feeds is advisory. No signature is asked for here,
+    /// because a signature the same operator produces would not change that.
     #[serde(default)]
     pub(crate) events_path: Option<String>,
 }
@@ -205,6 +216,20 @@ pub(crate) enum PlanError {
     DuplicateCacheRung { rung: String },
     #[error("a full run must name a real-traffic cache event stream (`cache.events_path`)")]
     MissingCacheEvents,
+    #[error(
+        "a full run may not name its own ready-child program (`wake.child` is `{program}`); a \
+         full run measures the artifact it was built from, and the wake and ready-children axes \
+         would otherwise report the spawn latency and resident memory of some other binary under \
+         this artifact's build revision. Run a separate-binary comparison as a synthetic smoke"
+    )]
+    ChildOverrideNotAllowedInFullRun { program: String },
+    #[error(
+        "`corpus.queries` is {queries} but the plan only indexes {indexed_docs} documents; every \
+         query anchors on a document of its own, so a plan asking for more queries than documents \
+         is refused rather than answered with queries that wrap back onto documents already \
+         probed and re-score the same rows as fresh samples"
+    )]
+    QueriesExceedCorpus { queries: usize, indexed_docs: usize },
     #[error(
         "`corpus.k` is {k} but the plan only indexes {indexed_docs} documents; the retrieval and \
          precision axes describe the same plan, so a k larger than the corpus is refused rather \
@@ -293,6 +318,12 @@ impl PerfPlan {
                 indexed_docs: self.corpus.indexed_docs,
             });
         }
+        if self.corpus.queries > self.corpus.indexed_docs {
+            return Err(PlanError::QueriesExceedCorpus {
+                queries: self.corpus.queries,
+                indexed_docs: self.corpus.indexed_docs,
+            });
+        }
         Ok(())
     }
 
@@ -370,6 +401,14 @@ impl PerfPlan {
         if self.cache.events_path.is_none() {
             return Err(PlanError::MissingCacheEvents);
         }
+        // ONE-1963. Refused at admission rather than downgraded at report
+        // time: an axis that measured the wrong binary is not weaker evidence,
+        // it is evidence about something else.
+        if let Some(child) = &self.wake.child {
+            return Err(PlanError::ChildOverrideNotAllowedInFullRun {
+                program: child.program.clone(),
+            });
+        }
         Ok(())
     }
 
@@ -431,245 +470,4 @@ pub(crate) fn full_plan_fixture() -> PerfPlan {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A full run is defined at exactly `[1, 10, 100, 300]`. Omitting a rung,
-    /// reordering it, padding it or emptying it are all invalid full-run
-    /// plans; a synthetic smoke may use a smaller curve.
-    #[test]
-    fn perf_plan_requires_exact_full_scale_curve() {
-        full_plan_fixture()
-            .validate()
-            .expect("the exact curve validates");
-
-        for broken in [
-            vec![1, 10, 100],
-            vec![1, 10, 300],
-            vec![1, 10, 300, 100],
-            vec![300, 100, 10, 1],
-            vec![1, 10, 100, 300, 1000],
-            vec![1, 10, 100, 200],
-        ] {
-            let mut plan = full_plan_fixture();
-            plan.sessions.curve = broken.clone();
-            let error = plan
-                .validate()
-                .expect_err("a full run must refuse a curve that is not exactly [1,10,100,300]");
-            match error {
-                PlanError::SessionCurve { expected, found } => {
-                    assert_eq!(expected.as_slice(), REQUIRED_FULL_SESSION_CURVE.as_slice());
-                    assert_eq!(found, broken);
-                }
-                other => panic!("expected a session-curve refusal for {broken:?}, got {other}"),
-            }
-        }
-
-        let mut empty = full_plan_fixture();
-        empty.sessions.curve = Vec::new();
-        assert_eq!(
-            empty.validate().expect_err("an empty curve is refused"),
-            PlanError::EmptySessionCurve
-        );
-
-        // The smoke contract is explicitly allowed smaller fixtures.
-        let mut smoke = full_plan_fixture();
-        smoke.mode = PlanMode::SyntheticSmoke;
-        smoke.sessions.curve = vec![1, 4];
-        smoke.corpus.indexed_docs = 48;
-        smoke.corpus.queries = 8;
-        smoke.gated_writes = GatedWritePlan {
-            warmup: 2,
-            measured: 6,
-        };
-        smoke.cache.events_path = None;
-        smoke
-            .validate()
-            .expect("a synthetic smoke may use smaller fixtures");
-    }
-
-    #[test]
-    fn full_run_floors_and_axis_shape_are_enforced() {
-        let mut under = full_plan_fixture();
-        under.corpus.indexed_docs = 999;
-        assert!(matches!(
-            under.validate(),
-            Err(PlanError::LatencyFloor { .. })
-        ));
-
-        let mut writes = full_plan_fixture();
-        writes.gated_writes.measured = 9_999;
-        assert!(matches!(
-            writes.validate(),
-            Err(PlanError::GatedWriteFloor { .. })
-        ));
-
-        let mut children = full_plan_fixture();
-        children.resident_memory.ready_children = 9;
-        assert!(matches!(
-            children.validate(),
-            Err(PlanError::ReadyChildren { .. })
-        ));
-
-        let mut candidates = full_plan_fixture();
-        candidates.precision.candidates = vec![PrecisionCandidate::F32, PrecisionCandidate::F16];
-        assert!(matches!(
-            candidates.validate(),
-            Err(PlanError::PrecisionCandidates { .. })
-        ));
-
-        let mut rungs = full_plan_fixture();
-        rungs.cache.rungs = vec!["embedding".to_owned(), "embedding".to_owned()];
-        assert!(matches!(
-            rungs.validate(),
-            Err(PlanError::DuplicateCacheRung { .. })
-        ));
-
-        let mut events = full_plan_fixture();
-        events.cache.events_path = None;
-        assert_eq!(
-            events.validate().expect_err("a full run needs real events"),
-            PlanError::MissingCacheEvents
-        );
-
-        let mut schema = full_plan_fixture();
-        schema.schema = "something.else".to_owned();
-        assert!(matches!(schema.validate(), Err(PlanError::Schema { .. })));
-    }
-
-    /// The retrieval and precision axes describe the SAME plan. A `k` larger
-    /// than the indexed corpus is refused at the door, so one axis can never
-    /// report a clamped k while the other keeps the original.
-    #[test]
-    fn a_k_larger_than_the_indexed_corpus_is_refused() {
-        let mut plan = full_plan_fixture();
-        plan.corpus.k = plan.corpus.indexed_docs + 1;
-        let error = plan.validate().expect_err("k > indexed_docs is refused");
-        assert_eq!(
-            error,
-            PlanError::KExceedsCorpus {
-                k: FULL_RUN_MIN_INDEXED_DOCS + 1,
-                indexed_docs: FULL_RUN_MIN_INDEXED_DOCS,
-            }
-        );
-
-        // The same refusal applies to a smoke, whose corpus is small.
-        let mut smoke = full_plan_fixture();
-        smoke.mode = PlanMode::SyntheticSmoke;
-        smoke.sessions.curve = vec![1, 4];
-        smoke.corpus.indexed_docs = 8;
-        smoke.corpus.queries = 4;
-        smoke.corpus.k = 10;
-        smoke.gated_writes = GatedWritePlan {
-            warmup: 1,
-            measured: 2,
-        };
-        smoke.cache.events_path = None;
-        assert!(matches!(
-            smoke.validate(),
-            Err(PlanError::KExceedsCorpus { .. })
-        ));
-
-        // k exactly at the corpus size is admissible.
-        let mut edge = full_plan_fixture();
-        edge.corpus.k = edge.corpus.indexed_docs;
-        edge.precision.binary_prefix_breadth = Some(edge.corpus.indexed_docs);
-        edge.validate().expect("k == indexed_docs is a valid plan");
-    }
-
-    /// The binary-prefix stage must run at exactly the breadth named by the
-    /// plan. Values below k or past the indexed corpus are refused before the
-    /// plan hash can identify one request while the axis silently measures
-    /// another.
-    #[test]
-    fn an_out_of_range_binary_prefix_breadth_is_refused_at_admission() {
-        for breadth in [9, FULL_RUN_MIN_INDEXED_DOCS + 1] {
-            let mut plan = full_plan_fixture();
-            plan.precision.binary_prefix_breadth = Some(breadth);
-            assert_eq!(
-                plan.validate()
-                    .expect_err("an out-of-range breadth must be refused"),
-                PlanError::BinaryPrefixBreadthOutOfRange {
-                    breadth,
-                    k: 10,
-                    indexed_docs: FULL_RUN_MIN_INDEXED_DOCS,
-                }
-            );
-        }
-
-        for breadth in [10, FULL_RUN_MIN_INDEXED_DOCS] {
-            let mut plan = full_plan_fixture();
-            plan.precision.binary_prefix_breadth = Some(breadth);
-            plan.validate()
-                .expect("both inclusive breadth boundaries are admissible");
-        }
-
-        // An omitted breadth still resolves to 4*k. A tiny smoke that cannot
-        // hold that default must name a smaller in-range breadth explicitly;
-        // it is never clamped behind the plan's back.
-        let mut smoke = full_plan_fixture();
-        smoke.mode = PlanMode::SyntheticSmoke;
-        smoke.sessions.curve = vec![1];
-        smoke.corpus.indexed_docs = 20;
-        smoke.corpus.queries = 4;
-        smoke.gated_writes = GatedWritePlan {
-            warmup: 1,
-            measured: 2,
-        };
-        smoke.cache.events_path = None;
-        assert_eq!(
-            smoke
-                .validate()
-                .expect_err("the 4*k default exceeds this smoke corpus"),
-            PlanError::BinaryPrefixBreadthOutOfRange {
-                breadth: 40,
-                k: 10,
-                indexed_docs: 20,
-            }
-        );
-        smoke.precision.binary_prefix_breadth = Some(20);
-        smoke
-            .validate()
-            .expect("an explicit in-range smoke breadth is admissible");
-    }
-
-    /// A ready child arms its hold the moment it connects, which can be at the
-    /// very start of the parent's accept window. A hold that does not outlast
-    /// that window plus the sampling margin is refused.
-    #[test]
-    fn a_child_hold_that_cannot_outlast_the_sampling_phase_is_refused() {
-        let mut plan = full_plan_fixture();
-        plan.wake.timeout_ms = 20_000;
-        plan.wake.hold_ms = 20_000;
-        let error = plan
-            .validate()
-            .expect_err("a hold equal to the accept timeout is refused");
-        match error {
-            PlanError::ChildHoldTooShort {
-                hold_ms,
-                minimum_ms,
-                timeout_ms,
-            } => {
-                assert_eq!(hold_ms, 20_000);
-                assert_eq!(timeout_ms, 20_000);
-                assert_eq!(minimum_ms, minimum_child_hold_ms(20_000));
-                assert!(minimum_ms > hold_ms);
-            }
-            other => panic!("expected a child-hold refusal, got {other}"),
-        }
-
-        let mut exact = full_plan_fixture();
-        exact.wake.timeout_ms = 20_000;
-        exact.wake.hold_ms = minimum_child_hold_ms(20_000);
-        exact
-            .validate()
-            .expect("a hold exactly at the floor is admissible");
-
-        let mut short = full_plan_fixture();
-        short.wake.hold_ms = 1;
-        assert!(matches!(
-            short.validate(),
-            Err(PlanError::ChildHoldTooShort { .. })
-        ));
-    }
-}
+mod tests;

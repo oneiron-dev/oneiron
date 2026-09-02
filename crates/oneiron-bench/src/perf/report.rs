@@ -6,11 +6,18 @@
 //! there is deliberately no composite score field, and every axis is emitted
 //! as its own object with its own evidence kind and sample counts.
 //!
-//! Beside the eight axes the envelope carries three sections a consumer needs
+//! Beside the eight axes the envelope carries four sections a consumer needs
 //! in order to use them: `provenance` (where and from what inputs),
-//! `publication` (every check the publish verdict rests on) and `acceptance`
-//! (the ONE-1578 knobs and the ONE-1537 relationship). All three are checked
-//! for before a report is allowed to leave the process.
+//! `publication` (every check the candidacy verdict rests on), `certificate`
+//! (the scope partition, trust manifest, statistical exposure and the RFC 8785
+//! hashes) and `acceptance` (the ONE-1578 knobs and the ONE-1537 relationship).
+//! All four are checked for before a report is allowed to leave the process.
+//!
+//! Schema v2 (ONE-1961) renames `publishable` to `publication_candidate`. The
+//! rename is the point, not bookkeeping: this document is an INPUT to a
+//! publication decision that happens elsewhere, and the old field name invited
+//! a reader to treat the measuring process's own verdict as the answer. It is
+//! a breaking change with no consumers to break — PR819 is unmerged.
 
 use serde::Serialize;
 
@@ -18,13 +25,14 @@ use super::acceptance::AcceptanceEvidence;
 use super::axes::{GatedWriteAxis, RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis};
 use super::cache_events::CacheAxis;
 use super::cells::RunMode;
+use super::certificate::RunCertificate;
 use super::nvme::NvmeFsyncAxis;
 use super::precision::PrecisionAxis;
 use super::provenance::Provenance;
 use super::publication::PublicationDecision;
 
 /// Report envelope schema id.
-pub(crate) const PERF_REPORT_SCHEMA: &str = "oneiron.bench.perf_report.v1";
+pub(crate) const PERF_REPORT_SCHEMA: &str = "oneiron.bench.perf_report.v2";
 
 /// Every axis the report must emit, in report order.
 pub(crate) const AXES: [&str; 8] = [
@@ -39,10 +47,11 @@ pub(crate) const AXES: [&str; 8] = [
 ];
 
 /// Non-axis sections the report must also carry.
-pub(crate) const REPORT_SECTIONS: [&str; 3] = ["provenance", "publication", "acceptance"];
+pub(crate) const REPORT_SECTIONS: [&str; 4] =
+    ["provenance", "publication", "certificate", "acceptance"];
 
 /// Every provenance field the report must carry.
-pub(crate) const PROVENANCE_FIELDS: [&str; 23] = [
+pub(crate) const PROVENANCE_FIELDS: [&str; 24] = [
     "build_revision_blake3",
     "build_revision_source",
     "build_git_sha",
@@ -61,6 +70,7 @@ pub(crate) const PROVENANCE_FIELDS: [&str; 23] = [
     "plan_hash",
     "corpus_hash",
     "corpus_marker_evidence",
+    "corpus_query_evidence",
     "cache_events_hash",
     "cache_source",
     "seed",
@@ -72,12 +82,20 @@ pub(crate) const PROVENANCE_FIELDS: [&str; 23] = [
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct PerfReport {
     pub(crate) schema: &'static str,
+    /// The contract an `oneiron-eval perf-verify` run validates before reading
+    /// anything else, following the BEAM `EVAL_CONTRACT_VERSION` idiom.
+    pub(crate) contract_version: &'static str,
     pub(crate) mode: RunMode,
-    pub(crate) publishable: bool,
+    /// The strongest verdict this process can reach. It is NEVER `publishable`:
+    /// only the external verifier may say that.
+    pub(crate) publication_candidate: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) non_publishable_reason: Option<String>,
-    /// Every check the publish verdict rests on, satisfied or not.
+    pub(crate) non_candidate_reason: Option<String>,
+    /// Every check the candidacy verdict rests on, satisfied or not.
     pub(crate) publication: PublicationDecision,
+    /// What the verdict was allowed to rest on, and the hashes that pin the
+    /// bytes it was computed over.
+    pub(crate) certificate: RunCertificate,
     pub(crate) scoring_policy: &'static str,
     pub(crate) beam_relationship: &'static str,
     pub(crate) plan_label: String,
@@ -153,11 +171,22 @@ mod tests {
         });
         assert!(missing_axes(&nulled).contains(&"recall_latency"));
         assert!(missing_sections(&nulled).contains(&"publication"));
+        assert!(missing_sections(&nulled).contains(&"certificate"));
         assert!(missing_sections(&nulled).contains(&"acceptance"));
         assert!(missing_provenance_fields(&nulled).contains(&"build_revision_blake3"));
         assert!(missing_provenance_fields(&nulled).contains(&"build_git_sha"));
         assert!(missing_provenance_fields(&nulled).contains(&"source_checkout_git_sha"));
         assert!(missing_provenance_fields(&nulled).contains(&"cache_events_hash"));
         assert!(missing_provenance_fields(&nulled).contains(&"node"));
+    }
+
+    /// The schema id and its candidate vocabulary are one decision. A v2
+    /// document that still said `publishable` would be the exact confusion the
+    /// rename exists to remove.
+    #[test]
+    fn the_schema_is_v2_and_the_envelope_never_says_publishable() {
+        assert_eq!(PERF_REPORT_SCHEMA, "oneiron.bench.perf_report.v2");
+        assert!(!PERF_REPORT_SCHEMA.contains("publish"));
+        assert!(REPORT_SECTIONS.contains(&"certificate"));
     }
 }

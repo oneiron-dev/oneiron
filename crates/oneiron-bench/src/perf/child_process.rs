@@ -29,7 +29,9 @@ use oneiron::{Vault, VaultConfig};
 use serde::{Deserialize, Serialize};
 
 use super::axes::ReadinessSignal;
+use super::cells::{Cell, RunMode};
 use super::corpus::BENCH_EMBEDDING_MODEL;
+use super::git_sha::hash_file_blake3;
 
 /// Environment override naming the program the ready-children probes spawn.
 pub(crate) const CHILD_PROGRAM_ENV: &str = "ONEIRON_BENCH_PERF_CHILD";
@@ -248,6 +250,103 @@ pub(crate) struct ChildProgram {
     pub(crate) harness_owned: bool,
 }
 
+/// The ready-child program this run will actually spawn, hashed BEFORE the
+/// first spawn (ONE-1963).
+///
+/// The digest is what makes the ready-children axis attributable: without it,
+/// "ten children held a vault" says nothing about WHICH binary held it. A full
+/// run is additionally required to spawn the measuring artifact itself, which
+/// the `child_program_matches_build_revision` check enforces by comparing this
+/// digest to `provenance.build_revision_blake3`.
+pub(crate) struct ResolvedChildProgram {
+    /// `None` when no child program could be resolved at all; the reason is in
+    /// `blake3`, which is then `not_ready`.
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) harness_owned: bool,
+    /// The program came from [`CHILD_PROGRAM_ENV`], so its bytes were chosen by
+    /// the operator. A full run never reaches this state.
+    pub(crate) overridden_by_environment: bool,
+    pub(crate) blake3: Cell<String>,
+}
+
+/// The non-empty value of the child-program override, if the operator set one.
+fn environment_child_override() -> Option<String> {
+    let raw = std::env::var(CHILD_PROGRAM_ENV).ok()?;
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The ONE-1963 refusal, as a decision over its two inputs so every branch is
+/// reachable from a test without mutating this process's environment.
+pub(crate) fn refuse_full_run_child_override(
+    mode: RunMode,
+    pinned: Option<&str>,
+) -> Result<(), String> {
+    match pinned {
+        Some(pinned) if mode.is_full() => Err(format!(
+            "{CHILD_PROGRAM_ENV} is set to `{pinned}` for a FULL run; a full run measures the \
+             artifact it was built from, so an operator-chosen ready-child program is refused \
+             before any axis runs rather than silently downgrading the ready-children axis. Unset \
+             {CHILD_PROGRAM_ENV}, or run this comparison as a synthetic smoke"
+        )),
+        Some(_) | None => Ok(()),
+    }
+}
+
+/// Resolves the ready-child program for this run and hashes it, refusing an
+/// operator-chosen child outright for a FULL run.
+///
+/// The refusal is the point of ONE-1963 and it happens BEFORE any axis runs.
+/// Previously an override merely flipped `harness_owned: false`, which
+/// downgraded one axis's evidence while the run carried on and still reported
+/// wake latency for an arbitrary program. A full run measures the artifact it
+/// was built from or it does not run: the harness REJECTS the override rather
+/// than hash-pinning some other binary into the certificate, because a Full-run
+/// pin that must equal the parent's own digest is the identity case and a
+/// separate-binary wake test belongs in a synthetic smoke.
+pub(crate) fn resolve_and_hash_child_program(
+    mode: RunMode,
+    planned: Option<&ChildCommandPlan>,
+) -> Result<ResolvedChildProgram, String> {
+    let overridden = environment_child_override();
+    refuse_full_run_child_override(mode, overridden.as_deref())?;
+
+    // Whatever `child_command` will actually spawn: a plan-supplied program
+    // when the plan named one (smoke only — plan admission refuses it for a
+    // full run), otherwise the resolved harness child.
+    let resolved = match planned {
+        Some(plan) => Ok(ChildProgram {
+            path: PathBuf::from(&plan.program),
+            harness_owned: false,
+        }),
+        None => resolve_child_program(),
+    };
+    Ok(match resolved {
+        Ok(program) => {
+            let blake3 = match hash_file_blake3(&program.path) {
+                Ok(digest) => Cell::measured(digest),
+                Err(error) => Cell::not_ready(format!(
+                    "the ready-child program `{}` could not be hashed, so the run cannot say which \
+                     binary it spawned: {error}",
+                    program.path.display()
+                )),
+            };
+            ResolvedChildProgram {
+                path: Some(program.path),
+                harness_owned: program.harness_owned,
+                overridden_by_environment: overridden.is_some(),
+                blake3,
+            }
+        }
+        Err(reason) => ResolvedChildProgram {
+            path: None,
+            harness_owned: false,
+            overridden_by_environment: overridden.is_some(),
+            blake3: Cell::not_ready(reason),
+        },
+    })
+}
+
 /// Resolves the program the harness will spawn as its ready child.
 pub(crate) fn resolve_child_program() -> Result<ChildProgram, String> {
     if let Ok(pinned) = std::env::var(CHILD_PROGRAM_ENV)
@@ -418,232 +517,4 @@ pub(crate) fn run_wake_child(args: &[String]) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use super::*;
-
-    fn first_existing(candidates: &[&str]) -> Option<PathBuf> {
-        for candidate in candidates {
-            let path = PathBuf::from(candidate);
-            if path.exists() {
-                return Some(path);
-            }
-        }
-        None
-    }
-
-    /// A program that stays up until it is killed, for the bounded-shutdown
-    /// regression. `None` only where the platform ships no such program.
-    fn long_lived_program() -> Option<PathBuf> {
-        first_existing(&["/bin/sleep", "/usr/bin/sleep"])
-    }
-
-    fn immediate_program() -> Option<PathBuf> {
-        first_existing(&["/bin/true", "/usr/bin/true"])
-    }
-
-    /// Readiness must be the completed TCP accept and nothing else. The
-    /// stand-in child emits a stream of convincing "ready" log lines well
-    /// before it connects; a probe that watched log text would return early,
-    /// and a probe that waited on the accept cannot.
-    #[test]
-    fn wake_probe_waits_for_tcp_accept_not_log_text() {
-        let probe = WakeProbe::bind().expect("probe binds");
-        let addr = probe.addr().expect("probe has an address");
-        let log = Arc::new(Mutex::new(Vec::<String>::new()));
-        let log_writer = Arc::clone(&log);
-        let quiet_for = Duration::from_millis(120);
-
-        let started = Instant::now();
-        let child = std::thread::spawn(move || {
-            // Everything a log-text wait would have tripped on, emitted first.
-            for line in ["listening", "READY", "server ready", "startup complete"] {
-                log_writer
-                    .lock()
-                    .expect("log lock")
-                    .push(String::from(line));
-                std::thread::sleep(quiet_for / 4);
-            }
-            TcpStream::connect(addr).expect("stand-in child connects")
-        });
-
-        let ready = probe
-            .wait_ready(started, Duration::from_secs(20))
-            .expect("the probe accepts the child");
-        let connection = child.join().expect("stand-in child thread");
-
-        assert_eq!(ready.signal, ReadinessSignal::TcpAccept);
-        assert!(
-            ready.elapsed_ms >= quiet_for.as_secs_f64() * 1e3 * 0.8,
-            "readiness must not fire before the connect; got {}ms while the child spent {}ms only \
-             writing log text",
-            ready.elapsed_ms,
-            quiet_for.as_secs_f64() * 1e3
-        );
-        let emitted = log.lock().expect("log lock").clone();
-        assert!(
-            emitted.iter().any(|line| line.contains("READY")),
-            "the fixture must actually have emitted ready-looking log text"
-        );
-        assert_eq!(emitted.len(), 4, "all four log lines landed before ready");
-        drop(connection);
-        drop(ready.stream);
-    }
-
-    /// A caller-supplied child is not required to exit when the parent closes
-    /// the readiness socket. An unconditional `wait()` on such a child would
-    /// block the whole benchmark forever, so the parent bounds the wait and
-    /// then terminates and reaps it.
-    #[test]
-    fn a_child_that_outlives_its_release_is_terminated_within_the_budget() {
-        let Some(program) = long_lived_program() else {
-            if cfg!(target_os = "linux") {
-                panic!("a linux host must provide `sleep` for the bounded-shutdown regression");
-            }
-            return;
-        };
-        let mut child =
-            spawn_child(&program, &["300".to_owned()]).expect("the stand-in child spawns");
-
-        let started = Instant::now();
-        let outcome = wait_bounded(&mut child, Duration::from_millis(150));
-        let elapsed = started.elapsed();
-
-        assert_eq!(
-            outcome,
-            ChildExit::TerminatedAfterBudget,
-            "a child that ignores its release must be terminated, not waited on forever"
-        );
-        assert!(
-            elapsed < Duration::from_secs(10),
-            "the bounded wait must return promptly, took {elapsed:?}"
-        );
-        assert!(
-            matches!(child.try_wait(), Ok(Some(_))),
-            "the terminated child must be reaped, not left as a zombie"
-        );
-    }
-
-    /// A child that DOES exit on its own is reported as having exited, and is
-    /// never killed.
-    #[test]
-    fn a_child_that_exits_on_its_own_is_reported_as_exited() {
-        let Some(program) = immediate_program() else {
-            if cfg!(target_os = "linux") {
-                panic!("a linux host must provide `true` for the shutdown regression");
-            }
-            return;
-        };
-        let mut child = spawn_child(&program, &[]).expect("the stand-in child spawns");
-        assert_eq!(
-            wait_bounded(&mut child, child_shutdown_budget()),
-            ChildExit::Exited
-        );
-    }
-
-    /// The hold a child arms at connect time must cover the parent's whole
-    /// spawn, accept and sample phase — otherwise the FIRST child can expire
-    /// while the parent is still accepting the tenth.
-    #[test]
-    fn the_minimum_child_hold_covers_the_whole_accept_and_sample_phase() {
-        assert_eq!(
-            minimum_child_hold_ms(20_000),
-            20_000 + READY_CHILD_SAMPLING_MARGIN_MS
-        );
-        assert!(
-            minimum_child_hold_ms(20_000) > 20_000,
-            "a hold equal to the accept timeout leaves no room to sample RSS"
-        );
-        assert_eq!(
-            minimum_child_hold_ms(u64::MAX),
-            u64::MAX,
-            "the floor saturates rather than wrapping to a tiny hold"
-        );
-    }
-
-    /// The bundled child is described by the exact command line that was run,
-    /// and a caller-supplied plan gets its placeholders substituted.
-    #[test]
-    fn child_commands_substitute_their_placeholders() {
-        let addr: SocketAddr = "127.0.0.1:4242".parse().expect("addr");
-        let fallback = Path::new("/opt/oneiron-bench");
-        let vault = Path::new("/tmp/ready-3");
-
-        let (program, args) = child_command(None, fallback, addr, vault, 25_000);
-        assert_eq!(program, fallback);
-        assert_eq!(args[0], "perf");
-        assert_eq!(args[1], "wake-child");
-        assert!(args.contains(&"127.0.0.1:4242".to_owned()));
-        assert!(args.contains(&"25000".to_owned()));
-        assert!(describe_child(&program, &args).contains("wake-child"));
-
-        let plan = ChildCommandPlan {
-            program: "/usr/bin/service".to_owned(),
-            args: vec![
-                "--listen={ready_addr}".to_owned(),
-                "--data={vault_dir}".to_owned(),
-                "--linger={hold_ms}".to_owned(),
-            ],
-        };
-        let (program, args) = child_command(Some(&plan), fallback, addr, vault, 25_000);
-        assert_eq!(program, Path::new("/usr/bin/service"));
-        assert_eq!(
-            args,
-            vec![
-                "--listen=127.0.0.1:4242".to_owned(),
-                "--data=/tmp/ready-3".to_owned(),
-                "--linger=25000".to_owned(),
-            ]
-        );
-    }
-
-    /// Only the harness's OWN child opens its vault before connecting, so only
-    /// it can carry vault residency. A program named by the environment
-    /// override is an arbitrary executable the harness never argued with, and
-    /// the resolver must say so rather than letting the ready-children axis
-    /// call ten opaque processes ten active vaults.
-    #[test]
-    fn an_environment_overridden_child_program_is_never_harness_owned() {
-        let pinned = std::env::var(CHILD_PROGRAM_ENV)
-            .ok()
-            .map(|raw| raw.trim().to_owned())
-            .filter(|raw| !raw.is_empty());
-        match resolve_child_program() {
-            Ok(resolved) => {
-                if let Some(pinned) = pinned {
-                    assert!(
-                        !resolved.harness_owned,
-                        "an overridden child program is opaque, whatever it points at"
-                    );
-                    assert_eq!(
-                        resolved.path,
-                        PathBuf::from(pinned),
-                        "the override is spawned verbatim"
-                    );
-                } else {
-                    assert!(
-                        resolved.harness_owned,
-                        "the running oneiron-bench binary IS the harness-owned child"
-                    );
-                    assert_eq!(
-                        resolved.path,
-                        std::env::current_exe().expect("the test executable resolves")
-                    );
-                }
-            }
-            Err(reason) => assert!(
-                reason.contains(CHILD_PROGRAM_ENV),
-                "an unresolvable child program must name the override: {reason}"
-            ),
-        }
-    }
-
-    #[test]
-    fn wake_child_arguments_are_validated() {
-        assert!(run_wake_child(&["--ready-addr".to_owned()]).is_err());
-        assert!(run_wake_child(&[]).is_err());
-        assert!(run_wake_child(&["--ready-addr".to_owned(), "not-an-addr".to_owned()]).is_err());
-        assert!(run_wake_child(&["--unknown".to_owned(), "value".to_owned()]).is_err());
-    }
-}
+mod tests;

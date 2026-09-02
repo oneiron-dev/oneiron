@@ -127,8 +127,8 @@ fn print_help() {
                                        axes are never collapsed into one score)\n\
           perf smoke                  run the bundled ONE-1579 synthetic smoke;\n\
                                        emits every axis and is always marked\n\
-                                       synthetic_smoke and non-publishable\n\
-                                       (see `perf --help`)\n\
+                                       synthetic_smoke and never a publication\n\
+                                       candidate (see `perf --help`)\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\

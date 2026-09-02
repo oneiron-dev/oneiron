@@ -13,6 +13,17 @@
 //! `BinaryPrefixRescore` row additionally records its prefix breadth, which
 //! defaults to `4 * k` (40 at the contract k=10).
 //!
+//! **Warm-up is symmetric.** Scan latencies are only comparable across rows if
+//! every representation entered its timed window in the same state, so EVERY
+//! candidate is warmed identically — the same queries, the same k, the same
+//! scan, discarded rather than timed — immediately before its own samples are
+//! taken. Every candidate reaches its samples through the one door in
+//! [`Representations::measure`], whose match over [`PrecisionCandidate`] is
+//! exhaustive: a new representation cannot be added to the report without
+//! being warmed like the rest, and no candidate is exempted because building
+//! it looks cheap. Each row carries the warm-up it received, so a row that
+//! skipped it is visible rather than merely slow.
+//!
 //! The parked Moorcheh binary benchmark is IDENTIFIED rather than imitated:
 //! [`MoorchehEvidence`] names it, points at the binary-prefix row that is its
 //! in-harness counterpart, and carries an artifact reference only when one was
@@ -31,6 +42,10 @@ use super::representations::{
 
 /// Binary-prefix breadth default multiplier: breadth = `4 * k` (40 at k=10).
 pub(crate) const BINARY_PREFIX_BREADTH_MULTIPLIER: usize = 4;
+/// Full untimed passes over every query that EVERY candidate receives before
+/// its own timed samples are taken. One full pass, not a handful of queries:
+/// the warm-up has to cover the same work the timed window will.
+pub(crate) const PRECISION_WARMUP_PASSES: usize = 1;
 /// Environment variable declaring a traceable artifact reference for the
 /// parked Moorcheh binary benchmark (a run id, artifact path or ticket ref).
 pub(crate) const MOORCHEH_REFERENCE_ENV: &str = "ONEIRON_BENCH_MOORCHEH_REF";
@@ -55,6 +70,12 @@ const BINARY_MEMORY_RULE: &str = "binary-code memory is counted from the u64 WOR
      to bytes and not from the f32 or f16 buffer of another representation; the exact float32 \
      payload the rescore stage still reads is added on top because the candidate genuinely needs \
      both";
+const WARMUP_RULE: &str = "every candidate is warmed with the SAME treatment before its timed \
+     window opens: the same queries, the same k and the same scan it will be timed on, run \
+     untimed and discarded, immediately before its own samples; no representation is timed on a \
+     cold first call while another was warmed, none is exempted because its construction looks \
+     cheap, and each row reports the warm-up scans it actually received so a skipped warm-up is \
+     visible rather than merely slow";
 const DELTA_RULE: &str = "every row carries recall@k MINUS the float32 row's recall@k from this \
      same run; the float32 row is the baseline and carries an exact 0.0 by construction, and a \
      row whose recall was not measured has a not_ready delta rather than a zero";
@@ -148,6 +169,10 @@ pub(crate) struct PrecisionRow {
     pub(crate) mean_recall_delta_vs_f32: Cell<f64>,
     pub(crate) recall_at_k: Cell<Percentiles>,
     pub(crate) scan_latency_ms: Cell<Percentiles>,
+    /// Untimed scans this candidate ran before its timed window opened. Every
+    /// row must carry the same number; a smaller one is a row that was timed
+    /// colder than its neighbours.
+    pub(crate) warmup_scans: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) prefix_breadth: Option<usize>,
     /// Present only when both this row and the float32 row produced measured
@@ -199,6 +224,11 @@ pub(crate) struct PrecisionAxis {
     pub(crate) binary_prefix_breadth_reshaped: bool,
     pub(crate) binary_prefix_breadth_rule: &'static str,
     pub(crate) binary_memory_rule: &'static str,
+    /// Untimed full passes over every query each candidate received.
+    pub(crate) warmup_passes_per_candidate: usize,
+    /// The resulting untimed scans per candidate. Every row must match it.
+    pub(crate) warmup_scans_per_candidate: usize,
+    pub(crate) warmup_rule: &'static str,
     pub(crate) ground_truth: &'static str,
     pub(crate) recall_delta_rule: &'static str,
     pub(crate) f32_baseline_mean_recall_at_k: Cell<f64>,
@@ -219,6 +249,8 @@ pub(crate) const fn default_binary_prefix_breadth(k: usize) -> usize {
 struct CandidateMeasure {
     recall: Vec<f64>,
     latency_ms: Vec<f64>,
+    /// Untimed scans this candidate ran before the timed window opened.
+    warmup_scans: usize,
 }
 
 impl CandidateMeasure {
@@ -227,6 +259,64 @@ impl CandidateMeasure {
             return None;
         }
         Some(self.recall.iter().sum::<f64>() / self.recall.len() as f64)
+    }
+}
+
+/// The bench's own copy of the corpus, plus every candidate representation
+/// built from it. All of them are built BEFORE any warm-up or timing, so no
+/// row pays another row's construction cost inside its window.
+struct Representations<'a> {
+    vectors: &'a [Vec<f32>],
+    f16: Vec<Vec<u16>>,
+    int8: Vec<Int8Vector>,
+    binary: Vec<Vec<u64>>,
+}
+
+impl<'a> Representations<'a> {
+    fn build(vectors: &'a [Vec<f32>]) -> Self {
+        Self {
+            vectors,
+            f16: vectors.iter().map(Vec::as_slice).map(encode_f16).collect(),
+            int8: vectors.iter().map(Vec::as_slice).map(encode_int8).collect(),
+            binary: vectors
+                .iter()
+                .map(Vec::as_slice)
+                .map(encode_binary)
+                .collect(),
+        }
+    }
+
+    /// The ONE door every candidate reaches its samples through.
+    ///
+    /// The match is exhaustive over [`PrecisionCandidate`], so a new
+    /// representation cannot be reported without an arm here — and every arm
+    /// hands its scan to the same [`measure`], which warms before it times.
+    /// That is what keeps the rows comparable: no candidate can be given a
+    /// different warm-up, and none can be skipped for looking cheap to build.
+    fn measure(
+        &self,
+        candidate: PrecisionCandidate,
+        queries: &[Vec<f32>],
+        truth: &[Vec<usize>],
+        k: usize,
+        breadth: usize,
+    ) -> CandidateMeasure {
+        use PrecisionCandidate::{BinaryPrefixRescore, F16, F32, Int8Sq};
+
+        match candidate {
+            F32 => measure(queries, truth, k, |query: &[f32], limit: usize| {
+                scan_f32(self.vectors, query, limit)
+            }),
+            F16 => measure(queries, truth, k, |query: &[f32], limit: usize| {
+                scan_f16(&self.f16, query, limit)
+            }),
+            Int8Sq => measure(queries, truth, k, |query: &[f32], limit: usize| {
+                scan_int8(&self.int8, query, limit)
+            }),
+            BinaryPrefixRescore => measure(queries, truth, k, |query: &[f32], limit: usize| {
+                scan_binary_prefix(&self.binary, self.vectors, query, limit, breadth)
+            }),
+        }
     }
 }
 
@@ -243,36 +333,31 @@ pub(crate) fn evaluate(
     let dimensions = vectors.first().map_or(0, Vec::len);
     let k = requested_k.clamp(1, vectors.len().max(1));
     let breadth = requested_breadth.clamp(k, vectors.len().max(k));
+    // Ground truth first, and from the exact float32 scan: it is what every
+    // row is scored against, not a timed sample of any candidate.
     let truth: Vec<Vec<usize>> = queries
         .iter()
         .map(|query| scan_f32(vectors, query, k))
         .collect();
 
-    let f16_codes: Vec<Vec<u16>> = vectors.iter().map(Vec::as_slice).map(encode_f16).collect();
-    let int8_codes: Vec<Int8Vector> = vectors.iter().map(Vec::as_slice).map(encode_int8).collect();
-    let binary_codes: Vec<Vec<u64>> = vectors
-        .iter()
-        .map(Vec::as_slice)
-        .map(encode_binary)
+    // Every representation is built before any candidate is warmed or timed.
+    let representations = Representations::build(vectors);
+    let measures: Vec<(PrecisionCandidate, CandidateMeasure)> = PrecisionCandidate::ALL
+        .into_iter()
+        .map(|candidate| {
+            let measure = representations.measure(candidate, queries, &truth, k, breadth);
+            (candidate, measure)
+        })
         .collect();
 
-    let measures = [
-        measure(queries, &truth, k, |query: &[f32], limit: usize| {
-            scan_f32(vectors, query, limit)
-        }),
-        measure(queries, &truth, k, |query: &[f32], limit: usize| {
-            scan_f16(&f16_codes, query, limit)
-        }),
-        measure(queries, &truth, k, |query: &[f32], limit: usize| {
-            scan_int8(&int8_codes, query, limit)
-        }),
-        measure(queries, &truth, k, |query: &[f32], limit: usize| {
-            scan_binary_prefix(&binary_codes, vectors, query, limit, breadth)
-        }),
-    ];
-
-    let baseline_p50 = Percentiles::from_samples(&measures[0].latency_ms).map(|p| p.p50);
-    let baseline_recall = measures[0].mean_recall();
+    let baseline = measures
+        .iter()
+        .find(|(candidate, _)| *candidate == PrecisionCandidate::F32)
+        .map(|(_, measure)| measure);
+    let baseline_p50 = baseline
+        .and_then(|measure| Percentiles::from_samples(&measure.latency_ms))
+        .map(|percentiles| percentiles.p50);
+    let baseline_recall = baseline.and_then(CandidateMeasure::mean_recall);
     let shape = RowShape {
         dimensions,
         vectors: vectors.len(),
@@ -281,9 +366,8 @@ pub(crate) fn evaluate(
         baseline_p50,
         baseline_recall,
     };
-    let rows: Vec<PrecisionRow> = PrecisionCandidate::ALL
+    let rows: Vec<PrecisionRow> = measures
         .iter()
-        .zip(&measures)
         .map(|(candidate, measure)| row(*candidate, measure, &shape))
         .collect();
 
@@ -300,6 +384,9 @@ pub(crate) fn evaluate(
         binary_prefix_breadth_reshaped: breadth != requested_breadth,
         binary_prefix_breadth_rule: BREADTH_RULE,
         binary_memory_rule: BINARY_MEMORY_RULE,
+        warmup_passes_per_candidate: PRECISION_WARMUP_PASSES,
+        warmup_scans_per_candidate: PRECISION_WARMUP_PASSES * queries.len(),
+        warmup_rule: WARMUP_RULE,
         ground_truth: GROUND_TRUTH_NOTE,
         recall_delta_rule: DELTA_RULE,
         f32_baseline_mean_recall_at_k: Cell::from_option(
@@ -382,6 +469,7 @@ fn row(
             format!("no {} recall samples were collected", candidate.as_str()),
         ),
         scan_latency_ms,
+        warmup_scans: measure.warmup_scans,
         prefix_breadth: match candidate {
             PrecisionCandidate::BinaryPrefixRescore => Some(shape.breadth),
             _ => None,
@@ -435,11 +523,28 @@ fn declared_moorcheh_reference() -> Option<String> {
     Some(trimmed.to_owned())
 }
 
-/// Times one scan per query and scores it against the exact float32 ranking.
+/// Warms a candidate, then times one scan per query and scores it against the
+/// exact float32 ranking.
+///
+/// The warm-up is [`PRECISION_WARMUP_PASSES`] full untimed passes over the
+/// SAME queries with the SAME k through the SAME scan, discarded through
+/// `black_box` so the optimiser cannot delete work the timed pass will pay
+/// for. Every candidate is warmed here and nowhere else, which is what makes
+/// the treatment identical: the first timed sample of every row is taken on a
+/// representation that has just done the whole job once.
 fn measure<F>(queries: &[Vec<f32>], truth: &[Vec<usize>], k: usize, mut scan: F) -> CandidateMeasure
 where
     F: FnMut(&[f32], usize) -> Vec<usize>,
 {
+    let mut warmup_scans = 0_usize;
+    for _ in 0..PRECISION_WARMUP_PASSES {
+        for query in queries {
+            let hits = scan(query.as_slice(), k);
+            std::hint::black_box(&hits);
+            warmup_scans += 1;
+        }
+    }
+
     let mut recall = Vec::with_capacity(queries.len());
     let mut latency_ms = Vec::with_capacity(queries.len());
     for (query, expected) in queries.iter().zip(truth) {
@@ -456,7 +561,11 @@ where
             overlap as f64 / expected.len() as f64
         });
     }
-    CandidateMeasure { recall, latency_ms }
+    CandidateMeasure {
+        recall,
+        latency_ms,
+        warmup_scans,
+    }
 }
 
 #[cfg(test)]

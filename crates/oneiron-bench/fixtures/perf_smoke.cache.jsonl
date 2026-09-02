@@ -6,6 +6,12 @@
 # (`cache_events_reject_synthetic_source_for_full_run`); only a synthetic smoke
 # admits them.
 #
+# This stream is OPERATOR-DECLARED evidence: whoever runs the bench chooses the
+# file, and the `source` field below is a shape check on the rows rather than
+# evidence of where they came from. ONE-1961 draws the consequence instead of
+# hiding it — the cache axis is ADVISORY and can never withhold publication
+# candidacy, however complete its rungs are (see `perf/trust.rs`).
+#
 # The `context_pack` rung is listed in the smoke plan but deliberately has NO
 # event here, so the smoke demonstrates the fail-closed cell: a required rung
 # with no admissible event reports `not_ready`, never a zero hit rate.

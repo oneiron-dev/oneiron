@@ -11,7 +11,7 @@
 //! * `oneiron-bench perf run --plan <JSON> --out <JSON>` — run a plan and
 //!   write the report.
 //! * `oneiron-bench perf smoke` — run the bundled synthetic smoke. Always
-//!   marked `synthetic_smoke` and explicitly non-publishable.
+//!   marked `synthetic_smoke` and never a publication candidate.
 //! * `oneiron-bench perf wake-child ...` — harness-internal. Spawned BY the
 //!   wake and ready-children probes as their ready child; not a user command.
 //!
@@ -34,25 +34,43 @@
 //!    recall deltas against F32 — [`precision`]. BENCH representations only;
 //!    the engine persist path stays f16.
 //! 7. Real-traffic cache hit rates per listed rung, from bench-owned JSONL
-//!    events — [`cache_events`]. `vault.rs` and `ppr.rs` retrieval internals
+//!    events — [`cache_events`]. The stream is operator-declared, so the axis
+//!    is ADVISORY (see [`trust`]). `vault.rs` and `ppr.rs` retrieval internals
 //!    are not instrumented.
 //! 8. A descriptive NVMe sequential/random fsync row — [`nvme`]. Missing
 //!    hardware stays explicitly missing.
 //!
 //! Beside the axes: [`provenance`] (where and from which exact inputs),
-//! [`publication`] (every check the publish verdict rests on) and
-//! [`acceptance`] (the ONE-1578 knobs and the ONE-1537 relationship).
+//! [`trust`] (which class of evidence each publication input is),
+//! [`publication`] (every check the candidacy verdict rests on),
+//! [`certificate`] (the scope partition, trust manifest, single-trial exposure
+//! and the RFC 8785 hashes a verifier reproduces) and [`acceptance`] (the
+//! ONE-1578 knobs and the ONE-1537 relationship).
+//!
+//! **This harness never publishes.** It emits `publication_candidate` and
+//! nothing stronger; `oneiron-eval perf-verify` is the only thing that may say
+//! `publishable`, and it decides from the candidate plus an independent build
+//! record. A measuring process that certifies its own measurements is the
+//! failure this split exists to close.
 //!
 //! Fail-closed rules the code enforces rather than merely documents: a full run
 //! below the >=1000-doc / >=100-query plan floor OR below >=100 COMPLETED
 //! samples per set reports not-applicable latency cells instead of numbers; a
 //! full run below >=1000 warmup / >=10000 measured gated writes is an invalid
-//! plan; a `corpus.k` larger than the indexed corpus is an invalid plan; a
-//! child hold that cannot outlast the accept-and-sample phase is an invalid
-//! plan; a speedup is emitted only when BOTH sides were measured wall-clock in
-//! the same run; a full run refuses any cache event that is not real traffic;
-//! a listed cache rung with no admissible event is `not_ready`, never `0`; and
-//! a full report is publishable only when every publication check passes.
+//! plan; a `corpus.k` or `corpus.queries` larger than the indexed corpus is an
+//! invalid plan, so every query anchors on a document of its own; a child hold
+//! that cannot outlast the accept-and-sample phase is an invalid plan; a full
+//! run may not name its own ready-child program and refuses an environment
+//! override of it before any axis runs, and the program it does spawn is hashed
+//! before the first spawn and must equal the measuring artifact; every
+//! precision candidate is warmed identically before it is timed; a speedup is
+//! emitted only when BOTH sides were measured wall-clock in the same run; a
+//! full run refuses any cache event that is not real traffic, while the cache
+//! axis itself stays advisory because the operator chose the stream; a listed
+//! cache rung with no admissible event is `not_ready`, never `0`; no BLOCKING
+//! check may rest on operator-declared evidence; a report is a candidate only
+//! from an artifact whose COMPILED optimisation level and overflow checks were
+//! measured; and only when every blocking check passes.
 
 pub(crate) mod acceptance;
 pub(crate) mod axes;
@@ -60,6 +78,7 @@ pub(crate) mod binary16;
 pub(crate) mod build_profile;
 pub(crate) mod cache_events;
 pub(crate) mod cells;
+pub(crate) mod certificate;
 pub(crate) mod child_process;
 pub(crate) mod cli;
 pub(crate) mod corpus;
@@ -78,6 +97,7 @@ pub(crate) mod resident_memory;
 pub(crate) mod retrieval;
 pub(crate) mod runner;
 pub(crate) mod sessions;
+pub(crate) mod trust;
 pub(crate) mod wake;
 
 use std::process::ExitCode;

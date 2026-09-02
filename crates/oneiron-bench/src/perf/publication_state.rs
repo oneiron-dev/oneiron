@@ -10,10 +10,11 @@ use super::axes::{
     SessionsAxis, WakeAxis,
 };
 use super::cache_events::CacheAxis;
-use super::cells::RunMode;
+use super::cells::{Cell, RunMode};
+use super::child_process::ResolvedChildProgram;
 use super::nvme::NvmeFsyncAxis;
 use super::plan::PerfPlan;
-use super::precision::{PrecisionAxis, PrecisionCandidate};
+use super::precision::{PRECISION_WARMUP_PASSES, PrecisionAxis, PrecisionCandidate};
 use super::provenance::{NodeIdentity, Provenance};
 use super::publication::PublicationInputs;
 
@@ -33,6 +34,9 @@ pub(crate) struct Inputs<'a> {
     pub(crate) node: &'a NodeIdentity,
     pub(crate) provenance: &'a Provenance,
     pub(crate) acceptance: &'a AcceptanceEvidence,
+    /// The ready-child program this run resolved and hashed BEFORE spawning
+    /// anything (ONE-1963).
+    pub(crate) child_program: &'a ResolvedChildProgram,
 }
 
 pub(crate) fn inputs(source: Inputs<'_>) -> PublicationInputs {
@@ -50,6 +54,7 @@ pub(crate) fn inputs(source: Inputs<'_>) -> PublicationInputs {
         node,
         provenance,
         acceptance,
+        child_program,
     } = source;
     let (retrieval_measurements_valid, retrieval_detail) =
         retrieval_publication_state(plan, recall_latency);
@@ -61,6 +66,9 @@ pub(crate) fn inputs(source: Inputs<'_>) -> PublicationInputs {
         gated_write_publication_state(plan, gated_writes);
     let (precision_axis_valid, precision_detail) = precision_publication_state(plan, precision);
     let (cache_axis_valid, cache_detail) = cache_publication_state(plan, cache);
+    let (child_program_matches_build_revision, child_program_detail) =
+        child_program_publication_state(child_program, &provenance.build_revision_blake3);
+    let anchors = &provenance.corpus_query_evidence;
     PublicationInputs {
         mode,
         meets_plan_floor: recall_latency.meets_plan_floor,
@@ -105,6 +113,25 @@ pub(crate) fn inputs(source: Inputs<'_>) -> PublicationInputs {
                 .corpus_marker_evidence
                 .capacity_covers_full_usize_domain
         ),
+        // Fail-closed: the queries a run reports must have probed as many
+        // DISTINCT documents as the plan asked for queries. A wrapped anchor
+        // would re-score a document another query already retrieved and
+        // present it as an independent sample.
+        corpus_query_anchors_distinct: anchors.anchors_distinct
+            && anchors.indexed_docs == plan.corpus.indexed_docs
+            && anchors.requested_queries == plan.corpus.queries
+            && anchors.emitted_queries == plan.corpus.queries
+            && anchors.distinct_anchors == plan.corpus.queries
+            && anchors.distinct_expected_documents == plan.corpus.queries,
+        corpus_query_anchor_detail: format!(
+            "{} planned queries over {} indexed documents emitted {} queries on {} distinct \
+             anchors and {} distinct expected documents",
+            plan.corpus.queries,
+            anchors.indexed_docs,
+            anchors.emitted_queries,
+            anchors.distinct_anchors,
+            anchors.distinct_expected_documents,
+        ),
         measured_qps_acceptance_valid: acceptance.measured_qps.valid_for_lifecycle_support
             && !acceptance.measured_qps.valid_for_one_1537_embed_gate,
         measured_qps_acceptance_detail: format!(
@@ -128,12 +155,59 @@ pub(crate) fn inputs(source: Inputs<'_>) -> PublicationInputs {
             provenance.build_tree_dirty.value(),
             provenance.build_tree_dirty_source
         ),
-        build_profile_approved: provenance.build_profile.approved_for_publication,
-        build_profile_detail: provenance.build_profile.publication_detail(),
+        // The MEASURED compiled settings, never the declared profile name.
+        build_settings_optimized: provenance.build_profile.approved_for_publication,
+        build_settings_detail: provenance.build_profile.publication_detail(),
         node_is_designated_first_tokyo: node.is_designated_first_tokyo_node,
         node_detail: node.publication_detail(),
         nvme_sanity_ok: nvme_fsync.sanity_ok(),
         nvme_detail: nvme_fsync.publication_detail(),
+        child_program_matches_build_revision,
+        child_program_detail,
+        // ONE-1961 runtime trust: a child program the OPERATOR named is a
+        // value they chose, whatever the static table says about digests being
+        // measured. A full run never reaches this — the override is refused
+        // before any axis runs — so this is the second net under a closed door.
+        runtime_operator_declared_inputs: if child_program.overridden_by_environment {
+            vec!["child_program_blake3"]
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// ONE-1963: the artifact that measured the run must be the artifact that was
+/// spawned as its ready child.
+///
+/// Fail-closed on either digest being unavailable: "we could not hash one of
+/// them" is not evidence that they matched.
+fn child_program_publication_state(
+    child: &ResolvedChildProgram,
+    build_revision: &Cell<String>,
+) -> (bool, String) {
+    let spawned = child.path.as_ref().map_or_else(
+        || "<none>".to_owned(),
+        |path| format!("`{}`", path.display()),
+    );
+    match (child.blake3.value(), build_revision.value()) {
+        (Some(child_digest), Some(revision)) => (
+            child_digest == revision,
+            format!(
+                "ready-child program {spawned} hashes to {child_digest}; the measuring artifact is \
+                 {revision} (harness_owned={}, environment_override={})",
+                child.harness_owned, child.overridden_by_environment
+            ),
+        ),
+        (child_digest, revision) => (
+            false,
+            format!(
+                "the ready-child program {spawned} and the measuring artifact cannot be compared: \
+                 child digest measured={}, build revision measured={}; an unhashed pair is not a \
+                 match",
+                child_digest.is_some(),
+                revision.is_some()
+            ),
+        ),
     }
 }
 
@@ -364,6 +438,10 @@ fn precision_publication_state(plan: &PerfPlan, axis: &PrecisionAxis) -> (bool, 
                 .scan_latency_ms
                 .value()
                 .is_some_and(|percentiles| percentiles.count == plan.corpus.queries)
+            // Every row must have been warmed with the same treatment: a row
+            // whose warm-up count is short was timed colder than its
+            // neighbours, which makes the latency column incomparable.
+            && row.warmup_scans == axis.warmup_scans_per_candidate
             && match row.candidate {
                 PrecisionCandidate::BinaryPrefixRescore => {
                     row.prefix_breadth == Some(expected_breadth)
@@ -384,19 +462,22 @@ fn precision_publication_state(plan: &PerfPlan, axis: &PrecisionAxis) -> (bool, 
         && !axis.binary_prefix_breadth_reshaped
         && candidates.as_slice() == PrecisionCandidate::ALL.as_slice()
         && axis.f32_baseline_mean_recall_at_k.is_measured()
+        && axis.warmup_passes_per_candidate == PRECISION_WARMUP_PASSES
+        && axis.warmup_scans_per_candidate == PRECISION_WARMUP_PASSES * plan.corpus.queries
         && rows_valid;
     (
         valid,
         format!(
             "precision emitted candidates {:?}, {}/{} complete row(s), k {} (requested {}), \
-             breadth {} (planned {})",
+             breadth {} (planned {}), {} warm-up scan(s) per candidate before timing",
             candidates,
             complete_rows,
             PrecisionCandidate::ALL.len(),
             axis.k,
             axis.requested_k,
             axis.binary_prefix_breadth,
-            expected_breadth
+            expected_breadth,
+            axis.warmup_scans_per_candidate,
         ),
     )
 }
@@ -420,15 +501,20 @@ fn cache_publication_state(plan: &PerfPlan, axis: &CacheAxis) -> (bool, String) 
         .filter(|row| row.events == 0 || !row.hit_rate.is_measured())
         .map(|row| row.rung.as_str())
         .collect();
-    let valid = axis.source_kind == "real_traffic_only"
-        && axis.rungs_listed == plan.cache.rungs
+    // Completeness is still checked exactly as strictly as before. What
+    // changed in ONE-1961 is what a PASS is worth: the stream is
+    // operator-declared, so this check is advisory and its result is a caveat
+    // rather than a licence. Nothing here tries to make it stronger than that
+    // — an assertion inside the stream about the stream cannot.
+    let valid = axis.rungs_listed == plan.cache.rungs
         && rows_valid
         && events_reported == axis.events_admitted;
     (
         valid,
         format!(
-            "listed {:?}, emitted {} row(s), admitted {} real-traffic event(s), silent or invalid \
-             rung(s): {:?}",
+            "listed {:?}, emitted {} row(s), admitted {} real-traffic event(s) from an \
+             operator-declared stream (advisory evidence: the rows declare their own source), \
+             silent or invalid rung(s): {:?}",
             axis.rungs_listed,
             axis.rows.len(),
             axis.events_admitted,

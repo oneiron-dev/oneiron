@@ -9,6 +9,23 @@
 //! refused rather than invented; and a listed rung with no admissible event is
 //! `not_ready`, never a zero hit rate.
 //!
+//! ## This axis is ADVISORY, and the shape checks are why
+//!
+//! A row's `source` field is the STREAM DESCRIBING ITSELF. Refusing a row that
+//! admits to being synthetic is worth doing — it keeps an obviously
+//! inadmissible stream out of a full run — but it is a shape check, not
+//! evidence of origin, and no amount of shape checking turns a file the
+//! operator pointed at into something they did not choose.
+//!
+//! ONE-1961 draws the conclusion rather than papering over it: `cache_events`
+//! is OPERATOR-DECLARED (see [`super::trust`]), so `cache_rungs_complete` is an
+//! ADVISORY check and the cache axis is an ADVISORY axis. It is still measured,
+//! still emitted, still hashed into `provenance.cache_events_hash`, and a
+//! silent rung is still a reported failure — it just cannot withhold
+//! publication candidacy, because a condition the operator can arrange is not
+//! evidence. A signature over these bytes was considered and rejected: the same
+//! operator would hold the key, so it would authenticate the same declaration.
+//!
 //! `sessions` counts DISTINCT session ids, not rows that happened to carry
 //! one. One session emitting four events is one session; counting the events
 //! instead would misdescribe the traffic scope the hit rate was measured over.
@@ -106,6 +123,11 @@ pub(crate) struct CacheAxis {
     pub(crate) rows: Vec<CacheRungRow>,
     pub(crate) events_admitted: usize,
     pub(crate) rejects_synthetic_source_for_full_run: bool,
+    /// The trust class of this axis's evidence, stated in the axis itself so a
+    /// reader never has to infer it: the rows' own `source` field is a shape
+    /// check on a stream the operator chose, which is why the axis is advisory.
+    pub(crate) evidence_trust_class: &'static str,
+    pub(crate) publication_scope: &'static str,
     pub(crate) session_counting_rule: &'static str,
     pub(crate) evidence_kind: EvidenceKind,
     pub(crate) note: &'static str,
@@ -113,8 +135,14 @@ pub(crate) struct CacheAxis {
 
 const CACHE_NOTE: &str = "cache events are BENCH-OWNED rows: they are read from a JSONL stream the \
      harness owns, and no retrieval internal in vault.rs or ppr.rs is instrumented or mutated to \
-     produce them; a listed rung with no admissible event stays not_ready and never reads as a \
-     zero hit rate";
+     produce them; the stream is chosen by whoever runs the bench and its rows declare their own \
+     source, so this axis is OPERATOR-DECLARED evidence and is ADVISORY — it is measured, emitted \
+     and hashed, and it never withholds publication candidacy; a listed rung with no admissible \
+     event stays not_ready and never reads as a zero hit rate";
+/// The ONE-1961 trust class of every cache row, stated on the axis.
+const CACHE_TRUST_CLASS: &str = "operator_declared";
+/// The ONE-1961 publication scope of this axis.
+const CACHE_PUBLICATION_SCOPE: &str = "advisory";
 const SESSION_RULE: &str = "`sessions` is the number of DISTINCT non-empty session ids seen on the \
      rung, not the number of rows that carried one; `events_with_session` reports the latter \
      separately so neither can be mistaken for the other";
@@ -180,6 +208,8 @@ impl CacheAxis {
             rows,
             events_admitted: admitted,
             rejects_synthetic_source_for_full_run: true,
+            evidence_trust_class: CACHE_TRUST_CLASS,
+            publication_scope: CACHE_PUBLICATION_SCOPE,
             session_counting_rule: SESSION_RULE,
             evidence_kind: if mode.is_full() {
                 EvidenceKind::IngestedRealTrafficEvents
@@ -330,6 +360,45 @@ mod tests {
             CacheAxis::ingest(RunMode::Full, &listed, stray),
             Err(CacheIngestError::UnlistedRung { .. })
         ));
+    }
+
+    /// ONE-1961: the axis states its own trust class and publication scope. A
+    /// row saying `real_traffic` is the stream describing itself, so a full
+    /// run's rows are still operator-declared and still advisory — the shape
+    /// check that admitted them does not promote them.
+    #[test]
+    fn the_axis_states_that_its_evidence_is_operator_declared_and_advisory() {
+        let listed = rungs(&["embedding"]);
+        let real = r#"{"rung":"embedding","outcome":"hit","source":"real_traffic"}"#;
+        let axis = CacheAxis::ingest(RunMode::Full, &listed, real).expect("stream is admitted");
+
+        assert_eq!(axis.source_kind, "real_traffic_only");
+        assert!(
+            axis.rejects_synthetic_source_for_full_run,
+            "the shape check still runs; it is simply not evidence of origin"
+        );
+        assert_eq!(axis.evidence_trust_class, "operator_declared");
+        assert_eq!(axis.publication_scope, "advisory");
+        assert_eq!(axis.events_admitted, 1);
+
+        // The trust class is a property of where the stream came from, not of
+        // which mode read it: a smoke says exactly the same thing.
+        let smoke_stream = r#"{"rung":"embedding","outcome":"hit","source":"synthetic_smoke"}"#;
+        let smoke = CacheAxis::ingest(RunMode::SyntheticSmoke, &listed, smoke_stream)
+            .expect("a smoke admits its own fixture");
+        assert_eq!(smoke.source_kind, "synthetic_smoke_fixture");
+        assert_eq!(smoke.evidence_trust_class, "operator_declared");
+        assert_eq!(smoke.publication_scope, "advisory");
+
+        let rendered = serde_json::to_string(&axis).expect("axis renders");
+        assert!(
+            rendered.contains(r#""publication_scope":"advisory""#),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(r#""evidence_trust_class":"operator_declared""#),
+            "{rendered}"
+        );
     }
 
     /// One session emitting several events is ONE session. Counting rows that

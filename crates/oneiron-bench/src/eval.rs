@@ -506,7 +506,8 @@ fn apply_reward_line(
     if line.trim().is_empty() {
         return Ok(false);
     }
-    let row: RewardRow = serde_json::from_str(&line).map_err(|error| error.to_string())?;
+    #[rustfmt::skip]
+    let row: RewardRow = serde_json::from_str(&line).map_err(|error| { let reason = error.to_string(); if reason.contains("out of range") { format!("reward must be a finite evaluator scalar ({reason})") } else { reason } })?;
     let outcome = outcome_from_row(&row, default_key)?;
     vault
         .record_retrieval_outcome(outcome)

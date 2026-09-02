@@ -111,6 +111,89 @@ fn precision_candidates_report_recall_memory_and_scan_latency() {
     );
 }
 
+/// Scan latencies are only comparable if every representation entered its
+/// timed window in the same state. Every candidate — including the ones whose
+/// construction looks cheap — must receive the SAME warm-up before its first
+/// timed sample, and the row must report the warm-up it actually got.
+#[test]
+fn every_precision_candidate_is_warmed_before_it_is_timed() {
+    let mut rng = StdRng::seed_from_u64(1579);
+    let vectors = corpus(&mut rng, 48, 32);
+    let queries = corpus(&mut rng, 6, 32);
+    let axis = evaluate(&vectors, &queries, 5, 20, EvidenceKind::MeasuredWallClock);
+
+    assert_eq!(axis.warmup_passes_per_candidate, PRECISION_WARMUP_PASSES);
+    assert_eq!(
+        axis.warmup_scans_per_candidate,
+        PRECISION_WARMUP_PASSES * queries.len()
+    );
+    assert!(
+        axis.warmup_scans_per_candidate > 0,
+        "a warm-up of nothing is a cold first call for whichever row is timed first"
+    );
+    assert_eq!(axis.rows.len(), PrecisionCandidate::ALL.len());
+    for row in &axis.rows {
+        assert_eq!(
+            row.warmup_scans,
+            axis.warmup_scans_per_candidate,
+            "`{}` was not warmed like the rest of the axis",
+            row.candidate.as_str()
+        );
+    }
+    let rendered = serde_json::to_string(&axis).expect("axis renders");
+    for field in ["warmup_scans", "warmup_passes_per_candidate", "warmup_rule"] {
+        assert!(rendered.contains(field), "the axis dropped `{field}`");
+    }
+}
+
+/// The warm-up is real work, not a flag: the scan is run over every query
+/// before the timed pass starts, and the timed pass still contributes exactly
+/// one sample per query. Every candidate goes through this one door, so none
+/// can be given a different treatment.
+#[test]
+fn the_warmup_runs_the_same_untimed_work_for_every_candidate() {
+    let mut rng = StdRng::seed_from_u64(7);
+    let vectors = corpus(&mut rng, 32, 16);
+    let queries = corpus(&mut rng, 5, 16);
+    let k = 4;
+    let truth: Vec<Vec<usize>> = queries
+        .iter()
+        .map(|query| scan_f32(&vectors, query, k))
+        .collect();
+
+    let mut scans = 0_usize;
+    let measured = measure(&queries, &truth, k, |query: &[f32], limit: usize| {
+        scans += 1;
+        scan_f32(&vectors, query, limit)
+    });
+    assert_eq!(
+        scans,
+        queries.len() * (PRECISION_WARMUP_PASSES + 1),
+        "one untimed warm-up pass per candidate plus the timed pass"
+    );
+    let warmed = queries.len() * PRECISION_WARMUP_PASSES;
+    assert_eq!(measured.warmup_scans, warmed);
+    assert_eq!(
+        measured.latency_ms.len(),
+        queries.len(),
+        "the warm-up contributes no timed samples"
+    );
+    assert_eq!(measured.recall.len(), queries.len());
+
+    // The same door, walked for every candidate the report can emit.
+    let representations = Representations::build(&vectors);
+    for candidate in PrecisionCandidate::ALL {
+        let measured = representations.measure(candidate, &queries, &truth, k, 8);
+        assert_eq!(
+            measured.warmup_scans,
+            warmed,
+            "`{}` must be warmed through the same door",
+            candidate.as_str()
+        );
+        assert_eq!(measured.latency_ms.len(), queries.len());
+    }
+}
+
 /// Absolute recall alone does not answer "what did this representation
 /// cost against exact float32". Every row must carry the delta, computed
 /// against the float32 row measured in the SAME run.

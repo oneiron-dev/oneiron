@@ -22,6 +22,8 @@ use super::axes::{
     SESSION_SYNCHRONIZATION_RULE, SessionsAxis, WakeAxis,
 };
 use super::cache_events::CacheAxis;
+use super::certificate::{self, PERF_CANDIDATE_CONTRACT_VERSION};
+use super::child_process::{self, ResolvedChildProgram};
 use super::corpus::{Corpus, generate_corpus, index_corpus, perf_vault_config};
 use super::nvme::{NvmeFsyncAxis, describe_nvme_fsync};
 use super::plan::PerfPlan;
@@ -61,6 +63,17 @@ pub(crate) fn execute(inputs: &RunInputs) -> Result<PerfReport, String> {
     inputs.plan.validate().map_err(|error| error.to_string())?;
     let plan = &inputs.plan;
     let evidence = plan.mode.evidence_kind();
+
+    // ONE-1963, BEFORE any axis. Two separate things happen here and the order
+    // matters: a full run with an environment-pinned ready child is refused
+    // outright rather than measured and downgraded, and whatever program WILL
+    // be spawned is hashed while it is still the program that will be spawned.
+    // Hashing after the run would hash whatever is on that path afterwards.
+    let child_program = child_process::resolve_and_hash_child_program(
+        plan.mode.run_mode(),
+        plan.wake.child.as_ref(),
+    )?;
+
     let corpus = generate_corpus(
         plan.seed,
         plan.corpus.indexed_docs,
@@ -94,7 +107,7 @@ pub(crate) fn execute(inputs: &RunInputs) -> Result<PerfReport, String> {
         evidence,
     );
     let axes = measure_remaining_axes(inputs, &corpus, &vault, root.path(), recall_latency)?;
-    Ok(finish(inputs, axes, &corpus, &vault_dir))
+    finish(inputs, axes, &corpus, &vault_dir, &child_program)
 }
 
 /// Everything except the warm/cold sets, which the caller measures first so
@@ -171,7 +184,8 @@ fn finish(
     mut axes: MeasuredAxes,
     corpus: &Corpus,
     vault_dir: &Path,
-) -> PerfReport {
+    child_program: &ResolvedChildProgram,
+) -> Result<PerfReport, String> {
     let mode = inputs.plan.mode.run_mode();
     if mode.is_full() {
         axes.recall_latency.enforce_full_run_floor();
@@ -181,6 +195,7 @@ fn finish(
         plan_hash: blake3::hash(&inputs.plan_bytes).to_hex().to_string(),
         corpus_hash: corpus.hash.clone(),
         corpus_marker_evidence: corpus.marker_evidence.clone(),
+        corpus_query_evidence: corpus.query_evidence.clone(),
         cache_events: inputs.cache_events.clone(),
         seed: inputs.plan.seed,
         sample_counts: sample_counts(&axes),
@@ -210,13 +225,32 @@ fn finish(
         node: &node,
         provenance: &provenance,
         acceptance: &acceptance,
+        child_program,
     }));
-    PerfReport {
+    // Sealed over the axes and provenance exactly as they will be emitted, and
+    // fail-closed: a report whose hashes cannot be computed does not ship.
+    let certificate = certificate::seal(certificate::CertificateInputs {
+        axes: certificate::AxesView {
+            recall_latency: &axes.recall_latency,
+            wake: &axes.wake,
+            sessions: &axes.sessions,
+            resident_memory: &axes.resident_memory,
+            gated_writes: &axes.gated_writes,
+            precision: &axes.precision,
+            cache: &axes.cache,
+            nvme_fsync: &axes.nvme_fsync,
+        },
+        provenance: &provenance,
+        child_program_blake3: child_program.blake3.clone(),
+    })?;
+    Ok(PerfReport {
         schema: PERF_REPORT_SCHEMA,
+        contract_version: PERF_CANDIDATE_CONTRACT_VERSION,
         mode,
-        publishable: decision.publishable,
-        non_publishable_reason: decision.non_publishable_reason.clone(),
+        publication_candidate: decision.candidate,
+        non_candidate_reason: decision.non_candidate_reason.clone(),
         publication: decision,
+        certificate,
         scoring_policy: SCORING_POLICY,
         beam_relationship: BEAM_RELATIONSHIP,
         plan_label: inputs.plan.label.clone(),
@@ -230,7 +264,7 @@ fn finish(
         precision: axes.precision,
         cache: axes.cache,
         nvme_fsync: axes.nvme_fsync,
-    }
+    })
 }
 
 /// Flattens the measured axes into the publication predicate's inputs. Every
@@ -312,6 +346,23 @@ mod tests {
         assert!(axis.completed_ops() <= requested);
     }
 
+    /// Every count the certificate's statistics block reads must be tallied by
+    /// this runner. A missing one is a sealing failure, not a zero, so the two
+    /// tables are asserted against each other rather than kept in step by hand.
+    fn certificate_statistics_are_derivable(counts: &BTreeMap<String, usize>) {
+        for (axis, key) in certificate::AXIS_SAMPLE_SOURCES {
+            assert!(
+                counts.contains_key(key),
+                "the `{axis}` axis reports its sample size from `sample_counts.{key}`, which this \
+                 runner did not tally"
+            );
+        }
+    }
+
+    /// One bench-owned smoke cache row, explicitly synthetic.
+    const SMOKE_CACHE_EVENT: &str =
+        r#"{"rung":"embedding","outcome":"hit","source":"synthetic_smoke"}"#;
+
     fn idle_child_settings() -> ChildSettings {
         ChildSettings {
             samples: 0,
@@ -368,7 +419,7 @@ mod tests {
             cache: CacheAxis::ingest(
                 RunMode::SyntheticSmoke,
                 &["embedding".to_owned()],
-                r#"{"rung":"embedding","outcome":"hit","source":"synthetic_smoke"}"#,
+                SMOKE_CACHE_EVENT,
             )
             .expect("cache ingests"),
             nvme_fsync: describe_nvme_fsync(
@@ -400,6 +451,7 @@ mod tests {
             plan_hash: "plan".to_owned(),
             corpus_hash: corpus.hash,
             corpus_marker_evidence: corpus.marker_evidence,
+            corpus_query_evidence: corpus.query_evidence,
             cache_events: "event".to_owned(),
             seed: 1,
             sample_counts: sample_counts(&axes),
@@ -429,6 +481,11 @@ mod tests {
             node: &node,
             provenance: &provenance,
             acceptance: &acceptance,
+            child_program: &child_process::resolve_and_hash_child_program(
+                RunMode::SyntheticSmoke,
+                None,
+            )
+            .expect("a smoke resolves its ready child"),
         });
         assert_eq!(inputs.measured_commits, 3);
         assert_eq!(
@@ -456,8 +513,8 @@ mod tests {
 
         let decision = publication::decide(&inputs);
         assert!(
-            !decision.publishable,
-            "an under-floor fixture on an undeclared node is never publishable"
+            !decision.candidate,
+            "an under-floor fixture on an undeclared node is never a publication candidate"
         );
         assert!(
             decision
@@ -465,7 +522,10 @@ mod tests {
                 .contains(&"recall_latency_plan_floor")
         );
 
+        // Every count the certificate's statistics block reads is present, so
+        // sealing a report over these axes cannot fail for a missing count.
         let counts = sample_counts(&axes);
+        certificate_statistics_are_derivable(&counts);
         assert_eq!(
             counts.get("nvme_fsync_ops_completed").copied(),
             Some(axes.nvme_fsync.completed_ops())

@@ -7,6 +7,15 @@
 //! order, so the same seed reproduces the same documents, the same queries and
 //! the same hash.
 //!
+//! Query anchors are DISTINCT by construction. Asking for more queries than
+//! there are documents cannot produce distinct anchors, so it is refused here
+//! rather than answered with repeated anchors: two "different" queries that
+//! wrap onto the same document search for the same marker, retrieve the same
+//! row and score the same recall, which inflates a sample count without
+//! widening the experiment it describes. [`CorpusQueryEvidence`] carries the
+//! counts, so a report proves the anchors were distinct instead of asserting
+//! it in prose.
+//!
 //! Engine boundary: indexing goes through the public `Vault::batch` door and
 //! nothing else.
 
@@ -52,6 +61,7 @@ const VOCAB: [&str; 24] = [
 
 /// One indexed document. The marker is a unique nonsense token planted in the
 /// body so the harness owns its ground truth instead of guessing at it.
+#[derive(Debug)]
 pub(crate) struct CorpusDoc {
     pub(crate) id: EntityId,
     pub(crate) marker: String,
@@ -59,6 +69,7 @@ pub(crate) struct CorpusDoc {
 }
 
 /// One query plus the document it must retrieve.
+#[derive(Debug)]
 pub(crate) struct CorpusQuery {
     pub(crate) text: String,
     pub(crate) expected: EntityId,
@@ -78,7 +89,30 @@ pub(crate) struct CorpusMarkerEvidence {
     pub(crate) rule: &'static str,
 }
 
+/// Auditable evidence that the queries a run reports are as many DISTINCT
+/// probes of the corpus as it claims. Counts, not prose: the distinct anchor
+/// and distinct expected-document tallies are computed from the queries that
+/// were actually emitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct CorpusQueryEvidence {
+    pub(crate) indexed_docs: usize,
+    pub(crate) requested_queries: usize,
+    pub(crate) emitted_queries: usize,
+    pub(crate) distinct_anchors: usize,
+    pub(crate) distinct_expected_documents: usize,
+    /// Every emitted query anchored on a document of its own.
+    pub(crate) anchors_distinct: bool,
+    pub(crate) rule: &'static str,
+}
+
+const QUERY_ANCHOR_RULE: &str = "each query anchors on a DISTINCT indexed document: a run may not \
+     ask for more queries than it indexes, because the extra ones could only wrap back onto \
+     documents already probed, and two queries carrying the same planted marker retrieve the same \
+     row and score the same recall while presenting as independent samples; the distinct anchor \
+     and expected-document counts are computed from the queries that were actually emitted";
+
 /// The seeded, deterministic corpus a run is measured against.
+#[derive(Debug)]
 pub(crate) struct Corpus {
     pub(crate) docs: Vec<CorpusDoc>,
     pub(crate) queries: Vec<CorpusQuery>,
@@ -87,6 +121,7 @@ pub(crate) struct Corpus {
     pub(crate) query_vectors: Vec<Vec<f32>>,
     pub(crate) hash: String,
     pub(crate) marker_evidence: CorpusMarkerEvidence,
+    pub(crate) query_evidence: CorpusQueryEvidence,
 }
 
 /// Builds the corpus from one seeded `StdRng` stream in a fixed order, so the
@@ -97,6 +132,17 @@ pub(crate) fn generate_corpus(
     queries: usize,
     dimensions: usize,
 ) -> Result<Corpus, String> {
+    // Refused rather than wrapped: with more queries than documents the
+    // anchors below could only repeat, and repeated anchors are the same
+    // document probed twice under two query slots.
+    if queries > docs {
+        return Err(format!(
+            "a run cannot draw {queries} queries with DISTINCT anchors from {docs} indexed \
+             documents; every query anchors on a document of its own, so the extra queries could \
+             only re-probe documents already queried and inflate the sample count without \
+             widening the experiment"
+        ));
+    }
     let mut rng = StdRng::seed_from_u64(seed);
     let mut corpus_docs = Vec::with_capacity(docs);
     let mut vectors = Vec::with_capacity(docs);
@@ -111,14 +157,15 @@ pub(crate) fn generate_corpus(
         vectors.push(gen_vector(&mut rng, dimensions));
     }
 
+    // `floor(index * docs / queries)` steps by at least `docs / queries >= 1`
+    // for every index once `queries <= docs`, so the anchors are strictly
+    // increasing and therefore distinct. The set below counts them anyway: the
+    // report proves distinctness rather than trusting this comment.
     let mut corpus_queries = Vec::with_capacity(queries);
     let mut query_vectors = Vec::with_capacity(queries);
+    let mut anchors = std::collections::BTreeSet::new();
     for index in 0..queries {
-        let anchor = if corpus_docs.is_empty() {
-            0
-        } else {
-            (index * corpus_docs.len()) / queries.max(1)
-        };
+        let anchor = (index * corpus_docs.len()) / queries.max(1);
         let Some(doc) = corpus_docs.get(anchor) else {
             break;
         };
@@ -127,7 +174,23 @@ pub(crate) fn generate_corpus(
             expected: doc.id,
         });
         query_vectors.push(perturb(&mut rng, &vectors[anchor]));
+        anchors.insert(anchor);
     }
+    let distinct_expected_documents = corpus_queries
+        .iter()
+        .map(|query| query.expected)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let query_evidence = CorpusQueryEvidence {
+        indexed_docs: corpus_docs.len(),
+        requested_queries: queries,
+        emitted_queries: corpus_queries.len(),
+        distinct_anchors: anchors.len(),
+        distinct_expected_documents,
+        anchors_distinct: anchors.len() == corpus_queries.len()
+            && distinct_expected_documents == corpus_queries.len(),
+        rule: QUERY_ANCHOR_RULE,
+    };
 
     let hash = corpus_hash(&corpus_docs, &vectors);
     let unique_markers = corpus_docs
@@ -152,6 +215,7 @@ pub(crate) fn generate_corpus(
         query_vectors,
         hash,
         marker_evidence,
+        query_evidence,
     })
 }
 
@@ -288,6 +352,54 @@ mod tests {
         assert_eq!(left.marker_evidence.unique_markers, left.docs.len());
         assert!(left.marker_evidence.collision_free);
         assert!(left.marker_evidence.capacity_covers_full_usize_domain);
+    }
+
+    /// Every query must anchor on a document of its OWN. Asking for more
+    /// queries than there are documents is refused at the door, because the
+    /// extra queries could only wrap onto documents already probed: they would
+    /// carry a marker some earlier query already searched for, retrieve the
+    /// same row, score the same recall, and present as independent samples.
+    #[test]
+    fn queries_anchor_on_distinct_documents_and_never_wrap() {
+        let refused = generate_corpus(1579, 8, 9, 4)
+            .expect_err("more queries than documents cannot have distinct anchors");
+        assert!(refused.contains("DISTINCT anchors"), "{refused}");
+        assert!(
+            generate_corpus(1579, 0, 1, 4).is_err(),
+            "an empty corpus cannot answer even one query"
+        );
+
+        for (docs, queries) in [(8_usize, 8_usize), (1_000, 100), (48, 8), (4, 1), (6, 5)] {
+            let corpus = generate_corpus(1579, docs, queries, 4).expect("corpus");
+            assert_eq!(corpus.queries.len(), queries);
+            assert_eq!(corpus.query_vectors.len(), queries);
+
+            let markers: std::collections::BTreeSet<&str> = corpus
+                .queries
+                .iter()
+                .map(|query| query.text.as_str())
+                .collect();
+            assert_eq!(
+                markers.len(),
+                queries,
+                "{docs} docs / {queries} queries: every query must search for its own marker"
+            );
+            let targets: std::collections::BTreeSet<_> =
+                corpus.queries.iter().map(|query| query.expected).collect();
+            assert_eq!(
+                targets.len(),
+                queries,
+                "{docs} docs / {queries} queries: no document may be the target of two queries"
+            );
+
+            let evidence = &corpus.query_evidence;
+            assert!(evidence.anchors_distinct, "{docs}/{queries}: {evidence:?}");
+            assert_eq!(evidence.indexed_docs, docs);
+            assert_eq!(evidence.requested_queries, queries);
+            assert_eq!(evidence.emitted_queries, queries);
+            assert_eq!(evidence.distinct_anchors, queries);
+            assert_eq!(evidence.distinct_expected_documents, queries);
+        }
     }
 
     /// The former five-letter encoding repeated after `26^5` documents. The

@@ -95,8 +95,8 @@ const fn help_text() -> &'static str {
      subcommands:\n\
        run --plan <JSON> --out <JSON>   run a perf plan and write the report\n\
        smoke                            run the bundled synthetic smoke; the report is\n\
-                                        always marked synthetic_smoke and explicitly\n\
-                                        non-publishable\n\
+                                        always marked synthetic_smoke and is never a\n\
+                                        publication candidate\n\
        wake-child --ready-addr <ADDR> [--vault <DIR>] [--hold-ms <N>]\n\
                                         harness-internal ready child, spawned by the wake\n\
                                         and ready-children probes; not a user command\n\
@@ -110,10 +110,15 @@ const fn help_text() -> &'static str {
      real-traffic cache hit rates per listed rung, and a descriptive NVMe fsync\n\
      row. Accuracy and cost stay BEAM-owned.\n\
      \n\
-     a full report is publishable only when every publication check passes:\n\
-     the doc/query and COMPLETED-sample floors, the gated-write floor with zero\n\
-     failed commits and exactly one gate decision per commit, the designated\n\
-     first Tokyo node identity, and a successful NVMe sanity result."
+     this command NEVER publishes. The strongest verdict it emits is\n\
+     `publication_candidate`: every BLOCKING check satisfied — the doc/query and\n\
+     COMPLETED-sample floors, the gated-write floor with zero failed commits and\n\
+     exactly one gate decision per commit, the designated first Tokyo node\n\
+     identity, a ready child that hashes to this same artifact, and a successful\n\
+     NVMe sanity result. The cache axis is advisory: its stream is\n\
+     operator-declared, so it is reported but never withholds candidacy.\n\
+     `oneiron-eval perf-verify` decides publishability from the candidate plus\n\
+     an independent build record."
 }
 
 fn run_plan(args: &[String]) -> Result<(), String> {
@@ -245,14 +250,14 @@ fn summary(report: &PerfReport) -> String {
     let mut lines = vec![
         "== oneiron perf bench (ONE-1579) ==".to_owned(),
         format!(
-            "mode: {} | publishable: {} | plan: {}",
+            "mode: {} | publication_candidate: {} | plan: {}",
             report.mode.as_str(),
-            report.publishable,
+            report.publication_candidate,
             report.plan_label
         ),
     ];
-    if let Some(reason) = &report.non_publishable_reason {
-        lines.push(format!("non-publishable: {reason}"));
+    if let Some(reason) = &report.non_candidate_reason {
+        lines.push(format!("not a publication candidate: {reason}"));
     }
     if !report.publication.blocking_checks.is_empty() {
         lines.push(format!(
@@ -260,6 +265,22 @@ fn summary(report: &PerfReport) -> String {
             report.publication.blocking_checks
         ));
     }
+    if !report.publication.advisory_failures.is_empty() {
+        lines.push(format!(
+            "advisory failures (reported, never blocking): {:?}",
+            report.publication.advisory_failures
+        ));
+    }
+    lines.push(format!(
+        "certificate: {} (axes {}, provenance {})",
+        report.certificate.certificate_blake3,
+        report.certificate.body.axes_blake3,
+        report.certificate.body.provenance_blake3,
+    ));
+    lines.push(
+        "this harness emits a CANDIDATE only; `oneiron-eval perf-verify` decides publishability"
+            .to_owned(),
+    );
     lines.push(report.scoring_policy.to_owned());
     for (axis, measured) in [
         (
@@ -315,10 +336,11 @@ mod tests {
         ReadinessSignal,
     };
     use super::super::cells::{Cell, RunMode};
+    use super::super::certificate::{self, PERF_CANDIDATE_CONTRACT_VERSION};
     use super::super::child_process::minimum_child_hold_ms;
     use super::super::precision::{PrecisionCandidate, default_binary_prefix_breadth};
-    use super::super::publication::SMOKE_NON_PUBLISHABLE_REASON;
-    use super::super::report::PERF_REPORT_SCHEMA;
+    use super::super::publication::SMOKE_NON_CANDIDATE_REASON;
+    use super::super::report::{AXES, PERF_REPORT_SCHEMA};
     use super::*;
 
     #[test]
@@ -353,11 +375,14 @@ mod tests {
         assert!(help.contains("wake-child"), "{help}");
         assert!(help.contains("[1, 10, 100, 300]"), "{help}");
         assert!(help.contains("first Tokyo node"), "{help}");
+        assert!(help.contains("publication_candidate"), "{help}");
+        assert!(help.contains("NEVER publishes"), "{help}");
+        assert!(help.contains("perf-verify"), "{help}");
     }
 
     /// The smoke must run end to end against its bundled fixtures and emit
-    /// every axis, section and provenance field, marked synthetic and
-    /// explicitly non-publishable.
+    /// every axis, section and provenance field, marked synthetic and never a
+    /// publication candidate.
     ///
     /// The per-axis assertions live in the helpers below so the smoke is run
     /// ONCE and each group of claims stays readable on its own.
@@ -366,12 +391,16 @@ mod tests {
         let report = smoke_report().expect("the bundled smoke runs");
 
         assert_eq!(report.mode, RunMode::SyntheticSmoke);
-        assert!(!report.publishable, "a smoke is never publishable");
+        assert!(
+            !report.publication_candidate,
+            "a smoke is never a publication candidate"
+        );
         assert_eq!(
-            report.non_publishable_reason.as_deref(),
-            Some(SMOKE_NON_PUBLISHABLE_REASON)
+            report.non_candidate_reason.as_deref(),
+            Some(SMOKE_NON_CANDIDATE_REASON)
         );
         assert_eq!(report.schema, PERF_REPORT_SCHEMA);
+        assert_eq!(report.contract_version, PERF_CANDIDATE_CONTRACT_VERSION);
         assert!(
             report
                 .publication
@@ -385,6 +414,7 @@ mod tests {
         assert_engine_axes(&report);
         assert_precision_and_cache_axes(&report);
         assert_environment_and_acceptance(&report);
+        assert_certificate(&report, &value);
 
         // No collapsed score anywhere.
         let object = value.as_object().expect("report object");
@@ -394,8 +424,116 @@ mod tests {
                 "{forbidden} must not exist"
             );
         }
+        // The v2 vocabulary, at the top level of the emitted document.
+        assert!(
+            !object.contains_key("publishable"),
+            "schema v2 renamed `publishable` to `publication_candidate`"
+        );
+        assert!(!object.contains_key("non_publishable_reason"));
+        assert!(object.contains_key("publication_candidate"));
+        assert!(object.contains_key("contract_version"));
+        assert!(object.contains_key("certificate"));
+
         assert!(emit(&report).is_ok());
-        assert!(summary(&report).contains("publishable: false"));
+        assert!(summary(&report).contains("publication_candidate: false"));
+        assert!(summary(&report).contains("perf-verify"));
+    }
+
+    /// ONE-1961: the certificate says what the verdict was allowed to rest on
+    /// and pins the exact bytes it was computed over. The digests are
+    /// recomputed here the way the external verifier will recompute them —
+    /// from the EMITTED document, not from the in-memory structs.
+    fn assert_certificate(report: &PerfReport, value: &serde_json::Value) {
+        let certificate = &report.certificate;
+        assert_eq!(
+            certificate.body.contract_version,
+            PERF_CANDIDATE_CONTRACT_VERSION
+        );
+
+        // The scope partition covers every emitted axis exactly once, and the
+        // advisory half is the operator-declared cache axis.
+        let scope = &certificate.body.publication_scope;
+        assert_eq!(scope.advisory_axes, ["cache"]);
+        for axis in AXES {
+            assert!(
+                scope.blocking_axes.contains(&axis) ^ scope.advisory_axes.contains(&axis),
+                "`{axis}` must be in exactly one half of the publication scope"
+            );
+        }
+
+        // Statistical exposure (§8): every axis carries its sample size, every
+        // axis ran once, and the single-trial list is present rather than
+        // implied. A verifier treats its absence as a contract violation.
+        let statistics = &certificate.body.statistics;
+        assert_eq!(statistics.repeats, 1);
+        assert_eq!(statistics.per_axis.len(), AXES.len());
+        for axis in AXES {
+            let row = statistics
+                .per_axis
+                .get(axis)
+                .unwrap_or_else(|| panic!("`{axis}` must carry statistics"));
+            assert_eq!(row.repeats, 1);
+        }
+        assert_eq!(
+            statistics.per_axis.get("wake").map(|row| row.samples),
+            report.provenance.sample_counts.get("wake_probes").copied()
+        );
+        assert!(!statistics.single_trial_axes.is_empty());
+
+        // `axes_blake3` really is the digest of the eight emitted axis objects,
+        // read back out of the rendered report.
+        let mut emitted_axes = serde_json::Map::new();
+        for axis in AXES {
+            emitted_axes.insert(
+                (*axis).to_owned(),
+                value.get(axis).expect("the axis is emitted").clone(),
+            );
+        }
+        assert_eq!(
+            certificate::canonical_blake3("axes", &serde_json::Value::Object(emitted_axes))
+                .expect("the emitted axes canonicalize"),
+            certificate.body.axes_blake3,
+            "axes_blake3 must cover exactly the axes the report emits"
+        );
+        assert_eq!(
+            certificate::canonical_blake3(
+                "provenance",
+                value.get("provenance").expect("provenance is emitted")
+            )
+            .expect("the emitted provenance canonicalizes"),
+            certificate.body.provenance_blake3,
+        );
+
+        // And the certificate's own digest reproduces from the emitted
+        // document with the self-referential field removed.
+        let mut emitted = value
+            .get("certificate")
+            .expect("the certificate is emitted")
+            .clone();
+        let reported = emitted
+            .as_object_mut()
+            .expect("certificate object")
+            .remove("certificate_blake3")
+            .expect("the certificate reports its own digest");
+        assert_eq!(
+            reported.as_str(),
+            Some(certificate.certificate_blake3.as_str())
+        );
+        assert_eq!(
+            certificate::canonical_blake3("certificate", &emitted).expect("recomputes"),
+            certificate.certificate_blake3,
+        );
+
+        // The trust manifest travels with the report, and the cache row in it
+        // is the operator-declared one.
+        let cache = certificate
+            .body
+            .trust_inputs
+            .iter()
+            .find(|row| row.name == "cache_events")
+            .expect("the cache stream is a declared trust input");
+        assert_eq!(cache.class.as_str(), "operator_declared");
+        assert_eq!(cache.consumed_by, vec!["cache_rungs_complete"]);
     }
 
     /// Every axis, non-axis section and provenance field survived rendering.
@@ -476,10 +614,17 @@ mod tests {
             default_binary_prefix_breadth(report.precision.k)
         );
         assert!(!report.precision.k_reduced_to_corpus);
+        assert!(report.precision.warmup_scans_per_candidate > 0);
         for row in &report.precision.rows {
             assert!(
                 row.mean_recall_delta_vs_f32.is_measured(),
                 "{} must carry its recall delta against f32",
+                row.candidate.as_str()
+            );
+            assert_eq!(
+                row.warmup_scans,
+                report.precision.warmup_scans_per_candidate,
+                "{} must be warmed exactly like every other row",
                 row.candidate.as_str()
             );
         }
@@ -488,6 +633,21 @@ mod tests {
                 .precision
                 .moorcheh_binary_benchmark
                 .run_by_this_harness
+        );
+
+        // The bundled smoke stream is a file the harness was pointed at, and
+        // the axis says so: operator-declared evidence, advisory scope. Its
+        // rows saying `synthetic_smoke` is a shape check on the rows, never
+        // evidence of where they came from.
+        assert_eq!(report.cache.source_kind, "synthetic_smoke_fixture");
+        assert_eq!(report.cache.evidence_trust_class, "operator_declared");
+        assert_eq!(report.cache.publication_scope, "advisory");
+        assert!(
+            !report
+                .publication
+                .blocking_checks
+                .contains(&"cache_rungs_complete"),
+            "an advisory check may never appear among the blocking ones"
         );
 
         // Rungs come from the plan; a silent rung is not_ready; and sessions
@@ -548,6 +708,11 @@ mod tests {
             report.provenance.corpus_marker_evidence.documents,
             report.provenance.corpus_marker_evidence.unique_markers
         );
+        let queries = &report.provenance.corpus_query_evidence;
+        assert!(queries.anchors_distinct, "{queries:?}");
+        assert_eq!(queries.distinct_anchors, queries.emitted_queries);
+        assert_eq!(queries.distinct_expected_documents, queries.emitted_queries);
+        assert!(queries.emitted_queries <= queries.indexed_docs);
         assert_eq!(
             report.provenance.node.designated_first_tokyo_node,
             "tokyo-1"
