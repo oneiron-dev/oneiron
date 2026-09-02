@@ -41,6 +41,7 @@ pub mod comm;
 pub mod commitment;
 pub mod commitment_ledger;
 pub mod commitment_schedule;
+pub mod compaction;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -191,6 +192,10 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
+pub use crate::compaction::{
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
+    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
+};
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
     CompanionProvenance, CompanionRecord, CompanionRecordKind, CompanionScope,
@@ -234,7 +239,7 @@ pub use crate::eiri::{
     UnprocessedItem,
 };
 pub use crate::entity_id::{EntityId, parse_presentation_id};
-pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 pub use crate::federation::FederationGrantScope;
