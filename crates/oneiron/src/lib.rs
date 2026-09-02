@@ -138,6 +138,7 @@ pub mod skill_reliability;
 pub mod skill_scan;
 pub mod speculative;
 pub mod store;
+pub mod subject_model;
 pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
@@ -152,6 +153,7 @@ mod vault;
 pub mod voice_identity;
 pub mod wave_orchestration;
 pub mod web_fetch;
+pub mod workspace_roster;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -437,6 +439,54 @@ pub(crate) mod test_util {
              pick a byte outside PINNED_ID_BYTES or construct the pinned id explicitly"
         );
         EntityId::from_bytes([seed; 16]).expect("non-pinned seed byte forms a valid entity id")
+    }
+
+    /// Seeds a minimal, VALID AGENT_DEF entity at `id` and returns it.
+    ///
+    /// Centralized because an AGENT_DEF body is validated on write: the
+    /// obvious `put_entity(id, ENTITY_TYPE_AGENT_DEF, b"fixture")` is rejected
+    /// with `InvalidAgentDefBody`, so every test needing "an actor that is a
+    /// real agent" would otherwise grow its own copy of this constructor.
+    pub(crate) fn seed_agent_definition(vault: &Vault, id: EntityId, label: &str) -> EntityId {
+        use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+        use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+        use rmpv::Value;
+
+        let def = AgentDefinition::new(
+            format!("{label}-{}", id.to_hex()),
+            "test_util agent fixture",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            AgentScope::All,
+            AgentCeiling::Proposed,
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::Imported,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![(Value::from("fixture"), Value::from(label))]),
+            None,
+            true,
+            None,
+        );
+        vault
+            .put_agent_definition(
+                &id,
+                &def,
+                TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .expect("seed agent definition");
+        id
     }
 
     /// Raw stored-entity record: the 25-byte metadata header (type byte,

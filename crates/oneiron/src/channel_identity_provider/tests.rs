@@ -537,7 +537,7 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
     assert_eq!(identity.shape, ChannelIdentityShape::SharedPresence);
     assert!(matches!(
         identity.binding,
-        ChannelIdentityBinding::Agent { agent_ref: bound } if bound == agent_ref
+        ChannelIdentityBinding::Actor { actor_ref: bound, .. } if bound == agent_ref
     ));
 
     let provision = adapter.provision(
@@ -591,7 +591,7 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
     assert_eq!(receipt.agent_ref, Some(agent_ref.to_hex()));
     let surface_event = receipt.surface_event.expect("routed event");
     assert_eq!(surface_event.receiving_identity_ref, identity_id.to_hex());
-    assert_eq!(surface_event.agent_ref, agent_ref.to_hex());
+    assert_eq!(surface_event.actor_ref, agent_ref.to_hex());
     assert_eq!(
         surface_event.payload_ref.as_deref(),
         Some("provider:line-event-1")
@@ -800,7 +800,8 @@ fn line_oa_adapter_validates_provider_native_id_shapes() -> Result<()> {
 
 use crate::attempt_queue::{AttemptQueue, EnqueueOutcome};
 use crate::channel_identity::{
-    CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, DelegatedGrantScope, encode_channel_identity_body,
+    CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION,
+    DelegatedGrantScope, encode_channel_identity_body,
 };
 use crate::channel_identity_provider::gmail::{
     GMAIL_CONNECTOR_EFFECTOR, GMAIL_DELEGATED_PROVIDER_KEY, GMAIL_INBOX_POLL_ATTEMPT_KIND,
@@ -1230,6 +1231,11 @@ fn gmail_delegated_adapter_rejects_foreign_mailboxes_and_shapes() -> Result<()> 
         Error::InvalidConfig(reason)
             if reason == "gmail delegated adapter grant ref does not match ProvisionIntent"
     ));
-    assert_eq!(CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, 2);
+    // Both delegated versions are pinned so neither drifts silently: INB-06
+    // moved the CURRENT delegated body to 4 when the binding gained a facet
+    // key, and 2 stays reserved forever as the decode-only version of every
+    // delegated row already on disk.
+    assert_eq!(CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, 4);
+    assert_eq!(CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION, 2);
     Ok(())
 }

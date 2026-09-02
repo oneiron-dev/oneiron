@@ -4,7 +4,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityShape, ChannelIdentityState,
-    decode_channel_identity_body, encode_channel_identity_body,
+    decode_channel_identity_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -535,13 +535,12 @@ impl Vault {
         id: &EntityId,
         identity: &ChannelIdentity,
     ) -> Result<()> {
-        let data = encode_channel_identity_body(identity)?;
         if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some()
             || self.channel_identity_assignment_conflict_in_txn(wtxn, id, identity)?
         {
             return Err(Error::ChannelIdentityAlreadyExists);
         }
-        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, data)
+        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, identity)
     }
 
     fn write_existing_channel_identity_in_txn(
@@ -553,8 +552,7 @@ impl Vault {
         if self.channel_identity_assignment_conflict_in_txn(wtxn, id, identity)? {
             return Err(Error::ChannelIdentityAlreadyExists);
         }
-        let data = encode_channel_identity_body(identity)?;
-        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, data)
+        self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, identity)
     }
 
     fn read_channel_identity_in_txn(

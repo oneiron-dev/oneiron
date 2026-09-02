@@ -55,7 +55,7 @@ fn channel_identity_codec_and_claim_family_round_trip() -> Result<()> {
     }));
     assert!(claims.iter().any(|claim| {
         claim.predicate == PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE
-            && claim.value.as_str() == Some("agent")
+            && claim.value.as_str() == Some("actor")
     }));
     assert!(claims.iter().any(|claim| {
         claim.predicate == PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT
@@ -258,11 +258,13 @@ fn sample_delegated_identity() -> ChannelIdentity {
     )
 }
 
-/// Rebuilds the exact twelve-key, `schema_version: 1` body head wrote, from
-/// literal key strings rather than the crate constants. If a future change
-/// renames a key, reorders the map, or bumps the version out from under the
-/// three self-held shapes, this fails instead of silently orphaning every
-/// pre-INB-00 row on disk.
+/// Rebuilds the exact twelve-key, `schema_version: 1` body pre-INB-06 head
+/// wrote, from literal key strings rather than the crate constants — including
+/// its `binding_scope: "agent"` spelling.
+///
+/// This is the ON-DISK fixture, so it is frozen forever: if a decode path ever
+/// stops accepting it, every row written before INB-06 is orphaned, and that
+/// is what the tests below exist to catch.
 fn head_encoded_body(identity: &ChannelIdentity) -> Vec<u8> {
     let value = Value::Map(vec![
         (Value::from("schema_version"), Value::from(1u64)),
@@ -276,8 +278,13 @@ fn head_encoded_body(identity: &ChannelIdentity) -> Vec<u8> {
         ),
         (Value::from("shape"), Value::from(identity.shape.as_str())),
         (
+            // The head spelling, pinned as a literal: pre-INB-06 rows say
+            // "agent" and no live constant may drift this fixture off it.
             Value::from("binding_scope"),
-            Value::from(identity.binding.scope_str()),
+            Value::from(match identity.binding {
+                ChannelIdentityBinding::Actor { .. } => "agent",
+                ChannelIdentityBinding::Vault { .. } => "vault",
+            }),
         ),
         (
             Value::from("binding_target"),
@@ -312,7 +319,22 @@ fn head_encoded_body(identity: &ChannelIdentity) -> Vec<u8> {
     out
 }
 
+/// Builds a delegated body in the CURRENT fifteen-key layout.
+///
+/// `binding_facet_ref` sits between the self-held keys and the two custody
+/// keys, so the custody keys live at [`DELEGATED_GRANT_REF_IDX`] and
+/// [`GRANT_SCOPES_IDX`].
 fn delegated_body_entries(shape: &str, version: u64) -> Vec<(Value, Value)> {
+    let mut entries = legacy_delegated_body_entries(shape, version);
+    entries.insert(12, (Value::from("binding_facet_ref"), Value::Nil));
+    entries
+}
+
+const DELEGATED_GRANT_REF_IDX: usize = 13;
+const GRANT_SCOPES_IDX: usize = 14;
+
+/// Builds a delegated body in the pre-INB-06 fourteen-key layout.
+fn legacy_delegated_body_entries(shape: &str, version: u64) -> Vec<(Value, Value)> {
     vec![
         (Value::from("schema_version"), Value::from(version)),
         (Value::from("channel"), Value::from("email")),
@@ -352,11 +374,19 @@ fn encode_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
     out
 }
 
+/// INB-06 moved back-compat from a BYTE claim to a DECODE claim, on purpose.
+///
+/// The pre-INB-06 encoding cannot express what the record now holds: the
+/// binding names an ACTOR that may wear a facet mask, so the canonical body
+/// gained a `binding_facet_ref` key and spells its scope `actor`. No byte
+/// sequence satisfies both that and "identical to what head wrote".
+///
+/// What actually protected users was never the byte identity — it was that no
+/// row on disk gets orphaned. That is what this asserts now, and it is
+/// strictly the load-bearing half: every pre-INB-06 body still decodes, to the
+/// right record, with no facet.
 #[test]
-fn head_three_shape_bodies_are_byte_stable_after_the_fourth_shape() -> Result<()> {
-    // Back-compat is a byte claim, not a "it still parses" claim: adding the
-    // fourth shape must leave the three self-held shapes writing the exact
-    // bytes already on disk, so no row needs migrating.
+fn head_three_shape_bodies_still_decode_after_the_actor_binding() -> Result<()> {
     for shape in [
         ChannelIdentityShape::DedicatedAddress,
         ChannelIdentityShape::DedicatedHandle,
@@ -364,14 +394,29 @@ fn head_three_shape_bodies_are_byte_stable_after_the_fourth_shape() -> Result<()
     ] {
         let mut identity = sample_identity();
         identity.shape = shape;
-        let encoded = encode_channel_identity_body(&identity)?;
+
+        // The exact bytes head wrote still decode to the exact record.
+        let head_bytes = head_encoded_body(&identity);
+        let decoded = decode_channel_identity_body(&head_bytes)?;
         assert_eq!(
-            encoded,
-            head_encoded_body(&identity),
-            "{} body must stay byte-identical to head",
+            decoded,
+            identity,
+            "{} head body must still decode",
             shape.as_str()
         );
-        assert_eq!(decode_channel_identity_body(&encoded)?, identity);
+        assert_eq!(
+            decoded.binding,
+            ChannelIdentityBinding::Actor {
+                actor_ref: entity(0x51),
+                facet_ref: None,
+            },
+            "a legacy agent binding is an unmasked actor"
+        );
+
+        // Rewriting it emits the new canonical encoding, which round-trips.
+        let rewritten = encode_channel_identity_body(&decoded)?;
+        assert_ne!(rewritten, head_bytes, "rewrite must canonicalize");
+        assert_eq!(decode_channel_identity_body(&rewritten)?, identity);
         assert!(identity.delegated_grant.is_none());
         assert!(shape.is_self_held());
     }
@@ -383,9 +428,32 @@ fn head_three_shape_bodies_are_byte_stable_after_the_fourth_shape() -> Result<()
         None,
     )?;
     assert_eq!(
-        encode_channel_identity_body(&pending)?,
-        head_encoded_body(&pending)
+        decode_channel_identity_body(&head_encoded_body(&pending))?,
+        pending
     );
+    Ok(())
+}
+
+/// The canonical self-held body is the thirteen pinned keys at the current
+/// version, in order — the counterpart of the legacy fixture above.
+#[test]
+fn canonical_self_held_body_carries_the_facet_key() -> Result<()> {
+    let identity = sample_identity();
+    let encoded = encode_channel_identity_body(&identity)?;
+    let Value::Map(entries) =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(encoded.as_slice()))
+            .expect("body decodes as a map")
+    else {
+        panic!("body must encode as a map");
+    };
+    let keys = entries
+        .iter()
+        .map(|(key, _)| key.as_str().expect("string key").to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(keys, CHANNEL_IDENTITY_BODY_KEYS.to_vec());
+    assert_eq!(entries[0].1.as_u64(), Some(CHANNEL_IDENTITY_SCHEMA_VERSION));
+    assert_eq!(entries[4].1.as_str(), Some("actor"));
+    assert_eq!(entries[12].1, Value::Nil);
     Ok(())
 }
 
@@ -441,14 +509,29 @@ fn delegated_bodies_fail_closed_on_version_shape_key_and_scope_drift() {
         assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody, "{why}");
     };
 
-    // The version selects the key set, so neither key set can wear the
-    // other's version.
+    // The version selects the key set, so no key set can wear another's
+    // version — including the two decode-only legacy versions.
     reject(
         delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_SCHEMA_VERSION),
-        "delegated body at schema_version 1 must fail closed",
+        "delegated body at the self-held version must fail closed",
     );
     reject(
-        delegated_body_entries("delegated_grant", 3),
+        delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_LEGACY_SCHEMA_VERSION),
+        "delegated body at legacy schema_version 1 must fail closed",
+    );
+    reject(
+        legacy_delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION),
+        "legacy key set at the current delegated version must fail closed",
+    );
+    reject(
+        delegated_body_entries(
+            "delegated_grant",
+            CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION,
+        ),
+        "current key set at the legacy delegated version must fail closed",
+    );
+    reject(
+        delegated_body_entries("delegated_grant", 99),
         "unknown schema_version must fail closed",
     );
     reject(
@@ -461,15 +544,15 @@ fn delegated_bodies_fail_closed_on_version_shape_key_and_scope_drift() {
 
     let mut self_held_with_custody_key =
         delegated_body_entries("dedicated_address", CHANNEL_IDENTITY_SCHEMA_VERSION);
-    self_held_with_custody_key.truncate(13);
+    self_held_with_custody_key.truncate(14);
     reject(
         self_held_with_custody_key,
-        "v1 body with an extra custody key must fail closed",
+        "self-held body with an extra custody key must fail closed",
     );
 
     let mut missing_scopes =
         delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
-    missing_scopes.truncate(13);
+    missing_scopes.truncate(GRANT_SCOPES_IDX);
     reject(
         missing_scopes,
         "delegated body missing grant_scopes must fail closed",
@@ -485,24 +568,60 @@ fn delegated_bodies_fail_closed_on_version_shape_key_and_scope_drift() {
     for scope in ["mail.send", "mail.delete", "mail.modify", ""] {
         let mut write_scope =
             delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
-        write_scope[13].1 = Value::Array(vec![Value::from(scope)]);
+        write_scope[GRANT_SCOPES_IDX].1 = Value::Array(vec![Value::from(scope)]);
         reject(write_scope, "write scope must fail closed");
     }
 
     let mut empty_scopes =
         delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
-    empty_scopes[13].1 = Value::Array(Vec::new());
+    empty_scopes[GRANT_SCOPES_IDX].1 = Value::Array(Vec::new());
     reject(empty_scopes, "empty scope list must fail closed");
 
     let mut repeated_scopes =
         delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
-    repeated_scopes[13].1 = Value::Array(vec![Value::from("mail.read"), Value::from("mail.read")]);
+    repeated_scopes[GRANT_SCOPES_IDX].1 =
+        Value::Array(vec![Value::from("mail.read"), Value::from("mail.read")]);
     reject(repeated_scopes, "repeated scopes must fail closed");
 
     let mut blank_ref =
         delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
-    blank_ref[12].1 = Value::from("  ");
+    blank_ref[DELEGATED_GRANT_REF_IDX].1 = Value::from("  ");
     reject(blank_ref, "blank custody ref must fail closed");
+
+    // A vault-scoped row cannot carry a facet: there is no actor to mask.
+    let mut vault_with_facet =
+        delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
+    vault_with_facet[4].1 = Value::from("vault");
+    vault_with_facet[5].1 = Value::from(7u64);
+    vault_with_facet[12].1 = Value::from(entity(0x77).to_hex());
+    reject(
+        vault_with_facet,
+        "vault binding with a facet must fail closed",
+    );
+}
+
+/// A pre-INB-06 delegated row on disk still decodes, and its rewrite
+/// canonicalizes onto the current version.
+#[test]
+fn legacy_delegated_body_still_decodes() -> Result<()> {
+    let legacy = encode_entries(legacy_delegated_body_entries(
+        "delegated_grant",
+        CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION,
+    ));
+    let decoded = decode_channel_identity_body(&legacy)?;
+    assert_eq!(
+        decoded.binding,
+        ChannelIdentityBinding::Actor {
+            actor_ref: entity(0x51),
+            facet_ref: None,
+        }
+    );
+    assert_eq!(decoded.shape, ChannelIdentityShape::DelegatedGrant);
+
+    let rewritten = encode_channel_identity_body(&decoded)?;
+    assert_ne!(rewritten, legacy, "rewrite must canonicalize");
+    assert_eq!(decode_channel_identity_body(&rewritten)?, decoded);
+    Ok(())
 }
 
 #[test]
@@ -572,4 +691,172 @@ fn channel_identity_type_registration_is_stable() {
     assert_eq!(entry.short_id_prefix, None);
     assert_eq!(entry.classification, EntityClassification::Maintenance);
     assert_eq!(entry.zone, TypeByteZone::System);
+}
+
+/// An identity bound to an actor anchored to a PERSON round-trips, mask and
+/// all. The binding names the ACTOR; the person is reached through the actor's
+/// subject anchor, never stored on the identity.
+#[test]
+fn actor_person_round_trip() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed_entity(&vault, entity(0x51), crate::registry::ENTITY_TYPE_AGENT_DEF);
+    let person = seed_entity(&vault, entity(0x52), crate::registry::ENTITY_TYPE_PERSON);
+    let facet = seed_entity(&vault, entity(0x53), crate::registry::ENTITY_TYPE_FACET);
+
+    crate::subject_model::anchor_actor_subject(
+        &vault,
+        actor,
+        person,
+        crate::write_envelope::WriteActor::new(entity(0x5F), crate::edge::EdgeActorClass::System),
+        1_800_000_000,
+    )?;
+
+    let identity_id = entity(0x60);
+    let mut identity = sample_identity();
+    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+    vault.create_channel_identity(&identity_id, &identity)?;
+
+    let stored = vault
+        .get_channel_identity(&identity_id)?
+        .expect("identity stored");
+    assert_eq!(stored.binding, identity.binding);
+    assert_eq!(stored.binding.actor_ref(), Some(actor));
+    assert_eq!(stored.binding.facet_ref(), Some(facet));
+    assert_eq!(
+        crate::subject_model::actor_subject_anchor(&vault, &actor)?,
+        Some(person)
+    );
+    Ok(())
+}
+
+/// The same shape with an ORG behind the actor. ORG and PERSON are the two
+/// anchor targets; nothing about the binding changes between them.
+#[test]
+fn actor_org_round_trip() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed_entity(&vault, entity(0x61), crate::registry::ENTITY_TYPE_AGENT_DEF);
+    let org = seed_entity(&vault, entity(0x62), crate::registry::ENTITY_TYPE_ORG);
+
+    crate::subject_model::anchor_actor_subject(
+        &vault,
+        actor,
+        org,
+        crate::write_envelope::WriteActor::new(entity(0x6F), crate::edge::EdgeActorClass::System),
+        1_800_000_000,
+    )?;
+
+    let identity_id = entity(0x63);
+    let mut identity = sample_identity();
+    identity.binding = ChannelIdentityBinding::actor(actor);
+    vault.create_channel_identity(&identity_id, &identity)?;
+
+    let stored = vault
+        .get_channel_identity(&identity_id)?
+        .expect("identity stored");
+    assert_eq!(stored.binding, ChannelIdentityBinding::actor(actor));
+    assert_eq!(stored.binding.facet_ref(), None);
+    assert_eq!(
+        crate::subject_model::actor_subject_anchor(&vault, &org.clone())?,
+        None,
+        "the anchor hangs off the actor, not the org"
+    );
+    assert_eq!(
+        crate::subject_model::actor_subject_anchor(&vault, &actor)?,
+        Some(org)
+    );
+    Ok(())
+}
+
+/// The whole legacy-decode contract in one place: a stored v1 body with
+/// `binding_scope: "agent"` is an unmasked actor.
+#[test]
+fn legacy_agent_binding_decodes() -> Result<()> {
+    let identity = sample_identity();
+    let decoded = decode_channel_identity_body(&head_encoded_body(&identity))?;
+    assert_eq!(
+        decoded.binding,
+        ChannelIdentityBinding::Actor {
+            actor_ref: entity(0x51),
+            facet_ref: None,
+        }
+    );
+    assert_eq!(decoded.binding.scope_str(), "actor");
+
+    // A claim body carrying the legacy scope string still validates, so the
+    // claim family does not orphan pre-INB-06 rows either.
+    let mut legacy_claim = ClaimBody::new(
+        PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
+        ClaimSubject::Entity(entity(0xD1)),
+        Value::from("agent"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    validate_channel_identity_claim_structure(&legacy_claim)?;
+    legacy_claim.value = Value::from("actor");
+    validate_channel_identity_claim_structure(&legacy_claim)?;
+    legacy_claim.value = Value::from("person");
+    assert_eq!(
+        validate_channel_identity_claim_structure(&legacy_claim)
+            .expect_err("unknown scope must fail")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+    Ok(())
+}
+
+/// A bound facet must name a real type-13 FACET. This is a vault question, so
+/// it is enforced at the write chokepoint rather than in the pure codec.
+#[test]
+fn facet_type_is_checked() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed_entity(&vault, entity(0x71), crate::registry::ENTITY_TYPE_AGENT_DEF);
+    let not_a_facet = seed_entity(&vault, entity(0x72), crate::registry::ENTITY_TYPE_PERSON);
+
+    let mut identity = sample_identity();
+    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, not_a_facet);
+    let err = vault
+        .create_channel_identity(&entity(0x73), &identity)
+        .expect_err("non-FACET mask must be refused");
+    assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
+
+    // An absent entity is refused on the same axis.
+    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, entity(0x7E));
+    let err = vault
+        .create_channel_identity(&entity(0x74), &identity)
+        .expect_err("dangling mask must be refused");
+    assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
+
+    // The real thing lands.
+    let facet = seed_entity(&vault, entity(0x75), crate::registry::ENTITY_TYPE_FACET);
+    identity.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+    vault.create_channel_identity(&entity(0x76), &identity)?;
+    assert_eq!(
+        vault
+            .get_channel_identity(&entity(0x76))?
+            .expect("stored")
+            .binding
+            .facet_ref(),
+        Some(facet)
+    );
+    Ok(())
+}
+
+fn seed_entity(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
+    if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
+        return crate::test_util::seed_agent_definition(vault, id, "channel_identity");
+    }
+    vault
+        .put_entity(
+            &id,
+            entity_type,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"channel identity fixture",
+        )
+        .expect("seed entity");
+    id
 }
