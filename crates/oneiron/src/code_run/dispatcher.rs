@@ -248,6 +248,21 @@ impl<'a> HostSelfDispatcher<'a> {
         &self.run_ref
     }
 
+    /// Dispatches one call on behalf of a durable engine-executor replay run.
+    ///
+    /// The ordinary [`SelfDispatcher`] implementation intentionally has no run
+    /// id and preserves the standalone run-ref-only speech identity. The engine
+    /// executor owns the durable id, so it enters through this crate-private
+    /// door and binds that id only to transcript identity; guest payloads still
+    /// cannot name or forge it.
+    pub(crate) fn dispatch_for_executor_run(
+        &self,
+        run_id: EntityId,
+        call: SelfCall,
+    ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_bound(call, Some(run_id))
+    }
+
     fn code_emission_admission(&self) -> Result<Option<consent::CodeEmissionAdmission>> {
         let Some((emission, review)) = &self.code_emission else {
             return Ok(None);
@@ -768,12 +783,14 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         effect: SelfEffect,
         call: SelfSpeechCall,
+        run_id: Option<EntityId>,
     ) -> Result<SelfDispatchOutcome> {
         let kind = effect.speech_utterance().ok_or(Error::InvariantViolation(
             "speech dispatch on a non-speech effect",
         ))?;
         let _receipt = self.storage.witness_executor_utterance(
             &self.run_ref,
+            run_id,
             kind,
             &call.text,
             call.occurred_at,
@@ -786,6 +803,40 @@ impl<'a> HostSelfDispatcher<'a> {
             is_visible: kind.is_visible(),
             emitted: true,
         }))
+    }
+
+    fn dispatch_bound(
+        &self,
+        call: SelfCall,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
+        // The descriptor bridge answers before the policy probe: that probe is
+        // itself a vault read, and `self.context` must perform none.
+        if !matches!(call, SelfCall::Context(_)) {
+            self.enforce_off_record_effect_policy(call.effect())?;
+        }
+        match call {
+            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
+            SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
+            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
+            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
+            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
+            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
+            SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
+                SelfEffect::DestructiveFixture,
+                SelfDurableWaitReason::DestructiveEffect,
+                Some(call.label),
+            )),
+            SelfCall::OutboundFixture(call) => Ok(self.durable_wait(
+                SelfEffect::OutboundFixture,
+                SelfDurableWaitReason::OutboundEffect,
+                Some(call.label),
+            )),
+            SelfCall::Context(call) => dispatch_self_context(call),
+            SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call, run_id),
+            SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
+            SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
+        }
     }
 
     fn durable_wait(
@@ -870,33 +921,7 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
     ///
     /// Canonical dispatch keeps its existing path and captures no route.
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        // The descriptor bridge answers before the policy probe: that probe is
-        // itself a vault read, and `self.context` must perform none.
-        if !matches!(call, SelfCall::Context(_)) {
-            self.enforce_off_record_effect_policy(call.effect())?;
-        }
-        match call {
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
-            SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
-            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
-            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
-            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
-            SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
-                SelfEffect::DestructiveFixture,
-                SelfDurableWaitReason::DestructiveEffect,
-                Some(call.label),
-            )),
-            SelfCall::OutboundFixture(call) => Ok(self.durable_wait(
-                SelfEffect::OutboundFixture,
-                SelfDurableWaitReason::OutboundEffect,
-                Some(call.label),
-            )),
-            SelfCall::Context(call) => dispatch_self_context(call),
-            SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call),
-            SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call),
-            SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call),
-        }
+        self.dispatch_bound(call, None)
     }
 }
 

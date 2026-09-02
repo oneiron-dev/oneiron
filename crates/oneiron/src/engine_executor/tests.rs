@@ -18,6 +18,8 @@ use crate::{
 
 use super::*;
 
+mod speech_identity_regressions;
+
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
@@ -1604,8 +1606,11 @@ fn executor_interleaves_speech_reads_and_gated_writes_in_bridge_order() {
     );
     // All four ride ONE run-scoped conversation and ONE turn, both derived
     // from the run ref — not a fresh shell per utterance.
-    let conversation =
-        crate::code_run::canonical_speech_conversation_id("run-speech-interleave").expect("shell");
+    let conversation = crate::code_run::canonical_speech_conversation_id_for_run(
+        "run-speech-interleave",
+        Some(config.run_id),
+    )
+    .expect("shell");
     assert_eq!(
         vault.get_entity_type(&conversation).expect("shell type"),
         Some(crate::registry::ENTITY_TYPE_CONVERSATION)

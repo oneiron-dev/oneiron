@@ -6,7 +6,10 @@
 //! the pinned component boundary, and every `self.*` import is routed through a
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,10 +27,10 @@ use crate::{
     FinishReason, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
     code_run::GatedActorWrite, code_run::SelfCall, code_run::SelfDeniedResult,
-    code_run::SelfDispatchOutcome, code_run::SelfDispatcher, code_run::SelfDurableWait,
-    code_run::SelfDurableWaitReason, code_run::SelfEffect, code_run::SelfFailedResult,
-    code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxComponentBoundary,
-    code_sandbox::SandboxGuestLanguage, code_sandbox::SandboxGuestTier,
+    code_run::SelfDispatchOutcome, code_run::SelfDurableWait, code_run::SelfDurableWaitReason,
+    code_run::SelfEffect, code_run::SelfFailedResult, code_sandbox::SandboxBoundaryContract,
+    code_sandbox::SandboxComponentBoundary, code_sandbox::SandboxGuestLanguage,
+    code_sandbox::SandboxGuestTier,
 };
 use crate::{Result, code_sandbox::PLAIN_JS_HOST_VERB_DTS};
 use crate::{
@@ -348,6 +351,10 @@ pub struct EngineNativeExecutor<'a> {
     runtime: &'a mut dyn JsCodeModeRuntime,
     gated_write: &'a GatedActorWrite<'a>,
     legibility: Option<ExecutorLegibility<'a>>,
+    /// Next order for the public compatibility witness door, whose callers do
+    /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
+    /// bypass this allocator and retain their exact order.
+    next_witness_order: AtomicU32,
 }
 
 impl<'a> EngineNativeExecutor<'a> {
@@ -366,6 +373,7 @@ impl<'a> EngineNativeExecutor<'a> {
             runtime,
             gated_write,
             legibility: None,
+            next_witness_order: AtomicU32::new(0),
         }
     }
 
@@ -396,6 +404,7 @@ impl<'a> EngineNativeExecutor<'a> {
             runtime,
             gated_write,
             legibility: None,
+            next_witness_order: AtomicU32::new(0),
         })
     }
 
@@ -440,21 +449,26 @@ impl<'a> EngineNativeExecutor<'a> {
         text: &str,
         occurred_at: u64,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
-        self.witness_turn_at(kind, text, occurred_at, 0)
+        let order = self.allocate_witness_order()?;
+        self.witness_turn_at(kind, text, occurred_at, order)
     }
 
     /// [`Self::witness_turn`], carrying an explicit bubble `order`.
     ///
     /// The order is the emitter's position in the run's bridge ordering, so a
-    /// turn recorded outside the bridge — the trailing plaintext fallback — can
-    /// still be placed against the calls it follows. It is also the bubble's
-    /// IDENTITY input: the storage door derives the MESSAGE id from the run ref
-    /// and this order, so re-emitting the same position converges on the same
-    /// row.
+    /// turn recorded outside the bridge can still be placed against the calls
+    /// it follows. It is also the bubble's IDENTITY input: the storage door
+    /// derives the MESSAGE id from the run identity and this order, so
+    /// re-emitting the same position converges on the same row.
+    ///
+    /// This explicit door never advances [`Self::witness_turn`]'s compatibility
+    /// allocator. Durable runtime dispatch and fallback use a private sibling
+    /// that also binds [`EngineExecutorConfig::run_id`].
     ///
     /// # Errors
     ///
-    /// Same as [`Self::witness_turn`].
+    /// Same as [`Self::witness_turn`], plus `Error::InvalidConfig` when `order`
+    /// exceeds the witness MESSAGE order ceiling.
     pub fn witness_turn_at(
         &self,
         kind: ExecutorUtterance,
@@ -462,9 +476,46 @@ impl<'a> EngineNativeExecutor<'a> {
         occurred_at: u64,
         order: u32,
     ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        self.witness_turn_for_run_at(None, kind, text, occurred_at, order)
+    }
+
+    fn allocate_witness_order(&self) -> EngineExecutorResult<u32> {
+        // Relaxed ordering is sufficient: the atomic protects only uniqueness
+        // of the returned integer, not publication of any other memory.
+        self.next_witness_order
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |order| {
+                if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
+                    None
+                } else {
+                    order.checked_add(1)
+                }
+            })
+            .map_err(|_| {
+                Error::InvalidConfig(
+                    "engine executor compatibility witness order exhausted".to_owned(),
+                )
+                .into()
+            })
+    }
+
+    fn witness_turn_for_run_at(
+        &self,
+        run_id: Option<EntityId>,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+    ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
+            return Err(Error::InvalidConfig(
+                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
+            )
+            .into());
+        }
         self.verify_storage_dispatcher_binding()?;
         Ok(Some(self.storage.witness_executor_utterance(
             self.gated_write.run_ref(),
+            run_id,
             kind,
             text,
             occurred_at,
@@ -547,6 +598,7 @@ impl<'a> EngineNativeExecutor<'a> {
             let bridge_start = record.bridge_calls.len();
             let mut host = RecordingJsHost::new(
                 self.gated_write,
+                config.run_id,
                 bridge_start as u64,
                 config.determinism,
                 self.legibility,
@@ -738,10 +790,11 @@ impl<'a> EngineNativeExecutor<'a> {
     /// bubble, keyed by content into the same routed raw-output store the run
     /// already uses, and is therefore visible to a retry whose replay record
     /// never landed — that covers the record-persistence failure the marker
-    /// sits between. And the bubble's own IDENTITY is derived from the run ref
-    /// and this order (`code_run::storage`), so even a crash landing between
-    /// the witness and the marker re-puts THAT row rather than adding a second
-    /// one. There is no window in which the transcript grows twice.
+    /// sits between. And the bubble's own IDENTITY is derived from the durable
+    /// run identity and this order (`code_run::storage`), so even a crash
+    /// landing between the witness and the marker re-puts THAT row rather than
+    /// adding a second one. There is no window in which the transcript grows
+    /// twice.
     fn emit_trailing_speak_fallback(
         &self,
         record: &CodeRunReplayRecord,
@@ -771,7 +824,13 @@ impl<'a> EngineNativeExecutor<'a> {
             .frozen_unix_ms
             .saturating_add(u64::from(order))
             / 1000;
-        self.witness_turn_at(ExecutorUtterance::Speak, text, occurred_at, order)?;
+        self.witness_turn_for_run_at(
+            Some(config.run_id),
+            ExecutorUtterance::Speak,
+            text,
+            occurred_at,
+            order,
+        )?;
         // Written AFTER the bubble, deliberately: a marker written first and
         // then orphaned by a crash would silence a run that never spoke, which
         // is the failure the fallback exists to prevent. Written second, the
@@ -948,6 +1007,7 @@ impl<'a> EngineNativeExecutor<'a> {
 
 struct RecordingJsHost<'a> {
     gated_write: &'a GatedActorWrite<'a>,
+    run_id: EntityId,
     next_seq: u64,
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
@@ -963,12 +1023,14 @@ struct RecordingJsHost<'a> {
 impl<'a> RecordingJsHost<'a> {
     fn new(
         gated_write: &'a GatedActorWrite<'a>,
+        run_id: EntityId,
         next_seq: u64,
         determinism: CodeRunDeterminism,
         legibility: Option<ExecutorLegibility<'a>>,
     ) -> Self {
         Self {
             gated_write,
+            run_id,
             next_seq,
             determinism,
             legibility,
@@ -1024,7 +1086,10 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome));
         }
-        let outcome = match self.gated_write.dispatch(call.clone()) {
+        let outcome = match self
+            .gated_write
+            .dispatch_for_executor_run(self.run_id, call.clone())
+        {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
