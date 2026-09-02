@@ -161,12 +161,11 @@ pub fn evaluate_scoped_mcp_call(
     grant: ScopedMcpGrantRef<'_>,
     call: ScopedMcpCall<'_>,
 ) -> ScopedMcpConsentDecision {
-    // Both sides of the server axis go through the ONE shared safe-segment
-    // authority and are compared in that single canonical form, so an accepted
-    // spelling never becomes a different authority and an UNSAFE one (a colon,
-    // whitespace, a wildcard, or the empty segment) can never auto-fire
-    // (ONE-1885). Persisted grant scopes are additionally required to be stored
-    // in exactly this canonical form by `validate_scope`/`decode_scope`.
+    // Both sides of the server axis must already satisfy the ONE shared
+    // safe-segment rule and are then compared byte-for-byte. Admission never
+    // trims, case-folds, or aliases `'-'` with `'_'`, so a different spelling
+    // cannot become the granted authority (ONE-1885). Persisted grant scopes
+    // carry this exact spelling through `validate_scope`/`decode_scope`.
     let Some(grant_server) = canonical_scoped_server(grant.server) else {
         return ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::InvalidGrant);
     };
@@ -1283,7 +1282,8 @@ fn is_canonical_non_empty(value: &str) -> bool {
     !value.trim().is_empty() && value == value.trim()
 }
 
-/// The ONE shared safe canonical scoped-server segment (ONE-1885).
+/// Validates and preserves the ONE exact canonical scoped-server segment
+/// (ONE-1885).
 fn canonical_scoped_server(server: &str) -> Option<String> {
     crate::connector_key::canonical_scoped_server_segment(server)
 }

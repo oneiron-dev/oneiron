@@ -449,25 +449,31 @@ fn scoped_server_of(grant: &StandingOutboundGrant) -> String {
 fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
     let grant_id = EntityId::from_bytes([0x5C; 16]).expect("grant id");
 
-    // An accepted spelling maps to the canonical segment ONCE, at mint, so the
-    // stored grant and the per-grant capability key producer name the same
-    // authority byte-for-byte.
-    for spelling in ["files", "FILES"] {
-        let grant = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
-            &scoped_intent(spelling),
-            10,
-            vec![0xA5; 32],
-            [0xB6; 32],
-        )?;
-        assert_eq!(scoped_server_of(&grant), "files", "{spelling}");
-    }
+    let files = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+        &scoped_intent("files"),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    assert_eq!(scoped_server_of(&files), "files");
+
+    // Hyphen and underscore are separate canonical identity bytes. Grant mint,
+    // capability production, and storage retain each spelling exactly.
     let hyphen = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
         &scoped_intent("my-server"),
         10,
         vec![0xA5; 32],
         [0xB6; 32],
     )?;
-    assert_eq!(scoped_server_of(&hyphen), "my_server");
+    let underscore = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+        &scoped_intent("my_server"),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    assert_eq!(scoped_server_of(&hyphen), "my-server");
+    assert_eq!(scoped_server_of(&underscore), "my_server");
+    assert_ne!(hyphen.scope, underscore.scope);
     let capability = crate::connector_key::ScopedCapabilityProvenance::mint("my-server", &grant_id)
         .expect("safe canonical server");
     assert_eq!(capability.server(), scoped_server_of(&hyphen));
@@ -483,10 +489,12 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
     let encoded = encode_standing_outbound_grant_body(&hyphen)?;
     assert_eq!(decode_standing_outbound_grant_body(&encoded)?, hyphen);
 
-    // Every unsafe spelling fails closed at the constructor: a colon (which
-    // would forge extra capability-key segments), ASCII or Unicode whitespace
-    // anywhere, a wildcard/glob spelling, and the empty segment.
+    // Every non-canonical or unsafe spelling fails closed at the constructor
+    // and persisted scope boundary. No case-folding or punctuation alias exists.
     for unsafe_server in [
+        "Files",
+        "FILES",
+        "MY-SERVER",
         "files:extra",
         ":",
         " files",
@@ -511,24 +519,19 @@ fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
             .is_err(),
             "unsafe scoped server {unsafe_server:?} must not mint a grant"
         );
-        // The same rule guards the persisted scope: a forged row never decodes.
         assert!(
             decode_scope(&scoped_mcp_scope_value(unsafe_server)).is_err(),
             "unsafe stored scoped server {unsafe_server:?} must fail closed"
         );
     }
 
-    // Stored-form == authority-form: a merely well-shaped non-canonical server
-    // would govern under one spelling and enforce under another.
-    for non_canonical in ["Files", "my-server"] {
-        assert!(
-            decode_scope(&scoped_mcp_scope_value(non_canonical)).is_err(),
-            "non-canonical stored scoped server {non_canonical:?} must fail closed"
-        );
-    }
+    assert_eq!(
+        decode_scope(&scoped_mcp_scope_value("my-server"))?,
+        hyphen.scope
+    );
     assert_eq!(
         decode_scope(&scoped_mcp_scope_value("my_server"))?,
-        hyphen.scope
+        underscore.scope
     );
 
     // An in-memory grant carrying an unsafe server can never be persisted.
@@ -565,38 +568,44 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
     .expect("safe canonical server");
     let scope = grant.scope.scoped_mcp_grant().expect("scoped grant");
 
-    // Admission canonicalizes the call's server through the SAME authority, so
-    // an accepted spelling of the granted server still auto-fires.
-    for spelling in ["my-server", "my_server", "MY-SERVER"] {
+    assert_eq!(
+        crate::outbound_consent::evaluate_scoped_mcp_call(scope, call("my-server")),
+        crate::outbound_consent::ScopedMcpConsentDecision::AutoFire
+    );
+    // Admission is exact: underscore, mixed case, whitespace, and unsafe
+    // spellings cannot alias the granted hyphenated server.
+    for wrong_server in [
+        "my_server",
+        "MY-SERVER",
+        "My-Server",
+        "my-server:extra",
+        " my-server",
+        "my-server ",
+        "my server",
+        "my-*",
+        "",
+        "other",
+    ] {
         assert_eq!(
-            crate::outbound_consent::evaluate_scoped_mcp_call(scope, call(spelling)),
-            crate::outbound_consent::ScopedMcpConsentDecision::AutoFire,
-            "{spelling}"
-        );
-    }
-    // An unsafe call server has no safe canonical segment at all: it escalates
-    // rather than being trimmed or normalized into some other authority.
-    for unsafe_server in ["my_server:extra", " my_server", "my server", "my_*", ""] {
-        assert_eq!(
-            crate::outbound_consent::evaluate_scoped_mcp_call(scope, call(unsafe_server)),
+            crate::outbound_consent::evaluate_scoped_mcp_call(scope, call(wrong_server)),
             crate::outbound_consent::ScopedMcpConsentDecision::Escalate(
                 crate::outbound_consent::ScopedMcpEscalationReason::WrongServer
             ),
-            "{unsafe_server}"
+            "{wrong_server}"
         );
     }
-    // A different safe server is still the wrong server.
-    assert_eq!(
-        crate::outbound_consent::evaluate_scoped_mcp_call(scope, call("other")),
-        crate::outbound_consent::ScopedMcpConsentDecision::Escalate(
-            crate::outbound_consent::ScopedMcpEscalationReason::WrongServer
-        )
-    );
 
-    // A grant whose own server is not a safe segment authorizes nothing, even
-    // when the call spells the same bytes.
+    // A grant whose own server is non-canonical or unsafe authorizes nothing,
+    // even when the call repeats the same bytes.
     let endpoints = vec!["https://files.internal.example".to_owned()];
-    for unsafe_server in ["my_server:extra", "my server", "my_*", ""] {
+    for unsafe_server in [
+        "My-Server",
+        "MY-SERVER",
+        "my_server:extra",
+        "my server",
+        "my-*",
+        "",
+    ] {
         let unsafe_scope = ScopedMcpGrantRef {
             server: unsafe_server,
             tool: "read_file",

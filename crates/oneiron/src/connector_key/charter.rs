@@ -340,11 +340,12 @@ fn parse_charter_channel(token: &str) -> std::result::Result<String, String> {
 /// The operand must name one identity the engine could actually mint — a safe
 /// canonical server segment and a real grant id — so it compiles into the
 /// tagged entry the capability matcher compares whole against a typed
-/// [`ScopedCapabilityProvenance`]. Canonicalization is the shared one, so a
-/// hyphenated or shouted server spelling compiles to the same bytes the per-grant
-/// key producer stores. Anything else (a wildcard, a truncated key, an ordinary
-/// channel string, a colon-bearing server) fails closed with this line's number
-/// rather than becoming a prohibition nothing can honour.
+/// [`ScopedCapabilityProvenance`]. The key must already use the exact canonical
+/// server spelling; the compiler never case-folds it or aliases `'-'` with
+/// `'_'`.
+/// Anything else (a wildcard, a truncated key, an ordinary channel string, a
+/// colon-bearing server) fails closed with this line's number rather than
+/// becoming a prohibition nothing can honour.
 fn parse_charter_never_key(token: &str) -> std::result::Result<String, String> {
     let capability =
         ScopedCapabilityProvenance::parse_owner_capability_key(token).ok_or_else(|| {

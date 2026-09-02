@@ -6596,8 +6596,8 @@ fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
     let (decision, _) = check_effect(&vault, &neighbour_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
 
-    // The owner may spell a hyphenated server: charter text and the key producer
-    // meet in the same underscore-normalized byte-space.
+    // A canonical hyphenated server stays hyphenated through grant, key,
+    // charter compilation, and gate matching.
     let hyphen_hex = hyphen_grant.to_hex();
     let hyphen_text = format!("never key mcp:my-server:grant:{hyphen_hex}");
     let pending = vault.propose_connector_charter(&hyphen_key, &hyphen_text, 1_003)?;

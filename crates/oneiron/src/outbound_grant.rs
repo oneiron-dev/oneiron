@@ -349,10 +349,11 @@ impl StandingOutboundGrant {
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
             origin_receipt_ref: non_empty_optional(intent.origin_receipt_ref.as_deref())?,
             scope: StandingOutboundGrantScope::ScopedMcp {
-                // The stored scope carries the ONE safe canonical server
-                // segment, so the grant, the per-grant capability key producer,
-                // admission, and charter compilation all name the same
-                // authority; an unsafe spelling fails closed at mint (ONE-1885).
+                // The stored scope carries the ONE exact canonical server
+                // segment, so the grant, key producer, admission, and charter
+                // compiler all retain the same identity bytes. Mixed-case,
+                // trimmed, or otherwise non-canonical spellings fail closed at
+                // mint instead of becoming aliases (ONE-1885).
                 server: canonical_scoped_server(&intent.server)?,
                 tool: intent.tool.clone(),
                 data_class_ceiling: intent.data_class_ceiling,
@@ -863,10 +864,10 @@ fn canonical_non_empty_str(value: &str) -> Result<()> {
     Ok(())
 }
 
-/// The ONE safe canonical scoped-server segment, shared with the capability-key
-/// producer, the scoped-call admission path, and the charter compiler
-/// (ONE-1885). A colon, any ASCII or Unicode whitespace, a wildcard/glob
-/// spelling, or an empty segment fails closed here for every scoped seam.
+/// Validates and preserves the ONE exact canonical scoped-server segment,
+/// shared with the capability-key producer, scoped-call admission, and charter
+/// compiler (ONE-1885). No scoped seam trims, case-folds, or aliases identity
+/// punctuation.
 fn canonical_scoped_server(server: &str) -> Result<String> {
     crate::connector_key::canonical_scoped_server_segment(server).ok_or_else(invalid_grant)
 }

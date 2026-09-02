@@ -2139,24 +2139,70 @@ fn scoped_capability_identity_requires_one_safe_server() {
     let grant_id = test_id(0xAB);
     let hex = grant_id.to_hex();
 
-    // A safe canonical server mints the one per-grant capability connector, and
-    // an accepted non-canonical spelling maps to that SAME canonical segment —
-    // producer and grant/admission/compiler therefore share one byte-space.
     let minted = ScopedCapabilityProvenance::mint("files", &grant_id).expect("safe server");
     assert_eq!(minted.server(), "files");
     assert_eq!(minted.connector(), format!("mcp:files:grant:{hex}"));
     assert_eq!(minted.grant_id(), grant_id);
     assert_eq!(minted.ordinary_channel(), "mcp:files");
-    for spelling in ["My-Server", "MY_SERVER", "my_server"] {
-        let mapped = ScopedCapabilityProvenance::mint(spelling, &grant_id).expect("safe server");
-        assert_eq!(mapped.server(), "my_server", "{spelling}");
-        assert_eq!(mapped.connector(), format!("mcp:my_server:grant:{hex}"));
-    }
 
-    // Unsafe segments mint NOTHING: a colon (which would forge extra segments),
-    // ASCII or Unicode whitespace anywhere, a wildcard/glob spelling, and the
-    // empty segment all fail closed at the one shared authority.
+    // Hyphen and underscore are both canonical identity bytes. Neither the
+    // producer nor connector-key canonicalization may alias one to the other.
+    let hyphen = ScopedCapabilityProvenance::mint("my-server", &grant_id)
+        .expect("canonical hyphenated server");
+    let underscore = ScopedCapabilityProvenance::mint("my_server", &grant_id)
+        .expect("canonical underscored server");
+    assert_eq!(hyphen.server(), "my-server");
+    assert_eq!(hyphen.connector(), format!("mcp:my-server:grant:{hex}"));
+    assert_eq!(hyphen.ordinary_channel(), "mcp:my-server");
+    assert_eq!(underscore.server(), "my_server");
+    assert_eq!(underscore.connector(), format!("mcp:my_server:grant:{hex}"));
+    assert_ne!(hyphen, underscore);
+    assert_eq!(
+        normalize_connector_key(hyphen.connector()),
+        hyphen.connector()
+    );
+    assert_eq!(
+        normalize_connector_key(underscore.connector()),
+        underscore.connector()
+    );
+    let (_tmp, vault) = temp_vault();
+    let hyphen_key_id = test_id(0xAD);
+    let underscore_key_id = test_id(0xAE);
+    vault
+        .register_connector_key(
+            &hyphen_key_id,
+            ConnectorKeyRecord::active(hyphen.connector(), None, Vec::new(), 10),
+        )
+        .expect("register hyphenated capability connector");
+    vault
+        .register_connector_key(
+            &underscore_key_id,
+            ConnectorKeyRecord::active(underscore.connector(), None, Vec::new(), 10),
+        )
+        .expect("register underscored capability connector");
+    assert_eq!(
+        vault
+            .connector_key_for(hyphen.connector(), None)
+            .expect("lookup hyphenated connector")
+            .expect("hyphenated connector key")
+            .0,
+        hyphen_key_id
+    );
+    assert_eq!(
+        vault
+            .connector_key_for(underscore.connector(), None)
+            .expect("lookup underscored connector")
+            .expect("underscored connector key")
+            .0,
+        underscore_key_id
+    );
+
+    // Non-canonical and unsafe segments mint NOTHING. Admission never trims or
+    // case-folds a server identifier into another authority.
     for unsafe_server in [
+        "My-Server",
+        "MY_SERVER",
+        "FILES",
         "acme:extra",
         "acme:grant:ff",
         ":",
@@ -2186,20 +2232,20 @@ fn scoped_capability_identity_requires_one_safe_server() {
         );
     }
 
-    // Persisted parts are re-derived, never trusted: a non-canonical stored
-    // server or a connector that is not EXACTLY what (server, grant) mints has
-    // no capability identity at all.
+    // Persisted parts are re-derived, never trusted, and retain the exact
+    // admitted server punctuation through the round trip.
     assert_eq!(
         ScopedCapabilityProvenance::from_persisted_parts(
             &grant_id,
-            "files",
-            &format!("mcp:files:grant:{hex}")
+            "my-server",
+            &format!("mcp:my-server:grant:{hex}")
         )
-        .expect("consistent parts"),
-        minted
+        .expect("consistent hyphenated parts"),
+        hyphen
     );
     for (server, connector) in [
-        ("Files", format!("mcp:files:grant:{hex}")),
+        ("My-Server", format!("mcp:my-server:grant:{hex}")),
+        ("my-server", format!("mcp:my_server:grant:{hex}")),
         ("files", format!("mcp:other:grant:{hex}")),
         (
             "files",
@@ -2230,19 +2276,21 @@ fn charter_compiles_the_never_key_capability_form() {
         compiled.compiled.never_list,
         vec![format!("capability-key:{key}")]
     );
-    // Shouted and hyphenated spellings canonicalize into the SAME stored bytes
-    // the per-grant key producer mints.
-    let shouty =
-        compile_connector_charter(&format!("NEVER KEY MCP:Acme:Grant:{}", hex.to_uppercase()))
-            .expect("compiles");
-    assert_eq!(shouty.compiled, compiled.compiled);
-    assert_eq!(shouty.compiled_hash, compiled.compiled_hash);
+    // Canonical hyphen and underscore server identities retain their exact
+    // bytes and compile to distinct per-grant prohibitions.
     let hyphen = compile_connector_charter(&format!("never key mcp:my-server:grant:{hex}"))
-        .expect("compiles");
+        .expect("canonical hyphenated key compiles");
+    let underscore = compile_connector_charter(&format!("never key mcp:my_server:grant:{hex}"))
+        .expect("canonical underscored key compiles");
     assert_eq!(
         hyphen.compiled.never_list,
+        vec![format!("capability-key:mcp:my-server:grant:{hex}")]
+    );
+    assert_eq!(
+        underscore.compiled.never_list,
         vec![format!("capability-key:mcp:my_server:grant:{hex}")]
     );
+    assert_ne!(hyphen.compiled, underscore.compiled);
     assert_eq!(
         hyphen.compiled.never_list[0],
         format!(
@@ -2251,7 +2299,7 @@ fn charter_compiles_the_never_key_capability_form() {
                 .expect("safe server")
                 .connector()
         ),
-        "compiler and producer meet in one canonical byte-space"
+        "compiler and producer preserve the same exact identity bytes"
     );
 
     // Bare `never key` reads as the capability form with its operand missing.
@@ -2263,13 +2311,17 @@ fn charter_compiles_the_never_key_capability_form() {
     );
 
     // Every operand that is not one canonical, safe, real capability identity
-    // fails closed AT COMPILE with its line number: partial wildcards, unsafe
-    // servers (colon-forged, whitespace, glob), truncated or over-long keys, and
-    // a grant id that is not a real id.
+    // fails closed AT COMPILE with its line number: mixed-case aliases, partial
+    // wildcards, unsafe servers (colon-forged, whitespace, glob), truncated or
+    // over-long keys, and a grant id that is not a real id.
     // (Whitespace never reaches this seam: the directive is tokenized on
     // whitespace, so an unsafe spelling like `mcp:ac me:grant:<id>` is not even
     // a directive. The shared segment rule rejects it at every other seam.)
     for operand in [
+        format!("MCP:acme:grant:{hex}"),
+        format!("mcp:Acme:grant:{hex}"),
+        format!("mcp:acme:Grant:{hex}"),
+        format!("mcp:acme:grant:{}", hex.to_uppercase()),
         "mcp:acme:grant:*".to_owned(),
         format!("mcp:acme*:grant:{hex}"),
         format!("mcp:*:grant:{hex}"),

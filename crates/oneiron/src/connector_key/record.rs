@@ -378,20 +378,29 @@ impl ConnectorKeyRecord {
     }
 }
 
-/// Normalizes an outbound connector/channel key (duplicate of the private
-/// `outbound.rs::normalize_key` on the shared string space).
+/// Canonicalizes an ordinary outbound connector/channel key (duplicate of the
+/// private `outbound.rs::normalize_key` on the shared string space).
+///
+/// An already-canonical per-grant connector spelling is the one exception:
+/// storage must retain an admitted server identity, so `'-'` and `'_'` remain
+/// distinct. Preserving that exact string does not classify an ordinary
+/// lookalike or confer authority; only typed [`ScopedCapabilityProvenance`] does.
 #[must_use]
 pub(crate) fn normalize_connector_key(value: &str) -> String {
+    if canonical_scoped_capability_connector_parts(value).is_some() {
+        return value.to_owned();
+    }
     value.trim().to_ascii_lowercase().replace('-', "_")
 }
 
 /// The reserved compiled-entry tag for a capability-only `never key` rule
 /// (ONE-1885).
 ///
-/// `normalize_connector_key` maps `'-'` to `'_'` and every ordinary
-/// `"{channel}:{verb}"` entry is stored in that canonical form, so no ordinary
-/// entry can ever begin with this tag. The two rule modes are therefore
-/// STRUCTURALLY disjoint: nothing has to guess a rule's mode from its shape.
+/// An ordinary channel beginning with `"capability-key:"` is not a canonical
+/// per-grant connector shape, so `normalize_connector_key` rewrites that
+/// prefix's `'-'` to `'_'`. No ordinary entry can therefore begin with this
+/// tag. The two rule modes stay STRUCTURALLY disjoint: nothing has to guess a
+/// rule's mode from its shape.
 pub(super) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
 
 /// The ONE safe canonical scoped-server segment rule (ONE-1885).
@@ -399,32 +408,44 @@ pub(super) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
 /// Every scoped creation seam — the scoped grant constructor, the persisted
 /// grant scope encode/decode/validate, the scoped-call admission path, the
 /// per-grant capability-key producer, and the charter capability-key compiler —
-/// asks exactly this function, so no seam can trim or normalize a value another
-/// seam rejects. Returns the canonical segment, or `None` when the spelling is
-/// unsafe: any `':'` (which would forge extra segments in
-/// `mcp:{server}:grant:{id}`), any ASCII or Unicode whitespace anywhere, `'*'`
-/// or any other wildcard/glob punctuation, an empty segment, and anything
-/// outside the ASCII `[a-z0-9_.]` canonical alphabet. An accepted non-canonical
-/// spelling (a hyphenated or shouted server) maps to its canonical underscore
-/// form, and that one form is what every seam then stores, produces, and
-/// matches on.
+/// asks exactly this function. Admission accepts only an already-canonical,
+/// non-empty ASCII `[a-z0-9_.-]` segment. It never trims, folds case, or rewrites
+/// `'-'` to `'_'`; those bytes name distinct server identities. A colon,
+/// whitespace, wildcard/glob punctuation, non-ASCII byte, or any other spelling
+/// outside that alphabet has no scoped capability identity.
 #[must_use]
 pub(crate) fn canonical_scoped_server_segment(server: &str) -> Option<String> {
-    // `normalize_connector_key` only trims the ENDS, so internal whitespace
-    // would survive; a leading/trailing or Unicode space would silently become
-    // a different authority. Reject whitespace on the raw spelling instead.
-    if server.chars().any(char::is_whitespace) {
-        return None;
-    }
-    let canonical = normalize_connector_key(server);
-    if canonical.is_empty()
-        || !canonical.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'.'
+    if server.is_empty()
+        || !server.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || byte == b'_'
+                || byte == b'.'
+                || byte == b'-'
         })
     {
         return None;
     }
-    Some(canonical)
+    Some(server.to_owned())
+}
+
+/// Parses only the canonical storage spelling of a per-grant connector. This
+/// shape check preserves identity bytes in connector-key storage; it does not
+/// confer capability authority on an ordinary lookalike.
+fn canonical_scoped_capability_connector_parts(text: &str) -> Option<(&str, EntityId)> {
+    let mut parts = text.split(':');
+    let (Some("mcp"), Some(server), Some("grant"), Some(grant_hex), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return None;
+    };
+    canonical_scoped_server_segment(server)?;
+    let grant_id = EntityId::from_hex(grant_hex).ok()?;
+    (grant_id.to_hex() == grant_hex).then_some((server, grant_id))
 }
 
 /// The one typed per-grant scoped capability identity (ONE-1885).
@@ -481,23 +502,9 @@ impl ScopedCapabilityProvenance {
     /// applied to a connector string to manufacture a capability.
     #[must_use]
     pub(crate) fn parse_owner_capability_key(text: &str) -> Option<Self> {
-        let canonical = normalize_connector_key(text);
-        let mut parts = canonical.split(':');
-        let (Some("mcp"), Some(server), Some("grant"), Some(grant_hex), None) = (
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-        ) else {
-            return None;
-        };
-        let grant_id = EntityId::from_hex(grant_hex).ok()?;
-        if grant_id.to_hex() != grant_hex {
-            return None;
-        }
+        let (server, grant_id) = canonical_scoped_capability_connector_parts(text)?;
         let minted = Self::mint(server, &grant_id)?;
-        (minted.connector == canonical).then_some(minted)
+        (minted.connector == text).then_some(minted)
     }
 
     /// The exact engine-produced per-grant connector key.

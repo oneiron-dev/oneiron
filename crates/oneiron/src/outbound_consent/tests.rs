@@ -92,6 +92,7 @@ fn register_active_scoped_connector_key_with_budgets(
 struct RecordingResultSender {
     sent_payloads: Vec<Vec<u8>>,
     sent_endpoints: Vec<Option<String>>,
+    sent_servers: Vec<String>,
 }
 
 impl OutboundResultSender for RecordingResultSender {
@@ -99,6 +100,7 @@ impl OutboundResultSender for RecordingResultSender {
         self.sent_payloads.push(call.payload().to_vec());
         self.sent_endpoints
             .push(call.resolved_endpoint().map(str::to_owned));
+        self.sent_servers.push(call.server().to_owned());
         OutboundTransportResult {
             outcome: OutboundSendOutcome::Acked,
             raw_result: RawOutboundResult::new(None, None, None, None),
@@ -1694,4 +1696,85 @@ fn capability_provenance_survives_admission_ledger_and_recovery() {
         })
         .expect("neighbour row");
     assert_eq!(neighbour_row.state, IntentState::Done);
+}
+
+#[test]
+fn canonical_hyphenated_server_round_trips_through_key_ledger_and_recovery_transport() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x75);
+    let key_id = entity(0x76);
+    let mut intent = scoped_intent();
+    intent.server = "files-prod".to_owned();
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
+        .expect("mint canonical hyphenated grant");
+    assert_eq!(
+        grant.scope.scoped_mcp_grant().expect("scoped grant").server,
+        "files-prod"
+    );
+    register_scoped_key(&vault, &key_id, &grant_id, "files-prod");
+    let exact_connector = scoped_capability_connector("files-prod", &grant_id);
+    assert_eq!(
+        vault
+            .get_connector_key(&key_id)
+            .expect("read connector key")
+            .expect("stored connector key")
+            .connector,
+        exact_connector
+    );
+    let underscore_connector = scoped_capability_connector("files_prod", &grant_id);
+    assert!(
+        vault
+            .connector_key_for(&underscore_connector, None)
+            .expect("look up distinct underscore identity")
+            .is_none(),
+        "hyphenated key must not alias the underscored identity"
+    );
+
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut call = scoped_call();
+    call.server = "files-prod".to_owned();
+    let mut ambiguous = AmbiguousResultSender;
+    let initial = execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        OutboundToolDescriptor {
+            read_only_hint: Some(false),
+            idempotency_supported_hint: Some(true),
+        },
+        AttemptId::from_bytes(&[0x75; 16]).expect("attempt id"),
+        1,
+        call,
+        FrozenMcpPayload::new(b"exact server identity".to_vec()),
+        11,
+        &mut ambiguous,
+    )
+    .expect("seed paid Pending row");
+    assert_eq!(initial.effectful_sends, 1);
+
+    // The durable row is decoded before inspection, covering the persisted
+    // call and typed-provenance round trip rather than only in-memory values.
+    let rows = intent_ledger_records(&vault).expect("read pending row");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].server, "files-prod");
+    let provenance = rows[0]
+        .capability_provenance()
+        .expect("typed scoped provenance");
+    assert_eq!(provenance.server(), "files-prod");
+    assert_eq!(provenance.connector(), exact_connector);
+    assert_eq!(rows[0].state, IntentState::Pending);
+
+    let mut transport = RecordingResultSender::default();
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 12, 30_000)
+            .expect("recover exact frozen call");
+    assert_eq!(recovered.effectful_sends, 1);
+    assert_eq!(recovered.authorization_rejections, 0);
+    assert_eq!(transport.sent_servers, vec!["files-prod".to_owned()]);
+    let rows = intent_ledger_records(&vault).expect("read recovered row");
+    assert_eq!(rows[0].server, "files-prod");
+    assert_eq!(rows[0].state, IntentState::Done);
 }
