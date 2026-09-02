@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
@@ -7,6 +7,7 @@ use std::thread;
 
 use serde_json::{Value, json};
 
+use super::render::normalize_link_list;
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -298,6 +299,13 @@ fn http_redirect(location: &str) -> String {
     )
 }
 
+fn http_redirect_with_body(location: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
 /// A loopback port nothing is listening on, for the connection-refused leg.
 const REFUSED_ENDPOINT: &str = "http://127.0.0.1:1/v1/scrape";
 
@@ -390,6 +398,7 @@ fn fixture_url(raw: &str) -> Url {
 struct FakeHeadless {
     html: String,
     final_url: String,
+    status: u16,
 }
 
 impl HeadlessRenderer for FakeHeadless {
@@ -397,6 +406,7 @@ impl HeadlessRenderer for FakeHeadless {
         Ok(HeadlessDocument {
             html: self.html.clone(),
             final_url: self.final_url.clone(),
+            status: self.status,
         })
     }
 }
@@ -409,6 +419,7 @@ impl HeadlessRenderer for BadHeadless {
         Ok(HeadlessDocument {
             html: "<html><body>x</body></html>".to_string(),
             final_url: "about:blank".to_string(),
+            status: 200,
         })
     }
 }
@@ -894,6 +905,7 @@ fn headless_reuses_native_readability_extraction() {
     let headless_source: Arc<dyn HeadlessRenderer> = Arc::new(FakeHeadless {
         html: article_html(),
         final_url: "https://fixture.test/articles/one".to_string(),
+        status: 200,
     });
     let headless: Arc<dyn Renderer> = Arc::new(NativeHeadlessRenderer::new(headless_source));
 
@@ -929,6 +941,38 @@ fn headless_reuses_native_readability_extraction() {
         .render("https://fixture.test/articles/one")
         .expect_err("about:blank is not a web transport");
     assert_eq!(error.kind, RendererErrorKind::InvalidResponse);
+}
+
+#[test]
+fn headless_rejects_error_status_and_oversized_rendered_html() {
+    let not_found = NativeHeadlessRenderer::new(Arc::new(FakeHeadless {
+        html: article_html(),
+        final_url: "https://fixture.test/missing".to_string(),
+        status: 404,
+    }))
+    .render("https://fixture.test/missing")
+    .expect_err("a rendered target error page is not content");
+    assert_eq!(not_found.kind, RendererErrorKind::Transport);
+    assert!(
+        not_found.message.contains("404"),
+        "the target status is carried through the browser boundary: {}",
+        not_found.message
+    );
+
+    let oversized = NativeHeadlessRenderer::new(Arc::new(FakeHeadless {
+        html: "x".repeat(65),
+        final_url: "https://fixture.test/large".to_string(),
+        status: 200,
+    }))
+    .with_max_response_bytes(NonZeroUsize::new(64).expect("non-zero ceiling"))
+    .render("https://fixture.test/large")
+    .expect_err("rendered HTML is bounded before DOM extraction");
+    assert_eq!(oversized.kind, RendererErrorKind::InvalidResponse);
+    assert!(
+        oversized.message.contains("64") && oversized.message.contains("ceiling"),
+        "the rendered-body refusal names its ceiling: {}",
+        oversized.message
+    );
 }
 
 #[test]
@@ -976,6 +1020,29 @@ fn native_http_get_maps_status_and_final_url() {
 }
 
 #[test]
+fn native_http_rejects_redirect_status_when_redirects_are_disabled() {
+    let html = served_article_html();
+    let base = spawn_fixture_server(move |request| match request_path(request).as_str() {
+        "/redirect" => http_redirect_with_body("/final", &html),
+        "/final" => http_response("200 OK", "text/html; charset=utf-8", &html),
+        _ => http_response("404 Not Found", "text/plain", "missing"),
+    });
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("redirect-disabled client");
+    let error = NativeReadabilityRenderer::new(client)
+        .render(&format!("{base}/redirect"))
+        .expect_err("a 302 body is never admitted as the requested page");
+    assert_eq!(error.kind, RendererErrorKind::Transport);
+    assert!(
+        error.message.contains("302"),
+        "the non-success status is explicit: {}",
+        error.message
+    );
+}
+
+#[test]
 fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
     let recorded: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&recorded);
@@ -984,31 +1051,29 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
             .expect("recorded requests")
             .push(request.to_string());
         match request_path(request).as_str() {
-            // `sourceURL` deliberately echoes a *different* request URL than the
-            // navigation-final `url`, so the mapping proves it reads the final
-            // identity from the response contract rather than the request echo.
+            // This is the standard self-hosted response shape: `sourceURL` is
+            // the page URL field and there is no invented `metadata.url`.
             "/v1/scrape" => http_response(
                 "200 OK",
                 "application/json",
-                r##"{"success":true,"data":{"markdown":"# Firecrawl page\n\nBody text that clears the floor.","links":["https://example.test/next","https://example.test/next","mailto:x@example.test","/relative"],"metadata":{"title":"  Example  ","sourceURL":"https://redirect.test/requested","url":"https://example.test/page#frag","statusCode":200}}}"##,
+                r##"{"success":true,"data":{"markdown":"# Firecrawl page\n\nBody text that clears the floor.","links":["https://example.test/next","https://example.test/next","mailto:x@example.test","/relative"],"metadata":{"title":"  Example  ","sourceURL":"https://example.test/page#frag","statusCode":200}}}"##,
             ),
             "/not-success" => http_response("200 OK", "application/json", r#"{"success":false}"#),
             "/no-data" => http_response("200 OK", "application/json", r#"{"success":true}"#),
             "/no-markdown" => http_response(
                 "200 OK",
                 "application/json",
-                r#"{"success":true,"data":{"metadata":{"url":"https://example.test/page"}}}"#,
+                r#"{"success":true,"data":{"metadata":{"sourceURL":"https://example.test/page"}}}"#,
             ),
-            // A request echo alone is not a navigation-final identity.
             "/no-final" => http_response(
                 "200 OK",
                 "application/json",
-                r#"{"success":true,"data":{"markdown":"body","metadata":{"sourceURL":"https://example.test/page"}}}"#,
+                r#"{"success":true,"data":{"markdown":"body","metadata":{"title":"No URL"}}}"#,
             ),
             "/bad-final" => http_response(
                 "200 OK",
                 "application/json",
-                r#"{"success":true,"data":{"markdown":"body","metadata":{"url":"mailto:x@example.test"}}}"#,
+                r#"{"success":true,"data":{"markdown":"body","metadata":{"sourceURL":"mailto:x@example.test"}}}"#,
             ),
             "/boom" => http_response("502 Bad Gateway", "text/plain", "upstream"),
             _ => http_response("404 Not Found", "text/plain", "missing"),
@@ -1044,11 +1109,7 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
     assert_eq!(page.title, "Example");
     assert_eq!(
         page.final_url, "https://example.test/page",
-        "the navigation-final `url` is normalized and supplies the final URL"
-    );
-    assert_ne!(
-        page.final_url, "https://redirect.test/requested",
-        "the request-echoing sourceURL never supplies the final URL"
+        "the standard sourceURL field is normalized and supplies the best available final identity"
     );
     assert_eq!(page.canonical_url, "https://example.test/page");
     assert_eq!(
@@ -1058,8 +1119,7 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
             "https://example.test/relative".to_string(),
         ],
         "links are normalized, filtered to HTTP(S), sorted and deduplicated, and \
-         a relative link resolves against the navigation-final `url` host rather \
-         than the sourceURL host"
+         a relative link resolves against sourceURL"
     );
 
     for path in [
@@ -2203,7 +2263,9 @@ fn userinfo_credentials_are_refused_and_never_reach_a_diagnostic() {
 
     // A credentialed link never enters a frontier.
     assert!(
-        normalize_link_list([CREDENTIALED_URL], &fixture_url("https://example.test/")).is_empty(),
+        normalize_link_list([CREDENTIALED_URL], &fixture_url("https://example.test/"))
+            .expect("one bounded link normalizes")
+            .is_empty(),
         "a credentialed link is not walkable"
     );
 }
@@ -2213,7 +2275,7 @@ fn response_bodies_are_read_under_an_explicit_byte_ceiling() {
     let html = served_article_html();
     let oversized_html = "x".repeat(8 * 1024);
     let oversized_envelope = format!(
-        r#"{{"success":true,"data":{{"markdown":"{}","metadata":{{"url":"https://example.test/page","statusCode":200}}}}}}"#,
+        r#"{{"success":true,"data":{{"markdown":"{}","metadata":{{"sourceURL":"https://example.test/page","statusCode":200}}}}}}"#,
         "y".repeat(8 * 1024)
     );
     let base = spawn_fixture_server(move |request| match request_path(request).as_str() {
@@ -2340,12 +2402,12 @@ fn firecrawl_target_status_is_read_from_the_envelope_before_transport_status() {
         "/target-404" => http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Not Found\n\nThe page is gone, and this body is long enough to clear any floor.","metadata":{"url":"https://example.test/gone","statusCode":404}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Not Found\n\nThe page is gone, and this body is long enough to clear any floor.","metadata":{"sourceURL":"https://example.test/gone","statusCode":404}}}"##,
         ),
         "/target-500" => http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Server Error\n\nAn upstream failure page that would otherwise be indexed as content.","metadata":{"url":"https://example.test/boom","statusCode":500}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Server Error\n\nAn upstream failure page that would otherwise be indexed as content.","metadata":{"sourceURL":"https://example.test/boom","statusCode":500}}}"##,
         ),
         // A non-2xx transport whose body still carries the scrape verdict.
         "/error-envelope" => http_response(
@@ -2358,12 +2420,12 @@ fn firecrawl_target_status_is_read_from_the_envelope_before_transport_status() {
         "/target-ok" => http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target that really did answer, with a body past the floor.","metadata":{"url":"https://example.test/fine","statusCode":200}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target that really did answer, with a body past the floor.","metadata":{"sourceURL":"https://example.test/fine","statusCode":200}}}"##,
         ),
         "/target-unreported" => http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target whose status the envelope never mentions at all.","metadata":{"url":"https://example.test/quiet"}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target whose status the envelope never mentions at all.","metadata":{"sourceURL":"https://example.test/quiet"}}}"##,
         ),
         _ => http_response("404 Not Found", "text/plain", "missing"),
     });
@@ -2629,7 +2691,7 @@ fn a_credentialed_provider_identity_and_crawl_reason_stay_sanitized() {
         http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Envelope\n\nA body comfortably past any configured extraction floor.","metadata":{"url":"http:agent:s3cr3t@example.test/page","statusCode":200}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Envelope\n\nA body comfortably past any configured extraction floor.","metadata":{"sourceURL":"http:agent:s3cr3t@example.test/page","statusCode":200}}}"##,
         )
     });
     let error = FirecrawlRenderer::new(
@@ -3297,6 +3359,40 @@ fn fetch_result_decoding_rejects_a_malformed_content_hash() {
 }
 
 #[test]
+fn fetch_result_decoding_validates_and_normalizes_canonical_url() {
+    let object = encoded_fetch_result();
+
+    for invalid in [
+        "/relative",
+        "file:///tmp/page",
+        "https://agent:s3cr3t@example.test/page",
+    ] {
+        let mut payload = object.clone();
+        payload.insert("canonical_url".to_string(), json!(invalid));
+        let reported = serde_json::from_value::<FetchResult>(Value::Object(payload))
+            .expect_err("an identity the writer cannot produce must not rematerialize");
+        let detail = reported.to_string();
+        assert!(
+            detail.contains("canonical_url"),
+            "the decode refusal names the invalid identity field: {detail}"
+        );
+        assert!(
+            !detail.contains("agent") && !detail.contains("s3cr3t"),
+            "decode diagnostics never repeat embedded credentials: {detail}"
+        );
+    }
+
+    let mut normalized = object;
+    normalized.insert(
+        "canonical_url".to_string(),
+        json!("HTTPS://EXAMPLE.TEST:443/a/../page#fragment"),
+    );
+    let decoded = serde_json::from_value::<FetchResult>(Value::Object(normalized))
+        .expect("a valid web identity decodes");
+    assert_eq!(decoded.canonical_url, "https://example.test/page");
+}
+
+#[test]
 fn fetch_result_decoding_keeps_the_field_doors_closed() {
     let object = encoded_fetch_result();
 
@@ -3343,9 +3439,18 @@ fn fetch_result_decoding_keeps_the_field_doors_closed() {
 
 #[test]
 fn link_ceilings_are_nonzero_and_ordered() {
+    let raw_per_page = MAX_RAW_LINKS_PER_PAGE;
     let per_page = MAX_DISCOVERED_LINKS_PER_PAGE;
     let frontier_ceiling = super::ladder::MAX_CRAWL_FRONTIER_URLS;
+    assert!(
+        raw_per_page > 0,
+        "a zero raw-link ceiling would admit no link"
+    );
     assert!(per_page > 0, "a zero per-page ceiling would admit no page");
+    assert!(
+        per_page <= raw_per_page,
+        "normalized links cannot outnumber inspected raw entries"
+    );
     assert!(
         frontier_ceiling > 0,
         "a zero frontier ceiling would admit no walk at all"
@@ -3368,6 +3473,52 @@ fn dense_links(host: &str, count: usize) -> Vec<String> {
         links.push(format!("https://{host}/p/{index}"));
     }
     links
+}
+
+#[test]
+fn raw_link_entries_are_bounded_before_normalization_and_firecrawl_allocation() {
+    let duplicates = vec!["/same".to_string(); MAX_RAW_LINKS_PER_PAGE + 1];
+    let dense = RenderedPage {
+        markdown: "markdown body for a duplicate-heavy page".to_string(),
+        title: "duplicates".to_string(),
+        canonical_url: "https://raw-links.test/page".to_string(),
+        final_url: "https://raw-links.test/page".to_string(),
+        discovered_links: duplicates.clone(),
+    };
+    let dense_rung = scripted(&call_log(), RendererKind::Readability, Ok(dense));
+    let reported = WebFetcher::new(rung(&dense_rung))
+        .expect("readability slot")
+        .with_minimum_content(ladder_minimum())
+        .fetch("https://raw-links.test/page", 1_700_000_042)
+        .expect_err("duplicates still consume raw-link work");
+    let WebFetchError::AllRenderersFailed { attempts, .. } = reported else {
+        panic!("expected the ordered ladder trace");
+    };
+    assert!(
+        attempts[0].render_reason().contains("raw-link ceiling"),
+        "the custom-renderer boundary reports raw work overflow: {:?}",
+        attempts[0]
+    );
+
+    // The provider sequence is rejected by its serde visitor. It never first
+    // becomes an unbounded Vec and then reaches normalization.
+    let envelope = json!({
+        "success": true,
+        "data": {
+            "markdown": "body",
+            "links": duplicates,
+            "metadata": {
+                "sourceURL": "https://raw-links.test/page",
+                "statusCode": 200,
+            },
+        },
+    });
+    let rejected = serde_json::from_value::<FirecrawlScrapeEnvelope>(envelope)
+        .expect_err("Firecrawl raw links are bounded during decoding");
+    assert!(
+        rejected.to_string().contains("raw-link ceiling"),
+        "the decode refusal names the raw-entry bound: {rejected}"
+    );
 }
 
 #[test]
@@ -3477,6 +3628,51 @@ fn a_page_beyond_the_discovered_link_ceiling_fails_closed() {
 }
 
 #[test]
+fn a_long_chain_is_bounded_by_live_frontier_not_historical_enqueues() {
+    let frontier_ceiling = super::ladder::MAX_CRAWL_FRONTIER_URLS;
+    let seed = fixture_url("https://chain.test/p/0");
+    let mut walk = super::ladder::CrawlWalk::new(seed, frontier_ceiling + 2);
+    let markdown = "markdown body for a one-link chain";
+    let hash = content_hash(markdown);
+
+    // Cross the old historical-enqueue ceiling while the live queue remains one
+    // URL wide. Clearing admitted pages keeps this a frontier-state regression,
+    // not a 65k-result allocation test.
+    for index in 0..=frontier_ceiling {
+        let current = walk
+            .pop_frontier()
+            .expect("the previous page left exactly one live successor");
+        let requested = current.to_string();
+        walk.visited.insert(requested.clone());
+        let next = format!("https://chain.test/p/{}", index + 1);
+        walk.absorb_success(
+            requested.clone(),
+            FetchResult {
+                markdown: markdown.to_string(),
+                title: String::new(),
+                canonical_url: requested,
+                fetched_at: 1_700_000_042,
+                content_hash: hash.clone(),
+                renderer: RendererKind::Readability,
+            },
+            &[next],
+            &current,
+            CrawlScope::SameSite,
+        );
+        assert!(
+            walk.failed.is_empty(),
+            "historical enqueue count cannot reject chain page {index}"
+        );
+        assert_eq!(
+            walk.frontier.len(),
+            1,
+            "the live frontier remains exactly one URL wide at page {index}"
+        );
+        walk.pages.clear();
+    }
+}
+
+#[test]
 fn frontier_link_budget_exhaustion_is_surfaced_not_accumulated() {
     let per_page = MAX_DISCOVERED_LINKS_PER_PAGE;
     let frontier_ceiling = super::ladder::MAX_CRAWL_FRONTIER_URLS;
@@ -3524,19 +3720,23 @@ fn frontier_link_budget_exhaustion_is_surfaced_not_accumulated() {
         ))
         .expect("the walk survives frontier exhaustion");
 
-    // The frontier holds the seed plus one entry per hub before any hub runs,
-    // and each admitted hub adds its whole distinct allotment.
-    let mut enqueued = 1 + hub_count;
+    // After the seed, the live frontier contains the hubs. Each hub leaves the
+    // queue before its links are measured, and only an admitted hub adds its
+    // distinct allotment. A refused hub therefore frees its own queue slot for a
+    // later sibling instead of consuming historical capacity forever.
+    let mut live_frontier = hub_count;
     let mut admitted = Vec::new();
     let mut crossing = Vec::new();
     for index in 0..hub_count {
-        if enqueued + per_page > frontier_ceiling {
+        live_frontier -= 1;
+        if live_frontier + per_page > frontier_ceiling {
             crossing.push(index);
         } else {
-            enqueued += per_page;
+            live_frontier += per_page;
             admitted.push(index);
         }
     }
+
     assert!(
         !admitted.is_empty() && !crossing.is_empty(),
         "the fixture must actually straddle the frontier ceiling"

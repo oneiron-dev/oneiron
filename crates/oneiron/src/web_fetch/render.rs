@@ -8,17 +8,19 @@
 //! constant, trait, and rung adapter, and reaches these units through
 //! `pub(super)`.
 
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::num::NonZeroUsize;
 
 use dom_smoothie::{Config, Readability, TextMode};
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{
-    FIRECRAWL_UNREPORTED_STATUS, FirecrawlRenderer, MAX_REPORTED_CHARSET_LABEL_CHARS,
-    REDACTED_USERINFO, RenderedPage, RendererError, RendererResult, WebFetchError, WebFetchResult,
-    normalize_link_list,
+    FIRECRAWL_UNREPORTED_STATUS, FirecrawlRenderer, MAX_DISCOVERED_LINKS_PER_PAGE,
+    MAX_RAW_LINKS_PER_PAGE, MAX_REPORTED_CHARSET_LABEL_CHARS, REDACTED_USERINFO, RenderedPage,
+    RendererError, RendererResult, WebFetchError, WebFetchResult,
 };
 
 /// The single normalization step: drop the fragment and keep whatever the URL
@@ -29,6 +31,48 @@ pub(super) fn normalize_url(url: &Url) -> Url {
     let mut normalized = url.clone();
     normalized.set_fragment(None);
     normalized
+}
+
+/// Normalizes, filters to HTTP(S), sorts bytewise, and deduplicates one raw
+/// link list under both work ceilings.
+///
+/// Raw entries are counted before parsing or joining, so duplicates and invalid
+/// spellings cannot buy unbounded CPU work. Distinct normalized entries are
+/// checked before insertion, so the set itself never grows past its ceiling.
+/// Either overflow is a typed rung failure; no shortened link list is admitted.
+pub(super) fn normalize_link_list<I, S>(links: I, base: &Url) -> RendererResult<Vec<String>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut raw_count = 0_usize;
+    let mut normalized = BTreeSet::new();
+    for raw in links {
+        raw_count = raw_count.saturating_add(1);
+        if raw_count > MAX_RAW_LINKS_PER_PAGE {
+            return Err(RendererError::invalid_response(format!(
+                "web fetch page exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
+            )));
+        }
+        let Ok(joined) = base.join(raw.as_ref().trim()) else {
+            continue;
+        };
+        let candidate = normalize_url(&joined);
+        if !is_web_url(&candidate) {
+            continue;
+        }
+        let identity = candidate.to_string();
+        if normalized.contains(&identity) {
+            continue;
+        }
+        if normalized.len() == MAX_DISCOVERED_LINKS_PER_PAGE {
+            return Err(RendererError::invalid_response(format!(
+                "web fetch page exceeded the {MAX_DISCOVERED_LINKS_PER_PAGE} discovered-link ceiling"
+            )));
+        }
+        normalized.insert(identity);
+    }
+    Ok(normalized.into_iter().collect())
 }
 
 /// Absolute HTTP(S), a non-empty host, and no embedded credentials: the only
@@ -399,7 +443,10 @@ fn resolve_canonical_url(final_url: &Url, candidate: Option<&str>) -> String {
 /// Collects `a[href]` targets from the document *before* `parse()` mutates it.
 /// Relative hrefs resolve against the document `<base href>` when one is
 /// present and otherwise against the response-final URL.
-fn collect_document_links(readability: &Readability, final_url: &Url) -> Vec<String> {
+fn collect_document_links(
+    readability: &Readability,
+    final_url: &Url,
+) -> RendererResult<Vec<String>> {
     let base = readability
         .doc
         .select("base[href]")
@@ -409,10 +456,18 @@ fn collect_document_links(readability: &Readability, final_url: &Url) -> Vec<Str
         .and_then(|href| final_url.join(href.trim()).ok())
         .unwrap_or_else(|| final_url.clone());
 
+    // Collect only under the raw-entry ceiling. The DOM is already present, but
+    // an anchor-dense document must not create an unbounded second vector before
+    // normalization gets its turn.
     let anchors = readability.doc.select("a[href]");
-    let mut hrefs: Vec<String> = Vec::new();
+    let mut hrefs = Vec::new();
     for node in anchors.nodes() {
         if let Some(href) = node.attr("href") {
+            if hrefs.len() == MAX_RAW_LINKS_PER_PAGE {
+                return Err(RendererError::invalid_response(format!(
+                    "web fetch page exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
+                )));
+            }
             hrefs.push(href.to_string());
         }
     }
@@ -434,7 +489,7 @@ pub(super) fn extract_readable_page(html: &str, final_url: &Url) -> RendererResu
             RendererError::extraction(format!("readability construction failed: {error}"))
         })?;
 
-    let discovered_links = collect_document_links(&readability, &normalized_final);
+    let discovered_links = collect_document_links(&readability, &normalized_final)?;
 
     let article = readability.parse().map_err(|error| {
         RendererError::extraction(format!("readability extraction failed: {error}"))
@@ -474,19 +529,70 @@ pub(super) struct FirecrawlScrapeEnvelope {
 struct FirecrawlScrapeData {
     #[serde(default)]
     markdown: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bounded_links")]
     links: Vec<String>,
     #[serde(default)]
     metadata: Option<FirecrawlScrapeMetadata>,
 }
 
+/// Decodes Firecrawl's link array without first expanding the whole peer-chosen
+/// sequence into a `Vec<String>`. The visitor stops at the first entry beyond
+/// the raw ceiling, so even an array of tiny duplicates has bounded allocation
+/// and bounded decode work.
+fn deserialize_bounded_links<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoundedLinksVisitor;
+
+    impl<'de> Visitor<'de> for BoundedLinksVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_RAW_LINKS_PER_PAGE} Firecrawl link strings"
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            if sequence
+                .size_hint()
+                .is_some_and(|length| length > MAX_RAW_LINKS_PER_PAGE)
+            {
+                return Err(de::Error::custom(format!(
+                    "firecrawl links exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
+                )));
+            }
+            let capacity = sequence
+                .size_hint()
+                .unwrap_or_default()
+                .min(MAX_RAW_LINKS_PER_PAGE);
+            let mut links = Vec::with_capacity(capacity);
+            while let Some(link) = sequence.next_element::<String>()? {
+                if links.len() == MAX_RAW_LINKS_PER_PAGE {
+                    return Err(de::Error::custom(format!(
+                        "firecrawl links exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
+                    )));
+                }
+                links.push(link);
+            }
+            Ok(links)
+        }
+    }
+
+    deserializer.deserialize_seq(BoundedLinksVisitor)
+}
+
 /// The pinned self-hosted scrape metadata.
 ///
-/// `url` is where the scraper actually landed, and is the only identity this
-/// module accepts as navigation-final. The envelope's `sourceURL` echoes the
-/// request and is deliberately not read: a request echo cannot witness a
-/// redirect, so trusting it would silently make every redirect invisible to
-/// containment and to the crawl seen set.
+/// Standard Firecrawl responses expose the page identity as `sourceURL`; they
+/// do not expose the previously assumed `url` field. The API has no separate
+/// redirect-final identity, so this one validated field supplies both the
+/// renderer's canonical URL and its best available navigation identity.
 ///
 /// `statusCode` is the *target page's* status, which is the reason a perfectly
 /// well-formed success envelope can still describe a page that failed.
@@ -494,8 +600,8 @@ struct FirecrawlScrapeData {
 struct FirecrawlScrapeMetadata {
     #[serde(default)]
     title: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
+    #[serde(default, rename = "sourceURL")]
+    source_url: Option<String>,
     #[serde(default, rename = "statusCode")]
     status_code: Option<u16>,
 }
@@ -523,27 +629,28 @@ impl FirecrawlRenderer {
         let markdown = data.markdown.ok_or_else(|| {
             RendererError::invalid_response("firecrawl scrape envelope carried no markdown")
         })?;
-        // Navigation-final identity, taken from the response contract. The
-        // request-echoing `sourceURL` is never consulted for it.
-        let Some(reported_final) = metadata.url else {
+        // Firecrawl's actual response field. It is the service's only page URL,
+        // so validate it once and use that same conservative identity for both
+        // canonical reporting and crawl containment.
+        let Some(reported_url) = metadata.source_url else {
             return Err(RendererError::invalid_response(
-                "firecrawl scrape envelope carried no data.metadata.url",
+                "firecrawl scrape envelope carried no data.metadata.sourceURL",
             ));
         };
-        let final_url = validated_web_url(&reported_final).ok_or_else(|| {
+        let final_url = validated_web_url(&reported_url).ok_or_else(|| {
             RendererError::invalid_response(format!(
-                "firecrawl final URL is not credential-free absolute http(s): {}",
-                redact_url_credentials(&reported_final)
+                "firecrawl sourceURL is not credential-free absolute http(s): {}",
+                redact_url_credentials(&reported_url)
             ))
         })?;
         let final_url_text = final_url.to_string();
-        let discovered_links = normalize_link_list(&data.links, &final_url);
+        let discovered_links = normalize_link_list(&data.links, &final_url)?;
         Ok(RenderedPage {
             markdown,
             title: metadata.title.unwrap_or_default().trim().to_string(),
-            // The pinned envelope carries no separate canonical field, so the
-            // navigation-final identity supplies both. Only `final_url` ever
-            // participates in containment or the seen set.
+            // The pinned envelope carries one page URL and no separate
+            // redirect-final field, so that validated identity supplies both.
+            // Only `final_url` participates in containment or the seen set.
             canonical_url: final_url_text.clone(),
             final_url: final_url_text,
             discovered_links,

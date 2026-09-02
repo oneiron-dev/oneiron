@@ -13,12 +13,14 @@ use std::collections::{BTreeSet, VecDeque};
 use reqwest::Url;
 use serde::Deserialize;
 
-use super::render::{is_web_url, normalize_url, renderer_canonical_url, renderer_final_url};
+use super::render::{
+    is_web_url, normalize_link_list, normalize_url, renderer_canonical_url, renderer_final_url,
+    validated_web_url,
+};
 use super::{
     ALL_RENDERERS_FAILED_REASON_PREFIX, CROSS_SITE_REDIRECT_REASON, CrawlCompletion,
     CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, Renderer, RendererAttemptFailure,
-    RendererError, RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher,
-    content_hash, normalize_link_list,
+    RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher, content_hash,
 };
 
 /// Ceiling on how many distinct URLs one walk's frontier may hold.
@@ -38,14 +40,7 @@ pub(super) const FRONTIER_LINK_BUDGET_EXCEEDED_REASON: &str = "frontier_link_bud
 /// attempt and admits neither page nor links, and a seed that does it stays a
 /// typed seed error. Nothing here ever hands back a shortened link list.
 fn bounded_link_list(links: Vec<String>, base: &Url) -> RendererResult<Vec<String>> {
-    let ceiling = super::MAX_DISCOVERED_LINKS_PER_PAGE;
-    let normalized = normalize_link_list(links, base);
-    if normalized.len() > ceiling {
-        return Err(RendererError::invalid_response(format!(
-            "web fetch page exceeded the {ceiling} discovered-link ceiling"
-        )));
-    }
-    Ok(normalized)
+    normalize_link_list(links, base)
 }
 
 /// Whether an absent ladder slot is an ordinary trace record or a fail-closed
@@ -185,8 +180,9 @@ impl WebFetcher {
 /// Mutable state of one breadth-first walk.
 pub(super) struct CrawlWalk {
     pub(super) frontier: VecDeque<Url>,
-    /// Frontier identity at enqueue time. Kills duplicate (diamond) enqueues.
-    enqueued: BTreeSet<String>,
+    /// Identities held by `frontier` right now. It kills duplicate (diamond)
+    /// enqueues without retaining every URL that was ever queued.
+    queued: BTreeSet<String>,
     /// Dequeue-time skip identity: requested URLs already attempted plus
     /// response-final URLs already reached. A requested URL enters this set
     /// before its own fetch, so membership is not evidence that a page for that
@@ -205,13 +201,13 @@ pub(super) struct CrawlWalk {
 
 impl CrawlWalk {
     pub(super) fn new(seed: Url, page_budget: usize) -> Self {
-        let mut enqueued = BTreeSet::new();
-        enqueued.insert(seed.to_string());
+        let mut queued = BTreeSet::new();
+        queued.insert(seed.to_string());
         let mut frontier = VecDeque::new();
         frontier.push_back(seed);
         Self {
             frontier,
-            enqueued,
+            queued,
             visited: BTreeSet::new(),
             completed_finals: BTreeSet::new(),
             pages: Vec::new(),
@@ -219,6 +215,20 @@ impl CrawlWalk {
             pinned_host: None,
             remaining_budget: page_budget,
         }
+    }
+
+    /// Removes one live frontier entry and its queue identity together.
+    pub(super) fn pop_frontier(&mut self) -> Option<Url> {
+        let current = self.frontier.pop_front()?;
+        self.queued.remove(current.as_str());
+        Some(current)
+    }
+
+    /// Restores a page that was popped only to discover the explicit page budget
+    /// was already exhausted.
+    pub(super) fn restore_front(&mut self, current: Url) {
+        self.queued.insert(current.to_string());
+        self.frontier.push_front(current);
     }
 
     pub(super) fn absorb_success(
@@ -261,13 +271,13 @@ impl CrawlWalk {
         }
 
         let fresh = self.fresh_links(links, scope, &pinned_host);
-        if self.enqueued.len().saturating_add(fresh.len()) > MAX_CRAWL_FRONTIER_URLS {
-            // The peer decides how many distinct URLs its pages spell, so the
-            // frontier refuses the crossing page exactly the way the cross-site
-            // arm does: the attempt is already counted, and neither the page nor
-            // one link of it is admitted. Admitting the page and dropping the
-            // overflowing tail instead would make `unvisited_urls` a quiet lie
-            // about what this walk still had in front of it.
+        if self.frontier.len().saturating_add(fresh.len()) > MAX_CRAWL_FRONTIER_URLS {
+            // The bound is over URLs still held in memory, not every URL the
+            // walk ever queued. A long one-link chain therefore remains a
+            // one-entry frontier, while a genuinely wide page is refused. The
+            // attempt is already counted, and neither the page nor one link of
+            // it is admitted. Dropping only the overflowing tail would make
+            // `unvisited_urls` a quiet lie about what remained in front of us.
             self.failed.push(CrawlPageFailure {
                 url: requested,
                 reason: FRONTIER_LINK_BUDGET_EXCEEDED_REASON.to_string(),
@@ -303,7 +313,10 @@ impl CrawlWalk {
                 continue;
             }
             let identity = normalized.to_string();
-            if !self.enqueued.contains(&identity) && seen.insert(identity) {
+            if !self.queued.contains(&identity)
+                && !self.visited.contains(&identity)
+                && seen.insert(identity)
+            {
                 fresh.push(normalized);
             }
         }
@@ -317,7 +330,7 @@ impl CrawlWalk {
         self.pages.push(page);
         self.completed_finals.insert(final_url.to_string());
         for link in fresh {
-            if self.enqueued.insert(link.to_string()) {
+            if self.queued.insert(link.to_string()) {
                 self.frontier.push_back(link);
             }
         }
@@ -411,10 +424,13 @@ impl TryFrom<FetchResultWire> for FetchResult {
         if wire.content_hash != content_hash(&wire.markdown) {
             return Err("content_hash does not match the markdown it arrived with".to_string());
         }
+        let canonical_url = validated_web_url(&wire.canonical_url).ok_or_else(|| {
+            "canonical_url must be a credential-free absolute http(s) URL".to_string()
+        })?;
         Ok(Self {
             markdown: wire.markdown,
             title: wire.title,
-            canonical_url: wire.canonical_url,
+            canonical_url: canonical_url.to_string(),
             fetched_at: wire.fetched_at,
             content_hash: wire.content_hash,
             renderer: wire.renderer,
