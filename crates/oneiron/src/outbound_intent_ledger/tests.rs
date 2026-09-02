@@ -1271,6 +1271,52 @@ fn endpoint_bound_row_without_capability_provenance_is_rejected_before_recovery_
     );
 }
 
+#[test]
+fn capability_row_naming_another_server_is_rejected_before_recovery_send() {
+    let (_dir, vault) = open_vault();
+    let capability = capability_fixture();
+    let mut record = capability_record(capability.clone());
+    // A SELF-CONSISTENT forged row: the typed identity is one the engine could
+    // really mint and the row digest is recomputed over it, but it names a
+    // server this call never went to. Capability provenance is bound to the
+    // call's own server, so the row must fail decode and never reach a sender.
+    record.capability_provenance = Some(
+        ScopedCapabilityProvenance::mint("other", &capability.grant_id())
+            .expect("safe canonical scoped server"),
+    );
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode forged capability row");
+    assert!(matches!(
+        decode_record(&key, &encoded),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("insert forged row");
+    wtxn.commit().expect("commit forged row");
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 101).expect("recovery");
+    assert_eq!(
+        sender.calls, 0,
+        "a capability naming another server must never be sent"
+    );
+    assert_eq!(recovery.scanned, 1);
+    assert_eq!(recovery.resent, 0);
+    assert_eq!(recovery.completed, 0);
+    assert_eq!(recovery.pending, 0);
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some(record.id),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }]
+    );
+}
+
 fn row_with_capability_value(encoded: &[u8], value: Value) -> Vec<u8> {
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("decode canonical row")

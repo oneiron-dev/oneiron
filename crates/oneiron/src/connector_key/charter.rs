@@ -7,7 +7,7 @@ use super::record::{
     CAPABILITY_NEVER_ENTRY_TAG, CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod,
     CompiledConnectorPolicy, ConnectorCharterBlock, EffectorBudget, EffectorBudgetDimension,
     EffectorBudgetOnExhaust, EffectorBudgetWindow, SCOPED_CHANNEL_NEVER_ENTRY_TAG,
-    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    ScopedCapabilityProvenance, is_canonical_scoped_channel, normalize_connector_key,
     validate_budget_row, validate_never_list_entry, validate_spend_unit,
 };
 
@@ -127,10 +127,21 @@ pub(crate) fn charter_never_list_matches(
 
 /// Matches the ordinary channel travelled by a typed scoped-MCP call.
 ///
-/// Typed calls read only the private exact-scoped entries emitted alongside
-/// normalized ordinary rules. The raw canonical `mcp:{server}` spelling keeps
-/// `-` and `_` distinct; capability provenance is supplied by verified
-/// admission, never inferred from connector text.
+/// A typed call reads exactly two things on this axis, and never the ordinary
+/// NORMALIZED entry for a named channel — that entry aliases `foo-bar` onto
+/// `foo_bar`, so reading it would let one server's rule bind another's calls:
+///
+/// 1. The private exact-scoped entries emitted alongside the normalized
+///    ordinary rules. Their raw canonical `mcp:{server}` spelling is compared
+///    WHOLE, so `-` and `_` stay distinct identities.
+/// 2. The whole-fleet wildcard channel `"*"` (`never <verb>`), which names no
+///    channel spelling at all and so cannot alias anything. It is the one
+///    ordinary form that legitimately binds every dispatch, typed included; the
+///    tagged form is deliberately never allowed to carry a wildcard channel, so
+///    this arm is where `never <verb>` keeps reaching a scoped call.
+///
+/// Capability provenance is supplied by verified admission, never inferred from
+/// connector text, and capability-only rules are a different mode entirely.
 pub(crate) fn charter_never_list_matches_scoped_channel(
     block: &ConnectorCharterBlock,
     raw_channel: &str,
@@ -138,13 +149,22 @@ pub(crate) fn charter_never_list_matches_scoped_channel(
 ) -> bool {
     let verb = verb.trim().to_ascii_lowercase();
     block.compiled.never_list.iter().any(|entry| {
-        let Some(exact_entry) = entry.strip_prefix(SCOPED_CHANNEL_NEVER_ENTRY_TAG) else {
+        if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG) {
+            return false;
+        }
+        let tagged = entry.strip_prefix(SCOPED_CHANNEL_NEVER_ENTRY_TAG);
+        let rule = tagged.unwrap_or(entry.as_str());
+        let Some((channel_part, verb_part)) = rule.rsplit_once(':') else {
             return false;
         };
-        let Some((channel_part, verb_part)) = exact_entry.rsplit_once(':') else {
-            return false;
+        // A tagged entry matches its EXACT raw channel; the only untagged entry
+        // a typed call may read is the whole-fleet wildcard.
+        let channel_matches = if tagged.is_some() {
+            channel_part == raw_channel
+        } else {
+            channel_part == "*"
         };
-        (channel_part == raw_channel) && (verb_part == "*" || verb_part == verb)
+        channel_matches && (verb_part == "*" || verb_part == verb)
     })
 }
 
@@ -249,16 +269,13 @@ fn compile_never_entries(entry: String) -> Vec<String> {
 
     let ordinary = format!("{}:{verb}", normalize_connector_key(channel));
     let mut entries = vec![ordinary];
+    // The private exact-scoped entry is emitted for exactly the shape the record
+    // validator accepts — one shared rule, so the compiler can never emit a
+    // tagged entry the validator would reject, nor withhold one it would accept.
     if is_canonical_scoped_channel(channel) {
         entries.push(format!("{SCOPED_CHANNEL_NEVER_ENTRY_TAG}{channel}:{verb}"));
     }
     entries
-}
-
-fn is_canonical_scoped_channel(channel: &str) -> bool {
-    channel
-        .strip_prefix("mcp:")
-        .is_some_and(|server| canonical_scoped_server_segment(server).is_some())
 }
 
 enum CharterDirective {

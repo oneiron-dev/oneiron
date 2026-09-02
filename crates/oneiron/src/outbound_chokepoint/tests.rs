@@ -64,14 +64,13 @@ fn charged_record(
     tool: &str,
     capability: Option<ScopedCapabilityProvenance>,
 ) -> IntentLedgerRecord {
-    let mut request = OutboundCallRequest::new(
-        AttemptId::from_bytes(&[0x5A; 16]).expect("attempt id"),
-        1,
-        "files",
-        tool,
-        b"recovery payload".to_vec(),
-        10,
-    );
+    // A capability row's typed provenance must name the row's OWN call server,
+    // exactly as durable validation requires, so these fixtures stay rows this
+    // engine could actually have written (ONE-1885).
+    let server = capability
+        .as_ref()
+        .map_or_else(|| "files".to_owned(), |value| value.server().to_owned());
+    let mut request = recovery_request(&server, tool);
     if let Some(capability) = capability {
         // Capability rows are minted only on the scoped path, which always
         // binds the authorization in the same admission step.
@@ -80,18 +79,44 @@ fn charged_record(
             .with_resolved_endpoint("https://files.example.test/mcp")
             .with_capability_provenance(capability);
     }
+    IntentLedgerRecord::pending(request, true, charged_marker(key_id))
+        .expect("pending ledger record")
+}
+
+/// The reconstructed v3 shape a recovery seam must never downgrade: endpoint-
+/// and binding-bound — so only scoped authorization could have written it —
+/// while the typed discriminator is absent.
+fn endpoint_bound_record_without_provenance(key_id: EntityId, tool: &str) -> IntentLedgerRecord {
     IntentLedgerRecord::pending(
-        request,
+        recovery_request("files", tool)
+            .with_authorization_binding(OutboundAuthorizationBinding::new([0xB1; 32]))
+            .with_resolved_endpoint("https://files.example.test/mcp"),
         true,
-        BudgetChargeMarker {
-            key_ref: Some(key_id),
-            budget_class: BudgetClass::Operation,
-            matched_rows: Vec::new(),
-            sends_debit: 0,
-            accounted_at_ms: 10,
-        },
+        charged_marker(key_id),
     )
     .expect("pending ledger record")
+}
+
+/// The frozen call identity every recovery fixture shares.
+fn recovery_request(server: &str, tool: &str) -> OutboundCallRequest {
+    OutboundCallRequest::new(
+        AttemptId::from_bytes(&[0x5A; 16]).expect("attempt id"),
+        1,
+        server,
+        tool,
+        b"recovery payload".to_vec(),
+        10,
+    )
+}
+
+fn charged_marker(key_id: EntityId) -> BudgetChargeMarker {
+    BudgetChargeMarker {
+        key_ref: Some(key_id),
+        budget_class: BudgetClass::Operation,
+        matched_rows: Vec::new(),
+        sends_debit: 0,
+        accounted_at_ms: 10,
+    }
 }
 
 #[derive(Default)]
@@ -144,6 +169,90 @@ fn recovery_rejects_reconstructed_capability_without_endpoint_before_transport()
             reason: IntentEscalationReason::BindingInvalid,
             ..
         })
+    ));
+}
+
+#[test]
+fn recovery_rejects_reconstructed_endpoint_row_without_provenance_before_transport() {
+    let (_tmp, vault) = temp_vault();
+    let key_id = entity(0xDC);
+    let capability = register_scoped_key(&vault, &key_id, &entity(0x94), "files");
+    let persisted = charged_record(key_id, "read_file", Some(capability));
+
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    insert_pending_in_txn(&vault, &mut wtxn, &persisted).expect("persist valid capability row");
+    wtxn.commit().expect("commit valid capability row");
+    force_sync(&vault).expect("sync valid capability row");
+
+    // The SAME durable identity, reconstructed without its typed discriminator.
+    // The endpoint and binding survive, so an ordinary reading of this row would
+    // send it; an endpoint-bound row is a scoped row and must fail closed.
+    let reconstructed = endpoint_bound_record_without_provenance(key_id, "read_file");
+    assert_eq!(
+        reconstructed.id, persisted.id,
+        "the reconstructed row must keep the persisted identity"
+    );
+    let authority = OutboundBindingAuthority::from_secret([0xAC; 32]);
+    let mut transport = CountingTransport::default();
+    let result = send_pending(&vault, &authority, reconstructed, 11, true, &mut transport)
+        .expect("recovery must fail closed");
+
+    assert_eq!(
+        transport.sends, 0,
+        "an untyped endpoint-bound row must not reach transport"
+    );
+    assert_eq!(result.dispatch.send_outcome, None);
+    assert_eq!(result.dispatch.state, Some(IntentState::Abandoned));
+    assert!(matches!(
+        result.dispatch.escalation,
+        Some(IntentEscalation {
+            reason: IntentEscalationReason::BindingInvalid,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn recovery_keeps_typed_scoped_channel_spellings_distinct() {
+    let (_tmp, vault) = temp_vault();
+    let hyphen_key = entity(0xC5);
+    let hyphen = register_scoped_key(&vault, &hyphen_key, &entity(0x91), "foo-bar");
+    let underscore_key = entity(0xC6);
+    let underscore = register_scoped_key(&vault, &underscore_key, &entity(0x92), "foo_bar");
+    // ONE stamped text on BOTH keys, naming the hyphenated server with the
+    // wildcard ordinary verb.
+    for key_id in [hyphen_key, underscore_key] {
+        stamp_charter(&vault, &key_id, "never * on mcp:foo-bar");
+    }
+    assert!(matches!(
+        recovery_governance(
+            &vault,
+            &charged_record(hyphen_key, "read_file", Some(hyphen)),
+        )
+        .expect("recovery governance"),
+        RecoveryGovernance::Block("charter_never_list")
+    ));
+    // Discriminating: `_` is a DIFFERENT server identity. Ordinary connector
+    // normalization would alias the two spellings, so recovery must read the
+    // exact scoped channel — the same rule the gate applied at admission.
+    assert!(matches!(
+        recovery_governance(
+            &vault,
+            &charged_record(underscore_key, "read_file", Some(underscore)),
+        )
+        .expect("recovery governance"),
+        RecoveryGovernance::Allow
+    ));
+
+    // The whole-fleet wildcard channel names no spelling at all, so it cannot
+    // alias anything and keeps reaching a typed capability dispatch here too.
+    let fleet_key = entity(0xC7);
+    let fleet = register_scoped_key(&vault, &fleet_key, &entity(0x93), "foo-bar");
+    stamp_charter(&vault, &fleet_key, "never read_file");
+    assert!(matches!(
+        recovery_governance(&vault, &charged_record(fleet_key, "read_file", Some(fleet)))
+            .expect("recovery governance"),
+        RecoveryGovernance::Block("charter_never_list")
     ));
 }
 
@@ -261,8 +370,9 @@ fn recovery_matches_ordinary_never_channel_rules_whole() {
         RecoveryGovernance::Allow
     ));
 
-    // The landed wildcard form still binds every channel, and it still reaches
-    // a capability dispatch through the ORDINARY channel it travels on.
+    // The landed wildcard form still binds every ordinary channel. (That it
+    // also still reaches a typed capability dispatch is proven in
+    // `recovery_keeps_typed_scoped_channel_spellings_distinct`.)
     let wildcard_key = entity(0xC3);
     register_key(&vault, &wildcard_key, "mcp:agenda");
     stamp_charter(&vault, &wildcard_key, "never read_file");

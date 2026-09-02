@@ -1762,6 +1762,42 @@ fn charter_never_list_matching_forms() {
         "mcp:foo-bar",
         "send"
     ));
+
+    // A typed call must NOT read the normalized ordinary entry for a named
+    // channel: that entry aliases `foo-bar` onto `foo_bar`, so reading it would
+    // let one server's rule bind another server's calls.
+    let normalized_ordinary = never_list_block(&["mcp:foo_bar:send"]);
+    for channel in ["mcp:foo_bar", "mcp:foo-bar"] {
+        assert!(
+            !charter_never_list_matches_scoped_channel(&normalized_ordinary, channel, "send"),
+            "normalized ordinary entry must not reach typed {channel}"
+        );
+    }
+    // The whole-fleet wildcard names no channel spelling at all, so it cannot
+    // alias anything and keeps binding every dispatch, typed included. The
+    // tagged form may never carry a wildcard channel, so this is the ONLY way
+    // `never <verb>` reaches a scoped call.
+    let fleet_wide = never_list_block(&["*:send"]);
+    for channel in ["mcp:foo-bar", "mcp:foo_bar"] {
+        assert!(charter_never_list_matches_scoped_channel(
+            &fleet_wide,
+            channel,
+            "send"
+        ));
+        assert!(!charter_never_list_matches_scoped_channel(
+            &fleet_wide,
+            channel,
+            "read_file"
+        ));
+    }
+    // A capability-only rule stays a different mode on this axis too.
+    let capability_rule =
+        never_list_block(&["capability-key:mcp:foo-bar:grant:ab12cd34ab12cd34ab12cd34ab12cd34"]);
+    assert!(!charter_never_list_matches_scoped_channel(
+        &capability_rule,
+        "mcp:foo-bar",
+        "send"
+    ));
 }
 
 #[test]

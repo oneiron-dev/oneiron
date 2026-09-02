@@ -6686,6 +6686,106 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
     assert!(charge.is_none());
     let (decision, _) = check_effect(&vault, &underscore_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // A named ordinary rule spelled the OTHER way never reaches the typed call:
+    // the normalized ordinary entry (`mcp:foo_bar:*` for either spelling) is not
+    // an axis a typed dispatch reads, so no aliasing can occur in either
+    // direction.
+    let alias_key = test_id(0xD6);
+    let alias_grant = test_id(0xD8);
+    let alias_principal = test_id(0xD9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &alias_grant,
+        &scoped_mcp_grant_intent(&alias_principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.register_connector_key(
+        &alias_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &alias_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let alias_effect = scoped_mcp_effect(alias_principal, "foo-bar");
+    let pending = vault.propose_connector_charter(&alias_key, "never * on mcp:foo_bar", 1_003)?;
+    vault.approve_connector_charter(&alias_key, pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &alias_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+#[test]
+fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
+    // `never <verb>` names NO channel spelling, so it cannot alias `foo-bar`
+    // onto `foo_bar` and must keep binding every dispatch — a typed scoped-MCP
+    // call included. The private exact-scoped entry deliberately never carries a
+    // wildcard channel, so this whole-fleet form is the one ordinary rule a
+    // typed call reads.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xE5), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xE6);
+    let grant_id = test_id(0xE7);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    let key_id = test_id(0xE8);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let effect = scoped_mcp_effect(principal, "foo-bar");
+    assert_eq!(
+        check_effect(&vault, &effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+
+    let pending = vault.propose_connector_charter(&key_id, "never read_file", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+
+    // Discriminating: the wildcard binds only the VERB it names. A second
+    // capability whose owner prohibited a DIFFERENT verb fleet-wide keeps its
+    // prior outcome, so this is not a blanket scoped deny.
+    let other_principal = test_id(0xE9);
+    let other_grant = test_id(0xEA);
+    let other_key = test_id(0xEB);
+    vault.mint_scoped_mcp_outbound_grant(
+        &other_grant,
+        &scoped_mcp_grant_intent(&other_principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.register_connector_key(
+        &other_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &other_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let pending = vault.propose_connector_charter(&other_key, "never send", 1_003)?;
+    vault.approve_connector_charter(&other_key, pending.compiled_hash, "owner", 1_004)?;
+    let other_effect = scoped_mcp_effect(other_principal, "foo-bar");
+    let (decision, _) = check_effect(&vault, &other_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
     Ok(())
 }
 

@@ -403,8 +403,16 @@ pub(crate) fn normalize_connector_key(value: &str) -> String {
 /// rule's mode from its shape.
 pub(super) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
 
-/// Reserved compiled entry for the exact ordinary channel of a typed scoped
-/// call. The ordinary normalized entry is retained alongside this private form.
+/// The reserved compiled-entry tag for the exact ordinary channel of a typed
+/// scoped-MCP call (ONE-1885). The ordinary normalized entry is retained
+/// alongside this private form.
+///
+/// Like the capability tag, this prefix is UNREACHABLE for an ordinary entry:
+/// an ordinary channel is stored normalized, and normalization rewrites `'-'`
+/// to `'_'` everywhere except an already-canonical `mcp:{server}:grant:{id}`
+/// connector — which begins with `"mcp:"`, not with this tag. The three rule
+/// modes therefore stay STRUCTURALLY disjoint and nothing has to guess a rule's
+/// mode from its shape.
 pub(super) const SCOPED_CHANNEL_NEVER_ENTRY_TAG: &str = "scoped-channel:";
 
 /// The ONE safe canonical scoped-server segment rule (ONE-1885).
@@ -729,7 +737,15 @@ fn validate_never_list_verb(verb: &str) -> Result<()> {
     }
 }
 
-fn is_canonical_scoped_channel(channel: &str) -> bool {
+/// The ONE rule for the exact ordinary channel of a typed scoped-MCP call:
+/// literal `"mcp:"` followed by a safe canonical server segment (ONE-1885).
+///
+/// The charter compiler emits the private tagged entry for exactly this shape
+/// and this validator accepts exactly this shape, so emit and accept cannot
+/// drift apart. Everything else — a mixed-case or wildcard server, an extra
+/// colon, a non-ASCII or unsafe byte, an ordinary lookalike — has no typed
+/// scoped channel and therefore never becomes a tagged entry.
+pub(super) fn is_canonical_scoped_channel(channel: &str) -> bool {
     channel
         .strip_prefix("mcp:")
         .is_some_and(|server| canonical_scoped_server_segment(server).is_some())
