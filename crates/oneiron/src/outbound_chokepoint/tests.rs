@@ -77,6 +77,7 @@ fn charged_record(
         // binds the authorization in the same admission step.
         request = request
             .with_authorization_binding(OutboundAuthorizationBinding::new([0xB1; 32]))
+            .with_resolved_endpoint("https://files.example.test/mcp")
             .with_capability_provenance(capability);
     }
     IntentLedgerRecord::pending(
@@ -91,6 +92,59 @@ fn charged_record(
         },
     )
     .expect("pending ledger record")
+}
+
+#[derive(Default)]
+struct CountingTransport {
+    sends: usize,
+}
+
+impl OutboundTransport for CountingTransport {
+    fn send(&mut self, _call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        self.sends += 1;
+        OutboundSendOutcome::Acked
+    }
+}
+
+#[test]
+fn recovery_rejects_reconstructed_capability_without_endpoint_before_transport() {
+    let (_tmp, vault) = temp_vault();
+    let key_id = entity(0xDB);
+    let capability = register_scoped_key(&vault, &key_id, &entity(0x90), "files");
+    let persisted = charged_record(key_id, "read_file", Some(capability));
+
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    insert_pending_in_txn(&vault, &mut wtxn, &persisted).expect("persist valid capability row");
+    wtxn.commit().expect("commit valid capability row");
+    force_sync(&vault).expect("sync valid capability row");
+
+    // Simulate a reconstructed in-memory v3 row whose capability provenance
+    // and binding look valid but whose endpoint is absent. The persisted copy
+    // remains valid so the recovery seam can abandon it durably on rejection.
+    let mut reconstructed = persisted;
+    reconstructed.resolved_endpoint = None;
+    let authority = OutboundBindingAuthority::from_secret([0xAC; 32]);
+    let mut transport = CountingTransport::default();
+    let result = send_pending(
+        &vault,
+        &authority,
+        reconstructed,
+        11,
+        true,
+        &mut transport,
+    )
+    .expect("recovery must fail closed");
+
+    assert_eq!(transport.sends, 0, "missing endpoint must not reach transport");
+    assert_eq!(result.dispatch.send_outcome, None);
+    assert_eq!(result.dispatch.state, Some(IntentState::Abandoned));
+    assert!(matches!(
+        result.dispatch.escalation,
+        Some(IntentEscalation {
+            reason: IntentEscalationReason::BindingInvalid,
+            ..
+        })
+    ));
 }
 
 #[test]

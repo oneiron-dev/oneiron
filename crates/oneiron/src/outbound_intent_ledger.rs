@@ -1980,6 +1980,11 @@ fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResul
             "outbound intent resolved_endpoint is invalid",
         ));
     }
+    if record.capability_provenance.is_some() && record.resolved_endpoint.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "capability-bound intent is missing resolved endpoint",
+        ));
+    }
     if record.resolved_endpoint.is_some() && record.authorization_binding.is_none() {
         return Err(IntentLedgerError::InvalidRecord(
             "endpoint-bound intent is missing authorization binding",

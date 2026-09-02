@@ -417,7 +417,12 @@ fn send_pending<T: OutboundTransport>(
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
     let call = FrozenOutboundCall::from_record(&record);
-    if record.resolved_endpoint.is_some()
+    // Scoped capability rows must always pass the frozen grant/binding/server/
+    // tool/endpoint check. Ordinary rows retain their existing endpoint-bound
+    // validation behavior; connector text never opts a row into this branch.
+    let requires_frozen_call_validation =
+        record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
+    if requires_frozen_call_validation
         && !matches!(
             authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
             FrozenCallValidation::Valid
@@ -461,7 +466,7 @@ fn send_pending<T: OutboundTransport>(
     }
 
     // F2 is checked again at the last in-process boundary before transport.
-    if record.resolved_endpoint.is_some()
+    if requires_frozen_call_validation
         && !matches!(
             authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
             FrozenCallValidation::Valid

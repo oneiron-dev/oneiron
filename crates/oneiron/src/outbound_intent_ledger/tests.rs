@@ -1185,7 +1185,9 @@ fn capability_fixture() -> ScopedCapabilityProvenance {
 
 fn capability_record(capability: ScopedCapabilityProvenance) -> IntentLedgerRecord {
     IntentLedgerRecord::pending(
-        request(attempt(31), 0, b"capability payload", 100).with_capability_provenance(capability),
+        request(attempt(31), 0, b"capability payload", 100)
+            .with_resolved_endpoint("https://files.example.test/mcp")
+            .with_capability_provenance(capability),
         true,
         BudgetChargeMarker {
             key_ref: None,
@@ -1196,6 +1198,41 @@ fn capability_record(capability: ScopedCapabilityProvenance) -> IntentLedgerReco
         },
     )
     .expect("pending record")
+}
+
+#[test]
+fn capability_row_without_resolved_endpoint_is_rejected_before_recovery_send() {
+    let (_dir, vault) = open_vault();
+    let mut record = capability_record(capability_fixture());
+    // Encode a reconstructed v3 row with a self-consistent digest, but with
+    // the endpoint that the scoped writer always freezes removed. This bypasses
+    // insertion validation so recovery must treat the row as corrupt rather
+    // than allowing it to reach a sender.
+    record.resolved_endpoint = None;
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode malformed capability row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("insert reconstructed row");
+    wtxn.commit().expect("commit reconstructed row");
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 101).expect("recovery");
+    assert_eq!(sender.calls, 0, "invalid capability row must never be sent");
+    assert_eq!(recovery.scanned, 1);
+    assert_eq!(recovery.resent, 0);
+    assert_eq!(recovery.completed, 0);
+    assert_eq!(recovery.pending, 0);
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some(record.id),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }]
+    );
 }
 
 fn row_with_capability_value(encoded: &[u8], value: Value) -> Vec<u8> {
