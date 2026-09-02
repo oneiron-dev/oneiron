@@ -1109,6 +1109,13 @@ impl Vault {
     /// through the update gate at the batch chokepoint. The raw
     /// `put_entity` door stays state-agnostic on purpose: sync remat and
     /// legacy-body upgrades write already-lifecycled records.
+    ///
+    /// ONE-1449 armed that gate for the AUTOMATED road only:
+    /// [`crate::skill_optimize::admit_optimized_skill_revision`] is the one
+    /// door an optimizer-born candidate reaches `active` through, and the
+    /// batch chokepoint refuses a bare flip of one. A user-authored candidate
+    /// is admitted by its owner through [`Vault::update_skill_record`],
+    /// exactly as before — the arming binds the loop, not the person.
     pub fn put_skill_record(
         &self,
         id: &EntityId,

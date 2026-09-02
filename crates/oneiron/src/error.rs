@@ -330,6 +330,7 @@ pub enum ErrorKind {
     EditProposalStale,
     SettleNotAuthorized,
     InvalidSkillBody,
+    SkillEditGateRetry,
     SkillContentAnchorTypeMismatch,
     InvalidAgentDefBody,
     AgentDefinitionNotFound,
@@ -1110,6 +1111,18 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// The world the ONE-1449 skill-edit gate was ruling over moved before the
+    /// ruling could commit: the reserved evidence changed under the scorer, or
+    /// a terminal reason read before the write door no longer held inside it.
+    ///
+    /// RETRYABLE, and structurally distinct from every refusal: the gate's
+    /// transaction rolled back, so NO verdict row, NO lifecycle closure, NO cap
+    /// spend and NO marker change was committed and nothing was learned about
+    /// the proposal. The proposal is exactly as it was before the call, and a
+    /// rerun over a settled ledger rules on it deterministically. A refusal, by
+    /// contrast, is an ANSWER and is always durable.
+    #[error("skill edit gate must be retried: {0}")]
+    SkillEditGateRetry(&'static str),
     /// The deterministic SKILL content-anchor id (ONE-1741) is already occupied
     /// by an entity of another kind, so the scan-verdict subject cannot be
     /// minted or reused without adopting a squatter. Nothing was written.
@@ -2319,6 +2332,7 @@ impl Error {
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
+            Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
             Self::SkillContentAnchorTypeMismatch { .. } => {
                 ErrorKind::SkillContentAnchorTypeMismatch
             }
@@ -2501,6 +2515,10 @@ impl Error {
         match self {
             Self::ConcurrentWrite(_) => true,
             Self::UpstreamToolFailure { .. } => true,
+            // ONE-1449: the gate committed nothing, so the same call over a
+            // settled ledger is the whole remedy. This is the one arm a
+            // scheduler reads to tell "retry me" from "answered no".
+            Self::SkillEditGateRetry(_) => true,
             // Transient by construction: the refusal clears once the last
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]

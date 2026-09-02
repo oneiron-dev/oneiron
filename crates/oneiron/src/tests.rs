@@ -980,7 +980,8 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
         serde_json::json!([
             "historical_loro_updates",
             "historical_loro_snapshots",
-            "derived_carriers"
+            "derived_carriers",
+            "redirect_table"
         ])
     );
     assert_eq!(job["retry_state"]["attempt_count"], 0);
@@ -995,6 +996,90 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
     let receipt = receipt_body(&receipt_raw);
     assert_eq!(receipt["sweep_queued_at"].as_u64(), Some(queued_at));
     assert!(receipt["sweep_complete_at"].is_null());
+    Ok(())
+}
+
+/// ARCH-0055 §9 (r6) end to end: hard-erasing a canonical head empties its
+/// redirect shell, widens the erasure's sweep scope to cover the shell's
+/// historical carriers, drops the author stamp from the type-76 event the
+/// walk touched — and does NOT turn the shell into a deletion (§10:
+/// merge-away is not deletion).
+#[test]
+fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&actor, &survivor, &loser] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(200, 200),
+            201,
+            b"cascade fixture body",
+        )?;
+    }
+
+    let event = match vault.apply_identity_topology_op(
+        &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![loser],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        }),
+        &crate::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(actor, EdgeActorClass::Human)),
+        202,
+    )? {
+        crate::identity_topology::IdentityOpOutcome::Applied { event, .. } => event,
+        outcome => panic!("auto merge must apply, got {outcome:?}"),
+    };
+    assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
+    assert!(!vault.get(&loser)?.expect("shell body").is_empty());
+
+    let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
+    assert!(outcome.existed);
+
+    // The leak r6 §9 names: neither the head nor its shell may still read.
+    assert_eq!(vault.get(&survivor)?, None);
+    assert_eq!(vault.get(&loser)?.expect("shell row").len(), 0);
+    assert_eq!(vault.count_dangling_redirect_payloads()?, 0);
+
+    // §10: the shell was EMPTIED, not deleted — its row survives and it
+    // carries no hard-delete marker of its own.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.local_hard_delete_marker_exists_in_txn(&rtxn, &survivor)?);
+    assert!(!vault.local_hard_delete_marker_exists_in_txn(&rtxn, &loser)?);
+    drop(rtxn);
+
+    // The shell rides the head's `h:` row, or its historical carriers are
+    // never swept and the bytes survive in history.
+    let rows = hard_erase_sweep_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+    let scoped: BTreeSet<String> = job["scope"]["entity_ids"]
+        .as_array()
+        .expect("entity_ids array")
+        .iter()
+        .map(|hex| hex.as_str().expect("hex string").to_owned())
+        .collect();
+    assert_eq!(scoped, BTreeSet::from([survivor.to_hex(), loser.to_hex()]));
+
+    // The author-stamp rider: the touched merge event loses its actor while
+    // staying the same effective ledger event (same seq, same action, and a
+    // shell state the fold still speaks for).
+    let raw = vault.get_raw(&event)?.expect("ledger event");
+    let stored = crate::identity_topology::decode_identity_topology_event_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    assert_eq!(stored.actor, None);
+    assert_eq!(
+        stored.action,
+        crate::identity_topology::StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        }
+    );
     Ok(())
 }
 
@@ -16641,7 +16726,8 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
         serde_json::json!([
             "historical_loro_updates",
             "historical_loro_snapshots",
-            "derived_carriers"
+            "derived_carriers",
+            "redirect_table"
         ])
     );
 
