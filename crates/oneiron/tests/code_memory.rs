@@ -12,9 +12,10 @@ use oneiron::code_memory::{
     AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AttachCodeMemory,
     BlocksWriteContext, CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS, CODE_MEMORY_MAX_VALUES_PER_SLOT,
     CODE_MEMORY_PPR_DEPTH, CodeMemoryAnchor, CodeMemoryContractKind, CodeMemoryLocator,
-    CodeMemoryPayloadRef, CodeMemoryPullRequest, CodeMemoryRevision, CodeMemorySlotName,
-    CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
+    CodeMemoryPayloadRef, CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemoryRevision,
+    CodeMemorySlotName, CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
 };
+use oneiron::deletion::DeleteReason;
 use oneiron::note::TakeTarget;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -111,6 +112,39 @@ fn claim(vault: &Vault, byte: u8, subject: EntityId) -> EntityId {
         .put_claim(&claim_id, &body, range(1_780_000_000), 1_780_000_000)
         .expect("seed CLAIM through the public door");
     claim_id
+}
+
+/// A CLAIM whose entity row is a SOFT-DELETE SHELL: the pinned 25-byte header
+/// and no body at all.
+///
+/// The claim is deleted BEFORE the returned ref is attached anywhere, because
+/// deleting a payload sweeps every code-memory row that names it — attaching
+/// afterwards is the only way a live slot can point at a shell. Nothing in
+/// `attach_code_memory` resolves a payload, by design: NOTE/CLAIM bodies are
+/// opaque to L2 in both directions.
+fn deleted_shell_claim(vault: &Vault, byte: u8, subject: EntityId) -> CodeMemoryPayloadRef {
+    let claim_id = claim(vault, byte, subject);
+    assert!(
+        vault
+            .delete_entity_with_reason(&claim_id, DeleteReason::UserDelete)
+            .expect("soft delete")
+            .existed,
+        "the fixture must actually delete something"
+    );
+    assert!(
+        vault.is_deleted_shell(&claim_id).expect("shell probe"),
+        "a user delete keeps the header-only shell this fixture is about"
+    );
+    CodeMemoryPayloadRef::Claim(claim_id)
+}
+
+/// The payloads a pull returned, in the order it returned them.
+fn pulled_payloads(pulled: &CodeMemoryPullResult) -> Vec<CodeMemoryPayloadRef> {
+    pulled
+        .notes
+        .iter()
+        .map(|labelled| labelled.data.payload)
+        .collect()
 }
 
 fn slot() -> CodeMemorySlotName {
@@ -1330,9 +1364,10 @@ fn all_pulled_values_are_labelled_data() {
 /// The ScopedRead clamp runs on EVERY referenced entity BEFORE the caller's
 /// note limit is applied.
 ///
-/// The denied note is attached FIRST and is canonically smaller, so a
-/// pull that cut to `limit = 1` before clamping would return it and drop the
-/// permitted one. Getting the permitted note back is the ordering proof.
+/// The denied note is attached FIRST and is canonically smaller. With a limit
+/// of TWO, both values fit the global examined-value budget, so the permitted
+/// one survives while the denied one is removed by the same snapshot-local
+/// admission predicate used by the pull.
 #[test]
 fn scoped_read_clamps_before_ranking() {
     let (_dir, vault) = vault();
@@ -1360,7 +1395,7 @@ fn scoped_read_clamps_before_ranking() {
     .expect("attach the permitted note");
 
     let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
-    request.limit = 1;
+    request.limit = 2;
     let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
 
     assert_eq!(pulled.notes.len(), 1);
@@ -1431,6 +1466,162 @@ fn always_on_remains_scoped_through_the_canonical_clamp() {
         pulled.notes.iter().any(|note| note.data.payload == plain),
         "a live non-CLAIM NOTE ref passes the claim-specific clamp today"
     );
+}
+
+/// A header-only CLAIM payload is SKIPPED, never an error.
+///
+/// The pull decides every payload inside its OWN read transaction. The
+/// canonical `ScopedRead` clamp answers a header-only CLAIM by consulting
+/// `is_deleted_shell`, which opens a read transaction of its own — and nested
+/// read transactions on one thread are forbidden, so reaching it under the
+/// pull's `RoTxn` would fail the whole read instead of dropping one unreadable
+/// payload. The shell is attached FIRST, so it is the first thing the sweep
+/// meets.
+#[test]
+fn a_header_only_claim_payload_is_skipped_rather_than_failing_the_pull() {
+    let (_dir, vault) = vault();
+    let anchor_symbol = symbol(&vault, 0xB0);
+    let subject = seed(&vault, 0xB1, ENTITY_TYPE_PERSON);
+    let shell = deleted_shell_claim(&vault, 0xB2, subject);
+    let permitted = note(&vault);
+
+    attach(
+        &vault,
+        anchor_symbol,
+        "src/a.rs",
+        slot(),
+        value(shell, id(0x01), 0x01, 100),
+    )
+    .expect("a slot may name a payload this module never resolves");
+    attach(
+        &vault,
+        anchor_symbol,
+        "src/a.rs",
+        slot(),
+        value(permitted, id(0x02), 0x02, 200),
+    )
+    .expect("attach the readable note");
+
+    let pulled = vault
+        .pull_code_memory(
+            reader_key(),
+            CodeMemoryPullRequest::new(vec![anchor_symbol]),
+        )
+        .expect("an unreadable payload must never fail the pull");
+
+    assert_eq!(
+        pulled_payloads(&pulled),
+        vec![permitted],
+        "the shell is skipped and the readable note still comes back"
+    );
+}
+
+/// The global examined-value budget counts denied payloads across slots.
+///
+/// A denial-heavy prefix may therefore return short by design. With two
+/// denials in the first two canonical slots and two readable values after
+/// them, limits 2, 3, and 4 examine exactly that many values globally and
+/// return respectively zero, the first readable value, and both readable
+/// values. This proves that admission cannot run past the budget and that the
+/// admitted prefix keeps canonical slot order.
+#[test]
+fn denied_values_consume_one_global_examined_budget_across_slots() {
+    let (_dir, vault) = vault();
+    let anchor_symbol = symbol(&vault, 0xB4);
+    let subject = seed(&vault, 0xB5, ENTITY_TYPE_PERSON);
+
+    let unresolvable = CodeMemoryPayloadRef::NoteEntity(id(0xB6));
+    let shell = deleted_shell_claim(&vault, 0xB7, subject);
+    let first = note(&vault);
+    let second = note(&vault);
+
+    for (index, (slot_name, payload)) in [
+        ("slot.00", unresolvable),
+        ("slot.01", shell),
+        ("slot.02", first),
+        ("slot.03", second),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        attach(
+            &vault,
+            anchor_symbol,
+            "src/a.rs",
+            CodeMemorySlotName::new(slot_name).expect("valid slot name"),
+            value(
+                payload,
+                id(u8::try_from(index + 1).expect("small index")),
+                0x10,
+                100,
+            ),
+        )
+        .expect("attach");
+    }
+
+    for (limit, expected) in [(2, Vec::new()), (3, vec![first]), (4, vec![first, second])] {
+        let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
+        request.limit = limit;
+        let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
+        assert_eq!(
+            pulled_payloads(&pulled),
+            expected,
+            "denied values consume the global budget before later slots are scanned"
+        );
+    }
+}
+
+/// The bounded slot sweep keeps CANONICAL order while respecting the global
+/// examined-value budget.
+///
+/// The pull streams slot bodies and stops before decoding another slot once
+/// `limit` values have been examined. The first slot is a denied shell, so it
+/// consumes the first unit and can make the result short; later readable slots
+/// still arrive in canonical order only when the budget reaches them.
+#[test]
+fn bounded_slot_streaming_keeps_canonical_order_and_respects_denial_budget() {
+    let (_dir, vault) = vault();
+    let anchor_symbol = symbol(&vault, 0xB8);
+    let subject = seed(&vault, 0xB9, ENTITY_TYPE_PERSON);
+    let denied = deleted_shell_claim(&vault, 0xBA, subject);
+
+    attach(
+        &vault,
+        anchor_symbol,
+        "src/a.rs",
+        CodeMemorySlotName::new("slot.00").expect("valid slot name"),
+        value(denied, id(0x01), 0x01, 100),
+    )
+    .expect("the canonically first slot holds a denied shell");
+
+    let mut readable = Vec::new();
+    for index in 1..6u8 {
+        let payload = note(&vault);
+        readable.push(payload);
+        attach(
+            &vault,
+            anchor_symbol,
+            "src/a.rs",
+            CodeMemorySlotName::new(format!("slot.{index:02}")).expect("valid slot name"),
+            value(payload, id(index), 0x02, 100),
+        )
+        .expect("attach one readable note per later slot");
+    }
+
+    for (limit, expected) in [
+        (1, Vec::new()),
+        (2, readable[..1].to_vec()),
+        (3, readable[..2].to_vec()),
+    ] {
+        let mut request = CodeMemoryPullRequest::new(vec![anchor_symbol]);
+        request.limit = limit;
+        let pulled = vault.pull_code_memory(reader_key(), request).expect("pull");
+        assert_eq!(
+            pulled_payloads(&pulled),
+            expected,
+            "the global budget preserves canonical admitted order and may return short under denial"
+        );
+    }
 }
 
 /// Always-on registration accepts interface/policy NOTE refs only. A `Claim`

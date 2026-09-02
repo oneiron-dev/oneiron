@@ -41,6 +41,7 @@ pub mod comm;
 pub mod commitment;
 pub mod commitment_ledger;
 pub mod commitment_schedule;
+pub mod compaction;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -148,6 +149,7 @@ mod vault;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_identity;
 pub mod wave_orchestration;
+pub mod web_fetch;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -189,6 +191,10 @@ pub use crate::claim::{
 pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
+};
+pub use crate::compaction::{
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
+    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
 };
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
@@ -233,7 +239,7 @@ pub use crate::eiri::{
     UnprocessedItem,
 };
 pub use crate::entity_id::{EntityId, parse_presentation_id};
-pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 pub use crate::federation::FederationGrantScope;
@@ -312,6 +318,14 @@ pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
 };
+pub use crate::web_fetch::{
+    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
+    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, FirecrawlRenderer, HeadlessDocument,
+    HeadlessRenderer, MinExtractedContentBytes, NativeHeadlessRenderer, NativeReadabilityRenderer,
+    RenderedPage, Renderer, RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind,
+    RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult, WebFetcher,
+};
+
 pub use crate::wave_orchestration::{
     BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan,
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,

@@ -40,7 +40,8 @@ const ACCESS_FACTOR_SECONDS_PER_DAY: f64 = 86_400.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClaimAgingClass {
     /// Slow-aging facts about who someone is: roots `identity`,
-    /// `preference`, `relationship`.
+    /// `preference`, `relationship`, and the engine-authored federation
+    /// root `core.relationship`.
     Durable,
     /// Every other well-formed predicate root.
     Standard,
@@ -88,10 +89,28 @@ pub struct ClaimRetrievability {
 /// has root `location` and is therefore [`ClaimAgingClass::Ephemeral`].
 /// Every unlisted (including unknown, wild-namespace) root is
 /// [`ClaimAgingClass::Standard`] — the crate stays predicate-agnostic.
+///
+/// `core.relationship` is a literal member of the Durable list, NOT a
+/// namespace rule: it is the root the engine's own federation predicates
+/// (`core.relationship.person_ref`, `core.relationship.label`) resolve to
+/// after dropping the leaf, and a person-link is exactly as slow-aging as
+/// the bare `relationship` root beside it. Membership stays by EXACT root,
+/// never by suffix or by product layer: a wild `user.relationship.note`
+/// (root `user.relationship`) and a three-segment
+/// `relationship.<mid>.<leaf>` still classify Standard.
+///
+/// Deliberately not a `PREDICATE_LAYER_NAMESPACES` strip: [`predicate_root`]
+/// is layer-agnostic by design ("no registry or layer-list lookup"), and
+/// stripping every product layer would silently reclassify whole families
+/// that ship no predicates — a policy change wearing a bug fix's clothes.
+/// When the ONE-252 per-predicate family field lands it supersedes this
+/// list outright.
 #[must_use]
 pub fn claim_aging_class(predicate: &str) -> ClaimAgingClass {
     match predicate_root(predicate) {
-        "identity" | "preference" | "relationship" => ClaimAgingClass::Durable,
+        "identity" | "preference" | "relationship" | "core.relationship" => {
+            ClaimAgingClass::Durable
+        }
         "status" | "availability" | "location" => ClaimAgingClass::Ephemeral,
         _ => ClaimAgingClass::Standard,
     }

@@ -476,10 +476,25 @@ impl Memory<'_> {
             // RT-03 (ONE-1685): a witnessed turn bumps the open session's
             // activity clock — atomically with the turn write, so a crash
             // cannot record the turn without the bump.
-            let _bumped_session = crate::session_lifecycle::bump_open_session_activity_in_txn(
+            let bumped_session = crate::session_lifecycle::bump_open_session_activity_in_txn(
                 &self.vault.store,
                 wtxn,
                 learned_at,
+            )?;
+            // DREAM-008 (ONE-1250): the TURN → SESSION membership fact, in
+            // THIS transaction for the same reason the bump is — a crash
+            // cannot record a turn without its sitting, so the compaction
+            // handoff door can prove which session a turn came from instead
+            // of trusting a packet's claim. Minted turns only: an append to
+            // an already-stored turn never re-homes it into whatever sitting
+            // is open now, and a turn witnessed outside any session records
+            // nothing (ARCH-0002 open-endedness).
+            let membership_session = bumped_session.filter(|_| existing_turn.is_none());
+            crate::session_lifecycle::record_turn_session_membership_in_txn(
+                &self.vault.store,
+                wtxn,
+                &turn_id,
+                membership_session,
             )?;
             // LAST statement in the transaction, deliberately: a session
             // witness admitted on record must not commit base rows once the
