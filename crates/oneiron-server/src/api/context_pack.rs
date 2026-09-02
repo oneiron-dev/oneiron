@@ -641,6 +641,9 @@ pub(crate) struct CoreContextPackScoreEvidence {
     final_rank: u32,
     /// Final fused score.
     final_score: f32,
+    /// Read-side access factor applied to the fused score, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access_factor: Option<f32>,
     /// Signal-level score components.
     components: Vec<CoreContextPackScoreComponent>,
 }
@@ -2038,6 +2041,7 @@ pub(crate) fn core_context_pack_score_evidence(
         result_id: hex_bytes(&score.result_id),
         final_rank: score.final_rank,
         final_score: score.final_score,
+        access_factor: score.access_factor,
         components: score
             .components
             .into_iter()

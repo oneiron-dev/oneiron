@@ -21,6 +21,7 @@ use super::types::{
     SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    SelfSpeechCall, SelfSpeechResult,
 };
 
 const SELF_SURFACE_NAME: &str = "self.*";
@@ -212,11 +213,20 @@ impl<'a> HostSelfDispatcher<'a> {
             // `self.context` stores nothing and reads nothing — a descriptor
             // round-trip has no durable-record side for the talk-only line to
             // protect.
+            //
+            // The speech family is what TALK-ONLY means: a room that is off
+            // record is still a room somebody is speaking in, and its
+            // utterances ride the session's own route into the overlay, where
+            // they evaporate with it. Refusing them here would make an
+            // off-record room mute rather than private.
             SelfEffect::MemorySearch
             | SelfEffect::AskHuman
             | SelfEffect::DestructiveFixture
             | SelfEffect::OutboundFixture
-            | SelfEffect::Context => Ok(()),
+            | SelfEffect::Context
+            | SelfEffect::Speak
+            | SelfEffect::Think
+            | SelfEffect::Express => Ok(()),
         }
     }
 
@@ -236,6 +246,21 @@ impl<'a> HostSelfDispatcher<'a> {
     #[must_use]
     pub fn run_ref(&self) -> &str {
         &self.run_ref
+    }
+
+    /// Dispatches one call on behalf of a durable engine-executor replay run.
+    ///
+    /// The ordinary [`SelfDispatcher`] implementation intentionally has no run
+    /// id and preserves the standalone run-ref-only speech identity. The engine
+    /// executor owns the durable id, so it enters through this crate-private
+    /// door and binds that id only to transcript identity; guest payloads still
+    /// cannot name or forge it.
+    pub(crate) fn dispatch_for_executor_run(
+        &self,
+        run_id: EntityId,
+        call: SelfCall,
+    ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_bound(call, Some(run_id))
     }
 
     fn code_emission_admission(&self) -> Result<Option<consent::CodeEmissionAdmission>> {
@@ -735,6 +760,85 @@ impl<'a> HostSelfDispatcher<'a> {
         }
     }
 
+    /// One speech call — one durable MESSAGE bubble (ONE-1686, RT-04).
+    ///
+    /// Speech is an EFFECT, dispatched where every other `self.*` effect is
+    /// dispatched, at the moment the guest calls it. Nothing is buffered for a
+    /// final response, so a step that speaks, searches, speaks again and then
+    /// writes lands those four things in that order.
+    ///
+    /// The bubble's author, message type and visibility are the host's: the
+    /// actor is the one bound at construction, the type comes from the
+    /// utterance the effect names, and `is_visible` is
+    /// [`ExecutorUtterance::is_visible`]. Only the text is the guest's.
+    ///
+    /// A `Speech` OUTCOME therefore means one thing and nothing else: the
+    /// bubble exists. Both storage arms materialize it, and a refusal — a
+    /// stale route after a mid-run mode flip, a ceiling denial — leaves through
+    /// `Err`, which the bridge records as the `Denied`/`Failed` row the
+    /// fail-closed barrier already understands. `emitted` is `true` on every
+    /// value this constructor can build; the decoder refuses any other
+    /// combination, so no replay row can claim speech that never happened.
+    fn dispatch_speech(
+        &self,
+        effect: SelfEffect,
+        call: SelfSpeechCall,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
+        let kind = effect.speech_utterance().ok_or(Error::InvariantViolation(
+            "speech dispatch on a non-speech effect",
+        ))?;
+        let _receipt = self.storage.witness_executor_utterance(
+            &self.run_ref,
+            run_id,
+            kind,
+            &call.text,
+            call.occurred_at,
+            call.order,
+            self.actor,
+        )?;
+        Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
+            effect,
+            order: call.order,
+            is_visible: kind.is_visible(),
+            emitted: true,
+        }))
+    }
+
+    fn dispatch_bound(
+        &self,
+        call: SelfCall,
+        run_id: Option<EntityId>,
+    ) -> Result<SelfDispatchOutcome> {
+        // The descriptor bridge answers before the policy probe: that probe is
+        // itself a vault read, and `self.context` must perform none.
+        if !matches!(call, SelfCall::Context(_)) {
+            self.enforce_off_record_effect_policy(call.effect())?;
+        }
+        match call {
+            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
+            SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
+            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
+            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
+            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
+            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
+            SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
+                SelfEffect::DestructiveFixture,
+                SelfDurableWaitReason::DestructiveEffect,
+                Some(call.label),
+            )),
+            SelfCall::OutboundFixture(call) => Ok(self.durable_wait(
+                SelfEffect::OutboundFixture,
+                SelfDurableWaitReason::OutboundEffect,
+                Some(call.label),
+            )),
+            SelfCall::Context(call) => dispatch_self_context(call),
+            SelfCall::Speak(call) => self.dispatch_speech(SelfEffect::Speak, call, run_id),
+            SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
+            SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
+        }
+    }
+
     fn durable_wait(
         &self,
         effect: SelfEffect,
@@ -817,30 +921,7 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
     ///
     /// Canonical dispatch keeps its existing path and captures no route.
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        // The descriptor bridge answers before the policy probe: that probe is
-        // itself a vault read, and `self.context` must perform none.
-        if !matches!(call, SelfCall::Context(_)) {
-            self.enforce_off_record_effect_policy(call.effect())?;
-        }
-        match call {
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
-            SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
-            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
-            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
-            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
-            SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
-                SelfEffect::DestructiveFixture,
-                SelfDurableWaitReason::DestructiveEffect,
-                Some(call.label),
-            )),
-            SelfCall::OutboundFixture(call) => Ok(self.durable_wait(
-                SelfEffect::OutboundFixture,
-                SelfDurableWaitReason::OutboundEffect,
-                Some(call.label),
-            )),
-            SelfCall::Context(call) => dispatch_self_context(call),
-        }
+        self.dispatch_bound(call, None)
     }
 }
 

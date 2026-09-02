@@ -206,6 +206,13 @@ struct RetrievalTraceCandidateExport {
     final_rank: u32,
     final_score: f32,
     components: Vec<RetrievalScoreComponent>,
+    /// ONE-1402: the exported row carries the read-side decay attribution
+    /// verbatim, so an exported trace still says why a candidate scored
+    /// where it did. Omitted — and decoded as `None` — for rows where no
+    /// multiplier was applied (per-channel and fused stages) and for rows
+    /// exported before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    access_factor: Option<f32>,
 }
 
 impl RetrievalTraceCandidateExport {
@@ -215,6 +222,7 @@ impl RetrievalTraceCandidateExport {
             final_rank: candidate.final_rank,
             final_score: candidate.final_score,
             components: candidate.components.clone(),
+            access_factor: candidate.access_factor,
         }
     }
 
@@ -225,6 +233,7 @@ impl RetrievalTraceCandidateExport {
             final_rank: self.final_rank,
             final_score: self.final_score,
             components: self.components.clone(),
+            access_factor: self.access_factor,
         })
     }
 }

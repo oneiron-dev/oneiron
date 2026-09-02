@@ -214,6 +214,27 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
+/// Seeds one MESSAGE row for a fixture that only needs the row to EXIST.
+///
+/// ONE-1686 closed the public raw MESSAGE door — a MESSAGE body is a gated
+/// witness envelope now — so these fixtures carry canonical envelope bytes and
+/// go through the crate's test-only seeding door instead of `put_entity`. They
+/// deliberately do NOT witness: a real witness call would also mint the
+/// conversation, turn and edges these tests are counting.
+fn seed_message_fixture(vault: &Vault, id: &EntityId, content: &str, at: u64) -> Result<()> {
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "companion",
+        "dialogue",
+        content,
+        true,
+        0,
+    )?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(id, test_time_range(at, at), at, &body)
+        .commit()
+}
+
 fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     let waker = std::task::Waker::noop();
     let mut context = std::task::Context::from_waker(waker);
@@ -8519,19 +8540,7 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
 fn message_vad_annotation_round_trip() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message-level affect",
-        "spkr": "assistant",
-        "at": 110_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(110, 110),
-        110,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message-level affect", 110)?;
     let raw_before = vault.get_raw(&message)?.expect("message raw body");
 
     let annotation = VadAnnotation::new(
@@ -8582,13 +8591,7 @@ fn fresh_default_policy_allows_internal_vad_annotations() -> Result<()> {
         120,
         b"turn",
     )?;
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(121, 121),
-        121,
-        b"message",
-    )?;
+    seed_message_fixture(&vault, &message, "message", 121)?;
 
     let turn_annotation = VadAnnotation::new(
         Vad {
@@ -8718,19 +8721,7 @@ fn batch_delete_removes_turn_vad_annotation_claim_and_edges() -> Result<()> {
 fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message soft delete affect",
-        "spkr": "assistant",
-        "at": 131_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(131, 131),
-        131,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message soft delete affect", 131)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.2,
@@ -8801,19 +8792,7 @@ fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -
 
     let (_annotate_dir, annotate_vault) = open_test_vault();
     let message = EntityId::now();
-    let message_body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim shell",
-        "spkr": "assistant",
-        "at": 134_u64,
-    }))
-    .expect("encode message body");
-    annotate_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(134, 134),
-        134,
-        &message_body,
-    )?;
+    seed_message_fixture(&annotate_vault, &message, "message claim shell", 134)?;
     let first = VadAnnotation::new(
         Vad {
             valence: 0.15,
@@ -8904,19 +8883,7 @@ fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
 
     let (_claim_dir, claim_vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim residue",
-        "spkr": "assistant",
-        "at": 132_u64,
-    }))
-    .expect("encode message body");
-    claim_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(132, 132),
-        132,
-        &body,
-    )?;
+    seed_message_fixture(&claim_vault, &message, "message claim residue", 132)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.3,
@@ -12478,6 +12445,18 @@ fn claim_body_keys_pin_d11_vocabulary() {
 
 #[test]
 fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
+    // The `learned_at` every claim below is written at, and the frozen run
+    // clock every scoring query below reads under.
+    //
+    // ONE-1402 multiplies a read-side decay factor onto the fused score, so
+    // on an unpinned wall clock these epoch-second claims would age by
+    // decades and each exact expectation here would silently become
+    // `blend * ACCESS_FACTOR_FLOOR`. Freezing the clock at the fixture's own
+    // `learned_at` gives age `0` and factor `2^0 = 1.0` exactly, keeping the
+    // assertions below a pure `sal`/`conf` KEY contract instead of a decay
+    // one (decay's own arithmetic is pinned in `claim::tests` and
+    // `pipeline::decay_tests`).
+    const CLAIM_LEARNED_AT: u64 = 11;
     fn z_score(value: f32, values: &[f32]) -> f32 {
         let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
         let variance = values
@@ -12517,7 +12496,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     body.salience = Some(0.9);
-    vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
+    vault.put_claim(&claim, &body, test_time_range(10, 10), CLAIM_LEARNED_AT)?;
 
     let other_claim = EntityId::now();
     let mut other_body = ClaimBody::new(
@@ -12529,7 +12508,12 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     other_body.salience = Some(0.3);
-    vault.put_claim(&other_claim, &other_body, test_time_range(10, 10), 11)?;
+    vault.put_claim(
+        &other_claim,
+        &other_body,
+        test_time_range(10, 10),
+        CLAIM_LEARNED_AT,
+    )?;
 
     let third_claim = EntityId::now();
     let mut third_body = ClaimBody::new(
@@ -12541,7 +12525,12 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     third_body.salience = Some(0.0);
-    vault.put_claim(&third_claim, &third_body, test_time_range(10, 10), 11)?;
+    vault.put_claim(
+        &third_claim,
+        &third_body,
+        test_time_range(10, 10),
+        CLAIM_LEARNED_AT,
+    )?;
     vault
         .batch()
         .text(&claim, &[("body", "matcha preference")])
@@ -12549,12 +12538,17 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         .text(&third_claim, &[("body", "matcha preference")])
         .commit()?;
 
-    let baseline = vault.query().search_text("matcha", 10).run()?;
+    let baseline = vault
+        .query()
+        .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
+        .run()?;
     assert_eq!(baseline.len(), 3);
 
     let sal_boosted = vault
         .query()
         .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
         .boost_salience()
         .run()?;
     assert_eq!(sal_boosted.len(), 3);
@@ -12568,6 +12562,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
     let conf_boosted = vault
         .query()
         .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
         .boost_confidence()
         .run()?;
     assert_eq!(conf_boosted.len(), 3);
