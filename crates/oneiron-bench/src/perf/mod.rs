@@ -57,6 +57,7 @@
 pub(crate) mod acceptance;
 pub(crate) mod axes;
 pub(crate) mod binary16;
+pub(crate) mod build_profile;
 pub(crate) mod cache_events;
 pub(crate) mod cells;
 pub(crate) mod child_process;

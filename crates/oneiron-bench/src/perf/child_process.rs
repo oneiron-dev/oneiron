@@ -233,12 +233,33 @@ pub(crate) const fn child_kill_reap_budget() -> Duration {
     Duration::from_millis(CHILD_KILL_REAP_BUDGET_MS)
 }
 
+/// The program the ready-child probes will spawn, plus whether it is the
+/// harness's OWN `perf wake-child`.
+///
+/// The distinction is load-bearing rather than cosmetic. Only the bundled
+/// child opens its assigned vault BEFORE it connects, so only its readiness
+/// also proves vault residency. A program named by [`CHILD_PROGRAM_ENV`] is an
+/// arbitrary executable that merely has to reach the listener: it may ignore
+/// `{vault_dir}` entirely, exactly as a caller-supplied `wake.child` plan may.
+pub(crate) struct ChildProgram {
+    pub(crate) path: PathBuf,
+    /// True only for the running `oneiron-bench` binary resolved WITHOUT an
+    /// environment override. Anything else proves TCP readiness only.
+    pub(crate) harness_owned: bool,
+}
+
 /// Resolves the program the harness will spawn as its ready child.
-pub(crate) fn resolve_child_program() -> Result<PathBuf, String> {
+pub(crate) fn resolve_child_program() -> Result<ChildProgram, String> {
     if let Ok(pinned) = std::env::var(CHILD_PROGRAM_ENV)
         && !pinned.trim().is_empty()
     {
-        return Ok(PathBuf::from(pinned.trim()));
+        // An overridden program is opaque even when it happens to point back at
+        // an oneiron-bench build: the harness did not choose its arguments and
+        // cannot know it opens a vault.
+        return Ok(ChildProgram {
+            path: PathBuf::from(pinned.trim()),
+            harness_owned: false,
+        });
     }
     let executable = std::env::current_exe()
         .map_err(|error| format!("the running executable is not resolvable: {error}"))?;
@@ -248,7 +269,10 @@ pub(crate) fn resolve_child_program() -> Result<PathBuf, String> {
         .unwrap_or_default()
         .to_owned();
     if stem == "oneiron-bench" {
-        return Ok(executable);
+        return Ok(ChildProgram {
+            path: executable,
+            harness_owned: true,
+        });
     }
     Err(format!(
         "the running executable `{stem}` is not the oneiron-bench binary, so the harness has no \
@@ -572,6 +596,47 @@ mod tests {
                 "--linger=25000".to_owned(),
             ]
         );
+    }
+
+    /// Only the harness's OWN child opens its vault before connecting, so only
+    /// it can carry vault residency. A program named by the environment
+    /// override is an arbitrary executable the harness never argued with, and
+    /// the resolver must say so rather than letting the ready-children axis
+    /// call ten opaque processes ten active vaults.
+    #[test]
+    fn an_environment_overridden_child_program_is_never_harness_owned() {
+        let pinned = std::env::var(CHILD_PROGRAM_ENV)
+            .ok()
+            .map(|raw| raw.trim().to_owned())
+            .filter(|raw| !raw.is_empty());
+        match resolve_child_program() {
+            Ok(resolved) => {
+                if let Some(pinned) = pinned {
+                    assert!(
+                        !resolved.harness_owned,
+                        "an overridden child program is opaque, whatever it points at"
+                    );
+                    assert_eq!(
+                        resolved.path,
+                        PathBuf::from(pinned),
+                        "the override is spawned verbatim"
+                    );
+                } else {
+                    assert!(
+                        resolved.harness_owned,
+                        "the running oneiron-bench binary IS the harness-owned child"
+                    );
+                    assert_eq!(
+                        resolved.path,
+                        std::env::current_exe().expect("the test executable resolves")
+                    );
+                }
+            }
+            Err(reason) => assert!(
+                reason.contains(CHILD_PROGRAM_ENV),
+                "an unresolvable child program must name the override: {reason}"
+            ),
+        }
     }
 
     #[test]

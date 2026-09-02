@@ -3,13 +3,21 @@
 //! These are deliberately two different facts:
 //!
 //! * the BUILD REVISION is the BLAKE3 digest of the running executable image,
-//!   optionally paired with a git SHA captured by the build environment. It is
-//!   immutable for that artifact and cannot change with the caller's cwd or a
-//!   later branch advance;
+//!   paired with a git SHA and a DIRTY FLAG captured by the build environment.
+//!   All three are immutable for that artifact and cannot change with the
+//!   caller's cwd or a later branch advance;
 //! * the SOURCE CHECKOUT HEAD is a descriptive runtime observation from the
 //!   compile-time manifest path (then the executable location). It is useful
 //!   context, but it is never promoted into the build-revision slot because a
 //!   checkout can move after the binary was compiled.
+//!
+//! The dirty flag is the half that a SHA alone cannot carry. A binary compiled
+//! from a tree with uncommitted changes contains code that no commit describes,
+//! so attributing its numbers to the SHA its checkout happened to be on is
+//! wrong in exactly the way a later branch advance is wrong. Because only the
+//! build environment can know it, it is read through `option_env!` — embedded
+//! into the artifact at compile time — and an artifact that embedded nothing is
+//! fail-closed `not_ready`, never an assumed "clean".
 //!
 //! Linked worktrees are supported through `commondir`, and the caller's current
 //! directory is never consulted.
@@ -26,6 +34,11 @@ const BUILD_GIT_SHA_ENV: &str = "ONEIRON_BENCH_BUILD_GIT_SHA";
 const COMPILE_TIME_BUILD_GIT_SHA: Option<&str> = option_env!("ONEIRON_BENCH_BUILD_GIT_SHA");
 const COMPILE_TIME_GITHUB_SHA: Option<&str> = option_env!("GITHUB_SHA");
 const COMPILE_TIME_GITLAB_SHA: Option<&str> = option_env!("CI_COMMIT_SHA");
+/// Compile-time declaration of whether the tree the artifact was BUILT from
+/// carried uncommitted changes. Only the build environment can know this, so it
+/// is embedded rather than re-derived from a checkout at report time.
+const BUILD_DIRTY_ENV: &str = "ONEIRON_BENCH_BUILD_GIT_DIRTY";
+const COMPILE_TIME_BUILD_DIRTY: Option<&str> = option_env!("ONEIRON_BENCH_BUILD_GIT_DIRTY");
 /// The crate source directory this binary was built from, captured at compile
 /// time. It is used only for the descriptive checkout-head observation.
 const BUILD_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
@@ -141,6 +154,52 @@ pub(crate) fn build_git_sha() -> GitShaResolution {
         source: format!(
             "no git SHA was embedded at build time; set {BUILD_GIT_SHA_ENV} while compiling (or use {GIT_SHA_ENV} only as an explicit packaged-binary override)"
         ),
+    }
+}
+
+/// Whether the source tree the running artifact was COMPILED from carried
+/// uncommitted changes, as declared by the build environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuildDirtyResolution {
+    pub(crate) dirty: Option<bool>,
+    pub(crate) source: String,
+}
+
+/// Reads the compile-time dirty declaration. Fail-closed: an artifact that
+/// embedded nothing, or embedded something unreadable, reports `None` with the
+/// reason rather than assuming a clean tree.
+pub(crate) fn build_tree_dirty() -> BuildDirtyResolution {
+    let Some(raw) = COMPILE_TIME_BUILD_DIRTY else {
+        return BuildDirtyResolution {
+            dirty: None,
+            source: format!(
+                "no build-tree cleanliness was embedded at compile time; set {BUILD_DIRTY_ENV} \
+                 while compiling so the artifact carries whether its sources were committed"
+            ),
+        };
+    };
+    match parse_dirty(raw) {
+        Some(dirty) => BuildDirtyResolution {
+            dirty: Some(dirty),
+            source: format!("compile-time environment {BUILD_DIRTY_ENV}"),
+        },
+        None => BuildDirtyResolution {
+            dirty: None,
+            source: format!(
+                "compile-time environment {BUILD_DIRTY_ENV} was set but did not read as a \
+                 boolean, so the build tree's cleanliness is unknown rather than assumed"
+            ),
+        },
+    }
+}
+
+/// The accepted spellings, matched case-insensitively. Anything else is
+/// unknown; the flag is never coerced by treating "unrecognised" as clean.
+fn parse_dirty(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "dirty" | "modified" => Some(true),
+        "0" | "false" | "no" | "clean" => Some(false),
+        _ => None,
     }
 }
 
@@ -399,6 +458,55 @@ mod tests {
         assert_ne!(
             hash_file_blake3(&left).expect("left hashes"),
             hash_file_blake3(&changed).expect("changed hashes")
+        );
+    }
+
+    /// A SHA alone cannot describe a binary compiled from uncommitted
+    /// sources, so the dirty flag rides beside it and is captured at COMPILE
+    /// time. An artifact that embedded nothing must stay `not_ready` rather
+    /// than assume a clean tree, and it must never be re-derived by looking at
+    /// whatever checkout happens to sit under the manifest path at report time.
+    #[test]
+    fn build_tree_dirtiness_is_a_compile_time_fact_and_fails_closed() {
+        for raw in ["1", "true", "TRUE", " yes ", "dirty", "Modified"] {
+            assert_eq!(parse_dirty(raw), Some(true), "{raw} means dirty");
+        }
+        for raw in ["0", "false", "No", "clean", "CLEAN "] {
+            assert_eq!(parse_dirty(raw), Some(false), "{raw} means clean");
+        }
+        for raw in ["", "  ", "maybe", "2", "unknown", "-1"] {
+            assert_eq!(
+                parse_dirty(raw),
+                None,
+                "`{raw}` is unreadable and must not be coerced to clean"
+            );
+        }
+
+        let resolved = build_tree_dirty();
+        assert_eq!(
+            resolved.dirty,
+            COMPILE_TIME_BUILD_DIRTY.and_then(parse_dirty)
+        );
+        assert!(
+            resolved.source.contains(BUILD_DIRTY_ENV),
+            "{}",
+            resolved.source
+        );
+        if COMPILE_TIME_BUILD_DIRTY.is_none() {
+            assert!(
+                resolved.dirty.is_none(),
+                "an artifact that embedded nothing knows nothing about its build tree"
+            );
+        }
+
+        // The flag is a compile-time constant. The resolver reads no runtime
+        // variable and no checkout, so it is stable for the artifact's life,
+        // unlike the report-time source-checkout observation beside it.
+        assert_eq!(build_tree_dirty(), resolved);
+        assert!(
+            !resolved.source.contains(BUILD_MANIFEST_DIR),
+            "build attribution must not be derived from the manifest path: {}",
+            resolved.source
         );
     }
 

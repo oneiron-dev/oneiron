@@ -15,10 +15,14 @@
 //!
 //! Vault residency has a narrower proof boundary. The harness-owned
 //! `perf wake-child` opens its vault before it connects, so its TCP readiness
-//! also proves residency. A caller-supplied `wake.child` command is opaque: its
-//! connect proves TCP readiness only, even if its arguments contain
-//! `{vault_dir}`. Its RSS may be reported as a process diagnostic, but the axis
-//! marks vault residency unproven and can never make that full run publishable.
+//! also proves residency. Two other shapes are opaque and neither may claim
+//! residency: a caller-supplied `wake.child` command, whose connect proves TCP
+//! readiness only even if its arguments contain `{vault_dir}`; and a program
+//! substituted through `ONEIRON_BENCH_PERF_CHILD`, which the harness merely
+//! spawns with the bundled child's flags and which is under no obligation to
+//! understand — let alone open — the vault directory they name. Their RSS may
+//! be reported as a process diagnostic, but the axis marks vault residency
+//! unproven and can never make that full run publishable.
 //!
 //! Release is parent-owned: the accepted streams are closed and every child is
 //! then waited on under a bounded budget and terminated if it outlives it.
@@ -38,6 +42,7 @@ use super::child_process::{
 
 const BUILTIN_VAULT_RESIDENCY_EVIDENCE: &str = "harness-owned perf wake-child opens the assigned vault before its TCP connect; a measured cohort therefore proves both readiness and vault residency";
 const CUSTOM_VAULT_RESIDENCY_EVIDENCE: &str = "caller-supplied wake.child is opaque: its completed TCP connect proves readiness only; placeholder substitution does not prove that it opened or retained {vault_dir}, so this RSS is not per-vault residency evidence";
+const OVERRIDDEN_VAULT_RESIDENCY_EVIDENCE: &str = "the ready-child program was substituted through ONEIRON_BENCH_PERF_CHILD: it is spawned with the bundled child's flags but is under no obligation to understand or open the vault directory they name, so its completed TCP connect proves readiness only and this RSS is not per-vault residency evidence";
 const UNMEASURED_VAULT_RESIDENCY_EVIDENCE: &str =
     "no complete child cohort was measured, so no process is claimed to hold an open vault";
 
@@ -63,11 +68,47 @@ pub(crate) fn measure_resident_memory(
             return not_ready(required, settings, errors, reason, evidence_kind);
         }
     };
-    match hold_ready_children(&program, settings, root, required) {
-        Ok(cohort) => measured(required, settings, cohort, errors, evidence_kind),
+    // Residency can only be claimed for the harness's OWN child, spawned with
+    // the harness's own flags. A caller-supplied plan and an environment
+    // substitution are both opaque.
+    let residency = if settings.child.is_some() {
+        VaultResidency::CallerSuppliedPlan
+    } else if program.harness_owned {
+        VaultResidency::HarnessOwned
+    } else {
+        VaultResidency::EnvironmentOverride
+    };
+    match hold_ready_children(&program.path, settings, root, required) {
+        Ok(cohort) => measured(required, settings, residency, cohort, errors, evidence_kind),
         Err(reason) => {
             errors.push(reason.clone());
             not_ready(required, settings, errors, reason, evidence_kind)
+        }
+    }
+}
+
+/// Where the ready child came from, which is what decides whether its TCP
+/// readiness can also stand for an open vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VaultResidency {
+    /// The bundled `perf wake-child`, which opens its vault before connecting.
+    HarnessOwned,
+    /// A `wake.child` command named by the plan.
+    CallerSuppliedPlan,
+    /// A program substituted through `ONEIRON_BENCH_PERF_CHILD`.
+    EnvironmentOverride,
+}
+
+impl VaultResidency {
+    const fn proves_open_vault(self) -> bool {
+        matches!(self, Self::HarnessOwned)
+    }
+
+    const fn evidence(self) -> &'static str {
+        match self {
+            Self::HarnessOwned => BUILTIN_VAULT_RESIDENCY_EVIDENCE,
+            Self::CallerSuppliedPlan => CUSTOM_VAULT_RESIDENCY_EVIDENCE,
+            Self::EnvironmentOverride => OVERRIDDEN_VAULT_RESIDENCY_EVIDENCE,
         }
     }
 }
@@ -248,6 +289,7 @@ fn kill_all(children: &mut Vec<Child>) {
 fn measured(
     required: usize,
     settings: &ChildSettings,
+    residency: VaultResidency,
     cohort: ReadyCohort,
     mut errors: Vec<String>,
     evidence_kind: EvidenceKind,
@@ -282,16 +324,11 @@ fn measured(
              ({budget_bytes} B) per-vault budget slot"
         )
     });
-    let builtin_child = settings.child.is_none();
     ResidentMemoryAxis {
         required_ready_children: required,
         ready_children_observed: observed,
-        child_holds_open_vault: builtin_child && observed == required,
-        vault_residency_evidence: if builtin_child {
-            BUILTIN_VAULT_RESIDENCY_EVIDENCE
-        } else {
-            CUSTOM_VAULT_RESIDENCY_EVIDENCE
-        },
+        child_holds_open_vault: residency.proves_open_vault() && observed == required,
+        vault_residency_evidence: residency.evidence(),
         sampled_while_all_children_ready: observed == required,
         child_hold_ms: settings.hold_ms,
         minimum_child_hold_ms: minimum_child_hold_ms(settings.timeout_ms),
@@ -491,6 +528,7 @@ mod tests {
         let axis = measured(
             10,
             &custom,
+            VaultResidency::CallerSuppliedPlan,
             ReadyCohort {
                 rss: vec![1_024; 10],
                 shutdown_outcomes: BTreeMap::new(),
@@ -518,6 +556,75 @@ mod tests {
         );
     }
 
+    /// A program substituted through `ONEIRON_BENCH_PERF_CHILD` is exactly as
+    /// opaque as a caller-supplied `wake.child`: the plan carries no child, so
+    /// the harness spawns the override with the BUNDLED child's flags, but the
+    /// override is under no obligation to understand — let alone open — the
+    /// vault directory those flags name. Ten such processes are ten TCP
+    /// connections, not ten active vaults, and calling them vaults would
+    /// materially understate per-vault RSS.
+    #[test]
+    fn an_environment_overridden_child_cohort_never_claims_vault_residency() {
+        // The plan itself names no child: only the environment substituted one.
+        let plain = settings(20_000);
+        assert!(plain.child.is_none());
+        let cohort = || ReadyCohort {
+            rss: vec![4_096; 10],
+            shutdown_outcomes: BTreeMap::from([("exited".to_owned(), 10)]),
+        };
+        let overridden = measured(
+            10,
+            &plain,
+            VaultResidency::EnvironmentOverride,
+            cohort(),
+            Vec::new(),
+            EvidenceKind::MeasuredWallClock,
+        );
+
+        assert_eq!(overridden.ready_children_observed, 10);
+        assert!(overridden.sampled_while_all_children_ready);
+        assert!(
+            overridden.total_child_rss_bytes.is_measured(),
+            "the process RSS is still a legitimate diagnostic"
+        );
+        assert!(
+            !overridden.child_holds_open_vault,
+            "an overridden child's TCP connect proves readiness, not vault residency"
+        );
+        assert!(
+            overridden
+                .vault_residency_evidence
+                .contains("readiness only"),
+            "{}",
+            overridden.vault_residency_evidence
+        );
+        assert!(
+            overridden
+                .vault_residency_evidence
+                .contains("ONEIRON_BENCH_PERF_CHILD"),
+            "the evidence line must name the override that made the child opaque: {}",
+            overridden.vault_residency_evidence
+        );
+
+        // Only the harness's own child, on the very same cohort, may claim it.
+        let owned = measured(
+            10,
+            &plain,
+            VaultResidency::HarnessOwned,
+            cohort(),
+            Vec::new(),
+            EvidenceKind::MeasuredWallClock,
+        );
+        assert!(owned.child_holds_open_vault);
+        assert_ne!(
+            owned.vault_residency_evidence,
+            overridden.vault_residency_evidence
+        );
+        assert!(!VaultResidency::EnvironmentOverride.proves_open_vault());
+        assert!(!VaultResidency::CallerSuppliedPlan.proves_open_vault());
+        assert!(VaultResidency::HarnessOwned.proves_open_vault());
+    }
+
     /// A measured cohort records that every sample was taken while all the
     /// children were ready, plus how each of them left.
     #[test]
@@ -528,6 +635,7 @@ mod tests {
         let axis = measured(
             10,
             &settings,
+            VaultResidency::HarnessOwned,
             ReadyCohort {
                 rss: vec![1_024_000; 10],
                 shutdown_outcomes: shutdown,

@@ -49,7 +49,12 @@ const ENGINE_STORAGE_NOTE: &str = "bench representations only: these rows are bu
      or implied by any row here";
 const GROUND_TRUTH_NOTE: &str = "exact float32 cosine brute force over the bench's own vectors, \
      computed independently of every candidate representation";
-const BREADTH_RULE: &str = "binary prefix breadth defaults to 4*k (40 at the contract k=10), is always recorded, and plan admission rejects any resolved breadth outside [k, indexed_docs] rather than silently clamping the experiment";
+const BREADTH_RULE: &str = "binary prefix breadth defaults to 4*k (40 at the contract k=10), is always recorded, and plan admission rejects any resolved breadth outside [k, indexed_docs] rather than silently clamping the experiment; the requested breadth is reported beside the used one so a caller that reached evaluate directly cannot hide a reshape either";
+const BINARY_MEMORY_RULE: &str = "binary-code memory is counted from the u64 WORDS the encoder \
+     actually allocates (ceil(dimensions/64) words of 8 bytes each), not from a bit-count rounded \
+     to bytes and not from the f32 or f16 buffer of another representation; the exact float32 \
+     payload the rescore stage still reads is added on top because the candidate genuinely needs \
+     both";
 const DELTA_RULE: &str = "every row carries recall@k MINUS the float32 row's recall@k from this \
      same run; the float32 row is the baseline and carries an exact 0.0 by construction, and a \
      row whose recall was not measured has a not_ready delta rather than a zero";
@@ -106,14 +111,26 @@ impl PrecisionCandidate {
     /// Resident bytes for one vector under this representation. The rescore
     /// candidate honestly counts the full-precision payload its second stage
     /// still needs, rather than reporting only the binary code.
+    ///
+    /// The binary code's own cost is the storage `encode_binary` ALLOCATES: a
+    /// `Vec<u64>` of `ceil(dimensions / 64)` words. Counting `ceil(dimensions
+    /// / 8)` bytes instead describes a bit-packed buffer this harness never
+    /// builds and under-reports every dimension that is not a multiple of 64
+    /// (at 32 dimensions: 4 reported bytes against 8 allocated).
     fn bytes_per_vector(self, dimensions: usize) -> usize {
         match self {
             Self::F32 => dimensions * 4,
             Self::F16 => dimensions * 2,
             Self::Int8Sq => dimensions + 4,
-            Self::BinaryPrefixRescore => dimensions.div_ceil(8) + dimensions * 4,
+            Self::BinaryPrefixRescore => binary_code_bytes_per_vector(dimensions) + dimensions * 4,
         }
     }
+}
+
+/// Bytes of `u64` word storage one binary code occupies, matching exactly what
+/// [`super::representations::encode_binary`] allocates for that vector.
+pub(crate) const fn binary_code_bytes_per_vector(dimensions: usize) -> usize {
+    dimensions.div_ceil(64) * std::mem::size_of::<u64>()
 }
 
 /// One reported precision row.
@@ -170,8 +187,18 @@ pub(crate) struct PrecisionAxis {
     pub(crate) dimensions: usize,
     pub(crate) vectors: usize,
     pub(crate) queries: usize,
+    /// The breadth the caller asked for, before any local reshape.
+    pub(crate) requested_binary_prefix_breadth: usize,
+    /// The breadth actually scanned.
     pub(crate) binary_prefix_breadth: usize,
+    /// True only if the requested breadth had to be reshaped to fit `[k,
+    /// vectors]`. Plan admission refuses such a breadth outright, so an
+    /// admitted plan can never set this; it is emitted so a caller that
+    /// reached `evaluate` directly cannot hide the reshape behind a plan hash
+    /// still naming the original value.
+    pub(crate) binary_prefix_breadth_reshaped: bool,
     pub(crate) binary_prefix_breadth_rule: &'static str,
+    pub(crate) binary_memory_rule: &'static str,
     pub(crate) ground_truth: &'static str,
     pub(crate) recall_delta_rule: &'static str,
     pub(crate) f32_baseline_mean_recall_at_k: Cell<f64>,
@@ -210,12 +237,12 @@ pub(crate) fn evaluate(
     vectors: &[Vec<f32>],
     queries: &[Vec<f32>],
     requested_k: usize,
-    breadth: usize,
+    requested_breadth: usize,
     evidence_kind: EvidenceKind,
 ) -> PrecisionAxis {
     let dimensions = vectors.first().map_or(0, Vec::len);
     let k = requested_k.clamp(1, vectors.len().max(1));
-    let breadth = breadth.clamp(k, vectors.len().max(k));
+    let breadth = requested_breadth.clamp(k, vectors.len().max(k));
     let truth: Vec<Vec<usize>> = queries
         .iter()
         .map(|query| scan_f32(vectors, query, k))
@@ -268,8 +295,11 @@ pub(crate) fn evaluate(
         dimensions,
         vectors: vectors.len(),
         queries: queries.len(),
+        requested_binary_prefix_breadth: requested_breadth,
         binary_prefix_breadth: breadth,
+        binary_prefix_breadth_reshaped: breadth != requested_breadth,
         binary_prefix_breadth_rule: BREADTH_RULE,
+        binary_memory_rule: BINARY_MEMORY_RULE,
         ground_truth: GROUND_TRUTH_NOTE,
         recall_delta_rule: DELTA_RULE,
         f32_baseline_mean_recall_at_k: Cell::from_option(
@@ -430,256 +460,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
-
-    use super::*;
-
-    fn corpus(rng: &mut StdRng, count: usize, dimensions: usize) -> Vec<Vec<f32>> {
-        (0..count)
-            .map(|_| {
-                (0..dimensions)
-                    .map(|_| rng.gen_range(-1.0_f32..1.0))
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// Every candidate must land four independent numbers on its row: recall
-    /// against the exact float32 ranking, the delta against that same row,
-    /// resident memory, and measured scan latency. None is allowed to stand in
-    /// for the others, and the binary candidate must record the breadth it
-    /// actually used.
-    #[test]
-    fn precision_candidates_report_recall_memory_and_scan_latency() {
-        let mut rng = StdRng::seed_from_u64(1579);
-        let vectors = corpus(&mut rng, 96, 64);
-        let queries = corpus(&mut rng, 12, 64);
-        let k = 10;
-        let breadth = default_binary_prefix_breadth(k);
-        assert_eq!(breadth, 40, "the contract default breadth is 4*k = 40");
-
-        let axis = evaluate(
-            &vectors,
-            &queries,
-            k,
-            breadth,
-            EvidenceKind::MeasuredWallClock,
-        );
-
-        assert_eq!(axis.rows.len(), 4, "all four candidates must be reported");
-        let reported: Vec<PrecisionCandidate> = axis.rows.iter().map(|row| row.candidate).collect();
-        assert_eq!(reported.as_slice(), PrecisionCandidate::ALL.as_slice());
-        assert_eq!(axis.binary_prefix_breadth, 40);
-        assert!(axis.bench_representations_only);
-        assert_eq!(axis.engine_persist_representation, "f16");
-        assert_eq!(axis.requested_k, k);
-        assert!(!axis.k_reduced_to_corpus);
-
-        for row in &axis.rows {
-            let label = row.candidate.as_str();
-            assert!(
-                row.bytes_per_vector > 0,
-                "{label} must report resident bytes per vector"
-            );
-            assert_eq!(
-                row.total_vector_bytes,
-                (row.bytes_per_vector as u64) * 96,
-                "{label} total bytes must follow from the per-vector figure"
-            );
-            assert!(
-                row.mean_recall_at_k.is_measured(),
-                "{label} must report recall"
-            );
-            let recall = row.mean_recall_at_k.value().copied().unwrap_or(-1.0);
-            assert!(
-                (0.0..=1.0).contains(&recall),
-                "{label} recall must be a fraction, got {recall}"
-            );
-            assert!(
-                row.scan_latency_ms.is_measured(),
-                "{label} must report measured scan latency"
-            );
-            let latency = row.scan_latency_ms.value().expect("scan latency measured");
-            assert_eq!(latency.count, queries.len(), "{label} sample count");
-            assert!(latency.p50 >= 0.0 && latency.p95 >= latency.p50, "{label}");
-            assert!(
-                row.recall_at_k.is_measured(),
-                "{label} must report a recall distribution, not only a mean"
-            );
-        }
-
-        let f32_row = &axis.rows[0];
-        let f16_row = &axis.rows[1];
-        let int8_row = &axis.rows[2];
-        let binary_row = &axis.rows[3];
-
-        assert!(
-            (f32_row.mean_recall_at_k.value().copied().unwrap_or(0.0) - 1.0).abs() < 1e-9,
-            "the float32 candidate is the ground truth and must score 1.0"
-        );
-        assert!(f32_row.scan_speedup_over_f32.is_none(), "no self-speedup");
-        assert_eq!(f32_row.bytes_per_vector, 64 * 4);
-        assert_eq!(f16_row.bytes_per_vector, 64 * 2);
-        assert_eq!(int8_row.bytes_per_vector, 64 + 4);
-        assert!(
-            f16_row.bytes_per_vector < f32_row.bytes_per_vector
-                && int8_row.bytes_per_vector < f16_row.bytes_per_vector,
-            "memory must shrink from f32 to f16 to int8"
-        );
-        assert_eq!(
-            binary_row.prefix_breadth,
-            Some(40),
-            "the binary candidate must record the breadth it used"
-        );
-        assert!(
-            f16_row.mean_recall_at_k.value().copied().unwrap_or(0.0) > 0.9,
-            "f16 must stay close to the exact ranking"
-        );
-    }
-
-    /// Absolute recall alone does not answer "what did this representation
-    /// cost against exact float32". Every row must carry the delta, computed
-    /// against the float32 row measured in the SAME run.
-    #[test]
-    fn every_precision_row_carries_its_recall_delta_against_f32() {
-        let mut rng = StdRng::seed_from_u64(1579);
-        let vectors = corpus(&mut rng, 96, 64);
-        let queries = corpus(&mut rng, 12, 64);
-        let axis = evaluate(&vectors, &queries, 10, 40, EvidenceKind::MeasuredWallClock);
-
-        let baseline = axis
-            .f32_baseline_mean_recall_at_k
-            .measured_f64()
-            .expect("the float32 baseline is measured");
-        assert!((baseline - 1.0).abs() < 1e-9);
-
-        let f32_delta = axis.rows[0]
-            .mean_recall_delta_vs_f32
-            .measured_f64()
-            .expect("the baseline row carries an exact zero delta");
-        assert!(
-            f32_delta.abs() < f64::EPSILON,
-            "the float32 row is its own baseline, so its delta is exactly 0.0, got {f32_delta}"
-        );
-
-        for row in &axis.rows[1..] {
-            let label = row.candidate.as_str();
-            let recall = row
-                .mean_recall_at_k
-                .measured_f64()
-                .unwrap_or_else(|| panic!("{label} recall measured"));
-            let delta = row
-                .mean_recall_delta_vs_f32
-                .measured_f64()
-                .unwrap_or_else(|| panic!("{label} must carry a recall delta"));
-            assert!(
-                (delta - (recall - baseline)).abs() < 1e-12,
-                "{label} delta must be its own recall minus the float32 baseline"
-            );
-            assert!(
-                delta <= 1e-12,
-                "{label} cannot beat the exact float32 ranking it is scored against, got {delta}"
-            );
-        }
-    }
-
-    /// The parked Moorcheh binary benchmark must be identified and tied to the
-    /// local binary-prefix row, without any Moorcheh figure being invented.
-    #[test]
-    fn the_parked_moorcheh_benchmark_is_identified_not_imitated() {
-        let mut rng = StdRng::seed_from_u64(23);
-        let vectors = corpus(&mut rng, 64, 32);
-        let queries = corpus(&mut rng, 8, 32);
-        let axis = evaluate(&vectors, &queries, 8, 32, EvidenceKind::MeasuredWallClock);
-        let evidence = &axis.moorcheh_binary_benchmark;
-
-        assert!(
-            !evidence.run_by_this_harness,
-            "the harness must not claim to have run the parked benchmark"
-        );
-        assert_eq!(evidence.parked_by_ticket, "ONE-1579");
-        assert_eq!(evidence.parked_by_ticket_url, MOORCHEH_PARKED_TICKET_URL);
-        assert_eq!(
-            evidence.external_evidence_status,
-            "parked_external_not_run_by_this_harness"
-        );
-        assert_eq!(evidence.local_counterpart_row, "binary_prefix_rescore");
-        let binary = &axis.rows[3];
-        assert_eq!(
-            evidence.local_counterpart_recall_at_k.measured_f64(),
-            binary.mean_recall_at_k.measured_f64(),
-            "the evidence block must quote the row it points at, not a separate number"
-        );
-        assert_eq!(
-            evidence
-                .local_counterpart_recall_delta_vs_f32
-                .measured_f64(),
-            binary.mean_recall_delta_vs_f32.measured_f64()
-        );
-        assert_eq!(
-            evidence.local_counterpart_bytes_per_vector.value().copied(),
-            Some(binary.bytes_per_vector)
-        );
-        assert_eq!(evidence.artifact_reference_source, MOORCHEH_REFERENCE_ENV);
-
-        let rendered = serde_json::to_string(evidence).expect("evidence renders");
-        match declared_moorcheh_reference() {
-            None => {
-                assert!(
-                    !evidence.artifact_reference.is_measured(),
-                    "with no declared reference the artifact cell stays not_ready"
-                );
-                assert!(rendered.contains(MOORCHEH_REFERENCE_ENV), "{rendered}");
-                assert!(rendered.contains(MOORCHEH_PARKED_TICKET_URL), "{rendered}");
-            }
-            Some(reference) => assert_eq!(
-                evidence.artifact_reference.value().map(String::as_str),
-                Some(reference.as_str())
-            ),
-        }
-    }
-
-    /// `evaluate` is reachable from tests with a k larger than the corpus.
-    /// Plan admission refuses that shape, and when it is reached anyway the
-    /// reduction is REPORTED rather than silently applied.
-    #[test]
-    fn a_k_larger_than_the_corpus_is_reported_as_reduced() {
-        let mut rng = StdRng::seed_from_u64(5);
-        let vectors = corpus(&mut rng, 6, 8);
-        let queries = corpus(&mut rng, 2, 8);
-        let axis = evaluate(&vectors, &queries, 50, 50, EvidenceKind::MeasuredWallClock);
-        assert_eq!(axis.requested_k, 50);
-        assert_eq!(axis.k, 6, "k cannot exceed the vectors that exist");
-        assert!(
-            axis.k_reduced_to_corpus,
-            "a reduced k must be visible in the axis, never silent"
-        );
-    }
-
-    #[test]
-    fn the_binary_prefix_rescore_reads_exactly_its_breadth() {
-        let mut rng = StdRng::seed_from_u64(11);
-        let vectors = corpus(&mut rng, 40, 32);
-        let queries = corpus(&mut rng, 4, 32);
-        // Breadth == the whole corpus makes stage 2 exact, so the candidate
-        // must reproduce the float32 ranking.
-        let axis = evaluate(&vectors, &queries, 5, 40, EvidenceKind::MeasuredWallClock);
-        let binary = &axis.rows[3];
-        assert_eq!(binary.prefix_breadth, Some(40));
-        assert!(
-            (binary.mean_recall_at_k.value().copied().unwrap_or(0.0) - 1.0).abs() < 1e-9,
-            "a full-corpus breadth rescore is exact"
-        );
-        assert!(
-            binary
-                .mean_recall_delta_vs_f32
-                .measured_f64()
-                .unwrap_or(-1.0)
-                .abs()
-                < 1e-9,
-            "an exact rescore loses nothing against the float32 baseline"
-        );
-    }
-}
+mod tests;

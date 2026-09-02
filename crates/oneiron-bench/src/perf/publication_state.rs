@@ -119,6 +119,17 @@ pub(crate) fn inputs(source: Inputs<'_>) -> PublicationInputs {
             provenance.build_revision_blake3.is_measured(),
             provenance.build_revision_source
         ),
+        // Fail-closed: only an embedded, explicit `clean` satisfies this. A
+        // `not_ready` cell means the artifact carries no build-tree evidence
+        // at all, which is exactly as unpublishable as a declared dirty tree.
+        build_tree_clean: provenance.build_tree_dirty.value() == Some(&false),
+        build_tree_detail: format!(
+            "compile-time build-tree cleanliness: dirty={:?}, source: {}",
+            provenance.build_tree_dirty.value(),
+            provenance.build_tree_dirty_source
+        ),
+        build_profile_approved: provenance.build_profile.approved_for_publication,
+        build_profile_detail: provenance.build_profile.publication_detail(),
         node_is_designated_first_tokyo: node.is_designated_first_tokyo_node,
         node_detail: node.publication_detail(),
         nvme_sanity_ok: nvme_fsync.sanity_ok(),
@@ -368,7 +379,9 @@ fn precision_publication_state(plan: &PerfPlan, axis: &PrecisionAxis) -> (bool, 
         && axis.dimensions == plan.corpus.dimensions
         && axis.vectors == plan.corpus.indexed_docs
         && axis.queries == plan.corpus.queries
+        && axis.requested_binary_prefix_breadth == expected_breadth
         && axis.binary_prefix_breadth == expected_breadth
+        && !axis.binary_prefix_breadth_reshaped
         && candidates.as_slice() == PrecisionCandidate::ALL.as_slice()
         && axis.f32_baseline_mean_recall_at_k.is_measured()
         && rows_valid;

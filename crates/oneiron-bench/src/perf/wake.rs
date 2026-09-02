@@ -44,7 +44,7 @@ pub(crate) fn measure_wake(
     if let Some(program) = program {
         for index in 0..settings.samples {
             let dir = root.join(format!("wake-{index}"));
-            match wake_sample(&program, settings, &dir) {
+            match wake_sample(&program.path, settings, &dir) {
                 Ok(sample) => {
                     samples.push(sample.elapsed_ms);
                     readiness_signal = sample.signal;

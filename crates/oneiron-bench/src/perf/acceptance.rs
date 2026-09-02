@@ -19,7 +19,8 @@
 use serde::Serialize;
 
 use super::axes::{
-    REQUIRED_FULL_SESSION_CURVE, RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis,
+    REQUIRED_FULL_SESSION_CURVE, RecallLatencyAxis, ResidentMemoryAxis, SessionCurvePoint,
+    SessionsAxis, WakeAxis,
 };
 use super::cells::{Cell, EvidenceKind};
 
@@ -105,9 +106,10 @@ pub(crate) struct AcceptanceEvidence {
     pub(crate) beam_boundary: &'static str,
 }
 
-/// Trace from one synchronized, error-free session point to the QPS copied into
-/// acceptance. The numerator and denominator are carried beside the value so a
-/// consumer can reproduce it; an invalid/synthetic point becomes `not_ready`.
+/// Trace from one synchronized, error-free session point to the PEAK measured
+/// QPS copied into acceptance. The numerator and denominator are carried beside
+/// the value so a consumer can reproduce it; an invalid/synthetic point becomes
+/// `not_ready`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct MeasuredQpsEvidence {
     pub(crate) lifecycle_ticket: &'static str,
@@ -115,16 +117,35 @@ pub(crate) struct MeasuredQpsEvidence {
     pub(crate) related_embed_gate_ticket: &'static str,
     pub(crate) related_embed_gate_url: &'static str,
     pub(crate) source_report_cell: String,
+    /// Concurrency of the point the peak was actually measured at.
     pub(crate) sessions: usize,
     pub(crate) completed_queries_numerator: Cell<usize>,
     pub(crate) wall_clock_ms_denominator: Cell<f64>,
     pub(crate) measured_qps: Cell<f64>,
     pub(crate) evidence_kind: EvidenceKind,
+    /// How many curve points were admissible evidence at all.
+    pub(crate) traceable_points: usize,
+    /// The largest concurrency a full curve must walk, carried so a reader can
+    /// see whether the peak came from it or from an earlier point.
+    pub(crate) largest_required_sessions: usize,
+    /// Whether that largest point was itself traceable. It is reported rather
+    /// than used as a gate here: losing it does not erase a peak the earlier
+    /// points really measured. The separate `session_curve_complete`
+    /// publication check is what refuses an incomplete curve.
+    pub(crate) largest_required_point_traceable: bool,
+    pub(crate) peak_selection_rule: &'static str,
     pub(crate) valid_for_lifecycle_support: bool,
     pub(crate) valid_for_one_1537_embed_gate: bool,
     pub(crate) derivation: &'static str,
     pub(crate) relationship: &'static str,
 }
+
+const PEAK_QPS_RULE: &str = "peak throughput is the HIGHEST measured throughput_qps among this \
+     run's traceable session points, compared by measured QPS rather than taken from whichever \
+     point carried the largest concurrency: throughput commonly peaks before the largest point \
+     once contention begins, and an untraceable largest point never erases the peak the earlier \
+     points did measure; ties keep the lower concurrency, which reached that rate with fewer \
+     sessions";
 
 const BEAM_BOUNDARY: &str = "BEAM keeps accuracy and cost; nothing in this acceptance block restates, re-weights or \
      summarises a BEAM figure, and no knob row is an accuracy claim";
@@ -232,71 +253,103 @@ fn resident_mean(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
 
 fn peak_throughput(evidence: &MeasuredQpsEvidence) -> SupportingMeasurement {
     support(
-        "maximum_concurrency_session_throughput",
+        "peak_measured_session_throughput",
         "acceptance.measured_qps.measured_qps",
         evidence.measured_qps.measured_f64(),
         "queries_per_second",
-        "the maximum required session point did not produce traceable measured-wall-clock QPS",
+        "no session point produced traceable measured-wall-clock QPS to take a peak from",
     )
 }
 
+/// One curve point is admissible acceptance evidence only when its whole row is
+/// internally consistent: every worker released together, no query error, and a
+/// throughput that reproduces from its own numerator and denominator.
+fn point_is_traceable(point: &SessionCurvePoint) -> bool {
+    let reported = point.throughput_qps.measured_f64();
+    let timed = point.wall_clock_ms.is_finite() && point.wall_clock_ms > 0.0;
+    let derived =
+        (timed && point.queries > 0).then(|| point.queries as f64 / (point.wall_clock_ms / 1e3));
+    let rate_agrees = reported.zip(derived).is_some_and(|(reported, derived)| {
+        reported.is_finite()
+            && reported > 0.0
+            && (reported - derived).abs() <= f64::EPSILON * reported.abs().max(derived.abs()) * 8.0
+    });
+    point.workers_released == point.sessions
+        && point.synchronized
+        && point.errors == 0
+        && rate_agrees
+}
+
+/// The traceable point with the highest MEASURED throughput. Ties keep the
+/// lower concurrency: reaching the same rate with fewer sessions is the honest
+/// peak point, and the choice is deterministic rather than curve-order dependent.
+fn peak_point<'a>(traceable: &[&'a SessionCurvePoint]) -> Option<&'a SessionCurvePoint> {
+    traceable.iter().copied().reduce(|best, point| {
+        let best_qps = best.throughput_qps.measured_f64().unwrap_or(f64::MIN);
+        let point_qps = point.throughput_qps.measured_f64().unwrap_or(f64::MIN);
+        if point_qps > best_qps || (point_qps == best_qps && point.sessions < best.sessions) {
+            point
+        } else {
+            best
+        }
+    })
+}
+
 fn measured_qps_evidence(sessions: &SessionsAxis) -> MeasuredQpsEvidence {
-    let expected_sessions = REQUIRED_FULL_SESSION_CURVE
+    let largest = REQUIRED_FULL_SESSION_CURVE
         .last()
         .copied()
         .unwrap_or_default();
-    let source_report_cell = format!("sessions.curve[sessions={expected_sessions}].throughput_qps");
-    let point = sessions
-        .curve
-        .iter()
-        .find(|point| point.sessions == expected_sessions);
-    let valid_point = point.is_some_and(|point| {
-        let reported = point.throughput_qps.measured_f64();
-        let derived =
-            (point.wall_clock_ms.is_finite() && point.wall_clock_ms > 0.0 && point.queries > 0)
-                .then(|| point.queries as f64 / (point.wall_clock_ms / 1e3));
-        let rate_agrees = reported.zip(derived).is_some_and(|(reported, derived)| {
-            reported.is_finite()
-                && reported > 0.0
-                && (reported - derived).abs()
-                    <= f64::EPSILON * reported.abs().max(derived.abs()) * 8.0
-        });
-        point.workers_released == point.sessions
-            && point.synchronized
-            && point.errors == 0
-            && rate_agrees
-    });
-    let valid = sessions.evidence_kind == EvidenceKind::MeasuredWallClock && valid_point;
-    let reason = if sessions.evidence_kind != EvidenceKind::MeasuredWallClock {
-        "the point is synthetic smoke rather than publishable measured-wall-clock evidence"
-            .to_owned()
-    } else if point.is_none() {
-        format!("the required {expected_sessions}-session point is absent")
+    let measured_kind = sessions.evidence_kind == EvidenceKind::MeasuredWallClock;
+    let traceable: Vec<&SessionCurvePoint> = if measured_kind {
+        sessions
+            .curve
+            .iter()
+            .filter(|point| point_is_traceable(point))
+            .collect()
     } else {
-        format!(
-            "the required {expected_sessions}-session point was not synchronized, error-free, or arithmetically traceable to completed_queries / wall_clock_seconds"
-        )
+        Vec::new()
     };
-    let queries = point.map(|point| point.queries);
-    let wall_clock_ms = point.map(|point| point.wall_clock_ms);
-    let qps = point.and_then(|point| point.throughput_qps.measured_f64());
+    let peak = peak_point(&traceable);
+    let valid = peak.is_some();
+    let reason = if measured_kind {
+        format!(
+            "none of the {} emitted session point(s) released all of its workers together, \
+             completed every query without error, and reproduced its throughput_qps from \
+             completed_queries / wall_clock_seconds, so there is no measured peak to report",
+            sessions.curve.len()
+        )
+    } else {
+        "the session curve is synthetic smoke rather than publishable measured-wall-clock evidence"
+            .to_owned()
+    };
     MeasuredQpsEvidence {
         lifecycle_ticket: KNOB_TICKET,
         lifecycle_ticket_url: KNOB_TICKET_URL,
         related_embed_gate_ticket: EMBED_LATENCY_GATE_TICKET,
         related_embed_gate_url: EMBED_LATENCY_GATE_URL,
-        source_report_cell,
-        sessions: expected_sessions,
-        completed_queries_numerator: Cell::from_option(valid.then_some(queries).flatten(), &reason),
+        source_report_cell: format!(
+            "sessions.curve[sessions={}].throughput_qps",
+            peak.map_or(largest, |point| point.sessions)
+        ),
+        sessions: peak.map_or(largest, |point| point.sessions),
+        completed_queries_numerator: Cell::from_option(peak.map(|point| point.queries), &reason),
         wall_clock_ms_denominator: Cell::from_option(
-            valid.then_some(wall_clock_ms).flatten(),
+            peak.map(|point| point.wall_clock_ms),
             &reason,
         ),
-        measured_qps: Cell::from_option(valid.then_some(qps).flatten(), &reason),
+        measured_qps: Cell::from_option(
+            peak.and_then(|point| point.throughput_qps.measured_f64()),
+            &reason,
+        ),
         evidence_kind: sessions.evidence_kind,
+        traceable_points: traceable.len(),
+        largest_required_sessions: largest,
+        largest_required_point_traceable: traceable.iter().any(|p| p.sessions == largest),
+        peak_selection_rule: PEAK_QPS_RULE,
         valid_for_lifecycle_support: valid,
         valid_for_one_1537_embed_gate: false,
-        derivation: "sessions.curve[sessions=300].queries / (sessions.curve[sessions=300].wall_clock_ms / 1000); the source point must release all 300 workers together, complete every query without error, and carry measured_wall_clock evidence",
+        derivation: "the peak point's queries / (its wall_clock_ms / 1000), selected by comparing measured throughput_qps across every traceable point; each candidate must release all of its workers together, complete every query without error, and carry measured_wall_clock evidence",
         relationship: "this QPS is traceable support for ONE-1578 lifecycle sizing only; ONE-1537 owns a different Oneironer single-query embed-p95 gate, so the QPS is never substituted for or combined with that acceptance measurement",
     }
 }
@@ -446,293 +499,4 @@ fn declared_embed_latency_reference() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use super::super::axes::{
-        CHILD_SHUTDOWN_RULE, FULL_RUN_MIN_COMPLETED_SAMPLES, FULL_RUN_MIN_INDEXED_DOCS,
-        FULL_RUN_MIN_QUERIES, READINESS_RULE, REQUIRED_FULL_SESSION_CURVE, REQUIRED_READY_CHILDREN,
-        ReadinessSignal, SESSION_SYNCHRONIZATION_RULE, SampleSet, SessionCurvePoint,
-    };
-    use super::super::cells::{EvidenceKind, Percentiles};
-    use super::*;
-
-    fn recall_latency() -> RecallLatencyAxis {
-        let latency = vec![2.0; FULL_RUN_MIN_COMPLETED_SAMPLES];
-        let recall = vec![1.0; FULL_RUN_MIN_COMPLETED_SAMPLES];
-        RecallLatencyAxis::new(
-            10,
-            FULL_RUN_MIN_INDEXED_DOCS,
-            FULL_RUN_MIN_QUERIES,
-            SampleSet::new("cold", &latency, &recall, latency.len(), 0),
-            SampleSet::new("warm", &latency, &recall, latency.len(), 0),
-            EvidenceKind::MeasuredWallClock,
-        )
-    }
-
-    fn wake() -> WakeAxis {
-        WakeAxis {
-            readiness_signal: ReadinessSignal::TcpAccept,
-            readiness_rule: READINESS_RULE,
-            shutdown_rule: CHILD_SHUTDOWN_RULE,
-            accept_poll_interval_us: 100,
-            samples: 2,
-            spawn_to_ready_ms: Cell::from_option(
-                Percentiles::from_samples(&[3.0, 4.0]),
-                "test wake samples",
-            ),
-            child: Cell::measured("oneiron-bench perf wake-child".to_owned()),
-            shutdown_outcomes: BTreeMap::from([("exited".to_owned(), 2)]),
-            errors: Vec::new(),
-            evidence_kind: EvidenceKind::MeasuredWallClock,
-        }
-    }
-
-    fn sessions() -> SessionsAxis {
-        SessionsAxis {
-            vaults: 1,
-            required_full_curve: REQUIRED_FULL_SESSION_CURVE,
-            requested_curve: vec![1, 10],
-            exact_full_curve: false,
-            curve: vec![SessionCurvePoint {
-                sessions: 10,
-                workers_released: 10,
-                synchronized: true,
-                queries: 40,
-                spawn_ms: 1.0,
-                wall_clock_ms: 20.0,
-                latency_ms: Cell::from_option(Percentiles::from_samples(&[1.0]), "none"),
-                throughput_qps: Cell::measured(2_000.0),
-                errors: 0,
-            }],
-            evidence_kind: EvidenceKind::MeasuredWallClock,
-            synchronization: SESSION_SYNCHRONIZATION_RULE,
-            note: "test",
-        }
-    }
-
-    fn resident_memory() -> ResidentMemoryAxis {
-        ResidentMemoryAxis {
-            required_ready_children: REQUIRED_READY_CHILDREN,
-            ready_children_observed: REQUIRED_READY_CHILDREN,
-            child_holds_open_vault: true,
-            vault_residency_evidence: "harness-owned wake-child opened every vault",
-            sampled_while_all_children_ready: true,
-            child_hold_ms: 30_000,
-            minimum_child_hold_ms: 25_000,
-            per_child_rss_bytes: Cell::measured(vec![1_024; REQUIRED_READY_CHILDREN]),
-            total_child_rss_bytes: Cell::measured(10_240),
-            mean_child_rss_bytes: Cell::measured(1_024),
-            parent_rss_bytes: Cell::measured(2_048),
-            arch_0023b_per_vault_budget_mb: 50,
-            budget_comparison: Cell::measured("test".to_owned()),
-            shutdown_rule: CHILD_SHUTDOWN_RULE,
-            shutdown_outcomes: BTreeMap::from([("exited".to_owned(), REQUIRED_READY_CHILDREN)]),
-            errors: Vec::new(),
-            evidence_kind: EvidenceKind::MeasuredWallClock,
-        }
-    }
-
-    fn evidence<'a>(
-        recall: &'a RecallLatencyAxis,
-        wake: &'a WakeAxis,
-        sessions: &'a SessionsAxis,
-        memory: &'a ResidentMemoryAxis,
-    ) -> AcceptanceEvidence {
-        AcceptanceEvidence::collect(&AcceptanceInputs {
-            recall_latency: recall,
-            wake,
-            sessions,
-            resident_memory: memory,
-        })
-    }
-
-    /// The acceptance section names ONE-1578's actual lifecycle knobs, not
-    /// unrelated retrieval or precision parameters. Each proposal is linked,
-    /// distinguished from direct evidence, and supported only by measured
-    /// report cells that really exist in this run.
-    #[test]
-    fn acceptance_structures_the_five_one_1578_knob_relationships() {
-        let recall = recall_latency();
-        let wake = wake();
-        let sessions = sessions();
-        let memory = resident_memory();
-        let evidence = evidence(&recall, &wake, &sessions, &memory);
-
-        assert_eq!(evidence.knob_ticket, "ONE-1578");
-        assert_eq!(evidence.knob_ticket_url, KNOB_TICKET_URL);
-        let proposals: Vec<(&str, u64, &str)> = evidence
-            .knobs
-            .iter()
-            .map(|knob| (knob.knob, knob.proposed_setting, knob.proposed_setting_unit))
-            .collect();
-        assert_eq!(
-            proposals,
-            vec![
-                ("idle_ttl", 15, "minutes"),
-                ("hot_vault_extension", 60, "minutes_maximum"),
-                ("reap_lookahead", 5, "minutes"),
-                ("spawn_concurrency_cap", 8, "child_processes"),
-                ("sigkill_grace", 30, "seconds"),
-            ]
-        );
-        for knob in &evidence.knobs {
-            assert_eq!(knob.ticket, "ONE-1578");
-            assert_eq!(knob.ticket_url, KNOB_TICKET_URL);
-            assert!(!knob.directly_exercised_by_this_harness);
-            assert!(
-                !knob.direct_measurement.is_measured(),
-                "{} must not turn its proposal into a measurement",
-                knob.knob
-            );
-            assert!(!knob.supporting_measurements.is_empty(), "{}", knob.knob);
-            assert!(
-                knob.supporting_measurements
-                    .iter()
-                    .all(|measurement| !measurement.report_cell.is_empty()),
-                "{} must point at traceable report cells",
-                knob.knob
-            );
-            assert!(!knob.relationship.is_empty());
-        }
-        let idle = &evidence.knobs[0];
-        assert!(
-            idle.supporting_measurements
-                .iter()
-                .all(|measurement| measurement.measured_value.is_measured()),
-            "the fixture measured wake p95 and proven per-vault RSS"
-        );
-    }
-
-    /// QPS copied into acceptance is backed by an exact report cell plus its
-    /// numerator and denominator. Synthetic, unsynchronized, erroneous, or
-    /// arithmetically inconsistent points remain not-ready, and QPS is never
-    /// promoted into ONE-1537's unrelated embed gate.
-    #[test]
-    fn measured_qps_acceptance_is_traceable_and_never_invented() {
-        let mut axis = sessions();
-        let point = axis.curve.first_mut().expect("fixture point");
-        point.sessions = 300;
-        point.workers_released = 300;
-        point.synchronized = true;
-        point.queries = 600;
-        point.wall_clock_ms = 20.0;
-        point.throughput_qps = Cell::measured(30_000.0);
-        point.errors = 0;
-        axis.evidence_kind = EvidenceKind::MeasuredWallClock;
-
-        let evidence = measured_qps_evidence(&axis);
-        assert!(evidence.valid_for_lifecycle_support);
-        assert!(!evidence.valid_for_one_1537_embed_gate);
-        assert_eq!(evidence.sessions, 300);
-        assert_eq!(evidence.completed_queries_numerator.value(), Some(&600));
-        assert_eq!(
-            evidence.wall_clock_ms_denominator.measured_f64(),
-            Some(20.0)
-        );
-        assert_eq!(evidence.measured_qps.measured_f64(), Some(30_000.0));
-        assert_eq!(
-            evidence.source_report_cell,
-            "sessions.curve[sessions=300].throughput_qps"
-        );
-        assert!(evidence.relationship.contains("never substituted"));
-
-        axis.curve[0].throughput_qps = Cell::measured(99_999.0);
-        let invented = measured_qps_evidence(&axis);
-        assert!(!invented.valid_for_lifecycle_support);
-        assert!(!invented.measured_qps.is_measured());
-
-        axis.curve[0].throughput_qps = Cell::measured(30_000.0);
-        axis.curve[0].errors = 1;
-        let partial = measured_qps_evidence(&axis);
-        assert!(!partial.measured_qps.is_measured());
-
-        axis.curve[0].errors = 0;
-        axis.evidence_kind = EvidenceKind::SyntheticSmoke;
-        let smoke = measured_qps_evidence(&axis);
-        assert!(!smoke.measured_qps.is_measured());
-    }
-
-    /// ONE-1537 owns a strict single-query embed p95 gate. Warm retrieval p95
-    /// is carried as a separate downstream component and never substituted for
-    /// the missing external embedding measurement.
-    #[test]
-    fn one_1537_relationship_is_linked_and_never_invented() {
-        let recall = recall_latency();
-        let relationship = embed_latency_relationship(&recall);
-
-        assert_eq!(relationship.gate_ticket, "ONE-1537");
-        assert_eq!(relationship.gate_ticket_url, EMBED_LATENCY_GATE_URL);
-        assert_eq!(
-            relationship.required_metric,
-            "oneironer_single_query_embed_p95_ms"
-        );
-        assert_eq!(relationship.acceptance_operator, "less_than");
-        assert!((relationship.budget_ms - 50.0).abs() < f64::EPSILON);
-        assert!(!relationship.measured_by_this_harness);
-        assert_eq!(
-            relationship.in_harness_report_cell,
-            "recall_latency.warm.latency_ms.p95"
-        );
-        assert_eq!(relationship.warm_retrieval_p95_ms.measured_f64(), Some(2.0));
-        assert!(relationship.relationship.contains("never added"));
-
-        match (
-            declared_embed_latency_p95_ms(),
-            declared_embed_latency_reference(),
-        ) {
-            (Some(external), Some(reference)) => {
-                assert_eq!(
-                    relationship.external_embed_p95_ms.measured_f64(),
-                    Some(external)
-                );
-                assert_eq!(
-                    relationship.external_evidence_reference.value(),
-                    Some(&reference)
-                );
-                assert_eq!(
-                    relationship
-                        .external_measurement_within_gate
-                        .value()
-                        .copied(),
-                    Some(external < EMBED_LATENCY_BUDGET_MS)
-                );
-                assert_eq!(
-                    relationship.external_gate_headroom_ms.measured_f64(),
-                    Some(EMBED_LATENCY_BUDGET_MS - external)
-                );
-            }
-            _ => {
-                assert!(!relationship.external_embed_p95_ms.is_measured());
-                assert!(!relationship.external_gate_headroom_ms.is_measured());
-                assert!(!relationship.external_measurement_within_gate.is_measured());
-                let rendered = serde_json::to_string(&relationship).expect("relationship renders");
-                assert!(
-                    rendered.contains(EMBED_LATENCY_MEASUREMENT_ENV),
-                    "{rendered}"
-                );
-                assert!(rendered.contains(EMBED_LATENCY_REFERENCE_ENV), "{rendered}");
-                assert!(rendered.contains(EMBED_LATENCY_GATE_URL), "{rendered}");
-            }
-        }
-    }
-
-    /// Even measured process RSS is not per-vault support when a custom child
-    /// command has only proved TCP readiness.
-    #[test]
-    fn custom_child_rss_is_not_promoted_to_one_1578_vault_residency_evidence() {
-        let recall = recall_latency();
-        let wake = wake();
-        let sessions = sessions();
-        let mut memory = resident_memory();
-        memory.child_holds_open_vault = false;
-        memory.vault_residency_evidence = "custom child proved TCP readiness only";
-        let evidence = evidence(&recall, &wake, &sessions, &memory);
-        let idle_rss = &evidence.knobs[0].supporting_measurements[1];
-        assert_eq!(idle_rss.metric, "mean_rss_per_proven_active_vault");
-        assert!(
-            !idle_rss.measured_value.is_measured(),
-            "opaque custom-child RSS must not become per-vault evidence"
-        );
-    }
-}
+mod tests;

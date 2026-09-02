@@ -19,7 +19,11 @@
 //!   every precision row and listed cache rung must be measured, and the NVMe
 //!   pass must be complete;
 //! * numeric floors also say nothing about WHERE a run happened, so a full
-//!   report has to prove it ran on the designated first Tokyo node.
+//!   report has to prove it ran on the designated first Tokyo node;
+//! * and they say nothing about WHICH ARTIFACT produced them. A binary built
+//!   from uncommitted sources belongs to no commit, and an unoptimised or
+//!   debug-assertion-carrying binary measures a differently shaped experiment
+//!   rather than a slower one, so both are refused.
 
 use serde::Serialize;
 
@@ -91,6 +95,13 @@ pub(crate) struct PublicationInputs {
     pub(crate) measured_qps_acceptance_detail: String,
     pub(crate) build_revision_valid: bool,
     pub(crate) build_revision_detail: String,
+    /// The artifact's compile-time declaration that its sources were committed.
+    /// Fail-closed: an artifact that embedded nothing is not "clean".
+    pub(crate) build_tree_clean: bool,
+    pub(crate) build_tree_detail: String,
+    /// The artifact was built with an approved OPTIMIZED profile.
+    pub(crate) build_profile_approved: bool,
+    pub(crate) build_profile_detail: String,
     pub(crate) node_is_designated_first_tokyo: bool,
     pub(crate) node_detail: String,
     pub(crate) nvme_sanity_ok: bool,
@@ -241,6 +252,16 @@ fn evaluate_checks(inputs: &PublicationInputs) -> Vec<PublicationCheck> {
             detail: inputs.build_revision_detail.clone(),
         },
         PublicationCheck {
+            check: "build_tree_clean_at_compile_time",
+            satisfied: inputs.build_tree_clean,
+            detail: inputs.build_tree_detail.clone(),
+        },
+        PublicationCheck {
+            check: "approved_optimized_build_profile",
+            satisfied: inputs.build_profile_approved,
+            detail: inputs.build_profile_detail.clone(),
+        },
+        PublicationCheck {
             check: "designated_first_tokyo_node",
             satisfied: inputs.node_is_designated_first_tokyo,
             detail: inputs.node_detail.clone(),
@@ -296,6 +317,10 @@ mod tests {
                 .to_owned(),
             build_revision_valid: true,
             build_revision_detail: "running executable BLAKE3 measured".to_owned(),
+            build_tree_clean: true,
+            build_tree_detail: "the build environment declared a committed tree".to_owned(),
+            build_profile_approved: true,
+            build_profile_detail: "declared build profile `release`, optimized artifact".to_owned(),
             node_is_designated_first_tokyo: true,
             node_detail: "declared node `tokyo-1` in `tokyo`".to_owned(),
             nvme_sanity_ok: true,
@@ -472,6 +497,68 @@ mod tests {
         let decision = decide(&no_nvme);
         assert!(!decision.publishable);
         assert_eq!(decision.blocking_checks, vec!["nvme_sanity"]);
+    }
+
+    /// Performance numbers are properties of an ARTIFACT. A binary compiled
+    /// from uncommitted sources belongs to no commit, and a debug or
+    /// unoptimised binary measures a differently shaped experiment rather than
+    /// a slower one. Each is its own named, independently blocking check, and
+    /// both fail closed when the artifact embedded nothing to prove otherwise.
+    #[test]
+    fn a_dirty_or_unapproved_build_artifact_blocks_publication() {
+        let mut dirty = publishable_inputs();
+        dirty.build_tree_clean = false;
+        dirty.build_tree_detail = "the build environment declared uncommitted sources".to_owned();
+        let decision = decide(&dirty);
+        assert!(!decision.publishable);
+        assert_eq!(
+            decision.blocking_checks,
+            vec!["build_tree_clean_at_compile_time"]
+        );
+        assert!(
+            decision
+                .non_publishable_reason
+                .unwrap_or_default()
+                .contains("uncommitted sources")
+        );
+
+        let mut unknown = publishable_inputs();
+        unknown.build_tree_clean = false;
+        unknown.build_tree_detail = "no cleanliness was embedded at compile time".to_owned();
+        assert!(
+            !decide(&unknown).publishable,
+            "an artifact that embedded nothing must not be assumed clean"
+        );
+
+        let mut debug_build = publishable_inputs();
+        debug_build.build_profile_approved = false;
+        debug_build.build_profile_detail =
+            "declared build profile `dev`; debug_assertions=true".to_owned();
+        let decision = decide(&debug_build);
+        assert!(!decision.publishable);
+        assert_eq!(
+            decision.blocking_checks,
+            vec!["approved_optimized_build_profile"]
+        );
+        assert!(
+            decision
+                .non_publishable_reason
+                .unwrap_or_default()
+                .contains("debug_assertions=true")
+        );
+
+        // The two are independent: neither one masks the other.
+        let mut both = publishable_inputs();
+        both.build_tree_clean = false;
+        both.build_profile_approved = false;
+        let decision = decide(&both);
+        assert_eq!(
+            decision.blocking_checks,
+            vec![
+                "build_tree_clean_at_compile_time",
+                "approved_optimized_build_profile"
+            ]
+        );
     }
 
     /// A starved completed-sample floor blocks publication even when the plan

@@ -42,11 +42,14 @@ pub(crate) const AXES: [&str; 8] = [
 pub(crate) const REPORT_SECTIONS: [&str; 3] = ["provenance", "publication", "acceptance"];
 
 /// Every provenance field the report must carry.
-pub(crate) const PROVENANCE_FIELDS: [&str; 20] = [
+pub(crate) const PROVENANCE_FIELDS: [&str; 23] = [
     "build_revision_blake3",
     "build_revision_source",
     "build_git_sha",
     "build_git_sha_source",
+    "build_tree_dirty",
+    "build_tree_dirty_source",
+    "build_profile",
     "source_checkout_git_sha",
     "source_checkout_git_sha_source",
     "target_triple",

@@ -17,7 +17,13 @@
 //!   stream that produced the reported hit rates is identifiable and cannot be
 //!   swapped without changing provenance;
 //! * the NODE IDENTITY names the host and says whether it is the designated
-//!   first Tokyo node, which the publication predicate requires.
+//!   first Tokyo node, which the publication predicate requires. Designation
+//!   is bound to the host identity this process OBSERVES — its kernel hostname
+//!   and machine id — matched against an allowlist embedded at compile time. A
+//!   free-form runtime claim is recorded as the operator's declaration and is
+//!   necessary, but it is never sufficient: any host can export
+//!   `ONEIRON_BENCH_NODE=tokyo-1`, and none can rewrite the artifact's
+//!   allowlist or the identity the kernel reports.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,9 +31,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use super::build_profile::BuildProfile;
 use super::cells::{Cell, EvidenceKind};
 use super::corpus::CorpusMarkerEvidence;
-use super::git_sha::{build_git_sha, running_executable_blake3, source_checkout_git_sha};
+use super::git_sha::{
+    build_git_sha, build_tree_dirty, running_executable_blake3, source_checkout_git_sha,
+};
 
 /// Environment variable declaring which node this run happened on.
 pub(crate) const NODE_ENV: &str = "ONEIRON_BENCH_NODE";
@@ -37,10 +46,24 @@ pub(crate) const NODE_LOCATION_ENV: &str = "ONEIRON_BENCH_NODE_LOCATION";
 pub(crate) const DESIGNATED_FIRST_TOKYO_NODE: &str = "tokyo-1";
 /// The location that node must declare.
 pub(crate) const DESIGNATED_NODE_LOCATION: &str = "tokyo";
+/// Compile-time allowlist of the OBSERVED host identities that are the
+/// designated first Tokyo node.
+///
+/// Entries are `hostname/machine-id` pairs separated by commas, semicolons or
+/// newlines; blank entries and `#` comments are ignored. Both halves are
+/// required, because either alone is guessable or shared. The allowlist is
+/// embedded with `option_env!` so it is part of the artifact rather than
+/// something the measured host can assert about itself, and an artifact that
+/// embedded no allowlist designates nothing at all.
+pub(crate) const TOKYO_NODE_ALLOWLIST_ENV: &str = "ONEIRON_BENCH_TOKYO_NODE_ALLOWLIST";
+const COMPILE_TIME_TOKYO_ALLOWLIST: Option<&str> =
+    option_env!("ONEIRON_BENCH_TOKYO_NODE_ALLOWLIST");
 
-const NODE_RULE: &str = "a publishable full run must declare the designated first Tokyo node and \
-     its location, and must resolve a hostname and machine id, so the report carries an \
-     auditable identity for WHERE it ran rather than only numeric floors";
+const NODE_RULE: &str = "a publishable full run must run on an OBSERVED host identity (kernel \
+     hostname plus machine id) that appears on the allowlist compiled into this artifact, and \
+     must additionally declare the designated first Tokyo node and its location; the declaration \
+     is an operator claim any host can make, so it is necessary but never sufficient, and a \
+     non-allowlisted host cannot publish however it labels itself";
 
 /// CPU facts. Every slot is optional-by-construction.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -86,20 +109,50 @@ pub(crate) struct NodeIdentity {
     pub(crate) declared_location_source: &'static str,
     pub(crate) designated_first_tokyo_node: &'static str,
     pub(crate) designated_location: &'static str,
+    /// Where the artifact's allowlist of observed identities came from.
+    pub(crate) observed_identity_allowlist_source: &'static str,
+    /// How many identities that allowlist carries. Zero designates nothing.
+    pub(crate) observed_identity_allowlist_entries: usize,
+    /// The OBSERVED hostname and machine id appear together on the allowlist
+    /// compiled into this artifact. This is the binding fact; the declared
+    /// node/location beside it is only the operator's claim.
+    pub(crate) observed_identity_allowlisted: bool,
     pub(crate) is_designated_first_tokyo_node: bool,
     pub(crate) rule: &'static str,
 }
 
 impl NodeIdentity {
     pub(crate) fn collect() -> Self {
-        let hostname = read_trimmed("/proc/sys/kernel/hostname");
-        let machine_id = read_trimmed("/etc/machine-id");
+        Self::resolve(
+            read_trimmed("/proc/sys/kernel/hostname"),
+            read_trimmed("/etc/machine-id"),
+            COMPILE_TIME_TOKYO_ALLOWLIST,
+        )
+    }
+
+    /// The designation decision over one observed identity and one allowlist,
+    /// so every branch is reachable from a test without recompiling.
+    fn resolve(
+        hostname: Option<String>,
+        machine_id: Option<String>,
+        allowlist: Option<&str>,
+    ) -> Self {
         let declared_node = declared(NODE_ENV);
         let declared_location = declared(NODE_LOCATION_ENV);
-        let is_designated = declared_node.as_deref() == Some(DESIGNATED_FIRST_TOKYO_NODE)
-            && declared_location.as_deref() == Some(DESIGNATED_NODE_LOCATION)
-            && hostname.is_some()
-            && machine_id.is_some();
+        let entries = allowlist_entries(allowlist);
+        // The BINDING fact: the identity this process observed is one the
+        // artifact was built to accept. A host that merely claims the node name
+        // cannot reach this, and a host on the allowlist that forgot to declare
+        // its node still does not publish — both halves are required.
+        let observed = hostname.as_deref().zip(machine_id.as_deref());
+        let allowlisted = observed.is_some_and(|(host, machine)| {
+            entries
+                .iter()
+                .any(|(listed, id)| listed == host && id == machine)
+        });
+        let is_designated = allowlisted
+            && declared_node.as_deref() == Some(DESIGNATED_FIRST_TOKYO_NODE)
+            && declared_location.as_deref() == Some(DESIGNATED_NODE_LOCATION);
         Self {
             hostname: Cell::from_option(
                 hostname,
@@ -121,6 +174,9 @@ impl NodeIdentity {
             declared_location_source: NODE_LOCATION_ENV,
             designated_first_tokyo_node: DESIGNATED_FIRST_TOKYO_NODE,
             designated_location: DESIGNATED_NODE_LOCATION,
+            observed_identity_allowlist_source: TOKYO_NODE_ALLOWLIST_ENV,
+            observed_identity_allowlist_entries: entries.len(),
+            observed_identity_allowlisted: allowlisted,
             is_designated_first_tokyo_node: is_designated,
             rule: NODE_RULE,
         }
@@ -130,21 +186,48 @@ impl NodeIdentity {
     pub(crate) fn publication_detail(&self) -> String {
         if self.is_designated_first_tokyo_node {
             return format!(
-                "declared node `{DESIGNATED_FIRST_TOKYO_NODE}` in \
-                 `{DESIGNATED_NODE_LOCATION}` with a resolved hostname and machine id"
+                "observed host {}/{} is on this artifact's {} entry allowlist and declared node \
+                 `{DESIGNATED_FIRST_TOKYO_NODE}` in `{DESIGNATED_NODE_LOCATION}`",
+                describe(&self.hostname),
+                describe(&self.machine_id),
+                self.observed_identity_allowlist_entries,
             );
         }
         format!(
-            "a publishable full run must declare node `{DESIGNATED_FIRST_TOKYO_NODE}` \
-             ({NODE_ENV}) in `{DESIGNATED_NODE_LOCATION}` ({NODE_LOCATION_ENV}) and resolve a \
-             hostname and machine id; this run declared node {} and location {}, with hostname {} \
-             and machine id {}",
-            describe(&self.declared_node),
-            describe(&self.declared_location),
+            "a publishable full run must run on an observed hostname/machine-id pair listed in \
+             the artifact's {TOKYO_NODE_ALLOWLIST_ENV} allowlist AND declare node \
+             `{DESIGNATED_FIRST_TOKYO_NODE}` ({NODE_ENV}) in `{DESIGNATED_NODE_LOCATION}` \
+             ({NODE_LOCATION_ENV}); this run observed hostname {} and machine id {} \
+             (allowlisted={} against {} embedded entry/entries) and declared node {} and \
+             location {}",
             describe(&self.hostname),
             describe(&self.machine_id),
+            self.observed_identity_allowlisted,
+            self.observed_identity_allowlist_entries,
+            describe(&self.declared_node),
+            describe(&self.declared_location),
         )
     }
+}
+
+/// Parses the compile-time allowlist into `(hostname, machine_id)` pairs.
+///
+/// An entry missing either half is DROPPED rather than half-matched: a
+/// hostname alone is trivially spoofable and a machine id alone says nothing
+/// about which host the operator meant.
+fn allowlist_entries(allowlist: Option<&str>) -> Vec<(String, String)> {
+    let Some(raw) = allowlist else {
+        return Vec::new();
+    };
+    raw.split(['\n', ',', ';'])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty() && !entry.starts_with('#'))
+        .filter_map(|entry| {
+            let (host, machine) = entry.split_once('/')?;
+            let (host, machine) = (host.trim(), machine.trim());
+            (!host.is_empty() && !machine.is_empty()).then(|| (host.to_owned(), machine.to_owned()))
+        })
+        .collect()
 }
 
 fn describe(cell: &Cell<String>) -> String {
@@ -173,6 +256,14 @@ pub(crate) struct Provenance {
     /// Cargo builds may not embed one; it is never inferred from mutable cwd.
     pub(crate) build_git_sha: Cell<String>,
     pub(crate) build_git_sha_source: String,
+    /// Whether the tree the artifact was COMPILED from carried uncommitted
+    /// changes, declared by the build environment. A SHA alone cannot say
+    /// this, and a dirty build's numbers belong to no commit; `not_ready`
+    /// means the artifact embedded nothing, never "assumed clean".
+    pub(crate) build_tree_dirty: Cell<bool>,
+    pub(crate) build_tree_dirty_source: String,
+    /// The compile-time optimisation profile of the running executable.
+    pub(crate) build_profile: BuildProfile,
     /// Descriptive HEAD of the source checkout associated with the binary at
     /// report time. Kept separate so it cannot masquerade as build revision.
     pub(crate) source_checkout_git_sha: Cell<String>,
@@ -220,6 +311,7 @@ impl Provenance {
         let cache_bytes = inputs.cache_events.as_bytes();
         let build_revision = running_executable_blake3();
         let build_git = build_git_sha();
+        let build_dirty = build_tree_dirty();
         let source_git = source_checkout_git_sha();
         Self {
             build_revision_blake3: Cell::from_option(
@@ -229,6 +321,9 @@ impl Provenance {
             build_revision_source: build_revision.source,
             build_git_sha: Cell::from_option(build_git.sha, build_git.source.clone()),
             build_git_sha_source: build_git.source,
+            build_tree_dirty: Cell::from_option(build_dirty.dirty, build_dirty.source.clone()),
+            build_tree_dirty_source: build_dirty.source,
+            build_profile: BuildProfile::collect(),
             source_checkout_git_sha: Cell::from_option(source_git.sha, source_git.source.clone()),
             source_checkout_git_sha_source: source_git.source,
             target_triple: target_triple(),
@@ -482,6 +577,10 @@ mod tests {
         assert_eq!(identity.designated_location, "tokyo");
         assert_eq!(identity.declared_node_source, NODE_ENV);
         assert_eq!(identity.declared_location_source, NODE_LOCATION_ENV);
+        assert_eq!(
+            identity.observed_identity_allowlist_source,
+            TOKYO_NODE_ALLOWLIST_ENV
+        );
         if identity.declared_node.value().map(String::as_str) != Some(DESIGNATED_FIRST_TOKYO_NODE) {
             assert!(
                 !identity.is_designated_first_tokyo_node,
@@ -496,6 +595,96 @@ mod tests {
             rendered.contains("is_designated_first_tokyo_node"),
             "{rendered}"
         );
+    }
+
+    /// Designation must bind to the host identity this process OBSERVED, on an
+    /// allowlist compiled into the artifact. A free-form runtime claim is the
+    /// operator's assertion, not evidence: any host can export
+    /// `ONEIRON_BENCH_NODE=tokyo-1`, so a non-allowlisted host must stay
+    /// undesignated — and therefore unpublishable — however it labels itself.
+    #[test]
+    fn tokyo_designation_binds_to_an_allowlisted_observed_host_identity() {
+        const ALLOWLIST: &str = "# the first Tokyo node\n\
+             tokyo-1.oneiron.internal / 8f14e45fceea167a5a36dedd4bea2543\n\
+             tokyo-1b.oneiron.internal/0cc175b9c0f1b6a831c399e269772661,\n\
+             , malformed-without-machine-id, /only-a-machine-id, host-only/";
+        let entries = allowlist_entries(Some(ALLOWLIST));
+        assert_eq!(
+            entries.len(),
+            2,
+            "comments, blanks and half-entries are dropped, never half-matched: {entries:?}"
+        );
+        assert!(entries.contains(&(
+            "tokyo-1.oneiron.internal".to_owned(),
+            "8f14e45fceea167a5a36dedd4bea2543".to_owned()
+        )));
+        assert!(allowlist_entries(None).is_empty());
+
+        let host = || Some("tokyo-1.oneiron.internal".to_owned());
+        let machine = || Some("8f14e45fceea167a5a36dedd4bea2543".to_owned());
+
+        let listed = NodeIdentity::resolve(host(), machine(), Some(ALLOWLIST));
+        assert!(
+            listed.observed_identity_allowlisted,
+            "the observed pair is on the artifact's allowlist"
+        );
+        assert_eq!(listed.observed_identity_allowlist_entries, 2);
+
+        // Every way of NOT being the allowlisted host.
+        for (label, hostname, machine_id, list) in [
+            (
+                "an impostor host",
+                Some("laptop".to_owned()),
+                machine(),
+                Some(ALLOWLIST),
+            ),
+            (
+                "a reused machine id",
+                host(),
+                Some("deadbeef".to_owned()),
+                Some(ALLOWLIST),
+            ),
+            ("no readable hostname", None, machine(), Some(ALLOWLIST)),
+            ("no readable machine id", host(), None, Some(ALLOWLIST)),
+            ("an artifact with no allowlist", host(), machine(), None),
+            (
+                "an empty allowlist",
+                host(),
+                machine(),
+                Some("  \n# nothing\n"),
+            ),
+        ] {
+            let identity = NodeIdentity::resolve(hostname, machine_id, list);
+            assert!(
+                !identity.observed_identity_allowlisted,
+                "{label} must not match the allowlist"
+            );
+            assert!(
+                !identity.is_designated_first_tokyo_node,
+                "{label} cannot be the designated first Tokyo node, whatever it declares"
+            );
+            let detail = identity.publication_detail();
+            assert!(
+                detail.contains(TOKYO_NODE_ALLOWLIST_ENV),
+                "{label}: {detail}"
+            );
+            assert!(detail.contains("allowlisted=false"), "{label}: {detail}");
+        }
+
+        // The allowlist is necessary but not sufficient on its own: the
+        // operator's declaration is still required, and the environment of
+        // this test process decides which side of that we can observe.
+        let declares_designated = declared(NODE_ENV).as_deref()
+            == Some(DESIGNATED_FIRST_TOKYO_NODE)
+            && declared(NODE_LOCATION_ENV).as_deref() == Some(DESIGNATED_NODE_LOCATION);
+        assert_eq!(
+            listed.is_designated_first_tokyo_node, declares_designated,
+            "designation is allowlisted identity AND the declared node/location"
+        );
+        if !declares_designated {
+            let detail = listed.publication_detail();
+            assert!(detail.contains(NODE_ENV), "{detail}");
+        }
     }
 
     /// Every report carries an immutable build revision even when no build-time
@@ -529,6 +718,31 @@ mod tests {
                 .contains("build_manifest_dir")
                 || !provenance.source_checkout_git_sha.is_measured()
         );
+
+        // The artifact's own compile-time attribution rides beside the digest:
+        // whether its sources were committed, and which profile built it. Both
+        // are fail-closed cells, never assumptions, and neither is re-derived
+        // from whatever checkout sits under the manifest path at report time.
+        assert!(
+            provenance
+                .build_tree_dirty_source
+                .contains("ONEIRON_BENCH_BUILD_GIT_DIRTY"),
+            "{}",
+            provenance.build_tree_dirty_source
+        );
+        assert_eq!(
+            provenance.build_profile.debug_assertions,
+            cfg!(debug_assertions)
+        );
+        let rendered = serde_json::to_string(&provenance).expect("provenance renders");
+        for field in [
+            "build_tree_dirty",
+            "build_tree_dirty_source",
+            "build_profile",
+            "approved_for_publication",
+        ] {
+            assert!(rendered.contains(field), "provenance dropped `{field}`");
+        }
     }
 
     /// The cache stream that produced the reported hit rates must be
