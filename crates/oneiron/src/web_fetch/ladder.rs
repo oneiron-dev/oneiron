@@ -20,7 +20,8 @@ use super::render::{
 use super::{
     ALL_RENDERERS_FAILED_REASON_PREFIX, CROSS_SITE_REDIRECT_REASON, CrawlCompletion,
     CrawlPageFailure, CrawlResult, CrawlScope, FetchResult, Renderer, RendererAttemptFailure,
-    RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher, content_hash,
+    RendererError, RendererKind, RendererResult, WebFetchError, WebFetchResult, WebFetcher,
+    content_hash,
 };
 
 /// Ceiling on how many distinct URLs one walk's frontier may hold.
@@ -71,6 +72,7 @@ impl WebFetcher {
         renderer: &dyn Renderer,
         url: &str,
         fetched_at: u64,
+        require_witnessed_final_url: bool,
     ) -> std::result::Result<(FetchResult, Vec<String>, Url), RendererAttemptFailure> {
         // The one spelling of "this rung failed" used by every check below, so
         // no boundary check can accidentally become a terminal failure.
@@ -93,7 +95,18 @@ impl WebFetcher {
             });
         }
 
-        let final_url = renderer_final_url(&page.final_url).map_err(as_attempt)?;
+        let final_url = page
+            .final_url
+            .as_deref()
+            .map(renderer_final_url)
+            .transpose()
+            .map_err(as_attempt)?;
+        if require_witnessed_final_url && final_url.is_none() {
+            return Err(as_attempt(RendererError::invalid_response(format!(
+                "{} renderer supplied no independently witnessed navigation-final URL",
+                kind.as_str()
+            ))));
+        }
         // A rung's canonical identity passes the same central check as its
         // final URL. The built-in rungs already resolve a valid one, so this is
         // the guard for a host-supplied custom [`Renderer`], whose output would
@@ -101,14 +114,13 @@ impl WebFetcher {
         let canonical_url = renderer_canonical_url(&page.canonical_url).map_err(as_attempt)?;
 
         // Every rung's link set leaves through the one normalization seam,
-        // resolved against the validated navigation-final URL. The built-in
-        // rungs already normalize, so this is the guard for a host-supplied
-        // custom [`Renderer`]: without it a relative link would be silently
-        // dropped downstream, and renderer order would decide which pages a
-        // finite budget reaches. Sorted, deduplicated, fragment-free HTTP(S)
-        // under the per-page ceiling is the only shape the walk ever sees.
+        // resolved against independently witnessed navigation identity when
+        // one exists and otherwise the validated canonical page identity. A
+        // crawl requires the former above, so the fallback serves only a
+        // single-page caller that cannot enqueue these links.
+        let link_base = final_url.as_ref().unwrap_or(&canonical_url);
         let discovered_links =
-            bounded_link_list(page.discovered_links, &final_url).map_err(as_attempt)?;
+            bounded_link_list(page.discovered_links, link_base).map_err(as_attempt)?;
 
         let result = FetchResult {
             content_hash: content_hash(&page.markdown),
@@ -118,7 +130,8 @@ impl WebFetcher {
             fetched_at,
             renderer: kind,
         };
-        Ok((result, discovered_links, final_url))
+        let traversal_identity = final_url.unwrap_or(canonical_url);
+        Ok((result, discovered_links, traversal_identity))
     }
 
     /// The fixed ladder. Sequential, never speculative, never parallel; a rung
@@ -133,6 +146,7 @@ impl WebFetcher {
         &self,
         url: &Url,
         fetched_at: u64,
+        require_witnessed_final_url: bool,
     ) -> WebFetchResult<(FetchResult, Vec<String>, Url)> {
         let requested = url.to_string();
         let mut attempts = Vec::new();
@@ -165,7 +179,13 @@ impl WebFetcher {
                 attempts.push(RendererAttemptFailure::Unavailable { renderer: kind });
                 continue;
             };
-            match self.try_rung(kind, renderer.as_ref(), &requested, fetched_at) {
+            match self.try_rung(
+                kind,
+                renderer.as_ref(),
+                &requested,
+                fetched_at,
+                require_witnessed_final_url,
+            ) {
                 Ok(success) => return Ok(success),
                 Err(failure) => attempts.push(failure),
             }
@@ -372,6 +392,41 @@ pub(super) fn crawl_failure_reason(error: &WebFetchError) -> String {
 // ---------------------------------------------------------------------------
 // The closed decode door for the public six-field result
 // ---------------------------------------------------------------------------
+
+impl FetchResult {
+    /// Returns the exact Markdown bytes covered by [`Self::content_hash`].
+    #[must_use]
+    pub fn markdown(&self) -> &str {
+        &self.markdown
+    }
+
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Returns the validated, normalized, credential-free HTTP(S) identity.
+    #[must_use]
+    pub fn canonical_url(&self) -> &str {
+        &self.canonical_url
+    }
+
+    #[must_use]
+    pub const fn fetched_at(&self) -> u64 {
+        self.fetched_at
+    }
+
+    /// Returns the domain-separated BLAKE3 identity of [`Self::markdown`].
+    #[must_use]
+    pub fn content_hash(&self) -> &str {
+        &self.content_hash
+    }
+
+    #[must_use]
+    pub const fn renderer(&self) -> RendererKind {
+        self.renderer
+    }
+}
 
 /// How many lowercase hex characters a BLAKE3 content identity is written in.
 const CONTENT_HASH_HEX_CHARS: usize = 64;

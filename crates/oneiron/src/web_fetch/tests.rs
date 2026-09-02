@@ -72,7 +72,7 @@ fn ladder_page(markdown: &str, final_url: &str) -> RenderedPage {
         markdown: markdown.to_string(),
         title: "Ladder Fixture".to_string(),
         canonical_url: final_url.to_string(),
-        final_url: final_url.to_string(),
+        final_url: Some(final_url.to_string()),
         discovered_links: Vec::new(),
     }
 }
@@ -150,7 +150,7 @@ fn page_entry_with_canonical(
             markdown: format!("markdown body for {final_url}"),
             title: format!("title for {final_url}"),
             canonical_url: canonical_url.to_string(),
-            final_url: final_url.to_string(),
+            final_url: Some(final_url.to_string()),
             discovered_links,
         },
     )
@@ -490,6 +490,15 @@ fn fetch_result_wire_shape_is_exactly_six_fields() {
 
     let round_tripped: FetchResult = serde_json::from_value(value).expect("decode fetch result");
     assert_eq!(round_tripped, result);
+    assert_eq!(round_tripped.markdown(), "# Heading\n\nBody.");
+    assert_eq!(round_tripped.title(), "Title");
+    assert_eq!(round_tripped.canonical_url(), "https://example.test/page");
+    assert_eq!(round_tripped.fetched_at(), 1_700_000_000);
+    assert_eq!(
+        round_tripped.content_hash(),
+        content_hash("# Heading\n\nBody.")
+    );
+    assert_eq!(round_tripped.renderer(), RendererKind::Readability);
 }
 
 const HASH_FIXTURE_MARKDOWN: &str = "# OF-444\n\nAcquisition body.\n";
@@ -538,7 +547,7 @@ fn content_hash_is_domain_separated_markdown_bytes() {
             markdown: HASH_FIXTURE_MARKDOWN.to_string(),
             title: "First Title".to_string(),
             canonical_url: "https://first.test/canonical".to_string(),
-            final_url: "https://first.test/page".to_string(),
+            final_url: Some("https://first.test/page".to_string()),
             discovered_links: Vec::new(),
         }),
     )))
@@ -560,7 +569,7 @@ fn content_hash_is_domain_separated_markdown_bytes() {
             markdown: HASH_FIXTURE_MARKDOWN.to_string(),
             title: "Second Title".to_string(),
             canonical_url: "https://second.test/canonical".to_string(),
-            final_url: "https://second.test/page".to_string(),
+            final_url: Some("https://second.test/page".to_string()),
             discovered_links: Vec::new(),
         }),
     )))
@@ -854,7 +863,8 @@ fn native_readability_extracts_markdown_title_canonical_and_links() {
         "JSON-LD metadata supplies the canonical identity"
     );
     assert_eq!(
-        page.final_url, "https://fixture.test/articles/one",
+        page.final_url,
+        Some("https://fixture.test/articles/one".to_string()),
         "the response-final URL is kept separately from metadata canonical"
     );
 
@@ -992,7 +1002,7 @@ fn native_http_get_maps_status_and_final_url() {
         .expect("301 then 200 chain");
     assert_eq!(
         page.final_url,
-        format!("{base}/final"),
+        Some(format!("{base}/final")),
         "the redirect-final URL is what gets recorded"
     );
     assert_eq!(
@@ -1051,12 +1061,18 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
             .expect("recorded requests")
             .push(request.to_string());
         match request_path(request).as_str() {
-            // This is the standard self-hosted response shape: `sourceURL` is
-            // the page URL field and there is no invented `metadata.url`.
+            // A sourceURL-only deployment remains valid for single-page
+            // acquisition, but that request/canonical echo is not final-URL
+            // evidence for containment-sensitive crawling.
             "/v1/scrape" => http_response(
                 "200 OK",
                 "application/json",
                 r##"{"success":true,"data":{"markdown":"# Firecrawl page\n\nBody text that clears the floor.","links":["https://example.test/next","https://example.test/next","mailto:x@example.test","/relative"],"metadata":{"title":"  Example  ","sourceURL":"https://example.test/page#frag","statusCode":200}}}"##,
+            ),
+            "/with-final" => http_response(
+                "200 OK",
+                "application/json",
+                r##"{"success":true,"data":{"markdown":"# Landed page\n\nBody text that clears the floor.","links":["/relative"],"metadata":{"title":"Landed","sourceURL":"https://canonical.example/page#fragment","url":"https://landing.example/final#fragment","statusCode":200}}}"##,
             ),
             "/not-success" => http_response("200 OK", "application/json", r#"{"success":false}"#),
             "/no-data" => http_response("200 OK", "application/json", r#"{"success":true}"#),
@@ -1108,8 +1124,8 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
     );
     assert_eq!(page.title, "Example");
     assert_eq!(
-        page.final_url, "https://example.test/page",
-        "the standard sourceURL field is normalized and supplies the best available final identity"
+        page.final_url, None,
+        "sourceURL is canonical identity, not redirect-final evidence"
     );
     assert_eq!(page.canonical_url, "https://example.test/page");
     assert_eq!(
@@ -1120,6 +1136,25 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
         ],
         "links are normalized, filtered to HTTP(S), sorted and deduplicated, and \
          a relative link resolves against sourceURL"
+    );
+
+    let witnessed = FirecrawlRenderer::new(client.clone(), &format!("{base}/with-final"))
+        .expect("endpoint")
+        .render("https://request.example/page")
+        .expect("envelope with distinct canonical and final identities");
+    assert_eq!(
+        witnessed.canonical_url, "https://canonical.example/page",
+        "sourceURL remains Firecrawl's canonical field"
+    );
+    assert_eq!(
+        witnessed.final_url,
+        Some("https://landing.example/final".to_string()),
+        "only the separate url field supplies navigation-final evidence"
+    );
+    assert_eq!(
+        witnessed.discovered_links,
+        vec!["https://landing.example/relative".to_string()],
+        "relative links resolve against the independently reported landing"
     );
 
     for path in [
@@ -1178,6 +1213,39 @@ fn firecrawl_adapter_maps_the_pinned_self_hosted_envelope() {
     .fetch("https://example.test/page", 4)
     .expect("firecrawl rung wins");
     assert_eq!(result.renderer, RendererKind::Firecrawl);
+
+    let crawl_error = WebFetcher::new(rung(&scripted(
+        &call_log(),
+        RendererKind::Readability,
+        Err(RendererError::transport("blocked")),
+    )))
+    .expect("readability slot")
+    .with_firecrawl(Arc::new(
+        FirecrawlRenderer::new(
+            reqwest::blocking::Client::new(),
+            &format!("{base}/v1/scrape"),
+        )
+        .expect("endpoint"),
+    ))
+    .expect("firecrawl slot")
+    .with_minimum_content(ladder_minimum())
+    .crawl(CrawlRequest::same_site(
+        "https://example.test/page",
+        4,
+        budget(1),
+    ))
+    .expect_err("a crawl cannot use a sourceURL request echo as final evidence");
+    let WebFetchError::AllRenderersFailed { attempts, .. } = crawl_error else {
+        panic!("unexpected crawl error: {crawl_error}");
+    };
+    assert!(
+        attempts.iter().any(|attempt| matches!(
+            attempt,
+            RendererAttemptFailure::Error { error, .. }
+                if error.message.contains("no independently witnessed navigation-final URL")
+        )),
+        "the Firecrawl rung fails explicitly: {attempts:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2239,7 +2307,7 @@ fn userinfo_credentials_are_refused_and_never_reach_a_diagnostic() {
             markdown: LADDER_MARKDOWN.to_string(),
             title: "Credentialed".to_string(),
             canonical_url: "https://example.test/page".to_string(),
-            final_url: CREDENTIALED_URL.to_string(),
+            final_url: Some(CREDENTIALED_URL.to_string()),
             discovered_links: Vec::new(),
         }),
     )))
@@ -2326,7 +2394,7 @@ fn response_bodies_are_read_under_an_explicit_byte_ceiling() {
     .with_max_response_bytes(roomy)
     .render("https://example.test/page")
     .expect("an envelope under the ceiling decodes");
-    assert_eq!(firecrawl_admitted.final_url, "https://example.test/page");
+    assert_eq!(firecrawl_admitted.final_url, None);
 }
 
 #[test]
@@ -2335,7 +2403,7 @@ fn a_custom_rung_canonical_url_passes_the_same_central_validation() {
         markdown: LADDER_MARKDOWN.to_string(),
         title: "Custom".to_string(),
         canonical_url: canonical.to_string(),
-        final_url: "https://example.test/final".to_string(),
+        final_url: Some("https://example.test/final".to_string()),
         discovered_links: Vec::new(),
     };
 
@@ -2420,12 +2488,12 @@ fn firecrawl_target_status_is_read_from_the_envelope_before_transport_status() {
         "/target-ok" => http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target that really did answer, with a body past the floor.","metadata":{"sourceURL":"https://example.test/fine","statusCode":200}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target that really did answer, with a body past the floor.","metadata":{"sourceURL":"https://example.test/fine","url":"https://example.test/fine","statusCode":200}}}"##,
         ),
         "/target-unreported" => http_response(
             "200 OK",
             "application/json",
-            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target whose status the envelope never mentions at all.","metadata":{"sourceURL":"https://example.test/quiet"}}}"##,
+            r##"{"success":true,"data":{"markdown":"# Fine\n\nA target whose status the envelope never mentions at all.","metadata":{"sourceURL":"https://example.test/quiet","url":"https://example.test/quiet"}}}"##,
         ),
         _ => http_response("404 Not Found", "text/plain", "missing"),
     });
@@ -2472,13 +2540,13 @@ fn firecrawl_target_status_is_read_from_the_envelope_before_transport_status() {
     // A 2xx target maps, whether or not the envelope reported its status.
     assert_eq!(
         render("/target-ok").expect("a 2xx target maps").final_url,
-        "https://example.test/fine"
+        Some("https://example.test/fine".to_string())
     );
     assert_eq!(
         render("/target-unreported")
             .expect("an unreported status is not a failure")
             .final_url,
-        "https://example.test/quiet"
+        Some("https://example.test/quiet".to_string())
     );
 }
 
@@ -2642,7 +2710,7 @@ fn noncanonical_userinfo_spellings_are_sanitized_in_every_public_diagnostic() {
                     markdown: LADDER_MARKDOWN.to_string(),
                     title: "Credentialed final".to_string(),
                     canonical_url: "https://example.test/page".to_string(),
-                    final_url: raw.to_string(),
+                    final_url: Some(raw.to_string()),
                     discovered_links: Vec::new(),
                 },
             ),
@@ -2652,7 +2720,7 @@ fn noncanonical_userinfo_spellings_are_sanitized_in_every_public_diagnostic() {
                     markdown: LADDER_MARKDOWN.to_string(),
                     title: "Credentialed canonical".to_string(),
                     canonical_url: raw.to_string(),
-                    final_url: "https://example.test/page".to_string(),
+                    final_url: Some("https://example.test/page".to_string()),
                     discovered_links: Vec::new(),
                 },
             ),
@@ -2717,7 +2785,7 @@ fn a_credentialed_provider_identity_and_crawl_reason_stay_sanitized() {
                 markdown: "markdown body for the seed page".to_string(),
                 title: "seed".to_string(),
                 canonical_url: "https://reason.test/".to_string(),
-                final_url: "https://reason.test/".to_string(),
+                final_url: Some("https://reason.test/".to_string()),
                 discovered_links: vec!["https://reason.test/leaky".to_string()],
             },
         ),
@@ -2727,7 +2795,7 @@ fn a_credentialed_provider_identity_and_crawl_reason_stay_sanitized() {
                 markdown: "markdown body for the leaky page".to_string(),
                 title: "leaky".to_string(),
                 canonical_url: "https://reason.test/leaky".to_string(),
-                final_url: "http:agent:s3cr3t@reason.test/page".to_string(),
+                final_url: Some("http:agent:s3cr3t@reason.test/page".to_string()),
                 discovered_links: Vec::new(),
             },
         ),
@@ -3179,7 +3247,7 @@ fn a_custom_rung_link_set_is_normalized_sorted_and_order_independent() {
             markdown: LADDER_MARKDOWN.to_string(),
             title: "Custom".to_string(),
             canonical_url: "https://links.test/".to_string(),
-            final_url: "https://links.test/".to_string(),
+            final_url: Some("https://links.test/".to_string()),
             discovered_links: custom_rung_links(),
         }),
     );
@@ -3192,6 +3260,7 @@ fn a_custom_rung_link_set_is_normalized_sorted_and_order_independent() {
             renderer.as_ref(),
             "https://links.test/",
             7,
+            true,
         )
         .expect("the custom rung succeeds");
     assert_eq!(
@@ -3224,7 +3293,7 @@ fn a_custom_rung_link_set_is_normalized_sorted_and_order_independent() {
                     markdown: "markdown body for the seed page".to_string(),
                     title: "seed".to_string(),
                     canonical_url: "https://links.test/".to_string(),
-                    final_url: "https://links.test/".to_string(),
+                    final_url: Some("https://links.test/".to_string()),
                     discovered_links: permuted,
                 },
             ),
@@ -3482,7 +3551,7 @@ fn raw_link_entries_are_bounded_before_normalization_and_firecrawl_allocation() 
         markdown: "markdown body for a duplicate-heavy page".to_string(),
         title: "duplicates".to_string(),
         canonical_url: "https://raw-links.test/page".to_string(),
-        final_url: "https://raw-links.test/page".to_string(),
+        final_url: Some("https://raw-links.test/page".to_string()),
         discovered_links: duplicates.clone(),
     };
     let dense_rung = scripted(&call_log(), RendererKind::Readability, Ok(dense));
@@ -3528,7 +3597,7 @@ fn a_page_beyond_the_discovered_link_ceiling_fails_closed() {
         markdown: "markdown body for the link-dense page".to_string(),
         title: "dense".to_string(),
         canonical_url: "https://dense.test/many".to_string(),
-        final_url: "https://dense.test/many".to_string(),
+        final_url: Some("https://dense.test/many".to_string()),
         discovered_links: dense_links("dense.test", over_ceiling),
     };
 
@@ -3689,7 +3758,7 @@ fn frontier_link_budget_exhaustion_is_surfaced_not_accumulated() {
         markdown: "markdown body for the frontier seed".to_string(),
         title: "frontier seed".to_string(),
         canonical_url: "https://frontier.test/".to_string(),
-        final_url: "https://frontier.test/".to_string(),
+        final_url: Some("https://frontier.test/".to_string()),
         discovered_links: hub_links.clone(),
     };
     let mut pages = vec![("https://frontier.test/".to_string(), seed)];
@@ -3705,7 +3774,7 @@ fn frontier_link_budget_exhaustion_is_surfaced_not_accumulated() {
                 markdown: format!("markdown body for hub {index}"),
                 title: format!("hub {index}"),
                 canonical_url: url.clone(),
-                final_url: url,
+                final_url: Some(url),
                 discovered_links: leaves,
             },
         ));
