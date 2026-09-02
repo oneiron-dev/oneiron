@@ -70,6 +70,7 @@ pub(super) fn emit_attempt_queue_cleanup_span(
         failed = report.failed,
         done = report.done,
         stale_requeued = report.stale_requeued,
+        landing_force_cancelled = report.landing_force_cancelled,
         retry_lease_timeout,
         retry_backoff,
     );
@@ -81,6 +82,7 @@ pub(super) fn emit_attempt_queue_cleanup_span(
         failed = report.failed,
         done = report.done,
         stale_requeued = report.stale_requeued,
+        landing_force_cancelled = report.landing_force_cancelled,
         retry_lease_timeout,
         retry_backoff,
         "attempt queue cleanup completed"

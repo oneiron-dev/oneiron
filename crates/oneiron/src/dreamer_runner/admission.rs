@@ -7,7 +7,8 @@ use std::collections::HashSet;
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptInterventionKind, ClaimAttempt, ClaimOutcome, InterveneAttempt,
+    AttemptId, AttemptInterventionKind, ClaimAttempt, ClaimOutcome, DialLandingReserve,
+    InterveneAttempt,
 };
 use crate::error::{Error, Result};
 
@@ -301,6 +302,23 @@ impl DreamerRunnerStore<'_> {
                 "dreamer admission claimed unexpected ready attempt",
             ));
         }
+
+        // ONE-1896 §4: the units this admission is about to reserve ARE the
+        // attempt's budget, so its LANDING slice is carved here — in the same
+        // transaction as the lease, because a leased attempt that has not been
+        // told what it may spend on landing cannot land. Ordinary execution is
+        // metered with `AttemptRecord::ordinary_budget_limit_units` (this dial
+        // MINUS the reserve), which is what makes the reserve unreachable by
+        // normal work rather than a rule some meter must remember.
+        let attempt = self.attempts.dial_landing_reserve_in_txn(
+            wtxn,
+            DialLandingReserve {
+                id: attempt.id,
+                limit_units: input.reserve_units,
+                reserve_percent: None,
+                now: input.now,
+            },
+        )?;
 
         let reservation = if let Some(reservation) = existing_reservation {
             if input.reserve_units > reservation.reserved_units {

@@ -1000,6 +1000,29 @@ pub struct OneironA2aExtensions {
     pub result_ref: Option<String>,
     pub counter_of: Option<String>,
     pub interruption_kind: Option<String>,
+    /// ONE-1896. A2A has one `cancelled` token and no landing at all, so the
+    /// two-rung protocol's distinctions ride here: `requested` (asked, still
+    /// working), `rejected` (refused, still working), `landing` (accepted,
+    /// finishing), `landed` (stopped by design), `forced` (hard stop). Without
+    /// this a peer cannot tell a designed landing from a kill, and both would
+    /// read as work that simply stopped.
+    pub cancel_mode: Option<String>,
+    /// Why the landing was triggered, when one is under way.
+    pub landing_trigger: Option<String>,
+    /// The exact point a successor resumes from, once recorded.
+    pub resume_point: Option<String>,
+    /// The durable artifact a successor should read FIRST, when the recorded
+    /// resume point named one.
+    ///
+    /// Additive and defaulted, and carried beside the marker rather than
+    /// folded into it: a successor that receives only the cursor has lost the
+    /// identity of the work already produced and would redo it. This is a
+    /// REFERENCE, never a payload body — the artifact stays opaque to the peer
+    /// exactly as internal plans and tool calls do.
+    pub resume_artifact_ref: Option<String>,
+    /// Soft requests the worker has refused. Non-zero is the pathology signal
+    /// a peer can act on without reading Oneiron's durable rows.
+    pub cancel_rejections: u32,
 }
 
 /// One consult TASK projected onto A2A task vocabulary.

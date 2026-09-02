@@ -105,10 +105,24 @@ pub(super) fn record_task_create_owner_in_txn(
 /// and delivery-window pipeline as any other send the owner makes.
 pub(crate) fn task_create_owner(vault: &Vault, task_ref: EntityId) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
+    task_create_owner_in(vault, &rtxn, task_ref)
+}
+
+/// The same owner fact, read through a caller-owned transaction.
+///
+/// The hard cancel rung re-verifies ownership INSIDE its write transaction
+/// before it terminalizes anything (ONE-1896 §7): a pre-transaction check is a
+/// TOCTOU window, and the one door that cannot be refused is the last place to
+/// leave one open.
+pub(crate) fn task_create_owner_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<EntityId>> {
     let Some(raw) = vault
         .store
         .vault_meta
-        .get(&rtxn, task_create_owner_key(task_ref).as_slice())?
+        .get(txn, task_create_owner_key(task_ref).as_slice())?
     else {
         return Ok(None);
     };

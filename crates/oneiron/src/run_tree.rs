@@ -13,6 +13,7 @@ use crate::attempt_queue::{
     AttemptEvent, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
     attempt_record_order,
 };
+use crate::consult_ladder::{A2aBaseTaskState, A2aTaskProjection, OneironA2aExtensions};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
@@ -264,6 +265,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
             | AttemptState::Leased
             | AttemptState::Paused
             | AttemptState::Scheduled
+            | AttemptState::Landing
             | AttemptState::Completed
             | AttemptState::Cancelled => None,
         },
@@ -460,7 +462,10 @@ fn status_event_kind(state: AttemptState) -> Option<RunTreeEventKind> {
         // A scheduled try has not run yet; `Created` is its only lifecycle
         // event, exactly as for a queued one.
         AttemptState::Queued | AttemptState::Scheduled => None,
-        AttemptState::Leased => Some(RunTreeEventKind::Claimed),
+        // A landing row is still under its claim; the trigger provenance rides
+        // the durable cancel receipts and the A2A projection, not a synthetic
+        // run-tree event, so the six-token event vocabulary stays closed.
+        AttemptState::Leased | AttemptState::Landing => Some(RunTreeEventKind::Claimed),
         AttemptState::Paused => Some(RunTreeEventKind::Paused),
         AttemptState::Completed => Some(RunTreeEventKind::Completed),
         AttemptState::Failed => Some(RunTreeEventKind::Failed),
@@ -472,7 +477,14 @@ impl From<AttemptState> for RunTreeStatus {
     fn from(state: AttemptState) -> Self {
         match state {
             AttemptState::Queued => Self::Queued,
-            AttemptState::Leased => Self::Running,
+            // A landing attempt is STILL RUNNING: it holds its lease and is
+            // doing bounded finishing work. It is emphatically not `Completed`
+            // — nothing was delivered — and not `Cancelled` — nothing was
+            // killed. The trigger provenance rides
+            // [`project_attempt_to_a2a`] and the durable receipts rather than a
+            // seventh status token, so no read surface has to learn a new axis
+            // to keep telling live work from settled work.
+            AttemptState::Leased | AttemptState::Landing => Self::Running,
             // Deferred until its scheduled instant: the same "not eligible to
             // run now" axis the board already renders as Scheduled.
             AttemptState::Paused | AttemptState::Scheduled => Self::Paused,
@@ -482,6 +494,81 @@ impl From<AttemptState> for RunTreeStatus {
         }
     }
 }
+
+/// Projects one ATTEMPT row onto A2A task vocabulary, preserving the two-rung
+/// graceful-cancel distinctions A2A itself cannot express.
+///
+/// The invariant this exists to hold: a LANDING attempt projects as `working`
+/// carrying `cancel_mode = "landing"`, never as `completed` and never as
+/// `cancelled`. A peer reading only the base state sees honest live work; a
+/// peer reading the extensions can tell an accepted landing from a refusal,
+/// from a designed stop, and from a hard kill.
+///
+/// The resume point is exported WHOLE — cursor and artifact reference both —
+/// because a successor given only the cursor has lost the identity of the work
+/// already produced. Both are typed refs; no payload body crosses this seam.
+#[must_use]
+pub fn project_attempt_to_a2a(record: &AttemptRecord) -> A2aTaskProjection {
+    let mut extensions = OneironA2aExtensions {
+        cancel_rejections: record.cancel_pressure().rejections,
+        resume_point: record
+            .resume_point()
+            .map(|resume_point| resume_point.marker.clone()),
+        // The WHOLE durable resume point, not just its marker: exporting the
+        // cursor alone silently dropped the artifact identity a successor needs
+        // to read before it continues, and a peer cannot recover a reference it
+        // was never given.
+        resume_artifact_ref: record
+            .resume_point()
+            .and_then(|resume_point| resume_point.artifact_ref.clone()),
+        ..OneironA2aExtensions::default()
+    };
+    if let Some(landing) = record.landing() {
+        extensions.landing_trigger = Some(landing.trigger.as_str().to_owned());
+    }
+    let base = match record.state {
+        AttemptState::Queued | AttemptState::Scheduled | AttemptState::Leased => {
+            A2aBaseTaskState::Working
+        }
+        AttemptState::Paused => A2aBaseTaskState::InputRequired,
+        AttemptState::Landing => {
+            extensions.cancel_mode = Some(ATTEMPT_A2A_CANCEL_MODE_LANDING.to_owned());
+            A2aBaseTaskState::Working
+        }
+        AttemptState::Completed => A2aBaseTaskState::Completed,
+        AttemptState::Failed => A2aBaseTaskState::Failed,
+        AttemptState::Cancelled => A2aBaseTaskState::Cancelled,
+    };
+    if let Some(cancellation) = record.cancellation() {
+        extensions.cancel_mode = Some(cancellation.mode.as_str().to_owned());
+        if let Some(trigger) = cancellation.trigger {
+            extensions.landing_trigger = Some(trigger.as_str().to_owned());
+        }
+    } else if base == A2aBaseTaskState::Working
+        && extensions.cancel_mode.is_none()
+        && record.cancel_pressure().requests > 0
+    {
+        // Asked but not yet settled: refusal outranks a bare outstanding ask,
+        // because a peer needs to know the worker ANSWERED and said no.
+        extensions.cancel_mode = Some(if extensions.cancel_rejections > 0 {
+            ATTEMPT_A2A_CANCEL_MODE_REJECTED.to_owned()
+        } else {
+            ATTEMPT_A2A_CANCEL_MODE_REQUESTED.to_owned()
+        });
+    }
+    A2aTaskProjection {
+        id: attempt_id_hex(record),
+        state: base,
+        extensions,
+    }
+}
+
+/// Wire tokens for [`OneironA2aExtensions::cancel_mode`] that have no durable
+/// [`crate::attempt_queue::CancelMode`] behind them because the attempt has not
+/// settled yet.
+const ATTEMPT_A2A_CANCEL_MODE_LANDING: &str = "landing";
+const ATTEMPT_A2A_CANCEL_MODE_REQUESTED: &str = "requested";
+const ATTEMPT_A2A_CANCEL_MODE_REJECTED: &str = "rejected";
 
 impl From<AttemptInterventionKind> for RunTreeEventKind {
     fn from(kind: AttemptInterventionKind) -> Self {

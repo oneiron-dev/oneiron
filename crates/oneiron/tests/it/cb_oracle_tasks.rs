@@ -247,6 +247,7 @@ mod cb_t {
             id: id.to_owned(),
             kind: "sync".to_owned(),
             status: TaskBoardStatus::Running,
+            cancel_pathology: None,
         };
         let tk_a = TaskIntentPresence::new(
             "tk_a".to_owned(),
@@ -309,6 +310,7 @@ mod cb_t {
                 id: "job".to_owned(),
                 kind: "sync".to_owned(),
                 status,
+                cancel_pathology: None,
             });
             fold_up_status(&jobs)
                 .expect("two realizing jobs must fold to one status")

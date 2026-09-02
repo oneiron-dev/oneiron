@@ -1115,6 +1115,7 @@ mod plugin_fixture {
                     result_ref: None,
                     ladder_disposition: None,
                     counter_task_ref: None,
+                    cancel_pathology: None,
                 }],
                 overflow: None,
             };

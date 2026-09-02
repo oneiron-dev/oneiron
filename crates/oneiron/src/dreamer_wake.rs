@@ -20,7 +20,12 @@ use std::time::Instant;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{
+    AcceptAttemptLanding, AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord,
+    AttemptResumePoint, FinishAttemptLanding, LandingOutcome, LandingReserveSpendOutcome,
+    LandingTrigger, LandingWarningOutcome, RecordAttemptResumePoint, SpendAttemptLandingReserve,
+    WarnAttemptBudgetPressure,
+};
 use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
     CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
@@ -357,6 +362,11 @@ pub struct WakePassReport {
     pub completed: u32,
     pub failed: u32,
     pub parked: u32,
+    /// ONE-1896: attempts that answered a stop by LANDING. Deliberately its own
+    /// counter and never folded into `completed`: a landing delivered no
+    /// result, and a pass that reported it as completed would be claiming work
+    /// finished that a successor still has to do.
+    pub landed: u32,
     pub stop: WakePassStop,
 }
 
@@ -366,8 +376,36 @@ pub struct WakePassReport {
 /// layer; a trapped attempt comes back as `Park` carrying the trap note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerAttemptExecution {
-    Completed { completed_units: u64 },
-    Park { reason: String },
+    Completed {
+        completed_units: u64,
+    },
+    Park {
+        reason: String,
+    },
+    /// ONE-1896 rung 1, answered: the worker saw a soft request or a typed
+    /// runtime warning ([`WakeAttemptContext::landing_request`]) and chose to
+    /// stop cleanly instead of being killed.
+    ///
+    /// The driver turns this into the durable protocol — enter LANDING, spend
+    /// the bounded landing reserve, record the resume point, finish (optionally
+    /// handing off to a successor that resumes from it) — so an executor never
+    /// hand-rolls the lifecycle and can never report a landing as a completion.
+    Landed {
+        /// Ordinary units spent before landing began, settled exactly like a
+        /// completion's.
+        completed_units: u64,
+        /// Bounded final work paid out of the attempt's LANDING RESERVE
+        /// (commit/push, receipt, resume point, handoff). It fails closed:
+        /// more than the reserve holds spends nothing.
+        reserve_units: u64,
+        /// The worker's own status line — "green + pushed + packet-only" is a
+        /// complete landing answer.
+        status: Option<String>,
+        /// Where a successor picks up. Required for `hand_off`.
+        resume_point: Option<AttemptResumePoint>,
+        /// Mint a successor row carrying the resume point.
+        hand_off: bool,
+    },
 }
 
 /// Per-attempt execution context handed to the executor.
@@ -376,6 +414,73 @@ pub struct WakeAttemptContext<'a> {
     pub deadline: &'a WakePassDeadline,
     pub budget_id: &'a str,
     pub now_ms: u64,
+}
+
+impl WakeAttemptContext<'_> {
+    /// The oldest stop this attempt has been asked for and not yet answered,
+    /// with the trigger that motivated it — or `None` when nobody has asked.
+    ///
+    /// This is the worker-facing half of ONE-1896's soft rung: a request that
+    /// arrives mid-execution lands on the durable row, not in the snapshot the
+    /// executor was handed, so a cooperative worker POLLS here at its own
+    /// step boundaries and answers by returning
+    /// [`DreamerAttemptExecution::Landed`] (or by refusing through
+    /// `AttemptQueue::reject_cancel`, which keeps it running and records why).
+    pub fn landing_request(&self, attempt_id: AttemptId) -> Result<Option<LandingRequestNotice>> {
+        let Some(record) = AttemptQueue::new(self.vault).get(attempt_id)? else {
+            return Ok(None);
+        };
+        Ok(landing_request_notice(&record))
+    }
+}
+
+/// The worker's landing answer, as the driver applies it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LandingRequest {
+    reserve_units: u64,
+    status: Option<String>,
+    resume_point: Option<AttemptResumePoint>,
+    hand_off: bool,
+}
+
+/// One outstanding stop request as a worker sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LandingRequestNotice {
+    /// Receipt sequence identifying WHICH request this is, so the answer names
+    /// the ask it consumed rather than the newest one.
+    pub request_sequence: u64,
+    pub trigger: LandingTrigger,
+    /// Who asked. The runtime's own warnings carry
+    /// [`crate::attempt_queue::ATTEMPT_RUNTIME_ACTOR`].
+    pub requested_by: String,
+    /// Units the attempt may spend on bounded landing work.
+    pub reserve_units: u64,
+}
+
+/// Projects the oldest unanswered soft request off a durable row.
+fn landing_request_notice(record: &AttemptRecord) -> Option<LandingRequestNotice> {
+    if record.cancel_pressure().pending == 0 {
+        return None;
+    }
+    let answered: std::collections::HashSet<u64> = record
+        .cancel_receipts()
+        .iter()
+        .filter(|receipt| receipt.kind.answers_request())
+        .filter_map(|receipt| receipt.request_sequence)
+        .collect();
+    record
+        .cancel_receipts()
+        .iter()
+        .find(|receipt| {
+            receipt.kind == AttemptCancelReceiptKind::SoftRequested
+                && !answered.contains(&receipt.sequence)
+        })
+        .map(|receipt| LandingRequestNotice {
+            request_sequence: receipt.sequence,
+            trigger: receipt.trigger.unwrap_or(LandingTrigger::CancelRequest),
+            requested_by: receipt.actor.clone(),
+            reserve_units: record.landing_reserve().remaining_units(),
+        })
 }
 
 /// Executes one admitted Dreamer attempt.
@@ -535,6 +640,7 @@ impl<'a> DreamerWakeDriver<'a> {
             completed: 0,
             failed: 0,
             parked: 0,
+            landed: 0,
             stop: WakePassStop::QueueEmpty,
         };
 
@@ -573,7 +679,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 break;
             }
 
-            let admitted =
+            let mut admitted =
                 match self
                     .store
                     .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
@@ -623,6 +729,33 @@ impl<'a> DreamerWakeDriver<'a> {
 
             report.admitted += 1;
             let attempt_id = admitted.status.attempt.id;
+
+            // ONE-1896 §3, quota/budget rung, at the ONE boundary where this
+            // pass both holds a leased attempt and can still act: the wake
+            // counter is already inside its wrap window, so the RUNTIME warns
+            // the worker to land while there is budget left to land with.
+            // Purely a request — nothing is terminated, the executor still
+            // runs, and a worker that ignores it keeps its lease. Once per
+            // admitted generation: the queue door is idempotent per
+            // outstanding ask, so a re-admitted attempt records one row.
+            if self.budget_pressure_now() {
+                match AttemptQueue::new(self.vault).warn_budget_pressure(
+                    WarnAttemptBudgetPressure {
+                        id: attempt_id,
+                        now: input.now,
+                    },
+                )? {
+                    LandingWarningOutcome::LandingRequested(record) => {
+                        // The executor reads its attempt from the admitted
+                        // snapshot, so the warning has to be IN it — otherwise
+                        // a cooperative worker would have to guess that the
+                        // runtime asked.
+                        admitted.status.attempt = record;
+                    }
+                    LandingWarningOutcome::AlreadyRequested(_)
+                    | LandingWarningOutcome::NotRunning(_) => {}
+                }
+            }
 
             // Cooperative-preemption checkpoint (H-S5/R2): the ONE point
             // between admission and settle where a cancel is honored is
@@ -759,6 +892,43 @@ impl<'a> DreamerWakeDriver<'a> {
                     self.complete_attempt(&admitted, input.now)?;
                     self.write_milestone(attempt_id, DreamerMilestoneKind::Done, input.now)?;
                     report.completed += 1;
+                }
+                DreamerAttemptExecution::Landed {
+                    completed_units,
+                    reserve_units,
+                    status,
+                    resume_point,
+                    hand_off,
+                } => {
+                    let spent_reserve_units = self.land_attempt(
+                        &admitted,
+                        LandingRequest {
+                            reserve_units,
+                            status,
+                            resume_point,
+                            hand_off,
+                        },
+                        input.now,
+                    )?;
+                    // Ordinary work AND the bounded landing spend come out of
+                    // the same reservation: both are units this attempt really
+                    // consumed, so the wake ledger settles the sum rather than
+                    // refunding work that happened.
+                    self.store.settle_budget(SettleDreamerBudget {
+                        budget_id: self.budget_id.clone(),
+                        child_attempt: attempt_id,
+                        actual_units: completed_units.saturating_add(spent_reserve_units),
+                        now: input.now,
+                    })?;
+                    // A designed landing leaves a durable resume point, exactly
+                    // like a deadline-cut park — never a `Done` milestone,
+                    // which would claim the job delivered.
+                    self.write_milestone(
+                        attempt_id,
+                        DreamerMilestoneKind::CheckpointReached,
+                        input.now,
+                    )?;
+                    report.landed += 1;
                 }
                 DreamerAttemptExecution::Park { reason } => {
                     // Executor-authored reasons get the same clamp as the
@@ -923,6 +1093,102 @@ impl<'a> DreamerWakeDriver<'a> {
                 .claim_candidate(&claim_id, candidate, &author.envelope, occurred, now)
                 .apply(wtxn)
         })
+    }
+
+    /// Whether the pass counter has entered its wrap window, which is the
+    /// quota/budget condition ONE-1896 warns a running worker about.
+    ///
+    /// Reuses the SAME [`BudgetGuard`] read the wrap notice and the finalize
+    /// window already use — no second meter and no second threshold.
+    fn budget_pressure_now(&self) -> bool {
+        self.guard.as_ref().is_some_and(|guard| {
+            let read = guard.read();
+            read.depleted_percent() >= DREAMER_WRAP_UP_NOTICE_PERCENT || read.remaining_units == 0
+        })
+    }
+
+    /// Runs the durable landing protocol for one admitted attempt and returns
+    /// the reserve units it actually spent.
+    ///
+    /// Order is the invariant: ENTER landing (the row stops being ordinary
+    /// running work and keeps its lease), SPEND from the reserve (never from
+    /// the ordinary meter, and never more than the reserve holds), RECORD the
+    /// exact resume point, then FINISH through the queue's own transaction —
+    /// optionally minting the successor that carries the point. Nothing here
+    /// can report the attempt completed.
+    fn land_attempt(
+        &self,
+        admitted: &DreamerAdmittedAttempt,
+        request: LandingRequest,
+        now: u64,
+    ) -> Result<u64> {
+        let queue = AttemptQueue::new(self.vault);
+        let attempt_id = admitted.status.attempt.id;
+        let lease_owner = admitted
+            .status
+            .attempt
+            .lease_owner
+            .clone()
+            .unwrap_or_default();
+        let attempt_count = admitted.status.attempt.attempt_count;
+        // Entering is idempotent (`AlreadyLanding`), so a re-executed attempt
+        // that already entered still finishes its landing here.
+        let _entered: LandingOutcome = queue.accept_landing(AcceptAttemptLanding {
+            id: attempt_id,
+            lease_owner: lease_owner.clone(),
+            attempt_count,
+            // Fallback only: a landing answering a recorded request takes that
+            // request's trigger, so a worker cannot relabel why it was asked.
+            trigger: LandingTrigger::CancelRequest,
+            status: request.status,
+            resume_point: None,
+            request_sequence: None,
+            now,
+        })?;
+
+        let mut spent_units = 0;
+        if request.reserve_units > 0 {
+            match queue.spend_landing_reserve(SpendAttemptLandingReserve {
+                id: attempt_id,
+                lease_owner: lease_owner.clone(),
+                attempt_count,
+                units: request.reserve_units,
+                now,
+            })? {
+                LandingReserveSpendOutcome::Spent { .. } => {
+                    spent_units = request.reserve_units;
+                }
+                // Fail closed and keep landing: an over-ask spends NOTHING, and
+                // the attempt still gets to record where it stopped rather than
+                // losing the landing because its final work was too large.
+                LandingReserveSpendOutcome::Exhausted { .. } => {}
+            }
+        }
+
+        if let Some(resume_point) = request.resume_point {
+            queue.record_resume_point(RecordAttemptResumePoint {
+                id: attempt_id,
+                lease_owner: lease_owner.clone(),
+                attempt_count,
+                resume_point,
+                now,
+            })?;
+        }
+
+        queue.finish_landing(FinishAttemptLanding {
+            id: attempt_id,
+            lease_owner,
+            attempt_count,
+            hand_off: request.hand_off,
+            // The successor is NEXT-pass work. A pass runs on one fixed `now`,
+            // so scheduling one second out makes the handoff unclaimable by the
+            // very pass that just asked this attempt to stop — otherwise a
+            // budget- or lease-pressured pass would immediately re-admit the
+            // work it landed and spin against the pressure that caused it.
+            scheduled_at: Some(now.saturating_add(1)),
+            now,
+        })?;
+        Ok(spent_units)
     }
 
     fn complete_attempt(&mut self, admitted: &DreamerAdmittedAttempt, now: u64) -> Result<()> {

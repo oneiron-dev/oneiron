@@ -281,7 +281,15 @@ impl DreamerRunnerStore<'_> {
             | (AttemptState::Failed, DreamerAttemptProgressState::Failed)
             // A scheduled try is pre-lease, exactly like a queued one: live
             // progress keeps flowing on the existing queued/deferred path.
-            | (AttemptState::Queued | AttemptState::Leased | AttemptState::Scheduled, _) => {}
+            // A landing attempt is still executing bounded work and its
+            // progress is exactly what a reviewer needs while it lands.
+            | (
+                AttemptState::Queued
+                | AttemptState::Leased
+                | AttemptState::Scheduled
+                | AttemptState::Landing,
+                _,
+            ) => {}
             (
                 AttemptState::Paused
                 | AttemptState::Completed

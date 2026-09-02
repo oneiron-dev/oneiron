@@ -7,6 +7,12 @@
 
 use crate::error::{Error, Result};
 
+use super::cancel::{
+    ATTEMPT_RUNTIME_ACTOR, AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind,
+    AttemptCancelState, AttemptLanding, AttemptResumePoint, CancelStanding, ForceCancelGrounds,
+    LandingTrigger, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_LANDING_RESERVE_PERCENT,
+    MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS,
+};
 use super::telemetry::invalid_transition;
 use super::types::{
     AttemptEvent, AttemptInterventionKind, AttemptRecord, AttemptState, CleanupAttemptLeases,
@@ -54,6 +60,56 @@ pub(super) const ERR_MANIFEST_VERSION_EMPTY: &str = "manifest version must not b
 pub(super) const ERR_MANIFEST_VERSION_TOO_LONG: &str = "manifest version exceeds 128 bytes";
 pub(super) const ERR_MANIFEST_FULL: &str = "attempt manifest is full; entries are never dropped";
 pub(super) const ERR_LEASE_TIMEOUT_ZERO: &str = "lease timeout must be > 0";
+pub(super) const MAX_CANCEL_STATUS_LEN: usize = 2048;
+pub(super) const MAX_RESUME_MARKER_LEN: usize = 2048;
+pub(super) const MAX_RESUME_ARTIFACT_REF_LEN: usize = 512;
+pub(super) const ERR_CANCEL_ACTOR_IS_RUNTIME: &str =
+    "cancel actor must not claim the reserved runtime identity";
+pub(super) const ERR_CANCEL_NO_STANDING: &str = "cancel request requires standing";
+pub(super) const ERR_CANCEL_STATUS_EMPTY: &str = "cancel status must not be empty";
+pub(super) const ERR_CANCEL_STATUS_TOO_LONG: &str = "cancel status exceeds 2048 bytes";
+pub(super) const ERR_RESUME_MARKER_EMPTY: &str = "resume marker must not be empty";
+pub(super) const ERR_RESUME_MARKER_TOO_LONG: &str = "resume marker exceeds 2048 bytes";
+pub(super) const ERR_RESUME_ARTIFACT_REF_EMPTY: &str = "resume artifact ref must not be empty";
+pub(super) const ERR_RESUME_ARTIFACT_REF_TOO_LONG: &str = "resume artifact ref exceeds 512 bytes";
+pub(super) const ERR_CANCEL_RECEIPTS_FULL: &str =
+    "attempt cancel receipts are full; refusal evidence is never dropped";
+pub(super) const ERR_CANCEL_RECEIPT_SEQUENCE: &str =
+    "attempt cancel receipt sequence must be strictly increasing";
+pub(super) const ERR_CANCEL_RECEIPT_TERMINAL_ORDER: &str =
+    "a terminal cancel receipt must be the last row, and there may be only one";
+pub(super) const ERR_CANCEL_RECEIPT_REQUEST_REF: &str =
+    "a cancel receipt may only answer an earlier request receipt";
+pub(super) const ERR_RESERVE_PERCENT_RANGE: &str = "landing reserve percent must be in 1..=50";
+pub(super) const ERR_RESERVE_SPEND_ZERO: &str = "landing reserve spend must be > 0";
+pub(super) const ERR_RESERVE_OVERSPENT: &str = "landing reserve spent exceeds the dialed reserve";
+pub(super) const ERR_LANDING_WITHOUT_RECORD: &str = "landing attempt must have a landing record";
+pub(super) const ERR_LANDING_WITHOUT_LEASE: &str = "landing attempt must have a lease owner";
+pub(super) const ERR_LANDING_WITH_BACKOFF: &str = "landing attempt must not have backoff state";
+pub(super) const ERR_LANDING_RECORD_MISPLACED: &str =
+    "only a landing or cancelled attempt may carry a landing record";
+pub(super) const ERR_CANCELLATION_MISPLACED: &str =
+    "only a cancelled attempt may carry a cancellation receipt";
+pub(super) const ERR_CANCELLATION_MALFORMED: &str =
+    "cancellation grounds must be set exactly for a forced stop";
+pub(super) const ERR_HANDOFF_WITHOUT_RESUME_POINT: &str =
+    "landing handoff requires a recorded resume point";
+pub(super) const ERR_CANCEL_RECEIPT_FIELD_MISSING: &str =
+    "cancel receipt is missing a field its kind requires";
+pub(super) const ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN: &str =
+    "cancel receipt carries a field its kind forbids";
+pub(super) const ERR_CANCEL_RECEIPT_MISSING_TRIGGER: &str =
+    "a cancel request or landing receipt must name its trigger";
+pub(super) const ERR_CANCEL_RECEIPT_MISSING_REASON: &str =
+    "a refusal receipt must carry the worker's reason";
+pub(super) const ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF: &str =
+    "a refusal receipt must name the request it answered";
+pub(super) const ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT: &str =
+    "a resume-point receipt must carry the resume point it recorded";
+pub(super) const ERR_CANCEL_RECEIPT_MISSING_GROUNDS: &str =
+    "a force-cancel receipt must carry its authorized grounds";
+pub(super) const ERR_CANCEL_RECEIPT_RESERVE_UNITS: &str =
+    "cancel receipt reserve units contradict its kind";
 
 pub(super) fn validate_kind(kind: &str) -> Result<()> {
     if kind.is_empty() {
@@ -248,6 +304,397 @@ pub(super) fn validate_attempt_manifest(manifest: &[ManifestEntry]) -> Result<()
         validate_manifest_entry(entry)?;
     }
     Ok(())
+}
+
+/// Refuses an actor that claims the runtime's own identity.
+///
+/// Structural forgery is already impossible — a hard receipt can only be
+/// written by the [`super::types::ForceCancelAuthority`] path — but a soft row
+/// whose actor reads `runtime` would still MISLEAD every reviewer, so the door
+/// refuses it outright.
+pub(super) fn validate_cancel_actor(actor: &str) -> Result<()> {
+    validate_intervention_actor(actor)?;
+    if actor == ATTEMPT_RUNTIME_ACTOR {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_CANCEL_ACTOR_IS_RUNTIME,
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_cancel_standing(standing: CancelStanding) -> Result<()> {
+    if standing.may_request() {
+        Ok(())
+    } else {
+        Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_NO_STANDING))
+    }
+}
+
+pub(super) fn validate_optional_cancel_status(status: Option<&str>) -> Result<()> {
+    if let Some(status) = status {
+        if status.is_empty() {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_STATUS_EMPTY));
+        }
+        if status.len() > MAX_CANCEL_STATUS_LEN {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_STATUS_TOO_LONG));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_resume_point(resume_point: &AttemptResumePoint) -> Result<()> {
+    if resume_point.marker.is_empty() {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESUME_MARKER_EMPTY));
+    }
+    if resume_point.marker.len() > MAX_RESUME_MARKER_LEN {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESUME_MARKER_TOO_LONG));
+    }
+    if let Some(artifact_ref) = resume_point.artifact_ref.as_deref() {
+        if artifact_ref.is_empty() {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RESUME_ARTIFACT_REF_EMPTY,
+            ));
+        }
+        if artifact_ref.len() > MAX_RESUME_ARTIFACT_REF_LEN {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RESUME_ARTIFACT_REF_TOO_LONG,
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_optional_resume_point(
+    resume_point: Option<&AttemptResumePoint>,
+) -> Result<()> {
+    match resume_point {
+        Some(resume_point) => validate_resume_point(resume_point),
+        None => Ok(()),
+    }
+}
+
+pub(super) fn validate_reserve_percent(reserve_percent: u64) -> Result<()> {
+    if reserve_percent == 0 || reserve_percent > MAX_LANDING_RESERVE_PERCENT {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_PERCENT_RANGE));
+    }
+    Ok(())
+}
+
+/// Whether one optional receipt field is REQUIRED by, merely ALLOWED on, or
+/// FORBIDDEN to a given [`AttemptCancelReceiptKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldRule {
+    Required,
+    Allowed,
+    Forbidden,
+}
+
+/// The per-kind field contract of one cancel receipt.
+///
+/// Declared once and enforced on BOTH sides — [`append_cancel_receipt`] before
+/// a row is ever pushed, and [`validate_cancel_state`] on every decode — so a
+/// writer and a reader can never disagree about what a kind means. Without it
+/// a persisted row could contradict its own kind (a refusal with no reason, a
+/// resume-point row with no point, a reserve spend of zero units, a force with
+/// no grounds) and every projection downstream would faithfully report the
+/// contradiction.
+#[derive(Debug, Clone, Copy)]
+struct CancelReceiptShape {
+    standing: FieldRule,
+    trigger: FieldRule,
+    grounds: FieldRule,
+    status: FieldRule,
+    reason: FieldRule,
+    resume_point: FieldRule,
+    request_sequence: FieldRule,
+    /// `Required` means strictly positive, `Forbidden` means exactly zero.
+    reserve_units: FieldRule,
+}
+
+const fn cancel_receipt_shape(kind: AttemptCancelReceiptKind) -> CancelReceiptShape {
+    use FieldRule::{Allowed, Forbidden, Required};
+    let base = CancelReceiptShape {
+        standing: Forbidden,
+        trigger: Allowed,
+        grounds: Forbidden,
+        status: Forbidden,
+        reason: Forbidden,
+        resume_point: Forbidden,
+        request_sequence: Forbidden,
+        reserve_units: Forbidden,
+    };
+    match kind {
+        // An ASK: it names why it is asking, may say who asked with what
+        // standing, and moves nothing.
+        AttemptCancelReceiptKind::SoftRequested => CancelReceiptShape {
+            standing: Allowed,
+            trigger: Required,
+            reason: Allowed,
+            ..base
+        },
+        // An ANSWER that stops: it carries the trigger of the ask it took, the
+        // worker's status, and the resume point as it stood. A self-triggered
+        // landing answers no recorded request, so the reference is optional.
+        AttemptCancelReceiptKind::LandingAccepted => CancelReceiptShape {
+            trigger: Required,
+            status: Allowed,
+            resume_point: Allowed,
+            request_sequence: Allowed,
+            ..base
+        },
+        // An ANSWER that refuses: the reason is the evidence and the request
+        // reference is what keeps the OTHER requesters still owed an answer.
+        AttemptCancelReceiptKind::SoftRejected => CancelReceiptShape {
+            status: Allowed,
+            reason: Required,
+            request_sequence: Required,
+            ..base
+        },
+        AttemptCancelReceiptKind::ResumePointRecorded => CancelReceiptShape {
+            resume_point: Required,
+            ..base
+        },
+        AttemptCancelReceiptKind::ReserveSpent => CancelReceiptShape {
+            reserve_units: Required,
+            ..base
+        },
+        // The two TERMINAL rows report settled accounting, which may legitimately
+        // be zero, so their units are unconstrained.
+        AttemptCancelReceiptKind::Landed => CancelReceiptShape {
+            resume_point: Allowed,
+            reserve_units: Allowed,
+            ..base
+        },
+        AttemptCancelReceiptKind::ForceCancelled => CancelReceiptShape {
+            grounds: Required,
+            reason: Allowed,
+            resume_point: Allowed,
+            reserve_units: Allowed,
+            ..base
+        },
+    }
+}
+
+fn check_field(rule: FieldRule, present: bool, missing: &'static str) -> Result<()> {
+    match (rule, present) {
+        (FieldRule::Required, false) => Err(Error::InvalidAttemptQueueRecord(missing)),
+        (FieldRule::Forbidden, true) => Err(Error::InvalidAttemptQueueRecord(
+            ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN,
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Enforces one receipt's per-kind field contract.
+///
+/// `standing` and `status` are never `Required`, so their "missing" message is
+/// the generic one and is unreachable; they are here to be FORBIDDEN on the
+/// kinds that must not carry them (a runtime warning claiming actor standing,
+/// a reserve spend carrying a worker status line).
+pub(super) fn validate_cancel_receipt_fields(receipt: &AttemptCancelReceipt) -> Result<()> {
+    let shape = cancel_receipt_shape(receipt.kind);
+    check_field(
+        shape.standing,
+        receipt.standing.is_some(),
+        ERR_CANCEL_RECEIPT_FIELD_MISSING,
+    )?;
+    check_field(
+        shape.trigger,
+        receipt.trigger.is_some(),
+        ERR_CANCEL_RECEIPT_MISSING_TRIGGER,
+    )?;
+    check_field(
+        shape.grounds,
+        receipt.grounds.is_some(),
+        ERR_CANCEL_RECEIPT_MISSING_GROUNDS,
+    )?;
+    check_field(
+        shape.status,
+        receipt.status.is_some(),
+        ERR_CANCEL_RECEIPT_FIELD_MISSING,
+    )?;
+    check_field(
+        shape.reason,
+        receipt.reason.is_some(),
+        ERR_CANCEL_RECEIPT_MISSING_REASON,
+    )?;
+    check_field(
+        shape.resume_point,
+        receipt.resume_point.is_some(),
+        ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT,
+    )?;
+    check_field(
+        shape.request_sequence,
+        receipt.request_sequence.is_some(),
+        ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF,
+    )?;
+    check_reserve_units(shape.reserve_units, receipt.reserve_units)?;
+    // A recorded standing is a claim someone HAD standing; the "none" token is
+    // the refusal verdict and can never be what a durable ask carries.
+    if let Some(standing) = receipt.standing
+        && !standing.may_request()
+    {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_NO_STANDING));
+    }
+    Ok(())
+}
+
+fn check_reserve_units(rule: FieldRule, units: u64) -> Result<()> {
+    match (rule, units) {
+        (FieldRule::Required, 0) | (FieldRule::Forbidden, 1..) => Err(
+            Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPT_RESERVE_UNITS),
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn validate_landing(landing: &AttemptLanding) -> Result<()> {
+    validate_intervention_actor(&landing.requested_by)?;
+    validate_optional_cancel_status(landing.status.as_deref())
+}
+
+/// Validates the whole ONE-1896 sub-record read back off a row.
+pub(super) fn validate_cancel_state(state: &AttemptCancelState) -> Result<()> {
+    if state.receipts.len() > MAX_ATTEMPT_CANCEL_RECEIPTS {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
+    }
+    let mut previous_sequence = 0;
+    let last_index = state.receipts.len().saturating_sub(1);
+    for (index, receipt) in state.receipts.iter().enumerate() {
+        if receipt.sequence == 0 || receipt.sequence <= previous_sequence {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_CANCEL_RECEIPT_SEQUENCE,
+            ));
+        }
+        // The reserved terminal slot is spendable exactly once and only at the
+        // end: a settled row that carried a terminal receipt in the middle
+        // would be a row that kept writing history after it stopped, and two
+        // of them would mean one terminal receipt had been overwritten.
+        if receipt.kind.is_terminal() && index != last_index {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_CANCEL_RECEIPT_TERMINAL_ORDER,
+            ));
+        }
+        match receipt.request_sequence {
+            // An answer names a request that is strictly OLDER than itself;
+            // anything else is a receipt pointing forward or at nothing.
+            Some(request_sequence)
+                if !receipt.kind.answers_request()
+                    || request_sequence == 0
+                    || request_sequence >= receipt.sequence =>
+            {
+                return Err(Error::InvalidAttemptQueueRecord(
+                    ERR_CANCEL_RECEIPT_REQUEST_REF,
+                ));
+            }
+            _ => {}
+        }
+        validate_intervention_actor(&receipt.actor)?;
+        validate_optional_cancel_status(receipt.status.as_deref())?;
+        validate_optional_failure_reason(receipt.reason.as_deref())?;
+        validate_optional_resume_point(receipt.resume_point.as_ref())?;
+        // A row must agree with its own kind before any surface projects it.
+        validate_cancel_receipt_fields(receipt)?;
+        previous_sequence = receipt.sequence;
+    }
+    if let Some(landing) = state.landing.as_ref() {
+        validate_landing(landing)?;
+    }
+    validate_optional_resume_point(state.resume_point.as_ref())?;
+    if let Some(cancellation) = state.cancellation.as_ref() {
+        if !cancellation.is_well_formed() {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCELLATION_MALFORMED));
+        }
+        validate_intervention_actor(&cancellation.actor)?;
+        validate_optional_failure_reason(cancellation.reason.as_deref())?;
+        // The terminal receipt reports the reserve AS SETTLED, so its own two
+        // numbers must be consistent even if the live sub-record were lost.
+        if cancellation.reserve_spent_units > cancellation.reserve_units {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_OVERSPENT));
+        }
+    }
+    if state.reserve.spent_units > state.reserve.reserve_units {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_OVERSPENT));
+    }
+    Ok(())
+}
+
+/// One append-only cancel receipt row, refusing at the cap instead of draining.
+#[derive(Debug, Default)]
+pub(super) struct CancelReceiptDraft {
+    pub(super) standing: Option<CancelStanding>,
+    pub(super) trigger: Option<LandingTrigger>,
+    pub(super) grounds: Option<ForceCancelGrounds>,
+    pub(super) status: Option<String>,
+    pub(super) reason: Option<String>,
+    pub(super) resume_point: Option<AttemptResumePoint>,
+    pub(super) reserve_units: u64,
+    pub(super) request_sequence: Option<u64>,
+}
+
+/// Appends one protocol row, refusing at the cap instead of draining — with the
+/// last slot held for the terminal receipt.
+///
+/// A full history must not make an attempt unsettleable. Non-terminal rows
+/// refuse at [`MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS`], leaving the reserved
+/// slot; `Landed` / `ForceCancelled` — including the runtime's lease-expiry
+/// cleanup — may spend it, so landing finish and the hard rung always settle
+/// atomically and never silently omit their evidence.
+pub(super) fn append_cancel_receipt(
+    record: &mut AttemptRecord,
+    kind: AttemptCancelReceiptKind,
+    actor: String,
+    draft: CancelReceiptDraft,
+    now: u64,
+) -> Result<()> {
+    let cap = if kind.is_terminal() {
+        MAX_ATTEMPT_CANCEL_RECEIPTS
+    } else {
+        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
+    };
+    if record.cancel_state.receipts.len() >= cap {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
+    }
+    let sequence = match record.cancel_state.receipts.last() {
+        Some(receipt) => receipt
+            .sequence
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("attempt cancel receipt sequence"))?,
+        None => 1,
+    };
+    let receipt = AttemptCancelReceipt {
+        sequence,
+        at: now,
+        actor,
+        kind,
+        standing: draft.standing,
+        trigger: draft.trigger,
+        grounds: draft.grounds,
+        status: draft.status,
+        reason: draft.reason,
+        resume_point: draft.resume_point,
+        reserve_units: draft.reserve_units,
+        request_sequence: draft.request_sequence,
+    };
+    // The SAME per-kind contract `decode_record` enforces, applied before the
+    // row exists: a writer cannot persist a shape the reader would then refuse,
+    // and a malformed draft leaves the record — and storage — untouched.
+    validate_cancel_receipt_fields(&receipt)?;
+    record.cancel_state.receipts.push(receipt);
+    Ok(())
+}
+
+/// Counts one refused soft request. Saturating: the pathology signal is "many",
+/// and an overflow must not reset it to "none". One refusal answers one
+/// outstanding request; duplicate asks remain pending until answered.
+pub(super) fn count_cancel_rejection(pressure: &mut AttemptCancelPressure) {
+    pressure.rejections = pressure.rejections.saturating_add(1);
+    pressure.pending = pressure.pending.saturating_sub(1);
+}
+
+pub(super) fn count_cancel_request(pressure: &mut AttemptCancelPressure) {
+    pressure.requests = pressure.requests.saturating_add(1);
+    pressure.pending = pressure.pending.saturating_add(1);
 }
 
 pub(super) fn append_attempt_event(

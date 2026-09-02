@@ -1679,6 +1679,74 @@ fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()>
 }
 
 #[test]
+fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Result<()> {
+    // ONE-1896 §3: the WARNING rung has a production caller — this maintenance
+    // lane — so a worker inside its expiry window is asked to land instead of
+    // discovering its lease was reclaimed.
+    const LEASE_TIMEOUT_SECS: u64 = 1_000;
+
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let queue = AttemptQueue::new(&vault);
+    queue.enqueue(EnqueueAttempt {
+        kind: "claim_extraction".to_owned(),
+        payload: b"payload".to_vec(),
+        dedupe_key: Some("turn:lease-warning".to_owned()),
+        run_id: Some("run-lease-warning".to_owned()),
+        now: 1,
+    })?;
+    // Claimed far enough in the past to sit inside the warning window
+    // (>= 80% of the timeout) but well short of expiry.
+    let claimed_at = crate::unix_seconds_now().saturating_sub(900);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: claimed_at,
+    })?
+    else {
+        panic!("expected claim");
+    };
+
+    let report = vault
+        .maintain()
+        .cleanup_attempt_queue_leases(LEASE_TIMEOUT_SECS)
+        .run()?;
+    assert_eq!(report.attempt_queue_lease_warnings.scanned, 1);
+    assert_eq!(report.attempt_queue_lease_warnings.warned, 1);
+    assert_eq!(report.attempt_queue_lease_warnings.expired, 0);
+    // The warning is NOT a reclaim: cleanup left the live lease alone.
+    assert_eq!(report.attempt_queue_cleanup.stale_requeued, 0);
+    assert_eq!(report.attempt_queue_cleanup.running, 1);
+
+    let warned = queue.get(claimed.id)?.expect("attempt row");
+    assert_eq!(warned.state, crate::attempt_queue::AttemptState::Leased);
+    assert_eq!(warned.lease_owner.as_deref(), Some("worker-a"));
+    assert_eq!(warned.cancel_pressure().pending, 1);
+    let receipt = warned.cancel_receipts().last().expect("warning receipt");
+    assert_eq!(receipt.actor, crate::attempt_queue::ATTEMPT_RUNTIME_ACTOR);
+    assert_eq!(
+        receipt.trigger,
+        Some(crate::attempt_queue::LandingTrigger::LeaseWarning)
+    );
+
+    // Re-running the lane does not inflate the ask: one outstanding request.
+    let again = vault
+        .maintain()
+        .cleanup_attempt_queue_leases(LEASE_TIMEOUT_SECS)
+        .run()?;
+    assert_eq!(again.attempt_queue_lease_warnings.warned, 0);
+    assert_eq!(again.attempt_queue_lease_warnings.already_requested, 1);
+    assert_eq!(
+        queue
+            .get(claimed.id)?
+            .expect("attempt row")
+            .cancel_pressure()
+            .requests,
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn attempt_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;

@@ -1,12 +1,19 @@
 //! Durable wire, verb-input, and outcome types for the attempt queue.
 //!
 //! Storage mechanics live in [`super::encoding`], input validation in
-//! [`super::validate`], and the queue handle itself in [`super::engine`].
+//! [`super::validate`], and the queue handle itself in [`super::engine`]. The
+//! ONE-1896 graceful-cancel rows and verbs are their own concern and live in
+//! [`super::cancel`].
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
+
+use super::cancel::{
+    AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelState, AttemptCancellation,
+    AttemptLanding, AttemptLandingReserve, AttemptResumePoint,
+};
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
@@ -70,6 +77,11 @@ pub enum AttemptState {
     /// waiting for its `scheduled_at` instant. Claimable only once
     /// `now >= scheduled_at`.
     Scheduled,
+    /// ONE-1896: the worker accepted a stop and is finishing. It still HOLDS
+    /// its lease, so it is neither queued work nor terminal work, and it is
+    /// deliberately not [`Self::Completed`] — a landing is an honest,
+    /// resumable stop, not a delivered result.
+    Landing,
 }
 
 impl AttemptState {
@@ -82,6 +94,7 @@ impl AttemptState {
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::Scheduled => "scheduled",
+            Self::Landing => "landing",
         }
     }
 
@@ -90,13 +103,29 @@ impl AttemptState {
     pub(super) const fn is_pending(self) -> bool {
         matches!(
             self,
-            Self::Queued | Self::Leased | Self::Paused | Self::Scheduled
+            Self::Queued | Self::Leased | Self::Paused | Self::Scheduled | Self::Landing
         )
     }
 
     /// True for the two states a ready-index row may legitimately sit in.
+    ///
+    /// [`Self::Landing`] is deliberately absent: a landing attempt owns a live
+    /// lease and is doing bounded finishing work, so handing it out as ordinary
+    /// queued work would run it twice.
     pub(super) const fn is_ready_indexed(self) -> bool {
         matches!(self, Self::Queued | Self::Scheduled)
+    }
+
+    /// True while a worker holds this row's lease and runtime.
+    #[must_use]
+    pub const fn is_running(self) -> bool {
+        matches!(self, Self::Leased | Self::Landing)
+    }
+
+    /// True once the row can never transition again.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -256,6 +285,11 @@ pub struct AttemptRecord {
     /// so no migration is needed.
     #[serde(default)]
     pub manifest: Vec<ManifestEntry>,
+    /// ONE-1896 two-rung graceful-cancel lifecycle: landing, resume point,
+    /// terminal cancellation receipt, cancel pressure, and reserve accounting.
+    /// Rows without the key decode as the default, so no migration is needed.
+    #[serde(default)]
+    pub cancel_state: AttemptCancelState,
 }
 
 impl AttemptRecord {
@@ -263,6 +297,56 @@ impl AttemptRecord {
     #[must_use]
     pub fn manifest(&self) -> &[ManifestEntry] {
         &self.manifest
+    }
+
+    /// The append-only graceful-cancel evidence, in append order.
+    #[must_use]
+    pub fn cancel_receipts(&self) -> &[AttemptCancelReceipt] {
+        &self.cancel_state.receipts
+    }
+
+    /// The durable landing record, present while landing and preserved on a
+    /// row that landed.
+    #[must_use]
+    pub const fn landing(&self) -> Option<&AttemptLanding> {
+        self.cancel_state.landing.as_ref()
+    }
+
+    /// The exact point a successor resumes from, once recorded.
+    #[must_use]
+    pub const fn resume_point(&self) -> Option<&AttemptResumePoint> {
+        self.cancel_state.resume_point.as_ref()
+    }
+
+    /// The terminal cancellation receipt, when this row was cancelled.
+    #[must_use]
+    pub const fn cancellation(&self) -> Option<&AttemptCancellation> {
+        self.cancel_state.cancellation.as_ref()
+    }
+
+    /// This attempt's landing reserve accounting.
+    #[must_use]
+    pub const fn landing_reserve(&self) -> AttemptLandingReserve {
+        self.cancel_state.reserve
+    }
+
+    /// The limit an ordinary execution meter for this attempt must use: the
+    /// dialed budget MINUS the landing reserve.
+    #[must_use]
+    pub const fn ordinary_budget_limit_units(&self) -> u64 {
+        self.cancel_state.reserve.ordinary_limit_units()
+    }
+
+    /// Soft-request pressure counters.
+    #[must_use]
+    pub const fn cancel_pressure(&self) -> AttemptCancelPressure {
+        self.cancel_state.pressure
+    }
+
+    /// True once repeated refusal of soft requests is an observable pathology.
+    #[must_use]
+    pub const fn soft_cancel_pathology(&self) -> bool {
+        self.cancel_state.pressure.is_pathological()
     }
 }
 
@@ -459,6 +543,10 @@ pub struct AttemptQueueCleanupReport {
     pub failed: u64,
     pub done: u64,
     pub stale_requeued: u64,
+    /// Landing rows whose lease expired mid-landing and were force-cancelled.
+    /// A landing cannot be requeued as ordinary work, so it cannot be part of
+    /// `stale_requeued`.
+    pub landing_force_cancelled: u64,
     pub retry_reasons: [AttemptQueueRetryReasonCount; ATTEMPT_QUEUE_RETRY_REASON_COUNT],
 }
 
@@ -470,6 +558,7 @@ impl Default for AttemptQueueCleanupReport {
             failed: 0,
             done: 0,
             stale_requeued: 0,
+            landing_force_cancelled: 0,
             retry_reasons: AttemptQueueRetryReason::metric_values()
                 .map(AttemptQueueRetryReasonCount::zero),
         }

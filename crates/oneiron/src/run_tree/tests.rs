@@ -592,6 +592,7 @@ fn dreamer_record(
         updated_at: created_at,
         events: Vec::new(),
         manifest: Vec::new(),
+        cancel_state: crate::attempt_queue::AttemptCancelState::default(),
     })
 }
 
@@ -621,6 +622,7 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         updated_at: created_at,
         events: Vec::new(),
         manifest: Vec::new(),
+        cancel_state: crate::attempt_queue::AttemptCancelState::default(),
     }
 }
 

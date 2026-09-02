@@ -48,6 +48,35 @@ impl TaskBoardStatus {
     }
 }
 
+/// ONE-1896 §1: a running realization keeps REFUSING to stop.
+///
+/// The soft rung is a request, so refusing it is legitimate — once. Repeated
+/// refusal is the one cancel outcome no automated rung can resolve: nothing
+/// below the owner's hard rung can stop a worker that will not land, so the
+/// evidence has to reach the owner's own surface rather than a tracing span.
+/// Typed, not prose: the count, the threshold it crossed, and the worker's own
+/// last status are what an owner needs to decide between waiting and forcing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancelRejectionPathology {
+    /// The realizing ATTEMPT that is refusing, so the owner can address it.
+    pub attempt_id: String,
+    /// Soft requests this attempt has refused.
+    pub rejections: u32,
+    /// The count at which refusal became a pathology signal
+    /// ([`crate::attempt_queue::SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD`]).
+    pub threshold: u32,
+    /// The worker's own last refusal status/reason line, one-line bounded.
+    pub last_status: Option<String>,
+}
+
+impl CancelRejectionPathology {
+    /// The board token: bounded, structural, and never the worker's prose.
+    #[must_use]
+    pub fn token(&self) -> String {
+        format!("cancel-refused={}/{}", self.rejections, self.threshold)
+    }
+}
+
 /// One collapsed TASKS row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRow {
@@ -67,6 +96,9 @@ pub struct TaskRow {
     pub ladder_disposition: Option<LadderTerminalDisposition>,
     /// The counter TASK that replaced this one.
     pub counter_task_ref: Option<String>,
+    /// ONE-1896: the realizing job that keeps refusing to stop, when one does.
+    /// `None` is the ordinary case and leaves every existing row byte-identical.
+    pub cancel_pathology: Option<CancelRejectionPathology>,
 }
 
 impl TaskRow {
@@ -86,8 +118,21 @@ impl TaskRow {
             result_ref: intent.result_ref.clone(),
             ladder_disposition: intent.ladder_disposition,
             counter_task_ref: intent.counter_task_ref.clone(),
+            cancel_pathology: intent_cancel_pathology(intent),
         }
     }
+}
+
+/// The refusal an owner must answer for, folded up from the intent's realizing
+/// jobs: the WORST one, because the decision the signal exists for (wait, or
+/// force) is made about the most stuck job, and a bounded row cannot carry N.
+fn intent_cancel_pathology(intent: &TaskIntentPresence) -> Option<CancelRejectionPathology> {
+    intent
+        .realizing_jobs
+        .iter()
+        .filter_map(|job| job.cancel_pathology.as_ref())
+        .max_by_key(|pathology| pathology.rejections)
+        .cloned()
 }
 
 /// The pinned board lane and cause tokens for one ladder outcome.
@@ -228,6 +273,9 @@ pub struct JobPresence {
     pub id: String,
     pub kind: String,
     pub status: TaskBoardStatus,
+    /// ONE-1896: set only when this job has crossed the repeated-refusal
+    /// threshold. Additive and `None` for every ordinary job.
+    pub cancel_pathology: Option<CancelRejectionPathology>,
 }
 
 impl JobPresence {
@@ -246,7 +294,17 @@ impl JobPresence {
             id: node.attempt_id.clone(),
             kind: node.worker_kind.clone(),
             status: run_tree_board_status(node.status)?,
+            cancel_pathology: None,
         })
+    }
+
+    /// Attaches the owner-visible refusal signal read off the durable ATTEMPT
+    /// row. Separate from [`Self::from_run_tree_node`] because the run tree
+    /// carries lifecycle, not the cancel protocol's evidence.
+    #[must_use]
+    pub fn with_cancel_pathology(mut self, pathology: Option<CancelRejectionPathology>) -> Self {
+        self.cancel_pathology = pathology;
+        self
     }
 }
 
@@ -567,6 +625,12 @@ fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
     if folded_job_count > 0 {
         tokens.push(format!("jobs={folded_job_count}"));
     }
+    // ONE-1896: the refusal signal rides BESIDE the status, exactly like a
+    // cause token — the row still says `running`, because the worker IS
+    // running; what the owner learns is that it will not stop when asked.
+    if let Some(pathology) = intent_cancel_pathology(intent) {
+        tokens.push(pathology.token());
+    }
     TaskRow::from_intent(intent, tokens.join(" "))
 }
 
@@ -605,14 +669,19 @@ fn cause_tokens(intent: &TaskIntentPresence) -> Vec<String> {
 }
 
 fn bare_job_row(job: &JobPresence) -> TaskRow {
+    let mut line = format!(
+        "{} {} {}",
+        one_line_token(&job.id),
+        one_line_token(&job.kind),
+        job.status.as_str()
+    );
+    if let Some(pathology) = job.cancel_pathology.as_ref() {
+        line.push(' ');
+        line.push_str(&pathology.token());
+    }
     TaskRow {
         id: job.id.clone(),
-        line: format!(
-            "{} {} {}",
-            one_line_token(&job.id),
-            one_line_token(&job.kind),
-            job.status.as_str()
-        ),
+        line,
         status: job.status,
         is_intent: false,
         folded_job_count: 0,
@@ -622,6 +691,7 @@ fn bare_job_row(job: &JobPresence) -> TaskRow {
         result_ref: None,
         ladder_disposition: None,
         counter_task_ref: None,
+        cancel_pathology: job.cancel_pathology.clone(),
     }
 }
 
@@ -643,6 +713,7 @@ mod tests {
             id: id.to_owned(),
             kind: "sync".to_owned(),
             status,
+            cancel_pathology: None,
         }
     }
 
