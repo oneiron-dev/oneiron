@@ -51,11 +51,12 @@ use crate::registry::ENTITY_TYPE_SESSION;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
+pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
+
 /// `vault_meta` key of the single open-session pointer (value = 16-byte id).
 const SESSION_LIFECYCLE_OPEN_KEY: &[u8] = b"session_lifecycle:v0:open";
 /// `vault_meta` key prefix for per-session lifecycle records (suffix = id).
 const SESSION_LIFECYCLE_RECORD_KEY_PREFIX: &[u8] = b"session_lifecycle:v0:record:";
-
 const SESSION_LIFECYCLE_RECORD_VERSION: u8 = 1;
 
 /// Why a session ended. `Explicit` is the app's own end hint; `IdleFloor`
