@@ -2006,6 +2006,7 @@ fn leased_realization_keeps_cancel_receipt_running() {
     // P1-a: a leased realization is NOT stoppable in-txn, so the cancel is
     // honest — it does not claim effect and does not hide the task.
     assert_eq!(usize::from(cancel.effected), 0);
+    assert!(cancel.cancel_requested, "the live worker received a soft request");
     assert_eq!(cancel.status, Some(RunTreeStatus::Running));
     assert_eq!(
         usize::from(cancel.status == Some(RunTreeStatus::Cancelled)),

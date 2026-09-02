@@ -28,7 +28,7 @@ use crate::agent_def::{
 };
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptRecord,
-    AttemptState, InterveneAttempt,
+    AttemptState, CancelStanding, InterveneAttempt, LandingTrigger, RequestAttemptCancel,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::context_projection::{
@@ -1229,6 +1229,7 @@ impl<'a> AgentDispatcher<'a> {
             }));
         }
 
+        let killer_actor = crate::entity_id::bytes_to_hex_lower(killer_attempt.as_bytes());
         let intervention_kind = match record.state {
             // A scheduled child has not started: kill it the same way a queued
             // one is killed.
@@ -1236,17 +1237,34 @@ impl<'a> AgentDispatcher<'a> {
             | AttemptState::Paused
             | AttemptState::Cancelled
             | AttemptState::Scheduled => AttemptInterventionKind::Cancel,
-            AttemptState::Leased => AttemptInterventionKind::Interrupt,
+            // A RUNNING child is asked, never killed (ONE-1896 rung 1). The
+            // spawner's proven parent link is peer standing, which is standing
+            // to ASK; only the owner/authority or a runtime ground can force,
+            // and this trusted wrapper mints neither.
+            AttemptState::Leased | AttemptState::Landing => AttemptInterventionKind::Interrupt,
             AttemptState::Completed | AttemptState::Failed => {
                 return Ok(KillOutcome::AlreadyTerminal);
             }
         };
+        if record.state.is_running() {
+            queue.request_cancel_in_txn(
+                &mut wtxn,
+                RequestAttemptCancel {
+                    id: *spawn_attempt_id,
+                    actor: killer_actor.clone(),
+                    standing: CancelStanding::PeerAgent,
+                    trigger: LandingTrigger::CancelRequest,
+                    reason: None,
+                    now,
+                },
+            )?;
+        }
         let outcome = queue.intervene_in_txn(
             &mut wtxn,
             InterveneAttempt {
                 id: *spawn_attempt_id,
                 kind: intervention_kind,
-                actor: crate::entity_id::bytes_to_hex_lower(killer_attempt.as_bytes()),
+                actor: killer_actor,
                 note: None,
                 now,
             },

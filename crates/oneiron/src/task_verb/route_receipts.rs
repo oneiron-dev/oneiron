@@ -139,6 +139,11 @@ pub struct TaskCancelReceipt {
     pub proposal_ref: Option<EntityId>,
     pub gate_decision_ref: Option<String>,
     pub status: Option<RunTreeStatus>,
+    /// ONE-1896: a RUNNING realization was asked to land rather than killed.
+    /// Deliberately not folded into `effected`, which stays the honest "work
+    /// actually stopped" bit — a request is a question, and the worker may
+    /// still refuse it.
+    pub cancel_requested: bool,
 }
 
 /// Result of persisting one render-tier task acknowledgement.

@@ -641,11 +641,20 @@ pub(super) fn superseded_attempt_ids(records: &[AttemptRecord]) -> HashSet<Attem
 }
 
 /// Pre-lease states a task cancel can still stop in its own transaction.
+///
+/// A landing row is deliberately absent alongside a leased one: it holds a live
+/// lease and is finishing bounded work, so the honest move is the soft rung, not
+/// a synchronous kill it would have to refuse anyway.
 pub(super) fn is_cancelable_attempt_state(state: AttemptState) -> bool {
     matches!(
         state,
         AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled
     )
+}
+
+/// States in which a worker holds the lease, so cancellation is a REQUEST.
+pub(super) fn is_running_attempt_state(state: AttemptState) -> bool {
+    state.is_running()
 }
 
 pub(super) fn terminal_attempt_status(

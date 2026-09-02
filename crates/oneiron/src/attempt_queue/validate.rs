@@ -9,8 +9,11 @@ use crate::error::{Error, Result};
 
 use super::telemetry::invalid_transition;
 use super::types::{
-    AttemptEvent, AttemptInterventionKind, AttemptRecord, AttemptState, CleanupAttemptLeases,
-    MAX_ATTEMPT_EVENTS_PER_RECORD, MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry,
+    ATTEMPT_RUNTIME_ACTOR, AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind,
+    AttemptCancelState, AttemptEvent, AttemptInterventionKind, AttemptLanding, AttemptRecord,
+    AttemptResumePoint, AttemptState, CancelStanding, CleanupAttemptLeases, ForceCancelGrounds,
+    LandingTrigger, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_ATTEMPT_EVENTS_PER_RECORD,
+    MAX_ATTEMPT_MANIFEST_ENTRIES, MAX_LANDING_RESERVE_PERCENT, ManifestEntry,
 };
 
 const MAX_KIND_LEN: usize = 128;
@@ -54,6 +57,36 @@ pub(super) const ERR_MANIFEST_VERSION_EMPTY: &str = "manifest version must not b
 pub(super) const ERR_MANIFEST_VERSION_TOO_LONG: &str = "manifest version exceeds 128 bytes";
 pub(super) const ERR_MANIFEST_FULL: &str = "attempt manifest is full; entries are never dropped";
 pub(super) const ERR_LEASE_TIMEOUT_ZERO: &str = "lease timeout must be > 0";
+pub(super) const MAX_CANCEL_STATUS_LEN: usize = 2048;
+pub(super) const MAX_RESUME_MARKER_LEN: usize = 2048;
+pub(super) const MAX_RESUME_ARTIFACT_REF_LEN: usize = 512;
+pub(super) const ERR_CANCEL_ACTOR_IS_RUNTIME: &str =
+    "cancel actor must not claim the reserved runtime identity";
+pub(super) const ERR_CANCEL_NO_STANDING: &str = "cancel request requires standing";
+pub(super) const ERR_CANCEL_STATUS_EMPTY: &str = "cancel status must not be empty";
+pub(super) const ERR_CANCEL_STATUS_TOO_LONG: &str = "cancel status exceeds 2048 bytes";
+pub(super) const ERR_RESUME_MARKER_EMPTY: &str = "resume marker must not be empty";
+pub(super) const ERR_RESUME_MARKER_TOO_LONG: &str = "resume marker exceeds 2048 bytes";
+pub(super) const ERR_RESUME_ARTIFACT_REF_EMPTY: &str = "resume artifact ref must not be empty";
+pub(super) const ERR_RESUME_ARTIFACT_REF_TOO_LONG: &str = "resume artifact ref exceeds 512 bytes";
+pub(super) const ERR_CANCEL_RECEIPTS_FULL: &str =
+    "attempt cancel receipts are full; refusal evidence is never dropped";
+pub(super) const ERR_CANCEL_RECEIPT_SEQUENCE: &str =
+    "attempt cancel receipt sequence must be strictly increasing";
+pub(super) const ERR_RESERVE_PERCENT_RANGE: &str = "landing reserve percent must be in 1..=50";
+pub(super) const ERR_RESERVE_SPEND_ZERO: &str = "landing reserve spend must be > 0";
+pub(super) const ERR_RESERVE_OVERSPENT: &str = "landing reserve spent exceeds the dialed reserve";
+pub(super) const ERR_LANDING_WITHOUT_RECORD: &str = "landing attempt must have a landing record";
+pub(super) const ERR_LANDING_WITHOUT_LEASE: &str = "landing attempt must have a lease owner";
+pub(super) const ERR_LANDING_WITH_BACKOFF: &str = "landing attempt must not have backoff state";
+pub(super) const ERR_LANDING_RECORD_MISPLACED: &str =
+    "only a landing or cancelled attempt may carry a landing record";
+pub(super) const ERR_CANCELLATION_MISPLACED: &str =
+    "only a cancelled attempt may carry a cancellation receipt";
+pub(super) const ERR_CANCELLATION_MALFORMED: &str =
+    "cancellation grounds must be set exactly for a forced stop";
+pub(super) const ERR_HANDOFF_WITHOUT_RESUME_POINT: &str =
+    "landing handoff requires a recorded resume point";
 
 pub(super) fn validate_kind(kind: &str) -> Result<()> {
     if kind.is_empty() {
@@ -248,6 +281,178 @@ pub(super) fn validate_attempt_manifest(manifest: &[ManifestEntry]) -> Result<()
         validate_manifest_entry(entry)?;
     }
     Ok(())
+}
+
+/// Refuses an actor that claims the runtime's own identity.
+///
+/// Structural forgery is already impossible — a hard receipt can only be
+/// written by the [`super::types::ForceCancelAuthority`] path — but a soft row
+/// whose actor reads `runtime` would still MISLEAD every reviewer, so the door
+/// refuses it outright.
+pub(super) fn validate_cancel_actor(actor: &str) -> Result<()> {
+    validate_intervention_actor(actor)?;
+    if actor == ATTEMPT_RUNTIME_ACTOR {
+        return Err(Error::InvalidAttemptQueueRecord(
+            ERR_CANCEL_ACTOR_IS_RUNTIME,
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_cancel_standing(standing: CancelStanding) -> Result<()> {
+    if standing.may_request() {
+        Ok(())
+    } else {
+        Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_NO_STANDING))
+    }
+}
+
+pub(super) fn validate_optional_cancel_status(status: Option<&str>) -> Result<()> {
+    if let Some(status) = status {
+        if status.is_empty() {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_STATUS_EMPTY));
+        }
+        if status.len() > MAX_CANCEL_STATUS_LEN {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_STATUS_TOO_LONG));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_resume_point(resume_point: &AttemptResumePoint) -> Result<()> {
+    if resume_point.marker.is_empty() {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESUME_MARKER_EMPTY));
+    }
+    if resume_point.marker.len() > MAX_RESUME_MARKER_LEN {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESUME_MARKER_TOO_LONG));
+    }
+    if let Some(artifact_ref) = resume_point.artifact_ref.as_deref() {
+        if artifact_ref.is_empty() {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RESUME_ARTIFACT_REF_EMPTY,
+            ));
+        }
+        if artifact_ref.len() > MAX_RESUME_ARTIFACT_REF_LEN {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RESUME_ARTIFACT_REF_TOO_LONG,
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_optional_resume_point(
+    resume_point: Option<&AttemptResumePoint>,
+) -> Result<()> {
+    match resume_point {
+        Some(resume_point) => validate_resume_point(resume_point),
+        None => Ok(()),
+    }
+}
+
+pub(super) fn validate_reserve_percent(reserve_percent: u64) -> Result<()> {
+    if reserve_percent == 0 || reserve_percent > MAX_LANDING_RESERVE_PERCENT {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_PERCENT_RANGE));
+    }
+    Ok(())
+}
+
+fn validate_landing(landing: &AttemptLanding) -> Result<()> {
+    validate_intervention_actor(&landing.requested_by)?;
+    validate_optional_cancel_status(landing.status.as_deref())
+}
+
+/// Validates the whole ONE-1896 sub-record read back off a row.
+pub(super) fn validate_cancel_state(state: &AttemptCancelState) -> Result<()> {
+    if state.receipts.len() > MAX_ATTEMPT_CANCEL_RECEIPTS {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
+    }
+    let mut previous_sequence = 0;
+    for receipt in &state.receipts {
+        if receipt.sequence == 0 || receipt.sequence <= previous_sequence {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_CANCEL_RECEIPT_SEQUENCE,
+            ));
+        }
+        validate_intervention_actor(&receipt.actor)?;
+        validate_optional_cancel_status(receipt.status.as_deref())?;
+        validate_optional_failure_reason(receipt.reason.as_deref())?;
+        validate_optional_resume_point(receipt.resume_point.as_ref())?;
+        previous_sequence = receipt.sequence;
+    }
+    if let Some(landing) = state.landing.as_ref() {
+        validate_landing(landing)?;
+    }
+    validate_optional_resume_point(state.resume_point.as_ref())?;
+    if let Some(cancellation) = state.cancellation.as_ref() {
+        if !cancellation.is_well_formed() {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_CANCELLATION_MALFORMED));
+        }
+        validate_intervention_actor(&cancellation.actor)?;
+        validate_optional_failure_reason(cancellation.reason.as_deref())?;
+    }
+    if state.reserve.spent_units > state.reserve.reserve_units {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESERVE_OVERSPENT));
+    }
+    Ok(())
+}
+
+/// One append-only cancel receipt row, refusing at the cap instead of draining.
+#[derive(Debug, Default)]
+pub(super) struct CancelReceiptDraft {
+    pub(super) standing: Option<CancelStanding>,
+    pub(super) trigger: Option<LandingTrigger>,
+    pub(super) grounds: Option<ForceCancelGrounds>,
+    pub(super) status: Option<String>,
+    pub(super) reason: Option<String>,
+    pub(super) resume_point: Option<AttemptResumePoint>,
+    pub(super) reserve_units: u64,
+}
+
+pub(super) fn append_cancel_receipt(
+    record: &mut AttemptRecord,
+    kind: AttemptCancelReceiptKind,
+    actor: String,
+    draft: CancelReceiptDraft,
+    now: u64,
+) -> Result<()> {
+    if record.cancel_state.receipts.len() >= MAX_ATTEMPT_CANCEL_RECEIPTS {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
+    }
+    let sequence = match record.cancel_state.receipts.last() {
+        Some(receipt) => receipt
+            .sequence
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("attempt cancel receipt sequence"))?,
+        None => 1,
+    };
+    record.cancel_state.receipts.push(AttemptCancelReceipt {
+        sequence,
+        at: now,
+        actor,
+        kind,
+        standing: draft.standing,
+        trigger: draft.trigger,
+        grounds: draft.grounds,
+        status: draft.status,
+        reason: draft.reason,
+        resume_point: draft.resume_point,
+        reserve_units: draft.reserve_units,
+    });
+    Ok(())
+}
+
+/// Counts one refused soft request. Saturating: the pathology signal is "many",
+/// and an overflow must not reset it to "none". One refusal answers one
+/// outstanding request; duplicate asks remain pending until answered.
+pub(super) fn count_cancel_rejection(pressure: &mut AttemptCancelPressure) {
+    pressure.rejections = pressure.rejections.saturating_add(1);
+    pressure.pending = pressure.pending.saturating_sub(1);
+}
+
+pub(super) fn count_cancel_request(pressure: &mut AttemptCancelPressure) {
+    pressure.requests = pressure.requests.saturating_add(1);
+    pressure.pending = pressure.pending.saturating_add(1);
 }
 
 pub(super) fn append_attempt_event(

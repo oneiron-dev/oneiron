@@ -4,7 +4,7 @@ use rmpv::Value;
 
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptState,
-    InterveneAttempt,
+    CancelRequestOutcome, CancelStanding, InterveneAttempt, LandingTrigger, RequestAttemptCancel,
 };
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
@@ -29,8 +29,8 @@ use super::consts::{
 };
 use super::consult_result::CancelTargetState;
 use super::presence_scan::{
-    cancel_target_state, is_cancelable_attempt_state, superseded_attempt_ids, task_presence,
-    task_presence_for_id, terminal_attempt_status,
+    cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
+    superseded_attempt_ids, task_presence, task_presence_for_id, terminal_attempt_status,
 };
 use super::rate_limit::task_verb_contract;
 use super::route_receipts::{
@@ -160,10 +160,11 @@ impl Memory<'_> {
                 proposal_ref: Some(proposal_ref),
                 gate_decision_ref,
                 status: None,
+                cancel_requested: false,
             });
         }
 
-        let (gate_decision_ref, gate_outcome, effected, status) = self
+        let (gate_decision_ref, gate_outcome, effected, status, cancel_requested) = self
             .with_verified_actor_write_txn(|wtxn| {
                 let policy = resolve_policy_manifest(&self.vault().store, &*wtxn)?;
                 let effect = ExternalEffectGateInput {
@@ -200,7 +201,7 @@ impl Memory<'_> {
                 )?;
                 let decision_ref = format!("gate:{}", decision_id.to_hex());
                 if decision.outcome() != GateOutcome::Allow {
-                    return Ok((decision_ref, decision.outcome(), false, None));
+                    return Ok((decision_ref, decision.outcome(), false, None, false));
                 }
 
                 // P1-b (TOCTOU): decide on transaction-current attempt state,
@@ -253,23 +254,55 @@ impl Memory<'_> {
                     }
                 };
 
-                // P1-a (leased-cancel honesty): a leased realization cannot be
-                // stopped in this txn (`intervene` refuses a leased attempt) and
-                // its local/outbound work keeps running. Report the honest
-                // partial — do NOT hide the task and do NOT claim effect while a
-                // live lease remains; the task stays VISIBLE (it folds to
-                // Running under its live lease) until the lease releases. A
-                // Queued+Leased mix is uneffected too: nothing is intervened and
-                // nothing is hidden, so the receipt never conceals live work.
-                if live_attempts
+                // P1-a (leased-cancel honesty): a running realization cannot be
+                // stopped in this txn and its local/outbound work keeps running.
+                // Report the honest partial — do NOT hide the task and do NOT
+                // claim effect while a live lease remains; the task stays
+                // VISIBLE (it folds to Running under its live lease) until the
+                // lease releases. A Queued+Leased mix is uneffected too: nothing
+                // is intervened and nothing is hidden, so the receipt never
+                // conceals live work.
+                //
+                // ONE-1896: it is no longer a dead end. The gate has already
+                // ALLOWED an owner-scoped cancel, which is standing to ASK, so
+                // the running worker gets a durable soft `cancel.request` and
+                // must answer it by landing or by refusing with a reason.
+                // `effected` stays false — nothing stopped yet — and the receipt
+                // says a request was made rather than pretending the attempt was
+                // synchronously killed.
+                let running: Vec<AttemptId> = live_attempts
                     .iter()
-                    .any(|(_, attempt_state)| *attempt_state == AttemptState::Leased)
-                {
+                    .filter(|(_, attempt_state)| is_running_attempt_state(*attempt_state))
+                    .map(|(attempt_id, _)| *attempt_id)
+                    .collect();
+                if !running.is_empty() {
+                    let mut cancel_requested = false;
+                    for attempt_id in running {
+                        let outcome = queue.request_cancel_in_txn(
+                            wtxn,
+                            RequestAttemptCancel {
+                                id: attempt_id,
+                                actor: self.actor().to_hex(),
+                                standing: CancelStanding::Authority,
+                                trigger: LandingTrigger::CancelRequest,
+                                reason: None,
+                                now,
+                            },
+                        )?;
+                        if matches!(
+                            outcome,
+                            CancelRequestOutcome::Requested { .. }
+                                | CancelRequestOutcome::AlreadyLanding(_)
+                        ) {
+                            cancel_requested = true;
+                        }
+                    }
                     return Ok((
                         decision_ref,
                         decision.outcome(),
                         false,
                         Some(RunTreeStatus::Running),
+                        cancel_requested,
                     ));
                 }
 
@@ -282,7 +315,13 @@ impl Memory<'_> {
                     .iter()
                     .any(|(_, attempt_state)| is_cancelable_attempt_state(*attempt_state))
                 {
-                    return Ok((decision_ref, decision.outcome(), false, terminal_status));
+                    return Ok((
+                        decision_ref,
+                        decision.outcome(),
+                        false,
+                        terminal_status,
+                        false,
+                    ));
                 }
 
                 let mut cancelled_count = 0usize;
@@ -311,7 +350,13 @@ impl Memory<'_> {
                     }
                 }
                 if cancelled_count == 0 {
-                    return Ok((decision_ref, decision.outcome(), false, terminal_status));
+                    return Ok((
+                        decision_ref,
+                        decision.outcome(),
+                        false,
+                        terminal_status,
+                        false,
+                    ));
                 }
                 // A Completed/Failed sibling remains real terminal work. Keep
                 // its TASK intent visible so the unchanged job stays folded
@@ -330,6 +375,7 @@ impl Memory<'_> {
                     decision.outcome(),
                     true,
                     preserved_terminal_status.or(Some(RunTreeStatus::Cancelled)),
+                    false,
                 ))
             })?;
 
@@ -350,6 +396,7 @@ impl Memory<'_> {
                 proposal_ref: Some(proposal_ref),
                 gate_decision_ref: Some(gate_decision_ref),
                 status: None,
+                cancel_requested: false,
             });
         }
 
@@ -363,6 +410,7 @@ impl Memory<'_> {
             proposal_ref: None,
             gate_decision_ref: Some(gate_decision_ref),
             status,
+            cancel_requested,
         })
     }
 
