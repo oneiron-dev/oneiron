@@ -40,11 +40,16 @@ pub use self::record::{
     PendingConnectorCharter,
 };
 
-pub(crate) use self::charter::{charter_block_drifted, charter_never_list_matches};
+pub(crate) use self::charter::{
+    charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
+    charter_never_list_matches_scoped_channel,
+};
 pub(crate) use self::meter::{
     EffectorBudgetChargeOutcome, budget_exhausted_reason, charge_effector_budgets,
 };
-pub(crate) use self::record::normalize_connector_key;
+pub(crate) use self::record::{
+    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+};
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling

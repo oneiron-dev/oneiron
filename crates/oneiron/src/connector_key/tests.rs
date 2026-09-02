@@ -1723,6 +1723,81 @@ fn charter_never_list_matching_forms() {
     assert!(charter_never_list_matches(&exact, "slack", "call"));
     assert!(!charter_never_list_matches(&exact, "slack", "send"));
     assert!(!charter_never_list_matches(&exact, "line", "call"));
+
+    // Ordinary connector keys are stored normalized, while the compiler keeps
+    // the author's raw channel operand for hashing and auditability.
+    let mixed_spelling = never_list_block(&["slack_chat:send"]);
+    assert!(charter_never_list_matches(
+        &mixed_spelling,
+        "slack_chat",
+        "send"
+    ));
+    assert!(!charter_never_list_matches(
+        &mixed_spelling,
+        "slack_chat_extra",
+        "send"
+    ));
+
+    // Typed scoped-MCP calls use the raw ordinary channel, not ordinary
+    // connector normalization: hyphen and underscore are distinct identities.
+    let hyphen = never_list_block(&["scoped-channel:mcp:foo-bar:*"]);
+    assert!(charter_never_list_matches_scoped_channel(
+        &hyphen,
+        "mcp:foo-bar",
+        "send"
+    ));
+    assert!(!charter_never_list_matches_scoped_channel(
+        &hyphen,
+        "mcp:foo_bar",
+        "send"
+    ));
+    let underscore = never_list_block(&["scoped-channel:mcp:foo_bar:*"]);
+    assert!(charter_never_list_matches_scoped_channel(
+        &underscore,
+        "mcp:foo_bar",
+        "send"
+    ));
+    assert!(!charter_never_list_matches_scoped_channel(
+        &underscore,
+        "mcp:foo-bar",
+        "send"
+    ));
+
+    // A typed call must NOT read the normalized ordinary entry for a named
+    // channel: that entry aliases `foo-bar` onto `foo_bar`, so reading it would
+    // let one server's rule bind another server's calls.
+    let normalized_ordinary = never_list_block(&["mcp:foo_bar:send"]);
+    for channel in ["mcp:foo_bar", "mcp:foo-bar"] {
+        assert!(
+            !charter_never_list_matches_scoped_channel(&normalized_ordinary, channel, "send"),
+            "normalized ordinary entry must not reach typed {channel}"
+        );
+    }
+    // The whole-fleet wildcard names no channel spelling at all, so it cannot
+    // alias anything and keeps binding every dispatch, typed included. The
+    // tagged form may never carry a wildcard channel, so this is the ONLY way
+    // `never <verb>` reaches a scoped call.
+    let fleet_wide = never_list_block(&["*:send"]);
+    for channel in ["mcp:foo-bar", "mcp:foo_bar"] {
+        assert!(charter_never_list_matches_scoped_channel(
+            &fleet_wide,
+            channel,
+            "send"
+        ));
+        assert!(!charter_never_list_matches_scoped_channel(
+            &fleet_wide,
+            channel,
+            "read_file"
+        ));
+    }
+    // A capability-only rule stays a different mode on this axis too.
+    let capability_rule =
+        never_list_block(&["capability-key:mcp:foo-bar:grant:ab12cd34ab12cd34ab12cd34ab12cd34"]);
+    assert!(!charter_never_list_matches_scoped_channel(
+        &capability_rule,
+        "mcp:foo-bar",
+        "send"
+    ));
 }
 
 #[test]
@@ -1927,11 +2002,22 @@ fn malformed_never_list_entry_fails_closed_at_validation() {
             "never_list entry must be channel:verb"
         ))
     ));
-    // More than one ':'.
+    // Colons inside an ordinary channel are DATA: the verb is the LAST segment,
+    // so this stored entry prohibits `x` on the whole `slack:call` connector.
+    assert!(encode_connector_key_body(&charter(vec!["slack:call:x".to_owned()])).is_ok());
+    // A capability rule must name one identity the engine can mint; a partial
+    // wildcard fails closed instead of denying nothing.
     assert!(matches!(
-        encode_connector_key_body(&charter(vec!["slack:call:x".to_owned()])),
+        encode_connector_key_body(&charter(vec!["capability-key:mcp:acme:grant:*".to_owned()])),
         Err(Error::InvalidConnectorKeyBody(
-            "never_list entry must be channel:verb"
+            "never_list capability key invalid"
+        ))
+    ));
+    // Same on the channel side of an ordinary rule.
+    assert!(matches!(
+        encode_connector_key_body(&charter(vec!["mcp*:acme:grant:ab12".to_owned()])),
+        Err(Error::InvalidConnectorKeyBody(
+            "never_list entry channel invalid"
         ))
     ));
     // Empty channel part.
@@ -1974,6 +2060,12 @@ fn never_list_entry_must_be_canonical_form() {
         " slack:send", // leading-whitespace channel
         "slack :send", // trailing-whitespace channel
         "slack:send ", // trailing-whitespace verb
+        // A colon-bearing ordinary channel carries the same canonicality duty:
+        // enforcement compares the stored channel by exact string.
+        "mcp:Acme:grant:ab12",
+        "mcp:acme:grant:ab12 ",
+        "mcp:my-server:grant:x",
+        "Mcp:acme:grant:ab12",
     ] {
         assert!(
             matches!(
@@ -1984,11 +2076,59 @@ fn never_list_entry_must_be_canonical_form() {
         );
     }
 
-    // The canonical forms the compiler emits still validate.
-    for entry in ["slack:send", "*:send", "slack:*", "*:*"] {
+    // The canonical forms the compiler emits still validate: the ordinary pair,
+    // both wildcards, a colon-bearing ordinary channel, and one exact tagged
+    // capability rule (ONE-1885).
+    let capability_entry = format!(
+        "capability-key:{}",
+        ScopedCapabilityProvenance::mint("acme", &test_id(0xB4))
+            .expect("safe canonical server")
+            .connector()
+    );
+    for entry in [
+        "slack:send",
+        "*:send",
+        "slack:*",
+        "*:*",
+        "mcp:acme:grant:ab12cd34",
+        "mcp:*",
+        "mcp:my_server:grant:x",
+        "scoped-channel:mcp:my-server:*",
+        capability_entry.as_str(),
+    ] {
         assert!(
             validate_compiled_policy(&policy(entry)).is_ok(),
             "canonical never_list entry {entry:?} must validate"
+        );
+    }
+
+    // An ordinary rule's verb is its LAST segment and its channel is everything
+    // before it: a missing separator, an empty part, or a partial wildcard may
+    // never reach a stored policy. A tagged rule must be one real capability
+    // identity — nothing wildcard, truncated, or unsafe.
+    for entry in [
+        "send",
+        ":send",
+        "slack:",
+        "",
+        "mcp*:acme:grant:ab12",
+        "mcp:acme*",
+        "capability-key:mcp:acme:grant:*",
+        "capability-key:mcp:acme:grant",
+        "capability-key:mcp:*:grant:ab12cd34ab12cd34ab12cd34ab12cd34",
+        "capability-key:mcp:acme:grant:ab12",
+        "capability-key:",
+        "scoped-channel:",
+        "scoped-channel:mcp:Acme:*",
+        "scoped-channel:mcp:acme:extra:*",
+        "scoped-channel:mcp:acme*:send",
+    ] {
+        assert!(
+            matches!(
+                validate_compiled_policy(&policy(entry)),
+                Err(Error::InvalidConnectorKeyBody(_))
+            ),
+            "malformed never_list entry {entry:?} must fail closed"
         );
     }
 }
@@ -2025,4 +2165,440 @@ fn crlf_imported_charter_block_does_not_false_drift() -> Result<()> {
         "mutated text must still drift"
     );
     Ok(())
+}
+
+// --- ONE-1885 first-colon never-list grammar ----------------------------------
+
+/// Golden compiled-policy hash for a two-part-only never-list. Extending the
+/// grammar to first-colon capability keys must NOT version the compiled domain,
+/// the codec key order, the sort/dedup, or the stamp aggregate: a landed charter
+/// keeps byte-identical stored policy, so a stamped block cannot silently drift
+/// into proposed-only after an engine upgrade.
+const LEGACY_TWO_PART_NEVER_HASH_V1: [u8; 32] = [
+    0x80, 0xEB, 0xBA, 0xEC, 0x8C, 0xAC, 0xA5, 0xEE, 0xF5, 0x49, 0xC8, 0x85, 0x94, 0x32, 0xD6, 0xE6,
+    0x01, 0x76, 0xA9, 0xAE, 0x5A, 0x52, 0xDF, 0x3B, 0xF3, 0xEF, 0x31, 0x99, 0x9D, 0x85, 0x07, 0x6A,
+];
+
+fn never_list_block(entries: &[&str]) -> ConnectorCharterBlock {
+    ConnectorCharterBlock {
+        text: "fixture".to_owned(),
+        text_hash: [0; 32],
+        compiled: CompiledConnectorPolicy {
+            never_list: entries.iter().map(|entry| (*entry).to_owned()).collect(),
+            channel_caps: Vec::new(),
+        },
+        compiled_hash: [0; 32],
+        stamped_aggregate: [0; 32],
+        stamped_by: "owner".to_owned(),
+        stamped_at: 1,
+    }
+}
+
+#[test]
+fn legacy_two_part_never_hash_is_frozen() {
+    let compiled =
+        compile_connector_charter("never call\nnever delete on slack\nnever send on slack\n")
+            .expect("legacy charter compiles");
+    assert_eq!(
+        compiled.compiled.never_list,
+        vec![
+            "*:call".to_owned(),
+            "slack:delete".to_owned(),
+            "slack:send".to_owned(),
+        ]
+    );
+    assert!(compiled.compiled.channel_caps.is_empty());
+    assert_eq!(
+        compiled.compiled_hash, LEGACY_TWO_PART_NEVER_HASH_V1,
+        "the two-part compiled policy hash is frozen"
+    );
+}
+
+#[test]
+fn scoped_capability_identity_requires_one_safe_server() {
+    let grant_id = test_id(0xAB);
+    let hex = grant_id.to_hex();
+
+    let minted = ScopedCapabilityProvenance::mint("files", &grant_id).expect("safe server");
+    assert_eq!(minted.server(), "files");
+    assert_eq!(minted.connector(), format!("mcp:files:grant:{hex}"));
+    assert_eq!(minted.grant_id(), grant_id);
+    assert_eq!(minted.ordinary_channel(), "mcp:files");
+
+    // Hyphen and underscore are both canonical identity bytes. Neither the
+    // producer nor connector-key canonicalization may alias one to the other.
+    let hyphen = ScopedCapabilityProvenance::mint("my-server", &grant_id)
+        .expect("canonical hyphenated server");
+    let underscore = ScopedCapabilityProvenance::mint("my_server", &grant_id)
+        .expect("canonical underscored server");
+    assert_eq!(hyphen.server(), "my-server");
+    assert_eq!(hyphen.connector(), format!("mcp:my-server:grant:{hex}"));
+    assert_eq!(hyphen.ordinary_channel(), "mcp:my-server");
+    assert_eq!(underscore.server(), "my_server");
+    assert_eq!(underscore.connector(), format!("mcp:my_server:grant:{hex}"));
+    assert_ne!(hyphen, underscore);
+    assert_eq!(
+        normalize_connector_key(hyphen.connector()),
+        hyphen.connector()
+    );
+    assert_eq!(
+        normalize_connector_key(underscore.connector()),
+        underscore.connector()
+    );
+    let (_tmp, vault) = temp_vault();
+    let hyphen_key_id = test_id(0xAD);
+    let underscore_key_id = test_id(0xAE);
+    vault
+        .register_connector_key(
+            &hyphen_key_id,
+            ConnectorKeyRecord::active(hyphen.connector(), None, Vec::new(), 10),
+        )
+        .expect("register hyphenated capability connector");
+    vault
+        .register_connector_key(
+            &underscore_key_id,
+            ConnectorKeyRecord::active(underscore.connector(), None, Vec::new(), 10),
+        )
+        .expect("register underscored capability connector");
+    assert_eq!(
+        vault
+            .connector_key_for(hyphen.connector(), None)
+            .expect("lookup hyphenated connector")
+            .expect("hyphenated connector key")
+            .0,
+        hyphen_key_id
+    );
+    assert_eq!(
+        vault
+            .connector_key_for(underscore.connector(), None)
+            .expect("lookup underscored connector")
+            .expect("underscored connector key")
+            .0,
+        underscore_key_id
+    );
+
+    // Non-canonical and unsafe segments mint NOTHING. Admission never trims or
+    // case-folds a server identifier into another authority.
+    for unsafe_server in [
+        "My-Server",
+        "MY_SERVER",
+        "FILES",
+        "acme:extra",
+        "acme:grant:ff",
+        ":",
+        " acme",
+        "acme ",
+        "ac me",
+        "ac\tme",
+        "ac\u{00a0}me",
+        "\u{3000}acme",
+        "*",
+        "ac*",
+        "*me",
+        "acme?",
+        "acme[1]",
+        "",
+        "   ",
+        "acme/../etc",
+        "acme\u{0000}",
+    ] {
+        assert!(
+            ScopedCapabilityProvenance::mint(unsafe_server, &grant_id).is_none(),
+            "unsafe scoped server {unsafe_server:?} must not mint a capability key"
+        );
+        assert!(
+            canonical_scoped_server_segment(unsafe_server).is_none(),
+            "unsafe scoped server {unsafe_server:?} must fail the shared rule"
+        );
+    }
+
+    // Persisted parts are re-derived, never trusted, and retain the exact
+    // admitted server punctuation through the round trip.
+    assert_eq!(
+        ScopedCapabilityProvenance::from_persisted_parts(
+            &grant_id,
+            "my-server",
+            &format!("mcp:my-server:grant:{hex}")
+        )
+        .expect("consistent hyphenated parts"),
+        hyphen
+    );
+    for (server, connector) in [
+        ("My-Server", format!("mcp:my-server:grant:{hex}")),
+        ("my-server", format!("mcp:my_server:grant:{hex}")),
+        ("files", format!("mcp:other:grant:{hex}")),
+        (
+            "files",
+            format!("mcp:files:grant:{}", test_id(0xAC).to_hex()),
+        ),
+        ("files", "mcp:files:grant:ab12".to_owned()),
+        ("files:x", format!("mcp:files:x:grant:{hex}")),
+    ] {
+        assert!(
+            ScopedCapabilityProvenance::from_persisted_parts(&grant_id, server, &connector)
+                .is_none(),
+            "inconsistent persisted provenance {server:?}/{connector} must fail closed"
+        );
+    }
+}
+
+#[test]
+fn charter_compiles_the_never_key_capability_form() {
+    let grant_id = test_id(0xC1);
+    let hex = grant_id.to_hex();
+    let key = format!("mcp:acme:grant:{hex}");
+
+    // The operand names one identity the engine can actually produce, and it
+    // compiles into the capability-only rule the typed matcher reads.
+    let compiled =
+        compile_connector_charter(&format!("never key {key}")).expect("capability form compiles");
+    assert_eq!(
+        compiled.compiled.never_list,
+        vec![format!("capability-key:{key}")]
+    );
+    // Canonical hyphen and underscore server identities retain their exact
+    // bytes and compile to distinct per-grant prohibitions.
+    let hyphen = compile_connector_charter(&format!("never key mcp:my-server:grant:{hex}"))
+        .expect("canonical hyphenated key compiles");
+    let underscore = compile_connector_charter(&format!("never key mcp:my_server:grant:{hex}"))
+        .expect("canonical underscored key compiles");
+    assert_eq!(
+        hyphen.compiled.never_list,
+        vec![format!("capability-key:mcp:my-server:grant:{hex}")]
+    );
+    assert_eq!(
+        underscore.compiled.never_list,
+        vec![format!("capability-key:mcp:my_server:grant:{hex}")]
+    );
+    assert_ne!(hyphen.compiled, underscore.compiled);
+    assert_eq!(
+        hyphen.compiled.never_list[0],
+        format!(
+            "capability-key:{}",
+            ScopedCapabilityProvenance::mint("my-server", &grant_id)
+                .expect("safe server")
+                .connector()
+        ),
+        "compiler and producer preserve the same exact identity bytes"
+    );
+
+    // Bare `never key` reads as the capability form with its operand missing.
+    let issue = compile_connector_charter("never key").expect_err("bare never key fails closed");
+    assert_eq!(issue.line_number, 1);
+    assert_eq!(
+        issue.message,
+        "never key requires an mcp:<server>:grant:<id> capability key"
+    );
+
+    // Every operand that is not one canonical, safe, real capability identity
+    // fails closed AT COMPILE with its line number: mixed-case aliases, partial
+    // wildcards, unsafe servers (colon-forged, whitespace, glob), truncated or
+    // over-long keys, and a grant id that is not a real id.
+    // (Whitespace never reaches this seam: the directive is tokenized on
+    // whitespace, so an unsafe spelling like `mcp:ac me:grant:<id>` is not even
+    // a directive. The shared segment rule rejects it at every other seam.)
+    for operand in [
+        format!("MCP:acme:grant:{hex}"),
+        format!("mcp:Acme:grant:{hex}"),
+        format!("mcp:acme:Grant:{hex}"),
+        format!("mcp:acme:grant:{}", hex.to_uppercase()),
+        "mcp:acme:grant:*".to_owned(),
+        format!("mcp:acme*:grant:{hex}"),
+        format!("mcp:*:grant:{hex}"),
+        format!("mcp::grant:{hex}"),
+        format!("mcp:acme:grant:{hex}:extra"),
+        format!("slack:acme:grant:{hex}"),
+        format!("mcp:acme:key:{hex}"),
+        "mcp:acme:grant:ab12".to_owned(),
+        "mcp:acme".to_owned(),
+        "mcp".to_owned(),
+        "mcp:calendar:grant:foo".to_owned(),
+    ] {
+        let line = format!("# ok\nnever key {operand}");
+        let issue = compile_connector_charter(&line).expect_err("fails closed");
+        assert_eq!(issue.line_number, 2, "{operand}");
+        assert_eq!(
+            issue.message,
+            "never key must name one canonical mcp:<server>:grant:<id> capability key",
+            "{operand}"
+        );
+    }
+    // `never key x y` is not a directive at all.
+    assert_eq!(
+        compile_connector_charter("never key mcp:acme grant")
+            .expect_err("fails closed")
+            .message,
+        "unrecognized charter directive"
+    );
+}
+
+#[test]
+fn charter_compiles_ordinary_colon_bearing_channels() {
+    // An ordinary connector's colons are DATA: the compiled entry's verb is its
+    // last segment, so the whole `mcp:calendar` string is the channel.
+    let compiled =
+        compile_connector_charter("never send on mcp:calendar").expect("ordinary form compiles");
+    assert_eq!(
+        compiled.compiled.never_list,
+        vec![
+            "mcp:calendar:send".to_owned(),
+            "scoped-channel:mcp:calendar:send".to_owned(),
+        ]
+    );
+    let deeper = compile_connector_charter("never send on mcp:calendar:grant:foo")
+        .expect("deeper ordinary connector compiles");
+    assert_eq!(
+        deeper.compiled.never_list,
+        vec!["mcp:calendar:grant:foo:send".to_owned()]
+    );
+    let mixed_spelling = compile_connector_charter("never send on Slack-Chat")
+        .expect("ordinary mixed spelling compiles");
+    assert_eq!(
+        mixed_spelling.compiled.never_list,
+        vec!["slack_chat:send".to_owned()]
+    );
+    // Cap/rate channels are matched WHOLE and keep their colon-bearing form.
+    let cap =
+        compile_connector_charter("cap 10 sends per day on mcp:calendar").expect("cap compiles");
+    assert_eq!(
+        cap.compiled.channel_caps[0].channel_class.as_deref(),
+        Some("mcp:calendar")
+    );
+}
+
+#[test]
+fn charter_scoped_channel_dual_entries_are_codec_and_hash_stable() -> Result<()> {
+    let hyphen = compile_connector_charter("never send on mcp:foo-bar")
+        .expect("hyphenated scoped channel compiles");
+    let underscore = compile_connector_charter("never send on mcp:foo_bar")
+        .expect("underscored scoped channel compiles");
+    assert_eq!(
+        hyphen.compiled.never_list,
+        vec![
+            "mcp:foo_bar:send".to_owned(),
+            "scoped-channel:mcp:foo-bar:send".to_owned(),
+        ]
+    );
+    assert_eq!(
+        underscore.compiled.never_list,
+        vec![
+            "mcp:foo_bar:send".to_owned(),
+            "scoped-channel:mcp:foo_bar:send".to_owned(),
+        ]
+    );
+    assert_ne!(
+        hyphen.compiled_hash, underscore.compiled_hash,
+        "exact scoped spelling must affect the compiled policy hash"
+    );
+    assert_eq!(
+        hyphen.compiled_hash,
+        compile_connector_charter("never send on mcp:foo-bar")
+            .expect("deterministic compile")
+            .compiled_hash
+    );
+
+    let record = ConnectorKeyRecord {
+        charter: Some(ConnectorCharterBlock {
+            text: "never send on mcp:foo-bar".to_owned(),
+            text_hash: hyphen.text_hash,
+            compiled: hyphen.compiled.clone(),
+            compiled_hash: hyphen.compiled_hash,
+            stamped_aggregate: [0x33; 32],
+            stamped_by: "owner".to_owned(),
+            stamped_at: 1_000,
+        }),
+        ..ConnectorKeyRecord::active("mcp:foo_bar", None, Vec::new(), 1_000)
+    };
+    let encoded = encode_connector_key_body(&record)?;
+    assert_eq!(decode_connector_key_body(&encoded)?, record);
+    Ok(())
+}
+
+#[test]
+fn charter_never_list_modes_are_distinct() {
+    let grant_id = test_id(0xC2);
+    let neighbour_id = test_id(0xC3);
+    let capability =
+        ScopedCapabilityProvenance::mint("acme", &grant_id).expect("safe canonical server");
+    let neighbour =
+        ScopedCapabilityProvenance::mint("acme", &neighbour_id).expect("safe canonical server");
+    let capability_rule = format!("capability-key:{}", capability.connector());
+
+    // `never key` names the exact real per-grant identity: that grant only.
+    let exact = never_list_block(&[capability_rule.as_str()]);
+    assert!(charter_never_list_matches_capability(&exact, &capability));
+    assert!(!charter_never_list_matches_capability(&exact, &neighbour));
+    // No prefix, suffix, or per-segment lookalike is a capability rule.
+    let longer_key = format!("capability-key:mcp:acme:grant:{}0", grant_id.to_hex());
+    for entry in [
+        "capability-key:mcp:acme:grant",
+        "capability-key:mcp:acme",
+        longer_key.as_str(),
+        capability.connector(),
+        "mcp:acme:grant",
+        "*:*",
+    ] {
+        assert!(
+            !charter_never_list_matches_capability(&never_list_block(&[entry]), &capability),
+            "{entry} must not carry capability authority"
+        );
+    }
+
+    // `never key` is NOT an ordinary-channel rule: the ordinary matcher never
+    // reads a capability entry, whatever channel or verb it is asked about.
+    for (channel, verb) in [
+        (capability.connector(), "read_file"),
+        ("mcp:acme", "read_file"),
+        ("mcp", "acme"),
+        ("*", "*"),
+    ] {
+        assert!(
+            !charter_never_list_matches(&exact, channel, verb),
+            "capability rule must not match ordinary {channel}/{verb}"
+        );
+    }
+
+    // The ordinary rule matches the COMPLETE connector string, colons included.
+    let ordinary = never_list_block(&["mcp:calendar:send"]);
+    assert!(charter_never_list_matches(
+        &ordinary,
+        "mcp:calendar",
+        "send"
+    ));
+    assert!(!charter_never_list_matches(
+        &ordinary,
+        "mcp",
+        "calendar:send"
+    ));
+    assert!(!charter_never_list_matches(
+        &ordinary,
+        "mcp:calendar:grant:foo",
+        "send"
+    ));
+    let deeper = never_list_block(&["mcp:calendar:grant:foo:send"]);
+    assert!(charter_never_list_matches(
+        &deeper,
+        "mcp:calendar:grant:foo",
+        "send"
+    ));
+    assert!(!charter_never_list_matches(&deeper, "mcp:calendar", "send"));
+    // An ordinary rule is not a capability rule either.
+    assert!(!charter_never_list_matches_capability(&deeper, &capability));
+
+    // Landed wildcard/verb semantics are unchanged.
+    assert!(charter_never_list_matches(
+        &never_list_block(&["*:delete"]),
+        "mcp:calendar",
+        " Delete "
+    ));
+    assert!(charter_never_list_matches(
+        &never_list_block(&["slack:*"]),
+        "slack",
+        "send"
+    ));
+    assert!(!charter_never_list_matches(
+        &never_list_block(&["slack:*"]),
+        "line",
+        "send"
+    ));
 }

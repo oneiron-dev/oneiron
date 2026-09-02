@@ -16,15 +16,20 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 
 /// Current schema version for device-local outbound intent rows.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 2;
+///
+/// v3 adds the required `capability_provenance` field (ONE-1885). These rows are
+/// device-local and pre-release, so v3 is read exclusively: there is no
+/// old-schema reader.
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 3;
 /// Binding format emitted and accepted by this greenfield ledger.
 pub const OUTBOUND_BINDING_VERSION: u64 = 2;
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 19] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 20] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -38,6 +43,7 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 19] = [
     "authorization_binding",
     "binding_version",
     "resolved_endpoint",
+    "capability_provenance",
     "budget_accounting",
     "recorded_outcome",
     "state",
@@ -55,6 +61,8 @@ const BUDGET_ACCOUNTING_KEYS: [&str; 5] = [
     "accounted_at_ms",
 ];
 const RECORDED_OUTCOME_KEYS: [&str; 2] = ["kind", "reason"];
+/// Pinned nested key set for the typed scoped capability provenance.
+const CAPABILITY_PROVENANCE_KEYS: [&str; 3] = ["grant_id", "server", "connector"];
 
 #[cfg(test)]
 static FORCE_SYNC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -72,12 +80,13 @@ const KEY_IDEMPOTENCY_SUPPORTED: &str = INTENT_LEDGER_VALUE_KEYS[9];
 const KEY_AUTHORIZATION_BINDING: &str = INTENT_LEDGER_VALUE_KEYS[10];
 const KEY_BINDING_VERSION: &str = INTENT_LEDGER_VALUE_KEYS[11];
 const KEY_RESOLVED_ENDPOINT: &str = INTENT_LEDGER_VALUE_KEYS[12];
-const KEY_BUDGET_ACCOUNTING: &str = INTENT_LEDGER_VALUE_KEYS[13];
-const KEY_RECORDED_OUTCOME: &str = INTENT_LEDGER_VALUE_KEYS[14];
-const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[15];
-const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[16];
-const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[17];
-const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[18];
+const KEY_CAPABILITY_PROVENANCE: &str = INTENT_LEDGER_VALUE_KEYS[13];
+const KEY_BUDGET_ACCOUNTING: &str = INTENT_LEDGER_VALUE_KEYS[14];
+const KEY_RECORDED_OUTCOME: &str = INTENT_LEDGER_VALUE_KEYS[15];
+const KEY_STATE: &str = INTENT_LEDGER_VALUE_KEYS[16];
+const KEY_CREATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[17];
+const KEY_UPDATED_MS: &str = INTENT_LEDGER_VALUE_KEYS[18];
+const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[19];
 
 pub type IntentLedgerResult<T> = std::result::Result<T, IntentLedgerError>;
 pub type IntentId = [u8; 32];
@@ -285,6 +294,10 @@ pub struct OutboundCallRequest {
     pub payload: Vec<u8>,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub resolved_endpoint: Option<String>,
+    /// Typed per-grant capability identity this call was admitted under, minted
+    /// only by the verified scoped-MCP admission path (ONE-1885). Ordinary
+    /// connector calls carry `None` and can never gain one from their text.
+    capability_provenance: Option<ScopedCapabilityProvenance>,
     pub now_ms: u64,
 }
 
@@ -306,6 +319,7 @@ impl OutboundCallRequest {
             payload,
             authorization_binding: None,
             resolved_endpoint: None,
+            capability_provenance: None,
             now_ms,
         }
     }
@@ -313,6 +327,16 @@ impl OutboundCallRequest {
     #[must_use]
     pub fn with_authorization_binding(mut self, binding: OutboundAuthorizationBinding) -> Self {
         self.authorization_binding = Some(binding);
+        self
+    }
+
+    /// Attaches the typed capability identity the scoped admission path minted.
+    #[must_use]
+    pub(crate) fn with_capability_provenance(
+        mut self,
+        capability: ScopedCapabilityProvenance,
+    ) -> Self {
+        self.capability_provenance = Some(capability);
         self
     }
 
@@ -337,6 +361,7 @@ pub struct FrozenOutboundCall {
     authorization_binding: Option<OutboundAuthorizationBinding>,
     binding_version: u64,
     resolved_endpoint: Option<String>,
+    capability_provenance: Option<ScopedCapabilityProvenance>,
 }
 
 impl FrozenOutboundCall {
@@ -390,6 +415,13 @@ impl FrozenOutboundCall {
         self.resolved_endpoint.as_deref()
     }
 
+    /// The typed per-grant capability identity this call was authorized under,
+    /// carried unchanged from admission through the durable row (ONE-1885).
+    #[must_use]
+    pub(crate) const fn capability_provenance(&self) -> Option<&ScopedCapabilityProvenance> {
+        self.capability_provenance.as_ref()
+    }
+
     #[cfg(test)]
     pub(crate) fn read_only(request: OutboundCallRequest, payload_hash: [u8; 32]) -> Self {
         Self {
@@ -403,6 +435,7 @@ impl FrozenOutboundCall {
             authorization_binding: request.authorization_binding,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
+            capability_provenance: request.capability_provenance,
         }
     }
 
@@ -424,6 +457,7 @@ impl FrozenOutboundCall {
             authorization_binding: request.authorization_binding,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
+            capability_provenance: request.capability_provenance,
         }
     }
 
@@ -439,6 +473,7 @@ impl FrozenOutboundCall {
             authorization_binding: record.authorization_binding,
             binding_version: record.binding_version,
             resolved_endpoint: record.resolved_endpoint.clone(),
+            capability_provenance: record.capability_provenance.clone(),
         }
     }
 }
@@ -492,6 +527,10 @@ pub struct IntentLedgerRecord {
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub binding_version: u64,
     pub resolved_endpoint: Option<String>,
+    /// Typed per-grant capability identity, or `None` for every ordinary
+    /// connector row. This durable value — never the row's connector text — is
+    /// what recovery reads to decide a capability-only prohibition (ONE-1885).
+    capability_provenance: Option<ScopedCapabilityProvenance>,
     pub budget_accounting: BudgetChargeMarker,
     pub recorded_outcome: Option<RecordedOutboundOutcome>,
     pub state: IntentState,
@@ -504,6 +543,13 @@ impl IntentLedgerRecord {
     #[must_use]
     pub(crate) fn payload(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// The durable typed capability identity, if this intent was admitted as a
+    /// scoped per-grant capability call (ONE-1885).
+    #[must_use]
+    pub(crate) const fn capability_provenance(&self) -> Option<&ScopedCapabilityProvenance> {
+        self.capability_provenance.as_ref()
     }
 
     pub(crate) fn pending(
@@ -533,6 +579,7 @@ impl IntentLedgerRecord {
             authorization_binding: request.authorization_binding,
             binding_version: OUTBOUND_BINDING_VERSION,
             resolved_endpoint: request.resolved_endpoint,
+            capability_provenance: request.capability_provenance,
             budget_accounting,
             recorded_outcome: None,
             state: IntentState::Pending,
@@ -559,6 +606,7 @@ impl fmt::Debug for OutboundCallRequest {
             )
             .field("authorization_binding", &self.authorization_binding)
             .field("resolved_endpoint", &self.resolved_endpoint)
+            .field("capability_provenance", &self.capability_provenance)
             .field("now_ms", &self.now_ms)
             .finish()
     }
@@ -580,6 +628,7 @@ impl fmt::Debug for FrozenOutboundCall {
             .field("authorization_binding", &self.authorization_binding)
             .field("binding_version", &self.binding_version)
             .field("resolved_endpoint", &self.resolved_endpoint)
+            .field("capability_provenance", &self.capability_provenance)
             .finish()
     }
 }
@@ -602,6 +651,7 @@ impl fmt::Debug for IntentLedgerRecord {
             .field("authorization_binding", &self.authorization_binding)
             .field("binding_version", &self.binding_version)
             .field("resolved_endpoint", &self.resolved_endpoint)
+            .field("capability_provenance", &self.capability_provenance)
             .field("budget_accounting", &self.budget_accounting)
             .field("recorded_outcome", &self.recorded_outcome)
             .field("state", &self.state)
@@ -770,6 +820,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
         authorization_binding: Some(authorization_binding),
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: call.resolved_endpoint.clone(),
+        capability_provenance: call.capability_provenance.clone(),
         budget_accounting: BudgetChargeMarker {
             key_ref: None,
             budget_class: BudgetClass::Send,
@@ -1339,6 +1390,12 @@ fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8;
         authorization_binding: Option<&'a [u8; 32]>,
         binding_version: u64,
         resolved_endpoint: Option<&'a str>,
+        // The typed capability identity is digest-bound like every other
+        // authority-bearing field: a swapped, added, or stripped provenance
+        // fails the content digest at decode (ONE-1885).
+        capability_grant_id: Option<&'a [u8; 16]>,
+        capability_server: Option<&'a str>,
+        capability_connector: Option<&'a str>,
         budget_key_ref: Option<&'a [u8; 16]>,
         budget_class: &'a str,
         budget_matched_rows: &'a [u16],
@@ -1351,6 +1408,10 @@ fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8;
         updated_ms: u64,
     }
 
+    let capability_grant_id = record
+        .capability_provenance
+        .as_ref()
+        .map(ScopedCapabilityProvenance::grant_id);
     canonical_hash(&RecordContent {
         schema_version: INTENT_LEDGER_SCHEMA_VERSION,
         id: &record.id,
@@ -1367,6 +1428,15 @@ fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8;
             .map(OutboundAuthorizationBinding::as_bytes),
         binding_version: record.binding_version,
         resolved_endpoint: record.resolved_endpoint.as_deref(),
+        capability_grant_id: capability_grant_id.as_ref().map(EntityId::as_bytes),
+        capability_server: record
+            .capability_provenance
+            .as_ref()
+            .map(ScopedCapabilityProvenance::server),
+        capability_connector: record
+            .capability_provenance
+            .as_ref()
+            .map(ScopedCapabilityProvenance::connector),
         budget_key_ref: record
             .budget_accounting
             .key_ref
@@ -1463,6 +1533,26 @@ fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
             Value::from(record.budget_accounting.accounted_at_ms),
         ),
     ]);
+    let capability_provenance =
+        record
+            .capability_provenance
+            .as_ref()
+            .map_or(Value::Nil, |capability| {
+                Value::Map(vec![
+                    (
+                        Value::from(CAPABILITY_PROVENANCE_KEYS[0]),
+                        Value::Binary(capability.grant_id().as_bytes().to_vec()),
+                    ),
+                    (
+                        Value::from(CAPABILITY_PROVENANCE_KEYS[1]),
+                        Value::from(capability.server()),
+                    ),
+                    (
+                        Value::from(CAPABILITY_PROVENANCE_KEYS[2]),
+                        Value::from(capability.connector()),
+                    ),
+                ])
+            });
     let recorded_outcome = record.recorded_outcome.map_or(Value::Nil, |outcome| {
         let (kind, reason) = match outcome {
             RecordedOutboundOutcome::DefiniteNonDelivery => ("definite_non_delivery", Value::Nil),
@@ -1525,6 +1615,10 @@ fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
                 .as_deref()
                 .map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(KEY_CAPABILITY_PROVENANCE),
+            capability_provenance,
+        ),
         (Value::from(KEY_BUDGET_ACCOUNTING), budget_accounting),
         (Value::from(KEY_RECORDED_OUTCOME), recorded_outcome),
         (Value::from(KEY_STATE), Value::from(record.state.as_str())),
@@ -1571,6 +1665,7 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
     let mut authorization_binding = None;
     let mut binding_version = None;
     let mut resolved_endpoint = None;
+    let mut capability_provenance = None;
     let mut budget_accounting = None;
     let mut recorded_outcome = None;
     let mut state = None;
@@ -1632,6 +1727,9 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
                     Some(expect_string(&value)?)
                 });
             }
+            KEY_CAPABILITY_PROVENANCE => {
+                capability_provenance = Some(decode_capability_provenance(&value)?);
+            }
             KEY_BUDGET_ACCOUNTING => budget_accounting = Some(decode_budget_accounting(&value)?),
             KEY_RECORDED_OUTCOME => {
                 recorded_outcome = Some(decode_recorded_outcome(&value)?);
@@ -1684,6 +1782,10 @@ fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecor
         resolved_endpoint: required(
             resolved_endpoint,
             "missing outbound intent resolved_endpoint",
+        )?,
+        capability_provenance: required(
+            capability_provenance,
+            "missing outbound intent capability_provenance",
         )?,
         budget_accounting: required(
             budget_accounting,
@@ -1744,6 +1846,38 @@ fn decode_budget_accounting(value: &Value) -> IntentLedgerResult<BudgetChargeMar
         sends_debit: expect_u64(nested_value(entries, BUDGET_ACCOUNTING_KEYS[3])?)?,
         accounted_at_ms: expect_u64(nested_value(entries, BUDGET_ACCOUNTING_KEYS[4])?)?,
     })
+}
+
+/// Decodes the typed scoped capability provenance fail-closed: unknown or
+/// duplicate nested keys, a malformed grant id, an unsafe/non-canonical server,
+/// or a connector that is not EXACTLY the identity that (server, grant) mints
+/// are all rejected, so no durable row can carry a forged capability (ONE-1885).
+fn decode_capability_provenance(
+    value: &Value,
+) -> IntentLedgerResult<Option<ScopedCapabilityProvenance>> {
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    let Value::Map(entries) = value else {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent capability_provenance must be a map",
+        ));
+    };
+    validate_nested_keys(entries, &CAPABILITY_PROVENANCE_KEYS)?;
+    let grant_id = EntityId::from_bytes(expect_binary_array::<16>(nested_value(
+        entries,
+        CAPABILITY_PROVENANCE_KEYS[0],
+    )?)?)
+    .map_err(|_| {
+        IntentLedgerError::InvalidRecord("outbound intent capability grant_id is invalid")
+    })?;
+    let server = expect_string(nested_value(entries, CAPABILITY_PROVENANCE_KEYS[1])?)?;
+    let connector = expect_string(nested_value(entries, CAPABILITY_PROVENANCE_KEYS[2])?)?;
+    ScopedCapabilityProvenance::from_persisted_parts(&grant_id, &server, &connector)
+        .map(Some)
+        .ok_or(IntentLedgerError::InvalidRecord(
+            "outbound intent capability_provenance is inconsistent",
+        ))
 }
 
 fn decode_recorded_outcome(value: &Value) -> IntentLedgerResult<Option<RecordedOutboundOutcome>> {
@@ -1846,9 +1980,37 @@ fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResul
             "outbound intent resolved_endpoint is invalid",
         ));
     }
+    if record.capability_provenance.is_some() && record.resolved_endpoint.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "capability-bound intent is missing resolved endpoint",
+        ));
+    }
+    // An endpoint-bound row is produced only by scoped authorization. Keeping
+    // its typed provenance is what prevents recovery from downgrading it to an
+    // ordinary connector when the row is reconstructed.
+    if record.resolved_endpoint.is_some() && record.capability_provenance.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "endpoint-bound intent is missing capability provenance",
+        ));
+    }
+    if let Some(capability) = record.capability_provenance.as_ref()
+        && capability.server() != record.server
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "capability-bound intent server does not match provenance",
+        ));
+    }
     if record.resolved_endpoint.is_some() && record.authorization_binding.is_none() {
         return Err(IntentLedgerError::InvalidRecord(
             "endpoint-bound intent is missing authorization binding",
+        ));
+    }
+    // A capability identity only ever exists on the verified scoped path, which
+    // always mints an authorization binding in the same admission step; a row
+    // carrying one without the other is not a row this engine wrote.
+    if record.capability_provenance.is_some() && record.authorization_binding.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "capability-bound intent is missing authorization binding",
         ));
     }
     if record.budget_accounting.key_ref.is_none()

@@ -349,7 +349,12 @@ impl StandingOutboundGrant {
             origin_action_id: non_empty_string(&intent.origin_action_id)?,
             origin_receipt_ref: non_empty_optional(intent.origin_receipt_ref.as_deref())?,
             scope: StandingOutboundGrantScope::ScopedMcp {
-                server: intent.server.clone(),
+                // The stored scope carries the ONE exact canonical server
+                // segment, so the grant, key producer, admission, and charter
+                // compiler all retain the same identity bytes. Mixed-case,
+                // trimmed, or otherwise non-canonical spellings fail closed at
+                // mint instead of becoming aliases (ONE-1885).
+                server: canonical_scoped_server(&intent.server)?,
                 tool: intent.tool.clone(),
                 data_class_ceiling: intent.data_class_ceiling,
                 endpoint_allowlist: intent.endpoint_allowlist.clone(),
@@ -650,7 +655,7 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
                 return Err(invalid_grant());
             }
             Ok(StandingOutboundGrantScope::ScopedMcp {
-                server: decode_canonical_non_empty_string(required_value(entries, SCOPE_KEYS[5])?)?,
+                server: decode_canonical_scoped_server(required_value(entries, SCOPE_KEYS[5])?)?,
                 tool: decode_canonical_non_empty_string(required_value(entries, SCOPE_KEYS[6])?)?,
                 data_class_ceiling,
                 endpoint_allowlist: decode_canonical_non_empty_string_array(required_value(
@@ -681,7 +686,13 @@ fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
             data_class_ceiling,
             endpoint_allowlist,
         } => {
-            canonical_non_empty_str(server)?;
+            // Stored-form == authority-form: the scoped server must ALREADY be
+            // the safe canonical segment the capability-key producer and the
+            // charter compiler use, or this grant would govern under one
+            // spelling and be enforced under another (ONE-1885).
+            if canonical_scoped_server(server)? != *server {
+                return Err(invalid_grant());
+            }
             canonical_non_empty_str(tool)?;
             if !data_class_ceiling.is_grantable() || endpoint_allowlist.is_empty() {
                 return Err(invalid_grant());
@@ -851,6 +862,22 @@ fn canonical_non_empty_str(value: &str) -> Result<()> {
         return Err(invalid_grant());
     }
     Ok(())
+}
+
+/// Validates and preserves the ONE exact canonical scoped-server segment,
+/// shared with the capability-key producer, scoped-call admission, and charter
+/// compiler (ONE-1885). No scoped seam trims, case-folds, or aliases identity
+/// punctuation.
+fn canonical_scoped_server(server: &str) -> Result<String> {
+    crate::connector_key::canonical_scoped_server_segment(server).ok_or_else(invalid_grant)
+}
+
+fn decode_canonical_scoped_server(value: &Value) -> Result<String> {
+    let value = value.as_str().ok_or_else(invalid_grant)?;
+    if canonical_scoped_server(value)? != value {
+        return Err(invalid_grant());
+    }
+    Ok(value.to_owned())
 }
 
 fn refs_match(candidate: &str, target: &str) -> bool {

@@ -11,9 +11,9 @@ use oneiron::{
 // accessible. This integration pin keeps the public greenfield format honest.
 #[test]
 fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
-    assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 2);
+    assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 3);
     assert_eq!(OUTBOUND_BINDING_VERSION, 2);
-    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 19);
+    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 20);
     assert_eq!(
         INTENT_LEDGER_VALUE_KEYS
             .iter()
@@ -26,6 +26,9 @@ fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
     for required in [
         "binding_version",
         "resolved_endpoint",
+        // The typed per-grant capability identity is part of the canonical row
+        // (ONE-1885): it is what recovery reads instead of connector text.
+        "capability_provenance",
         "budget_accounting",
         "recorded_outcome",
     ] {

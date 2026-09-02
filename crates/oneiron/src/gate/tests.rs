@@ -2899,7 +2899,7 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
     vault.register_connector_key(
         &test_id(0xDA),
         crate::connector_key::ConnectorKeyRecord::active(
-            scoped_mcp_credential_connector_key("files", &grant_id),
+            scoped_capability_connector("files", &grant_id),
             None,
             Vec::new(),
             10,
@@ -3020,7 +3020,7 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
         },
         10,
     )?;
-    let governing_connector = scoped_mcp_credential_connector_key("files", &grant_id);
+    let governing_connector = scoped_capability_connector("files", &grant_id);
     let key_id = test_id(0xC2);
     vault.register_connector_key(
         &key_id,
@@ -3094,7 +3094,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
     vault.register_connector_key(
         &test_id(0xBA),
         crate::connector_key::ConnectorKeyRecord::active(
-            scoped_mcp_credential_connector_key("files", &grant_id),
+            scoped_capability_connector("files", &grant_id),
             None,
             Vec::new(),
             10,
@@ -3145,7 +3145,7 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
     vault.register_connector_key(
         &test_id(0xBF),
         crate::connector_key::ConnectorKeyRecord::active(
-            scoped_mcp_credential_connector_key("files", &grant_id),
+            scoped_capability_connector("files", &grant_id),
             None,
             Vec::new(),
             10,
@@ -6011,8 +6011,9 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
         )]),
     )?;
     // Registered with the messy owner-typed connector string.
+    let key_id = test_id(0x78);
     vault.register_connector_key(
-        &test_id(0x78),
+        &key_id,
         crate::connector_key::ConnectorKeyRecord::active(
             " Slack-Chat ",
             None,
@@ -6027,6 +6028,14 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     let charge = charge.expect("normalized connector governs the effect");
     assert_eq!(charge.read.rows[0].used, 1);
+
+    // The ordinary never-list compiler retains the raw operand, but matching
+    // uses the normalized stored connector for ordinary rows.
+    let pending = vault.propose_connector_charter(&key_id, "never send on Slack-Chat", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert!(charge.is_none(), "never-list deny must not reach budgets");
     Ok(())
 }
 
@@ -6472,6 +6481,411 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
         gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
     assert!(deny_after > deny_before, "CharterPolicy deny metric counts");
 
+    Ok(())
+}
+
+// --- ONE-1885 per-grant capability never-list --------------------------------
+
+/// The real engine-produced per-grant capability connector. Tests may only
+/// obtain a capability spelling through the engine producer (ONE-1885).
+fn scoped_capability_connector(server: &str, grant_id: &EntityId) -> String {
+    crate::connector_key::ScopedCapabilityProvenance::mint(server, grant_id)
+        .expect("safe canonical scoped server")
+        .connector()
+        .to_owned()
+}
+
+fn scoped_mcp_grant_intent(
+    principal_ref: &str,
+    server: &str,
+) -> crate::outbound_grant::ScopedMcpGrantMintIntent {
+    crate::outbound_grant::ScopedMcpGrantMintIntent {
+        principal_ref: principal_ref.to_owned(),
+        origin_component_id: "ask-mcp".to_owned(),
+        origin_action_id: "grant-scoped-mcp".to_owned(),
+        origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+    }
+}
+
+fn scoped_mcp_effect(principal: EntityId, server: &str) -> ExternalEffectGateInput {
+    let mut effect = external_effect_gate_input(&principal.to_hex(), "send", "mcp:calendar");
+    effect.provenance.actor_entity_ref = Some(principal);
+    effect.has_opted_in = false;
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+    effect
+}
+
+#[test]
+fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &encode_policy_manifest(vec![]))?;
+    let denied_principal = test_id(0xE0);
+    let neighbour_principal = test_id(0xE3);
+    let denied_grant = test_id(0xC7);
+    let neighbour_grant = test_id(0xC8);
+    let hyphen_grant = test_id(0xC9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &denied_grant,
+        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "files"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &neighbour_grant,
+        &scoped_mcp_grant_intent(&neighbour_principal.to_hex(), "files"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &hyphen_grant,
+        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "my-server"),
+        10,
+    )?;
+    let denied_key = test_id(0xCA);
+    let neighbour_key = test_id(0xCB);
+    let hyphen_key = test_id(0xCC);
+    for (key_id, grant_id, server) in [
+        (denied_key, denied_grant, "files"),
+        (neighbour_key, neighbour_grant, "files"),
+        (hyphen_key, hyphen_grant, "my-server"),
+    ] {
+        vault.register_connector_key(
+            &key_id,
+            crate::connector_key::ConnectorKeyRecord::active(
+                scoped_capability_connector(server, &grant_id),
+                None,
+                Vec::new(),
+                10,
+            ),
+        )?;
+    }
+    let policy = resolve(&vault)?;
+    let denied_effect = scoped_mcp_effect(denied_principal, "files");
+    let neighbour_effect = scoped_mcp_effect(neighbour_principal, "files");
+    let hyphen_effect = scoped_mcp_effect(denied_principal, "my-server");
+
+    // Every in-scope scoped call auto-fires before any charter is stamped.
+    for effect in [&denied_effect, &neighbour_effect, &hyphen_effect] {
+        let (decision, _) = check_effect(&vault, effect, &policy)?;
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+    }
+
+    // The owner stamps a deny naming ONE exact per-grant capability key. Before
+    // ONE-1885 this charter could not even be stored: the entry carries three
+    // colons, so the record validator rejected it and the prohibition was
+    // inexpressible.
+    let denied_capability = scoped_capability_connector("files", &denied_grant);
+    let text = format!("never key {denied_capability}");
+    let pending = vault.propose_connector_charter(&denied_key, &text, 1_001)?;
+    vault.approve_connector_charter(&denied_key, pending.compiled_hash, "owner", 1_002)?;
+    // The neighbour key carries the SAME stamped text, naming the other grant.
+    let pending = vault.propose_connector_charter(&neighbour_key, &text, 1_001)?;
+    vault.approve_connector_charter(&neighbour_key, pending.compiled_hash, "owner", 1_002)?;
+
+    let (decision, charge) = check_effect(&vault, &denied_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(decision.receipt_reasons().contains(&"charter_never_list"));
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+
+    // Discriminating: the deny binds that grant's identity, not the server, the
+    // channel, or the tool. A second grant on the SAME server, with the same
+    // tool and channel and the SAME stamped text, keeps its prior outcome — a
+    // first-segment or prefix reading of the entry would deny it too.
+    let (decision, _) = check_effect(&vault, &neighbour_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // A canonical hyphenated server stays hyphenated through grant, key,
+    // charter compilation, and gate matching.
+    let hyphen_hex = hyphen_grant.to_hex();
+    let hyphen_text = format!("never key mcp:my-server:grant:{hyphen_hex}");
+    let pending = vault.propose_connector_charter(&hyphen_key, &hyphen_text, 1_003)?;
+    vault.approve_connector_charter(&hyphen_key, pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &hyphen_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    Ok(())
+}
+
+#[test]
+fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xD0);
+    let hyphen_grant = test_id(0xD1);
+    let underscore_grant = test_id(0xD2);
+    vault.mint_scoped_mcp_outbound_grant(
+        &hyphen_grant,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &underscore_grant,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo_bar"),
+        10,
+    )?;
+    let hyphen_key = test_id(0xD3);
+    let underscore_key = test_id(0xD4);
+    vault.register_connector_key(
+        &hyphen_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &hyphen_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    vault.register_connector_key(
+        &underscore_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo_bar", &underscore_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let hyphen_effect = scoped_mcp_effect(principal, "foo-bar");
+    let underscore_effect = scoped_mcp_effect(principal, "foo_bar");
+    assert_eq!(
+        check_effect(&vault, &hyphen_effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+    assert_eq!(
+        check_effect(&vault, &underscore_effect, &policy)?
+            .0
+            .outcome(),
+        GateOutcome::Allow
+    );
+
+    // The ordinary-channel wildcard preserves the complete scoped server
+    // connector. It denies the hyphenated server and never aliases `_` to `-`.
+    for key_id in [hyphen_key, underscore_key] {
+        let pending = vault.propose_connector_charter(&key_id, "never * on mcp:foo-bar", 1_001)?;
+        vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    }
+    let (decision, charge) = check_effect(&vault, &hyphen_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none());
+    let (decision, _) = check_effect(&vault, &underscore_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // A named ordinary rule spelled the OTHER way never reaches the typed call:
+    // the normalized ordinary entry (`mcp:foo_bar:*` for either spelling) is not
+    // an axis a typed dispatch reads, so no aliasing can occur in either
+    // direction.
+    let alias_key = test_id(0xD6);
+    let alias_grant = test_id(0xD8);
+    let alias_principal = test_id(0xD9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &alias_grant,
+        &scoped_mcp_grant_intent(&alias_principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.register_connector_key(
+        &alias_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &alias_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let alias_effect = scoped_mcp_effect(alias_principal, "foo-bar");
+    let pending = vault.propose_connector_charter(&alias_key, "never * on mcp:foo_bar", 1_003)?;
+    vault.approve_connector_charter(&alias_key, pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &alias_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+#[test]
+fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
+    // `never <verb>` names NO channel spelling, so it cannot alias `foo-bar`
+    // onto `foo_bar` and must keep binding every dispatch — a typed scoped-MCP
+    // call included. The private exact-scoped entry deliberately never carries a
+    // wildcard channel, so this whole-fleet form is the one ordinary rule a
+    // typed call reads.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xE5), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xE6);
+    let grant_id = test_id(0xE7);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    let key_id = test_id(0xE8);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let effect = scoped_mcp_effect(principal, "foo-bar");
+    assert_eq!(
+        check_effect(&vault, &effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+
+    let pending = vault.propose_connector_charter(&key_id, "never read_file", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+
+    // Discriminating: the wildcard binds only the VERB it names. A second
+    // capability whose owner prohibited a DIFFERENT verb fleet-wide keeps its
+    // prior outcome, so this is not a blanket scoped deny.
+    let other_principal = test_id(0xE9);
+    let other_grant = test_id(0xEA);
+    let other_key = test_id(0xEB);
+    vault.mint_scoped_mcp_outbound_grant(
+        &other_grant,
+        &scoped_mcp_grant_intent(&other_principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.register_connector_key(
+        &other_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &other_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let pending = vault.propose_connector_charter(&other_key, "never send", 1_003)?;
+    vault.approve_connector_charter(&other_key, pending.compiled_hash, "owner", 1_004)?;
+    let other_effect = scoped_mcp_effect(other_principal, "foo-bar");
+    let (decision, _) = check_effect(&vault, &other_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+/// One manifest granting `external:send` on each ordinary colon-bearing
+/// channel, so an ordinary dispatch on it reaches the connector-key stage.
+fn ordinary_channels_send_manifest(channels: &[&str]) -> Vec<u8> {
+    let grant_row = |channel: &str| {
+        Value::Map(vec![
+            (Value::from(ACTOR_REF_KEY), Value::from("sender")),
+            (
+                Value::from(GRANT_EFFECTOR_KEY),
+                Value::from("external:send"),
+            ),
+            (
+                Value::from(GRANT_SCOPE_KEY),
+                Value::Map(vec![(
+                    Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                    Value::from(channel),
+                )]),
+            ),
+        ])
+    };
+    encode_policy_manifest(vec![(
+        Value::from(POLICY_SCOPED_GRANTS_KEY),
+        Value::Array(channels.iter().copied().map(grant_row).collect()),
+    )])
+}
+
+#[test]
+fn charter_never_key_never_reaches_an_ordinary_connector() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // An ordinary connector spelled EXACTLY like a real per-grant capability
+    // key. It is ordinary because of how it was constructed — an ordinary
+    // registration, with no typed provenance — not because its text fails a
+    // heuristic.
+    let lookalike = scoped_capability_connector("calendar", &test_id(0xB1));
+    let channels = ["mcp:calendar", "mcp:calendar:grant:foo", lookalike.as_str()];
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0xD2),
+        &ordinary_channels_send_manifest(&channels),
+    )?;
+    let key_ids = [test_id(0xB2), test_id(0xB3), test_id(0xB4)];
+    for (key_id, channel) in key_ids.iter().zip(channels) {
+        vault.register_connector_key(
+            key_id,
+            crate::connector_key::ConnectorKeyRecord::active(channel, None, Vec::new(), 10),
+        )?;
+    }
+    let policy = resolve(&vault)?;
+    let ordinary_effect = |channel: &str| {
+        let mut effect = external_effect_gate_input("sender", "send", channel);
+        effect.send_ref = Some("intent:ordinary".to_owned());
+        effect
+    };
+
+    // A capability-only rule naming the lookalike spelling is stamped on every
+    // ordinary key. None of them may be denied by it: `never key` is consulted
+    // only against a typed capability identity, which no ordinary row has.
+    let capability_text = format!("never key {lookalike}");
+    for key_id in &key_ids {
+        let pending = vault.propose_connector_charter(key_id, &capability_text, 1_001)?;
+        vault.approve_connector_charter(key_id, pending.compiled_hash, "owner", 1_002)?;
+    }
+    for channel in channels {
+        let (decision, _) = check_effect(&vault, &ordinary_effect(channel), &policy)?;
+        assert_eq!(
+            decision.outcome(),
+            GateOutcome::Allow,
+            "ordinary connector {channel} must stay ordinary under a never-key rule"
+        );
+    }
+
+    // The ordinary channel/verb form matches the COMPLETE connector string.
+    let pending =
+        vault.propose_connector_charter(&key_ids[0], "never send on mcp:calendar", 1_003)?;
+    vault.approve_connector_charter(&key_ids[0], pending.compiled_hash, "owner", 1_004)?;
+    let (decision, charge) = check_effect(&vault, &ordinary_effect("mcp:calendar"), &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+    // A DIFFERENT whole connector is untouched: a first-colon reading of the
+    // same rule would deny every `mcp:*` channel.
+    let pending = vault.propose_connector_charter(
+        &key_ids[1],
+        "never send on mcp:calendar:grant:foo",
+        1_003,
+    )?;
+    vault.approve_connector_charter(&key_ids[1], pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &ordinary_effect("mcp:calendar:grant:foo"), &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    let (decision, _) = check_effect(&vault, &ordinary_effect(&lookalike), &policy)?;
+    assert_eq!(
+        decision.outcome(),
+        GateOutcome::Allow,
+        "an ordinary rule on another connector must not widen"
+    );
     Ok(())
 }
 

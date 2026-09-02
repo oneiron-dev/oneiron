@@ -397,3 +397,227 @@ fn standing_outbound_grant_schema_has_no_auto_expiry_field() {
     assert!(!OUTBOUND_GRANT_BODY_KEYS.contains(&"expires_at"));
     assert!(!OUTBOUND_GRANT_BODY_KEYS.contains(&"ttl"));
 }
+
+// --- ONE-1885 one safe canonical scoped-server segment -----------------------
+
+fn scoped_intent(server: &str) -> ScopedMcpGrantMintIntent {
+    ScopedMcpGrantMintIntent {
+        principal_ref: "owner".to_owned(),
+        origin_component_id: "ask-mcp".to_owned(),
+        origin_action_id: "grant-scoped-mcp".to_owned(),
+        origin_receipt_ref: Some("gate:mcp".to_owned()),
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        data_class_ceiling: DataClass::Personal,
+        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+    }
+}
+
+fn scoped_mcp_scope_value(server: &str) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(SCOPE_KEYS[0]),
+            Value::from(SCOPE_KIND_SCOPED_MCP),
+        ),
+        (Value::from(SCOPE_KEYS[1]), Value::Nil),
+        (Value::from(SCOPE_KEYS[2]), Value::Nil),
+        (Value::from(SCOPE_KEYS[3]), Value::Nil),
+        (Value::from(SCOPE_KEYS[4]), Value::Nil),
+        (Value::from(SCOPE_KEYS[5]), Value::from(server)),
+        (Value::from(SCOPE_KEYS[6]), Value::from("read_file")),
+        (
+            Value::from(SCOPE_KEYS[7]),
+            Value::from(DataClass::Personal.as_str()),
+        ),
+        (
+            Value::from(SCOPE_KEYS[8]),
+            Value::Array(vec![Value::from("https://files.internal.example")]),
+        ),
+    ])
+}
+
+fn scoped_server_of(grant: &StandingOutboundGrant) -> String {
+    grant
+        .scope
+        .scoped_mcp_grant()
+        .expect("scoped grant")
+        .server
+        .to_owned()
+}
+
+#[test]
+fn scoped_mcp_grant_creation_pins_one_safe_canonical_server() -> Result<()> {
+    let grant_id = EntityId::from_bytes([0x5C; 16]).expect("grant id");
+
+    let files = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+        &scoped_intent("files"),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    assert_eq!(scoped_server_of(&files), "files");
+
+    // Hyphen and underscore are separate canonical identity bytes. Grant mint,
+    // capability production, and storage retain each spelling exactly.
+    let hyphen = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+        &scoped_intent("my-server"),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    let underscore = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+        &scoped_intent("my_server"),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    assert_eq!(scoped_server_of(&hyphen), "my-server");
+    assert_eq!(scoped_server_of(&underscore), "my_server");
+    assert_ne!(hyphen.scope, underscore.scope);
+    let capability = crate::connector_key::ScopedCapabilityProvenance::mint("my-server", &grant_id)
+        .expect("safe canonical server");
+    assert_eq!(capability.server(), scoped_server_of(&hyphen));
+    assert_eq!(
+        capability.connector(),
+        format!(
+            "mcp:{}:grant:{}",
+            scoped_server_of(&hyphen),
+            grant_id.to_hex()
+        )
+    );
+    // The stored grant round-trips through the persisted codec unchanged.
+    let encoded = encode_standing_outbound_grant_body(&hyphen)?;
+    assert_eq!(decode_standing_outbound_grant_body(&encoded)?, hyphen);
+
+    // Every non-canonical or unsafe spelling fails closed at the constructor
+    // and persisted scope boundary. No case-folding or punctuation alias exists.
+    for unsafe_server in [
+        "Files",
+        "FILES",
+        "MY-SERVER",
+        "files:extra",
+        ":",
+        " files",
+        "files ",
+        "fi les",
+        "fi\tles",
+        "fi\u{00a0}les",
+        "*",
+        "fi*",
+        "files?",
+        "files[1]",
+        "",
+        "   ",
+    ] {
+        assert!(
+            StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+                &scoped_intent(unsafe_server),
+                10,
+                vec![0xA5; 32],
+                [0xB6; 32],
+            )
+            .is_err(),
+            "unsafe scoped server {unsafe_server:?} must not mint a grant"
+        );
+        assert!(
+            decode_scope(&scoped_mcp_scope_value(unsafe_server)).is_err(),
+            "unsafe stored scoped server {unsafe_server:?} must fail closed"
+        );
+    }
+
+    assert_eq!(
+        decode_scope(&scoped_mcp_scope_value("my-server"))?,
+        hyphen.scope
+    );
+    assert_eq!(
+        decode_scope(&scoped_mcp_scope_value("my_server"))?,
+        underscore.scope
+    );
+
+    // An in-memory grant carrying an unsafe server can never be persisted.
+    let forged = StandingOutboundGrant {
+        scope: StandingOutboundGrantScope::ScopedMcp {
+            server: "files:extra".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+        },
+        ..hyphen
+    };
+    assert!(encode_standing_outbound_grant_body(&forged).is_err());
+    Ok(())
+}
+
+#[test]
+fn scoped_mcp_admission_shares_the_safe_server_rule() {
+    fn call(server: &str) -> crate::outbound_consent::ScopedMcpCall<'_> {
+        crate::outbound_consent::ScopedMcpCall {
+            server,
+            tool: "read_file",
+            payload_data_class: DataClass::Personal,
+            resolved_endpoint: "https://files.internal.example",
+        }
+    }
+
+    let grant = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
+        &scoped_intent("my-server"),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )
+    .expect("safe canonical server");
+    let scope = grant.scope.scoped_mcp_grant().expect("scoped grant");
+
+    assert_eq!(
+        crate::outbound_consent::evaluate_scoped_mcp_call(scope, call("my-server")),
+        crate::outbound_consent::ScopedMcpConsentDecision::AutoFire
+    );
+    // Admission is exact: underscore, mixed case, whitespace, and unsafe
+    // spellings cannot alias the granted hyphenated server.
+    for wrong_server in [
+        "my_server",
+        "MY-SERVER",
+        "My-Server",
+        "my-server:extra",
+        " my-server",
+        "my-server ",
+        "my server",
+        "my-*",
+        "",
+        "other",
+    ] {
+        assert_eq!(
+            crate::outbound_consent::evaluate_scoped_mcp_call(scope, call(wrong_server)),
+            crate::outbound_consent::ScopedMcpConsentDecision::Escalate(
+                crate::outbound_consent::ScopedMcpEscalationReason::WrongServer
+            ),
+            "{wrong_server}"
+        );
+    }
+
+    // A grant whose own server is non-canonical or unsafe authorizes nothing,
+    // even when the call repeats the same bytes.
+    let endpoints = vec!["https://files.internal.example".to_owned()];
+    for unsafe_server in [
+        "My-Server",
+        "MY-SERVER",
+        "my_server:extra",
+        "my server",
+        "my-*",
+        "",
+    ] {
+        let unsafe_scope = ScopedMcpGrantRef {
+            server: unsafe_server,
+            tool: "read_file",
+            data_class_ceiling: DataClass::Personal,
+            endpoint_allowlist: &endpoints,
+        };
+        assert_eq!(
+            crate::outbound_consent::evaluate_scoped_mcp_call(unsafe_scope, call(unsafe_server)),
+            crate::outbound_consent::ScopedMcpConsentDecision::Escalate(
+                crate::outbound_consent::ScopedMcpEscalationReason::InvalidGrant
+            ),
+            "{unsafe_server}"
+        );
+    }
+}

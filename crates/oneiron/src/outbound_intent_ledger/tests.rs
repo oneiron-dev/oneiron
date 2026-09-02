@@ -77,6 +77,7 @@ fn persist_pending(
         authorization_binding: Some(authorization_binding),
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: None,
+        capability_provenance: None,
         budget_accounting: BudgetChargeMarker {
             key_ref: None,
             budget_class: BudgetClass::Send,
@@ -963,6 +964,7 @@ fn greenfield_row_rejects_every_missing_chokepoint_field() {
     for required_key in [
         KEY_BINDING_VERSION,
         KEY_RESOLVED_ENDPOINT,
+        KEY_CAPABILITY_PROVENANCE,
         KEY_BUDGET_ACCOUNTING,
         KEY_RECORDED_OUTCOME,
     ] {
@@ -1169,4 +1171,276 @@ fn debug_redacts_raw_payload_from_receipt_and_request() {
     let request_debug = format!("{:?}", request(attempt(19), 0, secret, 100));
     assert!(request_debug.contains("bytes redacted"));
     assert!(!request_debug.contains(&payload_debug));
+}
+
+// --- ONE-1885 typed capability provenance serialization ----------------------
+
+fn capability_fixture() -> ScopedCapabilityProvenance {
+    ScopedCapabilityProvenance::mint(
+        "files",
+        &EntityId::from_bytes([0x4D; 16]).expect("grant id"),
+    )
+    .expect("safe canonical scoped server")
+}
+
+fn capability_record(capability: ScopedCapabilityProvenance) -> IntentLedgerRecord {
+    let mut request = request(attempt(31), 0, b"capability payload", 100);
+    request.server = capability.server().to_owned();
+    IntentLedgerRecord::pending(
+        request
+            .with_resolved_endpoint("https://files.example.test/mcp")
+            .with_capability_provenance(capability),
+        true,
+        BudgetChargeMarker {
+            key_ref: None,
+            budget_class: BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: 100,
+        },
+    )
+    .expect("pending record")
+}
+
+#[test]
+fn capability_row_without_resolved_endpoint_is_rejected_before_recovery_send() {
+    let (_dir, vault) = open_vault();
+    let mut record = capability_record(capability_fixture());
+    // Encode a reconstructed v3 row with a self-consistent digest, but with
+    // the endpoint that the scoped writer always freezes removed. This bypasses
+    // insertion validation so recovery must treat the row as corrupt rather
+    // than allowing it to reach a sender.
+    record.resolved_endpoint = None;
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode malformed capability row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("insert reconstructed row");
+    wtxn.commit().expect("commit reconstructed row");
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 101).expect("recovery");
+    assert_eq!(sender.calls, 0, "invalid capability row must never be sent");
+    assert_eq!(recovery.scanned, 1);
+    assert_eq!(recovery.resent, 0);
+    assert_eq!(recovery.completed, 0);
+    assert_eq!(recovery.pending, 0);
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some(record.id),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }]
+    );
+}
+
+#[test]
+fn endpoint_bound_row_without_capability_provenance_is_rejected_before_recovery_send() {
+    let (_dir, vault) = open_vault();
+    let mut record = capability_record(capability_fixture());
+    // A reconstructed scoped row may retain its endpoint and binding while the
+    // typed discriminator is missing. Encode a self-consistent row directly so
+    // recovery must reject it before it can downgrade the call to ordinary.
+    record.capability_provenance = None;
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode malformed capability row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("insert reconstructed row");
+    wtxn.commit().expect("commit reconstructed row");
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 101).expect("recovery");
+    assert_eq!(sender.calls, 0, "untyped scoped row must never be sent");
+    assert_eq!(recovery.scanned, 1);
+    assert_eq!(recovery.resent, 0);
+    assert_eq!(recovery.completed, 0);
+    assert_eq!(recovery.pending, 0);
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some(record.id),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }]
+    );
+}
+
+#[test]
+fn capability_row_naming_another_server_is_rejected_before_recovery_send() {
+    let (_dir, vault) = open_vault();
+    let capability = capability_fixture();
+    let mut record = capability_record(capability.clone());
+    // A SELF-CONSISTENT forged row: the typed identity is one the engine could
+    // really mint and the row digest is recomputed over it, but it names a
+    // server this call never went to. Capability provenance is bound to the
+    // call's own server, so the row must fail decode and never reach a sender.
+    record.capability_provenance = Some(
+        ScopedCapabilityProvenance::mint("other", &capability.grant_id())
+            .expect("safe canonical scoped server"),
+    );
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode forged capability row");
+    assert!(matches!(
+        decode_record(&key, &encoded),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("insert forged row");
+    wtxn.commit().expect("commit forged row");
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 101).expect("recovery");
+    assert_eq!(
+        sender.calls, 0,
+        "a capability naming another server must never be sent"
+    );
+    assert_eq!(recovery.scanned, 1);
+    assert_eq!(recovery.resent, 0);
+    assert_eq!(recovery.completed, 0);
+    assert_eq!(recovery.pending, 0);
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some(record.id),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }]
+    );
+}
+
+fn row_with_capability_value(encoded: &[u8], value: Value) -> Vec<u8> {
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("decode canonical row")
+    else {
+        panic!("canonical row must be a map");
+    };
+    for (candidate, slot) in &mut entries {
+        if candidate.as_str() == Some(KEY_CAPABILITY_PROVENANCE) {
+            *slot = value.clone();
+        }
+    }
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode tampered row");
+    out
+}
+
+#[test]
+fn capability_provenance_round_trips_and_fails_closed_when_forged() {
+    let capability = capability_fixture();
+    let record = capability_record(capability.clone());
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode capability row");
+    let decoded = decode_record(&key, &encoded).expect("decode capability row");
+    assert_eq!(decoded, record);
+    assert_eq!(decoded.capability_provenance(), Some(&capability));
+
+    // The typed server is part of the durable call identity. A valid capability
+    // minted for another server cannot be transplanted onto this row.
+    let mut mismatched_server = record;
+    mismatched_server.capability_provenance = Some(
+        ScopedCapabilityProvenance::mint("other", &capability.grant_id())
+            .expect("safe canonical scoped server"),
+    );
+    let mismatched_encoded = encode_record(&mismatched_server).expect("encode mismatched row");
+    assert!(matches!(
+        decode_record(&key, &mismatched_encoded),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+
+    // An ordinary row stays representable with no capability provenance at all.
+    let (_dir, vault) = open_vault();
+    let ordinary = persist_pending(&vault, attempt(32), 0, b"ordinary", 100, true);
+    assert!(ordinary.capability_provenance().is_none());
+    let ordinary_encoded = encode_record(&ordinary).expect("encode ordinary row");
+    assert_eq!(
+        decode_record(&intent_ledger_key(&ordinary.id), &ordinary_encoded).expect("decode"),
+        ordinary
+    );
+
+    // The digest binds the typed field: stripping it to Nil is a different row.
+    assert!(matches!(
+        decode_record(&key, &row_with_capability_value(&encoded, Value::Nil)),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+
+    // Malformed and unknown provenance forms fail closed, and so does any
+    // internally inconsistent identity — a connector that is not EXACTLY what
+    // (server, grant) mints can never be read back as a capability.
+    let grant_id = capability.grant_id();
+    let grant_value = || Value::Binary(grant_id.as_bytes().to_vec());
+    for forged in [
+        Value::from("mcp:files:grant:0"),
+        Value::Map(vec![
+            (Value::from(CAPABILITY_PROVENANCE_KEYS[0]), grant_value()),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[1]),
+                Value::from("files"),
+            ),
+        ]),
+        Value::Map(vec![
+            (Value::from(CAPABILITY_PROVENANCE_KEYS[0]), grant_value()),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[1]),
+                Value::from("files"),
+            ),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[2]),
+                Value::from(capability.connector()),
+            ),
+            (Value::from("extra"), Value::Nil),
+        ]),
+        Value::Map(vec![
+            (Value::from(CAPABILITY_PROVENANCE_KEYS[0]), grant_value()),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[1]),
+                Value::from("Files"),
+            ),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[2]),
+                Value::from(capability.connector()),
+            ),
+        ]),
+        Value::Map(vec![
+            (Value::from(CAPABILITY_PROVENANCE_KEYS[0]), grant_value()),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[1]),
+                Value::from("files"),
+            ),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[2]),
+                Value::from("mcp:other:grant:00112233445566778899aabbccddeeff"),
+            ),
+        ]),
+        Value::Map(vec![
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[0]),
+                Value::Binary(vec![0x4D; 8]),
+            ),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[1]),
+                Value::from("files"),
+            ),
+            (
+                Value::from(CAPABILITY_PROVENANCE_KEYS[2]),
+                Value::from(capability.connector()),
+            ),
+        ]),
+    ] {
+        assert!(
+            matches!(
+                decode_record(&key, &row_with_capability_value(&encoded, forged.clone())),
+                Err(IntentLedgerError::InvalidRecord(_))
+            ),
+            "forged capability provenance {forged:?} must fail closed"
+        );
+    }
 }
