@@ -1808,6 +1808,51 @@ fn speech_replay_refuses_incoherent_effect_order_visibility_emission_and_host_st
     Ok(())
 }
 
+/// A speech request may end in a denied/failed/barrier row, but never in a
+/// successful non-speech outcome. The cursor and codec must reject that
+/// impossible cross-effect row before it can reach the guest.
+#[test]
+fn speech_replay_rejects_successful_non_speech_outcome() -> Result<()> {
+    let started_at_ms = 1_719_000_123_456;
+    let call =
+        SelfCall::Speak(SelfSpeechCall::new("coherent answer")).with_bridge_stamp(0, started_at_ms);
+    let outcome = SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
+        query: "forged search".to_owned(),
+        results: Vec::new(),
+    });
+    let row = CodeRunBridgeCall {
+        seq: 0,
+        effect: SelfEffect::Speak,
+        request: self_call_request_value(&call)?,
+        outcome: self_dispatch_outcome_value(&outcome),
+        started_at_ms,
+        finished_at_ms: started_at_ms,
+    };
+    let mut record = CodeRunReplayRecord::new(
+        entity(0xD1),
+        CodeRunDeterminism::new(started_at_ms, [0xD1; 32]),
+    );
+    record.bridge_calls.push(row);
+
+    assert!(
+        encode_code_run_replay_record(&record).is_err(),
+        "codec must reject a successful non-speech result on a speech row",
+    );
+    let cursor = record.replay_cursor();
+    assert!(
+        cursor
+            .dispatch(SelfCall::Speak(SelfSpeechCall::new("coherent answer")))
+            .is_err(),
+        "cursor must reject a successful non-speech result on a speech row",
+    );
+    assert_eq!(
+        cursor.consumed(),
+        0,
+        "rejection must not consume the cursor"
+    );
+    Ok(())
+}
+
 /// ONE-1686: a CANONICAL run's speech materializes one complete MESSAGE per
 /// call, through the same witness door the session arm uses.
 ///

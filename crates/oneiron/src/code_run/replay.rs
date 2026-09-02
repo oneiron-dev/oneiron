@@ -115,15 +115,42 @@ impl CodeRunBridgeCall {
             None
         };
 
-        let SelfDispatchOutcome::Speech(result) = outcome else {
-            return Ok(());
-        };
-        let Some(expected_order) = expected_order else {
-            return Err(invalid_code_run_replay(
-                "speech outcome belongs to a non-speech bridge effect",
-            ));
-        };
-        validate_speech_result(self.effect, expected_order, result)
+        match outcome {
+            SelfDispatchOutcome::Speech(result) => {
+                let Some(expected_order) = expected_order else {
+                    return Err(invalid_code_run_replay(
+                        "speech outcome belongs to a non-speech bridge effect",
+                    ));
+                };
+                validate_speech_result(self.effect, expected_order, result)
+            }
+            // A speech attempt can fail at the gate or hit the fail-closed
+            // barrier after an earlier durable wait. Those are replay-visible
+            // outcomes, but they are not successful speech and therefore carry
+            // no bubble identity to validate here. Denied/Failed still name the
+            // attempted effect; a DurableWait intentionally carries the wait
+            // that caused the barrier, which may be a different effect.
+            SelfDispatchOutcome::Denied(result)
+                if self.effect.is_speech() && result.effect == self.effect =>
+            {
+                Ok(())
+            }
+            SelfDispatchOutcome::Failed(result)
+                if self.effect.is_speech() && result.effect == self.effect =>
+            {
+                Ok(())
+            }
+            SelfDispatchOutcome::DurableWait(_) if self.effect.is_speech() => Ok(()),
+            // A successful non-speech result for a speech request is not a
+            // weaker variant. It is an impossible cross-effect row and must
+            // fail closed before a replay cursor can hand it to the guest.
+            _ if self.effect.is_speech() => Err(invalid_code_run_replay(
+                "speech bridge effect carries a non-speech success outcome",
+            )),
+            // Non-speech bridge effects retain their existing outcome family;
+            // the speech-specific checks above do not narrow those rows.
+            _ => Ok(()),
+        }
     }
 
     /// Whether this row is an explicit speech call that ACTUALLY emitted.

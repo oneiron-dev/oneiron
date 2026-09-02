@@ -19,7 +19,7 @@ use crate::error::Error;
 use crate::gate::{
     MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
     WITNESS_AUTHOR_USER, WitnessMessageEnvelope, check_witness_message_ceiling,
-    resolve_policy_manifest,
+    resolve_policy_manifest, validate_canonical_witness_message_body,
 };
 use crate::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
@@ -110,8 +110,8 @@ pub struct WitnessTurn {
     /// a `System` row carries no `AuthoredBy` edge, so writing one requires a
     /// loaded policy with an owner-authored `actor_ceilings` row bound to the
     /// writing actor and resolving to `auto`. Each message's order must be
-    /// distinct within the
-    /// call.
+    /// distinct within the call and, when appending, from the turn's stored
+    /// MESSAGE children.
     pub messages: Vec<WitnessMessage>,
     /// Unix seconds; used for both `occurred` and `learned_at` so
     /// migration backfill stays deterministic.
@@ -337,6 +337,20 @@ impl Memory<'_> {
                 ));
             }
             let has_new_messages = message_already_exists.iter().any(|exists| !exists);
+            if existing_turn.is_some() {
+                let existing_message_ids = message_ids
+                    .iter()
+                    .zip(&message_already_exists)
+                    .filter_map(|(id, exists)| exists.then_some(*id))
+                    .collect::<HashSet<_>>();
+                validate_existing_witness_message_orders(
+                    &self.vault.store,
+                    &*wtxn,
+                    &turn_id,
+                    &turn.messages,
+                    &existing_message_ids,
+                )?;
+            }
             match &existing_turn {
                 None => {
                     // A minted TURN carries exactly one grouping speaker; an
@@ -801,6 +815,15 @@ impl Memory<'_> {
                         existing_messages.insert(*id);
                     }
                 }
+                if turn_already_exists {
+                    validate_existing_witness_message_orders(
+                        &view,
+                        &*wtxn,
+                        &turn_id,
+                        &turn.messages,
+                        &existing_messages,
+                    )?;
+                }
                 drop(view);
                 if !turn_already_exists && !existing_messages.is_empty() {
                     return Err(MemoryError::bad_request(
@@ -1100,6 +1123,91 @@ fn validate_existing_witness_message(
     Ok(true)
 }
 
+/// Checks the ORDER axis against all already-persisted MESSAGE children of one
+/// existing TURN. An append is a new call, but its positions still share the
+/// turn's one reader-visible domain: a new message may not claim a slot an
+/// earlier call already occupied. Exact retries are exempt by message id after
+/// their canonical body and parent/actor topology have been verified above.
+fn validate_existing_witness_message_orders(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    turn_id: &EntityId,
+    messages: &[WitnessMessage],
+    existing_message_ids: &HashSet<EntityId>,
+) -> MemoryResult<()> {
+    const ORDER_WORDS: usize = (MAX_WITNESS_MESSAGE_ORDER as usize + 64) / 64;
+    let mut occupied = [0_u64; ORDER_WORDS];
+
+    // Reserve every incoming slot first. This catches a collision with a
+    // persisted sibling while still allowing an exact retry's own id below.
+    for message in messages {
+        if message.order > MAX_WITNESS_MESSAGE_ORDER {
+            return Err(MemoryError::bad_request(format!(
+                "witness message order {} exceeds the {MAX_WITNESS_MESSAGE_ORDER} ceiling",
+                message.order,
+            )));
+        }
+        let word = (message.order / 64) as usize;
+        occupied[word] |= 1_u64 << (message.order % 64);
+    }
+
+    let prefix = crate::vault::edge_kind_prefix(turn_id, EdgeKind::PartOf);
+    for row in dbs.edges_in().prefix_iter(txn, &prefix)? {
+        let (key, value) = row?;
+        let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+        if edge.source != *turn_id || edge.kind != EdgeKind::PartOf {
+            return Err(Error::CorruptedIndex("witness turn message edge").into());
+        }
+        let message_id = edge.target;
+        // The caller's exact retry already proved this row's canonical body and
+        // topology. Do not compare its own slot with itself.
+        if existing_message_ids.contains(&message_id) {
+            continue;
+        }
+        let raw = dbs
+            .entities()
+            .get(txn, message_id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("witness message edge target"))?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("witness message header"))?;
+        if header.entity_type != ENTITY_TYPE_MESSAGE {
+            return Err(Error::CorruptedIndex("witness turn message type").into());
+        }
+        let order = canonical_witness_message_order(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let word = (order / 64) as usize;
+        let mask = 1_u64 << (order % 64);
+        if occupied[word] & mask != 0 {
+            return Err(MemoryError::bad_request_with(
+                format!(
+                    "witness message order {order} collides with an existing message in this turn"
+                ),
+                &["Give each message in a turn its own position."],
+            ));
+        }
+        occupied[word] |= mask;
+    }
+    Ok(())
+}
+
+/// Reads the already-validated canonical MESSAGE order for append collision
+/// checks. Validation is repeated at this storage boundary so a malformed
+/// persisted sibling cannot be treated as an ordinary occupied slot.
+fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
+    validate_canonical_witness_message_body(body)?;
+    let mut cursor = body;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvalidWitnessMessageBody("MESSAGE order is not canonical"))?;
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidWitnessMessageBody("MESSAGE order is not canonical").into());
+    };
+    entries
+        .into_iter()
+        .find_map(|(key, value)| (key.as_str() == Some("order")).then(|| value.as_u64()))
+        .flatten()
+        .and_then(|order| u32::try_from(order).ok())
+        .ok_or_else(|| Error::InvalidWitnessMessageBody("MESSAGE order is not canonical").into())
+}
+
 /// The call's ORDER axis, checked as a set (ONE-1686).
 ///
 /// `order` is the position readers sort a turn by, so two messages in one call
@@ -1110,9 +1218,9 @@ fn validate_existing_witness_message(
 /// cross-message half of that axis, and it runs BEFORE the write transaction
 /// so the whole call is refused rather than half-written.
 ///
-/// Only WITHIN one call: a later witness appending to the same turn is its own
-/// call with its own numbering, and re-reading every stored sibling to police
-/// that would make each append O(turn).
+/// This local pass handles one call in linear time. When the target TURN
+/// already exists, the transactional witness paths add a second pass over its
+/// persisted `PartOf` children so an append cannot reuse a stored position.
 pub(super) fn distinct_message_orders(messages: &[WitnessMessage]) -> MemoryResult<()> {
     // The order domain is fixed and small enough for a 1,024-word bitset. This
     // keeps validation deterministic O(messages) even for a call spanning the

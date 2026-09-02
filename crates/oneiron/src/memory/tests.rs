@@ -1573,6 +1573,62 @@ fn witness_message_order_validation_is_linear_over_the_complete_domain() {
     assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
 }
 
+/// An append shares the existing TURN's order domain. A new message may not
+/// claim a slot occupied by an earlier call, and the refusal must leave the
+/// complete second call untouched.
+#[test]
+fn witness_append_rejects_a_persisted_message_order_collision() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xBB);
+    let facade = facade_for(&vault, actor);
+    let conversation = EntityId::from_bytes([0xBC; 16]).expect("conversation");
+    let turn = EntityId::from_bytes([0xBD; 16]).expect("turn");
+    let first_message = EntityId::from_bytes([0xBE; 16]).expect("first message");
+    let second_message = EntityId::from_bytes([0xBF; 16]).expect("second message");
+
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![WitnessMessage {
+                id: Some(first_message.to_hex()),
+                ..witness_message(0, WitnessAuthor::User, "first slot")
+            }],
+            occurred_at: 702,
+        })
+        .expect("first turn append");
+
+    let refused = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![WitnessMessage {
+                id: Some(second_message.to_hex()),
+                ..witness_message(0, WitnessAuthor::User, "contested slot")
+            }],
+            occurred_at: 703,
+        })
+        .expect_err("a later message may not reuse the turn's order");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    assert!(
+        vault
+            .get_raw(&second_message)
+            .expect("second message lookup")
+            .is_none(),
+        "the colliding append must not materialize its message"
+    );
+    assert_eq!(
+        vault
+            .edges_in(&turn)
+            .expect("turn children")
+            .into_iter()
+            .filter(|edge| edge.kind == EdgeKind::PartOf)
+            .count(),
+        1,
+        "the original message remains the only child at order zero"
+    );
+}
+
 /// The legitimate envelopes keep working, metadata and hidden companion rows
 /// included: the door hardens the ceiling, it does not narrow the transcript.
 #[test]
