@@ -14,9 +14,12 @@ use super::payload::{
 };
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, code_run_layout_hash,
-    invalid_code_run_replay, sha256_bytes, validate_label, validate_text,
+    expect_map, invalid_code_run_replay, map_get, sha256_bytes, str_value, validate_label,
+    validate_text,
 };
-use super::types::{SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect};
+use super::types::{
+    SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
+};
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 1;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
@@ -70,15 +73,171 @@ impl CodeRunBridgeCall {
             ));
         }
 
-        Ok(Self {
+        let row = Self {
             seq,
             effect: call.effect(),
             request: self_call_request_value(call)?,
             outcome: self_dispatch_outcome_value(outcome),
             started_at_ms,
             finished_at_ms,
-        })
+        };
+        row.validate_speech_coherence()?;
+        Ok(row)
     }
+
+    /// Validates every host-owned and outcome-owned axis of a speech row.
+    ///
+    /// The top-level effect, canonical request, decoded result and host stamp
+    /// are one fact. Keeping this check on the row lets record construction,
+    /// codec encode/decode and an in-memory replay cursor all enforce the same
+    /// contract rather than trusting whichever boundary happened to run first.
+    pub(super) fn validate_speech_coherence(&self) -> Result<()> {
+        let outcome = decode_self_dispatch_outcome(&self.outcome)?;
+        let expected_order = if self.effect.is_speech() {
+            let order = u32::try_from(self.seq)
+                .map_err(|_| invalid_code_run_replay("speech bridge seq exceeds u32"))?;
+            let entries = expect_map(&self.request, "speech request must be a map")?;
+            let text = str_value(map_get(entries, "text")?)?;
+            let unstamped = match self.effect {
+                SelfEffect::Speak => SelfCall::Speak(SelfSpeechCall::new(text)),
+                SelfEffect::Think => SelfCall::Think(SelfSpeechCall::new(text)),
+                SelfEffect::Express => SelfCall::Express(SelfSpeechCall::new(text)),
+                _ => unreachable!("is_speech exhaustively names the speech family"),
+            };
+            let expected_call = unstamped.with_bridge_stamp(self.seq, self.started_at_ms);
+            if self.request != self_call_request_value(&expected_call)? {
+                return Err(invalid_code_run_replay(
+                    "speech request contradicts its host bridge stamp",
+                ));
+            }
+            Some(order)
+        } else {
+            None
+        };
+
+        match outcome {
+            SelfDispatchOutcome::Speech(result) => {
+                let Some(expected_order) = expected_order else {
+                    return Err(invalid_code_run_replay(
+                        "speech outcome belongs to a non-speech bridge effect",
+                    ));
+                };
+                validate_speech_result(self.effect, expected_order, result)
+            }
+            // A speech attempt can fail at the gate or hit the fail-closed
+            // barrier after an earlier durable wait. Those are replay-visible
+            // outcomes, but they are not successful speech and therefore carry
+            // no bubble identity to validate here. Denied/Failed still name the
+            // attempted effect; a DurableWait intentionally carries the wait
+            // that caused the barrier, which may be a different effect.
+            SelfDispatchOutcome::Denied(result)
+                if self.effect.is_speech() && result.effect == self.effect =>
+            {
+                Ok(())
+            }
+            SelfDispatchOutcome::Failed(result)
+                if self.effect.is_speech() && result.effect == self.effect =>
+            {
+                Ok(())
+            }
+            SelfDispatchOutcome::DurableWait(_) if self.effect.is_speech() => Ok(()),
+            // A successful non-speech result for a speech request is not a
+            // weaker variant. It is an impossible cross-effect row and must
+            // fail closed before a replay cursor can hand it to the guest.
+            _ if self.effect.is_speech() => Err(invalid_code_run_replay(
+                "speech bridge effect carries a non-speech success outcome",
+            )),
+            // Non-speech bridge effects retain their existing outcome family;
+            // the speech-specific checks above do not narrow those rows.
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether this row is an explicit speech call that ACTUALLY emitted.
+    ///
+    /// The two conditions are separate on purpose. A speech row whose outcome
+    /// is a durable wait or a failed trap is a call the fail-closed barrier
+    /// refused: it is replay-visible, but no bubble exists for it, so it must
+    /// not suppress the trailing plaintext fallback. Only a row carrying a
+    /// speech OUTCOME says the run spoke — and the decoder refuses a speech
+    /// outcome that claims `emitted: false`, so "decodes as speech" and
+    /// "emitted" are one fact rather than two that could disagree.
+    #[must_use]
+    pub fn emitted_speech(&self) -> bool {
+        self.effect.is_speech()
+            && self.validate_speech_coherence().is_ok()
+            && matches!(
+                decode_self_dispatch_outcome(&self.outcome),
+                Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
+                    emitted: true,
+                    ..
+                }))
+            )
+    }
+
+    /// The visible TEXT this row spoke, when it emitted an addressed bubble.
+    ///
+    /// Read from the row's own request payload — the same canonical value
+    /// replay compares a re-dispatched call against — so what the fallback
+    /// treats as "already said" is exactly what the user could already see.
+    /// Hidden `self.think` text deliberately returns `None`: a private thought
+    /// that matches the terminal observation must not suppress its visible
+    /// trailing fallback.
+    #[must_use]
+    pub fn emitted_visible_speech_text(&self) -> Option<&str> {
+        if self.validate_speech_coherence().is_err() {
+            return None;
+        }
+        let Ok(SelfDispatchOutcome::Speech(SelfSpeechResult {
+            is_visible: true,
+            emitted: true,
+            ..
+        })) = decode_self_dispatch_outcome(&self.outcome)
+        else {
+            return None;
+        };
+        let Value::Map(entries) = &self.request else {
+            return None;
+        };
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("text"))
+            .and_then(|(_, value)| value.as_str())
+    }
+}
+
+fn validate_speech_result(
+    bridge_effect: SelfEffect,
+    expected_order: u32,
+    result: SelfSpeechResult,
+) -> Result<()> {
+    if result.effect != bridge_effect {
+        return Err(invalid_code_run_replay(
+            "speech outcome effect contradicts its bridge effect",
+        ));
+    }
+    if result.order != expected_order {
+        return Err(invalid_code_run_replay(
+            "speech outcome order contradicts its request",
+        ));
+    }
+    let expected_visibility = bridge_effect
+        .speech_utterance()
+        .ok_or(invalid_code_run_replay(
+            "speech outcome belongs to a non-speech effect",
+        ))?
+        .is_visible();
+    if result.is_visible != expected_visibility {
+        return Err(invalid_code_run_replay(
+            "speech outcome visibility contradicts its bridge effect",
+        ));
+    }
+    if !result.emitted {
+        return Err(invalid_code_run_replay(
+            "speech outcome claims no emitted bubble",
+        ));
+    }
+    Ok(())
 }
 
 /// Deterministic checkpoint marker between bridge calls.
@@ -331,10 +490,22 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
             return Err(invalid_code_run_replay("code-run replay effect mismatch"));
         }
 
+        // ONE-1686: replay re-stamps the HOST-owned bridge identity from the
+        // PERSISTED row — its seq and its start clock — exactly as the live
+        // bridge stamps it at dispatch. Guest code supplies neither on either
+        // path, so a replayed speech call cannot claim a different position or
+        // timestamp than the one its bubble was written under, and an
+        // unstamped re-dispatch cannot fail the comparison below for a
+        // difference the guest was never allowed to control.
+        let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
         let request = self_call_request_value(&call)?;
         if stored.request != request {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
+        // A cursor can be built from an in-memory record that never passed the
+        // codec. Recheck speech effect/request/result coherence here before the
+        // stored outcome can reach the guest.
+        stored.validate_speech_coherence()?;
 
         let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
         self.next.set(index + 1);

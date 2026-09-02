@@ -9,22 +9,26 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de, de::Deserializ
 
 use crate::{Error, Result};
 
-use super::generated_ui::{GeneratedUiPrimitive, SelfUiBinding};
+use super::generated_ui::{
+    GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiActionTier,
+    GeneratedUiPrimitive, SelfUiBinding,
+};
 use super::self_ui::{SelfUiAction, SelfUiControl, SelfUiOption};
 use super::validate::{
     LensBudget, fallback_lens_text, validate_lens_collection_len, validate_lens_tree,
     validate_required_lens_text, validate_selected_option, validate_self_ui_options,
 };
 use super::wire_ids::{
-    LensAtomId, LensHandleName, LensHandleRef, LensMediaHandle, MAX_LENS_COLLECTION_ITEMS,
-    MAX_LENS_TREE_DEPTH, SelfUiControlId, SelfUiOptionValue,
+    LensAtomId, LensHandleName, LensHandleRef, LensMediaHandle, LensResultSetRowId,
+    MAX_LENS_COLLECTION_ITEMS, MAX_LENS_TREE_DEPTH, SelfUiActionId, SelfUiControlId,
+    SelfUiOptionValue,
 };
 use super::wire_limits::{
     LimitedVecSeed, deserialize_limited_vec, max_lens_collection_items_error,
     reject_lens_sequence_hint, serialize_tagged,
 };
 
-pub const LENS_ATOM_KIT_VERSION: u16 = 2;
+pub const LENS_ATOM_KIT_VERSION: u16 = 3;
 
 pub const GENERATED_LENS_ATOM_KINDS: &[&str] = &[
     "text_block",
@@ -53,7 +57,16 @@ pub const GENERATED_LENS_ATOM_KINDS: &[&str] = &[
     "inspector_trail",
     "self_ui",
     "media",
+    "result_set",
 ];
+
+/// Wire name of the selectable result-set atom minted at catalog version 3.
+pub const RESULT_SET_ATOM_KIND: &str = "result_set";
+
+/// The single rejection a surface below catalog 3 — or one whose primitive list omits
+/// [`GeneratedUiPrimitive::ResultSet`] — gets. A result set never lowers to fallback
+/// text: a degraded selection surface would offer rows the host cannot resolve.
+pub const LENS_RESULT_SET_UNSUPPORTED: &str = "result_set requires lens atom catalog version 3";
 
 pub(super) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 
@@ -459,6 +472,7 @@ pub enum LensAtom {
     InspectorTrail(InspectorAtom),
     SelfUi(SelfUiControl),
     Media(MediaAtom),
+    ResultSet(GeneratedUiResultSetAtom),
 }
 
 #[derive(Debug, Deserialize)]
@@ -495,6 +509,7 @@ enum LensAtomWire {
     InspectorTrail(InspectorAtom),
     SelfUi(SelfUiControl),
     Media(MediaAtom),
+    ResultSet(GeneratedUiResultSetAtom),
 }
 
 impl From<LensAtomWire> for LensAtom {
@@ -526,6 +541,7 @@ impl From<LensAtomWire> for LensAtom {
             LensAtomWire::InspectorTrail(atom) => Self::InspectorTrail(atom),
             LensAtomWire::SelfUi(control) => Self::SelfUi(control),
             LensAtomWire::Media(atom) => Self::Media(atom),
+            LensAtomWire::ResultSet(atom) => Self::ResultSet(atom),
         }
     }
 }
@@ -616,7 +632,130 @@ impl Serialize for LensAtom {
             }
             Self::SelfUi(props) => serialize_tagged(serializer, "kind", "self_ui", "props", props),
             Self::Media(props) => serialize_tagged(serializer, "kind", "media", "props", props),
+            Self::ResultSet(props) => {
+                serialize_tagged(serializer, "kind", RESULT_SET_ATOM_KIND, "props", props)
+            }
         }
+    }
+}
+
+/// One rendered row of a result set. `id` is an opaque echo token the client hands
+/// back to name a row; it is never authority, and `label` is display data the host
+/// never parses. The reach a row can prove is `target_handle`, which the node itself
+/// has to advertise as one of its declared backing handles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiResultSetRow {
+    pub id: LensResultSetRowId,
+    pub label: LensText,
+    pub target_handle: LensHandleName,
+}
+
+/// The closed select-all vocabulary. `WithinFilter` names one *host-declared*
+/// predicate handle; there is no place to express a query, expression, `where`
+/// clause, entity id, or replacement handle, so a client can never widen the
+/// filter a select-all resolves against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GeneratedUiResultSetSelectAll {
+    Disabled {},
+    WithinFilter { predicate_handle: LensHandleName },
+}
+
+/// The selectable result-set atom. `action_bar` is an *eligibility allowlist* of
+/// card-declared, `self.ui`-hosted, deterministic-tier action ids: the atom hosts no
+/// action of its own, so the landed one-action-per-element and
+/// declarations-name-a-self.ui-control gates keep deciding what is interactive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiResultSetAtom {
+    #[serde(deserialize_with = "deserialize_limited_vec")]
+    pub rows: Vec<GeneratedUiResultSetRow>,
+    pub select_all: GeneratedUiResultSetSelectAll,
+    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    pub action_bar: Vec<SelfUiActionId>,
+}
+
+/// Client-authored selection payload. It rides on the `self.ui`-hosted action event
+/// and names *which rendered rows were ticked* and nothing else: `AllWithinFilter`
+/// carries no fields at all, so the predicate can only come from the rendered atom.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GeneratedUiResultSetSelection {
+    Explicit {
+        #[serde(deserialize_with = "deserialize_limited_vec")]
+        row_ids: Vec<LensResultSetRowId>,
+    },
+    AllWithinFilter {},
+}
+
+/// A `self.ui`-hosted action event plus the result-set selection it carries. Selection
+/// is not approval: this is still only *what was touched*.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiResultSetActionEvent {
+    pub action: GeneratedUiActionEvent,
+    pub selection: GeneratedUiResultSetSelection,
+}
+
+impl GeneratedUiResultSetAtom {
+    fn validate(&self) -> Result<()> {
+        validate_lens_collection_len("result set rows", self.rows.len())?;
+        validate_lens_collection_len("result set action bar", self.action_bar.len())?;
+
+        let mut row_ids = HashSet::with_capacity(self.rows.len());
+        for row in &self.rows {
+            if !row_ids.insert(row.id.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "result set rows must not contain duplicate ids".to_string(),
+                ));
+            }
+        }
+
+        let mut action_ids = HashSet::with_capacity(self.action_bar.len());
+        for action_id in &self.action_bar {
+            if !action_ids.insert(action_id.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "result set action bar must not contain duplicate action ids".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Atom/action membership only: every allowlisted id has to be one the card's own
+    /// manifest declares exactly once at the deterministic-tool tier. Which element
+    /// *hosts* that declaration stays the landed interactivity gate's decision, so this
+    /// never lets a result set claim an action for itself.
+    pub fn validate_against_actions(&self, actions: &[GeneratedUiActionDeclaration]) -> Result<()> {
+        self.validate()?;
+        for action_id in &self.action_bar {
+            let mut declared = actions
+                .iter()
+                .filter(|declaration| &declaration.action_id == action_id);
+            let declaration = declared.next().ok_or_else(|| {
+                Error::InvalidConfig(
+                    "result set action bar must reference a declared card action".to_string(),
+                )
+            })?;
+            if declared.next().is_some() {
+                return Err(Error::InvalidConfig(
+                    "generated-ui action ids must be declared exactly once".to_string(),
+                ));
+            }
+            if declaration.tier != GeneratedUiActionTier::DeterministicTool {
+                return Err(Error::InvalidConfig(
+                    "result set action bar must reference deterministic-tool actions".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
+        budget.add_collection("result set rows", self.rows.len())?;
+        budget.add_collection("result set action bar", self.action_bar.len())
     }
 }
 
@@ -1035,12 +1174,29 @@ impl LensAtom {
             Self::InspectorTrail(_) => GeneratedUiPrimitive::InspectorTrail,
             Self::SelfUi(_) => GeneratedUiPrimitive::SelfUi,
             Self::Media(_) => GeneratedUiPrimitive::Media,
+            Self::ResultSet(_) => GeneratedUiPrimitive::ResultSet,
         }
     }
 
     #[must_use]
     pub fn kind(&self) -> &'static str {
         self.primitive().as_str()
+    }
+
+    /// Build a validated result-set atom. Row-id and action-bar uniqueness are proved
+    /// here, exactly as they are on the wire.
+    pub fn result_set(atom: GeneratedUiResultSetAtom) -> Result<Self> {
+        let atom = Self::ResultSet(atom);
+        atom.validate()?;
+        Ok(atom)
+    }
+
+    #[must_use]
+    pub fn result_set_payload(&self) -> Option<&GeneratedUiResultSetAtom> {
+        match self {
+            Self::ResultSet(atom) => Some(atom),
+            _ => None,
+        }
     }
 
     #[must_use]
@@ -1089,6 +1245,9 @@ impl LensAtom {
             }
             Self::SelfUi(control) => control.fallback_text(),
             Self::Media(atom) => atom.alt.as_str().to_string(),
+            // Row labels are display data the host never parses, and a row count is
+            // reach metadata. The fallback stays a static literal.
+            Self::ResultSet(_) => "result set".to_string(),
         };
         fallback_lens_text(self.kind(), fallback)
     }
@@ -1114,6 +1273,7 @@ impl LensAtom {
             }
             Self::SelfUi(control) => control.validate(),
             Self::Media(atom) => atom.validate(),
+            Self::ResultSet(atom) => atom.validate(),
         }
     }
 
@@ -1145,6 +1305,7 @@ impl LensAtom {
             }
             Self::SelfUi(control) => control.count_collection_items(budget),
             Self::Media(_) => Ok(()),
+            Self::ResultSet(atom) => atom.count_collection_items(budget),
         }
     }
 }

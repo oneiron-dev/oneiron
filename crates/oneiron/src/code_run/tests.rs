@@ -106,6 +106,38 @@ fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
     put_indexed_manifest_at_two(vault, entity(seed), b"not-msgpack")
 }
 
+fn install_exact_actor_ceiling(vault: &Vault, actor: EntityId, ceiling: &str) -> Result<()> {
+    clear_policy_manifests_for_test(vault)?;
+    let mut cursor = std::io::Cursor::new(crate::gate::default_policy_manifest());
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvariantViolation("default policy manifest failed to decode"))?
+    else {
+        return Err(Error::InvariantViolation(
+            "default policy manifest is not a map",
+        ));
+    };
+    let ceilings = entries
+        .iter_mut()
+        .find_map(|(key, value)| (key.as_str() == Some("actor_ceilings")).then_some(value))
+        .ok_or(Error::InvariantViolation(
+            "default policy manifest has no actor ceilings",
+        ))?;
+    let Value::Array(rows) = ceilings else {
+        return Err(Error::InvariantViolation(
+            "default policy actor ceilings are not an array",
+        ));
+    };
+    rows.push(Value::Map(vec![
+        (Value::from("actor_class"), Value::from("agent")),
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("ceiling"), Value::from(ceiling)),
+    ]));
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| Error::InvariantViolation("policy manifest failed to encode"))?;
+    put_indexed_manifest_at_two(vault, entity(0xE9), &data)
+}
+
 fn install_self_memory_allow_policy(vault: &Vault, actor: EntityId) -> Result<()> {
     install_self_memory_policy_trusting_source(vault, actor, ClaimSource::Generated)
 }
@@ -306,6 +338,21 @@ fn map_value<'a>(entries: &'a [(Value, Value)], key: &str) -> &'a Value {
             (entry_key.as_str() == Some(key)).then_some(entry_value)
         })
         .expect("map entry")
+}
+
+fn map_value_mut<'a>(value: &'a mut Value, key: &str) -> &'a mut Value {
+    let Value::Map(entries) = value else {
+        panic!("value is a map");
+    };
+    &mut entries
+        .iter_mut()
+        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
+        .unwrap_or_else(|| panic!("map carries {key}"))
+        .1
+}
+
+fn set_map_value(value: &mut Value, key: &str, replacement: Value) {
+    *map_value_mut(value, key) = replacement;
 }
 
 #[test]
@@ -1531,4 +1578,720 @@ fn self_context_calls_replay_through_the_pinned_codec() -> Result<()> {
     let encoded = self_dispatch_outcome_value(&outcome);
     assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
     Ok(())
+}
+
+/// ONE-1686 RT-04: the three speech verbs are stable typed calls with stable
+/// wire labels, and both halves of a bridge row round-trip through the pinned
+/// codec — while every landed effect token keeps the exact string it had.
+#[test]
+fn self_speech_calls_round_trip_without_disturbing_landed_tokens() -> Result<()> {
+    let speech = [
+        (SelfEffect::Speak, "self.speak", true),
+        (SelfEffect::Think, "self.think", false),
+        (SelfEffect::Express, "self.express", true),
+    ];
+
+    for (effect, token, is_visible) in speech {
+        assert_eq!(effect.as_str(), token);
+        assert_eq!(self_effect_from_str(token)?, effect);
+        assert!(effect.is_speech());
+        assert_eq!(
+            effect
+                .speech_utterance()
+                .expect("speech utterance")
+                .is_visible(),
+            is_visible,
+            "{token} visibility is decided once, by the utterance"
+        );
+    }
+
+    // No non-speech effect drifted into the family.
+    for effect in [
+        SelfEffect::MemorySearch,
+        SelfEffect::MemoryWriteFixture,
+        SelfEffect::MemoryPutClaim,
+        SelfEffect::MemorySupersedeClaim,
+        SelfEffect::MemoryPutEdge,
+        SelfEffect::AskHuman,
+        SelfEffect::DestructiveFixture,
+        SelfEffect::OutboundFixture,
+        SelfEffect::TaskDelegate,
+        SelfEffect::Context,
+    ] {
+        assert!(!effect.is_speech(), "{} is not speech", effect.as_str());
+        assert_eq!(effect.speech_utterance(), None);
+    }
+
+    // The landed tokens are untouched by the addition.
+    assert_eq!(
+        [
+            SelfEffect::MemorySearch,
+            SelfEffect::MemoryWriteFixture,
+            SelfEffect::MemoryPutClaim,
+            SelfEffect::MemorySupersedeClaim,
+            SelfEffect::MemoryPutEdge,
+            SelfEffect::AskHuman,
+            SelfEffect::DestructiveFixture,
+            SelfEffect::OutboundFixture,
+            SelfEffect::TaskDelegate,
+            SelfEffect::Context,
+        ]
+        .map(SelfEffect::as_str)
+        .to_vec(),
+        vec![
+            "self.memory.search",
+            "self.memory.write_fixture",
+            "self.memory.put_claim",
+            "self.memory.supersede_claim",
+            "self.memory.put_edge",
+            "self.ask_human",
+            "self.fixture.destructive",
+            "self.fixture.outbound",
+            "self.tasks.delegate",
+            "self.context",
+        ]
+    );
+
+    let calls = [
+        SelfCall::Speak(SelfSpeechCall::new("hello")),
+        SelfCall::Think(SelfSpeechCall::new("hmm")),
+        SelfCall::Express(SelfSpeechCall::new("*waves*")),
+    ];
+    for (index, call) in calls.into_iter().enumerate() {
+        let effect = call.effect();
+        let seq = index as u64;
+        let stamped = call.with_bridge_stamp(seq, 1_719_000_000_000 + seq);
+        let (SelfCall::Speak(inner) | SelfCall::Think(inner) | SelfCall::Express(inner)) = &stamped
+        else {
+            panic!("speech call stays in the speech family after stamping");
+        };
+        assert_eq!(inner.order, index as u32);
+        assert_eq!(inner.occurred_at, (1_719_000_000_000 + seq) / 1000);
+
+        let request = self_call_request_value(&stamped)?;
+        assert_eq!(self_call_request_value(&stamped)?, request);
+
+        let outcome = SelfDispatchOutcome::Speech(SelfSpeechResult {
+            effect,
+            order: index as u32,
+            is_visible: effect.speech_utterance().expect("utterance").is_visible(),
+            emitted: true,
+        });
+        let encoded = self_dispatch_outcome_value(&outcome);
+        assert_eq!(decode_self_dispatch_outcome(&encoded)?, outcome);
+    }
+
+    // A speech OUTCOME naming a non-speech effect is rejected, not coerced.
+    let forged = self_dispatch_outcome_value(&SelfDispatchOutcome::Speech(SelfSpeechResult {
+        effect: SelfEffect::Speak,
+        order: 0,
+        is_visible: true,
+        emitted: true,
+    }));
+    let Value::Map(mut entries) = forged else {
+        panic!("speech outcome encodes as a map");
+    };
+    for entry in &mut entries {
+        if entry.0.as_str() == Some("effect") {
+            entry.1 = Value::from("self.memory.search");
+        }
+    }
+    assert!(decode_self_dispatch_outcome(&Value::Map(entries)).is_err());
+    Ok(())
+}
+
+/// Speech replay rows bind the outer effect, host-stamped request and complete
+/// result. Construction, encode/decode and a cursor over an in-memory record all
+/// reject cross-axis forgeries instead of replaying an outcome the writer could
+/// never have produced.
+#[test]
+fn speech_replay_refuses_incoherent_effect_order_visibility_emission_and_host_stamp() -> Result<()>
+{
+    let started_at_ms = 1_719_000_123_456;
+    let call =
+        SelfCall::Speak(SelfSpeechCall::new("coherent answer")).with_bridge_stamp(0, started_at_ms);
+    let outcome = SelfDispatchOutcome::Speech(SelfSpeechResult {
+        effect: SelfEffect::Speak,
+        order: 0,
+        is_visible: true,
+        emitted: true,
+    });
+    let row = CodeRunBridgeCall::record(0, &call, &outcome, started_at_ms, started_at_ms)?;
+    let mut record = CodeRunReplayRecord::new(
+        entity(0xD0),
+        CodeRunDeterminism::new(started_at_ms, [0xD0; 32]),
+    );
+    record.bridge_calls.push(row);
+    let valid_encoded = encode_code_run_replay_record(&record)?;
+    assert_eq!(decode_code_run_replay_record(&valid_encoded)?, record);
+    assert_eq!(
+        record
+            .replay_cursor()
+            .dispatch(SelfCall::Speak(SelfSpeechCall::new("coherent answer")))?,
+        outcome,
+    );
+
+    let mismatched_at_construction = SelfDispatchOutcome::Speech(SelfSpeechResult {
+        effect: SelfEffect::Think,
+        order: 0,
+        is_visible: false,
+        emitted: true,
+    });
+    CodeRunBridgeCall::record(
+        0,
+        &call,
+        &mismatched_at_construction,
+        started_at_ms,
+        started_at_ms,
+    )
+    .expect_err("record construction binds inner and outer speech effects");
+
+    for axis in [
+        "outcome effect",
+        "outcome order",
+        "outcome visibility",
+        "outcome emitted",
+        "request order",
+        "request occurred_at",
+    ] {
+        let mut forged = record.clone();
+        let row = &mut forged.bridge_calls[0];
+        match axis {
+            "outcome effect" => {
+                set_map_value(&mut row.outcome, "effect", Value::from("self.think"));
+                set_map_value(&mut row.outcome, "is_visible", Value::Boolean(false));
+            }
+            "outcome order" => set_map_value(&mut row.outcome, "order", Value::from(1_u64)),
+            "outcome visibility" => {
+                set_map_value(&mut row.outcome, "is_visible", Value::Boolean(false));
+            }
+            "outcome emitted" => {
+                set_map_value(&mut row.outcome, "emitted", Value::Boolean(false));
+            }
+            "request order" => set_map_value(&mut row.request, "order", Value::from(1_u64)),
+            "request occurred_at" => set_map_value(
+                &mut row.request,
+                "occurred_at",
+                Value::from(started_at_ms / 1000 + 1),
+            ),
+            _ => unreachable!(),
+        }
+
+        assert!(
+            encode_code_run_replay_record(&forged).is_err(),
+            "encode must reject {axis}",
+        );
+        let cursor = forged.replay_cursor();
+        assert!(
+            cursor
+                .dispatch(SelfCall::Speak(SelfSpeechCall::new("coherent answer")))
+                .is_err(),
+            "cursor must reject {axis}",
+        );
+        assert_eq!(cursor.consumed(), 0, "{axis}");
+    }
+
+    // Decode runs the same row-context validator. Mutate a valid wire record
+    // directly so the forged bytes did not first pass the encoder.
+    let mut cursor = valid_encoded.as_slice();
+    let mut wire = rmpv::decode::read_value(&mut cursor).expect("decode valid wire value");
+    let Value::Array(calls) = map_value_mut(&mut wire, "bridge_calls") else {
+        panic!("bridge_calls is an array");
+    };
+    let outcome = map_value_mut(&mut calls[0], "outcome");
+    set_map_value(outcome, "effect", Value::from("self.think"));
+    set_map_value(outcome, "is_visible", Value::Boolean(false));
+    let mut forged_wire = Vec::new();
+    rmpv::encode::write_value(&mut forged_wire, &wire).expect("encode forged wire value");
+    decode_code_run_replay_record(&forged_wire)
+        .expect_err("decode must reject cross-axis speech outcome forgery");
+    Ok(())
+}
+
+/// A speech request may end in a denied/failed/barrier row, but never in a
+/// successful non-speech outcome. The cursor and codec must reject that
+/// impossible cross-effect row before it can reach the guest.
+#[test]
+fn speech_replay_rejects_successful_non_speech_outcome() -> Result<()> {
+    let started_at_ms = 1_719_000_123_456;
+    let call =
+        SelfCall::Speak(SelfSpeechCall::new("coherent answer")).with_bridge_stamp(0, started_at_ms);
+    let outcome = SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
+        query: "forged search".to_owned(),
+        results: Vec::new(),
+    });
+    let row = CodeRunBridgeCall {
+        seq: 0,
+        effect: SelfEffect::Speak,
+        request: self_call_request_value(&call)?,
+        outcome: self_dispatch_outcome_value(&outcome),
+        started_at_ms,
+        finished_at_ms: started_at_ms,
+    };
+    let mut record = CodeRunReplayRecord::new(
+        entity(0xD1),
+        CodeRunDeterminism::new(started_at_ms, [0xD1; 32]),
+    );
+    record.bridge_calls.push(row);
+
+    assert!(
+        encode_code_run_replay_record(&record).is_err(),
+        "codec must reject a successful non-speech result on a speech row",
+    );
+    let cursor = record.replay_cursor();
+    assert!(
+        cursor
+            .dispatch(SelfCall::Speak(SelfSpeechCall::new("coherent answer")))
+            .is_err(),
+        "cursor must reject a successful non-speech result on a speech row",
+    );
+    assert_eq!(
+        cursor.consumed(),
+        0,
+        "rejection must not consume the cursor"
+    );
+    Ok(())
+}
+
+/// ONE-1686: a CANONICAL run's speech materializes one complete MESSAGE per
+/// call, through the same witness door the session arm uses.
+///
+/// Every axis is asserted, because the ceiling door binds every axis: the
+/// Companion author, the family's message type, the guest's text, the family's
+/// visibility, and the HOST's bridge order. The rows land in the run-scoped
+/// conversation and turn derived from the run ref — a canonical run is not a
+/// mute run, and `emitted` is not a field that can say "spoken" with nothing
+/// behind it.
+#[test]
+fn canonical_speech_materializes_one_complete_bubble_per_call() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xB7);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-canonical-speech",
+    )?;
+
+    assert_eq!(message_entity_count(&vault)?, 0);
+    for (index, (call, effect, is_visible, text, message_type)) in [
+        (
+            SelfCall::Speak(SelfSpeechCall::new("addressed")),
+            SelfEffect::Speak,
+            true,
+            "addressed",
+            "executor.speak",
+        ),
+        (
+            SelfCall::Think(SelfSpeechCall::new("private")),
+            SelfEffect::Think,
+            false,
+            "private",
+            "executor.think",
+        ),
+        (
+            SelfCall::Express(SelfSpeechCall::new("*nods*")),
+            SelfEffect::Express,
+            true,
+            "*nods*",
+            "executor.express",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let order = index as u32;
+        let outcome =
+            dispatcher.dispatch(call.with_bridge_stamp(order.into(), 1_719_000_000_000))?;
+        assert_eq!(
+            outcome,
+            SelfDispatchOutcome::Speech(SelfSpeechResult {
+                effect,
+                order,
+                is_visible,
+                // A canonical bubble EXISTS, so the outcome says so.
+                emitted: true,
+            })
+        );
+
+        // The bubble is at the derived id, and its body is the complete
+        // canonical envelope the ceiling door authorized.
+        let id = crate::code_run::executor_speech_message_id("run-canonical-speech", order)?;
+        let view = vault
+            .memory(actor, EdgeActorClass::Agent)
+            .get_entity(&id.to_hex())
+            .expect("get bubble")
+            .expect("bubble exists");
+        let body = view.body.expect("bubble body decodes");
+        assert_eq!(body["author"], serde_json::json!("companion"));
+        assert_eq!(body["type"], serde_json::json!(message_type));
+        assert_eq!(body["content"], serde_json::json!(text));
+        assert_eq!(body["is_visible"], serde_json::json!(is_visible));
+        assert_eq!(body["order"], serde_json::json!(order));
+    }
+    assert_eq!(
+        message_entity_count(&vault)?,
+        3,
+        "one bubble per speech call, and no more"
+    );
+    assert_eq!(
+        gate_decision_rows(&vault)?,
+        0,
+        "speech opens no memory-write gate"
+    );
+    Ok(())
+}
+
+/// ONE-1686 idempotency by IDENTITY: re-dispatching the same speech position
+/// — the shape a step re-run after a failed replay-record persist takes —
+/// converges on the SAME bubble instead of growing a second one.
+#[test]
+fn canonical_speech_redispatch_at_the_same_order_writes_no_second_bubble() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xB8);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-canonical-speech-retry",
+    )?;
+
+    for _ in 0..3 {
+        dispatcher.dispatch(
+            SelfCall::Speak(SelfSpeechCall::new("said once"))
+                .with_bridge_stamp(2, 1_719_000_000_000),
+        )?;
+    }
+
+    assert_eq!(
+        message_entity_count(&vault)?,
+        1,
+        "three attempts at one position leave one bubble"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        1,
+        "and one turn, not one per attempt"
+    );
+    let id = crate::code_run::executor_speech_message_id("run-canonical-speech-retry", 2)?;
+    let body = vault
+        .memory(actor, EdgeActorClass::Agent)
+        .get_entity(&id.to_hex())
+        .expect("get bubble")
+        .expect("bubble exists")
+        .body
+        .expect("bubble body decodes");
+    assert_eq!(body["content"], serde_json::json!("said once"));
+    assert_eq!(body["order"], serde_json::json!(2));
+    Ok(())
+}
+
+/// A deterministic MESSAGE id is create-or-verify, never an overwrite handle.
+/// Exact retries leave both MESSAGE and TURN bytes unchanged; changed text or a
+/// changed speech family at the same run/order is refused and cannot reparent
+/// or replace the winner.
+#[test]
+fn canonical_speech_retry_refuses_a_divergent_same_id_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xBA);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-canonical-divergent-retry",
+    )?;
+    let stamp = |call: SelfCall| call.with_bridge_stamp(7, 1_719_000_007_000);
+
+    dispatcher.dispatch(stamp(SelfCall::Speak(SelfSpeechCall::new("winner"))))?;
+    let message_id = executor_speech_message_id("run-canonical-divergent-retry", 7)?;
+    let message_before = vault.get_raw(&message_id)?.expect("message exists");
+    let turns = vault.entities_by_type(crate::registry::ENTITY_TYPE_TURN)?;
+    assert_eq!(turns.len(), 1);
+    let turn_id = turns[0];
+    let turn_before = vault.get_raw(&turn_id)?.expect("turn exists");
+
+    dispatcher.dispatch(stamp(SelfCall::Speak(SelfSpeechCall::new("winner"))))?;
+    assert_eq!(
+        vault.get_raw(&message_id)?.as_deref(),
+        Some(message_before.as_slice())
+    );
+    assert_eq!(
+        vault.get_raw(&turn_id)?.as_deref(),
+        Some(turn_before.as_slice())
+    );
+
+    for divergent in [
+        SelfCall::Speak(SelfSpeechCall::new("loser overwrite")),
+        SelfCall::Think(SelfSpeechCall::new("winner")),
+    ] {
+        dispatcher
+            .dispatch(stamp(divergent))
+            .expect_err("same-id divergent speech retry must be refused");
+        assert_eq!(
+            vault.get_raw(&message_id)?.as_deref(),
+            Some(message_before.as_slice()),
+            "the winning MESSAGE body stays immutable",
+        );
+        assert_eq!(
+            vault
+                .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+                .len(),
+            1
+        );
+        let part_of = vault
+            .edges_out(&message_id)?
+            .into_iter()
+            .filter(|edge| edge.kind == crate::edge::EdgeKind::PartOf)
+            .map(|edge| edge.target)
+            .collect::<Vec<_>>();
+        assert_eq!(part_of, vec![turn_id], "the winner keeps one TURN parent");
+    }
+    Ok(())
+}
+
+/// The session storage arm uses the same host-derived TURN on every attempt.
+/// An exact off-record retry is a graph no-op; a divergent retry at that
+/// MESSAGE id is refused before the overlay or typed journal can gain another
+/// turn, parent edge, or body.
+#[test]
+fn off_record_session_speech_retry_converges_on_one_turn_and_one_message() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xBB);
+    let session = vault.off_record_session_vault().enter(
+        "session-speech-idempotency",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-session-idempotency",
+    )?;
+    let stamped = |text: &str| {
+        SelfCall::Speak(SelfSpeechCall::new(text)).with_bridge_stamp(3, 1_719_000_003_000)
+    };
+
+    dispatcher.dispatch(stamped("one bubble"))?;
+    dispatcher.dispatch(stamped("one bubble"))?;
+    let message_id = executor_speech_message_id("run-session-idempotency", 3)?;
+
+    let snapshot = || -> Result<(usize, usize, Vec<EntityId>, Vec<u8>)> {
+        let view = session.read_view()?;
+        let rtxn = vault.store.env.read_txn()?;
+        let turns = view
+            .type_index
+            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_TURN])?
+            .count();
+        let messages = view
+            .type_index
+            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
+            .count();
+        let prefix = crate::vault::edge_kind_prefix(&message_id, crate::edge::EdgeKind::PartOf);
+        let mut parents = Vec::new();
+        for row in view.edges_out.prefix_iter(&rtxn, &prefix)? {
+            let (key, _) = row?;
+            let (_, _, target) = crate::edge::parse_strict_edge_record_key(&key)?;
+            parents.push(target);
+        }
+        let raw = view
+            .entities
+            .get(&rtxn, message_id.as_bytes())?
+            .expect("session MESSAGE exists")
+            .into_owned();
+        Ok((turns, messages, parents, raw))
+    };
+
+    let before = snapshot()?;
+    assert_eq!((before.0, before.1), (1, 1));
+    assert_eq!(before.2.len(), 1, "one MESSAGE has one TURN parent");
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+            .len(),
+        0,
+        "off-record retries remain overlay-only",
+    );
+
+    dispatcher
+        .dispatch(stamped("divergent overwrite"))
+        .expect_err("same-id divergent session retry must be refused");
+    let after = snapshot()?;
+    assert_eq!(
+        after, before,
+        "refusal leaves the composed transcript unchanged"
+    );
+
+    drop(dispatcher);
+    session.close()?;
+    Ok(())
+}
+
+/// The host-only session adapter preserves the witness gate's typed denial.
+/// An exact actor-bound Proposed row is policy, not an invariant failure, and
+/// it stages no private transcript artifact.
+#[test]
+fn session_speech_preserves_typed_actor_ceiling_denial() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xBD);
+    install_exact_actor_ceiling(&vault, actor, "proposed")?;
+    let session = vault.off_record_session_vault().enter(
+        "session-speech-typed-denial",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-session-typed-denial",
+    )?;
+
+    let error = dispatcher
+        .dispatch(
+            SelfCall::Speak(SelfSpeechCall::new("must be denied"))
+                .with_bridge_stamp(0, 1_719_000_000_000),
+        )
+        .expect_err("exact Proposed ceiling clamps transcript writes");
+    assert!(matches!(
+        error,
+        Error::GateWriteRejected {
+            outcome: "pending",
+            ref reason_codes,
+        } if reason_codes == &vec!["gate.pending.actor_ceiling"]
+    ));
+    let view = session.read_view()?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        view.type_index
+            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
+            .count(),
+        0,
+    );
+    assert_eq!(
+        view.type_index
+            .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_TURN])?
+            .count(),
+        0,
+    );
+    drop(rtxn);
+    drop(view);
+    drop(dispatcher);
+    session.close()?;
+    Ok(())
+}
+
+/// The same host-bound identity is used when a session was already on record
+/// at run entry. The continuation shell changes the conversation, not the
+/// run-derived TURN or MESSAGE retry semantics.
+#[test]
+fn on_record_session_speech_retry_also_uses_one_deterministic_turn() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xBC);
+    let session = vault.off_record_session_vault().enter(
+        "session-speech-on-record-idempotency",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    session.flip_on_record()?;
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-session-on-record-idempotency",
+    )?;
+    let stamped = |text: &str| {
+        SelfCall::Speak(SelfSpeechCall::new(text)).with_bridge_stamp(4, 1_719_000_004_000)
+    };
+
+    dispatcher.dispatch(stamped("one durable bubble"))?;
+    dispatcher.dispatch(stamped("one durable bubble"))?;
+    let message_id = executor_speech_message_id("run-session-on-record-idempotency", 4)?;
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        1
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+            .len(),
+        1,
+    );
+    assert_eq!(
+        vault
+            .edges_out(&message_id)?
+            .into_iter()
+            .filter(|edge| edge.kind == crate::edge::EdgeKind::PartOf)
+            .count(),
+        1,
+    );
+    dispatcher
+        .dispatch(stamped("divergent durable overwrite"))
+        .expect_err("post-flip divergent retry is refused");
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        1
+    );
+
+    drop(dispatcher);
+    session.close()?;
+    Ok(())
+}
+
+/// Two runs are two conversations: the derived shell is a function of the run
+/// ref, so one run's speech can never append to another's turn.
+#[test]
+fn canonical_speech_shells_are_per_run() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xB9);
+    for run_ref in ["run-alpha", "run-beta"] {
+        HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            run_ref,
+        )?
+        .dispatch(
+            SelfCall::Speak(SelfSpeechCall::new("hello")).with_bridge_stamp(0, 1_719_000_000_000),
+        )?;
+    }
+
+    let alpha = crate::code_run::canonical_speech_conversation_id("run-alpha")?;
+    let beta = crate::code_run::canonical_speech_conversation_id("run-beta")?;
+    assert_ne!(alpha, beta);
+    for shell in [alpha, beta] {
+        assert_eq!(
+            vault.get_entity_type(&shell)?,
+            Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+        );
+    }
+    assert_eq!(message_entity_count(&vault)?, 2);
+    assert_eq!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TURN)?
+            .len(),
+        2,
+        "one turn per run"
+    );
+    Ok(())
+}
+
+fn message_entity_count(vault: &Vault) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = 0_usize;
+    for row in vault
+        .store
+        .type_index
+        .prefix_iter(&rtxn, &[crate::registry::ENTITY_TYPE_MESSAGE])?
+    {
+        row?;
+        rows += 1;
+    }
+    Ok(rows)
+}
+
+fn gate_decision_rows(vault: &Vault) -> Result<usize> {
+    Ok(vault.store.gate_decisions(100)?.len())
 }

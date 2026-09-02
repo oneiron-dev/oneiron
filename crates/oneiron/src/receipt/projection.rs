@@ -13,6 +13,16 @@ use crate::Vault;
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::outbound::OutboundIntentSource;
+
+/// Receipt field carrying the O2 trigger source. Emitters write it as a bare
+/// key (`receipt/ledgers.rs`), so this is a reader-side name for the same
+/// string, not a new vocabulary entry.
+const FIELD_INTENT_SOURCE: &str = "intent_source";
+
+/// Pinned deep-link prefix for a commitment-sourced receipt trigger. The full
+/// door target is `commitment:<32 case-insensitive hex chars>`.
+pub(crate) const COMMITMENT_TRIGGER_PREFIX: &str = "commitment:";
 
 /// Brief-rooted receipt projection for the B2 RS4 project view.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,6 +532,51 @@ fn direct_intent_ref(receipt: &ReceiptRecord) -> Option<String> {
     field_ref(receipt, FIELD_INTENT_REF)
         .map(str::to_owned)
         .or_else(|| trigger_ref_with_prefix(receipt, "intent:"))
+}
+
+/// Resolves the commitment a receipt was triggered by, as the stable
+/// `commitment:<32 hex>` deep-link target the view layer can follow.
+///
+/// Kept beside the `brief:` / `run:` / `intent:` readers because it is the
+/// same thing they are — a trigger-prefix reader over an already-projected
+/// [`ReceiptRecord`] — and splitting the four apart is how one of them
+/// quietly acquires a different notion of what a trigger ref is.
+///
+/// The SOURCE gate is primary. `intent_source` decides, and a receipt whose
+/// source is not a commitment is `Ok(None)` no matter how its trigger happens
+/// to be spelled. The fields map is serde-defaulted, so an absent or
+/// unparseable `intent_source` is a valid receipt shape, not an error.
+///
+/// Once the source says commitment, a MISSING or differently-prefixed trigger
+/// is still `Ok(None)`: landed producers do not enforce the prefix (SPINE-COMM
+/// owns that producer-side rule) and this door tolerates their legacy rows
+/// rather than turning old receipts into read failures. What it will NOT do is
+/// hand back a `commitment:` ref it could not validate — a present-but-broken
+/// suffix is a typed error, because that is a producer bug and swallowing it
+/// would render an unfollowable link.
+///
+/// # Errors
+///
+/// [`crate::Error::InvalidKey`] when the `commitment:` prefix is present but
+/// its single suffix is not one non-empty [`EntityId`] hex string.
+pub(crate) fn commitment_trigger_ref(receipt: &ReceiptRecord) -> Result<Option<String>> {
+    let source = receipt
+        .fields
+        .get(FIELD_INTENT_SOURCE)
+        .and_then(|value| OutboundIntentSource::parse(value));
+    if source != Some(OutboundIntentSource::Commitment) {
+        return Ok(None);
+    }
+    let Some(trigger) = receipt.trigger_ref.as_deref() else {
+        return Ok(None);
+    };
+    // Exactly ONE prefix comes off, so `commitment:commitment:<hex>` fails
+    // instead of resolving to the id buried inside it.
+    let Some(suffix) = trigger.strip_prefix(COMMITMENT_TRIGGER_PREFIX) else {
+        return Ok(None);
+    };
+    EntityId::from_hex(suffix)?;
+    Ok(Some(trigger.to_owned()))
 }
 
 fn receipt_counterparty_ref(receipt: &ReceiptRecord) -> Option<String> {

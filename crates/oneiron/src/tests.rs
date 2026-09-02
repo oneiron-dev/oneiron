@@ -214,6 +214,27 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
+/// Seeds one MESSAGE row for a fixture that only needs the row to EXIST.
+///
+/// ONE-1686 closed the public raw MESSAGE door — a MESSAGE body is a gated
+/// witness envelope now — so these fixtures carry canonical envelope bytes and
+/// go through the crate's test-only seeding door instead of `put_entity`. They
+/// deliberately do NOT witness: a real witness call would also mint the
+/// conversation, turn and edges these tests are counting.
+fn seed_message_fixture(vault: &Vault, id: &EntityId, content: &str, at: u64) -> Result<()> {
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "companion",
+        "dialogue",
+        content,
+        true,
+        0,
+    )?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(id, test_time_range(at, at), at, &body)
+        .commit()
+}
+
 fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     let waker = std::task::Waker::noop();
     let mut context = std::task::Context::from_waker(waker);
@@ -980,7 +1001,8 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
         serde_json::json!([
             "historical_loro_updates",
             "historical_loro_snapshots",
-            "derived_carriers"
+            "derived_carriers",
+            "redirect_table"
         ])
     );
     assert_eq!(job["retry_state"]["attempt_count"], 0);
@@ -995,6 +1017,90 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
     let receipt = receipt_body(&receipt_raw);
     assert_eq!(receipt["sweep_queued_at"].as_u64(), Some(queued_at));
     assert!(receipt["sweep_complete_at"].is_null());
+    Ok(())
+}
+
+/// ARCH-0055 §9 (r6) end to end: hard-erasing a canonical head empties its
+/// redirect shell, widens the erasure's sweep scope to cover the shell's
+/// historical carriers, drops the author stamp from the type-76 event the
+/// walk touched — and does NOT turn the shell into a deletion (§10:
+/// merge-away is not deletion).
+#[test]
+fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&actor, &survivor, &loser] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(200, 200),
+            201,
+            b"cascade fixture body",
+        )?;
+    }
+
+    let event = match vault.apply_identity_topology_op(
+        &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![loser],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        }),
+        &crate::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(actor, EdgeActorClass::Human)),
+        202,
+    )? {
+        crate::identity_topology::IdentityOpOutcome::Applied { event, .. } => event,
+        outcome => panic!("auto merge must apply, got {outcome:?}"),
+    };
+    assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
+    assert!(!vault.get(&loser)?.expect("shell body").is_empty());
+
+    let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
+    assert!(outcome.existed);
+
+    // The leak r6 §9 names: neither the head nor its shell may still read.
+    assert_eq!(vault.get(&survivor)?, None);
+    assert_eq!(vault.get(&loser)?.expect("shell row").len(), 0);
+    assert_eq!(vault.count_dangling_redirect_payloads()?, 0);
+
+    // §10: the shell was EMPTIED, not deleted — its row survives and it
+    // carries no hard-delete marker of its own.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.local_hard_delete_marker_exists_in_txn(&rtxn, &survivor)?);
+    assert!(!vault.local_hard_delete_marker_exists_in_txn(&rtxn, &loser)?);
+    drop(rtxn);
+
+    // The shell rides the head's `h:` row, or its historical carriers are
+    // never swept and the bytes survive in history.
+    let rows = hard_erase_sweep_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+    let scoped: BTreeSet<String> = job["scope"]["entity_ids"]
+        .as_array()
+        .expect("entity_ids array")
+        .iter()
+        .map(|hex| hex.as_str().expect("hex string").to_owned())
+        .collect();
+    assert_eq!(scoped, BTreeSet::from([survivor.to_hex(), loser.to_hex()]));
+
+    // The author-stamp rider: the touched merge event loses its actor while
+    // staying the same effective ledger event (same seq, same action, and a
+    // shell state the fold still speaks for).
+    let raw = vault.get_raw(&event)?.expect("ledger event");
+    let stored = crate::identity_topology::decode_identity_topology_event_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    assert_eq!(stored.actor, None);
+    assert_eq!(
+        stored.action,
+        crate::identity_topology::StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        }
+    );
     Ok(())
 }
 
@@ -8434,19 +8540,7 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
 fn message_vad_annotation_round_trip() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message-level affect",
-        "spkr": "assistant",
-        "at": 110_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(110, 110),
-        110,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message-level affect", 110)?;
     let raw_before = vault.get_raw(&message)?.expect("message raw body");
 
     let annotation = VadAnnotation::new(
@@ -8497,13 +8591,7 @@ fn fresh_default_policy_allows_internal_vad_annotations() -> Result<()> {
         120,
         b"turn",
     )?;
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(121, 121),
-        121,
-        b"message",
-    )?;
+    seed_message_fixture(&vault, &message, "message", 121)?;
 
     let turn_annotation = VadAnnotation::new(
         Vad {
@@ -8633,19 +8721,7 @@ fn batch_delete_removes_turn_vad_annotation_claim_and_edges() -> Result<()> {
 fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message soft delete affect",
-        "spkr": "assistant",
-        "at": 131_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(131, 131),
-        131,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message soft delete affect", 131)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.2,
@@ -8716,19 +8792,7 @@ fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -
 
     let (_annotate_dir, annotate_vault) = open_test_vault();
     let message = EntityId::now();
-    let message_body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim shell",
-        "spkr": "assistant",
-        "at": 134_u64,
-    }))
-    .expect("encode message body");
-    annotate_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(134, 134),
-        134,
-        &message_body,
-    )?;
+    seed_message_fixture(&annotate_vault, &message, "message claim shell", 134)?;
     let first = VadAnnotation::new(
         Vad {
             valence: 0.15,
@@ -8819,19 +8883,7 @@ fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
 
     let (_claim_dir, claim_vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim residue",
-        "spkr": "assistant",
-        "at": 132_u64,
-    }))
-    .expect("encode message body");
-    claim_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(132, 132),
-        132,
-        &body,
-    )?;
+    seed_message_fixture(&claim_vault, &message, "message claim residue", 132)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.3,
@@ -16641,7 +16693,8 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
         serde_json::json!([
             "historical_loro_updates",
             "historical_loro_snapshots",
-            "derived_carriers"
+            "derived_carriers",
+            "redirect_table"
         ])
     );
 
