@@ -144,6 +144,10 @@ pub struct TaskCancelReceipt {
     /// actually stopped" bit — a request is a question, and the worker may
     /// still refuse it.
     pub cancel_requested: bool,
+    /// ONE-1896 rung 2: a verified owner took the nonrefusable path and the
+    /// runtime authored terminal cancellation receipts. Always false for the
+    /// cooperative verb, which cannot force by construction.
+    pub forced: bool,
 }
 
 /// Result of persisting one render-tier task acknowledgement.

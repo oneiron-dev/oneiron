@@ -4,10 +4,13 @@ use crate::Vault;
 use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
 };
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{
+    AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, AttemptState,
+    SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
+};
 use crate::context_board::{
-    JobPresence, TaskBoardStatus, TaskIntentPresence, TasksSection, fold_up_status, task_is_acked,
-    task_is_cancelled,
+    CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TasksSection,
+    fold_up_status, one_line_token, task_is_acked, task_is_cancelled,
 };
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
@@ -50,6 +53,15 @@ fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
         .into_iter()
         .map(attempt_hex)
         .collect();
+    // ONE-1896 §1: the owner's own surface is where repeated refusal has to
+    // land, so the signal is derived HERE, from the durable rows this scan
+    // already read, and folded onto the job it belongs to.
+    let pathology_by_attempt: BTreeMap<String, CancelRejectionPathology> = records
+        .iter()
+        .filter_map(|record| {
+            cancel_rejection_pathology(record).map(|pathology| (attempt_hex(record.id), pathology))
+        })
+        .collect();
     let tree = RunTreeAdapter::new(vault).read()?;
     let mut nodes = Vec::new();
     collect_run_tree_nodes(&tree.roots, &mut nodes);
@@ -65,6 +77,7 @@ fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
         let Some(job) = JobPresence::from_run_tree_node(node) else {
             continue;
         };
+        let job = job.with_cancel_pathology(pathology_by_attempt.get(&node.attempt_id).cloned());
         match task_refs_by_attempt.get(&node.attempt_id) {
             Some(Some(task_ref)) => realizing.entry(task_ref.clone()).or_default().push(job),
             _ if node.worker_kind == BRIDGE_OUTBOUND_ATTEMPT_KIND => {}
@@ -72,6 +85,40 @@ fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
         }
     }
     Ok(JobBacklinks { realizing, bare })
+}
+
+/// The owner-visible refusal signal for one ATTEMPT, or `None` when the worker
+/// is behaving.
+///
+/// Only crossing [`SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD`] surfaces
+/// anything: one "not yet, I am mid-commit" is a legitimate answer and must not
+/// clutter the board. A settled row is silent too — an attempt that refused and
+/// then finished is history, not something an owner can still act on.
+fn cancel_rejection_pathology(record: &AttemptRecord) -> Option<CancelRejectionPathology> {
+    if record.state.is_terminal() || !record.soft_cancel_pathology() {
+        return None;
+    }
+    // The worker's OWN last word on why it will not stop, so the owner is not
+    // acting on a bare number. Status first, refusal reason second: the status
+    // is what the protocol asks a refusing worker to report.
+    let last_status = record
+        .cancel_receipts()
+        .iter()
+        .rev()
+        .find(|receipt| receipt.kind == AttemptCancelReceiptKind::SoftRejected)
+        .and_then(|receipt| {
+            receipt
+                .status
+                .clone()
+                .or_else(|| receipt.reason.clone())
+                .map(|line| one_line_token(&line))
+        });
+    Some(CancelRejectionPathology {
+        attempt_id: attempt_hex(record.id),
+        rejections: record.cancel_pressure().rejections,
+        threshold: SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
+        last_status,
+    })
 }
 
 /// Number of TASK ids fetched per sanctioned `entities_by_type_page` call.

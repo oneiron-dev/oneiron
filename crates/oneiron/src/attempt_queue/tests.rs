@@ -6,12 +6,12 @@ use super::engine::RETRY_REASON_UNSPECIFIED;
 use super::telemetry::emit_attempt_queue_cleanup_span;
 use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
 use super::validate::{
-    ERR_CANCEL_ACTOR_IS_RUNTIME, ERR_FAILURE_REASON_EMPTY, ERR_HANDOFF_WITHOUT_RESUME_POINT,
-    ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITHOUT_LEASE, ERR_LEASE_TIMEOUT_ZERO,
-    ERR_MANIFEST_FULL, ERR_MANIFEST_REFERENCE_EMPTY, ERR_MANIFEST_REFERENCE_HAS_AT,
-    ERR_MANIFEST_REFERENCE_TOO_LONG, ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG,
-    ERR_RUN_ID_TOO_LONG, MAX_FAILURE_REASON_LEN, MAX_MANIFEST_REFERENCE_LEN,
-    MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN,
+    ERR_CANCEL_ACTOR_IS_RUNTIME, ERR_CANCEL_RECEIPTS_FULL, ERR_FAILURE_REASON_EMPTY,
+    ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITHOUT_LEASE,
+    ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL, ERR_MANIFEST_REFERENCE_EMPTY,
+    ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG, ERR_MANIFEST_VERSION_EMPTY,
+    ERR_MANIFEST_VERSION_TOO_LONG, ERR_RUN_ID_TOO_LONG, MAX_FAILURE_REASON_LEN,
+    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN,
 };
 use super::*;
 use crate::error::{Error, Result};
@@ -2893,6 +2893,7 @@ fn accept_landing_at(
         trigger,
         status: Some("green + pushed + packet-only".to_owned()),
         resume_point: None,
+        request_sequence: None,
         now,
     })?
     else {
@@ -3163,6 +3164,7 @@ fn repeated_soft_rejection_stays_nonterminal_and_becomes_observable_pathology() 
             attempt_count: leased.attempt_count,
             reason: "mid-write; landing now would corrupt the packet".to_owned(),
             status: Some("red + unpushed".to_owned()),
+            request_sequence: None,
             now: 20 + u64::from(round),
         })?;
         assert_eq!(
@@ -3221,8 +3223,7 @@ fn repeated_soft_rejection_stays_nonterminal_and_becomes_observable_pathology() 
     // Only the hard rung ends it, and the refusal history survives the stop.
     let ForceCancelOutcome::Cancelled(forced) = queue.force_cancel(ForceAttemptCancel {
         id: leased.id,
-        authority: ForceCancelAuthority::from_standing(CancelStanding::Authority, "owner-1")
-            .expect("owner standing forces"),
+        authority: ForceCancelAuthority::owner("owner-1").expect("verified owner forces"),
         reason: Some("refused to land three times".to_owned()),
         now: 30,
     })?
@@ -3278,6 +3279,7 @@ fn soft_request_without_standing_changes_nothing() -> Result<()> {
                 attempt_count: leased.attempt_count,
                 reason: "nothing to answer".to_owned(),
                 status: None,
+                request_sequence: None,
                 now: 13,
             })
             .expect_err("a refusal without a request is invalid"),
@@ -3293,31 +3295,45 @@ fn hard_force_is_authority_only_and_runtime_authored() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
 
-    // No non-authority standing can even MINT the authority token, so an
-    // unauthorized force is impossible to express, not merely refused.
+    // Standing is the SOFT rung's currency and buys nothing here: there is no
+    // constructor that turns a `CancelStanding` into force authority, so an
+    // unauthorized force is impossible to express, not merely refused. What a
+    // non-authority actor CAN do is ask, and that door stays open.
     for standing in [
         CancelStanding::PeerAgent,
         CancelStanding::Healer,
         CancelStanding::Automation,
-        CancelStanding::None,
     ] {
+        assert!(standing.may_request(), "{} may ask", standing.as_str());
+    }
+    // Even the verified-owner mint refuses a malformed identity BEFORE it can
+    // reach a durable row (ONE-1896 §7).
+    for forged in ["", ATTEMPT_RUNTIME_ACTOR, &"o".repeat(129)] {
         assert!(
-            ForceCancelAuthority::from_standing(standing, "impostor").is_none(),
-            "{} may ask but never force",
-            standing.as_str()
+            ForceCancelAuthority::owner(forged).is_err(),
+            "an unreadable or runtime-impersonating owner cannot mint authority"
         );
     }
 
     // Owner grounds: terminal, with the authority's own actor on the receipt.
     let owned = leased_attempt(&queue, "turn:force-owner")?;
+    // A malformed owner identity cannot reach the row at all: the mint fails,
+    // so no half-written terminal receipt (which `decode_record` would then
+    // refuse to read back) is ever persisted.
+    let before = queue.get(owned.id)?.expect("row");
+    assert!(ForceCancelAuthority::owner("").is_err());
+    assert_eq!(
+        queue.get(owned.id)?.expect("row"),
+        before,
+        "a refused authority leaves the record byte-identical"
+    );
     queue.append_manifest_entry(
         owned.id,
         ManifestEntry::new(ManifestKind::Skill, "skill.cancel", "v1", 12),
     )?;
     let ForceCancelOutcome::Cancelled(forced) = queue.force_cancel(ForceAttemptCancel {
         id: owned.id,
-        authority: ForceCancelAuthority::from_standing(CancelStanding::Authority, "owner-1")
-            .expect("owner standing"),
+        authority: ForceCancelAuthority::owner("owner-1").expect("verified owner"),
         reason: Some("owner reclaimed the machine".to_owned()),
         now: 20,
     })?
@@ -3637,6 +3653,7 @@ fn sticky_completion_and_cancel_doors_share_one_lease_fence() -> Result<()> {
                 trigger: LandingTrigger::CancelRequest,
                 status: None,
                 resume_point: None,
+                request_sequence: None,
                 now: 13,
             })
             .expect_err("a stranger cannot land someone else's attempt"),
@@ -3651,6 +3668,7 @@ fn sticky_completion_and_cancel_doors_share_one_lease_fence() -> Result<()> {
                 attempt_count: leased.attempt_count + 1,
                 reason: "still working".to_owned(),
                 status: None,
+                request_sequence: None,
                 now: 13,
             })
             .expect_err("a stale lease generation cannot answer"),
@@ -3683,8 +3701,7 @@ fn sticky_completion_and_cancel_doors_share_one_lease_fence() -> Result<()> {
     assert!(matches!(
         queue.force_cancel(ForceAttemptCancel {
             id: leased.id,
-            authority: ForceCancelAuthority::from_standing(CancelStanding::Authority, "owner-1")
-                .expect("owner standing"),
+            authority: ForceCancelAuthority::owner("owner-1").expect("verified owner"),
             reason: None,
             now: 15,
         })?,
@@ -3694,6 +3711,563 @@ fn sticky_completion_and_cancel_doors_share_one_lease_fence() -> Result<()> {
         queue.get(leased.id)?.expect("row").state,
         AttemptState::Completed,
         "a completed attempt is not retroactively cancelled"
+    );
+    Ok(())
+}
+
+/// Proof 8: a soft request is only ever recorded where a worker can answer it.
+///
+/// A pre-lease row has no response door at all — `accept_landing` and
+/// `reject_cancel` both demand the lease — so a pending ask against one would
+/// be an obligation nobody holds, and its permanent `pending` would read as a
+/// worker refusing to answer.
+#[test]
+fn a_soft_request_is_refused_where_no_worker_can_answer() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    // Claim FIRST, while nothing else is ready, so the lease lands on this row.
+    let leased = leased_attempt(&queue, "turn:pre-lease-lease")?;
+    let RetryOutcome::Retried(scheduled) = queue.retry(RetryAttempt {
+        id: leased.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: leased.attempt_count,
+        backoff_until: 5_000,
+        last_error: None,
+        now: 12,
+    })?;
+    assert_eq!(scheduled.state, AttemptState::Scheduled);
+
+    let EnqueueOutcome::Enqueued(queued) =
+        queue.enqueue(enqueue("sync", Some("turn:pre-lease-queued"), 13))?
+    else {
+        panic!("a fresh dedupe key enqueues");
+    };
+    let EnqueueOutcome::Enqueued(to_pause) =
+        queue.enqueue(enqueue("sync", Some("turn:pre-lease-paused"), 14))?
+    else {
+        panic!("a fresh dedupe key enqueues");
+    };
+    let paused = queue
+        .intervene(InterveneAttempt {
+            id: to_pause.id,
+            kind: AttemptInterventionKind::Pause,
+            actor: "operator".to_owned(),
+            note: None,
+            now: 15,
+        })?
+        .record;
+    assert_eq!(paused.state, AttemptState::Paused);
+
+    for id in [queued.id, paused.id, scheduled.id] {
+        let before = queue.get(id)?.expect("row");
+        let CancelRequestOutcome::NotRunning(unchanged) =
+            queue.request_cancel(soft_request(id, "peer-1", CancelStanding::PeerAgent))?
+        else {
+            panic!(
+                "a {} attempt has no worker to answer",
+                before.state.as_str()
+            );
+        };
+        assert_eq!(unchanged, before);
+        assert_eq!(
+            queue.get(id)?.expect("row"),
+            before,
+            "a request nobody can answer leaves no durable trace"
+        );
+        assert_eq!(before.cancel_pressure(), AttemptCancelPressure::default());
+        assert!(before.cancel_receipts().is_empty());
+    }
+
+    // The pre-lease lane keeps its OWN stop: queue cancellation, which needs no
+    // worker because there is none.
+    let cancelled = queue.intervene(InterveneAttempt {
+        id: queued.id,
+        kind: AttemptInterventionKind::Cancel,
+        actor: "owner".to_owned(),
+        note: None,
+        now: 16,
+    })?;
+    assert_eq!(cancelled.effect, AttemptInterventionEffect::Cancelled);
+    assert_eq!(cancelled.record.state, AttemptState::Cancelled);
+    Ok(())
+}
+
+/// Proof 9: with several asks outstanding, each answer consumes exactly the
+/// request it names — not the newest one.
+#[test]
+fn each_answer_consumes_the_request_it_names_not_the_newest() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let leased = leased_attempt(&queue, "turn:two-asks")?;
+
+    let CancelRequestOutcome::Requested {
+        record: after_first,
+        ..
+    } = queue.request_cancel(RequestAttemptCancel {
+        id: leased.id,
+        actor: "peer-1".to_owned(),
+        standing: CancelStanding::PeerAgent,
+        trigger: LandingTrigger::CancelRequest,
+        reason: Some("the spawner wants the slot back".to_owned()),
+        now: 12,
+    })?
+    else {
+        panic!("a peer with standing may ask");
+    };
+    let first_sequence = after_first
+        .cancel_receipts()
+        .last()
+        .expect("request receipt")
+        .sequence;
+
+    let CancelRequestOutcome::Requested {
+        record: after_second,
+        pressure,
+    } = queue.request_cancel(RequestAttemptCancel {
+        id: leased.id,
+        actor: "healer-1".to_owned(),
+        standing: CancelStanding::Healer,
+        trigger: LandingTrigger::BudgetWarning,
+        reason: Some("quota nearly spent".to_owned()),
+        now: 13,
+    })?
+    else {
+        panic!("a second actor may ask too");
+    };
+    let second_sequence = after_second
+        .cancel_receipts()
+        .last()
+        .expect("request receipt")
+        .sequence;
+    assert_eq!(pressure.pending, 2, "two asks are outstanding");
+    assert_ne!(first_sequence, second_sequence);
+
+    // Refuse the SECOND ask by name. Recency-pairing consumed the newest row
+    // no matter which was answered, so it could not tell these two apart.
+    let rejection = queue.reject_cancel(RejectAttemptCancel {
+        id: leased.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: leased.attempt_count,
+        reason: "budget is fine; the peer's slot is not my problem".to_owned(),
+        status: Some("amber + unpushed".to_owned()),
+        request_sequence: Some(second_sequence),
+        now: 14,
+    })?;
+    assert_eq!(rejection.answered_request_sequence, second_sequence);
+    assert_eq!(
+        rejection.pressure.pending, 1,
+        "one refusal answers exactly one request"
+    );
+    assert_eq!(rejection.pressure.rejections, 1);
+    assert_eq!(rejection.pressure.requests, 2);
+    let refusal = rejection
+        .record
+        .cancel_receipts()
+        .last()
+        .expect("refusal receipt");
+    assert_eq!(
+        refusal.trigger,
+        Some(LandingTrigger::BudgetWarning),
+        "the refusal carries the trigger of the ask it answered"
+    );
+    assert_eq!(refusal.request_sequence, Some(second_sequence));
+
+    // The peer's ask is still owed an answer, so the landing answers THAT one:
+    // its actor and its trigger, not the refused warning's.
+    let landing = accept_landing_at(&queue, &leased, LandingTrigger::LeaseWarning, 15)?;
+    let record = landing.landing().expect("landing record");
+    assert_eq!(record.requested_by, "peer-1");
+    assert_eq!(
+        record.trigger,
+        LandingTrigger::CancelRequest,
+        "the answered request owns the provenance, not the worker's label"
+    );
+    let accepted = landing.cancel_receipts().last().expect("landing receipt");
+    assert_eq!(accepted.request_sequence, Some(first_sequence));
+    assert_eq!(
+        landing.cancel_pressure().pending,
+        0,
+        "landing satisfies every outstanding ask"
+    );
+
+    // Answering a request that is not outstanding is typed, never a silent
+    // re-answer of somebody else's ask.
+    let other = leased_attempt(&queue, "turn:unknown-ask")?;
+    queue.request_cancel(soft_request(other.id, "peer-2", CancelStanding::PeerAgent))?;
+    assert_invalid_transition(
+        queue
+            .reject_cancel(RejectAttemptCancel {
+                id: other.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: other.attempt_count,
+                reason: "refusing an ask that was never made".to_owned(),
+                status: None,
+                request_sequence: Some(9_999),
+                now: 16,
+            })
+            .expect_err("an unknown request cannot be answered"),
+        "cancel_reject",
+        "unknown_request",
+    );
+    Ok(())
+}
+
+/// Drives one attempt into LANDING with its append-only history at exactly the
+/// non-terminal cap, so only the reserved terminal slot remains.
+fn landing_at_receipt_cap(queue: &AttemptQueue<'_>, dedupe_key: &str) -> Result<AttemptRecord> {
+    let leased = leased_attempt(queue, dedupe_key)?;
+    queue.request_cancel(soft_request(leased.id, "peer-1", CancelStanding::PeerAgent))?;
+    let mut record = accept_landing_at(queue, &leased, LandingTrigger::CancelRequest, 13)?;
+    let mut marker = 0_u64;
+    while record.cancel_receipts().len() < MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS {
+        marker += 1;
+        record = queue.record_resume_point(RecordAttemptResumePoint {
+            id: leased.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: leased.attempt_count,
+            resume_point: AttemptResumePoint::new(format!("step-{marker}"), 14),
+            now: 14,
+        })?;
+    }
+    assert_eq!(
+        record.cancel_receipts().len(),
+        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
+    );
+    Ok(record)
+}
+
+/// Proof 10: a full history bounds the EVIDENCE, never the settlement.
+///
+/// The reserved last slot is why: without it a worker could refuse its way to
+/// the cap and become permanently unsettleable — no landing finish, no hard
+/// force, and no lease-expiry cleanup.
+#[test]
+fn a_full_receipt_history_still_settles_every_terminal_door() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    assert_eq!(
+        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS + TERMINAL_CANCEL_RECEIPT_RESERVE,
+        MAX_ATTEMPT_CANCEL_RECEIPTS
+    );
+
+    // 1. Landing finish at the cap.
+    let landing = landing_at_receipt_cap(&queue, "turn:cap-landed")?;
+    // Non-terminal evidence refuses at the cap rather than dropping a row.
+    assert!(matches!(
+        queue
+            .record_resume_point(RecordAttemptResumePoint {
+                id: landing.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: landing.attempt_count,
+                resume_point: AttemptResumePoint::new("one-too-many", 15),
+                now: 15,
+            })
+            .expect_err("a full history refuses non-terminal rows"),
+        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_CANCEL_RECEIPTS_FULL
+    ));
+    let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {
+        id: landing.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: landing.attempt_count,
+        hand_off: false,
+        scheduled_at: None,
+        now: 16,
+    })?
+    else {
+        panic!("a landing at the cap still finishes");
+    };
+    assert_eq!(landed.state, AttemptState::Cancelled);
+    assert_eq!(landed.cancel_receipts().len(), MAX_ATTEMPT_CANCEL_RECEIPTS);
+    let terminal = landed.cancel_receipts().last().expect("terminal receipt");
+    assert_eq!(terminal.kind, AttemptCancelReceiptKind::Landed);
+    assert!(terminal.kind.is_terminal());
+    assert_eq!(
+        landed.cancellation().expect("cancellation").mode,
+        CancelMode::Landed
+    );
+    // Prior evidence was preserved, not overwritten.
+    assert_eq!(
+        landed.cancel_receipts()[0].kind,
+        AttemptCancelReceiptKind::SoftRequested
+    );
+    assert_eq!(queue.get(landed.id)?.expect("row"), landed);
+
+    // 2. Hard force at the cap.
+    let forced_landing = landing_at_receipt_cap(&queue, "turn:cap-forced")?;
+    let ForceCancelOutcome::Cancelled(forced) = queue.force_cancel(ForceAttemptCancel {
+        id: forced_landing.id,
+        authority: ForceCancelAuthority::owner("owner-1").expect("verified owner"),
+        reason: Some("owner reclaimed the machine".to_owned()),
+        now: 17,
+    })?
+    else {
+        panic!("the hard rung is never blocked by a full history");
+    };
+    assert_eq!(forced.cancel_receipts().len(), MAX_ATTEMPT_CANCEL_RECEIPTS);
+    assert_eq!(
+        forced
+            .cancel_receipts()
+            .last()
+            .expect("terminal receipt")
+            .kind,
+        AttemptCancelReceiptKind::ForceCancelled
+    );
+    assert_eq!(
+        forced.cancellation().expect("cancellation").actor,
+        "owner-1"
+    );
+    assert_eq!(queue.get(forced.id)?.expect("row"), forced);
+
+    // 3. Lease-expiry cleanup at the cap.
+    let expiring = landing_at_receipt_cap(&queue, "turn:cap-expired")?;
+    let report = queue.cleanup_leases(CleanupAttemptLeases {
+        now: 10_000,
+        lease_timeout_secs: 60,
+    })?;
+    assert_eq!(report.landing_force_cancelled, 1);
+    let reclaimed = queue.get(expiring.id)?.expect("row");
+    assert_eq!(reclaimed.state, AttemptState::Cancelled);
+    assert_eq!(
+        reclaimed.cancel_receipts().len(),
+        MAX_ATTEMPT_CANCEL_RECEIPTS
+    );
+    let terminal = reclaimed
+        .cancel_receipts()
+        .last()
+        .expect("terminal receipt");
+    assert_eq!(terminal.kind, AttemptCancelReceiptKind::ForceCancelled);
+    assert_eq!(terminal.grounds, Some(ForceCancelGrounds::LeaseExpiry));
+    assert_eq!(
+        reclaimed.cancellation().expect("cancellation").actor,
+        ATTEMPT_RUNTIME_ACTOR
+    );
+    Ok(())
+}
+
+/// Proof 11: the dialed reserve is real accounting at every budget size —
+/// including the sizes where there is nothing to reserve.
+#[test]
+fn the_landing_reserve_dial_is_exact_and_fails_closed_when_spent() -> Result<()> {
+    // Integer percent, rounded DOWN, so the reserve can never exceed the
+    // budget it is carved from.
+    assert_eq!(
+        AttemptLandingReserve::dialed(0, LANDING_RESERVE_PERCENT),
+        AttemptLandingReserve::default()
+    );
+    let short = AttemptLandingReserve::dialed(9, LANDING_RESERVE_PERCENT);
+    assert_eq!(short.reserve_units, 0, "9 units cannot carve a 10% slice");
+    assert_eq!(short.ordinary_limit_units(), 9);
+    assert!(short.is_exhausted());
+    let dialed = AttemptLandingReserve::dialed(100, LANDING_RESERVE_PERCENT);
+    assert_eq!(dialed.reserve_units, 10);
+    assert_eq!(
+        dialed.ordinary_limit_units(),
+        90,
+        "the ordinary meter is built WITHOUT the reserve"
+    );
+
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    // A budget too small to reserve from: landing work fails closed instead of
+    // overdrawing the ordinary limit.
+    let tiny = leased_attempt(&queue, "turn:reserve-tiny")?;
+    let tiny = queue.dial_landing_reserve(DialLandingReserve {
+        id: tiny.id,
+        limit_units: 9,
+        reserve_percent: None,
+        now: 12,
+    })?;
+    assert_eq!(tiny.ordinary_budget_limit_units(), 9);
+    queue.request_cancel(soft_request(tiny.id, "peer-1", CancelStanding::PeerAgent))?;
+    let tiny_landing = accept_landing_at(&queue, &tiny, LandingTrigger::CancelRequest, 13)?;
+    let LandingReserveSpendOutcome::Exhausted {
+        record,
+        requested_units,
+        remaining_units,
+    } = queue.spend_landing_reserve(SpendAttemptLandingReserve {
+        id: tiny_landing.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: tiny_landing.attempt_count,
+        units: 1,
+        now: 14,
+    })?
+    else {
+        panic!("an undialed reserve has nothing to spend");
+    };
+    assert_eq!(requested_units, 1);
+    assert_eq!(remaining_units, 0);
+    assert_eq!(record.landing_reserve().spent_units, 0, "nothing was spent");
+
+    // A dialed budget: ordinary work is metered on 90, landing spends the 10.
+    let full = leased_attempt(&queue, "turn:reserve-full")?;
+    let full = queue.dial_landing_reserve(DialLandingReserve {
+        id: full.id,
+        limit_units: 100,
+        reserve_percent: None,
+        now: 15,
+    })?;
+    assert_eq!(full.ordinary_budget_limit_units(), 90);
+    queue.request_cancel(soft_request(full.id, "peer-1", CancelStanding::PeerAgent))?;
+    let full_landing = accept_landing_at(&queue, &full, LandingTrigger::CancelRequest, 16)?;
+    let LandingReserveSpendOutcome::Spent {
+        remaining_units, ..
+    } = queue.spend_landing_reserve(SpendAttemptLandingReserve {
+        id: full_landing.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: full_landing.attempt_count,
+        units: 10,
+        now: 17,
+    })?
+    else {
+        panic!("landing work spends the reserve it was given");
+    };
+    assert_eq!(remaining_units, 0);
+    let LandingReserveSpendOutcome::Exhausted { record, .. } =
+        queue.spend_landing_reserve(SpendAttemptLandingReserve {
+            id: full_landing.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: full_landing.attempt_count,
+            units: 1,
+            now: 18,
+        })?
+    else {
+        panic!("the reserve is a ceiling, not a suggestion");
+    };
+    assert_eq!(record.landing_reserve().spent_units, 10);
+
+    let FinishLandingOutcome::Landed(landed) = queue.finish_landing(FinishAttemptLanding {
+        id: full_landing.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: full_landing.attempt_count,
+        hand_off: false,
+        scheduled_at: None,
+        now: 19,
+    })?
+    else {
+        panic!("the landing finishes");
+    };
+    let cancellation = landed.cancellation().expect("cancellation");
+    assert_eq!(cancellation.reserve_units, 10);
+    assert_eq!(
+        cancellation.reserve_spent_units, 10,
+        "the terminal receipt reports the settled reserve accounting"
+    );
+    Ok(())
+}
+
+/// Proof 12: both runtime warning rungs are runtime-authored, idempotent per
+/// outstanding ask, and strictly separate from expiry's hard rung.
+#[test]
+fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    // Budget/quota rung.
+    let running = leased_attempt(&queue, "turn:budget-warning")?;
+    let LandingWarningOutcome::LandingRequested(warned) =
+        queue.warn_budget_pressure(WarnAttemptBudgetPressure {
+            id: running.id,
+            now: 12,
+        })?
+    else {
+        panic!("a leased worker can be warned");
+    };
+    assert_eq!(warned.state, AttemptState::Leased, "a warning never stops");
+    let receipt = warned.cancel_receipts().last().expect("warning receipt");
+    assert_eq!(receipt.kind, AttemptCancelReceiptKind::SoftRequested);
+    assert_eq!(receipt.actor, ATTEMPT_RUNTIME_ACTOR);
+    assert_eq!(receipt.trigger, Some(LandingTrigger::BudgetWarning));
+    assert_eq!(
+        receipt.standing, None,
+        "the runtime is not an actor claiming standing"
+    );
+    assert_eq!(warned.cancel_pressure().pending, 1);
+    assert!(matches!(
+        queue.warn_budget_pressure(WarnAttemptBudgetPressure {
+            id: running.id,
+            now: 13,
+        })?,
+        LandingWarningOutcome::AlreadyRequested(_)
+    ));
+    assert_eq!(
+        queue
+            .get(running.id)?
+            .expect("row")
+            .cancel_pressure()
+            .requests,
+        1,
+        "polling pressure records one ask, not a pathology-inflating stream"
+    );
+
+    // A pre-lease row has nobody to warn.
+    let EnqueueOutcome::Enqueued(queued) =
+        queue.enqueue(enqueue("sync", Some("turn:warn-queued"), 14))?
+    else {
+        panic!("enqueue");
+    };
+    assert!(matches!(
+        queue.warn_budget_pressure(WarnAttemptBudgetPressure {
+            id: queued.id,
+            now: 15,
+        })?,
+        LandingWarningOutcome::NotRunning(_)
+    ));
+
+    // Lease rung: the sweep warns inside the window and leaves the already
+    // expired lease to cleanup's hard rung.
+    let (_dir_b, vault_b) = open_queue();
+    let queue_b = AttemptQueue::new(&vault_b);
+    let inside = leased_attempt(&queue_b, "turn:lease-warning")?;
+    let not_due = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
+        now: 12,
+        lease_timeout_secs: 100,
+    })?;
+    assert_eq!(not_due.scanned, 1);
+    assert_eq!(not_due.warned, 0);
+    assert_eq!(not_due.not_due, 1);
+
+    let warned = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
+        now: 100,
+        lease_timeout_secs: 100,
+    })?;
+    assert_eq!(warned.warned, 1);
+    let row = queue_b.get(inside.id)?.expect("row");
+    assert_eq!(
+        row.state,
+        AttemptState::Leased,
+        "a warning is not a reclaim"
+    );
+    assert_eq!(
+        row.cancel_receipts().last().expect("receipt").trigger,
+        Some(LandingTrigger::LeaseWarning)
+    );
+    let repeated = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
+        now: 101,
+        lease_timeout_secs: 100,
+    })?;
+    assert_eq!(repeated.warned, 0);
+    assert_eq!(repeated.already_requested, 1);
+
+    let expired = queue_b.warn_expiring_leases(WarnExpiringAttemptLeases {
+        now: 10_000,
+        lease_timeout_secs: 100,
+    })?;
+    assert_eq!(expired.warned, 0);
+    assert_eq!(
+        expired.expired, 1,
+        "an expired lease belongs to cleanup, not to the warning rung"
+    );
+    // And cleanup still owns stale-lease recovery, unchanged.
+    let cleanup = queue_b.cleanup_leases(CleanupAttemptLeases {
+        now: 10_000,
+        lease_timeout_secs: 100,
+    })?;
+    assert_eq!(cleanup.stale_requeued, 1);
+    assert_eq!(
+        queue_b.get(inside.id)?.expect("row").state,
+        AttemptState::Queued
     );
     Ok(())
 }

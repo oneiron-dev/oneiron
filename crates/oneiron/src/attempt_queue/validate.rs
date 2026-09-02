@@ -13,7 +13,8 @@ use super::types::{
     AttemptCancelState, AttemptEvent, AttemptInterventionKind, AttemptLanding, AttemptRecord,
     AttemptResumePoint, AttemptState, CancelStanding, CleanupAttemptLeases, ForceCancelGrounds,
     LandingTrigger, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_ATTEMPT_EVENTS_PER_RECORD,
-    MAX_ATTEMPT_MANIFEST_ENTRIES, MAX_LANDING_RESERVE_PERCENT, ManifestEntry,
+    MAX_ATTEMPT_MANIFEST_ENTRIES, MAX_LANDING_RESERVE_PERCENT,
+    MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS, ManifestEntry,
 };
 
 const MAX_KIND_LEN: usize = 128;
@@ -73,6 +74,10 @@ pub(super) const ERR_CANCEL_RECEIPTS_FULL: &str =
     "attempt cancel receipts are full; refusal evidence is never dropped";
 pub(super) const ERR_CANCEL_RECEIPT_SEQUENCE: &str =
     "attempt cancel receipt sequence must be strictly increasing";
+pub(super) const ERR_CANCEL_RECEIPT_TERMINAL_ORDER: &str =
+    "a terminal cancel receipt must be the last row, and there may be only one";
+pub(super) const ERR_CANCEL_RECEIPT_REQUEST_REF: &str =
+    "a cancel receipt may only answer an earlier request receipt";
 pub(super) const ERR_RESERVE_PERCENT_RANGE: &str = "landing reserve percent must be in 1..=50";
 pub(super) const ERR_RESERVE_SPEND_ZERO: &str = "landing reserve spend must be > 0";
 pub(super) const ERR_RESERVE_OVERSPENT: &str = "landing reserve spent exceeds the dialed reserve";
@@ -368,11 +373,35 @@ pub(super) fn validate_cancel_state(state: &AttemptCancelState) -> Result<()> {
         return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
     }
     let mut previous_sequence = 0;
-    for receipt in &state.receipts {
+    let last_index = state.receipts.len().saturating_sub(1);
+    for (index, receipt) in state.receipts.iter().enumerate() {
         if receipt.sequence == 0 || receipt.sequence <= previous_sequence {
             return Err(Error::InvalidAttemptQueueRecord(
                 ERR_CANCEL_RECEIPT_SEQUENCE,
             ));
+        }
+        // The reserved terminal slot is spendable exactly once and only at the
+        // end: a settled row that carried a terminal receipt in the middle
+        // would be a row that kept writing history after it stopped, and two
+        // of them would mean one terminal receipt had been overwritten.
+        if receipt.kind.is_terminal() && index != last_index {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_CANCEL_RECEIPT_TERMINAL_ORDER,
+            ));
+        }
+        match receipt.request_sequence {
+            // An answer names a request that is strictly OLDER than itself;
+            // anything else is a receipt pointing forward or at nothing.
+            Some(request_sequence)
+                if !receipt.kind.answers_request()
+                    || request_sequence == 0
+                    || request_sequence >= receipt.sequence =>
+            {
+                return Err(Error::InvalidAttemptQueueRecord(
+                    ERR_CANCEL_RECEIPT_REQUEST_REF,
+                ));
+            }
+            _ => {}
         }
         validate_intervention_actor(&receipt.actor)?;
         validate_optional_cancel_status(receipt.status.as_deref())?;
@@ -407,8 +436,17 @@ pub(super) struct CancelReceiptDraft {
     pub(super) reason: Option<String>,
     pub(super) resume_point: Option<AttemptResumePoint>,
     pub(super) reserve_units: u64,
+    pub(super) request_sequence: Option<u64>,
 }
 
+/// Appends one protocol row, refusing at the cap instead of draining — with the
+/// last slot held for the terminal receipt.
+///
+/// A full history must not make an attempt unsettleable. Non-terminal rows
+/// refuse at [`MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS`], leaving the reserved
+/// slot; `Landed` / `ForceCancelled` — including the runtime's lease-expiry
+/// cleanup — may spend it, so landing finish and the hard rung always settle
+/// atomically and never silently omit their evidence.
 pub(super) fn append_cancel_receipt(
     record: &mut AttemptRecord,
     kind: AttemptCancelReceiptKind,
@@ -416,7 +454,12 @@ pub(super) fn append_cancel_receipt(
     draft: CancelReceiptDraft,
     now: u64,
 ) -> Result<()> {
-    if record.cancel_state.receipts.len() >= MAX_ATTEMPT_CANCEL_RECEIPTS {
+    let cap = if kind.is_terminal() {
+        MAX_ATTEMPT_CANCEL_RECEIPTS
+    } else {
+        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
+    };
+    if record.cancel_state.receipts.len() >= cap {
         return Err(Error::InvalidAttemptQueueRecord(ERR_CANCEL_RECEIPTS_FULL));
     }
     let sequence = match record.cancel_state.receipts.last() {
@@ -438,6 +481,7 @@ pub(super) fn append_cancel_receipt(
         reason: draft.reason,
         resume_point: draft.resume_point,
         reserve_units: draft.reserve_units,
+        request_sequence: draft.request_sequence,
     });
     Ok(())
 }

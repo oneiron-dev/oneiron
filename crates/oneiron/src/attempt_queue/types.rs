@@ -31,6 +31,20 @@ pub(super) const ATTEMPT_QUEUE_RETRY_REASON_COUNT: usize = 2;
 /// present as one that refused twice.
 pub const MAX_ATTEMPT_CANCEL_RECEIPTS: usize = 256;
 
+/// Rows of [`MAX_ATTEMPT_CANCEL_RECEIPTS`] held back for the ONE terminal
+/// receipt.
+///
+/// A bounded history must never make an attempt unsettleable: without this
+/// slot, a row that reached the cap could not record `Landed`, `ForceCancelled`
+/// or the runtime's lease-expiry cleanup, so a worker could refuse its way into
+/// a permanently unkillable attempt. Non-terminal rows therefore refuse one row
+/// EARLIER, and the reserved slot is spendable only by a terminal receipt.
+pub const TERMINAL_CANCEL_RECEIPT_RESERVE: usize = 1;
+
+/// Cap the append-only, NON-terminal protocol evidence refuses at.
+pub const MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS: usize =
+    MAX_ATTEMPT_CANCEL_RECEIPTS - TERMINAL_CANCEL_RECEIPT_RESERVE;
+
 /// Share of an attempt's dialed budget held back for LANDING work.
 ///
 /// The dial is a percent of INTEGER budget units, never a float: the reserve is
@@ -293,12 +307,17 @@ impl ForceCancelGrounds {
 
 /// Proof that a hard cancellation is AUTHORIZED and runtime-authored.
 ///
-/// The fields are private and there is no literal constructor: the only ways in
-/// are [`Self::from_standing`], which admits nothing but
-/// [`CancelStanding::Authority`], and the two runtime grounds. A worker-supplied
-/// actor string or note therefore cannot become one, which is what makes
-/// [`AttemptCancellation`] unforgeable — the terminal receipt's actor is copied
-/// from here, never from the request.
+/// The fields AND every constructor are crate-private, deliberately: a public
+/// `from_standing(CancelStanding::Authority, actor)` would have been a mint —
+/// `CancelStanding` is a public enum any caller can name, so anyone could have
+/// declared themselves the authority and chosen the actor the terminal receipt
+/// names. The hard rung is therefore reachable only from a path that has
+/// ALREADY verified the owner against durable ownership provenance
+/// ([`Self::owner`], used by the verified `tasks.cancel.force` door) or from a
+/// runtime ground the runtime itself establishes (lease expiry, criticality).
+///
+/// Public callers keep the whole soft rung — request, reject, land — and the
+/// typed proposal path when they cannot establish authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForceCancelAuthority {
     grounds: ForceCancelGrounds,
@@ -306,27 +325,25 @@ pub struct ForceCancelAuthority {
 }
 
 impl ForceCancelAuthority {
-    /// Grants force authority to an actor the caller resolved to
-    /// [`CancelStanding::Authority`]. Every other standing yields `None`, and
-    /// the caller must fall back to its own proposal path.
-    #[must_use]
-    pub fn from_standing(standing: CancelStanding, actor: &str) -> Option<Self> {
-        match standing {
-            CancelStanding::Authority => Some(Self {
-                grounds: ForceCancelGrounds::Owner,
-                actor: actor.to_owned(),
-            }),
-            CancelStanding::PeerAgent
-            | CancelStanding::Healer
-            | CancelStanding::Automation
-            | CancelStanding::None => None,
-        }
+    /// Grants OWNER force authority to an actor the CALLER has already verified
+    /// against durable ownership provenance.
+    ///
+    /// Crate-private: possession of this value is the authorization, so minting
+    /// one is exactly the capability that must not be public. The actor is
+    /// validated here — before any durable row can be written from it — so a
+    /// verified-but-malformed owner identity fails at the door instead of
+    /// persisting a receipt no reader can decode.
+    pub(crate) fn owner(actor: &str) -> Result<Self> {
+        super::validate::validate_cancel_actor(actor)?;
+        Ok(Self {
+            grounds: ForceCancelGrounds::Owner,
+            actor: actor.to_owned(),
+        })
     }
 
     /// Runtime grounds: the lease expired, so the runtime — not a worker —
     /// authors the terminal receipt.
-    #[must_use]
-    pub fn lease_expiry() -> Self {
+    pub(crate) fn lease_expiry() -> Self {
         Self {
             grounds: ForceCancelGrounds::LeaseExpiry,
             actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
@@ -334,8 +351,15 @@ impl ForceCancelAuthority {
     }
 
     /// Runtime grounds: a criticality stop.
-    #[must_use]
-    pub fn criticality() -> Self {
+    ///
+    /// Kept beside its sibling ground even though this build has no criticality
+    /// stop wired yet: the ONE-1896 hard rung rests on THREE verified grounds,
+    /// and deleting the constructor would leave the only way to reach
+    /// [`ForceCancelGrounds::Criticality`] as a caller-chosen actor string —
+    /// exactly the forgery this type exists to prevent. Exercised by the
+    /// crate's cancel tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn criticality() -> Self {
         Self {
             grounds: ForceCancelGrounds::Criticality,
             actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
@@ -490,6 +514,21 @@ impl AttemptCancelReceiptKind {
             Self::ForceCancelled => "force_cancelled",
         }
     }
+
+    /// True for the two rows that SETTLE an attempt. Exactly one of them may
+    /// exist on a row, and it is always the last one: it is the receipt the
+    /// reserved history slot ([`TERMINAL_CANCEL_RECEIPT_RESERVE`]) exists for.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Landed | Self::ForceCancelled)
+    }
+
+    /// True for the two rows that ANSWER one recorded soft request, and which
+    /// therefore name it through [`AttemptCancelReceipt::request_sequence`].
+    #[must_use]
+    pub const fn answers_request(self) -> bool {
+        matches!(self, Self::LandingAccepted | Self::SoftRejected)
+    }
 }
 
 /// One append-only row of the two-rung graceful-cancel protocol.
@@ -523,6 +562,16 @@ pub struct AttemptCancelReceipt {
     /// Reserve units this row moved (`ReserveSpent`), or 0.
     #[serde(default)]
     pub reserve_units: u64,
+    /// The `sequence` of the SoftRequested row this one ANSWERS, on the two
+    /// answering kinds ([`AttemptCancelReceiptKind::answers_request`]).
+    ///
+    /// Requests are identified by their own receipt sequence rather than by
+    /// recency: with two asks outstanding, "the last request" is not the one a
+    /// refusal answered, and pairing by recency reported the refusal against a
+    /// requester who is still waiting while the answered ask stayed pending
+    /// forever.
+    #[serde(default)]
+    pub request_sequence: Option<u64>,
 }
 
 /// Two-rung cancel pressure counters carried on the row.
@@ -986,6 +1035,14 @@ pub enum CancelRequestOutcome {
     /// The caller established no standing. The attempt is UNCHANGED and the
     /// caller must fall back to its own proposal path.
     NoStanding(AttemptRecord),
+    /// No worker holds this row's lease, so nobody can answer: a pre-lease
+    /// attempt has no response door at all (`accept_landing` and
+    /// `reject_cancel` both require a claimed lease). The attempt is UNCHANGED
+    /// and NOTHING is recorded — a pending request against a queued row would
+    /// be an ask addressed to no one, which the pathology counters would then
+    /// read as a worker refusing to answer. Pre-lease work is stopped by
+    /// `tasks.cancel`'s queue cancellation, not by asking.
+    NotRunning(AttemptRecord),
 }
 
 /// Input for a worker ACCEPTING a stop and entering [`AttemptState::Landing`].
@@ -1001,6 +1058,11 @@ pub struct AcceptAttemptLanding {
     /// The resume point, when the worker already knows it. It may also be
     /// recorded later, inside the landing.
     pub resume_point: Option<AttemptResumePoint>,
+    /// Which outstanding request this landing answers, by its receipt
+    /// `sequence`. `None` answers the OLDEST outstanding one, which is the only
+    /// order in which "the ask that has waited longest" is a stable meaning.
+    /// An unknown or already-answered sequence is refused.
+    pub request_sequence: Option<u64>,
     pub now: u64,
 }
 
@@ -1022,6 +1084,11 @@ pub struct RejectAttemptCancel {
     /// is indistinguishable from a worker that ignored the request.
     pub reason: String,
     pub status: Option<String>,
+    /// Which outstanding request this refusal answers, by its receipt
+    /// `sequence`. `None` answers the OLDEST outstanding one. Exactly one
+    /// request is consumed, so the others keep their provenance and stay owed
+    /// an answer.
+    pub request_sequence: Option<u64>,
     pub now: u64,
 }
 
@@ -1033,6 +1100,8 @@ pub struct CancelRejectionOutcome {
     /// Repeated refusal has crossed
     /// [`SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD`].
     pub pathology: bool,
+    /// The `sequence` of the request this refusal actually answered.
+    pub answered_request_sequence: u64,
 }
 
 /// Input for recording the exact resume point inside a landing.
@@ -1161,6 +1230,56 @@ pub enum LeaseWarningOutcome {
     AlreadyRequested(AttemptRecord),
     /// The lease already expired: that is cleanup's force path, not a warning.
     Expired(AttemptRecord),
+}
+
+/// Input for the runtime's QUOTA/BUDGET warning: the pass counter this attempt
+/// draws on is inside its land window, so the runtime asks the worker to land
+/// before it starts work the budget cannot finish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WarnAttemptBudgetPressure {
+    pub id: AttemptId,
+    pub now: u64,
+}
+
+/// Typed outcome of a runtime-authored landing warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LandingWarningOutcome {
+    /// A runtime-authored landing request was recorded against a leased row.
+    LandingRequested(AttemptRecord),
+    /// A request is already outstanding, or the worker is already landing.
+    /// Warning again would inflate the pressure counters that make repeated
+    /// refusal legible.
+    AlreadyRequested(AttemptRecord),
+    /// No worker holds the lease, so there is nobody to warn.
+    NotRunning(AttemptRecord),
+}
+
+/// Input for the runtime's lease-expiry warning SWEEP over live leases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WarnExpiringAttemptLeases {
+    pub now: u64,
+    /// The same timeout [`CleanupAttemptLeases`] reclaims against, so the
+    /// warning window is derived from the very deadline that would otherwise
+    /// take the work away.
+    pub lease_timeout_secs: u64,
+}
+
+/// What one lease-warning sweep observed. Deliberately separate from
+/// [`AttemptQueueCleanupReport`]: warning and expiry are different rungs, and a
+/// warned lease is still live work, not reclaimed work.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AttemptLeaseWarningReport {
+    /// Leased rows inspected.
+    pub scanned: u64,
+    /// Rows that got a fresh runtime landing request.
+    pub warned: u64,
+    /// Rows already carrying an unanswered ask, or already landing.
+    pub already_requested: u64,
+    /// Rows still inside their lease and before the warning window.
+    pub not_due: u64,
+    /// Rows already past expiry: cleanup's hard rung, never a warning.
+    pub expired: u64,
 }
 
 /// Input for returning stale leased attempts to the ready index.

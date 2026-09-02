@@ -24,18 +24,20 @@ use super::telemetry::{
     emit_attempt_queue_cleanup_span, invalid_transition, record_attempt_queue_cleanup_metrics,
 };
 use super::types::{
-    ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelReceiptKind, AttemptCancelState,
-    AttemptCancellation, AttemptId, AttemptInterventionEffect, AttemptInterventionKind,
-    AttemptLanding, AttemptLandingReserve, AttemptQueueCleanupReport, AttemptQueueRetryReason,
-    AttemptRecord, AttemptState, CancelMode, CancelRejectionOutcome, CancelRequestOutcome,
-    CancelStanding, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
-    CompleteOutcome, DialLandingReserve, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
-    FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel, ForceCancelGrounds,
-    ForceCancelOutcome, InterveneAttempt, InterveneOutcome, LANDING_RESERVE_PERCENT,
-    LEASE_LANDING_WARNING_PERCENT, LandingOutcome, LandingReserveSpendOutcome, LandingTrigger,
+    ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelReceipt, AttemptCancelReceiptKind,
+    AttemptCancelState, AttemptCancellation, AttemptId, AttemptInterventionEffect,
+    AttemptInterventionKind, AttemptLanding, AttemptLandingReserve, AttemptLeaseWarningReport,
+    AttemptQueueCleanupReport, AttemptQueueRetryReason, AttemptRecord, AttemptState, CancelMode,
+    CancelRejectionOutcome, CancelRequestOutcome, CancelStanding, ClaimAttempt, ClaimOutcome,
+    CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, DialLandingReserve, EnqueueAttempt,
+    EnqueueOutcome, FailAttempt, FailOutcome, FinishAttemptLanding, FinishLandingOutcome,
+    ForceAttemptCancel, ForceCancelAuthority, ForceCancelGrounds, ForceCancelOutcome,
+    InterveneAttempt, InterveneOutcome, LANDING_RESERVE_PERCENT, LEASE_LANDING_WARNING_PERCENT,
+    LandingOutcome, LandingReserveSpendOutcome, LandingTrigger, LandingWarningOutcome,
     LeaseWarningOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, RecordAttemptResumePoint,
     RejectAttemptCancel, RequestAttemptCancel, RetryAttempt, RetryOutcome,
-    SpendAttemptLandingReserve, WarnAttemptLeaseExpiry, attempt_record_order,
+    SpendAttemptLandingReserve, WarnAttemptBudgetPressure, WarnAttemptLeaseExpiry,
+    WarnExpiringAttemptLeases, attempt_record_order,
 };
 use super::validate::{
     CancelReceiptDraft, ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_MANIFEST_FULL,
@@ -934,10 +936,19 @@ impl<'a> AttemptQueue<'a> {
         validate_cancel_standing(input.standing)?;
         match record.state {
             AttemptState::Landing => return Ok(CancelRequestOutcome::AlreadyLanding(record)),
-            state if state.is_terminal() => {
+            AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled => {
                 return Ok(CancelRequestOutcome::AlreadySettled(record));
             }
-            _ => {}
+            // Only a CLAIMED, leased realization has a worker who can answer.
+            // Recording a pending ask against a queued/paused/scheduled row
+            // would create an obligation nobody holds: `accept_landing` and
+            // `reject_cancel` both require the lease, so the ask could never be
+            // discharged, and its permanent `pending` would read as a worker
+            // that will not answer. Pre-lease work is stopped, not asked.
+            AttemptState::Leased => {}
+            AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
+                return Ok(CancelRequestOutcome::NotRunning(record));
+            }
         }
 
         self.record_soft_request(
@@ -1027,15 +1038,20 @@ impl<'a> AttemptQueue<'a> {
             "accept_landing",
         )?;
 
-        // A pending request is the source of truth for trigger provenance;
+        // The ANSWERED request is the source of truth for trigger provenance;
         // the worker cannot relabel a lease warning as an unrelated cancel
         // request while answering it. A self-triggered landing has no pending
         // request and uses the typed trigger supplied by the worker.
-        let pending_request = last_pending_soft_request(&record);
-        let trigger = pending_request
+        //
+        // Which request is answered is chosen by identity, never by recency:
+        // with a peer ask and a runtime warning both outstanding, the landing
+        // must name the one it actually answers.
+        let answered = select_pending_request(&record, input.request_sequence, "accept_landing")?;
+        let answered_sequence = answered.map(|request| request.sequence);
+        let trigger = answered
             .and_then(|request| request.trigger)
             .unwrap_or(input.trigger);
-        let requested_by = pending_request
+        let requested_by = answered
             .map(|request| request.actor.clone())
             .unwrap_or(input.lease_owner.clone());
         record.cancel_state.landing = Some(AttemptLanding {
@@ -1047,6 +1063,10 @@ impl<'a> AttemptQueue<'a> {
         if let Some(resume_point) = input.resume_point.clone() {
             record.cancel_state.resume_point = Some(resume_point);
         }
+        // Landing satisfies every outstanding ask — they all wanted the worker
+        // to stop, and it is stopping — so no request stays owed an answer.
+        // The receipt still names the ONE request this landing answers, so the
+        // trigger and the requester on it are the real ones.
         record.cancel_state.pressure.pending = 0;
         record.state = AttemptState::Landing;
         record.updated_at = input.now;
@@ -1059,6 +1079,7 @@ impl<'a> AttemptQueue<'a> {
                 trigger: Some(trigger),
                 status: input.status,
                 resume_point: recorded_resume_point,
+                request_sequence: answered_sequence,
                 ..CancelReceiptDraft::default()
             },
             input.now,
@@ -1095,13 +1116,18 @@ impl<'a> AttemptQueue<'a> {
             input.attempt_count,
             "cancel_reject",
         )?;
-        if record.cancel_state.pressure.pending == 0 {
-            return Err(invalid_transition("cancel_reject", "no_request"));
-        }
         // Preserve the trigger on the request being answered. The worker's
         // refusal reason is new evidence, but it must not erase whether the
-        // ask came from a peer, a quota warning, or lease expiry.
-        let trigger = last_pending_soft_request(&record).and_then(|request| request.trigger);
+        // ask came from a peer, a quota warning, or lease expiry — and with
+        // several asks outstanding it must name the one it refused, or the
+        // remaining requesters inherit an answer nobody gave them.
+        let Some(answered) =
+            select_pending_request(&record, input.request_sequence, "cancel_reject")?
+        else {
+            return Err(invalid_transition("cancel_reject", "no_request"));
+        };
+        let trigger = answered.trigger;
+        let answered_request_sequence = answered.sequence;
 
         count_cancel_rejection(&mut record.cancel_state.pressure);
         append_cancel_receipt(
@@ -1112,6 +1138,7 @@ impl<'a> AttemptQueue<'a> {
                 trigger,
                 reason: Some(input.reason),
                 status: input.status,
+                request_sequence: Some(answered_request_sequence),
                 ..CancelReceiptDraft::default()
             },
             input.now,
@@ -1127,6 +1154,7 @@ impl<'a> AttemptQueue<'a> {
             record,
             pressure,
             pathology: pressure.is_pathological(),
+            answered_request_sequence,
         })
     }
 
@@ -1185,11 +1213,26 @@ impl<'a> AttemptQueue<'a> {
     /// [`AttemptRecord::ordinary_budget_limit_units`], which is what makes the
     /// reserve unreachable by normal work.
     pub fn dial_landing_reserve(&self, input: DialLandingReserve) -> Result<AttemptRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let record = self.dial_landing_reserve_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
+    /// Transaction-composable [`Self::dial_landing_reserve`], so an admission
+    /// path can co-commit the dial with the lease it just took: the units a
+    /// runner reserved for an attempt and the attempt's own landing slice are
+    /// one fact, and a crash between them would leave a leased attempt with a
+    /// budget but no way to land inside it.
+    pub(crate) fn dial_landing_reserve_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: DialLandingReserve,
+    ) -> Result<AttemptRecord> {
         let reserve_percent = input.reserve_percent.unwrap_or(LANDING_RESERVE_PERCENT);
         validate_reserve_percent(reserve_percent)?;
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("dial_landing_reserve", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
@@ -1207,8 +1250,7 @@ impl<'a> AttemptQueue<'a> {
         let encoded = encode_record(&record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
         Ok(record)
     }
 
@@ -1422,6 +1464,12 @@ impl<'a> AttemptQueue<'a> {
         input: ForceAttemptCancel,
     ) -> Result<ForceCancelOutcome> {
         validate_optional_failure_reason(input.reason.as_deref())?;
+        // The authority's actor becomes the terminal receipt's actor, so it is
+        // validated BEFORE any durable state changes: an owner-verified but
+        // malformed identity (empty, oversized, or claiming the runtime's own
+        // name) must fail at the door rather than terminalize the attempt and
+        // leave behind a cancellation row that `decode_record` then refuses.
+        validate_force_authority(&input.authority)?;
 
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("cancel_force", "missing"));
@@ -1459,6 +1507,133 @@ impl<'a> AttemptQueue<'a> {
         )?;
         self.delete_dedupe_entry_for_record(wtxn, &record)?;
         Ok(ForceCancelOutcome::Cancelled(record))
+    }
+
+    /// Runtime QUOTA/BUDGET warning — the `budget.land.95` rung's queue door.
+    ///
+    /// The runtime, not an actor, authors it: a worker whose wake counter is
+    /// nearly spent is asked to LAND while there is still budget to land WITH,
+    /// which is the whole point of holding a reserve back. Idempotent per
+    /// outstanding ask, so a loop that observes pressure on every iteration
+    /// records one row and does not inflate the refusal pressure counters.
+    pub fn warn_budget_pressure(
+        &self,
+        input: WarnAttemptBudgetPressure,
+    ) -> Result<LandingWarningOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let outcome = self.warn_budget_pressure_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Transaction-composable [`Self::warn_budget_pressure`].
+    pub(crate) fn warn_budget_pressure_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: WarnAttemptBudgetPressure,
+    ) -> Result<LandingWarningOutcome> {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
+            return Err(invalid_transition("budget_warning", "missing"));
+        };
+        let mut record = decode_record(&raw_record, input.id)?;
+        match record.state {
+            AttemptState::Leased => {}
+            AttemptState::Landing => return Ok(LandingWarningOutcome::AlreadyRequested(record)),
+            _ => return Ok(LandingWarningOutcome::NotRunning(record)),
+        }
+        if record.cancel_state.pressure.pending > 0 {
+            return Ok(LandingWarningOutcome::AlreadyRequested(record));
+        }
+
+        self.record_soft_request(
+            wtxn,
+            &mut record,
+            SoftRequestAuthorship {
+                actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
+                // No standing token: the runtime is not an actor making a
+                // claim, and only these runtime doors may author the row.
+                standing: None,
+                trigger: LandingTrigger::BudgetWarning,
+                reason: None,
+            },
+            input.now,
+        )?;
+        Ok(LandingWarningOutcome::LandingRequested(record))
+    }
+
+    /// Sweeps live leases and WARNS the ones inside the expiry window.
+    ///
+    /// The lane that reclaims expired leases ([`Self::cleanup_leases`]) is the
+    /// one lane that already knows the lease timeout, so the warning rung lives
+    /// beside it and stays strictly distinct from it: this door never
+    /// terminalizes, never requeues, and never touches a row whose lease has
+    /// ALREADY expired — that row belongs to cleanup's hard rung.
+    pub fn warn_expiring_leases(
+        &self,
+        input: WarnExpiringAttemptLeases,
+    ) -> Result<AttemptLeaseWarningReport> {
+        if input.lease_timeout_secs == 0 {
+            return Err(Error::InvalidAttemptQueueRecord(
+                super::validate::ERR_LEASE_TIMEOUT_ZERO,
+            ));
+        }
+
+        let mut candidates = Vec::new();
+        {
+            let rtxn = self.store.env.read_txn()?;
+            for row in self.store.attempt_records.iter(&rtxn)? {
+                let (key, raw_record) = row?;
+                let id = AttemptId::from_bytes(&key)?;
+                let record = decode_record(&raw_record, id)?;
+                if record.state == AttemptState::Leased {
+                    candidates.push(id);
+                }
+            }
+        }
+
+        let mut report = AttemptLeaseWarningReport::default();
+        if candidates.is_empty() {
+            return Ok(report);
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        for id in candidates {
+            let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
+                continue;
+            };
+            let mut record = decode_record(&raw_record, id)?;
+            if record.state != AttemptState::Leased {
+                continue;
+            }
+            report.scanned += 1;
+            if lease_expired(&record, input.now, input.lease_timeout_secs) {
+                report.expired += 1;
+                continue;
+            }
+            let age = input.now.saturating_sub(record.updated_at);
+            if age < lease_warning_after_secs(input.lease_timeout_secs) {
+                report.not_due += 1;
+                continue;
+            }
+            if record.cancel_state.pressure.pending > 0 {
+                report.already_requested += 1;
+                continue;
+            }
+            self.record_soft_request(
+                &mut wtxn,
+                &mut record,
+                SoftRequestAuthorship {
+                    actor: ATTEMPT_RUNTIME_ACTOR.to_owned(),
+                    standing: None,
+                    trigger: LandingTrigger::LeaseWarning,
+                    reason: None,
+                },
+                input.now,
+            )?;
+            report.warned += 1;
+        }
+        wtxn.commit()?;
+        Ok(report)
     }
 
     /// Runtime lease-expiry WARNING — the soft rung, not the reclaim.
@@ -1651,10 +1826,15 @@ impl<'a> AttemptQueue<'a> {
                     AttemptState::Landing
                         if lease_expired(&record, input.now, input.lease_timeout_secs) =>
                     {
+                        // The runtime's own ground, minted through the same
+                        // authority token the owner path uses — cleanup never
+                        // hand-writes an actor onto a terminal receipt.
+                        let authority = ForceCancelAuthority::lease_expiry();
+                        validate_force_authority(&authority)?;
                         force_cancel_record(
                             &mut record,
-                            ForceCancelGrounds::LeaseExpiry,
-                            ATTEMPT_RUNTIME_ACTOR.to_owned(),
+                            authority.grounds(),
+                            authority.actor().to_owned(),
                             Some(RETRY_REASON_LEASE_TIMEOUT.to_owned()),
                             input.now,
                         )?;
@@ -1914,21 +2094,54 @@ fn mark_rechecked_candidate_not_running(report: &mut AttemptQueueCleanupReport) 
     report.running = report.running.saturating_sub(1);
 }
 
-/// The most recent unanswered soft request, if any.
-fn last_pending_soft_request(
-    record: &AttemptRecord,
-) -> Option<&super::types::AttemptCancelReceipt> {
-    // A refusal answers the outstanding ask. Do not attribute a later
-    // self-triggered landing to a stale requester from an earlier round.
+/// Every soft request still owed an answer, OLDEST FIRST.
+///
+/// A request's identity is its own receipt `sequence`, and an answer names the
+/// request it consumed, so "still pending" is the set difference — not a guess
+/// from recency. Gated on the pending counter so an already-answered round
+/// (or a terminal row, whose asks are moot) yields nothing.
+fn pending_soft_requests(record: &AttemptRecord) -> Vec<&AttemptCancelReceipt> {
     if record.cancel_state.pressure.pending == 0 {
-        return None;
+        return Vec::new();
     }
+    let answered: HashSet<u64> = record
+        .cancel_state
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.kind.answers_request())
+        .filter_map(|receipt| receipt.request_sequence)
+        .collect();
     record
         .cancel_state
         .receipts
         .iter()
-        .rev()
-        .find(|receipt| receipt.kind == AttemptCancelReceiptKind::SoftRequested)
+        .filter(|receipt| {
+            receipt.kind == AttemptCancelReceiptKind::SoftRequested
+                && !answered.contains(&receipt.sequence)
+        })
+        .collect()
+}
+
+/// Resolves WHICH outstanding request a worker's answer consumes.
+///
+/// `None` selects the oldest outstanding ask — the only recency rule that is
+/// stable under repeated asking. An explicit sequence must name a request that
+/// is actually outstanding: answering an unknown or already-answered one is a
+/// typed refusal, never a silent re-answer of some other requester's ask.
+fn select_pending_request<'r>(
+    record: &'r AttemptRecord,
+    request_sequence: Option<u64>,
+    action: &'static str,
+) -> Result<Option<&'r AttemptCancelReceipt>> {
+    let pending = pending_soft_requests(record);
+    match request_sequence {
+        None => Ok(pending.first().copied()),
+        Some(sequence) => pending
+            .into_iter()
+            .find(|receipt| receipt.sequence == sequence)
+            .map(Some)
+            .ok_or_else(|| invalid_transition(action, "unknown_request")),
+    }
 }
 
 /// Instant, as an age against the lease clock, at which the runtime may warn.
@@ -1939,6 +2152,22 @@ fn lease_warning_after_secs(lease_timeout_secs: u64) -> u64 {
     // and expiry has not happened; without the clamp the warning instant and
     // the expiry instant coincide and the warning rung is unreachable.
     warn_after.min(lease_timeout_secs.saturating_sub(1))
+}
+
+/// Validates the identity a hard cancellation would author its terminal
+/// receipt with, by the grounds it rests on.
+///
+/// An OWNER is an ordinary actor and is held to the ordinary actor rules,
+/// including the refusal to claim the reserved runtime name. The two RUNTIME
+/// grounds legitimately carry [`ATTEMPT_RUNTIME_ACTOR`], so they are validated
+/// as a plain actor name.
+fn validate_force_authority(authority: &ForceCancelAuthority) -> Result<()> {
+    match authority.grounds() {
+        ForceCancelGrounds::Owner => validate_cancel_actor(authority.actor()),
+        ForceCancelGrounds::LeaseExpiry | ForceCancelGrounds::Criticality => {
+            validate_intervention_actor(authority.actor())
+        }
+    }
 }
 
 /// Applies a terminal, runtime-authored hard cancellation in place.

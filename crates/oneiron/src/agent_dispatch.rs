@@ -1181,9 +1181,16 @@ impl<'a> AgentDispatcher<'a> {
                 proposer: *killer_attempt,
             }));
         };
+        // ONE-1896: a LANDING parent is live work — it still holds its lease
+        // and its runtime — so it keeps the standing its lease gives it.
+        // Omitting it read a landing spawner as dead and downgraded its ask to
+        // a proposal precisely when it was tidying up its own children.
         if !matches!(
             killer.state,
-            AttemptState::Queued | AttemptState::Leased | AttemptState::Paused
+            AttemptState::Queued
+                | AttemptState::Leased
+                | AttemptState::Paused
+                | AttemptState::Landing
         ) {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
@@ -1890,6 +1897,142 @@ mod one_1698_tests {
                 .state,
             AttemptState::Completed
         );
+        Ok(())
+    }
+
+    /// ONE-1896 §12: a LANDING spawner is live work and keeps its standing.
+    ///
+    /// The live-parent allow-list decides whether the killer is a real parent
+    /// or an unconfirmable one; omitting `Landing` read a spawner that was
+    /// tidying up as DEAD and downgraded its ask to a proposal — exactly when
+    /// it needed to stop the children it was landing away from.
+    #[test]
+    fn a_landing_spawner_keeps_its_live_parent_standing() -> Result<()> {
+        use crate::attempt_queue::{
+            AcceptAttemptLanding, LandingOutcome, LandingTrigger, RejectAttemptCancel,
+            RequestAttemptCancel,
+        };
+
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+        let queued_child = dispatch_child(
+            &dispatcher,
+            seeded_target(&vault, "sys.scout"),
+            spawner.attempt.id,
+            2,
+        )?;
+        let running_child = dispatch_child(
+            &dispatcher,
+            seeded_target(&vault, "sys.keeper"),
+            spawner.attempt.id,
+            3,
+        )?;
+        let queue = AttemptQueue::new(&vault);
+
+        let ClaimOutcome::Claimed(claimed_spawner) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 4,
+        })?
+        else {
+            panic!("expected spawner lease");
+        };
+        assert_eq!(claimed_spawner.id, spawner.attempt.id);
+
+        // The spawner accepts a stop of its own and enters LANDING.
+        queue.request_cancel(RequestAttemptCancel {
+            id: spawner.attempt.id,
+            actor: "peer-1".to_owned(),
+            standing: CancelStanding::PeerAgent,
+            trigger: LandingTrigger::CancelRequest,
+            reason: None,
+            now: 5,
+        })?;
+        let LandingOutcome::Landing(landing) = queue.accept_landing(AcceptAttemptLanding {
+            id: spawner.attempt.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed_spawner.attempt_count,
+            trigger: LandingTrigger::CancelRequest,
+            status: None,
+            resume_point: None,
+            request_sequence: None,
+            now: 6,
+        })?
+        else {
+            panic!("expected a fresh landing");
+        };
+        assert_eq!(landing.state, AttemptState::Landing);
+
+        // Pre-lease child: stopped outright, exactly as a leased parent's is.
+        assert_eq!(
+            dispatcher.kill_spawn(&queued_child.attempt.id, &spawner.attempt.id, 7)?,
+            KillOutcome::Killed
+        );
+        assert_eq!(
+            queue
+                .get(queued_child.attempt.id)?
+                .expect("child exists")
+                .state,
+            AttemptState::Cancelled
+        );
+
+        // Running child: ASKED, never killed — peer standing is standing to ask.
+        let ClaimOutcome::Claimed(claimed_child) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-b".to_owned(),
+            now: 8,
+        })?
+        else {
+            panic!("expected running child lease");
+        };
+        assert_eq!(claimed_child.id, running_child.attempt.id);
+        assert_eq!(
+            dispatcher.kill_spawn(&running_child.attempt.id, &spawner.attempt.id, 9)?,
+            KillOutcome::CancellationRequested,
+            "a landing parent may still ask its running child to stop"
+        );
+        let asked = queue
+            .get(running_child.attempt.id)?
+            .expect("running child exists");
+        assert_eq!(asked.state, AttemptState::Leased);
+        assert_eq!(asked.cancel_pressure().pending, 1);
+
+        // Stale-generation completion stays typed and idempotent while the
+        // sticky child answers with a refusal instead.
+        let err = queue
+            .complete(CompleteAttempt {
+                id: running_child.attempt.id,
+                lease_owner: "worker-b".to_owned(),
+                attempt_count: claimed_child.attempt_count + 1,
+                now: 10,
+            })
+            .expect_err("a stale generation cannot complete");
+        assert!(matches!(
+            err,
+            Error::InvalidAttemptQueueTransition { action, state }
+                if action == "complete" && state == "stale_attempt"
+        ));
+        let refusal = queue.reject_cancel(RejectAttemptCancel {
+            id: running_child.attempt.id,
+            lease_owner: "worker-b".to_owned(),
+            attempt_count: claimed_child.attempt_count,
+            reason: "mid-write".to_owned(),
+            status: None,
+            request_sequence: None,
+            now: 11,
+        })?;
+        assert_eq!(refusal.record.state, AttemptState::Leased);
+        assert_eq!(refusal.pressure.rejections, 1);
+        // And the bound executor still completes its own current generation.
+        let CompleteOutcome::Completed(done) = queue.complete(CompleteAttempt {
+            id: running_child.attempt.id,
+            lease_owner: "worker-b".to_owned(),
+            attempt_count: claimed_child.attempt_count,
+            now: 12,
+        })?
+        else {
+            panic!("the bound executor completes its own attempt");
+        };
+        assert_eq!(done.state, AttemptState::Completed);
         Ok(())
     }
 
