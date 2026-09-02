@@ -8100,6 +8100,11 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
     );
     assert_eq!(body["evidence"]["scores"][0]["result_id"], Value::from(id));
     assert_eq!(
+        body["evidence"]["scores"][0]["access_factor"],
+        Value::from(1.0),
+        "HTTP score evidence must expose the applied neutral factor"
+    );
+    assert_eq!(
         body["evidence"]["scores"][0]["components"][0]["signal"],
         Value::from("text")
     );

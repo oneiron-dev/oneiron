@@ -4961,6 +4961,73 @@ fn rerank_reorders_block_with_score_ladder_reassignment() -> Result<()> {
     Ok(())
 }
 
+/// A post-blend boost belongs to the positional score ladder, while decay
+/// remains bound to whichever entity receives that rung after reranking.
+#[test]
+fn rerank_preserves_facet_prefer_boost_with_receiving_factor_once() -> Result<()> {
+    const BOOST: f32 = 3.0;
+    const FACTOR: f32 = 0.5;
+
+    let (_dir, vault) = open_test_vault();
+    let fixture = setup_facet_fixture(&vault)?;
+    let overrides = HashMap::from([(fixture.claim_other, FACTOR)]);
+    let baseline = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .with_access_factor_overrides(&overrides)
+        .facet(&fixture.facet_a, FacetMode::Prefer { boost: BOOST })
+        .limit(10)
+        .run()?;
+    assert_eq!(baseline[0].id, fixture.claim_active);
+    assert_eq!(baseline[0].score, FACET_R1 * BOOST);
+    assert_eq!(
+        baseline.last().map(|scored| scored.id),
+        Some(fixture.claim_other)
+    );
+
+    let reranker = ReversingReranker;
+    let reranked = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .with_access_factor_overrides(&overrides)
+        .facet(&fixture.facet_a, FacetMode::Prefer { boost: BOOST })
+        .rerank(
+            &reranker,
+            RerankOptions {
+                top_n: baseline.len(),
+                query: Some("rerank boosted decay probe".to_owned()),
+            },
+        )
+        .limit(10)
+        .run()?;
+
+    let expected_ids = baseline
+        .iter()
+        .rev()
+        .map(|scored| scored.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reranked.iter().map(|scored| scored.id).collect::<Vec<_>>(),
+        expected_ids,
+        "the reranker must reverse the full boosted block"
+    );
+    let promoted = &reranked[0];
+    assert_eq!(promoted.id, fixture.claim_other);
+    let expected = FACET_R1 * BOOST * FACTOR;
+    assert!(
+        approx_eq(promoted.score, expected, 1e-6),
+        "the boosted top rung must survive and receive one factor: expected {expected}, got {}",
+        promoted.score
+    );
+    assert!(
+        !approx_eq(promoted.score, expected * FACTOR, 1e-6),
+        "the receiving entity's factor must not be squared"
+    );
+    Ok(())
+}
+
 #[test]
 fn rerank_top_n_two_reorders_only_top_block() -> Result<()> {
     let (_dir, vault) = open_test_vault();

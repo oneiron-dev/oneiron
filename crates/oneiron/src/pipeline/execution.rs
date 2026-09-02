@@ -866,6 +866,28 @@ impl PipelineBuilder<'_> {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
 
+            // Reranking needs the score ladder after post-blend boosts but
+            // before access-factor application. Replay those multiplicative
+            // boosts over the blend's base-score face so a reassigned rung
+            // never carries its previous occupant's factor.
+            let mut rerank_ladder_scores = if self.rerank.is_some() {
+                let mut ladder_scores = Vec::with_capacity(scores.len());
+                for scored in &scores {
+                    let Some(base_score) = blend_base_scores.get(&scored.id).copied() else {
+                        return Err(Error::InvariantViolation(
+                            "rerank candidate missing its blended base score",
+                        ));
+                    };
+                    ladder_scores.push(ScoredEntity {
+                        id: scored.id,
+                        score: base_score,
+                    });
+                }
+                Some(ladder_scores)
+            } else {
+                None
+            };
+
             if self.apply_contiguity {
                 boost_contiguity(
                     &mut scores,
@@ -874,6 +896,15 @@ impl PipelineBuilder<'_> {
                     &rtxn,
                     &mut metadata_cache,
                 )?;
+                if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
+                    boost_contiguity(
+                        ladder_scores,
+                        self.temporal_search.as_ref(),
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                    )?;
+                }
             }
 
             // ARCH-0039 facet filter (ONE-1117): post-fusion / post-boosts,
@@ -889,6 +920,16 @@ impl PipelineBuilder<'_> {
                     &facet_id,
                     mode,
                 )?;
+                if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
+                    apply_facet_filter(
+                        ladder_scores,
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                        &facet_id,
+                        mode,
+                    )?;
+                }
                 if before_facet > 0 && scores.is_empty() {
                     empty_reason = Some(EmptyReason::FilterMatchedNone);
                 }
@@ -920,6 +961,12 @@ impl PipelineBuilder<'_> {
                 blended_trace_scores =
                     Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
             }
+            let rerank_ladder_scores = rerank_ladder_scores.map(|ladder_scores| {
+                ladder_scores
+                    .into_iter()
+                    .map(|scored| (scored.id, scored.score))
+                    .collect::<HashMap<_, _>>()
+            });
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
@@ -929,24 +976,21 @@ impl PipelineBuilder<'_> {
             // `result_limit` candidates and the budget/truncate operate on
             // the final relevance order. Score-ladder reassignment: the block
             // is permuted by (rerank score desc, id bytes asc) but position i
-            // keeps the i-th highest PRE-DECAY blended score of the block,
+            // keeps the i-th highest POST-BOOST, PRE-DECAY score of the block,
             // multiplied by the RECEIVING entity's own access factor; raw
             // reranker scores survive in the Rerank components.
             //
-            // The ladder is entity-bound on purpose. A ladder built from
+            // The factor is entity-bound on purpose. A ladder built from
             // already-decayed scores hands position i whatever decay the
             // entity that used to sit there carried: a zero-factor claim
             // promoted to the top would be RESURRECTED with a live
             // neighbor's score, and a live entity demoted into its slot
-            // would be punished for someone else's age. Sourcing the
-            // ladder pre-decay and re-multiplying per entity keeps the
-            // factor neither erased nor squared, so decay can still sink a
-            // promoted-but-faded candidate — rank, never survival. When
-            // every block factor is 1.0 this is the legacy ladder.
-            //
-            // The rung is the blend magnitude: per-entity post-blend score
-            // boosts (contiguity, facet Prefer) shape which candidates
-            // enter the block, not the rung values handed out inside it.
+            // would be punished for someone else's age. The shadow ladder
+            // starts from the pre-decay blend and receives the same contiguity
+            // and facet-Prefer multipliers as the live scores. Re-multiplying
+            // each rung by its receiving entity's factor keeps both those
+            // boosts and a single factor application. When every block factor
+            // is 1.0 this is the legacy ladder.
             let mut rerank_merged_components = None;
             let mut reranked_trace_scores = None;
             // Empty block: reranking zero candidates is a semantic no-op —
@@ -963,7 +1007,11 @@ impl PipelineBuilder<'_> {
                     scores[..block_len].iter().map(|scored| scored.id).collect();
                 let mut ladder = Vec::with_capacity(block_len);
                 for id in &block_ids {
-                    let Some(base) = blend_base_scores.get(id).copied() else {
+                    let Some(base) = rerank_ladder_scores
+                        .as_ref()
+                        .and_then(|ladder_scores| ladder_scores.get(id))
+                        .copied()
+                    else {
                         return Err(Error::InvariantViolation(
                             "rerank block entity missing its blended base score",
                         ));
