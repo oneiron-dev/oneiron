@@ -1,20 +1,22 @@
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::ops::ControlFlow;
 
 use heed::{RoTxn, RwTxn};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::affect::Vad;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSource, ScopedRead};
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CodebaseForkHash};
 use crate::edge::{EdgeActorClass, EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
-use crate::ppr::{self, SeedWeighting, ppr_query_scoped_in_txn};
+use crate::ppr::{self, PprNodeVisibility, SeedWeighting, ppr_query_scoped_in_txn};
 use crate::provenance::validate_actor_class;
-use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;

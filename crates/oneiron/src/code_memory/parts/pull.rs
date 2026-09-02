@@ -99,6 +99,133 @@ pub struct CodeMemoryPullResult {
     pub always_on_contracts: Vec<ProvenanceLabelled<AlwaysOnCodeMemoryContract>>,
 }
 
+/// Payload admission for one pull candidate, decided ON THE CALLER'S SNAPSHOT.
+///
+/// [`ScopedRead::ppr_node_visible`] is the canonical readability predicate —
+/// literally `ScopedRead::is_entity_readable_with_policy_in`, the same
+/// admission [`ScopedRead::get_entity_parts`] applies — and it answers in the
+/// transaction it is handed. That is what lets this module decide a candidate
+/// and MATERIALIZE it against one coherent view.
+///
+/// It has one hole a pull must close itself. For a CLAIM whose row is
+/// header-only, `ScopedRead` falls through to `Vault::is_deleted_shell`, which
+/// opens a read transaction OF ITS OWN; nested read transactions on one thread
+/// are forbidden, so reaching it under a live `rtxn` would fail the WHOLE pull
+/// rather than skip one payload. A header-only CLAIM is unreadable either way
+/// — it is a soft-delete shell, or a body no claim decoder can read — so the
+/// answer is settled here, on this snapshot, and the payload is skipped.
+///
+/// Nothing else is decided locally: every other row goes to the canonical
+/// predicate, so this can neither widen nor narrow what the lane admits.
+fn payload_visible_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scoped_read: &ScopedRead<'_>,
+    payload: CodeMemoryPayloadRef,
+) -> Result<bool> {
+    let payload_id = payload.entity_id();
+    if let Some(raw) = store.entities.get(rtxn, payload_id.as_bytes())? {
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
+            return Ok(false);
+        }
+    }
+    scoped_read.ppr_node_visible(rtxn, &payload_id)
+}
+
+/// One admitted note candidate: inherited relevance, owning symbol, slot name,
+/// and the slot value itself — the tuple the final ranking sorts on.
+type PullNoteCandidates = Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlotValue)>;
+
+/// The bounded candidate sweep over `retained`, entirely inside `rtxn`.
+///
+/// Returns at most `request.limit` notes, every one of them already admitted
+/// by [`payload_visible_in_txn`] on THIS snapshot, plus the always-on
+/// registrations of every retained symbol (which the caller's note limit never
+/// cuts).
+///
+/// TWO BOUNDS, BOTH LOAD-BEARING:
+///
+/// * one global `examined_values` budget starts at `request.limit` and spans
+///   ALL retained symbols and slots. Every decoded candidate value consumes
+///   one unit BEFORE visibility admission, so denied or missing payloads also
+///   consume the budget. A denial-heavy pull may therefore return short; it
+///   must not keep scanning indefinitely to backfill lower-ranked symbols;
+/// * slot bodies stream ([`stream_slots_for_symbol`]) and stop before the next
+///   body is decoded once that budget is exhausted. A body itself is bounded
+///   by the fixed [`CODE_MEMORY_MAX_VALUES_PER_SLOT`] cap. Thus candidate
+///   decoding and admission are O(`request.limit`) plus one fixed-cap body,
+///   rather than proportional to an unbounded number of slots or values. The
+///   always-on contract pass remains independent and still visits every
+///   retained symbol when requested.
+///
+/// The examined prefix is visited in EXACTLY the caller's canonical order:
+/// `ppr::sort_scores` hands `retained` back as score-descending then
+/// id-ascending; a slot prefix cursor yields slot names ascending; and a
+/// decoded slot body is `CodeMemorySlotValue::sort_key`-ascending
+/// (`decode_slot` refuses any other order). Admitted values from that prefix
+/// are sorted by the same final comparator below, so denial cannot reorder
+/// what was examined even though it may leave the result short.
+fn collect_pull_candidates(
+    vault: &Vault,
+    rtxn: &RoTxn<'_>,
+    scoped_read: &ScopedRead<'_>,
+    request: &CodeMemoryPullRequest,
+    retained: &[ScoredEntity],
+) -> Result<(PullNoteCandidates, Vec<AlwaysOnCodeMemoryContract>)> {
+    let note_limit = request.limit;
+    let examined_values = Cell::new(0_usize);
+    let mut candidate_notes: PullNoteCandidates = Vec::with_capacity(note_limit);
+    let mut candidate_contracts: Vec<AlwaysOnCodeMemoryContract> = Vec::new();
+
+    for scored in retained {
+        let notes_full = candidate_notes.len() == note_limit;
+        if notes_full && !request.include_always_on_contracts {
+            break;
+        }
+        if !notes_full {
+            stream_slots_for_symbol(
+                &vault.store,
+                rtxn,
+                &scored.id,
+                || examined_values.get() < note_limit,
+                |slot| {
+                    let CodeMemorySlot { name, values, .. } = slot;
+                    for value in values {
+                        if examined_values.get() == note_limit {
+                            return Ok(ControlFlow::Break(()));
+                        }
+                        // Denied or missing payloads consume this global budget
+                        // before the canonical visibility predicate runs. It
+                        // bounds admission work across ALL symbols and slots,
+                        // not merely the number of notes eventually retained.
+                        examined_values.set(examined_values.get() + 1);
+                        if !payload_visible_in_txn(
+                            &vault.store,
+                            rtxn,
+                            scoped_read,
+                            value.payload,
+                        )? {
+                            continue;
+                        }
+                        candidate_notes.push((scored.score, scored.id, name.clone(), value));
+                        if candidate_notes.len() == note_limit {
+                            return Ok(ControlFlow::Break(()));
+                        }
+                    }
+                    Ok(ControlFlow::Continue(()))
+                },
+            )?;
+        }
+        if request.include_always_on_contracts {
+            candidate_contracts.extend(read_always_on_for_symbol(&vault.store, rtxn, &scored.id)?);
+        }
+    }
+
+    Ok((candidate_notes, candidate_contracts))
+}
+
 /// ScopedRead-clamped L2 pull.
 ///
 /// Read order is fixed and load-bearing:
@@ -119,16 +246,27 @@ pub struct CodeMemoryPullResult {
 ///    reads nor writes it, and takes no dependency or graph-version write;
 /// 3. keep every scored `CODE_SYMBOL` at or above `minimum_relevance` — the
 ///    caller's note limit is NOT applied to symbols;
-/// 4. resolve slots and always-on registrations for those symbols in the same
-///    transaction;
-/// 5. `drop(rtxn)` BEFORE any [`ScopedRead::get_entity_parts`] call, which
-///    opens its own read transaction (nested read transactions on one thread
-///    are forbidden), and clamp every referenced entity. The walk gate above
-///    admits the SYMBOLS a ranking may traverse; this clamp still decides each
-///    PAYLOAD, and stays as defence in depth for both;
-/// 6. sort surviving notes by descending inherited relevance then canonical
-///    keys, and apply the caller limit exactly once, here;
-/// 7. label everything `Data`.
+/// 4. resolve slots and always-on registrations for those symbols, and clamp
+///    every referenced PAYLOAD, all in THAT SAME transaction. The walk gate
+///    above admits the SYMBOLS a ranking may traverse; the payload clamp stays
+///    as defence in depth for both. Candidate scanning has one global budget
+///    equal to `request.limit`: each decoded value consumes it before
+///    admission, including denied or missing values. Once exhausted, no later
+///    slot body is decoded, while the independent always-on pass continues;
+///    this intentionally permits a short note list under denial;
+/// 5. sort surviving notes by descending inherited relevance then canonical
+///    keys, and apply the caller limit exactly once;
+/// 6. label everything `Data`.
+///
+/// ONE SNAPSHOT DECIDES ADMISSION AND THE RESULT. There is deliberately no
+/// second, later clamp: re-asking [`ScopedRead::get_entity_parts`] after this
+/// transaction closed would ask a NEWER snapshot, and a candidate that had
+/// already consumed one of the caller's `limit` places could then be dropped
+/// by that newer answer — a concurrent delete or policy change would make the
+/// pull return fewer notes than the snapshot it ranked actually holds, with no
+/// lower-ranked note ever collected to take the empty place. The in-transaction
+/// predicate is the SAME admission `get_entity_parts` applies (see
+/// [`payload_visible_in_txn`]), so coherence costs no scope.
 pub fn pull_code_memory(
     vault: &Vault,
     scoped_read: &ScopedRead<'_>,
@@ -189,34 +327,8 @@ pub fn pull_code_memory(
         }
     }
 
-    let mut candidate_notes: Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlotValue)> =
-        Vec::new();
-    let mut candidate_contracts: Vec<AlwaysOnCodeMemoryContract> = Vec::new();
-    for scored in &retained {
-        for slot in read_slots_for_symbol(&vault.store, &rtxn, &scored.id)? {
-            for value in slot.values {
-                candidate_notes.push((scored.score, scored.id, slot.name.clone(), value));
-            }
-        }
-        if request.include_always_on_contracts {
-            candidate_contracts.extend(read_always_on_for_symbol(&vault.store, &rtxn, &scored.id)?);
-        }
-    }
-
-    // The clamp opens its OWN read transaction; the outer one must be gone
-    // first (landed short-lived-txn pattern, `code_symbol::code_symbol_ppr_neighbors`).
-    drop(rtxn);
-
-    let mut permitted_notes = Vec::new();
-    for (score, symbol_id, slot_name, value) in candidate_notes {
-        if scoped_read
-            .get_entity_parts(&value.payload.entity_id())?
-            .is_none()
-        {
-            continue;
-        }
-        permitted_notes.push((score, symbol_id, slot_name, value));
-    }
+    let (mut permitted_notes, mut candidate_contracts) =
+        collect_pull_candidates(vault, &rtxn, scoped_read, &request, &retained)?;
 
     permitted_notes.sort_by(|left, right| {
         right
@@ -226,6 +338,11 @@ pub fn pull_code_memory(
             .then_with(|| left.2.cmp(&right.2))
             .then_with(|| left.3.sort_key().cmp(&right.3.sort_key()))
     });
+    // The caller's cut, applied EXACTLY ONCE and only to the note list. Bounded
+    // admission already stops at the same number, so this cuts nothing today;
+    // it stays because the limit is a contract of THIS function, and the one
+    // place that enforces it should be visible here rather than inferred from
+    // the sweep.
     permitted_notes.truncate(request.limit);
 
     let notes = permitted_notes
@@ -252,10 +369,11 @@ pub fn pull_code_memory(
             ))
         });
         for contract in candidate_contracts {
-            if scoped_read
-                .get_entity_parts(&contract.payload.entity_id())?
-                .is_none()
-            {
+            // Same snapshot, same predicate as the notes above. Always-on
+            // registrations carry no caller cut, so no place can be consumed
+            // here — but a contract and a note naming the SAME payload must
+            // never disagree about whether this actor may see it.
+            if !payload_visible_in_txn(&vault.store, &rtxn, scoped_read, contract.payload)? {
                 continue;
             }
             always_on_contracts.push(ProvenanceLabelled {
@@ -271,6 +389,9 @@ pub fn pull_code_memory(
         }
     }
 
+    // Held deliberately this far: admission, ranking, and materialization all
+    // answered from THIS snapshot, and nothing above may reopen a newer one.
+    drop(rtxn);
     Ok(CodeMemoryPullResult {
         notes,
         always_on_contracts,
