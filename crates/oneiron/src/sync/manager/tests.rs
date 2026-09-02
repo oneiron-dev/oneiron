@@ -17,8 +17,10 @@ fn test_manager() -> (tempfile::TempDir, Arc<WindowManager>, WindowKey) {
 #[test]
 fn open_window_tracks_issued_handle_before_discard_can_deregister() {
     let (_dir, manager, key) = test_manager();
+    // Armed on this test's own manager: a concurrently running test holds a
+    // different manager and cannot consume or release this pause (ONE-1608).
     let pause = Arc::new(test_hooks::HandleIssuePause::new());
-    test_hooks::arm_handle_issue_pause(Arc::clone(&pause));
+    manager.arm_handle_issue_pause(Arc::clone(&pause));
 
     let open_manager = Arc::clone(&manager);
     let open_key = key.clone();
@@ -65,8 +67,11 @@ fn window_lookup_tracks_issued_handle_before_discard_can_deregister() {
     drop(initial);
     manager.issued_handles.lock().unwrap().remove(&key);
 
+    // Armed after the setup open above, and on this test's own manager, so
+    // neither that setup call nor a concurrent test can consume it
+    // (ONE-1608).
     let pause = Arc::new(test_hooks::HandleIssuePause::new());
-    test_hooks::arm_handle_issue_pause(Arc::clone(&pause));
+    manager.arm_handle_issue_pause(Arc::clone(&pause));
 
     let lookup_manager = Arc::clone(&manager);
     let lookup_key = key.clone();

@@ -27,8 +27,8 @@ use crate::ingest::{
 };
 use crate::note::{NoteBody, NoteKind, TakeTarget, encode_note_body};
 use crate::registry::{
-    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_NOTE,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY,
+    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -345,6 +345,24 @@ impl Memory<'_> {
                 &[
                     "NOTE bodies are actor-attributed; a caller-supplied author_ref would be a forgery.",
                     "Use author_take, which stamps the bound facade actor.",
+                ],
+            ));
+        }
+        // ONE-1686 (RT-04): MESSAGE bodies carry the six-axis witness envelope
+        // — author, type, content, metadata, visibility, order — and the
+        // approval-ceiling door authorizes exactly those axes at the witness
+        // write boundary. A caller who could hand-write the body here would
+        // author an unattributed `system` row, hide a row, or smuggle a
+        // metadata side channel through a door that never asked. Same posture
+        // as the NOTE refusal above: this broad door has no envelope to bind,
+        // so it refuses the kind rather than validating a body it cannot trust.
+        if type_byte == ENTITY_TYPE_MESSAGE {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "MESSAGE entities cannot be written through the structural door",
+                &[
+                    "MESSAGE bodies are gated envelopes; a caller-supplied body would bypass the witness ceiling.",
+                    "Use witness, which binds author, type, content, metadata, visibility and order to the acting actor.",
                 ],
             ));
         }

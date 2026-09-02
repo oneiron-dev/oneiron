@@ -122,6 +122,34 @@ impl<'a> TxnBatchBuilder<'a> {
         )
     }
 
+    /// The ONE-1686 witness MESSAGE put: the only door that stages an
+    /// `ENTITY_TYPE_MESSAGE` row.
+    ///
+    /// It takes the ceiling door's own [`WitnessMessageAuthorization`] and
+    /// writes the bytes THAT value carries — never a separately supplied body —
+    /// so the axes the door authorized and the bytes that land cannot diverge,
+    /// and nothing between the check and the put can substitute an envelope.
+    /// Holding the authorization is the permission: its only constructor is
+    /// [`crate::gate::check_witness_message_ceiling`], which runs inside this
+    /// same write transaction against the same policy snapshot.
+    pub(crate) fn put_witness_message(
+        self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        authorization: &crate::gate::WitnessMessageAuthorization<'_>,
+    ) -> Self {
+        let body = authorization.body();
+        self.put_through(
+            id,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            occurred,
+            learned_at,
+            body,
+            RawPutDoor::WitnessMessage,
+        )
+    }
+
     fn put_through(
         mut self,
         id: &EntityId,
