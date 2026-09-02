@@ -81,14 +81,26 @@ fn loopback() -> IpAddr {
     IpAddr::V4(Ipv4Addr::LOCALHOST)
 }
 
-/// A verified holder view good for pushing, injecting and leasing.
-fn push_credential(now: u64) -> DoorCredential {
+/// A verified holder view good for pushing, injecting and leasing, alive for
+/// `lifetime_secs` from `now`.
+fn push_credential_living(now: u64, lifetime_secs: u64) -> DoorCredential {
     let verbs = [DOOR_VERB_RECEIVE_PACK, DOOR_VERB_INJECT, DOOR_VERB_LEASE];
     let records = [repo_record(&repo()), DOOR_SECRET.to_owned()];
-    DoorCredential::verified("slip-push-1", "holder:tester", now, now + 600)
+    DoorCredential::verified("slip-push-1", "holder:tester", now, now + lifetime_secs)
         .with_verbs(verbs)
         .with_records(records)
         .with_channels([EFFECTOR])
+}
+
+/// The default push credential: 600s of validity left at `now`.
+fn push_credential(now: u64) -> DoorCredential {
+    push_credential_living(now, 600)
+}
+
+/// A push credential with more validity left than any floor or dial, so a TTL
+/// test measures the ceiling under test and not the slip's own remaining life.
+fn long_lived_push_credential(now: u64) -> DoorCredential {
+    push_credential_living(now, 2 * DOOR_MAX_LEASE_TTL_SECS)
 }
 
 /// A verified one-shot: single-use caveat, one named secret, one named
@@ -116,8 +128,12 @@ fn scan(door: &CredentialDoorService, blobs: &[PushedBlob]) -> DoorResult<DoorSc
 /// Writes a POLICY_MANIFEST row carrying `rows` as its body, the way the
 /// engine seeder does — the door dial resolves over exactly these bodies.
 fn put_policy_manifest(vault: &Vault, seed: u8, rows: Vec<(Value, Value)>) {
-    let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &Value::Map(rows)).expect("encode body");
+    put_policy_manifest_body(vault, seed, encoded_map(rows));
+}
+
+/// The same row, with the body written VERBATIM — the seam a corrupt or
+/// partially written manifest body arrives through.
+fn put_policy_manifest_body(vault: &Vault, seed: u8, data: Vec<u8>) {
     let id = EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("manifest id");
     let learned_at = 2_u64;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
@@ -252,7 +268,9 @@ fn the_door_composes_over_the_vault_it_was_given() {
 
 #[test]
 fn catastrophe_floors_are_constants_not_dials() {
-    const { assert!(DOOR_SCAN_ALWAYS_ON); }
+    const {
+        assert!(DOOR_SCAN_ALWAYS_ON);
+    }
     assert_eq!(DOOR_MAX_LEASE_TTL_SECS, 3600);
     assert_eq!(DOOR_ONE_SHOT_MAX_LIFETIME_SECS, 300);
 }
@@ -303,10 +321,10 @@ fn a_slip_may_not_name_a_floor_either() {
 fn a_slip_attenuation_cannot_raise_the_ttl_ceiling() {
     let (_tmp, _vault, door) = door_fixture();
     let now = 1_700_000_100;
-    let greedy = push_credential(now).attenuate_lease_ttl(7200);
+    let greedy = long_lived_push_credential(now).attenuate_lease_ttl(7200);
 
     let policy = DoorPolicy::default();
-    let ceiling = policy.effective_lease_ttl_ceiling(&greedy);
+    let ceiling = policy.effective_lease_ttl_ceiling(&greedy, now);
     assert_eq!(ceiling, DOOR_MAX_LEASE_TTL_SECS);
 
     let err = door
@@ -507,7 +525,7 @@ fn a_lease_ticket_rides_the_landed_receipt_before_value_path() {
 fn a_lease_above_the_hard_floor_is_denied() {
     let (_tmp, vault, door) = door_fixture();
     let now = 1_700_000_100;
-    let credential = push_credential(now);
+    let credential = long_lived_push_credential(now);
     let asked = DOOR_MAX_LEASE_TTL_SECS + 1;
 
     let err = door
@@ -521,6 +539,51 @@ fn a_lease_above_the_hard_floor_is_denied() {
         }
     ));
     assert_eq!(lease_rows(&vault), 0);
+}
+
+#[test]
+fn a_lease_never_outlives_the_credential_that_bought_it() {
+    // The slip has 600s left and the dial is at the 3600s floor, so the
+    // credential's own remaining validity is the binding ceiling: a ticket
+    // that outlived it would keep buying reads after the slip expired.
+    let (_tmp, vault, door) = door_fixture();
+    let now = 1_700_000_100;
+    let credential = push_credential(now);
+
+    let err = door
+        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 1200, now)
+        .expect_err("a slip may not sell more time than it has");
+    assert!(matches!(
+        err,
+        CredentialDoorError::LeaseTtlDenied {
+            requested_secs: 1200,
+            ceiling_secs: 600,
+        }
+    ));
+    assert_eq!(lease_rows(&vault), 0);
+
+    // The remaining validity shrinks with the witnessed clock, and the
+    // ceiling shrinks with it: a half-spent slip buys a half-length ticket.
+    let later = now + 300;
+    let err = door
+        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 301, later)
+        .expect_err("half spent, half the ceiling");
+    assert!(matches!(
+        err,
+        CredentialDoorError::LeaseTtlDenied {
+            ceiling_secs: 300,
+            ..
+        }
+    ));
+    assert_eq!(lease_rows(&vault), 0);
+
+    // Exactly the remaining validity still mints, and the ticket expires with
+    // the credential rather than after it.
+    let ticket = door
+        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 300, later)
+        .expect("a ticket inside the slip's remaining life mints");
+    assert_eq!(ticket.lease.expires_at - ticket.lease.granted_at, 300);
+    assert_eq!(lease_rows(&vault), 1);
 }
 
 #[test]
@@ -542,7 +605,7 @@ fn a_narrowing_dial_applies_to_lease_tickets() {
     let (_tmp, vault, door) = door_fixture();
     put_policy_manifest(&vault, 0x21, vec![ttl_row(900)]);
     let now = 1_700_000_100;
-    let credential = push_credential(now);
+    let credential = long_lived_push_credential(now);
 
     let policy = door.door_policy().expect("dial");
     assert_eq!(policy.max_lease_ttl_secs, 900);
@@ -616,6 +679,54 @@ fn malformed_and_duplicated_dial_rows_never_default_open() {
     let body = encoded_map(vec![ttl_row(900), ttl_row(600)]);
     let duplicated = decode_door_policy_keys(&body).expect_err("ambiguous row");
     assert!(is_invalid_policy(&duplicated));
+}
+
+#[test]
+fn a_partially_decoded_dial_body_never_defaults_open() {
+    // A body that announces a map and then cannot be read as one is a
+    // declaration the door cannot SEE — never "a pack that declared nothing".
+    let narrowing = encoded_map(vec![ttl_row(600)]);
+
+    let mut truncated = narrowing.clone();
+    truncated.pop();
+    let err = decode_door_policy_keys(&truncated).expect_err("a truncated declaration");
+    assert!(is_invalid_policy(&err));
+
+    let mut trailing = narrowing;
+    trailing.push(0x00);
+    let err = decode_door_policy_keys(&trailing).expect_err("bytes left past the map");
+    assert!(is_invalid_policy(&err));
+
+    // And it denies at the door instead of resolving the permissive default
+    // the narrowing row existed to replace.
+    let (_tmp, vault, door) = door_fixture();
+    put_policy_manifest_body(&vault, 0x27, truncated);
+    let err = door
+        .door_policy()
+        .expect_err("an unreadable dial resolves to nothing");
+    assert!(is_invalid_policy(&err));
+
+    let now = 1_700_000_100;
+    let credential = push_credential(now);
+    let err = door
+        .issue_lease_ticket(&credential, DOOR_SECRET, EFFECTOR, 60, now)
+        .expect_err("no lease resolves against an unreadable dial");
+    assert!(is_invalid_policy(&err));
+    assert_eq!(lease_rows(&vault), 0);
+}
+
+#[test]
+fn a_body_this_door_cannot_open_carries_no_door_rows() {
+    // The manifest body schema belongs to the gate: a plane this door does not
+    // read is not a malformed door declaration, and it denies nothing.
+    let mut array_body = Vec::new();
+    let rows = vec![Value::from(1_u64)];
+    rmpv::encode::write_value(&mut array_body, &Value::Array(rows)).expect("encode body");
+    assert_eq!(
+        decode_door_policy_keys(&array_body).expect("not a map"),
+        None
+    );
+    assert_eq!(decode_door_policy_keys(&[]).expect("empty body"), None);
 }
 
 #[test]
@@ -797,6 +908,19 @@ fn a_one_shot_lease_never_outlives_the_one_shot_cap() {
             ceiling_secs: DOOR_ONE_SHOT_MAX_LIFETIME_SECS,
         }
     ));
+}
+
+#[test]
+fn a_redeemed_one_shot_ticket_dies_with_its_one_shot() {
+    // Redeemed 90s into a 120s one-shot: 30s of authority remain, so the
+    // ticket is worth 30s — not the 120s the credential was declared with.
+    let (_tmp, _vault, door) = door_fixture();
+    let now = 1_700_000_100;
+
+    let ticket = door
+        .redeem_one_shot(one_shot_credential(now), now + 90)
+        .expect("a live one-shot redeems late");
+    assert_eq!(ticket.lease.expires_at - ticket.lease.granted_at, 30);
 }
 
 #[test]

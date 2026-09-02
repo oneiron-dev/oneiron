@@ -526,6 +526,18 @@ impl DoorCredential {
         self.expires_at.saturating_sub(self.issued_at)
     }
 
+    /// How much of the credential's validity is LEFT at `now`, in seconds.
+    ///
+    /// This is the bound every ticket the credential buys sits under: a lease
+    /// that outlives the slip that bought it turns the slip's expiry into a
+    /// suggestion, and a half-spent slip would otherwise buy a full-length
+    /// ticket. `now` is the same witnessed instant [`Self::evaluate`] admits
+    /// against, and the bound is a DURATION, so it stays meaningful when the
+    /// landed materialization stamps `granted_at` from its own clock.
+    fn remaining_secs(&self, now: u64) -> u64 {
+        self.expires_at.saturating_sub(now)
+    }
+
     /// The ONE evaluator call: `verb ∈ slip ∧ record ⊑ slip ∧ record ⊑ channel`,
     /// under the slip's lifetime and revocation state.
     ///
@@ -588,6 +600,9 @@ mod door_policy_keys {
     pub(crate) const MAX_LEASE_TTL_SECS: &str = "secret.door.max_lease_ttl_secs";
     /// Narrowed effector set.
     pub(crate) const ALLOWED_EFFECTORS: &str = "secret.door.allowed_effectors";
+    /// What an error names when the malformed field is the BODY that would
+    /// carry the door rows rather than one row inside it.
+    pub(crate) const NAMESPACE: &str = "secret.door.*";
 }
 
 /// MessagePack key-map helpers local to this module (the per-module idiom the
@@ -677,15 +692,17 @@ impl DoorPolicy {
             && self.allowed_effectors.contains(effector)
     }
 
-    /// The effective lease ceiling: the hard floor, narrowed by the dial, then
-    /// narrowed again by the slip's own attenuation. Only minima compose here,
-    /// so no combination of dial and slip can ever raise it.
-    pub(crate) fn effective_lease_ttl_ceiling(&self, credential: &DoorCredential) -> u64 {
+    /// The effective lease ceiling: the hard floor, narrowed by the dial,
+    /// narrowed again by the slip's own attenuation, and narrowed last by what
+    /// is LEFT of the slip's validity at `now`. Only minima compose here, so no
+    /// combination of dial, slip, and witnessed clock can ever raise it — and
+    /// no ticket this door issues can outlive the credential that bought it.
+    pub(crate) fn effective_lease_ttl_ceiling(&self, credential: &DoorCredential, now: u64) -> u64 {
         let mut ceiling = DOOR_MAX_LEASE_TTL_SECS.min(self.max_lease_ttl_secs);
         if let Some(attenuated) = credential.max_lease_ttl_secs {
             ceiling = ceiling.min(attenuated);
         }
-        ceiling
+        ceiling.min(credential.remaining_secs(now))
     }
 
     /// Resolves the dial from every POLICY_MANIFEST body in the vault,
@@ -723,13 +740,60 @@ impl DoorPolicy {
     }
 }
 
+/// True when `body` ANNOUNCES a MessagePack map: fixmap, map16, or map32.
+///
+/// A body that opens with a map marker is a manifest body that meant to carry
+/// rows, whether or not the rest of it survived.
+fn announces_a_map(body: &[u8]) -> bool {
+    let Some(&marker) = body.first() else {
+        return false;
+    };
+    matches!(marker, 0x80..=0x8f | 0xde | 0xdf)
+}
+
+/// Reads a policy-manifest body as the CANONICAL single MessagePack map the
+/// manifest contract defines — exactly one value, covering exactly the whole
+/// body, which is the same shape [`crate::gate`]'s canonical decoder requires
+/// of the bodies it owns.
+///
+/// `Ok(None)` keeps the landed [`crate::secret_custody::SecretCustodyFloor`]
+/// idiom and means only "this body is not a map, so it carries no door rows
+/// for this plane to read" — an unrelated manifest plane is not this door's to
+/// reject. But a body that ANNOUNCES a map and then does not canonically
+/// decode as one (truncated, corrupt, or bytes left over past the map) is a
+/// PARTIALLY decoded declaration: the door cannot see what it declared, and
+/// defaulting it would silently restore the permissive posture the declaration
+/// existed to narrow. That fails closed, exactly like a present-but-unreadable
+/// row.
+fn door_policy_map(body: &[u8]) -> DoorResult<Option<Vec<(Value, Value)>>> {
+    let partial = || CredentialDoorError::InvalidDoorPolicy {
+        key: door_policy_keys::NAMESPACE,
+        reason: "policy body announces a map it does not canonically decode as",
+    };
+    let mut cursor = Cursor::new(body);
+    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+        return if announces_a_map(body) {
+            Err(partial())
+        } else {
+            Ok(None)
+        };
+    };
+    let Value::Map(entries) = value else {
+        return Ok(None);
+    };
+    if cursor.position() != body.len() as u64 {
+        return Err(partial());
+    }
+    Ok(Some(entries))
+}
+
 /// Decodes the `secret.door.*` rows of ONE policy-manifest body.
 ///
 /// `Ok(None)` means only "this body is not a MessagePack map, so it carries no
-/// door rows" — the body schema itself belongs to the gate.
+/// door rows" — the body schema itself belongs to the gate. A body that is a
+/// map only in part fails closed instead (see [`door_policy_map`]).
 pub(crate) fn decode_door_policy_keys(body: &[u8]) -> DoorResult<Option<DoorPolicy>> {
-    let mut cursor = Cursor::new(body);
-    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+    let Some(entries) = door_policy_map(body)? else {
         return Ok(None);
     };
     reject_floor_naming_rows(&entries)?;
@@ -915,6 +979,10 @@ impl CredentialDoorService {
     /// the lease row and its receipt BEFORE the value returns, so the door
     /// adds no second, unmarked materializing path and no receipt family of
     /// its own.
+    ///
+    /// The ticket is bounded by the credential's REMAINING validity as well as
+    /// by floor, dial and attenuation: a slip may not sell more time than it
+    /// still has.
     pub(crate) fn issue_lease_ticket(
         &self,
         presented: &DoorCredential,
@@ -928,7 +996,7 @@ impl CredentialDoorService {
         self.witness_single_use(presented)?;
         presented.evaluate(DOOR_VERB_LEASE, secret_ref, effector, now)?;
 
-        let ceiling = policy.effective_lease_ttl_ceiling(presented);
+        let ceiling = policy.effective_lease_ttl_ceiling(presented, now);
         if ttl_secs == 0 || ttl_secs > ceiling {
             return Err(CredentialDoorError::LeaseTtlDenied {
                 requested_secs: ttl_secs,
@@ -949,7 +1017,8 @@ impl CredentialDoorService {
     /// enforcement — there is no door-local burn ledger, no token registry,
     /// and no new authority-log entry, because no landed surface licenses one.
     /// What the door CAN do it does: it refuses a single-use caveat it cannot
-    /// witness against the authority log.
+    /// witness against the authority log, and it never hands back a ticket
+    /// that outlives the one-shot it was redeemed from.
     pub(crate) fn redeem_one_shot(
         &self,
         one_shot: DoorCredential,
@@ -988,7 +1057,10 @@ impl CredentialDoorService {
         self.admit_scope(&policy, effector)?;
         one_shot.evaluate(DOOR_VERB_REDEEM, secret_ref, effector, now)?;
 
-        let ceiling = policy.effective_lease_ttl_ceiling(&one_shot);
+        // The declared lifetime is the CAP the one-shot was written under; the
+        // ceiling carries what is left of it at `now`, so a one-shot redeemed
+        // late buys only the time it still has.
+        let ceiling = policy.effective_lease_ttl_ceiling(&one_shot, now);
         let ttl = lifetime.min(ceiling);
         if ttl == 0 {
             return Err(CredentialDoorError::LeaseTtlDenied {
