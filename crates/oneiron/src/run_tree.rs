@@ -503,6 +503,10 @@ impl From<AttemptState> for RunTreeStatus {
 /// `cancelled`. A peer reading only the base state sees honest live work; a
 /// peer reading the extensions can tell an accepted landing from a refusal,
 /// from a designed stop, and from a hard kill.
+///
+/// The resume point is exported WHOLE — cursor and artifact reference both —
+/// because a successor given only the cursor has lost the identity of the work
+/// already produced. Both are typed refs; no payload body crosses this seam.
 #[must_use]
 pub fn project_attempt_to_a2a(record: &AttemptRecord) -> A2aTaskProjection {
     let mut extensions = OneironA2aExtensions {
@@ -510,6 +514,13 @@ pub fn project_attempt_to_a2a(record: &AttemptRecord) -> A2aTaskProjection {
         resume_point: record
             .resume_point()
             .map(|resume_point| resume_point.marker.clone()),
+        // The WHOLE durable resume point, not just its marker: exporting the
+        // cursor alone silently dropped the artifact identity a successor needs
+        // to read before it continues, and a peer cannot recover a reference it
+        // was never given.
+        resume_artifact_ref: record
+            .resume_point()
+            .and_then(|resume_point| resume_point.artifact_ref.clone()),
         ..OneironA2aExtensions::default()
     };
     if let Some(landing) = record.landing() {

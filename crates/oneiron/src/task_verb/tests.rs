@@ -7130,6 +7130,17 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
         "the refusal narrows the row; it does not relabel live work"
     );
 
+    // The by-id owner path carries it too: a row past the collapsed board's
+    // scan prefix is hidden, never gone, so `tasks.expand` must not be the one
+    // owner surface where the refusal disappears.
+    let expanded = facade.tasks_expand(task_ref).expect("expand");
+    assert!(
+        expanded
+            .iter()
+            .any(|line| line.contains("cancel-refused=3/3")),
+        "the expanded owner view carries the same bounded token: {expanded:?}"
+    );
+
     // Settling the attempt retires the signal: an owner can no longer act on it.
     let stopped = facade
         .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)

@@ -6,12 +6,16 @@ use super::engine::RETRY_REASON_UNSPECIFIED;
 use super::telemetry::emit_attempt_queue_cleanup_span;
 use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
 use super::validate::{
-    ERR_CANCEL_ACTOR_IS_RUNTIME, ERR_CANCEL_RECEIPTS_FULL, ERR_FAILURE_REASON_EMPTY,
+    CancelReceiptDraft, ERR_CANCEL_ACTOR_IS_RUNTIME, ERR_CANCEL_NO_STANDING,
+    ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN, ERR_CANCEL_RECEIPT_MISSING_GROUNDS,
+    ERR_CANCEL_RECEIPT_MISSING_REASON, ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF,
+    ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT, ERR_CANCEL_RECEIPT_MISSING_TRIGGER,
+    ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPTS_FULL, ERR_FAILURE_REASON_EMPTY,
     ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITHOUT_LEASE,
     ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL, ERR_MANIFEST_REFERENCE_EMPTY,
     ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG, ERR_MANIFEST_VERSION_EMPTY,
     ERR_MANIFEST_VERSION_TOO_LONG, ERR_RUN_ID_TOO_LONG, MAX_FAILURE_REASON_LEN,
-    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN,
+    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN, append_cancel_receipt,
 };
 use super::*;
 use crate::error::{Error, Result};
@@ -4268,6 +4272,315 @@ fn runtime_warnings_ask_and_never_take_the_lease_away() -> Result<()> {
     assert_eq!(
         queue_b.get(inside.id)?.expect("row").state,
         AttemptState::Queued
+    );
+    Ok(())
+}
+
+/// Proof 12 (ONE-1896 §4): the landing reserve is dialed ONCE per admitted
+/// generation, and a second dial against the running generation is a typed
+/// refusal that moves nothing.
+///
+/// The one-shot mark is durable, so a row dialed honestly to a ZERO reserve —
+/// a budget too small to carve a slice from — stays distinguishable from a row
+/// nothing has dialed yet, and neither can be enlarged underneath the ordinary
+/// meter that was already built from it.
+#[test]
+fn the_landing_reserve_dial_is_one_shot_per_admitted_generation() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let leased = leased_attempt(&queue, "turn:one-shot")?;
+    assert!(
+        !leased.landing_reserve().is_dialed(),
+        "an admitted row starts undialed, not dialed to zero"
+    );
+
+    let dialed = queue.dial_landing_reserve(DialLandingReserve {
+        id: leased.id,
+        limit_units: 1_000,
+        reserve_percent: None,
+        now: 12,
+    })?;
+    assert!(dialed.landing_reserve().is_dialed());
+    assert_eq!(dialed.landing_reserve().reserve_units, 100);
+    assert_eq!(
+        dialed.ordinary_budget_limit_units(),
+        900,
+        "ordinary execution is metered on the dial MINUS the reserve"
+    );
+    assert_eq!(
+        dialed.landing_reserve().dial_generation,
+        Some(leased.attempt_count),
+        "the dial is fenced to the generation it was applied at"
+    );
+
+    assert_invalid_transition(
+        queue
+            .dial_landing_reserve(DialLandingReserve {
+                id: leased.id,
+                limit_units: 1_000_000,
+                reserve_percent: Some(MAX_LANDING_RESERVE_PERCENT),
+                now: 13,
+            })
+            .expect_err("an already admitted generation is not re-dialed"),
+        "dial_landing_reserve",
+        "already_dialed",
+    );
+    let unchanged = queue.get(leased.id)?.expect("row");
+    assert_eq!(
+        unchanged.landing_reserve(),
+        dialed.landing_reserve(),
+        "a refused re-dial leaves every unit of accounting untouched"
+    );
+
+    // A budget too small to carve a slice from dials to a zero reserve, and
+    // that is still a DIAL: it is refused a second time exactly like a rich one.
+    let short = leased_attempt(&queue, "turn:one-shot-short")?;
+    let short = queue.dial_landing_reserve(DialLandingReserve {
+        id: short.id,
+        limit_units: 9,
+        reserve_percent: None,
+        now: 14,
+    })?;
+    assert_eq!(short.landing_reserve().reserve_units, 0);
+    assert!(short.landing_reserve().is_dialed());
+    assert_eq!(short.ordinary_budget_limit_units(), 9);
+    assert_invalid_transition(
+        queue
+            .dial_landing_reserve(DialLandingReserve {
+                id: short.id,
+                limit_units: 100,
+                reserve_percent: None,
+                now: 15,
+            })
+            .expect_err("a zero reserve is a dial, not an absence"),
+        "dial_landing_reserve",
+        "already_dialed",
+    );
+
+    // Landing spend stays bounded on the dialed reserve: an over-ask spends
+    // NOTHING, and a landing row is not dialed at all.
+    queue.request_cancel(soft_request(leased.id, "peer-1", CancelStanding::PeerAgent))?;
+    let landing = accept_landing_at(&queue, &leased, LandingTrigger::CancelRequest, 16)?;
+    let LandingReserveSpendOutcome::Exhausted {
+        record,
+        requested_units,
+        remaining_units,
+    } = queue.spend_landing_reserve(SpendAttemptLandingReserve {
+        id: landing.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: landing.attempt_count,
+        units: 101,
+        now: 17,
+    })?
+    else {
+        panic!("an over-ask spends nothing");
+    };
+    assert_eq!(requested_units, 101);
+    assert_eq!(remaining_units, 100);
+    assert_eq!(record.landing_reserve().spent_units, 0);
+    assert_invalid_transition(
+        queue
+            .dial_landing_reserve(DialLandingReserve {
+                id: landing.id,
+                limit_units: 10,
+                reserve_percent: None,
+                now: 18,
+            })
+            .expect_err("a landing row would be minting the reserve it spends"),
+        "dial_landing_reserve",
+        "landing",
+    );
+    Ok(())
+}
+
+/// Proof 13 (ONE-1896 §6): a persisted cancel receipt must agree with its own
+/// KIND, and the same contract guards the write door.
+///
+/// Contradictory rows are not a cosmetic problem: a refusal with no reason is
+/// indistinguishable from a worker that ignored the ask, and a projection that
+/// faithfully renders one is reporting a fact nobody established.
+#[test]
+fn a_persisted_cancel_receipt_must_agree_with_its_own_kind() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let leased = leased_attempt(&queue, "turn:receipt-kinds")?;
+    queue.request_cancel(soft_request(leased.id, "peer-1", CancelStanding::PeerAgent))?;
+    let refused = queue.reject_cancel(RejectAttemptCancel {
+        id: leased.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: leased.attempt_count,
+        reason: "mid-write".to_owned(),
+        status: None,
+        request_sequence: None,
+        now: 13,
+    })?;
+    let record = refused.record;
+    assert_eq!(record.cancel_receipts().len(), 2);
+
+    let refuse_decode = |mutate: &dyn Fn(&mut AttemptRecord), expected: &'static str| {
+        let mut malformed = record.clone();
+        mutate(&mut malformed);
+        let encoded = rmp_serde::to_vec_named(&malformed).expect("encode");
+        let mut raw = vec![super::types::ATTEMPT_RECORD_VERSION];
+        raw.extend(encoded);
+        let err = decode_record(&raw, malformed.id).expect_err("a contradictory row fails closed");
+        assert!(
+            matches!(&err, Error::InvalidAttemptQueueRecord(reason) if *reason == expected),
+            "expected {expected}, got {err:?}"
+        );
+    };
+
+    // The ASK: it must name its trigger, may not rest on force grounds, moves
+    // no reserve units, and cannot record the "no standing" refusal verdict as
+    // if it were standing.
+    refuse_decode(
+        &|row| row.cancel_state.receipts[0].trigger = None,
+        ERR_CANCEL_RECEIPT_MISSING_TRIGGER,
+    );
+    refuse_decode(
+        &|row| row.cancel_state.receipts[0].grounds = Some(ForceCancelGrounds::Owner),
+        ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN,
+    );
+    refuse_decode(
+        &|row| row.cancel_state.receipts[0].reserve_units = 5,
+        ERR_CANCEL_RECEIPT_RESERVE_UNITS,
+    );
+    refuse_decode(
+        &|row| row.cancel_state.receipts[0].standing = Some(CancelStanding::None),
+        ERR_CANCEL_NO_STANDING,
+    );
+
+    // The REFUSAL: the reason is the evidence, and the request reference is
+    // what keeps the other requesters still owed an answer.
+    refuse_decode(
+        &|row| row.cancel_state.receipts[1].reason = None,
+        ERR_CANCEL_RECEIPT_MISSING_REASON,
+    );
+    refuse_decode(
+        &|row| row.cancel_state.receipts[1].request_sequence = None,
+        ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF,
+    );
+
+    // A resume-point row with no point, a reserve spend of zero units, and a
+    // force with no grounds are all the same failure: a kind that claims
+    // something the row does not carry.
+    refuse_decode(
+        &|row| {
+            let receipt = &mut row.cancel_state.receipts[0];
+            receipt.kind = AttemptCancelReceiptKind::ResumePointRecorded;
+            receipt.standing = None;
+            receipt.reason = None;
+        },
+        ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT,
+    );
+    refuse_decode(
+        &|row| {
+            let receipt = &mut row.cancel_state.receipts[0];
+            receipt.kind = AttemptCancelReceiptKind::ReserveSpent;
+            receipt.standing = None;
+            receipt.reason = None;
+        },
+        ERR_CANCEL_RECEIPT_RESERVE_UNITS,
+    );
+    refuse_decode(
+        &|row| {
+            let receipt = &mut row.cancel_state.receipts[1];
+            receipt.kind = AttemptCancelReceiptKind::ForceCancelled;
+            receipt.request_sequence = None;
+        },
+        ERR_CANCEL_RECEIPT_MISSING_GROUNDS,
+    );
+
+    // The WRITE door holds the same contract, so a malformed draft can never
+    // reach storage in the first place: the row is refused and the append-only
+    // history is exactly as long as it was.
+    let mut draft_target = record.clone();
+    let before = draft_target.cancel_state.receipts.len();
+    let err = append_cancel_receipt(
+        &mut draft_target,
+        AttemptCancelReceiptKind::SoftRejected,
+        "worker-a".to_owned(),
+        CancelReceiptDraft {
+            request_sequence: Some(1),
+            ..CancelReceiptDraft::default()
+        },
+        14,
+    )
+    .expect_err("a refusal without a reason is refused at the door");
+    assert!(matches!(
+        err,
+        Error::InvalidAttemptQueueRecord(reason) if reason == ERR_CANCEL_RECEIPT_MISSING_REASON
+    ));
+    assert_eq!(
+        draft_target.cancel_state.receipts.len(),
+        before,
+        "a refused append leaves the record untouched"
+    );
+
+    // The live row on disk is still the well-formed one every mutation copied.
+    let stored = queue.get(leased.id)?.expect("row");
+    assert_eq!(stored.cancel_receipts().len(), 2);
+    assert_eq!(stored.state, AttemptState::Leased);
+    Ok(())
+}
+
+/// Proof 14 (ONE-1896 §5): the A2A projection exports the WHOLE durable resume
+/// point, artifact reference included.
+///
+/// A successor handed only the cursor has lost the identity of the work
+/// already produced and would redo it; the reference is a typed ref, never a
+/// payload body.
+#[test]
+fn the_a2a_projection_carries_the_whole_durable_resume_point() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let leased = leased_attempt(&queue, "turn:a2a-resume")?;
+
+    let ordinary = crate::run_tree::project_attempt_to_a2a(&leased);
+    assert!(ordinary.extensions.resume_point.is_none());
+    assert!(
+        ordinary.extensions.resume_artifact_ref.is_none(),
+        "an ordinary row carries neither half of a resume point"
+    );
+
+    queue.request_cancel(soft_request(leased.id, "peer-1", CancelStanding::PeerAgent))?;
+    let landing = accept_landing_at(&queue, &leased, LandingTrigger::CancelRequest, 13)?;
+    let recorded = queue.record_resume_point(RecordAttemptResumePoint {
+        id: landing.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: landing.attempt_count,
+        resume_point: AttemptResumePoint::new("step-7/of-12", 14).with_artifact_ref("receipt:9f2c"),
+        now: 14,
+    })?;
+    let a2a = crate::run_tree::project_attempt_to_a2a(&recorded);
+    assert_eq!(a2a.extensions.resume_point.as_deref(), Some("step-7/of-12"));
+    assert_eq!(
+        a2a.extensions.resume_artifact_ref.as_deref(),
+        Some("receipt:9f2c"),
+        "the artifact identity is exported, not silently dropped"
+    );
+
+    let FinishLandingOutcome::HandedOff { successor, .. } =
+        queue.finish_landing(FinishAttemptLanding {
+            id: landing.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: landing.attempt_count,
+            hand_off: true,
+            scheduled_at: None,
+            now: 15,
+        })?
+    else {
+        panic!("a recorded resume point may hand off");
+    };
+    let handed_off = crate::run_tree::project_attempt_to_a2a(&successor);
+    assert_eq!(
+        handed_off.extensions.resume_point.as_deref(),
+        Some("step-7/of-12")
+    );
+    assert_eq!(
+        handed_off.extensions.resume_artifact_ref.as_deref(),
+        Some("receipt:9f2c"),
+        "the successor carries the whole point across the handoff"
     );
     Ok(())
 }

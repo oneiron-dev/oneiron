@@ -1011,6 +1011,15 @@ pub struct OneironA2aExtensions {
     pub landing_trigger: Option<String>,
     /// The exact point a successor resumes from, once recorded.
     pub resume_point: Option<String>,
+    /// The durable artifact a successor should read FIRST, when the recorded
+    /// resume point named one.
+    ///
+    /// Additive and defaulted, and carried beside the marker rather than
+    /// folded into it: a successor that receives only the cursor has lost the
+    /// identity of the work already produced and would redo it. This is a
+    /// REFERENCE, never a payload body — the artifact stays opaque to the peer
+    /// exactly as internal plans and tool calls do.
+    pub resume_artifact_ref: Option<String>,
     /// Soft requests the worker has refused. Non-zero is the pathology signal
     /// a peer can act on without reading Oneiron's durable rows.
     pub cancel_rejections: u32,
