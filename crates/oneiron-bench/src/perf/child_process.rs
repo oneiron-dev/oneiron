@@ -1,0 +1,520 @@
+//! ONE-1579 ready-child plumbing: the TCP-accept readiness probe, the child
+//! programs the harness spawns, and the PARENT-OWNED lifetime that follows
+//! readiness.
+//!
+//! Readiness boundary: a child is ready when, and only when, the parent's TCP
+//! `accept` for it has completed. Children are spawned with all three standard
+//! streams pointed at `/dev/null`, so there is no log text for this harness to
+//! read even if someone later wanted to.
+//!
+//! Lifetime boundary: after readiness the PARENT owns the child. It releases
+//! the child by closing the accepted stream, waits a BOUNDED graceful budget,
+//! then gives termination/reaping its own BOUNDED budget. Anything still alive
+//! is reported as `unreapable`; no cleanup path falls through to blocking
+//! `Child::wait`. The bundled `wake-child` does
+//! exit on that EOF, but a caller-supplied [`ChildCommandPlan`] carries no such
+//! promise — an ordinary long-lived service would connect, stay up, and hang an
+//! unbounded `wait()` forever. The child's own `--hold-ms` is a safety net
+//! underneath that, never the mechanism: it must be long enough to cover the
+//! parent's whole spawn, accept and sample phase, which
+//! [`minimum_child_hold_ms`] states and plan admission enforces.
+
+use std::io::Read;
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use oneiron::{Vault, VaultConfig};
+use serde::{Deserialize, Serialize};
+
+use super::axes::ReadinessSignal;
+use super::cells::{Cell, RunMode};
+use super::corpus::BENCH_EMBEDDING_MODEL;
+use super::git_sha::hash_file_blake3;
+
+/// Environment override naming the program the ready-children probes spawn.
+pub(crate) const CHILD_PROGRAM_ENV: &str = "ONEIRON_BENCH_PERF_CHILD";
+/// Accept poll granularity for the wake probe, in microseconds.
+pub(crate) const ACCEPT_POLL_INTERVAL_US: u64 = 100;
+/// Head-room a child's hold must have OVER the accept timeout, so the earliest
+/// child cannot expire while the parent is still accepting the rest of the
+/// cohort and reading their RSS.
+pub(crate) const READY_CHILD_SAMPLING_MARGIN_MS: u64 = 5_000;
+/// How long the parent waits for a released child to exit before terminating
+/// it. A caller-supplied child is not required to exit on EOF, so this bound
+/// is what keeps the harness from blocking forever on `wait()`.
+pub(crate) const CHILD_SHUTDOWN_BUDGET_MS: u64 = 2_000;
+/// How long the parent waits after sending the termination signal for the
+/// child to become reapable. This second deadline is load-bearing: `kill()`
+/// followed by an unconditional `wait()` is still an unbounded wait when the
+/// signal fails or a process is stuck in an uninterruptible kernel state.
+pub(crate) const CHILD_KILL_REAP_BUDGET_MS: u64 = 2_000;
+/// Poll granularity while waiting for a released child to exit.
+const CHILD_EXIT_POLL_MS: u64 = 5;
+
+/// The shortest child hold that still covers the parent's whole
+/// spawn -> accept -> sample phase.
+///
+/// The parent's accept loop is bounded by the plan's `wake.timeout_ms`, and a
+/// child arms its hold the moment it connects — which can be at the very start
+/// of that window. A hold at or below the accept timeout therefore lets the
+/// FIRST child expire before the tenth is even accepted, turning the required
+/// ten-children measurement into `not_ready`.
+pub(crate) const fn minimum_child_hold_ms(accept_timeout_ms: u64) -> u64 {
+    accept_timeout_ms.saturating_add(READY_CHILD_SAMPLING_MARGIN_MS)
+}
+
+/// A bound loopback listener whose completed `accept` IS the readiness signal.
+///
+/// The probe has no API that consumes child output: there is no log reader, no
+/// stdout scan and no "sleep then assume ready" path anywhere on this type.
+pub(crate) struct WakeProbe {
+    listener: TcpListener,
+}
+
+/// One child that reached ready. The stream is held so the parent can keep the
+/// child alive and then release it by closing the socket.
+pub(crate) struct ReadyChild {
+    pub(crate) elapsed_ms: f64,
+    pub(crate) signal: ReadinessSignal,
+    pub(crate) stream: TcpStream,
+}
+
+impl WakeProbe {
+    pub(crate) fn bind() -> Result<Self, String> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| format!("wake probe could not bind loopback: {error}"))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("wake probe could not arm its listener: {error}"))?;
+        Ok(Self { listener })
+    }
+
+    pub(crate) fn addr(&self) -> Result<SocketAddr, String> {
+        self.listener
+            .local_addr()
+            .map_err(|error| format!("wake probe has no local address: {error}"))
+    }
+
+    /// Blocks until a child connects. The elapsed time is measured from the
+    /// caller's `started` instant (taken immediately before the spawn) to the
+    /// completed accept — never to a log line, a sleep or a stdout token.
+    pub(crate) fn wait_ready(
+        &self,
+        started: Instant,
+        timeout: Duration,
+    ) -> Result<ReadyChild, String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _)) => {
+                    let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
+                    stream
+                        .set_nonblocking(false)
+                        .map_err(|error| format!("ready stream could not be armed: {error}"))?;
+                    return Ok(ReadyChild {
+                        elapsed_ms,
+                        signal: ReadinessSignal::TcpAccept,
+                        stream,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(format!("no TCP accept within {timeout:?}"));
+                    }
+                    std::thread::sleep(Duration::from_micros(ACCEPT_POLL_INTERVAL_US));
+                }
+                Err(error) => return Err(format!("wake probe accept failed: {error}")),
+            }
+        }
+    }
+}
+
+/// A caller-supplied child program. `{ready_addr}`, `{vault_dir}` and
+/// `{hold_ms}` are substituted into each argument.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChildCommandPlan {
+    pub(crate) program: String,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
+}
+
+/// Sizing for the wake and ready-children probes.
+pub(crate) struct ChildSettings {
+    pub(crate) samples: usize,
+    pub(crate) timeout_ms: u64,
+    pub(crate) hold_ms: u64,
+    pub(crate) child: Option<ChildCommandPlan>,
+}
+
+impl ChildSettings {
+    pub(crate) const fn accept_timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms)
+    }
+}
+
+/// How a released child left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChildExit {
+    /// Exited on its own inside the shutdown budget.
+    Exited,
+    /// Outlived the budget and was terminated and reaped by the parent.
+    TerminatedAfterBudget,
+    /// Could not be reaped at all; the pid is reported rather than hidden.
+    Unreapable,
+}
+
+impl ChildExit {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exited => "exited",
+            Self::TerminatedAfterBudget => "terminated_after_budget",
+            Self::Unreapable => "unreapable",
+        }
+    }
+}
+
+/// Polls `try_wait` only until `deadline`. `try_wait` reaps a completed child,
+/// so no blocking `wait()` is needed anywhere in the harness.
+fn poll_reap_until(child: &mut Child, deadline: Instant) -> Result<bool, ()> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(true),
+            Ok(None) => {}
+            Err(_) => return Err(()),
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Ok(false);
+        };
+        std::thread::sleep(remaining.min(Duration::from_millis(CHILD_EXIT_POLL_MS)));
+    }
+}
+
+fn deadline_after(duration: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(duration).unwrap_or(now)
+}
+
+/// Waits at most `budget` for an already-released child to exit, then sends a
+/// termination signal and gives reaping its own bounded budget.
+///
+/// This is the ONLY wait path the harness performs on a spawned child. In
+/// particular, the post-`kill` path also uses `try_wait`: `kill(); wait()` is
+/// not bounded when signalling fails or a task is stuck in uninterruptible I/O.
+/// If the second deadline expires, the report says `unreapable` instead of
+/// hiding an indefinite wait behind a function named "bounded".
+pub(crate) fn wait_bounded(child: &mut Child, budget: Duration) -> ChildExit {
+    if let Ok(true) = poll_reap_until(child, deadline_after(budget)) {
+        return ChildExit::Exited;
+    }
+
+    let signal_sent = child.kill().is_ok();
+    match poll_reap_until(child, deadline_after(child_kill_reap_budget())) {
+        Ok(true) if signal_sent => ChildExit::TerminatedAfterBudget,
+        Ok(true) => ChildExit::Exited,
+        Ok(false) | Err(()) => ChildExit::Unreapable,
+    }
+}
+
+/// Terminates a child immediately and reaps it only under the same bounded
+/// post-signal budget. Used on error paths that never reached readiness.
+pub(crate) fn terminate_bounded(child: &mut Child) -> ChildExit {
+    wait_bounded(child, Duration::ZERO)
+}
+
+/// The bounded graceful shutdown budget every probe releases its children
+/// under before sending a termination signal.
+pub(crate) const fn child_shutdown_budget() -> Duration {
+    Duration::from_millis(CHILD_SHUTDOWN_BUDGET_MS)
+}
+
+/// The bounded post-termination reap budget.
+pub(crate) const fn child_kill_reap_budget() -> Duration {
+    Duration::from_millis(CHILD_KILL_REAP_BUDGET_MS)
+}
+
+/// The program the ready-child probes will spawn, plus whether it is the
+/// harness's OWN `perf wake-child`.
+///
+/// The distinction is load-bearing rather than cosmetic. Only the bundled
+/// child opens its assigned vault BEFORE it connects, so only its readiness
+/// also proves vault residency. A program named by [`CHILD_PROGRAM_ENV`] is an
+/// arbitrary executable that merely has to reach the listener: it may ignore
+/// `{vault_dir}` entirely, exactly as a caller-supplied `wake.child` plan may.
+pub(crate) struct ChildProgram {
+    pub(crate) path: PathBuf,
+    /// True only for the running `oneiron-bench` binary resolved WITHOUT an
+    /// environment override. Anything else proves TCP readiness only.
+    pub(crate) harness_owned: bool,
+}
+
+/// The ready-child program this run will actually spawn, hashed BEFORE the
+/// first spawn (ONE-1963).
+///
+/// The digest is what makes the ready-children axis attributable: without it,
+/// "ten children held a vault" says nothing about WHICH binary held it. A full
+/// run is additionally required to spawn the measuring artifact itself, which
+/// the `child_program_matches_build_revision` check enforces by comparing this
+/// digest to `provenance.build_revision_blake3`.
+pub(crate) struct ResolvedChildProgram {
+    /// `None` when no child program could be resolved at all; the reason is in
+    /// `blake3`, which is then `not_ready`.
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) harness_owned: bool,
+    /// The program came from [`CHILD_PROGRAM_ENV`], so its bytes were chosen by
+    /// the operator. A full run never reaches this state.
+    pub(crate) overridden_by_environment: bool,
+    pub(crate) blake3: Cell<String>,
+}
+
+/// The non-empty value of the child-program override, if the operator set one.
+fn environment_child_override() -> Option<String> {
+    let raw = std::env::var(CHILD_PROGRAM_ENV).ok()?;
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The ONE-1963 refusal, as a decision over its two inputs so every branch is
+/// reachable from a test without mutating this process's environment.
+pub(crate) fn refuse_full_run_child_override(
+    mode: RunMode,
+    pinned: Option<&str>,
+) -> Result<(), String> {
+    match pinned {
+        Some(pinned) if mode.is_full() => Err(format!(
+            "{CHILD_PROGRAM_ENV} is set to `{pinned}` for a FULL run; a full run measures the \
+             artifact it was built from, so an operator-chosen ready-child program is refused \
+             before any axis runs rather than silently downgrading the ready-children axis. Unset \
+             {CHILD_PROGRAM_ENV}, or run this comparison as a synthetic smoke"
+        )),
+        Some(_) | None => Ok(()),
+    }
+}
+
+/// Resolves the ready-child program for this run and hashes it, refusing an
+/// operator-chosen child outright for a FULL run.
+///
+/// The refusal is the point of ONE-1963 and it happens BEFORE any axis runs.
+/// Previously an override merely flipped `harness_owned: false`, which
+/// downgraded one axis's evidence while the run carried on and still reported
+/// wake latency for an arbitrary program. A full run measures the artifact it
+/// was built from or it does not run: the harness REJECTS the override rather
+/// than hash-pinning some other binary into the certificate, because a Full-run
+/// pin that must equal the parent's own digest is the identity case and a
+/// separate-binary wake test belongs in a synthetic smoke.
+pub(crate) fn resolve_and_hash_child_program(
+    mode: RunMode,
+    planned: Option<&ChildCommandPlan>,
+) -> Result<ResolvedChildProgram, String> {
+    let overridden = environment_child_override();
+    refuse_full_run_child_override(mode, overridden.as_deref())?;
+
+    // Whatever `child_command` will actually spawn: a plan-supplied program
+    // when the plan named one (smoke only — plan admission refuses it for a
+    // full run), otherwise the resolved harness child.
+    let resolved = match planned {
+        Some(plan) => Ok(ChildProgram {
+            path: PathBuf::from(&plan.program),
+            harness_owned: false,
+        }),
+        None => resolve_child_program(),
+    };
+    Ok(match resolved {
+        Ok(program) => {
+            let blake3 = match hash_file_blake3(&program.path) {
+                Ok(digest) => Cell::measured(digest),
+                Err(error) => Cell::not_ready(format!(
+                    "the ready-child program `{}` could not be hashed, so the run cannot say which \
+                     binary it spawned: {error}",
+                    program.path.display()
+                )),
+            };
+            ResolvedChildProgram {
+                path: Some(program.path),
+                harness_owned: program.harness_owned,
+                overridden_by_environment: overridden.is_some(),
+                blake3,
+            }
+        }
+        Err(reason) => ResolvedChildProgram {
+            path: None,
+            harness_owned: false,
+            overridden_by_environment: overridden.is_some(),
+            blake3: Cell::not_ready(reason),
+        },
+    })
+}
+
+/// Resolves the program the harness will spawn as its ready child.
+pub(crate) fn resolve_child_program() -> Result<ChildProgram, String> {
+    if let Ok(pinned) = std::env::var(CHILD_PROGRAM_ENV)
+        && !pinned.trim().is_empty()
+    {
+        // An overridden program is opaque even when it happens to point back at
+        // an oneiron-bench build: the harness did not choose its arguments and
+        // cannot know it opens a vault.
+        return Ok(ChildProgram {
+            path: PathBuf::from(pinned.trim()),
+            harness_owned: false,
+        });
+    }
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("the running executable is not resolvable: {error}"))?;
+    let stem = executable
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default()
+        .to_owned();
+    if stem == "oneiron-bench" {
+        return Ok(ChildProgram {
+            path: executable,
+            harness_owned: true,
+        });
+    }
+    Err(format!(
+        "the running executable `{stem}` is not the oneiron-bench binary, so the harness has no \
+         ready-child program to spawn; run the built binary or set {CHILD_PROGRAM_ENV}"
+    ))
+}
+
+pub(crate) fn child_command(
+    plan: Option<&ChildCommandPlan>,
+    fallback: &Path,
+    addr: SocketAddr,
+    vault_dir: &Path,
+    hold_ms: u64,
+) -> (PathBuf, Vec<String>) {
+    let ready_addr = addr.to_string();
+    let vault = vault_dir.display().to_string();
+    let hold = hold_ms.to_string();
+    match plan {
+        Some(plan) => {
+            let args = plan
+                .args
+                .iter()
+                .map(|argument| {
+                    argument
+                        .replace("{ready_addr}", &ready_addr)
+                        .replace("{vault_dir}", &vault)
+                        .replace("{hold_ms}", &hold)
+                })
+                .collect();
+            (PathBuf::from(&plan.program), args)
+        }
+        None => (
+            fallback.to_path_buf(),
+            vec![
+                "perf".to_owned(),
+                "wake-child".to_owned(),
+                "--ready-addr".to_owned(),
+                ready_addr,
+                "--vault".to_owned(),
+                vault,
+                "--hold-ms".to_owned(),
+                hold,
+            ],
+        ),
+    }
+}
+
+/// Spawns the child with every standard stream discarded. There is no pipe to
+/// read, so readiness cannot accidentally become a log-text wait.
+pub(crate) fn spawn_child(program: &Path, args: &[String]) -> Result<Child, String> {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("could not spawn `{}`: {error}", program.display()))
+}
+
+pub(crate) fn describe_child(program: &Path, args: &[String]) -> String {
+    format!("{} {}", program.display(), args.join(" "))
+}
+
+/// Best-effort resident set size for one live pid. `None` where the platform
+/// exposes no per-process counter — reported as such, never guessed.
+pub(crate) fn process_rss_bytes(pid: u32) -> Option<u64> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+    let kib: u64 = line
+        .trim_start_matches("VmRSS:")
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse()
+        .ok()?;
+    Some(kib * 1024)
+}
+
+/// Vault config for a ready child. Small on purpose: the child exists to be a
+/// real process holding a real open vault, not to hold a corpus.
+pub(crate) fn child_vault_config() -> VaultConfig {
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = Some(BENCH_EMBEDDING_MODEL.to_owned());
+    config.map_size = 64 * 1024 * 1024;
+    config.max_readers = 16;
+    config
+}
+
+// ─── ready-child mode ────────────────────────────────────────────────────
+
+/// Harness-internal child mode. Spawned by the wake and ready-children probes;
+/// it opens a vault (so the child is a genuinely active vault, not an idle
+/// process), announces readiness by CONNECTING to the parent's probe, and then
+/// blocks until the parent closes the socket or the hold budget expires.
+pub(crate) fn run_wake_child(args: &[String]) -> Result<(), String> {
+    let mut ready_addr = None;
+    let mut vault_dir = None;
+    let mut hold_ms = 30_000_u64;
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let value = args
+            .get(index + 1)
+            .ok_or_else(|| format!("wake-child flag `{flag}` needs a value"))?;
+        match flag {
+            "--ready-addr" => ready_addr = Some(value.clone()),
+            "--vault" => vault_dir = Some(value.clone()),
+            "--hold-ms" => {
+                hold_ms = value
+                    .parse()
+                    .map_err(|_| format!("--hold-ms expects milliseconds, got `{value}`"))?;
+            }
+            other => return Err(format!("unknown wake-child flag `{other}`")),
+        }
+        index += 2;
+    }
+    let ready_addr = ready_addr.ok_or_else(|| "--ready-addr is required".to_owned())?;
+    let ready_addr: SocketAddr = ready_addr
+        .parse()
+        .map_err(|_| format!("--ready-addr is not a socket address: `{ready_addr}`"))?;
+
+    // Opening the vault BEFORE announcing readiness is the point: the child
+    // only counts as ready once it is a live process holding an open vault.
+    let _held_vault = match vault_dir {
+        Some(dir) => Some(
+            Vault::open(dir, child_vault_config())
+                .map_err(|error| format!("child vault open failed: {error}"))?,
+        ),
+        None => None,
+    };
+
+    let mut stream = TcpStream::connect(ready_addr)
+        .map_err(|error| format!("child could not reach the readiness probe: {error}"))?;
+    // The hold is a SAFETY NET for an abandoned parent, not the release
+    // mechanism: the parent closes the socket, which lands here as EOF.
+    stream
+        .set_read_timeout(Some(Duration::from_millis(hold_ms.max(1))))
+        .map_err(|error| format!("child could not arm its hold timeout: {error}"))?;
+    let mut scratch = [0_u8; 1];
+    let _ = stream.read(&mut scratch);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;
