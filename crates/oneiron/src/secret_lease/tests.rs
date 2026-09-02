@@ -550,6 +550,71 @@ fn materialize_lease_writes_rows_and_returns_value() {
 }
 
 #[test]
+fn a_bounded_materialization_is_clamped_by_the_clock_that_stamps_it() {
+    // The bound exists because `ttl_secs` is computed at the CALLER's clock
+    // and `granted_at` is stamped from this method's own: without an absolute
+    // instant, any advance between the two lengthens the lease past whatever
+    // authority bought it. The bound is answered by the same reading that
+    // stamps the row, so the gap cannot be widened by delay.
+    let (_tmp, vault) = temp_vault();
+    register(
+        &vault,
+        default_record(
+            "bounded",
+            CustodyClass::CustodyPortable,
+            CustodyTier::T1Leased,
+        ),
+    );
+
+    // A TTL that would run past the bound dies AT the bound.
+    let bound = crate::unix_seconds_now() + 60;
+    let materialization = vault
+        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, Some(bound))
+        .expect("a live bound admits");
+    let lease = materialization.lease;
+    assert_eq!(lease.expires_at, bound);
+    assert!(lease.expires_at < lease.granted_at + 3600);
+    assert!(lease.granted_at < lease.expires_at);
+    // The clamped instant is what landed durable, not just what returned.
+    let stored = read_lease_row(&vault, &lease.lease_id).expect("lease row present");
+    assert_eq!(stored, lease);
+
+    // A TTL that ends before the bound is untouched by it.
+    let materialization = vault
+        .materialize_secret_lease_bounded("bounded", EFFECTOR, 30, Some(bound))
+        .expect("well inside the bound");
+    assert_eq!(
+        materialization.lease.expires_at,
+        materialization.lease.granted_at + 30
+    );
+
+    // A bound that has already elapsed mints NOTHING: the lease would be born
+    // dead, so no lease row, no receipt row, and no value leave this call.
+    let leases_before = count_rows(&vault, SECRET_LEASE_KEY_PREFIX);
+    let receipts_before = count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX);
+    let elapsed = crate::unix_seconds_now();
+    let err = vault
+        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, Some(elapsed))
+        .expect_err("an elapsed bound cannot be honoured");
+    assert!(matches!(err, Error::InvariantViolation(_)), "got {err:?}");
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), leases_before);
+    assert_eq!(
+        count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX),
+        receipts_before
+    );
+
+    // And `None` is exactly the unbounded contract every existing caller
+    // still gets.
+    let materialization = vault
+        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, None)
+        .expect("unbounded");
+    assert_eq!(
+        materialization.lease.expires_at,
+        materialization.lease.granted_at + 3600
+    );
+}
+
+#[test]
 fn receipt_write_failure_leaves_no_lease_row_and_no_value() {
     let (_tmp, vault) = temp_vault();
     register(
