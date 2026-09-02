@@ -1142,25 +1142,77 @@ impl Vault {
     /// `#[cfg(test)]` fault hook proves it). Expiry is lazy: the lease is
     /// expired from `expires_at` on, checked at use and by
     /// [`Vault::expire_secret_leases`].
+    ///
+    /// Unbounded: `expires_at` is `granted_at + ttl_secs` and nothing else.
+    /// A caller whose authority ENDS at a known instant must use
+    /// [`Vault::materialize_secret_lease_bounded`] instead, so the bound is
+    /// enforced by the same clock that stamps the lease.
     pub fn materialize_secret_lease(
         &self,
         secret_ref: &str,
         effector: &str,
         ttl_secs: u64,
     ) -> Result<SecretLeaseMaterialization> {
+        self.materialize_secret_lease_bounded(secret_ref, effector, ttl_secs, None)
+    }
+
+    /// [`Vault::materialize_secret_lease`] under an ABSOLUTE expiry bound.
+    ///
+    /// `not_after` is an absolute unix-seconds instant the minted lease may
+    /// never outlive — the expiry of whatever authority bought it. A relative
+    /// `ttl_secs` cannot carry that guarantee across the gap between a
+    /// caller's authorization clock and the write transaction's own: the
+    /// caller computes `ttl_secs` at its witnessed `now`, and this method
+    /// stamps `granted_at` from a FRESH reading, so any advance between the
+    /// two would push `granted_at + ttl_secs` past the authority's end. The
+    /// bound closes that gap by construction:
+    ///
+    /// * `granted_at` and the bound check read the SAME clock reading inside
+    ///   the one materializing write transaction, so no delay between
+    ///   authorization and persistence can widen the ticket;
+    /// * `expires_at` is `min(granted_at + ttl_secs, not_after)`, so the
+    ///   lease dies with the authority even when the clock moved;
+    /// * a reading at or past `not_after` means the authority's window closed
+    ///   before the lease could be stamped, which fails closed — no lease
+    ///   row, no receipt row, and no value returned.
+    ///
+    /// `not_after: None` is exactly [`Vault::materialize_secret_lease`]'s
+    /// unbounded behaviour, unchanged for every existing caller.
+    pub fn materialize_secret_lease_bounded(
+        &self,
+        secret_ref: &str,
+        effector: &str,
+        ttl_secs: u64,
+        not_after: Option<u64>,
+    ) -> Result<SecretLeaseMaterialization> {
         let mut wtxn = self.store.env.write_txn()?;
         let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, secret_ref)?;
         let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
         admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
         let value = read_value_for_ref_in_txn(self, &wtxn, &id, effector)?;
+        // ONE clock reading stamps `granted_at`, dates the receipt, and
+        // answers the bound. Nothing between authorization and here can move
+        // them apart.
         let now = unix_seconds_now();
+        let expires_at = match not_after {
+            // The window closed before the lease could be stamped. Returning
+            // here drops the write txn uncommitted, so no row and no value
+            // escape a bound this materialization can no longer honour.
+            Some(bound) if now >= bound => {
+                return Err(Error::InvariantViolation(
+                    "secret lease expiry bound elapsed before materialization stamped the lease",
+                ));
+            }
+            Some(bound) => now.saturating_add(ttl_secs).min(bound),
+            None => now.saturating_add(ttl_secs),
+        };
         let lease = SecretLease {
             lease_id: EntityId::now(),
             secret_ref: secret_ref.to_owned(),
             binding_effector: effector.to_owned(),
             tier: CustodyTier::T1Leased,
             granted_at: now,
-            expires_at: now.saturating_add(ttl_secs),
+            expires_at,
             status: SecretLeaseStatus::Active,
             materialization_receipt: EntityId::now(),
             value_generation: rec.rotation_generation,
