@@ -3,6 +3,10 @@ use crate::counterparty_contact::CounterpartyContactRecord;
 use serde_json::json;
 
 use crate::test_util::entity as test_id;
+use crate::voice_identity::{
+    VoicePrintCalibration, VoiceSessionRosterV1, put_raw_voice_roster_for_test,
+    put_voice_roster_for_test,
+};
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
@@ -14,6 +18,113 @@ fn resolution_input(parties: Vec<InterlocutorPartyInput>) -> InterlocutorResolut
         parties,
         voice_session_ref: None,
     }
+}
+
+fn seed_contact(vault: &Vault, identity: EntityId, contact_id: EntityId, who: &str) -> Result<()> {
+    let record = CounterpartyContactRecord::user_introduction(identity, who, 10)?;
+    vault.create_counterparty_contact(&contact_id, &record)
+}
+
+fn roster_segment(
+    segment_id: &str,
+    speaker_label: &str,
+    subject_ref: Option<EntityId>,
+    contact_ref: Option<EntityId>,
+    evidence: VoiceAttributionEvidence,
+) -> VoiceResolvedSegment {
+    VoiceResolvedSegment {
+        segment_id: segment_id.to_owned(),
+        start_ms: 0,
+        end_ms: 1_000,
+        speaker_label: speaker_label.to_owned(),
+        subject_ref,
+        contact_ref,
+        evidence,
+    }
+}
+
+/// An enrolled OWNER print match: enrolled-print evidence, no contact link.
+fn enrolled_owner_segment(segment_id: &str, subject_ref: EntityId) -> VoiceResolvedSegment {
+    roster_segment(
+        segment_id,
+        &subject_ref.to_hex(),
+        Some(subject_ref),
+        None,
+        VoiceAttributionEvidence::EnrolledPrint {
+            subject_ref,
+            score: 0.9,
+            calibration: VoicePrintCalibration::Calibrated,
+        },
+    )
+}
+
+/// An enrolled CONTACT print match.
+fn enrolled_contact_segment(
+    segment_id: &str,
+    subject_ref: EntityId,
+    contact_ref: EntityId,
+) -> VoiceResolvedSegment {
+    roster_segment(
+        segment_id,
+        &subject_ref.to_hex(),
+        Some(subject_ref),
+        Some(contact_ref),
+        VoiceAttributionEvidence::EnrolledPrint {
+            subject_ref,
+            score: 0.8,
+            calibration: VoicePrintCalibration::Collecting,
+        },
+    )
+}
+
+/// A non-biometric invite-elimination naming.
+fn invite_segment(segment_id: &str, attendee_ref: EntityId) -> VoiceResolvedSegment {
+    roster_segment(
+        segment_id,
+        &attendee_ref.to_hex(),
+        None,
+        Some(attendee_ref),
+        VoiceAttributionEvidence::InviteElimination { attendee_ref },
+    )
+}
+
+/// An anonymous residual cluster.
+fn residual_segment(
+    segment_id: &str,
+    speaker_label: &str,
+    cluster_ref: &str,
+) -> VoiceResolvedSegment {
+    roster_segment(
+        segment_id,
+        speaker_label,
+        None,
+        None,
+        VoiceAttributionEvidence::ResidualCluster {
+            cluster_ref: cluster_ref.to_owned(),
+        },
+    )
+}
+
+fn seed_voice_roster(
+    vault: &Vault,
+    voice_session_ref: &str,
+    segments: Vec<VoiceResolvedSegment>,
+) -> Result<()> {
+    put_voice_roster_for_test(
+        vault,
+        &VoiceSessionRosterV1 {
+            voice_session_ref: voice_session_ref.to_owned(),
+            recording_id: "recording-1".to_owned(),
+            embedding_space_id: "space-1".to_owned(),
+            known_threshold: 0.65,
+            segments,
+            created_at: 100,
+        },
+    )
+}
+
+fn put_raw_voice_roster(vault: &Vault, voice_session_ref: &str, bytes: &[u8]) -> Result<()> {
+    put_raw_voice_roster_for_test(vault, voice_session_ref, bytes)
 }
 
 #[test]
@@ -171,16 +282,180 @@ fn duplicate_contact_inputs_collapse_to_one_entry() -> Result<()> {
 }
 
 #[test]
-fn voice_session_ref_is_accepted_and_resolves_to_no_entries() -> Result<()> {
+fn voice_session_ref_resolves_its_stored_roster_parties() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let identity = test_id(0x61);
+    let contact_id = test_id(0x62);
+    let owner_subject = test_id(0x63);
+    let contact_subject = test_id(0x64);
+    seed_contact(&vault, identity, contact_id, "kenji@example.com")?;
+    seed_voice_roster(
+        &vault,
+        "call-123",
+        vec![
+            enrolled_owner_segment("seg-1", owner_subject),
+            enrolled_contact_segment("seg-2", contact_subject, contact_id),
+            residual_segment("seg-3", "anonymous speaker 1", "residual.1"),
+        ],
+    )?;
+
     let set = vault.resolve_interlocutors(&InterlocutorResolutionInput {
-        owner_session: true,
+        owner_session: false,
         parties: Vec::new(),
         voice_session_ref: Some("call-123".to_owned()),
     })?;
-    assert_eq!(set.entries().len(), 1);
-    assert!(set.supervised());
-    assert!(!set.has_non_owner());
+    assert!(!set.supervised(), "a roster never mints supervision");
+    assert_eq!(set.entries().len(), 3);
+
+    let owner_match = &set.entries()[0];
+    assert_eq!(owner_match.class(), InterlocutorClass::Unknown);
+    assert_eq!(owner_match.evidence(), PresenceEvidence::EnrolledVoicePrint);
+    assert!(owner_match.owner_print_matched());
+
+    let contact_match = &set.entries()[1];
+    assert_eq!(contact_match.class(), InterlocutorClass::KnownContact);
+    assert_eq!(
+        contact_match.evidence(),
+        PresenceEvidence::EnrolledVoicePrint
+    );
+    assert_eq!(contact_match.label(), "kenji@example.com");
+    assert_eq!(
+        contact_match.contact_ref(),
+        Some(contact_id.to_hex().as_str())
+    );
+    assert!(!contact_match.owner_print_matched());
+
+    let residual = &set.entries()[2];
+    assert_eq!(residual.class(), InterlocutorClass::Unknown);
+    assert_eq!(residual.label(), "anonymous speaker 1");
+    assert_eq!(residual.contact_ref(), None);
+    Ok(())
+}
+
+#[test]
+fn matched_owner_print_without_session_is_a_non_owner_entry() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner_subject = test_id(0x65);
+    seed_voice_roster(
+        &vault,
+        "call-owner",
+        vec![enrolled_owner_segment("seg-1", owner_subject)],
+    )?;
+
+    let unsupervised = vault.resolve_interlocutors(&InterlocutorResolutionInput {
+        owner_session: false,
+        parties: Vec::new(),
+        voice_session_ref: Some("call-owner".to_owned()),
+    })?;
+    assert_eq!(unsupervised.entries().len(), 1);
+    assert!(
+        !unsupervised.supervised(),
+        "an enrolled print is corroboration, never authentication"
+    );
+    assert!(unsupervised.entries()[0].owner_print_matched());
+    assert_eq!(
+        unsupervised.entries()[0].class(),
+        InterlocutorClass::Unknown
+    );
+
+    // With a real owner session, the session-created Owner stays the ONLY
+    // Owner entry and the voice match remains a separate non-owner entry.
+    let supervised = vault.resolve_interlocutors(&InterlocutorResolutionInput {
+        owner_session: true,
+        parties: Vec::new(),
+        voice_session_ref: Some("call-owner".to_owned()),
+    })?;
+    assert!(supervised.supervised());
+    assert_eq!(supervised.entries().len(), 2);
+    let owners: Vec<&Interlocutor> = supervised
+        .entries()
+        .iter()
+        .filter(|entry| entry.class() == InterlocutorClass::Owner)
+        .collect();
+    assert_eq!(owners.len(), 1);
+    assert_eq!(owners[0].evidence(), PresenceEvidence::AuthenticatedSession);
+    assert_eq!(owners[0].label(), "owner");
+    assert!(!owners[0].owner_print_matched());
+    assert_eq!(supervised.non_owner().count(), 1);
+    Ok(())
+}
+
+#[test]
+fn missing_or_corrupt_voice_roster_yields_one_unknown_non_owner() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+
+    // A supplied reference with no stored roster.
+    let missing = vault.resolve_interlocutors(&InterlocutorResolutionInput {
+        owner_session: true,
+        parties: Vec::new(),
+        voice_session_ref: Some("call-missing".to_owned()),
+    })?;
+    assert_eq!(missing.entries().len(), 2);
+    assert_eq!(missing.non_owner().count(), 1);
+    assert_eq!(
+        missing.non_owner().next().expect("entry").class(),
+        InterlocutorClass::Unknown
+    );
+    assert!(
+        missing.has_non_owner(),
+        "failure narrows disclosure: never owner-alone mode"
+    );
+
+    // A stored roster row whose bytes do not decode.
+    put_raw_voice_roster(&vault, "call-corrupt", b"not a roster body")?;
+    let corrupt = vault.resolve_interlocutors(&InterlocutorResolutionInput {
+        owner_session: true,
+        parties: Vec::new(),
+        voice_session_ref: Some("call-corrupt".to_owned()),
+    })?;
+    assert_eq!(corrupt.entries().len(), 2);
+    assert_eq!(corrupt.non_owner().count(), 1);
+    assert_eq!(
+        corrupt.non_owner().next().expect("entry").class(),
+        InterlocutorClass::Unknown
+    );
+    assert!(!corrupt.non_owner().next().expect("entry").claimed_owner());
+    Ok(())
+}
+
+#[test]
+fn voice_derived_stamps_carry_claims_not_instructions() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let identity = test_id(0x66);
+    let contact_id = test_id(0x67);
+    let attendee_id = test_id(0x68);
+    seed_contact(&vault, identity, contact_id, "kenji@example.com")?;
+    seed_contact(&vault, identity, attendee_id, "mai@example.com")?;
+    seed_voice_roster(
+        &vault,
+        "call-stamps",
+        vec![
+            enrolled_owner_segment("seg-1", test_id(0x69)),
+            enrolled_contact_segment("seg-2", test_id(0x6A), contact_id),
+            invite_segment("seg-3", attendee_id),
+            residual_segment("seg-4", "anonymous speaker 1", "residual.1"),
+        ],
+    )?;
+
+    let set = vault.resolve_interlocutors(&InterlocutorResolutionInput {
+        owner_session: true,
+        parties: Vec::new(),
+        voice_session_ref: Some("call-stamps".to_owned()),
+    })?;
+    assert_eq!(set.non_owner().count(), 4);
+    for entry in set.non_owner() {
+        assert_ne!(entry.class(), InterlocutorClass::Owner);
+        assert!(InterlocutorStamp::for_interlocutor(entry).claims_not_instructions);
+    }
+
+    // Invite elimination is non-biometric: it borrows no evidence rung.
+    let named = set
+        .non_owner()
+        .find(|entry| entry.contact_ref() == Some(attendee_id.to_hex().as_str()))
+        .expect("invite-eliminated attendee");
+    assert_eq!(named.class(), InterlocutorClass::KnownContact);
+    assert_eq!(named.evidence(), PresenceEvidence::FirstClaim);
+    assert!(!named.owner_print_matched());
     Ok(())
 }
 

@@ -1062,3 +1062,26 @@ pub(crate) fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementRecei
         settled_at: u(&x[7])?,
     })
 }
+
+// ONE-1907 (CSTDY-07) additive extension. Nothing above this line changes: the
+// `CheckoutRepoOps::materialize(&CheckoutLeaseAct)` port, every claim/grant
+// shape, and every persisted row keep their established bytes.
+use super::env_blueprint::MaterializationSpec;
+
+/// Standalone data carried by `CheckoutEnvPlan`. `None` means "use the exact
+/// ONE-1901 path". This type is never persisted and is not attached as a field
+/// to `CheckoutLeaseAct` or any existing public request or grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CheckoutMaterializationOptions {
+    pub spec: Option<MaterializationSpec>,
+}
+
+impl CheckoutMaterializationOptions {
+    pub const fn legacy() -> Self {
+        Self { spec: None }
+    }
+
+    pub const fn resolved(spec: MaterializationSpec) -> Self {
+        Self { spec: Some(spec) }
+    }
+}

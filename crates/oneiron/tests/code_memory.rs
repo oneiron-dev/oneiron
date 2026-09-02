@@ -203,6 +203,20 @@ fn transfer(
     }
 }
 
+/// The `path_at_revision` STORED on `symbol_id`'s attachment row for
+/// `payload` — the locator half of the dual anchor as it actually persists,
+/// read back through the public attachment door.
+fn attachment_path(vault: &Vault, symbol_id: EntityId, payload: CodeMemoryPayloadRef) -> String {
+    let rows = vault
+        .code_memory_attachments(symbol_id)
+        .expect("attachment rows");
+    let row = rows
+        .into_iter()
+        .find(|attachment| attachment.payload == payload)
+        .expect("the surviving payload keeps an attachment row");
+    row.anchor.locator.path_at_revision
+}
+
 fn human(vault: &Vault, byte: u8) -> WriteActor {
     WriteActor::new(seed(vault, byte, ENTITY_TYPE_PERSON), EdgeActorClass::Human)
 }
@@ -589,6 +603,211 @@ fn invalid_anchor_transfers_are_typed() {
     }
 }
 
+/// The LOCATOR IS PER PAYLOAD, never per operation.
+///
+/// A second attach into the same slot may not restamp the first payload's
+/// `path_at_revision`, and a transfer relabels only what it actually moved:
+/// a destination-only payload keeps the locator it was attached under even
+/// though the merged slot is rewritten around it.
+#[test]
+fn locators_survive_later_attaches_and_untouched_transfers() {
+    let (_dir, vault) = vault();
+    let from = symbol(&vault, 0xE0);
+    let to = symbol(&vault, 0xE1);
+    let first = note(&vault);
+    let second = note(&vault);
+    let destination_only = note(&vault);
+    let actor = id(0xE2);
+
+    attach(
+        &vault,
+        from,
+        "src/first.rs",
+        slot(),
+        value(first, actor, 0xB1, 1_000),
+    )
+    .expect("first attach");
+    attach(
+        &vault,
+        from,
+        "src/second.rs",
+        slot(),
+        value(second, actor, 0xB2, 2_000),
+    )
+    .expect("a second attach into the SAME slot");
+
+    assert_eq!(
+        attachment_path(&vault, from, first),
+        "src/first.rs",
+        "the older payload keeps the locator it was attached under"
+    );
+    assert_eq!(attachment_path(&vault, from, second), "src/second.rs");
+
+    // The destination already holds an unrelated payload in the same slot.
+    attach(
+        &vault,
+        to,
+        "src/destination.rs",
+        slot(),
+        value(destination_only, id(0xE3), 0xB3, 3_000),
+    )
+    .expect("destination pre-fill");
+
+    vault
+        .transfer_code_memory_anchor(&transfer(AnchorTransferKind::Copy, from, to, actor))
+        .expect("explicit copy");
+
+    assert_eq!(
+        attachment_path(&vault, to, destination_only),
+        "src/destination.rs",
+        "a payload this transfer never moved is not relabelled by `to_locator`"
+    );
+    for moved in [first, second] {
+        assert_eq!(
+            attachment_path(&vault, to, moved),
+            "src/after.rs",
+            "a payload that DID move carries the transfer's own locator"
+        );
+    }
+
+    assert_eq!(
+        attachment_path(&vault, from, first),
+        "src/first.rs",
+        "a copy leaves the source locators untouched too"
+    );
+    assert_eq!(attachment_path(&vault, from, second), "src/second.rs");
+}
+
+/// A symbol carrying ONLY standalone always-on contracts is a legal
+/// registration, so it is transferable: the rename re-points the always-on
+/// rows and reports zero moved slot values rather than refusing.
+#[test]
+fn contract_only_symbol_transfers() {
+    let (_dir, vault) = vault();
+    let from = symbol(&vault, 0xE4);
+    let to = symbol(&vault, 0xE5);
+    let actor = id(0xE6);
+    let payload = note(&vault);
+
+    vault
+        .register_always_on_contract(contract(
+            from,
+            slot(),
+            payload,
+            CodeMemoryContractKind::Interface,
+            actor,
+        ))
+        .expect("registration never requires a slot value");
+    assert!(
+        vault.code_memory_slots(from).expect("source").is_empty(),
+        "precondition: the source carries no slot value at all"
+    );
+
+    let receipt = vault
+        .transfer_code_memory_anchor(&transfer(AnchorTransferKind::Rename, from, to, actor))
+        .expect("a contract-only symbol may still be renamed");
+    assert_eq!(
+        receipt.moved_attachments, 0,
+        "the count measures slot values; the contract moved regardless"
+    );
+
+    let moved = vault
+        .code_memory_always_on_contracts(to)
+        .expect("destination contracts");
+    assert_eq!(moved.len(), 1);
+    assert_eq!(
+        moved[0].symbol_id, to,
+        "the always-on row re-points onto the destination symbol"
+    );
+    assert_eq!(moved[0].payload, payload);
+    assert_eq!(moved[0].kind, CodeMemoryContractKind::Interface);
+    assert!(
+        vault
+            .code_memory_always_on_contracts(from)
+            .expect("source contracts")
+            .is_empty(),
+        "the rename leaves no always-on row pinned to the old symbol"
+    );
+    assert_eq!(
+        vault.code_memory_transfers(to).expect("receipts").len(),
+        1,
+        "the transfer is recorded like any other"
+    );
+}
+
+/// Contract collisions resolve exactly like slot collisions: the destination
+/// registration stands. A transfer never writes source kind/actor/time/
+/// provenance over an existing destination `(symbol, slot, payload)` row.
+#[test]
+fn transfer_preserves_a_colliding_destination_contract() {
+    let (_dir, vault) = vault();
+    let from = symbol(&vault, 0xEC);
+    let to = symbol(&vault, 0xED);
+    let source_actor = id(0xEE);
+    let destination_actor = id(0xEF);
+    let payload = note(&vault);
+
+    // The SAME (symbol, slot, payload) key on both sides, registered with
+    // deliberately different metadata on every field a transfer could clobber.
+    let mut destination = contract(
+        to,
+        slot(),
+        payload,
+        CodeMemoryContractKind::Policy,
+        destination_actor,
+    );
+    destination.valid_time = range(1_780_000_111);
+    destination.recorded_at = 1_780_000_111;
+    destination.provenance_claim_id = id(0xF0);
+    vault
+        .register_always_on_contract(destination.clone())
+        .expect("the destination registers first");
+
+    let mut source = contract(
+        from,
+        slot(),
+        payload,
+        CodeMemoryContractKind::Interface,
+        source_actor,
+    );
+    source.valid_time = range(1_780_000_222);
+    source.recorded_at = 1_780_000_222;
+    source.provenance_claim_id = id(0xF1);
+    vault
+        .register_always_on_contract(source)
+        .expect("the source registers the colliding key");
+    attach(
+        &vault,
+        from,
+        "src/before.rs",
+        slot(),
+        value(note(&vault), source_actor, 0xF2, 1_000),
+    )
+    .expect("a slot value so the transfer moves both families at once");
+
+    vault
+        .transfer_code_memory_anchor(&transfer(AnchorTransferKind::Copy, from, to, source_actor))
+        .expect("transfer");
+
+    assert_eq!(
+        vault.code_memory_slots(to).expect("destination").len(),
+        1,
+        "the transfer really ran: the slot value landed"
+    );
+    let contracts = vault
+        .code_memory_always_on_contracts(to)
+        .expect("destination contracts");
+    assert_eq!(
+        contracts.len(),
+        1,
+        "the colliding destination key stays exactly one row"
+    );
+    assert_eq!(
+        contracts[0], destination,
+        "the destination registration survives field for field; there is no last-writer-wins"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Slots
 // ---------------------------------------------------------------------------
@@ -916,6 +1135,49 @@ fn blocks_authority_is_gated() {
         vault.blocks_dependencies(a).expect("read"),
         vec![b],
         "every refusal wrote nothing"
+    );
+}
+
+/// Readiness endpoints are TYPED, exactly like attach/transfer/pull anchors:
+/// a ghost id and a live non-`CODE_SYMBOL` entity are typed refusals on
+/// EITHER side, and neither persists a row.
+#[test]
+fn blocks_endpoints_must_be_live_code_symbols() {
+    let (_dir, vault) = vault();
+    let anchor_symbol = symbol(&vault, 0xE7);
+    let actor = human(&vault, 0xE8);
+    let ghost = id(0xE9);
+    let not_a_symbol = seed(&vault, 0xEA, ENTITY_TYPE_PERSON);
+
+    for (from, to) in [
+        (anchor_symbol, ghost),
+        (ghost, anchor_symbol),
+        (anchor_symbol, not_a_symbol),
+        (not_a_symbol, anchor_symbol),
+    ] {
+        let error = vault
+            .insert_blocks_edge(from, to, blocks_context(&actor))
+            .expect_err("readiness needs a live CODE_SYMBOL on both ends");
+        assert!(matches!(error, Error::CodeMemoryInvalidAnchor { .. }));
+    }
+
+    for endpoint in [anchor_symbol, ghost, not_a_symbol] {
+        let dependencies = vault.blocks_dependencies(endpoint).expect("read");
+        assert!(
+            dependencies.is_empty(),
+            "every refusal wrote nothing on either index"
+        );
+    }
+
+    // The control: the same actor and source write cleanly between two live
+    // symbols, so the refusals above measure endpoint typing and nothing else.
+    let downstream = symbol(&vault, 0xEB);
+    vault
+        .insert_blocks_edge(anchor_symbol, downstream, blocks_context(&actor))
+        .expect("two live CODE_SYMBOLs still pass the same door");
+    assert_eq!(
+        vault.blocks_dependencies(anchor_symbol).expect("read"),
+        vec![downstream]
     );
 }
 
@@ -1396,4 +1658,214 @@ fn relevance_pull_is_bounded() {
         )
         .expect("pull");
     assert_eq!(pulled.notes.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Deletion lifecycle
+// ---------------------------------------------------------------------------
+
+/// Row counts across all four public L2 readers for one symbol.
+fn row_counts(vault: &Vault, symbol_id: EntityId) -> (usize, usize, usize, usize) {
+    let slots = vault
+        .code_memory_slots(symbol_id)
+        .expect("slot rows are readable");
+    let rows = vault
+        .code_memory_attachments(symbol_id)
+        .expect("attachment rows are readable");
+    let always_on = vault
+        .code_memory_always_on_contracts(symbol_id)
+        .expect("always-on rows are readable");
+    let moves = vault
+        .code_memory_transfers(symbol_id)
+        .expect("transfer receipts are readable");
+    (slots.len(), rows.len(), always_on.len(), moves.len())
+}
+
+/// Deleting the ANCHOR takes its L2 rows with it, in the same transaction.
+///
+/// Attachments, slots, always-on registrations, and transfer receipts are
+/// `vault_meta` rows rather than entities, so nothing else in the delete path
+/// reaches them: every reader below would otherwise keep answering for a
+/// symbol that no longer exists. The copy destination is the control — it
+/// keeps the material the transfer gave it, because only the deleted anchor's
+/// rows are swept.
+#[test]
+fn deleting_a_symbol_clears_every_code_memory_row() {
+    let (_dir, vault) = vault();
+    let anchor_symbol = symbol(&vault, 0xE3);
+    let destination = symbol(&vault, 0xE4);
+    let actor = id(0xE5);
+    let payload = note(&vault);
+    let contract_payload = note(&vault);
+
+    attach(
+        &vault,
+        anchor_symbol,
+        "src/a.rs",
+        slot(),
+        value(payload, actor, 0xE6, 100),
+    )
+    .expect("attach");
+    vault
+        .register_always_on_contract(contract(
+            anchor_symbol,
+            other_slot(),
+            contract_payload,
+            CodeMemoryContractKind::Interface,
+            actor,
+        ))
+        .expect("register");
+    vault
+        .transfer_code_memory_anchor(&transfer(
+            AnchorTransferKind::Copy,
+            anchor_symbol,
+            destination,
+            actor,
+        ))
+        .expect("copy the anchor's material onto a second symbol");
+
+    assert_eq!(
+        row_counts(&vault, anchor_symbol),
+        (1, 1, 1, 1),
+        "slot, attachment, always-on, and transfer rows all exist before the delete"
+    );
+
+    vault
+        .batch()
+        .delete(&anchor_symbol)
+        .commit()
+        .expect("delete the anchor symbol");
+
+    assert!(
+        vault.get(&anchor_symbol).expect("read").is_none(),
+        "the anchor entity itself is gone"
+    );
+    assert_eq!(
+        row_counts(&vault, anchor_symbol),
+        (0, 0, 0, 0),
+        "no public reader answers for a dead anchor, including its transfer history"
+    );
+    assert_eq!(
+        vault.code_memory_slots(destination).expect("read").len(),
+        1,
+        "the copy destination keeps the material the transfer gave it"
+    );
+}
+
+/// Deleting a PAYLOAD takes every reference to it with it, under any symbol.
+///
+/// The always-on bound is eight LIVE contracts per symbol, but registration
+/// counts KEYS: without this sweep eight deleted NOTEs would hold a live
+/// symbol at capacity forever while the readers went on publishing refs to
+/// material that no longer exists. The surviving note is the control — the
+/// sweep removes references, not slots.
+#[test]
+fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
+    let (_dir, vault) = vault();
+    let anchor_symbol = symbol(&vault, 0xE7);
+    let actor = id(0xE8);
+    let survivor = note(&vault);
+    attach(
+        &vault,
+        anchor_symbol,
+        "src/a.rs",
+        slot(),
+        value(survivor, actor, 0xE9, 100),
+    )
+    .expect("attach the surviving note");
+
+    let mut payloads = Vec::new();
+    for index in 0..CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
+        let payload = note(&vault);
+        payloads.push(payload);
+        vault
+            .register_always_on_contract(contract(
+                anchor_symbol,
+                slot(),
+                payload,
+                CodeMemoryContractKind::Interface,
+                actor,
+            ))
+            .expect("eight distinct keys register");
+        let content = 0xEA + u8::try_from(index).expect("index fits a byte");
+        attach(
+            &vault,
+            anchor_symbol,
+            "src/a.rs",
+            slot(),
+            value(payload, actor, content, 200 + index as u64),
+        )
+        .expect("the same payload also rides a slot value");
+    }
+
+    let ninth = note(&vault);
+    let refused = vault
+        .register_always_on_contract(contract(
+            anchor_symbol,
+            slot(),
+            ninth,
+            CodeMemoryContractKind::Interface,
+            actor,
+        ))
+        .expect_err("eight live registrations fill the symbol");
+    assert!(matches!(
+        refused,
+        Error::CodeMemoryLimitExceeded {
+            kind: "always-on contracts per symbol",
+            limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS
+        }
+    ));
+
+    for payload in &payloads {
+        vault
+            .batch()
+            .delete(&payload.entity_id())
+            .commit()
+            .expect("hard-delete the NOTE payload");
+    }
+
+    let contracts = vault
+        .code_memory_always_on_contracts(anchor_symbol)
+        .expect("read");
+    assert!(
+        contracts.is_empty(),
+        "no reader publishes a contract whose NOTE was deleted"
+    );
+    let payload_refs: Vec<CodeMemoryPayloadRef> = vault
+        .code_memory_slots(anchor_symbol)
+        .expect("read")
+        .iter()
+        .flat_map(|slot| slot.values.iter().map(|value| value.payload))
+        .collect();
+    assert_eq!(
+        payload_refs,
+        vec![survivor],
+        "slot bodies keep the live payload and lose every deleted one"
+    );
+    let attached: Vec<CodeMemoryPayloadRef> = vault
+        .code_memory_attachments(anchor_symbol)
+        .expect("read")
+        .into_iter()
+        .map(|attachment| attachment.payload)
+        .collect();
+    assert_eq!(
+        attached,
+        vec![survivor],
+        "the attachment index tracks the rewritten slot body exactly"
+    );
+
+    vault
+        .register_always_on_contract(contract(
+            anchor_symbol,
+            slot(),
+            ninth,
+            CodeMemoryContractKind::Interface,
+            actor,
+        ))
+        .expect("the bound counts live registrations, so a ninth NOTE fits now");
+    let after = vault
+        .code_memory_always_on_contracts(anchor_symbol)
+        .expect("read");
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].payload, ninth);
 }

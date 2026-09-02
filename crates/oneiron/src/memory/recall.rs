@@ -27,7 +27,7 @@ const PPR_SEED_LIMIT: usize = 8;
 /// Bounded claim scan behind scope-honesty world enumeration.
 const SCOPE_HONESTY_SCAN_CAP: usize = 512;
 
-const RECALL_TOKEN_BUDGET: usize = 4000;
+pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
 /// Retrieval effort dial (S6). Deliberately distinct from `llm.rs`
 /// `ReasoningEffort` (the LLM dial) and `context_pack.rs` `FieldProfile`.
@@ -559,7 +559,7 @@ fn hedge_bucket_for(confidence: f32) -> &'static str {
 
 /// Maps the OF-096 format strings (`toon|md|json|yaml|txt`) to the pack
 /// serializer formats.
-fn parse_pack_format(format: &str) -> MemoryResult<PackFormat> {
+pub(super) fn parse_pack_format(format: &str) -> MemoryResult<PackFormat> {
     match format {
         "json" => Ok(PackFormat::Json),
         "yaml" => Ok(PackFormat::Yaml),

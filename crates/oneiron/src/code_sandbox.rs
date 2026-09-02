@@ -49,6 +49,10 @@ pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
 
   function askHuman(input: { prompt: string }): Promise<{ waitId: string }>;
   function ask_human(input: { prompt: string }): Promise<{ waitId: string }>;
+
+  function speak(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
+  function think(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
+  function express(input: { text: string }): Promise<{ order: number; isVisible: boolean }>;
 }
 
 declare namespace oneiron {
@@ -179,6 +183,15 @@ pub enum SandboxImportClass {
     Determinism,
     DurableWait,
     WriteTrap,
+    /// The `self.speak` family (ONE-1686): an explicit host effect that emits
+    /// one durable MESSAGE bubble through the run's bound witness route.
+    ///
+    /// Deliberately NOT `WriteTrap`. A write trap is a gated MEMORY verb —
+    /// claim, supersede, edge — and OF-060 P3 pins that set closed. Speech
+    /// writes a transcript row, not memory, and it is gated on the witness
+    /// path instead; giving it its own class is what keeps the two ceilings
+    /// from being confused for one.
+    Speech,
 }
 
 impl SandboxImportClass {
@@ -250,6 +263,12 @@ const SELF_ASK_HUMAN_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.ask_human", SandboxImportClass::DurableWait);
 const SELF_ASK_HUMAN_CAMEL_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.askHuman", SandboxImportClass::DurableWait);
+const SELF_SPEAK_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.speak", SandboxImportClass::Speech);
+const SELF_THINK_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.think", SandboxImportClass::Speech);
+const SELF_EXPRESS_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.express", SandboxImportClass::Speech);
 const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     READ_FILE_IMPORT,
     CREDENTIAL_CALL_IMPORT,
@@ -267,6 +286,9 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     SELF_MEMORY_PUT_EDGE_IMPORT,
     SELF_ASK_HUMAN_IMPORT,
     SELF_ASK_HUMAN_CAMEL_IMPORT,
+    SELF_SPEAK_IMPORT,
+    SELF_THINK_IMPORT,
+    SELF_EXPRESS_IMPORT,
 ];
 
 /// Link-time contract for one guest tier.

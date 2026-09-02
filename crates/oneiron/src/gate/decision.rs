@@ -7,7 +7,7 @@ use crate::counterparty_contact::CounterpartyFirstTouch;
 use super::input::ExternalEffectGateContext;
 
 pub(super) const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-pub(super) const GATE_METRIC_REASON_CLASS_COUNT: usize = 15;
+pub(super) const GATE_METRIC_REASON_CLASS_COUNT: usize = 17;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -66,6 +66,12 @@ pub(crate) enum GateMetricReasonClass {
     Consent,
     /// CA-06 campaign compliance: a seeded legal rule row refused the dispatch.
     CampaignCompliance,
+    /// GATE-12: deterministic pre-commit validation refused a Dreamer-authored
+    /// claim before any decision was applied.
+    DreamerPrecommit,
+    /// ONE-1686 (RT-04): the witness MESSAGE ceiling door refused an envelope
+    /// at the shared witness write boundary.
+    WitnessMessageCeiling,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -88,6 +94,8 @@ impl GateMetricReasonClass {
             Self::CharterPolicy => "charter_policy",
             Self::Consent => "consent",
             Self::CampaignCompliance => "campaign_compliance",
+            Self::DreamerPrecommit => "dreamer_precommit",
+            Self::WitnessMessageCeiling => "witness_message_ceiling",
         }
     }
 
@@ -108,6 +116,8 @@ impl GateMetricReasonClass {
             Self::CharterPolicy => 12,
             Self::Consent => 13,
             Self::CampaignCompliance => 14,
+            Self::DreamerPrecommit => 15,
+            Self::WitnessMessageCeiling => 16,
         }
     }
 
@@ -128,6 +138,8 @@ impl GateMetricReasonClass {
             Self::CharterPolicy,
             Self::Consent,
             Self::CampaignCompliance,
+            Self::DreamerPrecommit,
+            Self::WitnessMessageCeiling,
         ]
     }
 }
@@ -169,6 +181,26 @@ pub(crate) enum GateReasonCode {
     /// dispatch. Enforcement, not an ask — an owner approval must not be able
     /// to unlock a send the governing legal row forbids, so this is a deny.
     DenyCampaignCompliance,
+    /// GATE-12 check 1: the Dreamer's claim value was empty-after-trim or
+    /// opened with narration instead of a value.
+    DenyDreamerDegenerateOutput,
+    /// GATE-12 check 2: predicate, confidence, subject or value shape was
+    /// outside the claim contract.
+    DenyDreamerMalformed,
+    /// GATE-12 check 3: a non-runtime-record Dreamer claim cited no evidence
+    /// ref that resolves to an existing entity. Validity, not authority — so
+    /// it is a deny and never becomes an owner-review row.
+    DenyDreamerNoEvidence,
+    /// ONE-1686 (RT-04): the witnessed MESSAGE envelope was malformed — an
+    /// unknown author bucket, an out-of-shape message type, an out-of-range
+    /// order, an incoherent author/visibility pair, metadata that exceeded the
+    /// bounds or restated an envelope axis, or staged body bytes that were not
+    /// the canonical encoding of the axes presented. Validity, not authority.
+    DenyWitnessMessageMalformedEnvelope,
+    /// ONE-1686 (RT-04): the actor may not author this envelope. Today the only
+    /// bucket that needs authority beyond a bound actor is `system`, whose rows
+    /// carry no `AuthoredBy` edge and so speak in the engine's own voice.
+    DenyWitnessMessageAuthorNotAuthorized,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -199,6 +231,15 @@ impl GateReasonCode {
                 "gate.pending.consent.write_classification_failed"
             }
             Self::DenyCampaignCompliance => "gate.deny.campaign_compliance",
+            Self::DenyDreamerDegenerateOutput => "gate.deny.dreamer_precommit.degenerate_output",
+            Self::DenyDreamerMalformed => "gate.deny.dreamer_precommit.malformed",
+            Self::DenyDreamerNoEvidence => "gate.deny.dreamer_precommit.no_evidence",
+            Self::DenyWitnessMessageMalformedEnvelope => {
+                "gate.deny.witness_message.malformed_envelope"
+            }
+            Self::DenyWitnessMessageAuthorNotAuthorized => {
+                "gate.deny.witness_message.author_not_authorized"
+            }
         }
     }
 
@@ -230,6 +271,13 @@ impl GateReasonCode {
             | Self::PendingConsentCatastropheFloor
             | Self::PendingConsentWriteClassificationFailed => GateMetricReasonClass::Consent,
             Self::DenyCampaignCompliance => GateMetricReasonClass::CampaignCompliance,
+            Self::DenyDreamerDegenerateOutput
+            | Self::DenyDreamerMalformed
+            | Self::DenyDreamerNoEvidence => GateMetricReasonClass::DreamerPrecommit,
+            Self::DenyWitnessMessageMalformedEnvelope
+            | Self::DenyWitnessMessageAuthorNotAuthorized => {
+                GateMetricReasonClass::WitnessMessageCeiling
+            }
         }
     }
 }
