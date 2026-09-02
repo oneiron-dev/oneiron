@@ -500,7 +500,7 @@ pub(super) fn extract_readable_page(html: &str, final_url: &Url) -> RendererResu
         markdown: article.text_content.to_string(),
         title: article.title.trim().to_string(),
         canonical_url,
-        final_url: final_url_text,
+        final_url: Some(final_url_text),
         discovered_links,
     })
 }
@@ -589,10 +589,11 @@ where
 
 /// The pinned self-hosted scrape metadata.
 ///
-/// Standard Firecrawl responses expose the page identity as `sourceURL`; they
-/// do not expose the previously assumed `url` field. The API has no separate
-/// redirect-final identity, so this one validated field supplies both the
-/// renderer's canonical URL and its best available navigation identity.
+/// Firecrawl's canonical page identity is `sourceURL`. Some v1 deployments
+/// additionally report a post-navigation `url`; it is decoded separately and
+/// is the only Firecrawl field this engine accepts as redirect-final evidence.
+/// When it is absent, single-page acquisition remains usable but a crawl must
+/// reject the rung rather than pretending the request echo witnessed a landing.
 ///
 /// `statusCode` is the *target page's* status, which is the reason a perfectly
 /// well-formed success envelope can still describe a page that failed.
@@ -602,6 +603,8 @@ struct FirecrawlScrapeMetadata {
     title: Option<String>,
     #[serde(default, rename = "sourceURL")]
     source_url: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
     #[serde(default, rename = "statusCode")]
     status_code: Option<u16>,
 }
@@ -629,30 +632,41 @@ impl FirecrawlRenderer {
         let markdown = data.markdown.ok_or_else(|| {
             RendererError::invalid_response("firecrawl scrape envelope carried no markdown")
         })?;
-        // Firecrawl's actual response field. It is the service's only page URL,
-        // so validate it once and use that same conservative identity for both
-        // canonical reporting and crawl containment.
+        // Firecrawl's actual canonical field. It is intentionally not treated
+        // as redirect-final evidence: `sourceURL` can echo the requested page.
         let Some(reported_url) = metadata.source_url else {
             return Err(RendererError::invalid_response(
                 "firecrawl scrape envelope carried no data.metadata.sourceURL",
             ));
         };
-        let final_url = validated_web_url(&reported_url).ok_or_else(|| {
+        let canonical_url = validated_web_url(&reported_url).ok_or_else(|| {
             RendererError::invalid_response(format!(
                 "firecrawl sourceURL is not credential-free absolute http(s): {}",
                 redact_url_credentials(&reported_url)
             ))
         })?;
-        let final_url_text = final_url.to_string();
-        let discovered_links = normalize_link_list(&data.links, &final_url)?;
+        let final_url = metadata
+            .url
+            .map(|reported_final| {
+                validated_web_url(&reported_final).ok_or_else(|| {
+                    RendererError::invalid_response(format!(
+                        "firecrawl url is not credential-free absolute http(s): {}",
+                        redact_url_credentials(&reported_final)
+                    ))
+                })
+            })
+            .transpose()?;
+        // Relative links resolve against a witnessed landing when supplied and
+        // otherwise against the canonical identity. The latter links can serve
+        // callers inspecting one page, but the crawl door below rejects this
+        // unwitnessed result before any link reaches its frontier.
+        let link_base = final_url.as_ref().unwrap_or(&canonical_url);
+        let discovered_links = normalize_link_list(&data.links, link_base)?;
         Ok(RenderedPage {
             markdown,
             title: metadata.title.unwrap_or_default().trim().to_string(),
-            // The pinned envelope carries one page URL and no separate
-            // redirect-final field, so that validated identity supplies both.
-            // Only `final_url` participates in containment or the seen set.
-            canonical_url: final_url_text.clone(),
-            final_url: final_url_text,
+            canonical_url: canonical_url.to_string(),
+            final_url: final_url.map(|url| url.to_string()),
             discovered_links,
         })
     }

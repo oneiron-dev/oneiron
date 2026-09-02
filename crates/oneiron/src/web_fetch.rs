@@ -119,16 +119,16 @@ impl RendererKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, try_from = "FetchResultWire")]
 pub struct FetchResult {
-    pub markdown: String,
-    pub title: String,
-    pub canonical_url: String,
+    markdown: String,
+    title: String,
+    canonical_url: String,
     /// Caller-supplied Unix timestamp in seconds, copied verbatim. This module
     /// never reads a host clock.
-    pub fetched_at: u64,
+    fetched_at: u64,
     /// Lowercase 64-character BLAKE3 hex over
     /// [`WEB_FETCH_CONTENT_HASH_DOMAIN`] followed by the exact `markdown` bytes.
-    pub content_hash: String,
-    pub renderer: RendererKind,
+    content_hash: String,
+    renderer: RendererKind,
 }
 
 /// Internal renderer output. Carries the crawl-relevant fields that the closed
@@ -139,8 +139,10 @@ pub struct RenderedPage {
     pub title: String,
     /// Renderer-resolved metadata identity; emitted only as `FetchResult::canonical_url`.
     pub canonical_url: String,
-    /// Navigation/transport-final URL used for containment and seen-set identity.
-    pub final_url: String,
+    /// Independently witnessed navigation/transport-final URL. A renderer may
+    /// leave this absent for single-page acquisition, but a containment-sensitive
+    /// crawl refuses that rung rather than treating a request echo as evidence.
+    pub final_url: Option<String>,
     pub discovered_links: Vec<String>,
 }
 
@@ -721,7 +723,7 @@ impl WebFetcher {
     /// ordered ladder trace when no rung produced content.
     pub fn fetch(&self, url: &str, fetched_at: u64) -> WebFetchResult<FetchResult> {
         let parsed = parse_web_url(url)?;
-        let (result, _links, _final_url) = self.fetch_page(&parsed, fetched_at)?;
+        let (result, _links, _final_url) = self.fetch_page(&parsed, fetched_at, false)?;
         Ok(result)
     }
 
@@ -755,7 +757,7 @@ impl WebFetcher {
             walk.visited.insert(requested.clone());
 
             let is_seed = walk.pinned_host.is_none();
-            match self.fetch_page(&current, request.fetched_at) {
+            match self.fetch_page(&current, request.fetched_at, true) {
                 Ok((page, links, final_url)) => {
                     // A URL reached through a redirect is skipped when it is
                     // later dequeued. This set also carries requested URLs
