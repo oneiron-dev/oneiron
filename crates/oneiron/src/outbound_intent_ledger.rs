@@ -1985,6 +1985,21 @@ fn validate_record(key: &[u8], record: &IntentLedgerRecord) -> IntentLedgerResul
             "capability-bound intent is missing resolved endpoint",
         ));
     }
+    // An endpoint-bound row is produced only by scoped authorization. Keeping
+    // its typed provenance is what prevents recovery from downgrading it to an
+    // ordinary connector when the row is reconstructed.
+    if record.resolved_endpoint.is_some() && record.capability_provenance.is_none() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "endpoint-bound intent is missing capability provenance",
+        ));
+    }
+    if let Some(capability) = record.capability_provenance.as_ref()
+        && capability.server() != record.server
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "capability-bound intent server does not match provenance",
+        ));
+    }
     if record.resolved_endpoint.is_some() && record.authorization_binding.is_none() {
         return Err(IntentLedgerError::InvalidRecord(
             "endpoint-bound intent is missing authorization binding",

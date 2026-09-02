@@ -1723,6 +1723,45 @@ fn charter_never_list_matching_forms() {
     assert!(charter_never_list_matches(&exact, "slack", "call"));
     assert!(!charter_never_list_matches(&exact, "slack", "send"));
     assert!(!charter_never_list_matches(&exact, "line", "call"));
+
+    // Ordinary connector keys are stored normalized, while the compiler keeps
+    // the author's raw channel operand for hashing and auditability.
+    let mixed_spelling = never_list_block(&["slack_chat:send"]);
+    assert!(charter_never_list_matches(
+        &mixed_spelling,
+        "slack_chat",
+        "send"
+    ));
+    assert!(!charter_never_list_matches(
+        &mixed_spelling,
+        "slack_chat_extra",
+        "send"
+    ));
+
+    // Typed scoped-MCP calls use the raw ordinary channel, not ordinary
+    // connector normalization: hyphen and underscore are distinct identities.
+    let hyphen = never_list_block(&["scoped-channel:mcp:foo-bar:*"]);
+    assert!(charter_never_list_matches_scoped_channel(
+        &hyphen,
+        "mcp:foo-bar",
+        "send"
+    ));
+    assert!(!charter_never_list_matches_scoped_channel(
+        &hyphen,
+        "mcp:foo_bar",
+        "send"
+    ));
+    let underscore = never_list_block(&["scoped-channel:mcp:foo_bar:*"]);
+    assert!(charter_never_list_matches_scoped_channel(
+        &underscore,
+        "mcp:foo_bar",
+        "send"
+    ));
+    assert!(!charter_never_list_matches_scoped_channel(
+        &underscore,
+        "mcp:foo-bar",
+        "send"
+    ));
 }
 
 #[test]
@@ -2018,6 +2057,7 @@ fn never_list_entry_must_be_canonical_form() {
         "mcp:acme:grant:ab12cd34",
         "mcp:*",
         "mcp:my_server:grant:x",
+        "scoped-channel:mcp:my-server:*",
         capability_entry.as_str(),
     ] {
         assert!(
@@ -2042,6 +2082,10 @@ fn never_list_entry_must_be_canonical_form() {
         "capability-key:mcp:*:grant:ab12cd34ab12cd34ab12cd34ab12cd34",
         "capability-key:mcp:acme:grant:ab12",
         "capability-key:",
+        "scoped-channel:",
+        "scoped-channel:mcp:Acme:*",
+        "scoped-channel:mcp:acme:extra:*",
+        "scoped-channel:mcp:acme*:send",
     ] {
         assert!(
             matches!(
@@ -2360,13 +2404,22 @@ fn charter_compiles_ordinary_colon_bearing_channels() {
         compile_connector_charter("never send on mcp:calendar").expect("ordinary form compiles");
     assert_eq!(
         compiled.compiled.never_list,
-        vec!["mcp:calendar:send".to_owned()]
+        vec![
+            "mcp:calendar:send".to_owned(),
+            "scoped-channel:mcp:calendar:send".to_owned(),
+        ]
     );
     let deeper = compile_connector_charter("never send on mcp:calendar:grant:foo")
         .expect("deeper ordinary connector compiles");
     assert_eq!(
         deeper.compiled.never_list,
         vec!["mcp:calendar:grant:foo:send".to_owned()]
+    );
+    let mixed_spelling = compile_connector_charter("never send on Slack-Chat")
+        .expect("ordinary mixed spelling compiles");
+    assert_eq!(
+        mixed_spelling.compiled.never_list,
+        vec!["slack_chat:send".to_owned()]
     );
     // Cap/rate channels are matched WHOLE and keep their colon-bearing form.
     let cap =
@@ -2375,6 +2428,54 @@ fn charter_compiles_ordinary_colon_bearing_channels() {
         cap.compiled.channel_caps[0].channel_class.as_deref(),
         Some("mcp:calendar")
     );
+}
+
+#[test]
+fn charter_scoped_channel_dual_entries_are_codec_and_hash_stable() -> Result<()> {
+    let hyphen = compile_connector_charter("never send on mcp:foo-bar")
+        .expect("hyphenated scoped channel compiles");
+    let underscore = compile_connector_charter("never send on mcp:foo_bar")
+        .expect("underscored scoped channel compiles");
+    assert_eq!(
+        hyphen.compiled.never_list,
+        vec![
+            "mcp:foo_bar:send".to_owned(),
+            "scoped-channel:mcp:foo-bar:send".to_owned(),
+        ]
+    );
+    assert_eq!(
+        underscore.compiled.never_list,
+        vec![
+            "mcp:foo_bar:send".to_owned(),
+            "scoped-channel:mcp:foo_bar:send".to_owned(),
+        ]
+    );
+    assert_ne!(
+        hyphen.compiled_hash, underscore.compiled_hash,
+        "exact scoped spelling must affect the compiled policy hash"
+    );
+    assert_eq!(
+        hyphen.compiled_hash,
+        compile_connector_charter("never send on mcp:foo-bar")
+            .expect("deterministic compile")
+            .compiled_hash
+    );
+
+    let record = ConnectorKeyRecord {
+        charter: Some(ConnectorCharterBlock {
+            text: "never send on mcp:foo-bar".to_owned(),
+            text_hash: hyphen.text_hash,
+            compiled: hyphen.compiled.clone(),
+            compiled_hash: hyphen.compiled_hash,
+            stamped_aggregate: [0x33; 32],
+            stamped_by: "owner".to_owned(),
+            stamped_at: 1_000,
+        }),
+        ..ConnectorKeyRecord::active("mcp:foo_bar", None, Vec::new(), 1_000)
+    };
+    let encoded = encode_connector_key_body(&record)?;
+    assert_eq!(decode_connector_key_body(&encoded)?, record);
+    Ok(())
 }
 
 #[test]

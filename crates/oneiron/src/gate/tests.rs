@@ -6011,8 +6011,9 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
         )]),
     )?;
     // Registered with the messy owner-typed connector string.
+    let key_id = test_id(0x78);
     vault.register_connector_key(
-        &test_id(0x78),
+        &key_id,
         crate::connector_key::ConnectorKeyRecord::active(
             " Slack-Chat ",
             None,
@@ -6027,6 +6028,14 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     let charge = charge.expect("normalized connector governs the effect");
     assert_eq!(charge.read.rows[0].used, 1);
+
+    // The ordinary never-list compiler retains the raw operand, but matching
+    // uses the normalized stored connector for ordinary rows.
+    let pending = vault.propose_connector_charter(&key_id, "never send on Slack-Chat", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert!(charge.is_none(), "never-list deny must not reach budgets");
     Ok(())
 }
 
@@ -6651,25 +6660,29 @@ fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> R
     let policy = resolve(&vault)?;
     let hyphen_effect = scoped_mcp_effect(principal, "foo-bar");
     let underscore_effect = scoped_mcp_effect(principal, "foo_bar");
-    assert_eq!(check_effect(&vault, &hyphen_effect, &policy)?.0.outcome(), GateOutcome::Allow);
     assert_eq!(
-        check_effect(&vault, &underscore_effect, &policy)?.0.outcome(),
+        check_effect(&vault, &hyphen_effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+    assert_eq!(
+        check_effect(&vault, &underscore_effect, &policy)?
+            .0
+            .outcome(),
         GateOutcome::Allow
     );
 
     // The ordinary-channel wildcard preserves the complete scoped server
     // connector. It denies the hyphenated server and never aliases `_` to `-`.
     for key_id in [hyphen_key, underscore_key] {
-        let pending = vault.propose_connector_charter(
-            &key_id,
-            "never * on mcp:foo-bar",
-            1_001,
-        )?;
+        let pending = vault.propose_connector_charter(&key_id, "never * on mcp:foo-bar", 1_001)?;
         vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
     }
     let (decision, charge) = check_effect(&vault, &hyphen_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
-    assert_eq!(gate_reason_strs(&decision), vec!["gate.deny.charter_never_list"]);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
     assert!(charge.is_none());
     let (decision, _) = check_effect(&vault, &underscore_effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);

@@ -42,6 +42,7 @@ pub use self::record::{
 
 pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
+    charter_never_list_matches_scoped_channel,
 };
 pub(crate) use self::meter::{
     EffectorBudgetChargeOutcome, budget_exhausted_reason, charge_effector_budgets,

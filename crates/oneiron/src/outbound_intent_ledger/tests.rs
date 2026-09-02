@@ -1184,8 +1184,10 @@ fn capability_fixture() -> ScopedCapabilityProvenance {
 }
 
 fn capability_record(capability: ScopedCapabilityProvenance) -> IntentLedgerRecord {
+    let mut request = request(attempt(31), 0, b"capability payload", 100);
+    request.server = capability.server().to_owned();
     IntentLedgerRecord::pending(
-        request(attempt(31), 0, b"capability payload", 100)
+        request
             .with_resolved_endpoint("https://files.example.test/mcp")
             .with_capability_provenance(capability),
         true,
@@ -1235,6 +1237,40 @@ fn capability_row_without_resolved_endpoint_is_rejected_before_recovery_send() {
     );
 }
 
+#[test]
+fn endpoint_bound_row_without_capability_provenance_is_rejected_before_recovery_send() {
+    let (_dir, vault) = open_vault();
+    let mut record = capability_record(capability_fixture());
+    // A reconstructed scoped row may retain its endpoint and binding while the
+    // typed discriminator is missing. Encode a self-consistent row directly so
+    // recovery must reject it before it can downgrade the call to ordinary.
+    record.capability_provenance = None;
+    let key = intent_ledger_key(&record.id);
+    let encoded = encode_record(&record).expect("encode malformed capability row");
+    let mut wtxn = vault.store.env.write_txn().expect("write transaction");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("insert reconstructed row");
+    wtxn.commit().expect("commit reconstructed row");
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 101).expect("recovery");
+    assert_eq!(sender.calls, 0, "untyped scoped row must never be sent");
+    assert_eq!(recovery.scanned, 1);
+    assert_eq!(recovery.resent, 0);
+    assert_eq!(recovery.completed, 0);
+    assert_eq!(recovery.pending, 0);
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some(record.id),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }]
+    );
+}
+
 fn row_with_capability_value(encoded: &[u8], value: Value) -> Vec<u8> {
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("decode canonical row")
@@ -1260,6 +1296,19 @@ fn capability_provenance_round_trips_and_fails_closed_when_forged() {
     let decoded = decode_record(&key, &encoded).expect("decode capability row");
     assert_eq!(decoded, record);
     assert_eq!(decoded.capability_provenance(), Some(&capability));
+
+    // The typed server is part of the durable call identity. A valid capability
+    // minted for another server cannot be transplanted onto this row.
+    let mut mismatched_server = record;
+    mismatched_server.capability_provenance = Some(
+        ScopedCapabilityProvenance::mint("other", &capability.grant_id())
+            .expect("safe canonical scoped server"),
+    );
+    let mismatched_encoded = encode_record(&mismatched_server).expect("encode mismatched row");
+    assert!(matches!(
+        decode_record(&key, &mismatched_encoded),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
 
     // An ordinary row stays representable with no capability provenance at all.
     let (_dir, vault) = open_vault();

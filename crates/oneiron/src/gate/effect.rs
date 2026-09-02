@@ -423,7 +423,7 @@ pub(crate) fn evaluate_external_effect_policy(
             let never_list_matches = || match scoped_mcp_capability.as_ref() {
                 Some(capability) => {
                     connector_key::charter_never_list_matches_capability(block, capability)
-                        || connector_key::charter_never_list_matches(
+                        || connector_key::charter_never_list_matches_scoped_channel(
                             block,
                             &capability.ordinary_channel(),
                             effect_verb,

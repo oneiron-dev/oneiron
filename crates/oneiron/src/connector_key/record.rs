@@ -403,6 +403,10 @@ pub(crate) fn normalize_connector_key(value: &str) -> String {
 /// rule's mode from its shape.
 pub(super) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
 
+/// Reserved compiled entry for the exact ordinary channel of a typed scoped
+/// call. The ordinary normalized entry is retained alongside this private form.
+pub(super) const SCOPED_CHANNEL_NEVER_ENTRY_TAG: &str = "scoped-channel:";
+
 /// The ONE safe canonical scoped-server segment rule (ONE-1885).
 ///
 /// Every scoped creation seam — the scoped grant constructor, the persisted
@@ -664,10 +668,12 @@ pub(super) fn validate_compiled_policy(compiled: &CompiledConnectorPolicy) -> Re
 ///    the whole `mcp:calendar` connector), so no ordinary connector is ever
 ///    truncated at its first colon or re-read as a capability.
 ///
-/// Enforcement compares the stored parts by EXACT STRING and NEVER re-normalizes
-/// them. The ordinary channel parser preserves its complete connector bytes,
-/// including `-`, `_`, and colons; only blank or partial-wildcard channels are
-/// rejected so a corrupted charter cannot silently fail open.
+/// The compiler preserves the ordinary channel operand byte-for-byte, including
+/// `-`, `_`, and colons. Ordinary matching normalizes that rule channel against
+/// the already-normalized connector key; typed scoped-MCP matching instead uses
+/// an exact whole `mcp:{server}` comparison so `-` and `_` remain distinct.
+/// Only blank or partial-wildcard channels are rejected so a corrupted charter
+/// cannot silently fail open.
 pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
     if let Some(capability_key) = entry.strip_prefix(CAPABILITY_NEVER_ENTRY_TAG) {
         if ScopedCapabilityProvenance::parse_owner_capability_key(capability_key)
@@ -677,6 +683,15 @@ pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
         }
         return Ok(());
     }
+    if let Some(exact_channel_entry) = entry.strip_prefix(SCOPED_CHANNEL_NEVER_ENTRY_TAG) {
+        let Some((channel_part, verb)) = exact_channel_entry.rsplit_once(':') else {
+            return Err(invalid_body("never_list scoped channel invalid"));
+        };
+        if !is_canonical_scoped_channel(channel_part) {
+            return Err(invalid_body("never_list scoped channel invalid"));
+        }
+        return validate_never_list_verb(verb);
+    }
     // The verb is the LAST segment; everything before it is the whole ordinary
     // channel. A first-colon split would read `"mcp:calendar:send"` as the
     // channel `"mcp"` and deny nothing the author named.
@@ -685,26 +700,39 @@ pub(super) fn validate_never_list_entry(entry: &str) -> Result<()> {
     };
     if channel_part != "*" {
         // A `'*'` anywhere else on the channel side is a partial wildcard: the
-        // matcher compares the whole channel part by exact string, so it would
-        // deny nothing (fail-open). Ordinary-channel punctuation, including
-        // `-` and `_`, is data and must not be normalized or aliased.
+        // normalized ordinary matcher would otherwise deny nothing (fail-open).
         if channel_part.trim().is_empty() || channel_part.contains('*') {
             return Err(invalid_body("never_list entry channel invalid"));
         }
+        // Ordinary entries are stored in the existing normalized form. The
+        // compiler preserves the source spelling only in a private exact-scoped
+        // entry, when the channel is a typed canonical `mcp:{server}` value.
+        if channel_part != normalize_connector_key(channel_part) {
+            return Err(invalid_body("never_list entry channel must be canonical"));
+        }
     }
+    validate_never_list_verb(verb)
+}
+
+fn validate_never_list_verb(verb: &str) -> Result<()> {
     if verb == "*" {
         return Ok(());
     }
     // `parse_charter_verb` LOWERCASES before validating, so it accepts a
     // non-canonical spelling like `"SEND"` (yielding `"send"`). Enforcement
     // compares the stored verb by EXACT string against the lowercased effect
-    // verb, so the stored part must ALREADY equal its canonical
-    // `parse_charter_verb` output, or the entry never matches (fail-open).
+    // verb, so the stored part must ALREADY equal its canonical output.
     match parse_charter_verb(verb) {
         Ok(canonical) if canonical == verb => Ok(()),
         Ok(_) => Err(invalid_body("never_list entry verb must be canonical")),
         Err(_) => Err(invalid_body("never_list entry verb invalid")),
     }
+}
+
+fn is_canonical_scoped_channel(channel: &str) -> bool {
+    channel
+        .strip_prefix("mcp:")
+        .is_some_and(|server| canonical_scoped_server_segment(server).is_some())
 }
 
 pub(super) fn invalid_body(reason: &'static str) -> Error {

@@ -417,6 +417,22 @@ fn send_pending<T: OutboundTransport>(
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
     let call = FrozenOutboundCall::from_record(&record);
+    if record.resolved_endpoint.is_some() && record.capability_provenance().is_none() {
+        // Endpoint-bound rows are scoped rows. Never downgrade a reconstructed
+        // one to ordinary governance when its typed discriminator is missing.
+        let abandoned = abandon_record(
+            vault,
+            record.id,
+            IntentEscalationReason::BindingInvalid,
+            now_ms,
+        )?;
+        return Ok(effect_result(
+            &abandoned,
+            None,
+            replayed,
+            Some(IntentEscalationReason::BindingInvalid),
+        ));
+    }
     // Scoped capability rows must always pass the frozen grant/binding/server/
     // tool/endpoint check. Ordinary rows retain their existing endpoint-bound
     // validation behavior; connector text never opts a row into this branch.
@@ -565,7 +581,7 @@ fn recovery_governance(
                     return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
                 }
                 connector_key::charter_never_list_matches_capability(charter, capability)
-                    || connector_key::charter_never_list_matches(
+                    || connector_key::charter_never_list_matches_scoped_channel(
                         charter,
                         &capability.ordinary_channel(),
                         &record.tool,

@@ -6,8 +6,9 @@ use super::codec::encode_compiled_policy;
 use super::record::{
     CAPABILITY_NEVER_ENTRY_TAG, CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod,
     CompiledConnectorPolicy, ConnectorCharterBlock, EffectorBudget, EffectorBudgetDimension,
-    EffectorBudgetOnExhaust, EffectorBudgetWindow, ScopedCapabilityProvenance,
-    normalize_connector_key, validate_budget_row, validate_never_list_entry, validate_spend_unit,
+    EffectorBudgetOnExhaust, EffectorBudgetWindow, SCOPED_CHANNEL_NEVER_ENTRY_TAG,
+    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    validate_budget_row, validate_never_list_entry, validate_spend_unit,
 };
 
 // --- Charter compiler (GOV-10, ONE-1417) --------------------------------------
@@ -95,14 +96,15 @@ pub(crate) fn charter_block_drifted(block: &ConnectorCharterBlock) -> Result<boo
 }
 
 /// ORDINARY never-list matching: an entry `"{c}:{v}"` matches iff (`c == "*"`
-/// or `c ==` the WHOLE normalized effect channel) and (`v == "*"` or `v ==` the
-/// trimmed, lowercased effect verb).
+/// or `c ==` the WHOLE normalized effect channel) and (`v == "*"` or `v ==`
+/// the trimmed, lowercased effect verb).
 ///
+/// The compiler stores the ordinary channel in its existing normalized form.
 /// The channel is everything before the entry's LAST ':', so every colon inside
 /// an ordinary connector is data: `never send on mcp:calendar` matches the
-/// complete `mcp:calendar` string and nothing shorter. Capability-only rules are
-/// a different mode and are skipped here — an ordinary connector never acquires
-/// capability authority from its spelling.
+/// complete `mcp:calendar` string and nothing shorter. Private exact-scoped and
+/// capability-only entries are different modes and are skipped here — an
+/// ordinary connector never acquires capability authority from its spelling.
 pub(crate) fn charter_never_list_matches(
     block: &ConnectorCharterBlock,
     normalized_channel: &str,
@@ -110,7 +112,9 @@ pub(crate) fn charter_never_list_matches(
 ) -> bool {
     let verb = verb.trim().to_ascii_lowercase();
     block.compiled.never_list.iter().any(|entry| {
-        if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG) {
+        if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG)
+            || entry.starts_with(SCOPED_CHANNEL_NEVER_ENTRY_TAG)
+        {
             return false;
         }
         let Some((channel_part, verb_part)) = entry.rsplit_once(':') else {
@@ -118,6 +122,29 @@ pub(crate) fn charter_never_list_matches(
         };
         (channel_part == "*" || channel_part == normalized_channel)
             && (verb_part == "*" || verb_part == verb)
+    })
+}
+
+/// Matches the ordinary channel travelled by a typed scoped-MCP call.
+///
+/// Typed calls read only the private exact-scoped entries emitted alongside
+/// normalized ordinary rules. The raw canonical `mcp:{server}` spelling keeps
+/// `-` and `_` distinct; capability provenance is supplied by verified
+/// admission, never inferred from connector text.
+pub(crate) fn charter_never_list_matches_scoped_channel(
+    block: &ConnectorCharterBlock,
+    raw_channel: &str,
+    verb: &str,
+) -> bool {
+    let verb = verb.trim().to_ascii_lowercase();
+    block.compiled.never_list.iter().any(|entry| {
+        let Some(exact_entry) = entry.strip_prefix(SCOPED_CHANNEL_NEVER_ENTRY_TAG) else {
+            return false;
+        };
+        let Some((channel_part, verb_part)) = exact_entry.rsplit_once(':') else {
+            return false;
+        };
+        (channel_part == raw_channel) && (verb_part == "*" || verb_part == verb)
     })
 }
 
@@ -166,14 +193,20 @@ pub fn compile_connector_charter(
         }
         match parse_charter_directive(trimmed).map_err(|message| issue(&message))? {
             CharterDirective::Never(entry) => {
-                // The compiler may never emit an entry the record validator
-                // would reject: such a line used to compile and only fail later
-                // at the propose/approve write, with no line number to fix.
-                validate_never_list_entry(&entry).map_err(|error| match error {
-                    Error::InvalidConnectorKeyBody(reason) => issue(reason),
-                    _ => issue("invalid charter never-list entry"),
-                })?;
-                never_list.push(entry);
+                // Ordinary channels are stored in the existing normalized form.
+                // A canonical scoped-MCP channel additionally gets one private
+                // exact-spelling entry for typed calls, so ordinary text never
+                // becomes capability authority.
+                for entry in compile_never_entries(entry) {
+                    // The compiler may never emit an entry the record validator
+                    // would reject: such a line used to compile and only fail later
+                    // at the propose/approve write, with no line number to fix.
+                    validate_never_list_entry(&entry).map_err(|error| match error {
+                        Error::InvalidConnectorKeyBody(reason) => issue(reason),
+                        _ => issue("invalid charter never-list entry"),
+                    })?;
+                    never_list.push(entry);
+                }
             }
             CharterDirective::Cap(budget) => {
                 if channel_caps.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
@@ -204,6 +237,28 @@ pub fn compile_connector_charter(
         compiled,
         compiled_hash,
     })
+}
+
+fn compile_never_entries(entry: String) -> Vec<String> {
+    if entry.starts_with(CAPABILITY_NEVER_ENTRY_TAG) {
+        return vec![entry];
+    }
+    let Some((channel, verb)) = entry.rsplit_once(':') else {
+        return vec![entry];
+    };
+
+    let ordinary = format!("{}:{verb}", normalize_connector_key(channel));
+    let mut entries = vec![ordinary];
+    if is_canonical_scoped_channel(channel) {
+        entries.push(format!("{SCOPED_CHANNEL_NEVER_ENTRY_TAG}{channel}:{verb}"));
+    }
+    entries
+}
+
+fn is_canonical_scoped_channel(channel: &str) -> bool {
+    channel
+        .strip_prefix("mcp:")
+        .is_some_and(|server| canonical_scoped_server_segment(server).is_some())
 }
 
 enum CharterDirective {
