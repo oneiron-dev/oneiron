@@ -145,6 +145,7 @@ pub mod sync;
 pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
+pub mod thread_passport;
 pub mod tokenizer;
 mod vault;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
