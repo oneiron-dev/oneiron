@@ -27,6 +27,7 @@ pub mod channel_identity;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
+pub mod channel_identity_selection;
 pub mod checkout;
 pub mod claim;
 pub mod cluster;
@@ -182,6 +183,13 @@ pub use crate::calendar::{
 pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
     DevEmailIdentityAdapterConfig, EmailProviderInbound,
+};
+pub use crate::channel_identity_selection::{
+    ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelection,
+    ChannelIdentitySelectionError, ChannelIdentitySelectionRequest, ChannelIdentitySelectionSource,
+    ChannelIdentityThreadPin, RelationshipContext, SelectionResult, SelectionRule,
+    SelectionRuleAmendment, SelectionRuleScope, SelectionRuleSet, SelectionWriter,
+    SelectionWriterKind,
 };
 pub use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
