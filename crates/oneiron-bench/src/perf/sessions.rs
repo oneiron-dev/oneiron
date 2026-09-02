@@ -67,13 +67,20 @@ impl ReleaseGate {
         }
     }
 
-    /// Parent side: wait for `workers` arrivals, then release everyone at
-    /// once. Returns how many had arrived at the moment of release.
-    pub(crate) fn release_all(&self, workers: usize, timeout: Duration) -> usize {
+    /// Parent side: wait for `workers` arrivals, capture the measurement start
+    /// while still holding the gate mutex, then release everyone at once.
+    ///
+    /// Capturing the instant AFTER this method returned would race the workers:
+    /// once the mutex is released, a short query can start or even finish before
+    /// the parent takes its timestamp, understating wall time and inflating QPS.
+    pub(crate) fn release_all(&self, workers: usize, timeout: Duration) -> GateRelease {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let deadline = Instant::now() + timeout;
+        let wait_started = Instant::now();
+        let deadline = wait_started.checked_add(timeout);
         while state.arrived < workers {
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            let Some(remaining) =
+                deadline.and_then(|deadline| deadline.checked_duration_since(Instant::now()))
+            else {
                 break;
             };
             let (guard, _) = self
@@ -82,11 +89,23 @@ impl ReleaseGate {
                 .unwrap_or_else(PoisonError::into_inner);
             state = guard;
         }
-        let arrived = state.arrived;
+        let release = GateRelease {
+            arrived: state.arrived,
+            window_started: Instant::now(),
+        };
         state.released = true;
         self.released.notify_all();
-        arrived
+        release
     }
+}
+
+/// Facts captured atomically with opening the worker gate. Workers cannot pass
+/// `arrive_and_wait` before `window_started` because the parent still owns the
+/// same mutex while this value is made.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GateRelease {
+    pub(crate) arrived: usize,
+    pub(crate) window_started: Instant,
 }
 
 /// One synchronized run: what every worker returned, plus the spawn cost that
@@ -128,18 +147,17 @@ where
         let spawn_ms = spawn_started.elapsed().as_secs_f64() * 1e3;
 
         let expected = handles.len();
-        let workers_released = gate.release_all(expected, RENDEZVOUS_TIMEOUT);
-        let window_started = Instant::now();
+        let release = gate.release_all(expected, RENDEZVOUS_TIMEOUT);
         let mut results: Vec<ThreadResult<T>> = Vec::with_capacity(expected);
         for handle in handles {
             results.push(handle.join());
         }
-        let window_ms = window_started.elapsed().as_secs_f64() * 1e3;
+        let window_ms = release.window_started.elapsed().as_secs_f64() * 1e3;
 
         SynchronizedRun {
             results,
-            workers_released,
-            synchronized: workers_released == workers && spawn_errors.is_empty(),
+            workers_released: release.arrived,
+            synchronized: release.arrived == workers && spawn_errors.is_empty(),
             spawn_ms,
             window_ms,
             spawn_errors,
@@ -321,6 +339,32 @@ mod tests {
         for (index, result) in run.results.into_iter().enumerate() {
             assert_eq!(result.unwrap_or(usize::MAX), index * 2);
         }
+    }
+
+    /// The clock starts while the release mutex is still held. A worker can
+    /// never begin before the timestamp used as the QPS denominator, even when
+    /// its work is much shorter than a scheduler quantum.
+    #[test]
+    fn the_measurement_clock_precedes_every_released_worker() {
+        let gate = ReleaseGate::new();
+        let observed = Mutex::new(None::<Instant>);
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                gate.arrive_and_wait();
+                *observed.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+            });
+            let release = gate.release_all(1, RENDEZVOUS_TIMEOUT);
+            handle.join().expect("worker joins");
+            let worker_started = observed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .expect("worker recorded its start");
+            assert_eq!(release.arrived, 1);
+            assert!(
+                worker_started >= release.window_started,
+                "the QPS window must open before a released worker starts"
+            );
+        });
     }
 
     /// The curve itself must carry the synchronization evidence, so a reader

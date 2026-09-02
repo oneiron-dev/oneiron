@@ -33,7 +33,7 @@ use super::axes::{ARCH_0023B_PER_VAULT_BUDGET_MB, CHILD_SHUTDOWN_RULE, ResidentM
 use super::cells::{Cell, EvidenceKind};
 use super::child_process::{
     ChildSettings, WakeProbe, child_command, child_shutdown_budget, minimum_child_hold_ms,
-    process_rss_bytes, resolve_child_program, spawn_child, wait_bounded,
+    process_rss_bytes, resolve_child_program, spawn_child, terminate_bounded, wait_bounded,
 };
 
 const BUILTIN_VAULT_RESIDENCY_EVIDENCE: &str = "harness-owned perf wake-child opens the assigned vault before its TCP connect; a measured cohort therefore proves both readiness and vault residency";
@@ -183,18 +183,43 @@ fn accept_ready_cohort(
     Ok(streams)
 }
 
+/// Proves one cohort member is alive, treating an unreadable child status as a
+/// failure rather than silently continuing with a possibly reused pid.
+fn require_child_alive(
+    child: &mut Child,
+    index: usize,
+    required: usize,
+    phase: &str,
+) -> Result<(), String> {
+    match child.try_wait() {
+        Ok(None) => Ok(()),
+        Ok(Some(status)) => Err(format!(
+            "ready child {index} of {required} exited ({status}) {phase}, so the cohort was not \
+             simultaneously ready; a child's hold must outlast the parent's whole spawn, accept \
+             and sample phase"
+        )),
+        Err(error) => Err(format!(
+            "ready child {index} of {required} could not be checked {phase}: {error}; the harness \
+             cannot prove that the RSS pid still belongs to the ready cohort"
+        )),
+    }
+}
+
 /// Reads every child's RSS, refusing to report a sample set unless all of them
-/// were still alive when it was taken.
+/// were alive both before AND after the complete read window.
+///
+/// Checking each process only immediately before its own `/proc` read is not a
+/// cohort proof: child 0 can exit while child 9 is sampled. A final all-child
+/// pass proves that no member exited anywhere in the window (a process cannot
+/// exit and later become alive again), so every retained RSS value belongs to
+/// one simultaneously resident cohort.
 fn sample_live_cohort(children: &mut [Child], required: usize) -> Result<Vec<u64>, String> {
-    let mut rss = Vec::with_capacity(required);
     for (index, child) in children.iter_mut().enumerate() {
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!(
-                "ready child {index} of {required} exited ({status}) before its resident memory \
-                 was sampled, so the cohort was not simultaneously ready; a child's hold must \
-                 outlast the parent's whole spawn, accept and sample phase"
-            ));
-        }
+        require_child_alive(child, index, required, "before the RSS window opened")?;
+    }
+
+    let mut rss = Vec::with_capacity(required);
+    for child in &*children {
         match process_rss_bytes(child.id()) {
             Some(bytes) => rss.push(bytes),
             None => {
@@ -206,13 +231,16 @@ fn sample_live_cohort(children: &mut [Child], required: usize) -> Result<Vec<u64
             }
         }
     }
+
+    for (index, child) in children.iter_mut().enumerate() {
+        require_child_alive(child, index, required, "before the RSS window closed")?;
+    }
     Ok(rss)
 }
 
 fn kill_all(children: &mut Vec<Child>) {
     for child in &mut *children {
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = terminate_bounded(child);
     }
     children.clear();
 }
@@ -221,9 +249,25 @@ fn measured(
     required: usize,
     settings: &ChildSettings,
     cohort: ReadyCohort,
-    errors: Vec<String>,
+    mut errors: Vec<String>,
     evidence_kind: EvidenceKind,
 ) -> ResidentMemoryAxis {
+    let shutdowns: usize = cohort.shutdown_outcomes.values().sum();
+    let unreapable = cohort
+        .shutdown_outcomes
+        .get("unreapable")
+        .copied()
+        .unwrap_or(0);
+    if shutdowns != required {
+        errors.push(format!(
+            "bounded child cleanup recorded {shutdowns} outcome(s) for the {required}-child cohort"
+        ));
+    }
+    if unreapable > 0 {
+        errors.push(format!(
+            "{unreapable} ready child process(es) remained unreapable after both bounded shutdown deadlines"
+        ));
+    }
     let observed = cohort.rss.len();
     let total: u64 = cohort.rss.iter().sum();
     let mean = if observed == 0 {

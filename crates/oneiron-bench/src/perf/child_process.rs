@@ -8,8 +8,10 @@
 //! read even if someone later wanted to.
 //!
 //! Lifetime boundary: after readiness the PARENT owns the child. It releases
-//! the child by closing the accepted stream and then waits a BOUNDED budget,
-//! terminating and reaping anything still alive. The bundled `wake-child` does
+//! the child by closing the accepted stream, waits a BOUNDED graceful budget,
+//! then gives termination/reaping its own BOUNDED budget. Anything still alive
+//! is reported as `unreapable`; no cleanup path falls through to blocking
+//! `Child::wait`. The bundled `wake-child` does
 //! exit on that EOF, but a caller-supplied [`ChildCommandPlan`] carries no such
 //! promise — an ordinary long-lived service would connect, stay up, and hang an
 //! unbounded `wait()` forever. The child's own `--hold-ms` is a safety net
@@ -41,6 +43,11 @@ pub(crate) const READY_CHILD_SAMPLING_MARGIN_MS: u64 = 5_000;
 /// it. A caller-supplied child is not required to exit on EOF, so this bound
 /// is what keeps the harness from blocking forever on `wait()`.
 pub(crate) const CHILD_SHUTDOWN_BUDGET_MS: u64 = 2_000;
+/// How long the parent waits after sending the termination signal for the
+/// child to become reapable. This second deadline is load-bearing: `kill()`
+/// followed by an unconditional `wait()` is still an unbounded wait when the
+/// signal fails or a process is stuck in an uninterruptible kernel state.
+pub(crate) const CHILD_KILL_REAP_BUDGET_MS: u64 = 2_000;
 /// Poll granularity while waiting for a released child to exit.
 const CHILD_EXIT_POLL_MS: u64 = 5;
 
@@ -167,36 +174,63 @@ impl ChildExit {
     }
 }
 
-/// Waits at most `budget` for an already-released child to exit, then
-/// terminates and reaps it.
-///
-/// This is the ONLY wait the harness performs on a spawned child. An
-/// unconditional `wait()` would block the whole benchmark forever on a
-/// caller-supplied child that stays up after readiness, which the
-/// `ChildCommandPlan` contract does not forbid.
-pub(crate) fn wait_bounded(child: &mut Child, budget: Duration) -> ChildExit {
-    let deadline = Instant::now() + budget;
+/// Polls `try_wait` only until `deadline`. `try_wait` reaps a completed child,
+/// so no blocking `wait()` is needed anywhere in the harness.
+fn poll_reap_until(child: &mut Child, deadline: Instant) -> Result<bool, ()> {
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return ChildExit::Exited,
+            Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
-            Err(_) => return ChildExit::Unreapable,
+            Err(_) => return Err(()),
         }
-        if Instant::now() >= deadline {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(CHILD_EXIT_POLL_MS));
-    }
-    let _ = child.kill();
-    match child.wait() {
-        Ok(_) => ChildExit::TerminatedAfterBudget,
-        Err(_) => ChildExit::Unreapable,
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Ok(false);
+        };
+        std::thread::sleep(remaining.min(Duration::from_millis(CHILD_EXIT_POLL_MS)));
     }
 }
 
-/// The bounded shutdown budget every probe releases its children under.
+fn deadline_after(duration: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(duration).unwrap_or(now)
+}
+
+/// Waits at most `budget` for an already-released child to exit, then sends a
+/// termination signal and gives reaping its own bounded budget.
+///
+/// This is the ONLY wait path the harness performs on a spawned child. In
+/// particular, the post-`kill` path also uses `try_wait`: `kill(); wait()` is
+/// not bounded when signalling fails or a task is stuck in uninterruptible I/O.
+/// If the second deadline expires, the report says `unreapable` instead of
+/// hiding an indefinite wait behind a function named "bounded".
+pub(crate) fn wait_bounded(child: &mut Child, budget: Duration) -> ChildExit {
+    if let Ok(true) = poll_reap_until(child, deadline_after(budget)) {
+        return ChildExit::Exited;
+    }
+
+    let signal_sent = child.kill().is_ok();
+    match poll_reap_until(child, deadline_after(child_kill_reap_budget())) {
+        Ok(true) if signal_sent => ChildExit::TerminatedAfterBudget,
+        Ok(true) => ChildExit::Exited,
+        Ok(false) | Err(()) => ChildExit::Unreapable,
+    }
+}
+
+/// Terminates a child immediately and reaps it only under the same bounded
+/// post-signal budget. Used on error paths that never reached readiness.
+pub(crate) fn terminate_bounded(child: &mut Child) -> ChildExit {
+    wait_bounded(child, Duration::ZERO)
+}
+
+/// The bounded graceful shutdown budget every probe releases its children
+/// under before sending a termination signal.
 pub(crate) const fn child_shutdown_budget() -> Duration {
     Duration::from_millis(CHILD_SHUTDOWN_BUDGET_MS)
+}
+
+/// The bounded post-termination reap budget.
+pub(crate) const fn child_kill_reap_budget() -> Duration {
+    Duration::from_millis(CHILD_KILL_REAP_BUDGET_MS)
 }
 
 /// Resolves the program the harness will spawn as its ready child.

@@ -18,7 +18,7 @@ use super::axes::{CHILD_SHUTDOWN_RULE, READINESS_RULE, ReadinessSignal, WakeAxis
 use super::cells::{Cell, EvidenceKind, Percentiles};
 use super::child_process::{
     ACCEPT_POLL_INTERVAL_US, ChildSettings, WakeProbe, child_command, child_shutdown_budget,
-    describe_child, resolve_child_program, spawn_child, wait_bounded,
+    describe_child, resolve_child_program, spawn_child, terminate_bounded, wait_bounded,
 };
 
 /// Axis 2: spawn-to-ready latency, sampled `settings.samples` times.
@@ -98,9 +98,11 @@ fn wake_sample(program: &Path, settings: &ChildSettings, dir: &Path) -> Result<W
     let ready = match probe.wait_ready(started, settings.accept_timeout()) {
         Ok(ready) => ready,
         Err(reason) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(reason);
+            let cleanup = terminate_bounded(&mut child);
+            return Err(format!(
+                "{reason}; child cleanup outcome after readiness failure: {}",
+                cleanup.as_str()
+            ));
         }
     };
     // Release the child by closing the accepted stream, then bound the wait:

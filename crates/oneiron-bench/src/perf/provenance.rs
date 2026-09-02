@@ -8,13 +8,11 @@
 //!
 //! Three things here are load-bearing beyond description:
 //!
-//! * the GIT SHA identifies the checkout THIS BINARY came from — the build
-//!   checkout first, then the running executable's own directory — and never
-//!   the caller's working directory. Callers pass absolute plan and output
-//!   paths, so a bench invoked from inside an unrelated repository used to
-//!   record that repository's HEAD as the benchmark's provenance. The lookup
-//!   also resolves through a linked worktree's `commondir`, so a normal
-//!   worktree run reports its actual commit instead of `not_ready`;
+//! * the BUILD REVISION is BLAKE3 over the running executable image and is
+//!   independent of any checkout or caller cwd. A build-time Git SHA can ride
+//!   beside it when CI embedded one; the associated source-checkout HEAD is a
+//!   separate descriptive observation so a branch advance after compilation
+//!   can never rewrite artifact identity;
 //! * the CACHE-EVENT HASH covers the exact bytes the cache axis read, so the
 //!   stream that produced the reported hit rates is identifiable and cannot be
 //!   swapped without changing provenance;
@@ -28,7 +26,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use super::cells::{Cell, EvidenceKind};
-use super::git_sha::git_sha;
+use super::corpus::CorpusMarkerEvidence;
+use super::git_sha::{build_git_sha, running_executable_blake3, source_checkout_git_sha};
 
 /// Environment variable declaring which node this run happened on.
 pub(crate) const NODE_ENV: &str = "ONEIRON_BENCH_NODE";
@@ -165,11 +164,19 @@ fn declared(variable: &str) -> Option<String> {
 /// Everything a reader needs to know about where and how a report was made.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct Provenance {
-    pub(crate) git_sha: Cell<String>,
-    /// WHICH checkout the sha above was read from, or why none was found. A
-    /// reader can tell a build-checkout sha from a packaged-binary override
-    /// without having to trust the number alone.
-    pub(crate) git_sha_source: String,
+    /// Immutable identity of the artifact that executed this run. This is
+    /// BLAKE3 over the running executable image, so it remains valid outside a
+    /// checkout and cannot drift when a branch advances after compilation.
+    pub(crate) build_revision_blake3: Cell<String>,
+    pub(crate) build_revision_source: String,
+    /// Git revision captured by the build environment. Optional because local
+    /// Cargo builds may not embed one; it is never inferred from mutable cwd.
+    pub(crate) build_git_sha: Cell<String>,
+    pub(crate) build_git_sha_source: String,
+    /// Descriptive HEAD of the source checkout associated with the binary at
+    /// report time. Kept separate so it cannot masquerade as build revision.
+    pub(crate) source_checkout_git_sha: Cell<String>,
+    pub(crate) source_checkout_git_sha_source: String,
     pub(crate) target_triple: String,
     pub(crate) node: NodeIdentity,
     pub(crate) cpu: CpuFacts,
@@ -178,6 +185,7 @@ pub(crate) struct Provenance {
     pub(crate) filesystem: Cell<MountFacts>,
     pub(crate) plan_hash: String,
     pub(crate) corpus_hash: String,
+    pub(crate) corpus_marker_evidence: CorpusMarkerEvidence,
     /// blake3 over the EXACT cache-event bytes the cache axis read. A pathname
     /// alone would let an edited stream produce a materially different
     /// experiment under an identical provenance block.
@@ -196,6 +204,7 @@ pub(crate) struct Provenance {
 pub(crate) struct ProvenanceInputs {
     pub(crate) plan_hash: String,
     pub(crate) corpus_hash: String,
+    pub(crate) corpus_marker_evidence: CorpusMarkerEvidence,
     pub(crate) cache_events: String,
     pub(crate) seed: u64,
     pub(crate) sample_counts: BTreeMap<String, usize>,
@@ -209,10 +218,19 @@ pub(crate) struct ProvenanceInputs {
 impl Provenance {
     pub(crate) fn collect(inputs: ProvenanceInputs) -> Self {
         let cache_bytes = inputs.cache_events.as_bytes();
-        let git = git_sha();
+        let build_revision = running_executable_blake3();
+        let build_git = build_git_sha();
+        let source_git = source_checkout_git_sha();
         Self {
-            git_sha: Cell::from_option(git.sha, git.source.clone()),
-            git_sha_source: git.source,
+            build_revision_blake3: Cell::from_option(
+                build_revision.digest,
+                build_revision.source.clone(),
+            ),
+            build_revision_source: build_revision.source,
+            build_git_sha: Cell::from_option(build_git.sha, build_git.source.clone()),
+            build_git_sha_source: build_git.source,
+            source_checkout_git_sha: Cell::from_option(source_git.sha, source_git.source.clone()),
+            source_checkout_git_sha_source: source_git.source,
             target_triple: target_triple(),
             node: inputs.node,
             cpu: cpu_facts(),
@@ -224,6 +242,7 @@ impl Provenance {
             ),
             plan_hash: inputs.plan_hash,
             corpus_hash: inputs.corpus_hash,
+            corpus_marker_evidence: inputs.corpus_marker_evidence,
             cache_events_hash: Cell::from_option(
                 (!cache_bytes.is_empty()).then(|| blake3::hash(cache_bytes).to_hex().to_string()),
                 "this run admitted no cache-event bytes, so there is no cache input to identify",
@@ -236,9 +255,7 @@ impl Provenance {
             plan_source: inputs.plan_source,
             cache_source: inputs.cache_source,
             bench_binary: Cell::from_option(
-                std::env::current_exe()
-                    .ok()
-                    .map(|path| path.display().to_string()),
+                build_revision.executable,
                 "the running executable path is not resolvable",
             ),
         }
@@ -412,6 +429,18 @@ fn unescape_mount_field(field: &str) -> String {
 mod tests {
     use super::*;
 
+    fn marker_evidence() -> CorpusMarkerEvidence {
+        CorpusMarkerEvidence {
+            documents: 1,
+            unique_markers: 1,
+            collision_free: true,
+            marker_prefix: "qzmk",
+            base26_digits: 2 * std::mem::size_of::<usize>(),
+            capacity_covers_full_usize_domain: true,
+            rule: "test marker evidence",
+        }
+    }
+
     #[test]
     fn target_triple_names_the_build_target() {
         let triple = target_triple();
@@ -469,6 +498,39 @@ mod tests {
         );
     }
 
+    /// Every report carries an immutable build revision even when no build-time
+    /// Git SHA was embedded. The mutable source-checkout HEAD is separate and
+    /// may never be the only artifact identity.
+    #[test]
+    fn provenance_identifies_the_running_build_independently_of_checkout_head() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let provenance = Provenance::collect(ProvenanceInputs {
+            plan_hash: "plan".to_owned(),
+            corpus_hash: "corpus".to_owned(),
+            corpus_marker_evidence: marker_evidence(),
+            cache_events: "event".to_owned(),
+            seed: 1579,
+            sample_counts: BTreeMap::new(),
+            evidence_kind: EvidenceKind::SyntheticSmoke,
+            plan_source: "fixture".to_owned(),
+            cache_source: "fixture".to_owned(),
+            measured_path: dir.path().to_path_buf(),
+            node: NodeIdentity::collect(),
+        });
+        let digest = provenance
+            .build_revision_blake3
+            .value()
+            .expect("the running test artifact hashes");
+        assert_eq!(digest.len(), 64);
+        assert!(provenance.build_revision_source.contains("BLAKE3"));
+        assert!(
+            provenance
+                .source_checkout_git_sha_source
+                .contains("build_manifest_dir")
+                || !provenance.source_checkout_git_sha.is_measured()
+        );
+    }
+
     /// The cache stream that produced the reported hit rates must be
     /// identifiable by CONTENT: two different streams under the same pathname
     /// must not share a provenance block.
@@ -479,6 +541,7 @@ mod tests {
             Provenance::collect(ProvenanceInputs {
                 plan_hash: "plan".to_owned(),
                 corpus_hash: "corpus".to_owned(),
+                corpus_marker_evidence: marker_evidence(),
                 cache_events: events.to_owned(),
                 seed: 1579,
                 sample_counts: BTreeMap::new(),

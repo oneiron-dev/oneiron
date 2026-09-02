@@ -18,8 +18,10 @@
 
 use serde::Serialize;
 
-use super::axes::{RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis};
-use super::cells::Cell;
+use super::axes::{
+    REQUIRED_FULL_SESSION_CURVE, RecallLatencyAxis, ResidentMemoryAxis, SessionsAxis, WakeAxis,
+};
+use super::cells::{Cell, EvidenceKind};
 
 /// The ticket whose five supervisor lifecycle knobs need measurement support.
 pub(crate) const KNOB_TICKET: &str = "ONE-1578";
@@ -96,8 +98,32 @@ pub(crate) struct AcceptanceEvidence {
     pub(crate) knob_ticket_url: &'static str,
     pub(crate) knob_rule: &'static str,
     pub(crate) knobs: Vec<KnobMeasurement>,
+    /// Exact, auditable QPS support for lifecycle sizing. It is explicitly not
+    /// promoted into ONE-1537's different embed-latency acceptance gate.
+    pub(crate) measured_qps: MeasuredQpsEvidence,
     pub(crate) embed_latency_gate: EmbedLatencyRelationship,
     pub(crate) beam_boundary: &'static str,
+}
+
+/// Trace from one synchronized, error-free session point to the QPS copied into
+/// acceptance. The numerator and denominator are carried beside the value so a
+/// consumer can reproduce it; an invalid/synthetic point becomes `not_ready`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct MeasuredQpsEvidence {
+    pub(crate) lifecycle_ticket: &'static str,
+    pub(crate) lifecycle_ticket_url: &'static str,
+    pub(crate) related_embed_gate_ticket: &'static str,
+    pub(crate) related_embed_gate_url: &'static str,
+    pub(crate) source_report_cell: String,
+    pub(crate) sessions: usize,
+    pub(crate) completed_queries_numerator: Cell<usize>,
+    pub(crate) wall_clock_ms_denominator: Cell<f64>,
+    pub(crate) measured_qps: Cell<f64>,
+    pub(crate) evidence_kind: EvidenceKind,
+    pub(crate) valid_for_lifecycle_support: bool,
+    pub(crate) valid_for_one_1537_embed_gate: bool,
+    pub(crate) derivation: &'static str,
+    pub(crate) relationship: &'static str,
 }
 
 const BEAM_BOUNDARY: &str = "BEAM keeps accuracy and cost; nothing in this acceptance block restates, re-weights or \
@@ -114,18 +140,23 @@ pub(crate) struct AcceptanceInputs<'a> {
 
 impl AcceptanceEvidence {
     pub(crate) fn collect(inputs: &AcceptanceInputs<'_>) -> Self {
+        let measured_qps = measured_qps_evidence(inputs.sessions);
         Self {
             knob_ticket: KNOB_TICKET,
             knob_ticket_url: KNOB_TICKET_URL,
             knob_rule: KNOB_RULE,
-            knobs: knob_rows(inputs),
+            knobs: knob_rows(inputs, &measured_qps),
+            measured_qps,
             embed_latency_gate: embed_latency_relationship(inputs.recall_latency),
             beam_boundary: BEAM_BOUNDARY,
         }
     }
 }
 
-fn knob_rows(inputs: &AcceptanceInputs<'_>) -> Vec<KnobMeasurement> {
+fn knob_rows(
+    inputs: &AcceptanceInputs<'_>,
+    measured_qps: &MeasuredQpsEvidence,
+) -> Vec<KnobMeasurement> {
     vec![
         knob(
             "idle_ttl",
@@ -138,7 +169,7 @@ fn knob_rows(inputs: &AcceptanceInputs<'_>) -> Vec<KnobMeasurement> {
             "hot_vault_extension",
             60,
             "minutes_maximum",
-            vec![resident_mean(inputs), peak_throughput(inputs)],
+            vec![resident_mean(inputs), peak_throughput(measured_qps)],
             "active-vault RSS and the peak synchronized session point quantify costs while a vault is hot; this run does not apply a 60-minute extension or observe a hot-vault inter-arrival distribution",
         ),
         knob(
@@ -199,20 +230,75 @@ fn resident_mean(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
     )
 }
 
-fn peak_throughput(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
-    let measured = inputs
-        .sessions
+fn peak_throughput(evidence: &MeasuredQpsEvidence) -> SupportingMeasurement {
+    support(
+        "maximum_concurrency_session_throughput",
+        "acceptance.measured_qps.measured_qps",
+        evidence.measured_qps.measured_f64(),
+        "queries_per_second",
+        "the maximum required session point did not produce traceable measured-wall-clock QPS",
+    )
+}
+
+fn measured_qps_evidence(sessions: &SessionsAxis) -> MeasuredQpsEvidence {
+    let expected_sessions = REQUIRED_FULL_SESSION_CURVE
+        .last()
+        .copied()
+        .unwrap_or_default();
+    let source_report_cell = format!("sessions.curve[sessions={expected_sessions}].throughput_qps");
+    let point = sessions
         .curve
         .iter()
-        .max_by_key(|point| point.sessions)
-        .and_then(|point| point.throughput_qps.measured_f64());
-    support(
-        "peak_session_curve_throughput",
-        "sessions.curve[peak].throughput_qps",
-        measured,
-        "queries_per_second",
-        "no session-curve point produced measured throughput",
-    )
+        .find(|point| point.sessions == expected_sessions);
+    let valid_point = point.is_some_and(|point| {
+        let reported = point.throughput_qps.measured_f64();
+        let derived =
+            (point.wall_clock_ms.is_finite() && point.wall_clock_ms > 0.0 && point.queries > 0)
+                .then(|| point.queries as f64 / (point.wall_clock_ms / 1e3));
+        let rate_agrees = reported.zip(derived).is_some_and(|(reported, derived)| {
+            reported.is_finite()
+                && reported > 0.0
+                && (reported - derived).abs()
+                    <= f64::EPSILON * reported.abs().max(derived.abs()) * 8.0
+        });
+        point.workers_released == point.sessions
+            && point.synchronized
+            && point.errors == 0
+            && rate_agrees
+    });
+    let valid = sessions.evidence_kind == EvidenceKind::MeasuredWallClock && valid_point;
+    let reason = if sessions.evidence_kind != EvidenceKind::MeasuredWallClock {
+        "the point is synthetic smoke rather than publishable measured-wall-clock evidence"
+            .to_owned()
+    } else if point.is_none() {
+        format!("the required {expected_sessions}-session point is absent")
+    } else {
+        format!(
+            "the required {expected_sessions}-session point was not synchronized, error-free, or arithmetically traceable to completed_queries / wall_clock_seconds"
+        )
+    };
+    let queries = point.map(|point| point.queries);
+    let wall_clock_ms = point.map(|point| point.wall_clock_ms);
+    let qps = point.and_then(|point| point.throughput_qps.measured_f64());
+    MeasuredQpsEvidence {
+        lifecycle_ticket: KNOB_TICKET,
+        lifecycle_ticket_url: KNOB_TICKET_URL,
+        related_embed_gate_ticket: EMBED_LATENCY_GATE_TICKET,
+        related_embed_gate_url: EMBED_LATENCY_GATE_URL,
+        source_report_cell,
+        sessions: expected_sessions,
+        completed_queries_numerator: Cell::from_option(valid.then_some(queries).flatten(), &reason),
+        wall_clock_ms_denominator: Cell::from_option(
+            valid.then_some(wall_clock_ms).flatten(),
+            &reason,
+        ),
+        measured_qps: Cell::from_option(valid.then_some(qps).flatten(), &reason),
+        evidence_kind: sessions.evidence_kind,
+        valid_for_lifecycle_support: valid,
+        valid_for_one_1537_embed_gate: false,
+        derivation: "sessions.curve[sessions=300].queries / (sessions.curve[sessions=300].wall_clock_ms / 1000); the source point must release all 300 workers together, complete every query without error, and carry measured_wall_clock evidence",
+        relationship: "this QPS is traceable support for ONE-1578 lifecycle sizing only; ONE-1537 owns a different Oneironer single-query embed-p95 gate, so the QPS is never substituted for or combined with that acceptance measurement",
+    }
 }
 
 fn ready_children(inputs: &AcceptanceInputs<'_>) -> SupportingMeasurement {
@@ -516,6 +602,55 @@ mod tests {
                 .all(|measurement| measurement.measured_value.is_measured()),
             "the fixture measured wake p95 and proven per-vault RSS"
         );
+    }
+
+    /// QPS copied into acceptance is backed by an exact report cell plus its
+    /// numerator and denominator. Synthetic, unsynchronized, erroneous, or
+    /// arithmetically inconsistent points remain not-ready, and QPS is never
+    /// promoted into ONE-1537's unrelated embed gate.
+    #[test]
+    fn measured_qps_acceptance_is_traceable_and_never_invented() {
+        let mut axis = sessions();
+        let point = axis.curve.first_mut().expect("fixture point");
+        point.sessions = 300;
+        point.workers_released = 300;
+        point.synchronized = true;
+        point.queries = 600;
+        point.wall_clock_ms = 20.0;
+        point.throughput_qps = Cell::measured(30_000.0);
+        point.errors = 0;
+        axis.evidence_kind = EvidenceKind::MeasuredWallClock;
+
+        let evidence = measured_qps_evidence(&axis);
+        assert!(evidence.valid_for_lifecycle_support);
+        assert!(!evidence.valid_for_one_1537_embed_gate);
+        assert_eq!(evidence.sessions, 300);
+        assert_eq!(evidence.completed_queries_numerator.value(), Some(&600));
+        assert_eq!(
+            evidence.wall_clock_ms_denominator.measured_f64(),
+            Some(20.0)
+        );
+        assert_eq!(evidence.measured_qps.measured_f64(), Some(30_000.0));
+        assert_eq!(
+            evidence.source_report_cell,
+            "sessions.curve[sessions=300].throughput_qps"
+        );
+        assert!(evidence.relationship.contains("never substituted"));
+
+        axis.curve[0].throughput_qps = Cell::measured(99_999.0);
+        let invented = measured_qps_evidence(&axis);
+        assert!(!invented.valid_for_lifecycle_support);
+        assert!(!invented.measured_qps.is_measured());
+
+        axis.curve[0].throughput_qps = Cell::measured(30_000.0);
+        axis.curve[0].errors = 1;
+        let partial = measured_qps_evidence(&axis);
+        assert!(!partial.measured_qps.is_measured());
+
+        axis.curve[0].errors = 0;
+        axis.evidence_kind = EvidenceKind::SyntheticSmoke;
+        let smoke = measured_qps_evidence(&axis);
+        assert!(!smoke.measured_qps.is_measured());
     }
 
     /// ONE-1537 owns a strict single-query embed p95 gate. Warm retrieval p95

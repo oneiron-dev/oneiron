@@ -196,9 +196,9 @@ pub(crate) enum ReadinessSignal {
 pub(crate) const READINESS_RULE: &str = "ready == the parent's TCP accept for this child completed; child stdout/stderr is never read, \
      scanned or waited on, and no sleep stands in for readiness";
 /// Shutdown rule pinned into every report carrying a child probe.
-pub(crate) const CHILD_SHUTDOWN_RULE: &str = "after readiness the PARENT owns the child's lifetime: it closes the accepted stream and then \
-     waits a bounded budget, terminating and reaping any child that does not exit on its own; no \
-     wait on a caller-supplied child is unbounded";
+pub(crate) const CHILD_SHUTDOWN_RULE: &str = "after readiness the PARENT owns the child's lifetime: it closes the accepted stream, waits one \
+     bounded graceful budget, then gives termination/reaping a second bounded budget; a process \
+     still alive is reported as unreapable and no caller-supplied child reaches blocking wait()";
 
 /// Axis 2: process spawn-to-ready wake latency.
 #[derive(Debug, Clone, PartialEq, Serialize)]

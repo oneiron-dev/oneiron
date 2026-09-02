@@ -1,25 +1,34 @@
-//! Checkout HEAD resolution for ONE-1579 run provenance.
+//! Build-revision and checkout-HEAD resolution for ONE-1579 provenance.
 //!
-//! The git SHA identifies the checkout THIS BINARY came from — the build
-//! checkout first, then the running executable's own directory — and never
-//! the caller's working directory. Callers pass absolute plan and output
-//! paths, so a bench invoked from inside an unrelated repository used to
-//! record that repository's HEAD as the benchmark's provenance. The lookup
-//! also resolves through a linked worktree's `commondir`, so a normal
-//! worktree run reports its actual commit instead of `not_ready`.
+//! These are deliberately two different facts:
+//!
+//! * the BUILD REVISION is the BLAKE3 digest of the running executable image,
+//!   optionally paired with a git SHA captured by the build environment. It is
+//!   immutable for that artifact and cannot change with the caller's cwd or a
+//!   later branch advance;
+//! * the SOURCE CHECKOUT HEAD is a descriptive runtime observation from the
+//!   compile-time manifest path (then the executable location). It is useful
+//!   context, but it is never promoted into the build-revision slot because a
+//!   checkout can move after the binary was compiled.
+//!
+//! Linked worktrees are supported through `commondir`, and the caller's current
+//! directory is never consulted.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// Environment variable that pins the git sha for a PACKAGED binary that no
-/// longer sits in the checkout it was built from (container, CI artifact).
-/// It is an explicit override, never a fallback for a missing lookup.
+/// Explicit runtime override for the build git SHA of a packaged binary. The
+/// report names this source, so it cannot be confused with an automatic read.
 const GIT_SHA_ENV: &str = "ONEIRON_BENCH_GIT_SHA";
-/// The crate source directory this binary was BUILT from, captured at compile
-/// time. This is what makes the sha the BENCHMARK's provenance rather than a
-/// property of wherever the process was started.
+/// Preferred compile-time build SHA. A release/CI build can set this without a
+/// build script; `option_env!` embeds the value into the artifact.
+const BUILD_GIT_SHA_ENV: &str = "ONEIRON_BENCH_BUILD_GIT_SHA";
+const COMPILE_TIME_BUILD_GIT_SHA: Option<&str> = option_env!("ONEIRON_BENCH_BUILD_GIT_SHA");
+const COMPILE_TIME_GITHUB_SHA: Option<&str> = option_env!("GITHUB_SHA");
+const COMPILE_TIME_GITLAB_SHA: Option<&str> = option_env!("CI_COMMIT_SHA");
+/// The crate source directory this binary was built from, captured at compile
+/// time. It is used only for the descriptive checkout-head observation.
 const BUILD_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
-
-// ─── git sha ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitShaResolution {
@@ -27,10 +36,75 @@ pub(crate) struct GitShaResolution {
     pub(crate) source: String,
 }
 
-/// Resolves THIS BENCHMARK binary's checkout HEAD by reading Git's on-disk
-/// refs. The caller's current directory is deliberately never consulted: an
-/// absolute `perf run --plan ... --out ...` may be launched from any checkout.
-pub(crate) fn git_sha() -> GitShaResolution {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecutableDigestResolution {
+    pub(crate) digest: Option<String>,
+    pub(crate) source: String,
+    pub(crate) executable: Option<String>,
+}
+
+/// BLAKE3 over the executable image this process is actually running.
+///
+/// Linux uses `/proc/self/exe`, which remains attached to the running inode even
+/// if the pathname in `target/` is replaced after process start. Other targets
+/// fall back to `current_exe`. This digest is the always-local build identifier;
+/// it needs no git checkout and cannot accidentally identify the caller's repo.
+pub(crate) fn running_executable_blake3() -> ExecutableDigestResolution {
+    let displayed = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string());
+    #[cfg(target_os = "linux")]
+    let hash_path = PathBuf::from("/proc/self/exe");
+    #[cfg(not(target_os = "linux"))]
+    let hash_path = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return ExecutableDigestResolution {
+                digest: None,
+                source: format!("the running executable path is not resolvable: {error}"),
+                executable: None,
+            };
+        }
+    };
+
+    match hash_file_blake3(&hash_path) {
+        Ok(digest) => ExecutableDigestResolution {
+            digest: Some(digest),
+            source: format!(
+                "BLAKE3 of running executable image `{}`",
+                hash_path.display()
+            ),
+            executable: displayed.or_else(|| Some(hash_path.display().to_string())),
+        },
+        Err(error) => ExecutableDigestResolution {
+            digest: None,
+            source: format!(
+                "could not hash running executable image `{}`: {error}",
+                hash_path.display()
+            ),
+            executable: displayed,
+        },
+    }
+}
+
+fn hash_file_blake3(path: &Path) -> Result<String, std::io::Error> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Git SHA captured for the build, never inferred from a mutable checkout at
+/// report time. The packaged-binary runtime override is explicit; otherwise
+/// only compile-time environment values are eligible.
+pub(crate) fn build_git_sha() -> GitShaResolution {
     if let Ok(pinned) = std::env::var(GIT_SHA_ENV)
         && !pinned.trim().is_empty()
     {
@@ -40,19 +114,47 @@ pub(crate) fn git_sha() -> GitShaResolution {
             source: if valid_sha(pinned.trim()).is_some() {
                 format!("explicit packaged-binary override {GIT_SHA_ENV}")
             } else {
-                format!("{GIT_SHA_ENV} was set but did not contain a full hexadecimal git sha")
+                format!("{GIT_SHA_ENV} was set but did not contain a 40-hex git SHA")
             },
         };
     }
 
+    for (name, candidate) in [
+        (BUILD_GIT_SHA_ENV, COMPILE_TIME_BUILD_GIT_SHA),
+        ("GITHUB_SHA", COMPILE_TIME_GITHUB_SHA),
+        ("CI_COMMIT_SHA", COMPILE_TIME_GITLAB_SHA),
+    ] {
+        if let Some(candidate) = candidate {
+            return GitShaResolution {
+                sha: valid_sha(candidate),
+                source: if valid_sha(candidate).is_some() {
+                    format!("compile-time environment {name}")
+                } else {
+                    format!("compile-time environment {name} did not contain a 40-hex git SHA")
+                },
+            };
+        }
+    }
+
+    GitShaResolution {
+        sha: None,
+        source: format!(
+            "no git SHA was embedded at build time; set {BUILD_GIT_SHA_ENV} while compiling (or use {GIT_SHA_ENV} only as an explicit packaged-binary override)"
+        ),
+    }
+}
+
+/// Descriptive source-checkout HEAD at report capture. This is intentionally
+/// separate from [`build_git_sha`]: the branch may have advanced since compile.
+pub(crate) fn source_checkout_git_sha() -> GitShaResolution {
     git_sha_from_provenance(
         Path::new(BUILD_MANIFEST_DIR),
         std::env::current_exe().ok().as_deref(),
     )
 }
 
-/// Build checkout first, executable location second. Both identify where the
-/// benchmark came from; neither depends on the process working directory.
+/// Build checkout first, executable location second. Both identify the source
+/// checkout associated with the benchmark and neither depends on process cwd.
 pub(crate) fn git_sha_from_provenance(
     build_manifest_dir: &Path,
     executable: Option<&Path>,
@@ -77,7 +179,7 @@ pub(crate) fn git_sha_from_provenance(
     GitShaResolution {
         sha: None,
         source: format!(
-            "no benchmark checkout HEAD resolved from {}; set {GIT_SHA_ENV} only for an explicit              packaged-binary override",
+            "no associated source-checkout HEAD resolved from {}",
             attempted.join(", ")
         ),
     }
@@ -185,7 +287,7 @@ fn discover_git_dir(start: &Path) -> Option<PathBuf> {
 
 fn valid_sha(candidate: &str) -> Option<String> {
     let candidate = candidate.trim();
-    if candidate.len() >= 40 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+    if candidate.len() == 40 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
         return Some(candidate.to_owned());
     }
     None
@@ -278,12 +380,44 @@ mod tests {
         assert!(resolve_git_sha(&worktree).is_none());
     }
 
-    /// Benchmark provenance comes from the build checkout before the running
-    /// executable's checkout, and never from the caller cwd. An unrelated
-    /// executable path cannot replace the source SHA captured by the build
-    /// manifest directory.
+    /// The executable digest identifies file CONTENT, not a path label. Equal
+    /// bytes under different names produce equal build revisions; one changed
+    /// byte produces a different revision.
     #[test]
-    fn git_sha_prefers_build_and_executable_provenance_not_caller_state() {
+    fn executable_revision_is_a_content_digest() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let left = root.path().join("left");
+        let copy = root.path().join("copy");
+        let changed = root.path().join("changed");
+        std::fs::write(&left, b"oneiron-bench image v1").expect("left");
+        std::fs::write(&copy, b"oneiron-bench image v1").expect("copy");
+        std::fs::write(&changed, b"oneiron-bench image v2").expect("changed");
+        assert_eq!(
+            hash_file_blake3(&left).expect("left hashes"),
+            hash_file_blake3(&copy).expect("copy hashes")
+        );
+        assert_ne!(
+            hash_file_blake3(&left).expect("left hashes"),
+            hash_file_blake3(&changed).expect("changed hashes")
+        );
+    }
+
+    /// The running binary must expose an artifact revision without relying on
+    /// any Git checkout or caller working directory.
+    #[test]
+    fn the_running_executable_has_a_build_revision_digest() {
+        let revision = running_executable_blake3();
+        let digest = revision.digest.expect("the test executable can be hashed");
+        assert_eq!(digest.len(), 64);
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(revision.source.contains("BLAKE3"));
+    }
+
+    /// Source-checkout provenance comes from the build checkout before the
+    /// running executable's checkout, and never from the caller cwd. This is a
+    /// descriptive source HEAD and is deliberately distinct from build ID.
+    #[test]
+    fn source_sha_prefers_build_and_executable_provenance_not_caller_state() {
         let root = tempfile::tempdir().expect("tempdir");
         let build_repo = root.path().join("build-repo");
         let executable_repo = root.path().join("executable-repo");

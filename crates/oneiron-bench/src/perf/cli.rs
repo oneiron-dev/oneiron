@@ -536,9 +536,18 @@ mod tests {
             Some(report.nvme_fsync.completed_ops())
         );
 
-        // Provenance identifies the exact cache stream and the node.
+        // Provenance identifies the running build, exact cache stream, planted
+        // marker population, and node. The build digest is independent of cwd;
+        // a build-time Git SHA is optional and stays distinct from source HEAD.
+        assert!(report.provenance.build_revision_blake3.is_measured());
+        assert!(report.provenance.build_revision_source.contains("BLAKE3"));
         assert!(report.provenance.cache_events_hash.is_measured());
         assert!(report.provenance.cache_events_bytes > 0);
+        assert!(report.provenance.corpus_marker_evidence.collision_free);
+        assert_eq!(
+            report.provenance.corpus_marker_evidence.documents,
+            report.provenance.corpus_marker_evidence.unique_markers
+        );
         assert_eq!(
             report.provenance.node.designated_first_tokyo_node,
             "tokyo-1"
@@ -569,6 +578,16 @@ mod tests {
                 && !knob.direct_measurement.is_measured()
                 && !knob.supporting_measurements.is_empty()
         }));
+        assert_eq!(report.acceptance.measured_qps.lifecycle_ticket, "ONE-1578");
+        assert_eq!(
+            report.acceptance.measured_qps.related_embed_gate_ticket,
+            "ONE-1537"
+        );
+        assert!(!report.acceptance.measured_qps.valid_for_one_1537_embed_gate);
+        assert!(
+            !report.acceptance.measured_qps.measured_qps.is_measured(),
+            "synthetic smoke QPS is never promoted into measured acceptance evidence"
+        );
         assert_eq!(report.acceptance.embed_latency_gate.gate_ticket, "ONE-1537");
         assert!(
             report

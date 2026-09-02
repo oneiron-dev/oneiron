@@ -42,9 +42,13 @@ pub(crate) const AXES: [&str; 8] = [
 pub(crate) const REPORT_SECTIONS: [&str; 3] = ["provenance", "publication", "acceptance"];
 
 /// Every provenance field the report must carry.
-pub(crate) const PROVENANCE_FIELDS: [&str; 15] = [
-    "git_sha",
-    "git_sha_source",
+pub(crate) const PROVENANCE_FIELDS: [&str; 20] = [
+    "build_revision_blake3",
+    "build_revision_source",
+    "build_git_sha",
+    "build_git_sha_source",
+    "source_checkout_git_sha",
+    "source_checkout_git_sha_source",
     "target_triple",
     "node",
     "cpu",
@@ -53,6 +57,7 @@ pub(crate) const PROVENANCE_FIELDS: [&str; 15] = [
     "filesystem",
     "plan_hash",
     "corpus_hash",
+    "corpus_marker_evidence",
     "cache_events_hash",
     "cache_source",
     "seed",
@@ -141,12 +146,14 @@ mod tests {
 
         let nulled = serde_json::json!({
             "recall_latency": serde_json::Value::Null,
-            "provenance": { "git_sha": serde_json::Value::Null },
+            "provenance": { "build_revision_blake3": serde_json::Value::Null },
         });
         assert!(missing_axes(&nulled).contains(&"recall_latency"));
         assert!(missing_sections(&nulled).contains(&"publication"));
         assert!(missing_sections(&nulled).contains(&"acceptance"));
-        assert!(missing_provenance_fields(&nulled).contains(&"git_sha"));
+        assert!(missing_provenance_fields(&nulled).contains(&"build_revision_blake3"));
+        assert!(missing_provenance_fields(&nulled).contains(&"build_git_sha"));
+        assert!(missing_provenance_fields(&nulled).contains(&"source_checkout_git_sha"));
         assert!(missing_provenance_fields(&nulled).contains(&"cache_events_hash"));
         assert!(missing_provenance_fields(&nulled).contains(&"node"));
     }

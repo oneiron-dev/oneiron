@@ -70,6 +70,8 @@ pub(crate) struct PublicationInputs {
     pub(crate) session_detail: String,
     pub(crate) resident_memory_valid: bool,
     pub(crate) resident_memory_detail: String,
+    pub(crate) gated_write_measurements_valid: bool,
+    pub(crate) gated_write_detail: String,
     pub(crate) gated_write_meets_floor: bool,
     pub(crate) warmup_attempts: usize,
     pub(crate) warmup_commits: usize,
@@ -83,6 +85,12 @@ pub(crate) struct PublicationInputs {
     pub(crate) precision_detail: String,
     pub(crate) cache_axis_valid: bool,
     pub(crate) cache_detail: String,
+    pub(crate) corpus_marker_evidence_valid: bool,
+    pub(crate) corpus_marker_detail: String,
+    pub(crate) measured_qps_acceptance_valid: bool,
+    pub(crate) measured_qps_acceptance_detail: String,
+    pub(crate) build_revision_valid: bool,
+    pub(crate) build_revision_detail: String,
     pub(crate) node_is_designated_first_tokyo: bool,
     pub(crate) node_detail: String,
     pub(crate) nvme_sanity_ok: bool,
@@ -171,6 +179,11 @@ fn evaluate_checks(inputs: &PublicationInputs) -> Vec<PublicationCheck> {
             detail: inputs.resident_memory_detail.clone(),
         },
         PublicationCheck {
+            check: "gated_write_measurements_complete",
+            satisfied: inputs.gated_write_measurements_valid,
+            detail: inputs.gated_write_detail.clone(),
+        },
+        PublicationCheck {
             check: "gated_write_floor",
             satisfied: inputs.gated_write_meets_floor,
             detail: format!(
@@ -213,6 +226,21 @@ fn evaluate_checks(inputs: &PublicationInputs) -> Vec<PublicationCheck> {
             detail: inputs.cache_detail.clone(),
         },
         PublicationCheck {
+            check: "corpus_markers_collision_free",
+            satisfied: inputs.corpus_marker_evidence_valid,
+            detail: inputs.corpus_marker_detail.clone(),
+        },
+        PublicationCheck {
+            check: "measured_qps_acceptance_traceable",
+            satisfied: inputs.measured_qps_acceptance_valid,
+            detail: inputs.measured_qps_acceptance_detail.clone(),
+        },
+        PublicationCheck {
+            check: "build_revision_identified",
+            satisfied: inputs.build_revision_valid,
+            detail: inputs.build_revision_detail.clone(),
+        },
+        PublicationCheck {
             check: "designated_first_tokyo_node",
             satisfied: inputs.node_is_designated_first_tokyo,
             detail: inputs.node_detail.clone(),
@@ -246,6 +274,8 @@ mod tests {
             session_detail: "the exact curve completed without errors".to_owned(),
             resident_memory_valid: true,
             resident_memory_detail: "ten harness-owned vault children were sampled".to_owned(),
+            gated_write_measurements_valid: true,
+            gated_write_detail: "successful-commit throughput and latency were measured".to_owned(),
             gated_write_meets_floor: true,
             warmup_attempts: 1_000,
             warmup_commits: 1_000,
@@ -259,6 +289,13 @@ mod tests {
             precision_detail: "all four precision rows were measured".to_owned(),
             cache_axis_valid: true,
             cache_detail: "every listed real-traffic cache rung was measured".to_owned(),
+            corpus_marker_evidence_valid: true,
+            corpus_marker_detail: "1000 document markers, 1000 unique".to_owned(),
+            measured_qps_acceptance_valid: true,
+            measured_qps_acceptance_detail: "300-session QPS copies an exact measured cell"
+                .to_owned(),
+            build_revision_valid: true,
+            build_revision_detail: "running executable BLAKE3 measured".to_owned(),
             node_is_designated_first_tokyo: true,
             node_detail: "declared node `tokyo-1` in `tokyo`".to_owned(),
             nvme_sanity_ok: true,
@@ -333,8 +370,12 @@ mod tests {
             ("wake_axis_complete", 1),
             ("session_curve_complete", 2),
             ("ten_child_rss_complete", 3),
-            ("precision_axis_complete", 4),
-            ("cache_rungs_complete", 5),
+            ("gated_write_measurements_complete", 4),
+            ("precision_axis_complete", 5),
+            ("cache_rungs_complete", 6),
+            ("corpus_markers_collision_free", 7),
+            ("measured_qps_acceptance_traceable", 8),
+            ("build_revision_identified", 9),
         ] {
             let mut inputs = publishable_inputs();
             match break_axis {
@@ -356,12 +397,32 @@ mod tests {
                         "custom child TCP readiness did not prove vault residency".to_owned();
                 }
                 4 => {
+                    inputs.gated_write_measurements_valid = false;
+                    inputs.gated_write_detail =
+                        "successful commit throughput was unavailable".to_owned();
+                }
+                5 => {
                     inputs.precision_axis_valid = false;
                     inputs.precision_detail = "the f16 recall delta is unavailable".to_owned();
                 }
-                5 => {
+                6 => {
                     inputs.cache_axis_valid = false;
                     inputs.cache_detail = "listed rung `embedding` had no event".to_owned();
+                }
+                7 => {
+                    inputs.corpus_marker_evidence_valid = false;
+                    inputs.corpus_marker_detail =
+                        "1000 documents but 999 unique markers".to_owned();
+                }
+                8 => {
+                    inputs.measured_qps_acceptance_valid = false;
+                    inputs.measured_qps_acceptance_detail =
+                        "QPS did not trace to a synchronized point".to_owned();
+                }
+                9 => {
+                    inputs.build_revision_valid = false;
+                    inputs.build_revision_detail =
+                        "running executable could not be hashed".to_owned();
                 }
                 _ => unreachable!("fixed test cases"),
             }

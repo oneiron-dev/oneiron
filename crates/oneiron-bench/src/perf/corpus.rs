@@ -15,6 +15,7 @@ use std::time::Instant;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use serde::Serialize;
 
 /// Embedding identity stamped on every perf vault. Bench-owned; it never
 /// collides with a product vault's model id.
@@ -63,6 +64,20 @@ pub(crate) struct CorpusQuery {
     pub(crate) expected: EntityId,
 }
 
+/// Auditable planted-ground-truth marker facts. The report carries counts and
+/// the full-domain encoding rule instead of asking a reader to trust prose that
+/// markers were unique.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct CorpusMarkerEvidence {
+    pub(crate) documents: usize,
+    pub(crate) unique_markers: usize,
+    pub(crate) collision_free: bool,
+    pub(crate) marker_prefix: &'static str,
+    pub(crate) base26_digits: usize,
+    pub(crate) capacity_covers_full_usize_domain: bool,
+    pub(crate) rule: &'static str,
+}
+
 /// The seeded, deterministic corpus a run is measured against.
 pub(crate) struct Corpus {
     pub(crate) docs: Vec<CorpusDoc>,
@@ -71,6 +86,7 @@ pub(crate) struct Corpus {
     pub(crate) vectors: Vec<Vec<f32>>,
     pub(crate) query_vectors: Vec<Vec<f32>>,
     pub(crate) hash: String,
+    pub(crate) marker_evidence: CorpusMarkerEvidence,
 }
 
 /// Builds the corpus from one seeded `StdRng` stream in a fixed order, so the
@@ -114,25 +130,50 @@ pub(crate) fn generate_corpus(
     }
 
     let hash = corpus_hash(&corpus_docs, &vectors);
+    let unique_markers = corpus_docs
+        .iter()
+        .map(|doc| doc.marker.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let marker_evidence = CorpusMarkerEvidence {
+        documents: corpus_docs.len(),
+        unique_markers,
+        collision_free: unique_markers == corpus_docs.len(),
+        marker_prefix: "qzmk",
+        base26_digits: MARKER_DIGITS,
+        capacity_covers_full_usize_domain: MARKER_DIGITS * 26_usize.ilog2() as usize
+            >= usize::BITS as usize,
+        rule: "qzmk plus a fixed-width base-26 encoding of the full usize document index; every document marker is counted for uniqueness before the run is reported",
+    };
     Ok(Corpus {
         docs: corpus_docs,
         queries: corpus_queries,
         vectors,
         query_vectors,
         hash,
+        marker_evidence,
     })
 }
 
-/// `qzmk` plus five base-26 letters: a unique, pure-ASCII-lowercase token that
-/// survives analysis as one surface form.
+/// Number of base-26 digits needed to encode every `usize` on supported 32-
+/// and 64-bit targets. Two letters per byte is deliberately conservative:
+/// `26^16 > 2^64`, so unlike the old five-letter encoding this can never wrap
+/// and reuse a marker inside an admitted corpus.
+const MARKER_DIGITS: usize = 2 * std::mem::size_of::<usize>();
+
+/// `qzmk` plus a fixed-width base-26 encoding of the full document index: a
+/// unique, pure-ASCII-lowercase token that survives analysis as one surface
+/// form. Fixed width also keeps every marker on the same lexical footing.
 fn marker_token(index: usize) -> String {
-    let mut token = String::from("qzmk");
+    let mut token = String::with_capacity(4 + MARKER_DIGITS);
+    token.push_str("qzmk");
     let mut remaining = index;
-    for _ in 0..5 {
-        let letter = b'a' + u8::try_from(remaining % 26).unwrap_or(0);
+    for _ in 0..MARKER_DIGITS {
+        let letter = b'a' + (remaining % 26) as u8;
         token.push(char::from(letter));
         remaining /= 26;
     }
+    debug_assert_eq!(remaining, 0, "MARKER_DIGITS must encode every usize");
     token
 }
 
@@ -243,5 +284,26 @@ mod tests {
         let markers: std::collections::BTreeSet<&str> =
             left.docs.iter().map(|doc| doc.marker.as_str()).collect();
         assert_eq!(markers.len(), left.docs.len(), "markers are unique");
+        assert_eq!(left.marker_evidence.documents, left.docs.len());
+        assert_eq!(left.marker_evidence.unique_markers, left.docs.len());
+        assert!(left.marker_evidence.collision_free);
+        assert!(left.marker_evidence.capacity_covers_full_usize_domain);
+    }
+
+    /// The former five-letter encoding repeated after `26^5` documents. The
+    /// marker is evidence for planted ground truth, so uniqueness must hold for
+    /// the full admitted `usize` domain rather than only for tiny fixtures.
+    #[test]
+    fn corpus_markers_do_not_wrap_at_the_old_base26_boundary() {
+        let old_wrap = 26_usize.pow(5);
+        let cases = [0, 1, old_wrap - 1, old_wrap, old_wrap + 1, usize::MAX];
+        let markers: std::collections::BTreeSet<String> =
+            cases.into_iter().map(marker_token).collect();
+        assert_eq!(markers.len(), cases.len());
+        assert_ne!(marker_token(0), marker_token(old_wrap));
+        assert!(markers.iter().all(|marker| {
+            marker.len() == 4 + MARKER_DIGITS
+                && marker.bytes().all(|byte| byte.is_ascii_lowercase())
+        }));
     }
 }

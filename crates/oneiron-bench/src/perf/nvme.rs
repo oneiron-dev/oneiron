@@ -32,7 +32,7 @@ use rand::{Rng, SeedableRng};
 use serde::Serialize;
 
 use super::cells::{Cell, EvidenceKind, Percentiles};
-use super::provenance::{mount_facts, read_trimmed};
+use super::nvme_device::{BlockDeviceFacts, block_device_facts};
 
 /// Byte the setup pass fills the scratch file with.
 const SCRATCH_FILL_BYTE: u8 = 0x5A;
@@ -54,15 +54,6 @@ const COMPLETED_RULE: &str = "*_ops are what the plan requested; *_ops_completed
      that failed part way keeps the operations it had already completed and reports the failure \
      in `errors`, so a partial pass is never rewritten as zero work and never counts as a \
      complete measurement";
-
-/// Backing block device facts for the NVMe row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub(crate) struct BlockDeviceFacts {
-    pub(crate) device: String,
-    pub(crate) disk: String,
-    pub(crate) is_nvme: bool,
-    pub(crate) rotational: Cell<bool>,
-}
 
 /// Axis 8: descriptive sequential/random fsync behaviour of the device the
 /// vault actually sat on. Descriptive only — never an engine benchmark row.
@@ -111,10 +102,14 @@ impl NvmeFsyncAxis {
             .device
             .value()
             .map_or_else(|| "<unresolved>".to_owned(), |facts| facts.device.clone());
+        let chain = self
+            .device
+            .value()
+            .map_or_else(Vec::new, |facts| facts.resolution_chain.clone());
         format!(
-            "backing device {device}, status `{}`, {} of {} sequential and {} of {} random fsync \
-             operations completed; a publishable full run needs a resolved NVMe device with both \
-             fsync rows measured",
+            "backing device {device}, resolved chain {chain:?}, status `{}`, {} of {} sequential \
+             and {} of {} random fsync operations completed; a publishable full run needs exactly \
+             one resolved physical NVMe leaf with both fsync rows measured",
             self.status,
             self.sequential_ops_completed,
             self.sequential_ops,
@@ -375,55 +370,6 @@ fn write_block_and_fsync(file: &mut File, offset: u64, block: &[u8]) -> std::io:
     file.seek(SeekFrom::Start(offset))?;
     file.write_all(block)?;
     file.sync_all()
-}
-
-/// Resolves `dir`'s mount device to a block device, then reports whether that
-/// device is NVMe. Anything that is not a `/dev/...` block device (tmpfs,
-/// overlay, network mounts) resolves to `None`.
-pub(crate) fn block_device_facts(dir: &Path) -> Option<BlockDeviceFacts> {
-    let mount = mount_facts(dir)?;
-    let device = mount.device;
-    let name = device.strip_prefix("/dev/")?;
-    if name.is_empty() {
-        return None;
-    }
-    let disk = parent_disk(name);
-    let is_nvme = disk.starts_with("nvme");
-    let rotational = Cell::from_option(
-        read_trimmed(&format!("/sys/block/{disk}/queue/rotational")).and_then(|raw| {
-            match raw.as_str() {
-                "0" => Some(false),
-                "1" => Some(true),
-                _ => None,
-            }
-        }),
-        format!("/sys/block/{disk}/queue/rotational is not readable"),
-    );
-    Some(BlockDeviceFacts {
-        device,
-        disk,
-        is_nvme,
-        rotational,
-    })
-}
-
-/// `nvme0n1p3` -> `nvme0n1`, `sda2` -> `sda`, `dm-0` -> `dm-0`.
-fn parent_disk(name: &str) -> String {
-    if Path::new(&format!("/sys/block/{name}")).exists() {
-        return name.to_owned();
-    }
-    if let Some((disk, partition)) = name.rsplit_once('p')
-        && partition.chars().all(|c| c.is_ascii_digit())
-        && !partition.is_empty()
-        && Path::new(&format!("/sys/block/{disk}")).exists()
-    {
-        return disk.to_owned();
-    }
-    let trimmed = name.trim_end_matches(|c: char| c.is_ascii_digit());
-    if !trimmed.is_empty() && Path::new(&format!("/sys/block/{trimmed}")).exists() {
-        return trimmed.to_owned();
-    }
-    name.to_owned()
 }
 
 /// Scratch pathname for one pass, used by the presizing regression.
