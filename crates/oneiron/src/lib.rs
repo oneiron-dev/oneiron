@@ -148,6 +148,7 @@ mod vault;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_identity;
 pub mod wave_orchestration;
+pub mod web_fetch;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -312,6 +313,14 @@ pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
 };
+pub use crate::web_fetch::{
+    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
+    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, FirecrawlRenderer, HeadlessDocument,
+    HeadlessRenderer, MinExtractedContentBytes, NativeHeadlessRenderer, NativeReadabilityRenderer,
+    RenderedPage, Renderer, RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind,
+    RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult, WebFetcher,
+};
+
 pub use crate::wave_orchestration::{
     BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan,
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
