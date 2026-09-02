@@ -795,3 +795,441 @@ fn line_oa_adapter_validates_provider_native_id_shapes() -> Result<()> {
     ));
     Ok(())
 }
+
+// --- INB-00: Gmail/Workspace delegated-grant adapter -----------------------
+
+use crate::attempt_queue::{AttemptQueue, EnqueueOutcome};
+use crate::channel_identity::{
+    CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, DelegatedGrantScope, encode_channel_identity_body,
+};
+use crate::channel_identity_provider::gmail::{
+    GMAIL_CONNECTOR_EFFECTOR, GMAIL_DELEGATED_PROVIDER_KEY, GMAIL_INBOX_POLL_ATTEMPT_KIND,
+    GMAIL_METADATA_OAUTH_SCOPE, GMAIL_READONLY_OAUTH_SCOPE, GmailDelegatedAdapter,
+    GmailDelegatedAdapterConfig, GmailInboxPage, GmailInboxPollConfig, GmailMessageMetadata,
+    GmailReadWire, delegated_scope_for_google_oauth_scope, gmail_inbox_poll_dedupe_key,
+};
+use crate::secret_custody::{
+    CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
+    SecretCustodyRecord, SecretCustodyStatus,
+};
+
+const MEMBER_MAILBOX: &str = "member@member-owned.test";
+const GMAIL_CUSTODY_REF: &str = "gmail-delegated:member@member-owned.test";
+// Benign stand-in: no detector-shaped credential material (the gate write
+// wall scans bodies).
+const GRANT_VALUE: &[u8] = b"wave6-inb00-delegated-grant-value";
+
+fn gmail_custody_record(name: &str, bindings: Vec<SecretBinding>) -> SecretCustodyRecord {
+    SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: name.to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: GRANT_VALUE.to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1_700_000_000,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings,
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    }
+}
+
+fn gmail_read_binding() -> SecretBinding {
+    SecretBinding {
+        effector: GMAIL_CONNECTOR_EFFECTOR.to_owned(),
+        tier_ceiling: CustodyTier::T1Leased,
+        scopes: vec!["read".to_owned()],
+    }
+}
+
+fn gmail_adapter() -> Result<GmailDelegatedAdapter> {
+    Ok(GmailDelegatedAdapter::new(
+        GmailDelegatedAdapterConfig::new(MEMBER_MAILBOX, GMAIL_CUSTODY_REF)?
+            .with_google_oauth_scopes(&[GMAIL_READONLY_OAUTH_SCOPE, GMAIL_METADATA_OAUTH_SCOPE])?,
+    ))
+}
+
+/// Host wire stand-in. It is handed the custody NAME and never a value, which
+/// is the whole point of the seam.
+struct RecordingGmailWire {
+    page: GmailInboxPage,
+    seen_secret_ref: std::cell::RefCell<Option<String>>,
+}
+
+impl GmailReadWire for RecordingGmailWire {
+    fn fetch_inbox_page(
+        &self,
+        secret_ref: &str,
+        _mailbox_address: &str,
+        _cursor: Option<&str>,
+    ) -> Result<GmailInboxPage> {
+        *self.seen_secret_ref.borrow_mut() = Some(secret_ref.to_owned());
+        Ok(self.page.clone())
+    }
+}
+
+#[test]
+fn gmail_delegated_adapter_provisions_routes_and_polls() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let adapter = gmail_adapter()?;
+    assert_eq!(adapter.provider_key(), GMAIL_DELEGATED_PROVIDER_KEY);
+
+    vault.register_secret(gmail_custody_record(
+        GMAIL_CUSTODY_REF,
+        vec![gmail_read_binding()],
+    ))?;
+
+    let identity_id = entity(0x7A);
+    let agent_ref = entity(0xAA);
+    let requested = adapter.requested_identity(&vault, agent_ref, 7_000)?;
+    assert_eq!(requested.shape, ChannelIdentityShape::DelegatedGrant);
+    assert_eq!(requested.address_or_handle, MEMBER_MAILBOX);
+    assert_eq!(
+        requested
+            .delegated_grant
+            .as_ref()
+            .expect("grant")
+            .custody_record_ref,
+        GMAIL_CUSTODY_REF
+    );
+
+    // The row is a pointer into custody: the durable body carries the name
+    // and never the granted value.
+    let encoded = encode_channel_identity_body(&requested)?;
+    assert!(
+        !encoded
+            .windows(GRANT_VALUE.len())
+            .any(|window| window == GRANT_VALUE)
+    );
+    assert!(
+        encoded
+            .windows(GMAIL_CUSTODY_REF.len())
+            .any(|window| window == GMAIL_CUSTODY_REF.as_bytes())
+    );
+
+    let provision = adapter.provision(
+        &ProvisionIntent {
+            identity_id,
+            identity: requested.clone(),
+            fulfillment_mode: ChannelIdentityFulfillment::Api,
+        },
+        7_010,
+    )?;
+    assert_eq!(provision.channel, EMAIL_CHANNEL);
+    assert_eq!(provision.address_or_handle, MEMBER_MAILBOX);
+    assert_eq!(provision.fulfillment_mode, ChannelIdentityFulfillment::Api);
+
+    vault.create_channel_identity(&identity_id, &requested)?;
+    vault.transition_channel_identity(
+        &identity_id,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        7_020,
+        None,
+    )?;
+    let active = vault.transition_channel_identity(
+        &identity_id,
+        ChannelIdentityState::Active,
+        None,
+        7_030,
+        None,
+    )?;
+    assert_eq!(active.state, ChannelIdentityState::Active);
+
+    // Read one page through the wire, then normalize Gmail-native fields into
+    // the ordinary email inbound envelope.
+    let wire = RecordingGmailWire {
+        page: GmailInboxPage::new(
+            vec![GmailMessageMetadata::new(
+                "18f0a1b2c3d4e5f6",
+                "18f0a1b2c3d4e500",
+                MEMBER_MAILBOX,
+                "counterparty@example.test",
+                7_040,
+            )],
+            Some("history-9001".to_owned()),
+        ),
+        seen_secret_ref: std::cell::RefCell::new(None),
+    };
+    let page = adapter.fetch_inbox_page(&wire, None)?;
+    assert_eq!(
+        wire.seen_secret_ref.borrow().as_deref(),
+        Some(GMAIL_CUSTODY_REF)
+    );
+    assert_eq!(page.next_cursor.as_deref(), Some("history-9001"));
+
+    let message = page.messages.into_iter().next().expect("one message");
+    let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(
+        message.into_provider_inbound()?,
+    ))?;
+    assert_eq!(parsed.channel, EMAIL_CHANNEL);
+    assert_eq!(parsed.receiving_address_or_handle, MEMBER_MAILBOX);
+    assert_eq!(parsed.event_id, "gmail:18f0a1b2c3d4e5f6");
+    assert_eq!(
+        parsed.counterparty,
+        SurfaceCounterpartyStamp::unknown("email:counterparty@example.test".to_owned())
+    );
+    assert!(parsed.foreign_inbound);
+
+    // Delegated inbound rides the existing stamp with no special-casing.
+    let receipt = vault.route_inbound_surface_event(parsed)?;
+    assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    assert_eq!(receipt.receiving_identity_ref, Some(identity_id.to_hex()));
+    assert_eq!(receipt.agent_ref, Some(agent_ref.to_hex()));
+    let surface_event = receipt.surface_event.expect("routed event");
+    assert_eq!(surface_event.receiving_identity_ref, identity_id.to_hex());
+    assert_eq!(
+        surface_event.payload_ref.as_deref(),
+        Some("gmail:thread:18f0a1b2c3d4e500")
+    );
+    assert!(surface_event.claims_not_instructions);
+
+    // Exactly one poll attempt, deduped per identity, over the read-only
+    // attempt-queue API.
+    let first = adapter.enqueue_inbox_poll(&vault, identity_id, 7_050)?;
+    let EnqueueOutcome::Enqueued(attempt) = first else {
+        panic!("first poll enqueue must mint an attempt");
+    };
+    assert_eq!(attempt.kind, GMAIL_INBOX_POLL_ATTEMPT_KIND);
+    assert_eq!(
+        attempt.dedupe_key.as_deref(),
+        Some(gmail_inbox_poll_dedupe_key(identity_id).as_str())
+    );
+    let payload = serde_json::from_slice::<GmailInboxPollConfig>(&attempt.payload)
+        .expect("poll payload decodes");
+    assert_eq!(payload.mailbox_address, MEMBER_MAILBOX);
+    assert_eq!(payload.custody_record_ref, GMAIL_CUSTODY_REF);
+    assert_eq!(payload.identity_ref, identity_id.to_hex());
+    assert!(
+        !attempt
+            .payload
+            .windows(GRANT_VALUE.len())
+            .any(|window| window == GRANT_VALUE)
+    );
+
+    let second = adapter.enqueue_inbox_poll(&vault, identity_id, 7_060)?;
+    assert!(matches!(second, EnqueueOutcome::Existing(_)));
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .filter(|row| row.kind == GMAIL_INBOX_POLL_ATTEMPT_KIND)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn gmail_delegated_provisioning_requires_a_covering_custody_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let adapter = gmail_adapter()?;
+    let agent_ref = entity(0xAB);
+
+    // No custody record at all.
+    let missing = adapter
+        .requested_identity(&vault, agent_ref, 8_000)
+        .expect_err("provisioning without an existing grant must fail closed");
+    assert!(matches!(
+        missing,
+        Error::SecretRefNotFound { name } if name == GMAIL_CUSTODY_REF
+    ));
+
+    // A record exists, but nothing binds `connector:gmail` with a read scope.
+    // Naming the effector is not itself a grant, and an empty scope list is
+    // no grant at all.
+    vault.register_secret(gmail_custody_record(
+        GMAIL_CUSTODY_REF,
+        vec![
+            SecretBinding {
+                effector: "connector:other".to_owned(),
+                tier_ceiling: CustodyTier::T1Leased,
+                scopes: vec!["read".to_owned()],
+            },
+            SecretBinding {
+                effector: GMAIL_CONNECTOR_EFFECTOR.to_owned(),
+                tier_ceiling: CustodyTier::T1Leased,
+                scopes: Vec::new(),
+            },
+        ],
+    ))?;
+    let uncovered = adapter
+        .requested_identity(&vault, agent_ref, 8_010)
+        .expect_err("an uncovered binding must fail closed");
+    assert!(matches!(
+        uncovered,
+        Error::SecretBindingDenied { effector, secret_ref }
+            if effector == GMAIL_CONNECTOR_EFFECTOR && secret_ref == GMAIL_CUSTODY_REF
+    ));
+    Ok(())
+}
+
+#[test]
+fn gmail_delegated_token_use_goes_through_the_custody_door() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let adapter = gmail_adapter()?;
+    vault.register_secret(gmail_custody_record(
+        GMAIL_CUSTODY_REF,
+        vec![gmail_read_binding()],
+    ))?;
+
+    // The value is reachable only INSIDE the door closure, under the
+    // `connector:gmail` effector binding, and the receipt carries none of it.
+    let mut seen_len = 0usize;
+    let door_receipt = adapter.with_delegated_token_at_door(&vault, &mut |value| {
+        seen_len = value.len();
+        Ok(())
+    })?;
+    assert_eq!(seen_len, GRANT_VALUE.len());
+    assert_eq!(door_receipt.secret_ref, GMAIL_CUSTODY_REF);
+    assert_eq!(door_receipt.effector, GMAIL_CONNECTOR_EFFECTOR);
+    let serialized = serde_json::to_vec(&door_receipt).expect("receipt serializes");
+    assert!(
+        !serialized
+            .windows(GRANT_VALUE.len())
+            .any(|window| window == GRANT_VALUE)
+    );
+    Ok(())
+}
+
+#[test]
+fn gmail_delegated_adapter_exposes_no_send_surface() -> Result<()> {
+    // Write scopes have nowhere to land: neither the provider-scope mapping
+    // nor the config builder admits one, so a row can never claim send.
+    for write_scope in [
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://mail.google.com/",
+    ] {
+        assert_eq!(delegated_scope_for_google_oauth_scope(write_scope), None);
+        let err = GmailDelegatedAdapterConfig::new(MEMBER_MAILBOX, GMAIL_CUSTODY_REF)?
+            .with_google_oauth_scopes(&[GMAIL_READONLY_OAUTH_SCOPE, write_scope])
+            .expect_err("a write scope must be refused, not silently narrowed");
+        assert!(matches!(err, Error::InvalidConfig(reason) if reason.contains("read scopes only")));
+    }
+    assert_eq!(
+        delegated_scope_for_google_oauth_scope(GMAIL_READONLY_OAUTH_SCOPE),
+        Some(DelegatedGrantScope::MailRead)
+    );
+    assert_eq!(
+        delegated_scope_for_google_oauth_scope(GMAIL_METADATA_OAUTH_SCOPE),
+        Some(DelegatedGrantScope::MailMetadata)
+    );
+
+    // The capability matrix carries the fourth shape on the email channel and
+    // declares receive capabilities only — there is no send capability listed
+    // for delegated_grant because the manifest has no send surface at all.
+    let email = crate::channel_identity_manifest::channel_identity_manifest("email")
+        .expect("email manifest");
+    assert!(email.shapes.contains(&ChannelIdentityShape::DelegatedGrant));
+    assert!(email.receive_capabilities.messaging);
+    assert!(
+        email
+            .policy_risk_notes
+            .iter()
+            .any(|note| note.contains("scoped-read only"))
+    );
+    assert!(
+        email
+            .policy_risk_notes
+            .iter()
+            .any(|note| note.contains("Revocation and rotation"))
+    );
+
+    // The adapter offers a fulfillment lane for provisioning only; rotation
+    // is not something it can even be asked to do.
+    let adapter = gmail_adapter()?;
+    assert_eq!(
+        adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Provision),
+        Some(ChannelIdentityFulfillment::Api)
+    );
+    for verb in [
+        ChannelIdentityLifecycleVerb::Bind,
+        ChannelIdentityLifecycleVerb::Rotate,
+        ChannelIdentityLifecycleVerb::Release,
+        ChannelIdentityLifecycleVerb::RouteInbound,
+    ] {
+        assert_eq!(adapter.fulfillment_mode(verb), None);
+    }
+    Ok(())
+}
+
+#[test]
+fn gmail_delegated_adapter_rejects_foreign_mailboxes_and_shapes() -> Result<()> {
+    let adapter = gmail_adapter()?;
+
+    let wrong_mailbox = adapter
+        .parse_inbound(ChannelIdentityProviderInbound::Email(
+            GmailMessageMetadata::new(
+                "18f0a1b2c3d4e5f7",
+                "18f0a1b2c3d4e501",
+                "someone-else@member-owned.test",
+                "counterparty@example.test",
+                9_000,
+            )
+            .into_provider_inbound()?,
+        ))
+        .expect_err("inbound for another mailbox must not route");
+    assert!(matches!(
+        wrong_mailbox,
+        Error::InvalidConfig(reason) if reason == "gmail inbound envelope-to is not the granted mailbox"
+    ));
+
+    // A self-held row cannot be provisioned through the delegated adapter,
+    // and a delegated row whose grant ref disagrees with the binding is
+    // refused rather than re-pointed.
+    let self_held = ChannelIdentity::requested(
+        EMAIL_CHANNEL,
+        MEMBER_MAILBOX,
+        ChannelIdentityShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(entity(0xAC)),
+        9_010,
+    );
+    let shape_err = adapter
+        .provision(
+            &ProvisionIntent {
+                identity_id: entity(0x7B),
+                identity: self_held,
+                fulfillment_mode: ChannelIdentityFulfillment::Api,
+            },
+            9_020,
+        )
+        .expect_err("dedicated_address must not provision through the delegated adapter");
+    assert!(matches!(
+        shape_err,
+        Error::InvalidConfig(reason)
+            if reason == "gmail delegated adapter requires delegated_grant identities"
+    ));
+
+    let mismatched = ChannelIdentity::requested_delegated(
+        EMAIL_CHANNEL,
+        MEMBER_MAILBOX,
+        ChannelIdentityBinding::agent(entity(0xAD)),
+        crate::channel_identity::DelegatedGrant::new(
+            "gmail-delegated:someone-else",
+            vec![DelegatedGrantScope::MailRead],
+        ),
+        9_030,
+    );
+    let grant_err = adapter
+        .provision(
+            &ProvisionIntent {
+                identity_id: entity(0x7C),
+                identity: mismatched,
+                fulfillment_mode: ChannelIdentityFulfillment::Api,
+            },
+            9_040,
+        )
+        .expect_err("a foreign grant ref must not provision");
+    assert!(matches!(
+        grant_err,
+        Error::InvalidConfig(reason)
+            if reason == "gmail delegated adapter grant ref does not match ProvisionIntent"
+    ));
+    assert_eq!(CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, 2);
+    Ok(())
+}

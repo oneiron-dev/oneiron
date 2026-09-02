@@ -24,8 +24,19 @@ use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::temporal::TimeRange;
 use crate::vault::entity_id_from_type_index_key;
 
-/// Current ChannelIdentity body schema version.
+/// Current ChannelIdentity body schema version for the three self-held shapes.
+///
+/// This stays `1` on purpose. A `delegated_grant` row carries two extra keys
+/// and encodes at [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`]; every
+/// self-held row keeps encoding the exact head bytes, so every body written
+/// before INB-00 decodes unchanged.
 pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 1;
+
+/// ChannelIdentity body schema version for `delegated_grant` rows (INB-00).
+///
+/// Only the fourth shape uses it. The version is what selects the pinned key
+/// set at decode, so the two shapes' key sets can never be mixed.
+pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 2;
 
 /// Minimum self-hold window for a quarantined released identity (90 days).
 pub const CHANNEL_IDENTITY_MIN_QUARANTINE_SECS: u64 = 90 * 24 * 60 * 60;
@@ -46,6 +57,28 @@ pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 12] = [
     "manifest_ref",
 ];
 
+/// Pinned on-disk MessagePack key set for `delegated_grant` bodies.
+///
+/// The twelve self-held keys in the same order, then the two custody keys.
+/// `delegated_grant_ref` is a custody record NAME; no token bytes are ever
+/// written here.
+pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 14] = [
+    CHANNEL_IDENTITY_BODY_KEYS[0],
+    CHANNEL_IDENTITY_BODY_KEYS[1],
+    CHANNEL_IDENTITY_BODY_KEYS[2],
+    CHANNEL_IDENTITY_BODY_KEYS[3],
+    CHANNEL_IDENTITY_BODY_KEYS[4],
+    CHANNEL_IDENTITY_BODY_KEYS[5],
+    CHANNEL_IDENTITY_BODY_KEYS[6],
+    CHANNEL_IDENTITY_BODY_KEYS[7],
+    CHANNEL_IDENTITY_BODY_KEYS[8],
+    CHANNEL_IDENTITY_BODY_KEYS[9],
+    CHANNEL_IDENTITY_BODY_KEYS[10],
+    CHANNEL_IDENTITY_BODY_KEYS[11],
+    "delegated_grant_ref",
+    "grant_scopes",
+];
+
 const KEY_SCHEMA_VERSION: &str = CHANNEL_IDENTITY_BODY_KEYS[0];
 const KEY_CHANNEL: &str = CHANNEL_IDENTITY_BODY_KEYS[1];
 const KEY_ADDRESS_OR_HANDLE: &str = CHANNEL_IDENTITY_BODY_KEYS[2];
@@ -58,6 +91,8 @@ const KEY_STATE_CHANGED_AT: &str = CHANNEL_IDENTITY_BODY_KEYS[8];
 const KEY_QUARANTINE_UNTIL: &str = CHANNEL_IDENTITY_BODY_KEYS[9];
 const KEY_REPUTATION_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[10];
 const KEY_MANIFEST_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[11];
+const KEY_DELEGATED_GRANT_REF: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[12];
+const KEY_GRANT_SCOPES: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[13];
 
 /// Pinned `channel_identity.*` claim predicates for the CID-1 record fields.
 pub const CHANNEL_IDENTITY_CLAIM_PREDICATES: [&str; 11] = [
@@ -89,14 +124,22 @@ pub const PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF: &str = "channel_identity.mani
 
 const MAX_CHANNEL_BYTES: usize = 64;
 const MAX_ADDRESS_OR_HANDLE_BYTES: usize = 512;
+const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
+const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
 
-/// ChannelIdentity addressability shape (OF-347 R1).
+/// ChannelIdentity addressability shape (OF-347 R1, ARCH-0063 R2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ChannelIdentityShape {
     DedicatedAddress,
     DedicatedHandle,
     SharedPresence,
+    /// A member/owner mailbox held under a scoped-read OAuth grant.
+    ///
+    /// The product never mints, owns, rotates, or quarantines the underlying
+    /// account: it holds a custody record ref and reads. Routing, receipts,
+    /// health claims, and manifests never special-case this shape.
+    DelegatedGrant,
 }
 
 impl ChannelIdentityShape {
@@ -106,6 +149,7 @@ impl ChannelIdentityShape {
             Self::DedicatedAddress => "dedicated_address",
             Self::DedicatedHandle => "dedicated_handle",
             Self::SharedPresence => "shared_presence",
+            Self::DelegatedGrant => "delegated_grant",
         }
     }
 
@@ -115,8 +159,99 @@ impl ChannelIdentityShape {
             "dedicated_address" => Some(Self::DedicatedAddress),
             "dedicated_handle" => Some(Self::DedicatedHandle),
             "shared_presence" => Some(Self::SharedPresence),
+            "delegated_grant" => Some(Self::DelegatedGrant),
             _ => None,
         }
+    }
+
+    /// Whether the product itself holds the underlying account.
+    ///
+    /// False only for [`Self::DelegatedGrant`], where the member's provider
+    /// owns creation, rotation, and revocation.
+    #[must_use]
+    pub const fn is_self_held(self) -> bool {
+        !matches!(self, Self::DelegatedGrant)
+    }
+}
+
+/// Read-only OAuth scope classes a `delegated_grant` row may carry.
+///
+/// There is deliberately no send, reply, delete, or modify variant. Scoped-read
+/// is not a policy setting that a caller could widen: the absence of the variant
+/// is what makes a delegated row structurally incapable of naming a write scope,
+/// including through a decoded body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum DelegatedGrantScope {
+    /// Read message bodies in the granted mailbox.
+    MailRead,
+    /// Read message headers/metadata only.
+    MailMetadata,
+}
+
+impl DelegatedGrantScope {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MailRead => "mail.read",
+            Self::MailMetadata => "mail.metadata",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "mail.read" => Some(Self::MailRead),
+            "mail.metadata" => Some(Self::MailMetadata),
+            _ => None,
+        }
+    }
+}
+
+/// The custody handle a `delegated_grant` row carries.
+///
+/// This is a custody record NAME plus the read scopes the grant covers. The
+/// OAuth access/refresh token bytes live in the custody record and are reachable
+/// only through the SECRET-02 door/lease API under an effector binding; they
+/// never land on this struct, on the encoded body, or on any claim derived
+/// from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelegatedGrant {
+    /// Custody record name (`Vault::resolve_secret_ref` key), never a token.
+    pub custody_record_ref: String,
+    /// Read scopes the grant covers; non-empty, deduplicated.
+    pub scopes: Vec<DelegatedGrantScope>,
+}
+
+impl DelegatedGrant {
+    /// Builds a delegated grant handle from a custody record name and scopes.
+    #[must_use]
+    pub fn new(custody_record_ref: impl Into<String>, scopes: Vec<DelegatedGrantScope>) -> Self {
+        Self {
+            custody_record_ref: custody_record_ref.into(),
+            scopes,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_non_empty_bounded(
+            &self.custody_record_ref,
+            MAX_DELEGATED_GRANT_REF_BYTES,
+            "delegated_grant_ref must be a non-empty custody record name of at most 256 bytes",
+        )?;
+        if self.scopes.is_empty() || self.scopes.len() > MAX_DELEGATED_GRANT_SCOPES {
+            return Err(Error::InvalidChannelIdentityBody(
+                "delegated grant must declare 1..=8 read scopes",
+            ));
+        }
+        for (index, scope) in self.scopes.iter().enumerate() {
+            if self.scopes[..index].contains(scope) {
+                return Err(Error::InvalidChannelIdentityBody(
+                    "delegated grant scopes must not repeat",
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -277,6 +412,12 @@ pub struct ChannelIdentity {
     pub quarantine_until: Option<u64>,
     pub reputation_ref: Option<EntityId>,
     pub manifest_ref: Option<EntityId>,
+    /// Present exactly when `shape` is [`ChannelIdentityShape::DelegatedGrant`].
+    ///
+    /// The one-to-one tie is enforced by [`ChannelIdentity::validate`], so a
+    /// delegated row without custody, or a self-held row carrying custody,
+    /// cannot be built, encoded, or decoded.
+    pub delegated_grant: Option<DelegatedGrant>,
 }
 
 impl ChannelIdentity {
@@ -300,6 +441,32 @@ impl ChannelIdentity {
             quarantine_until: None,
             reputation_ref: None,
             manifest_ref: None,
+            delegated_grant: None,
+        }
+    }
+
+    /// Constructs a requested `delegated_grant` row over a member-held mailbox.
+    ///
+    /// `grant` names an already-granted custody record; this constructor does
+    /// not mint, rotate, or read it. The caller proves the record exists with a
+    /// covering binding before provisioning (see the Gmail adapter).
+    #[must_use]
+    pub fn requested_delegated(
+        channel: impl Into<String>,
+        address_or_handle: impl Into<String>,
+        binding: ChannelIdentityBinding,
+        grant: DelegatedGrant,
+        requested_at: u64,
+    ) -> Self {
+        Self {
+            delegated_grant: Some(grant),
+            ..Self::requested(
+                channel,
+                address_or_handle,
+                ChannelIdentityShape::DelegatedGrant,
+                binding,
+                requested_at,
+            )
         }
     }
 
@@ -317,6 +484,7 @@ impl ChannelIdentity {
             quarantine_until: None,
             reputation_ref: None,
             manifest_ref: None,
+            delegated_grant: None,
         }
     }
 
@@ -324,6 +492,12 @@ impl ChannelIdentity {
     #[must_use]
     pub fn assignment_key(&self) -> (&str, &str) {
         (&self.channel, &self.address_or_handle)
+    }
+
+    /// Whether this row is a member-held mailbox under a scoped-read grant.
+    #[must_use]
+    pub const fn is_delegated(&self) -> bool {
+        matches!(self.shape, ChannelIdentityShape::DelegatedGrant)
     }
 
     /// Validates CID-1 record invariants.
@@ -339,6 +513,7 @@ impl ChannelIdentity {
             "address_or_handle must be non-empty and at most 512 bytes",
         )?;
         self.binding.validate()?;
+        self.validate_custody()?;
         match self.state {
             ChannelIdentityState::PendingFulfillment => {
                 if self.pending_fulfillment.is_none() {
@@ -368,6 +543,41 @@ impl ChannelIdentity {
                     return Err(invalid_identity());
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Enforces the shape/custody tie and the delegated quarantine ban.
+    ///
+    /// A `delegated_grant` row holds a member's mailbox, so the two states that
+    /// assert product custody of the underlying account — `ROTATING` (we are
+    /// re-minting it) and `QUARANTINE` (we are holding it back from reuse) —
+    /// are structurally unreachable. Every writer, including
+    /// [`Vault::transition_channel_identity`] and the body decoder, funnels
+    /// through here, so there is no path that parks a delegated row in either.
+    fn validate_custody(&self) -> Result<()> {
+        match (&self.delegated_grant, self.is_delegated()) {
+            (Some(grant), true) => grant.validate()?,
+            (None, false) => return Ok(()),
+            (Some(_), false) => {
+                return Err(Error::InvalidChannelIdentityBody(
+                    "only a delegated_grant identity may carry a delegated grant ref",
+                ));
+            }
+            (None, true) => {
+                return Err(Error::InvalidChannelIdentityBody(
+                    "delegated_grant identity requires a delegated grant ref",
+                ));
+            }
+        }
+        if matches!(
+            self.state,
+            ChannelIdentityState::Rotating | ChannelIdentityState::Quarantine
+        ) || self.quarantine_until.is_some()
+        {
+            return Err(Error::InvalidChannelIdentityBody(
+                "delegated_grant identity admits no rotation or quarantine state",
+            ));
         }
         Ok(())
     }
@@ -446,12 +656,17 @@ impl ChannelIdentity {
 }
 
 /// Encodes a ChannelIdentity body in canonical MessagePack field order.
+///
+/// A self-held row encodes the twelve pinned keys at
+/// [`CHANNEL_IDENTITY_SCHEMA_VERSION`] — byte-for-byte what head wrote. Only a
+/// `delegated_grant` row appends the two custody keys and stamps
+/// [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`].
 pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8>> {
     identity.validate()?;
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
-            Value::from(CHANNEL_IDENTITY_SCHEMA_VERSION),
+            Value::from(body_schema_version(identity)),
         ),
         (
             Value::from(KEY_CHANNEL),
@@ -493,9 +708,37 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
             Value::from(KEY_MANIFEST_REF),
             encode_optional_entity_ref(identity.manifest_ref),
         ),
-    ]);
+    ];
 
-    encode_msgpack_value(&value, "channel identity body MessagePack encode failed")
+    if let Some(grant) = &identity.delegated_grant {
+        entries.push((
+            Value::from(KEY_DELEGATED_GRANT_REF),
+            Value::from(grant.custody_record_ref.as_str()),
+        ));
+        entries.push((
+            Value::from(KEY_GRANT_SCOPES),
+            Value::Array(
+                grant
+                    .scopes
+                    .iter()
+                    .map(|scope| Value::from(scope.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
+
+    encode_msgpack_value(
+        &Value::Map(entries),
+        "channel identity body MessagePack encode failed",
+    )
+}
+
+const fn body_schema_version(identity: &ChannelIdentity) -> u64 {
+    if identity.delegated_grant.is_some() {
+        CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION
+    } else {
+        CHANNEL_IDENTITY_SCHEMA_VERSION
+    }
 }
 
 /// Decodes and validates a ChannelIdentity body.
@@ -620,13 +863,20 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
     let Value::Map(entries) = value else {
         return Err(invalid_identity());
     };
-    validate_keys(entries, &CHANNEL_IDENTITY_BODY_KEYS)?;
-
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
-        != Some(CHANNEL_IDENTITY_SCHEMA_VERSION)
-    {
-        return Err(invalid_identity());
-    }
+    // The version selects the pinned key set, so the two key sets can never be
+    // mixed: an unknown version, a self-held body carrying custody keys, and a
+    // delegated body missing them all fail closed before any field is read.
+    let delegated_grant = match required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() {
+        Some(CHANNEL_IDENTITY_SCHEMA_VERSION) => {
+            validate_keys(entries, &CHANNEL_IDENTITY_BODY_KEYS)?;
+            None
+        }
+        Some(CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION) => {
+            validate_keys(entries, &CHANNEL_IDENTITY_DELEGATED_BODY_KEYS)?;
+            Some(decode_delegated_grant(entries)?)
+        }
+        _ => return Err(invalid_identity()),
+    };
 
     let channel = required_string(entries, KEY_CHANNEL)?.to_owned();
     let address_or_handle = required_string(entries, KEY_ADDRESS_OR_HANDLE)?.to_owned();
@@ -674,9 +924,32 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
         quarantine_until,
         reputation_ref,
         manifest_ref,
+        delegated_grant,
     };
     identity.validate()?;
     Ok(identity)
+}
+
+fn decode_delegated_grant(entries: &[(Value, Value)]) -> Result<DelegatedGrant> {
+    let custody_record_ref = required_string(entries, KEY_DELEGATED_GRANT_REF)?.to_owned();
+    let Value::Array(scopes) = required_value(entries, KEY_GRANT_SCOPES)? else {
+        return Err(invalid_identity());
+    };
+    let scopes = scopes
+        .iter()
+        .map(|scope| {
+            scope
+                .as_str()
+                .and_then(DelegatedGrantScope::parse)
+                .ok_or_else(invalid_identity)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let grant = DelegatedGrant {
+        custody_record_ref,
+        scopes,
+    };
+    grant.validate()?;
+    Ok(grant)
 }
 
 fn encode_binding_target(binding: ChannelIdentityBinding) -> Value {

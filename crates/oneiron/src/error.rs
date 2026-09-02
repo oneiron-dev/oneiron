@@ -318,6 +318,7 @@ pub enum ErrorKind {
     ConnectorCharterApprovalMismatch,
     ConnectorCharterMissing,
     InvalidChannelIdentityBody,
+    ChannelIdentityVerbNotAdmitted,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDisclosureScope,
@@ -1216,6 +1217,18 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid channel identity body: {0}")]
     InvalidChannelIdentityBody(&'static str),
+    /// A CID-2 lifecycle verb is not admitted by the identity's shape
+    /// (ARCH-0063 R2): `rotate` on a `delegated_grant` row is the case that
+    /// exists today, because the member's provider owns rotation.
+    ///
+    /// This is a structural deny, not a policy one: it is raised before the
+    /// ExternalEffect gate is consulted, so no decision is spent, no receipt is
+    /// appended, and nothing is written. No policy grant can widen it.
+    #[error("channel identity shape `{shape}` does not admit lifecycle verb `{verb}`")]
+    ChannelIdentityVerbNotAdmitted {
+        shape: &'static str,
+        verb: &'static str,
+    },
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -2317,6 +2330,9 @@ impl Error {
             Self::ConnectorCharterApprovalMismatch => ErrorKind::ConnectorCharterApprovalMismatch,
             Self::ConnectorCharterMissing => ErrorKind::ConnectorCharterMissing,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
+            Self::ChannelIdentityVerbNotAdmitted { .. } => {
+                ErrorKind::ChannelIdentityVerbNotAdmitted
+            }
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,

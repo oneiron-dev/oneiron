@@ -4,6 +4,8 @@
 //! Host-side adapters consume those intents, fulfill provider work, and report
 //! the resulting state transition back through the CID-2 fulfillment path.
 
+pub mod gmail;
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
