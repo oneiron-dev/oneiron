@@ -26,7 +26,7 @@ use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::{EdgeActorClass, EntityId, MemoryError, TimeRange, Vault, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
-use oneiron_server::mcp::McpToolName;
+use oneiron_server::mcp::{McpSurfaceMode, McpToolName, registered_surface};
 use oneiron_server::server::SyncServer;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1170,8 +1170,45 @@ async fn campaign_discovery_lists_self_verbs_once() {
         CAMPAIGN_SELF_VERBS.len()
     );
 
-    // The batch's own MCP catalog is still advertised alongside them.
-    assert!(capabilities.contains(&"mcp.tool.oneiron.calendar"));
+    // The MCP vocabulary advertised alongside them is the two REGISTERED
+    // endpoints' tool sets, derived from the registrations `tools/list`
+    // projects and `tools/call` resolves against, so every advertised name is
+    // one its stated endpoint accepts.
+    for mode in McpSurfaceMode::ALL {
+        let surface = registered_surface(mode);
+        assert!(
+            !surface.tool_names().is_empty(),
+            "the {} endpoint registers at least one tool",
+            mode.as_str()
+        );
+        for name in surface.tool_names() {
+            assert!(
+                surface.resolve(name).is_some(),
+                "{name} is advertised only because the {} endpoint accepts it",
+                mode.as_str()
+            );
+            assert!(
+                capabilities.contains(&format!("mcp.tool.{name}").as_str()),
+                "discovery advertises the registered tool {name}"
+            );
+            let endpoint_token = format!("mcp.endpoint.{}.{name}", mode.as_str());
+            assert!(
+                capabilities.contains(&endpoint_token.as_str()),
+                "discovery advertises {endpoint_token}"
+            );
+        }
+    }
+
+    // The batch's `oneiron.calendar` is part of the retired plain-verb catalog:
+    // neither endpoint registers it, so discovery advertises none of those
+    // seven names.
+    for tool in McpToolName::all() {
+        let retired = format!("mcp.tool.{}", tool.as_str());
+        assert!(
+            !capabilities.contains(&retired.as_str()),
+            "{retired} is registered on no endpoint and must not be advertised"
+        );
+    }
 
     // The vault under test mounts no Graph-FS `/queries/` view, and every verb
     // is still advertised — discovery states no filesystem prerequisite.

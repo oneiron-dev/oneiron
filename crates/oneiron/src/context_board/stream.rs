@@ -1347,6 +1347,54 @@ mod tests {
         assert!(mint_child_event(&ChildFixture, "missing", "e").is_err());
     }
     #[test]
+    fn own_task_done_routes_delta_after_pending_keyframe() {
+        let connection = StreamConnectionId("own-task-route".into());
+        let mut registry = BoardStreamRegistry::default();
+        let allowed = BTreeSet::from([SubscriptionScope::MyTasks]);
+        registry.attach_connection(
+            connection.clone(),
+            BoardRenderMode::Stream,
+            "actor".into(),
+            allowed.clone(),
+            0,
+        );
+        registry
+            .subscribe(&connection, &allowed)
+            .expect("the own-task scope is allowed");
+        assert_eq!(
+            registry.enqueue(&connection, k(11)),
+            FrameEnqueueOutcome::ReplacedWithKeyframe,
+        );
+
+        let event = mint_own_task_event(&OwnFixture, &connection, "own", "done")
+            .expect("the producer minted a verified own-task event");
+        assert_eq!(event.task_ref(), "own");
+        assert_eq!(event.actor_ref(), "actor");
+        assert_eq!(event.event_ref(), "done");
+        let observation = registry.route_event(BoardEvent::OwnTaskDone {
+            event,
+            delta: DeltaRow {
+                key: "task-1".into(),
+                line: "settled".into(),
+            },
+        });
+        assert_eq!(observation.carrier_enqueued, 1);
+
+        assert_eq!(registry.next_carrier_payload(&connection), Some(k(11)));
+        let delta = registry
+            .next_carrier_payload(&connection)
+            .expect("the same-epoch settlement delta follows the keyframe");
+        assert_eq!(delta.epoch, 11);
+        assert_eq!(
+            delta.kind,
+            FrameKind::Delta(vec![DeltaRow {
+                key: super::super::one_line_token("task-1"),
+                line: super::super::one_line_token("settled"),
+            }])
+        );
+        assert!(registry.next_carrier_payload(&connection).is_none());
+    }
+    #[test]
     fn on_demand_never_routes_in_any_mode() {
         for mode in [BoardRenderMode::Stream, BoardRenderMode::Resident] {
             let c = StreamConnectionId(format!("{mode:?}"));

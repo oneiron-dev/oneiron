@@ -11,7 +11,6 @@ use super::check_api_auth;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
-use crate::mcp::McpToolName;
 use crate::runtime::RuntimeHealthStatus;
 use crate::runtime::RuntimeStatus;
 use crate::server::SyncServer;
@@ -24,6 +23,14 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use utoipa::ToSchema;
+
+/// Capability-token prefix under which discovery states WHICH registered MCP
+/// endpoint a tool is callable on: `mcp.endpoint.<mode>.<tool>` (ONE-1704).
+///
+/// The mode half is [`crate::mcp::McpSurfaceMode::as_str`] and the tool half is
+/// a registered tool name, so the token is derived end to end from the
+/// registration and cannot name a surface or a tool that does not exist.
+pub(crate) const MCP_ENDPOINT_CAPABILITY_PREFIX: &str = "mcp.endpoint.";
 
 pub(crate) const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
 
@@ -174,9 +181,11 @@ pub(crate) struct DiscoveredEntity {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct FeatureFlags {
     /// Operation capabilities clients may rely on, including one
-    /// `mcp.tool.<name>` token per advertised MCP tool and one
-    /// `mcp.tool.<name>.<op>` token per closed tool operation.
-    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text", "mcp.tool.oneiron.calendar", "mcp.tool.oneiron.calendar.freebusy"]))]
+    /// `mcp.tool.<name>` token per advertised MCP tool, one
+    /// `mcp.tool.<name>.<op>` token per closed tool operation, and one
+    /// `mcp.endpoint.<mode>.<name>` token per tool a registered MCP endpoint
+    /// actually accepts.
+    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text", "mcp.tool.setup_oneiron", "mcp.endpoint.primary.setup_oneiron", "mcp.endpoint.tool_first.tasks.check"]))]
     capabilities: Vec<String>,
     /// Model or runtime effort modes advertised by the API.
     #[schema(value_type = Vec<String>, example = json!(["flash", "thinking", "pro", "ultra"]))]
@@ -511,7 +520,7 @@ pub(crate) fn supported_formats() -> Vec<&'static str> {
 /// Copied straight from the engine's closed list rather than hand-listed here,
 /// so each verb appears exactly once and a verb the surface dispatches cannot go
 /// unadvertised — the same derived-by-construction rule
-/// [`mcp_tool_capabilities`] follows for the MCP catalog.
+/// [`mcp_surface_capabilities`] follows for the MCP catalog.
 ///
 /// They ride the existing `capabilities` vocabulary rather than a new discovery
 /// key: the verb string IS the token an agent calls, so a second top-level list
@@ -531,7 +540,7 @@ pub(crate) fn feature_flags() -> FeatureFlags {
         capabilities: CAPABILITIES
             .iter()
             .map(|capability| (*capability).to_owned())
-            .chain(mcp_tool_capabilities())
+            .chain(mcp_surface_capabilities())
             .chain(booking_agent_capabilities())
             .chain(self_verb_capabilities())
             .collect(),
@@ -560,22 +569,38 @@ fn booking_agent_capabilities() -> Vec<String> {
     tokens
 }
 
-/// Advertises every MCP tool in the closed catalog, plus one token per
-/// operation for tools that carry an `op` discriminator (CAL-09's
-/// `oneiron.calendar` is the first).
+/// Advertises the MCP tools this process actually REGISTERS, and says which
+/// endpoint each one belongs to (ONE-1704 repair).
 ///
-/// Derived from `McpToolName` rather than hand-listed: a tool or operation that
-/// exists in the catalog is advertised by construction.
-fn mcp_tool_capabilities() -> Vec<String> {
+/// Derived from [`crate::mcp::registered_surface`] — the same two immutable
+/// registrations `tools/list` projects and `tools/call` resolves against — so
+/// every name advertised here is a name one of the endpoints accepts, and a
+/// name registered on neither (this release's `execute_code`) is advertised by
+/// nobody. There is no second catalog to keep coherent: the registration IS the
+/// source, and the surface definitions themselves are untouched.
+///
+/// Two tokens per registered tool, both deterministic and in registration
+/// order: the existing `mcp.tool.<name>` vocabulary, and one
+/// `mcp.endpoint.<mode>.<name>` token that states the endpoint the name is
+/// callable on. A client that must pick an endpoint reads the second; a client
+/// that only asks whether a tool exists keeps reading the first.
+fn mcp_surface_capabilities() -> Vec<String> {
+    let mut advertised = BTreeSet::new();
     let mut tokens = Vec::new();
-    for tool in McpToolName::all() {
-        let name = tool.as_str();
-        tokens.push(format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}"));
-        tokens.extend(
-            tool.operations()
-                .iter()
-                .map(|op| format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}.{op}")),
-        );
+    for mode in crate::mcp::McpSurfaceMode::ALL {
+        let surface = crate::mcp::registered_surface(mode);
+        for name in surface.tool_names() {
+            let tool_token = format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}");
+            // One token per NAME even if both endpoints ever register it, so a
+            // name is advertised exactly once on this axis.
+            if advertised.insert(tool_token.clone()) {
+                tokens.push(tool_token);
+            }
+            tokens.push(format!(
+                "{MCP_ENDPOINT_CAPABILITY_PREFIX}{mode}.{name}",
+                mode = mode.as_str(),
+            ));
+        }
     }
     tokens
 }
