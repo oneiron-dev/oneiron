@@ -1,0 +1,87 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+h1 {
+  font-size: 15px;
+  margin: 0 0 14px;
+}
+
+h2 {
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+
+.panel {
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.panel p {
+  margin: 0 0 8px;
+}
+
+.affirm {
+  font-weight: 600;
+}
+
+.state {
+  font-weight: 600;
+}
+
+.state[data-recording="true"]::before {
+  content: "\25CF\00a0";
+  color: #d0342c;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  font: inherit;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  background: transparent;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.error {
+  color: #d0342c;
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+li {
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  padding: 6px 0;
+}
+
+li:first-child {
+  border-top: none;
+}
+
+.meta {
+  opacity: 0.7;
+}

@@ -1,0 +1,28 @@
+{
+  "productName": "Oneiron Recorder",
+  "version": "0.1.0",
+  "identifier": "dev.oneiron.recorder",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Oneiron Recorder",
+        "width": 460,
+        "height": 640,
+        "resizable": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": []
+  }
+}

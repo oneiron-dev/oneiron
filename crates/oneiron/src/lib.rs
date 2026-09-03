@@ -149,6 +149,7 @@ pub mod tokenizer;
 mod vault;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_identity;
+pub mod voice_segment;
 pub mod wave_orchestration;
 pub mod web_fetch;
 pub mod write_envelope;

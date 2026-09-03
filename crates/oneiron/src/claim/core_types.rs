@@ -612,6 +612,8 @@ pub(crate) fn validate_claim_body_and_decode(
         // would silently adopt every future booking predicate into the
         // event-type validator.
         crate::booking::config::validate_event_type_claim(&body)?;
+    } else if crate::voice_segment::is_voice_segment_claim_predicate(&body.predicate) {
+        crate::voice_segment::validate_voice_segment_claim_structure(&body)?;
     }
     Ok(body)
 }

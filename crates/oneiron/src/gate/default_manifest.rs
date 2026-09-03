@@ -113,6 +113,27 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         ]),
                     ),
                 ]),
+                // A recorder's own segment descriptor: span, channel count,
+                // AEC mode, device. It says what the captured bytes ARE, never
+                // what was said in them, so it carries no transcript content
+                // and reads `normal` on both axes — the same standing as the
+                // VAD row above. Exact-keyed: `voice.transcript` and any
+                // `voice.segment.*` refinement inherit nothing and stay at the
+                // fail-closed default.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
                 Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
