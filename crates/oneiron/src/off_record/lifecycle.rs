@@ -71,7 +71,9 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
-use crate::session_overlay::{OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute};
+use crate::session_overlay::{
+    OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute, SnapshotLookup,
+};
 use crate::store::Store;
 
 use super::promote::{FloorWrites, PromoteOutcome};
@@ -80,6 +82,11 @@ const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 
 /// Longest accepted caller-supplied opaque session ref, in bytes.
 const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
+
+/// The base and room-overlay halves of one additive VaultMeta counter
+/// (ONE-1929).
+#[cfg(test)]
+pub(crate) type VaultMetaCounterComponents = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 /// Current write-routing mode of an off-record session.
 ///
@@ -985,6 +992,123 @@ impl OffRecordSession<'_> {
                 self.vault.store.vault_meta.put(wtxn, key, value)
             }),
         }
+    }
+
+    /// Atomically compare-and-put one routed VaultMeta row and update one
+    /// additive counter contribution beside it (ONE-1929).
+    ///
+    /// The counter has two components: the durable base value and this room's
+    /// overlay-local delta. Overlay writes advance only the delta; base writes
+    /// advance only the base value. Reading their sum prevents an overlay row
+    /// from shadowing canonical increments that commit after the room first
+    /// touched the counter, which is what makes the executor's per-model heal
+    /// tally survive an off-record -> on-record flip additively instead of
+    /// losing one side.
+    ///
+    /// Both arms do the compare, the row put and the counter put inside ONE
+    /// transaction, so a refused comparison writes neither and a committed
+    /// append can never be followed by a lost or double-counted tally.
+    pub(crate) fn vault_meta_compare_and_put_with_counter_routed(
+        &self,
+        route: &SessionWriteRoute,
+        compare_key: &[u8],
+        compare_value: &[u8],
+        accepts_current: impl FnOnce(Option<&[u8]>) -> Result<()>,
+        counter_key: &[u8],
+        update_counter: impl FnOnce(Option<&[u8]>, Option<&[u8]>, RouteTarget) -> Result<(Vec<u8>, u64)>,
+    ) -> Result<u64> {
+        route.revalidate()?;
+        match route.target() {
+            RouteTarget::Overlay => {
+                let overlay = self.entry.overlay.clone();
+                let (segment, total) = self.vault.with_write_txn(|wtxn| {
+                    let segment = overlay.install_txn_segment()?;
+                    route.revalidate()?;
+                    let view = self.vault.store.session_view(overlay.clone())?;
+                    accepts_current(view.vault_meta_get_in_txn(&*wtxn, compare_key)?.as_deref())?;
+                    let base = self
+                        .vault
+                        .store
+                        .vault_meta
+                        .get(&*wtxn, counter_key)?
+                        .map(|raw| raw.to_vec());
+                    let overlay_value = match overlay
+                        .snapshot()?
+                        .lookup_single(OverlayKeyspace::VaultMeta, counter_key)
+                    {
+                        SnapshotLookup::Present(value) => Some(value),
+                        SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => None,
+                    };
+                    let (next_counter, total) = update_counter(
+                        base.as_deref(),
+                        overlay_value.as_deref(),
+                        RouteTarget::Overlay,
+                    )?;
+                    view.vault_meta_put_in_txn(wtxn, compare_key, compare_value)?;
+                    view.vault_meta_put_in_txn(wtxn, counter_key, &next_counter)?;
+                    Ok((segment, total))
+                })?;
+                segment.commit()?;
+                Ok(total)
+            }
+            RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
+                route.revalidate()?;
+                let overlay = self.entry.overlay.clone();
+                let view = self.vault.store.session_view(overlay.clone())?;
+                accepts_current(view.vault_meta_get_in_txn(&*wtxn, compare_key)?.as_deref())?;
+                let base = self
+                    .vault
+                    .store
+                    .vault_meta
+                    .get(&*wtxn, counter_key)?
+                    .map(|raw| raw.to_vec());
+                let overlay_value = match overlay
+                    .snapshot()?
+                    .lookup_single(OverlayKeyspace::VaultMeta, counter_key)
+                {
+                    SnapshotLookup::Present(value) => Some(value),
+                    SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => None,
+                };
+                let (next_counter, total) =
+                    update_counter(base.as_deref(), overlay_value.as_deref(), RouteTarget::Base)?;
+                self.vault
+                    .store
+                    .vault_meta
+                    .put(wtxn, compare_key, compare_value)?;
+                self.vault
+                    .store
+                    .vault_meta
+                    .put(wtxn, counter_key, &next_counter)?;
+                Ok(total)
+            }),
+        }
+    }
+
+    /// The raw base and room-overlay components for an additive VaultMeta
+    /// counter. Ordinary composed reads intentionally keep shadow semantics;
+    /// only additive counters opt into this explicit merge.
+    #[cfg(test)]
+    pub(crate) fn vault_meta_counter_components(
+        &self,
+        key: &[u8],
+    ) -> Result<VaultMetaCounterComponents> {
+        let overlay = match self
+            .entry
+            .overlay
+            .snapshot()?
+            .lookup_single(OverlayKeyspace::VaultMeta, key)
+        {
+            SnapshotLookup::Present(value) => Some(value),
+            SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => None,
+        };
+        let rtxn = self.vault.store.env.read_txn()?;
+        let base = self
+            .vault
+            .store
+            .vault_meta
+            .get(&rtxn, key)?
+            .map(|raw| raw.to_vec());
+        Ok((base, overlay))
     }
 
     /// Composed VaultMeta read over overlay ∪ base.
