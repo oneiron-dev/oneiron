@@ -231,6 +231,7 @@ impl ConsolidationExecutor<'_> {
             run_id: run_id_ref.cloned(),
             envelope_actor: self.actor,
             subject: partition.conversation_ref,
+            pinned_config: None,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
         };
@@ -308,6 +309,7 @@ impl ConsolidationExecutor<'_> {
                 run_id: step_identity.1.clone(),
                 envelope_actor: self.actor,
                 subject: conflict.identity.subject,
+                pinned_config: None,
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
