@@ -20,7 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
-use oneiron::origin::smart_http::{self, DoorSeam, ServeReport, ServeRequest, ServeSink};
+use oneiron::origin::smart_http::{
+    self, DoorSeam, DoorWindowVerdict, ServeReport, ServeRequest, ServeSink,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 // ---------------------------------------------------------------------------
@@ -681,6 +683,155 @@ fn git_smart_http_double_plus_added_lines_reach_the_door() {
         !origin.object_present(&head),
         "rejected before objects become durable"
     );
+}
+
+/// Every refusal the door published, oldest first, one joined string per
+/// refused push. Read from the origin's own reports rather than the client's
+/// stderr: what the door DECIDED is the fact under test.
+fn door_refusals(origin: &TestOrigin) -> Vec<String> {
+    origin
+        .reports()
+        .into_iter()
+        .filter_map(|report| match report.door.verdict {
+            DoorWindowVerdict::Rejected { reasons } => Some(reasons.join("; ")),
+            DoorWindowVerdict::Clean | DoorWindowVerdict::NotInvoked => None,
+        })
+        .collect()
+}
+
+/// A planted `refs/replace/<oid>` must never decide which bytes the door reads.
+///
+/// Git resolves object reads through the replace table, so a
+/// `refs/replace/<commit>` entry aimed at a benign commit makes the hook's own
+/// `diff-tree` and `cat-file` enumerate the BENIGN commit while `receive-pack`
+/// moves the ref to the real, secret-carrying one: a clean verdict on bytes
+/// nobody is landing. Two layers close it, and this proves both — the wire
+/// refuses a `refs/replace/*` push outright, and every git the serve path runs
+/// has replacement lookup disabled, so a replacement that arrived some other
+/// way still substitutes nothing the door reads.
+#[test]
+fn git_smart_http_planted_replace_ref_cannot_substitute_the_bytes_the_door_scans() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
+    let before = origin
+        .origin_ref("refs/heads/main")
+        .expect("origin starts with a tip");
+
+    let work = tempfile::tempdir().expect("work tempdir");
+    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    let clone = work.path().join("clone");
+    // The secret commit exists locally BEFORE anything is pushed, so its oid is
+    // known in advance: that is exactly what makes a replacement plantable.
+    let secret = commit_file(
+        &clone,
+        "config.env",
+        "TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+        "carries a secret",
+    );
+    let planted = format!("refs/replace/{secret}");
+
+    // Layer one: the plant is refused on the wire. By every other measure it is
+    // a benign push — its value is the origin's own current tip.
+    let plant = git_output(&clone, &["push", "origin", &format!("{before}:{planted}")]);
+    assert!(
+        !plant.status.success(),
+        "this origin never serves a refs/replace/* push"
+    );
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("never serves a replacement ref")),
+        "the door refused on the rule, not by accident: {refusals:?}"
+    );
+    assert!(
+        origin.origin_ref(&planted).is_none(),
+        "the replacement ref never landed"
+    );
+
+    // Layer two: with the replacement planted directly in the origin — the
+    // shape the wire now refuses — the door still reads the true bytes.
+    git(&origin.repo_dir, &["update-ref", &planted, &before]);
+    let push = git_output(&clone, &["push", "origin", "main"]);
+    assert!(
+        !push.status.success(),
+        "the door scanned the bytes this push would make durable, not a substitute"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(before.as_str()),
+        "the refused push left refs unmoved"
+    );
+    // Asked with replacement off, because the planted ref would otherwise
+    // answer this question with the substitute's existence.
+    let durable = git_output(
+        &origin.repo_dir,
+        &["--no-replace-objects", "cat-file", "-e", &secret],
+    );
+    assert!(
+        !durable.status.success(),
+        "the secret commit never became durable"
+    );
+    assert!(
+        origin.landed().is_empty(),
+        "a refused push produces no landing and no receipt"
+    );
+}
+
+/// A name git accepts but the landing could never journal is refused pre-move.
+///
+/// `refs/heads/feature+foo` is a legal git ref and an illegal GitWire one. The
+/// landing parses every proposed name with `GitRefName::parse_full` and
+/// collects WHOLE, so before this rule the backend moved the ref and THEN the
+/// whole landing errored: a mutated repository with no receipt. The door window
+/// decides the name while the hook is still blocked, so git never moves what
+/// the landing cannot journal.
+#[test]
+fn git_smart_http_ref_name_the_landing_cannot_journal_is_refused_before_refs_move() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+
+    let work = tempfile::tempdir().expect("work tempdir");
+    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    let clone = work.path().join("clone");
+    let head = commit_file(&clone, "app.txt", "unjournalable\n", "illegal ref name");
+
+    let push = git_output(&clone, &["push", "origin", "main:refs/heads/feature+foo"]);
+    assert!(
+        !push.status.success(),
+        "a name the landing could not journal is refused"
+    );
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("not a ref name this origin can journal")),
+        "the door refused the name itself, pre-move: {refusals:?}"
+    );
+    assert!(
+        origin.origin_ref("refs/heads/feature+foo").is_none(),
+        "the refusal happened before the backend moved anything"
+    );
+    assert!(
+        !origin.object_present(&head),
+        "refused pre-move: the pushed objects never left quarantine"
+    );
+    assert!(
+        origin.landed().is_empty(),
+        "nothing moved, so there is nothing to journal"
+    );
+
+    // The rule narrows nothing else: the same commit under a name the landing
+    // CAN journal lands exactly as it did before.
+    git(&clone, &["push", "origin", "main:refs/heads/feature-foo"]);
+    assert_eq!(
+        origin.origin_ref("refs/heads/feature-foo").as_deref(),
+        Some(head.as_str()),
+        "a legal name still lands"
+    );
+    assert_eq!(origin.landed().len(), 1, "and it is journaled");
 }
 
 #[test]

@@ -24,6 +24,22 @@
 //!   parsed, so binary bytes cannot slip past a patch grammar, and an
 //!   extraction the origin cannot read whole is a refusal rather than an empty
 //!   scan.
+//! - **No substituted bytes.** Replacement-object lookup is OFF on every git the
+//!   serve path runs: `GIT_NO_REPLACE_OBJECTS` is part of the closed baseline
+//!   (an environment variable reaches every git a git spawns) and the vetted
+//!   hook additionally passes `--no-replace-objects` to each of its own git
+//!   children. A push that proposes a `refs/replace/*` name is refused in the
+//!   door window on top of that, so no replacement can be planted through this
+//!   wire at all. Without both, a planted `refs/replace/<oid>` would make the
+//!   door's scan read benign substitute bytes while the original object is what
+//!   the push makes durable.
+//! - **Only journalable refs move.** The door window refuses a push whose
+//!   proposed names the landing could not journal — names outside the GitWire
+//!   ref grammar, a name proposed twice, or a batch larger than the GitWire
+//!   publication bound — WHILE the objects are still quarantined. The landing's
+//!   own parse is the last line of defence, not the first: discovering an
+//!   unpublishable name after `git receive-pack` has moved refs would leave a
+//!   mutated repository with no receipt.
 //! - **Single writer (RA2).** A receive-pack holds the repository coordinator —
 //!   the same advisory lock in the git common directory that
 //!   [`crate::Vault::apply_repo_mutation`] and every GitWire ref effect take —
@@ -85,8 +101,20 @@ pub const ORIGIN_REPO_DIR_SUFFIX: &str = ".git";
 
 /// The closed serve baseline. Exactly these keys, and nothing else, form the
 /// non-request half of the child environment.
-pub const SERVE_BASE_ENV_KEYS: [&str; 4] =
-    ["GIT_DIR", "GIT_HTTP_EXPORT_ALL", "GIT_PROJECT_ROOT", "PATH"];
+///
+/// `GIT_NO_REPLACE_OBJECTS` is in the baseline rather than in argv because it
+/// has to reach git children this process never spawns: `http-backend` spawns
+/// `receive-pack`, which spawns the door hook, which spawns the plumbing that
+/// reads the pushed bytes. An environment variable travels that whole chain,
+/// and a replacement lookup anywhere in it would show the scan bytes other than
+/// the ones the push makes durable.
+pub const SERVE_BASE_ENV_KEYS: [&str; 5] = [
+    "GIT_DIR",
+    "GIT_HTTP_EXPORT_ALL",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_PROJECT_ROOT",
+    "PATH",
+];
 
 /// The closed CGI request half of the child environment. Every value is
 /// constructed from the typed [`ServeRequest`]; none is read from the ambient
@@ -114,6 +142,22 @@ pub const DOOR_PRE_RECEIVE_HOOK_NAME: &str = "pre-receive";
 /// Longest repository name the origin will resolve.
 pub const ORIGIN_MAX_REPO_NAME_BYTES: usize = 100;
 
+/// The most ref moves one push may propose.
+///
+/// It mirrors GitWire's publication bound, because the landing publishes what
+/// the push moved through exactly one publication set: a batch the landing
+/// could not carry is refused BEFORE `git receive-pack` moves anything, rather
+/// than discovered after the refs are already elsewhere.
+pub const ORIGIN_MAX_REF_UPDATES: usize = 64;
+
+/// The ref namespace this origin never lets a push write.
+///
+/// A `refs/replace/<oid>` entry rewrites what every later object lookup in this
+/// repository sees. The door scans the bytes a push makes durable, so a push
+/// that could plant a replacement is a push that could aim the next scan at
+/// bytes nobody is landing.
+pub const ORIGIN_REFUSED_REF_PREFIX: &str = "refs/replace/";
+
 /// Bound on the CGI header block. This bounds a protocol preamble, not a body:
 /// request and response bodies stream unbounded and unbuffered.
 const SERVE_MAX_CGI_HEADER_BYTES: usize = 64 * 1024;
@@ -133,6 +177,10 @@ pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The verdict line the vetted hook accepts as an admission.
 const DOOR_VERDICT_OK: &str = "ok";
+
+/// How much of a refused ref name a refusal echoes back to the client. A
+/// diagnostic names the ref; it never becomes a channel of its own.
+const DOOR_REFUSAL_NAME_CHARS: usize = 100;
 
 /// The vetted `pre-receive` hook.
 ///
@@ -160,7 +208,15 @@ const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 # The blob stream is length-framed: "blob <oid> <bytes> <path>\n" followed by
 # exactly <bytes> raw bytes. Framing rather than patch text is what makes the
 # extraction total -- there is no line shape a blob can carry that hides it.
+#
+# Every git below reads TRUE object bytes: replacement lookup is disabled by the
+# exported GIT_NO_REPLACE_OBJECTS (which reaches any git a git spawns) and again
+# by --no-replace-objects in each argv. A planted refs/replace/<oid> would
+# otherwise hand this scan a benign substitute while the original object is what
+# the push makes durable.
 set -eu
+GIT_NO_REPLACE_OBJECTS=1
+export GIT_NO_REPLACE_OBJECTS
 dir=${0%/*}
 req="$dir/pre-receive.request"
 part="$dir/pre-receive.request.part"
@@ -172,7 +228,7 @@ tab=$(printf '\t')
 : > "$part"
 : > "$blobspart"
 printf 'quarantine %s\n' "${GIT_QUARANTINE_PATH-}" >> "$part"
-empty=$(git hash-object -t tree /dev/null)
+empty=$(git --no-replace-objects hash-object -t tree /dev/null)
 while read -r old new ref; do
 	printf 'ref %s %s %s\n' "$old" "$new" "$ref" >> "$part"
 	case "$new" in
@@ -185,8 +241,8 @@ while read -r old new ref; do
 	esac
 	# Written to a file, never piped: a diff-tree that fails must fail the
 	# hook, and the left-hand side of a pipeline cannot do that in POSIX sh.
-	git diff-tree -r --raw --no-abbrev --no-commit-id --diff-filter=AMT \
-		"$base" "$new" > "$entries"
+	git --no-replace-objects diff-tree -r --raw --no-abbrev --no-commit-id \
+		--diff-filter=AMT "$base" "$new" > "$entries"
 	# ":<srcmode> <dstmode> <srcoid> <dstoid> <status><tab><path>"
 	while IFS= read -r entry; do
 		meta=${entry%%"$tab"*}
@@ -203,9 +259,9 @@ while read -r old new ref; do
 			*[!0]*) ;;
 			*) continue ;;
 		esac
-		size=$(git cat-file -s "$oid")
+		size=$(git --no-replace-objects cat-file -s "$oid")
 		printf 'blob %s %s %s\n' "$oid" "$size" "$path" >> "$blobspart"
-		git cat-file blob "$oid" >> "$blobspart"
+		git --no-replace-objects cat-file blob "$oid" >> "$blobspart"
 	done < "$entries"
 done
 printf 'end\n' >> "$part"
@@ -639,6 +695,10 @@ impl ServeCommand {
         env.insert("GIT_DIR".to_owned(), path_arg(repo_dir)?);
         env.insert("GIT_PROJECT_ROOT".to_owned(), path_arg(project_root)?);
         env.insert("GIT_HTTP_EXPORT_ALL".to_owned(), "1".to_owned());
+        // Reaches receive-pack, the door hook, and every git either of them
+        // spawns: the whole serve path reads true object bytes, never a
+        // replacement's.
+        env.insert("GIT_NO_REPLACE_OBJECTS".to_owned(), "1".to_owned());
         env.insert("PATH".to_owned(), inherited_path());
         Ok(Self { argv, env })
     }
@@ -843,9 +903,10 @@ pub enum DoorWindowVerdict {
     /// Every added line scanned, nothing matched.
     Clean,
     /// The push was refused. Each reason names one offending path and its
-    /// detector code; no matched line and no value bytes ever appear here.
+    /// detector code, or one proposed ref name this origin will not land; no
+    /// matched line and no value bytes ever appear here.
     Rejected {
-        /// One printable reason per offending blob.
+        /// One printable reason per offending blob or refused ref.
         reasons: Vec<String>,
     },
 }
@@ -924,10 +985,22 @@ fn serve_door_window(
     // empty scan — and rather than an unanswered hook left blocking.
     let (ref_updates, quarantine_path, verdict) = match door_window_inputs(&request_path, hooks) {
         Ok((request, blobs)) => {
-            let verdict = match seam {
-                DoorSeam::Noop => scan_through(&NoopDoorHook, repo, &blobs),
-                DoorSeam::Landed => {
-                    scan_through(&CredentialDoorService::new(Arc::clone(vault)), repo, &blobs)
+            // The name rule decides FIRST, and it decides here rather than at
+            // the landing: this is the last moment at which refusing costs
+            // nothing, because the hook is still blocked and the backend has
+            // moved no ref. A push whose names the landing could not journal is
+            // refused whole; nothing about a legal batch changes.
+            let unlandable = unlandable_ref_reasons(&request.ref_updates);
+            let verdict = if unlandable.is_empty() {
+                match seam {
+                    DoorSeam::Noop => scan_through(&NoopDoorHook, repo, &blobs),
+                    DoorSeam::Landed => {
+                        scan_through(&CredentialDoorService::new(Arc::clone(vault)), repo, &blobs)
+                    }
+                }
+            } else {
+                DoorWindowVerdict::Rejected {
+                    reasons: unlandable,
                 }
             };
             (request.ref_updates, request.quarantine_path, verdict)
@@ -988,6 +1061,76 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
     }
 }
 
+/// Why this push cannot be landed, one reason per offending name, empty when
+/// every proposed move is one the landing can journal.
+///
+/// This is the pre-move half of the landing's own rule. `RefUpdate::publication`
+/// and `realized_updates` both parse these names with [`GitRefName::parse_full`]
+/// and both collect WHOLE, so a single name outside the GitWire grammar turns
+/// the landing into an error — and by then `git receive-pack` has moved the
+/// refs, leaving a mutated repository with no receipt. Deciding here, while the
+/// hook is still blocked and the objects are still quarantined, is what keeps
+/// "git moved it" and "the origin journaled it" the same set.
+///
+/// Every rule below is one the landing enforces anyway; none of them narrows
+/// what a legal push may do:
+///
+/// - `refs/replace/*` is refused outright (see [`ORIGIN_REFUSED_REF_PREFIX`]):
+///   the landing would publish it, and what it publishes is a rewrite of what
+///   every later scan of this repository reads.
+/// - A name outside the GitWire ref grammar is refused, because
+///   [`GitRefName::parse_full`] is what the landing must parse it with.
+/// - A name proposed twice and a batch past [`ORIGIN_MAX_REF_UPDATES`] are
+///   refused, because GitWire's publication set rejects both.
+fn unlandable_ref_reasons(updates: &[RefUpdate]) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if updates.len() > ORIGIN_MAX_REF_UPDATES {
+        reasons.push(format!(
+            "a push may propose at most {ORIGIN_MAX_REF_UPDATES} ref moves; this one proposes {}",
+            updates.len()
+        ));
+    }
+    for (index, update) in updates.iter().enumerate() {
+        let name = printable_ref_name(&update.name);
+        if update.name.starts_with(ORIGIN_REFUSED_REF_PREFIX) {
+            reasons.push(format!(
+                "{name}: this origin never serves a replacement ref"
+            ));
+        } else if GitRefName::parse_full(update.name.clone()).is_err() {
+            reasons.push(format!("{name}: not a ref name this origin can journal"));
+        } else if updates[..index]
+            .iter()
+            .any(|earlier| earlier.name == update.name)
+        {
+            reasons.push(format!("{name}: proposed twice in one push"));
+        }
+    }
+    reasons
+}
+
+/// The offending name as it may appear in a refusal the client will read.
+///
+/// A refusal names the ref and nothing else — no pushed byte and no value ever
+/// reaches this string. The name itself is client-supplied, so it is bounded
+/// and stripped of anything that is not printable ASCII before it is echoed.
+fn printable_ref_name(name: &str) -> String {
+    let mut printable = name
+        .chars()
+        .take(DOOR_REFUSAL_NAME_CHARS)
+        .map(|character| {
+            if character.is_ascii_graphic() || character == ' ' {
+                character
+            } else {
+                '?'
+            }
+        })
+        .collect::<String>();
+    if name.chars().nth(DOOR_REFUSAL_NAME_CHARS).is_some() {
+        printable.push_str("...");
+    }
+    printable
+}
+
 fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| serve_failed("door request must be UTF-8".to_owned()))?;
@@ -1019,6 +1162,13 @@ fn parse_ref_update(line: &str) -> Result<RefUpdate> {
     let name = parts
         .next()
         .ok_or_else(|| serve_failed("door request ref line has no ref name"))?;
+    // The name is the LAST field, so a line with a fourth one describes a name
+    // this parse would truncate — and a truncated name is a name the door would
+    // decide while git moved a different one. Git's own ref grammar has no
+    // space in it, so this is a fault, and a fault here is a refusal.
+    if parts.next().is_some() {
+        return Err(serve_failed("door request ref line has a spaced ref name"));
+    }
     Ok(RefUpdate {
         name: name.to_owned(),
         old_oid: parse_optional_oid(old)?,
@@ -1874,6 +2024,14 @@ mod tests {
             Some("1"),
             "export pin"
         );
+        assert_eq!(
+            command
+                .env()
+                .get("GIT_NO_REPLACE_OBJECTS")
+                .map(String::as_str),
+            Some("1"),
+            "every git under this serve reads true object bytes"
+        );
 
         let request = ServeRequest {
             method: "POST".to_owned(),
@@ -1926,6 +2084,78 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(entries.len(), 1, "one hook, nothing else");
         assert_eq!(entries[0], DOOR_PRE_RECEIVE_HOOK_NAME);
+    }
+
+    #[test]
+    fn smart_http_vetted_hook_disables_replacement_lookup_on_every_git() {
+        assert!(
+            DOOR_PRE_RECEIVE_HOOK.contains("export GIT_NO_REPLACE_OBJECTS"),
+            "the hook exports the pin to every git it spawns"
+        );
+        for invocation in DOOR_PRE_RECEIVE_HOOK
+            .lines()
+            .map(str::trim_start)
+            .filter(|line| line.starts_with("git ") || line.contains("$(git "))
+        {
+            assert!(
+                invocation.contains("--no-replace-objects"),
+                "this hook git could read substituted bytes: {invocation}"
+            );
+        }
+    }
+
+    fn proposed(name: &str) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            old_oid: None,
+            new_oid: Some(GitOid::parse_hex("a".repeat(40)).expect("oid")),
+        }
+    }
+
+    #[test]
+    fn smart_http_unlandable_ref_names_are_refused_before_anything_moves() {
+        assert!(
+            unlandable_ref_reasons(&[
+                proposed("refs/heads/main"),
+                proposed("refs/tags/v1.0"),
+                proposed("refs/heads/feature-foo"),
+            ])
+            .is_empty(),
+            "a legal batch is untouched by this rule"
+        );
+
+        // Legal to git, unpublishable by GitWire: the landing would parse this
+        // name only AFTER the backend had moved it.
+        let illegal = unlandable_ref_reasons(&[proposed("refs/heads/feature+foo")]);
+        assert_eq!(illegal.len(), 1, "one reason for the one offending name");
+        assert!(
+            illegal[0].starts_with("refs/heads/feature+foo:"),
+            "the refusal names the ref: {}",
+            illegal[0]
+        );
+
+        let replace = unlandable_ref_reasons(&[proposed(&format!(
+            "{ORIGIN_REFUSED_REF_PREFIX}{}",
+            "b".repeat(40)
+        ))]);
+        assert_eq!(replace.len(), 1, "a replacement ref is never served");
+
+        let twice =
+            unlandable_ref_reasons(&[proposed("refs/heads/main"), proposed("refs/heads/main")]);
+        assert_eq!(twice.len(), 1, "a name proposed twice cannot be published");
+
+        let batch = (0..=ORIGIN_MAX_REF_UPDATES)
+            .map(|index| proposed(&format!("refs/heads/b{index}")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unlandable_ref_reasons(&batch).len(),
+            1,
+            "a batch past the publication bound is refused whole"
+        );
+        assert!(
+            unlandable_ref_reasons(&batch[..ORIGIN_MAX_REF_UPDATES]).is_empty(),
+            "exactly the bound is still a batch the landing can journal"
+        );
     }
 
     /// Frames one record the way the vetted hook does.
