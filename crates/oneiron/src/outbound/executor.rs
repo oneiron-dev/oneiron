@@ -161,6 +161,13 @@ impl Vault {
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
+            // CAL-04: replay the frozen five-field iMIP body the schedule
+            // chokepoint committed with this TASK. The executor is the retry
+            // lane, so it must never re-derive a UID or a SEQUENCE — it hands
+            // the pipeline exactly what was admitted.
+            if let Some(payload) = task.calendar_invite.clone() {
+                request = request.calendar_invite(payload);
+            }
             let mut result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,
                 sink,

@@ -214,6 +214,48 @@ pub fn index_passport_uid(
     Ok(())
 }
 
+/// The EVENT the UID index currently points at, without requiring a live
+/// passport to vouch for it.
+///
+/// [`resolve_event_by_uid`] deliberately treats an index row with no live
+/// passport as stale — for the INGEST diff, a shortcut nothing confirms must
+/// not resolve. The first outbound invite (CAL-04) is the one case where that
+/// is inverted: the UID was minted with the EVENT and indexed there, and the
+/// passport being about to exist is exactly what the caller is asking for. So
+/// this reader answers the narrower question — "what does the index say, and is
+/// it still an EVENT?" — and adds no second index.
+///
+/// # Errors
+///
+/// [`CalendarError::IcsIngest`] on store failures or a corrupt index row.
+pub(crate) fn event_ref_for_indexed_uid(
+    vault: &Vault,
+    uid: &str,
+) -> Result<Option<EntityId>, CalendarError> {
+    let key = passport_index_key(uid);
+    let indexed = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &key)?
+            .map(|raw| raw.to_vec())
+    };
+    let Some(raw) = indexed else {
+        return Ok(None);
+    };
+    let bytes: [u8; 16] = raw
+        .as_slice()
+        .try_into()
+        .map_err(|_| ingest("passport index row is not an entity id"))?;
+    let id = EntityId::from_bytes(bytes)
+        .map_err(|_| ingest("passport index row is not an entity id"))?;
+    if vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT) {
+        return Ok(Some(id));
+    }
+    Ok(None)
+}
+
 /// Every live passport claim on one EVENT, as `(claim id, decoded value)`.
 ///
 /// # Errors

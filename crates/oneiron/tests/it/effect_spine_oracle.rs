@@ -1525,3 +1525,288 @@ fn es09_superseding_a_prior_changes_subsequent_reads() {
         1
     );
 }
+
+// ── CAL-04 (ONE-1786): calendar.invite on the effect spine ──────────────
+//
+// The invite is not a second spine. It is one more channel verb through the
+// SAME chokepoint, so what this leg pins is that the spine's own guarantees —
+// gate first, exactly one durable intent, exactly-once transport — hold for it
+// unchanged, and that the calendar-specific state (the UID/SEQUENCE passport)
+// obeys them too: a gate-denied invite advances no sequence, and a retry
+// replays frozen bytes instead of minting anything.
+
+mod calendar_invite_fixture {
+    use super::{Vault, open_vault};
+
+    pub(super) const UID: &str = "one-1786-oracle@oneiron.test";
+    pub(super) const RECIPIENT: &str = "guest@example.test";
+
+    fn id(seed: u8) -> oneiron::EntityId {
+        oneiron::EntityId::from_bytes([seed; 16]).expect("fixture id")
+    }
+
+    pub(super) fn actor_ref() -> oneiron::EntityId {
+        id(0x91)
+    }
+
+    pub(super) fn event_ref() -> oneiron::EntityId {
+        id(0x92)
+    }
+
+    /// A vault carrying every precondition one lawful REQUEST stands on: the
+    /// EVENT its UID names, an ACTIVE dedicated sending identity on the primary
+    /// domain, the R7 booking-page standing grant, and the rendered invitation
+    /// in the blob store.
+    pub(super) fn admitted_vault() -> (tempfile::TempDir, Vault, String) {
+        let (dir, vault) = open_vault();
+        let actor = actor_ref();
+        vault
+            .put_entity(
+                &actor,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::temporal::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                b"cal-04 oracle actor",
+            )
+            .expect("put actor");
+        vault
+            .put_entity(
+                &event_ref(),
+                oneiron::registry::ENTITY_TYPE_EVENT,
+                oneiron::temporal::TimeRange {
+                    start: 1_800_003_600,
+                    end: 1_800_007_200,
+                },
+                100,
+                b"cal-04 oracle event",
+            )
+            .expect("put event");
+        oneiron::calendar::index_passport_uid(&vault, UID, &event_ref()).expect("index uid");
+
+        let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+            "email",
+            "me@primary.test",
+            oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+            oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
+            100,
+        );
+        identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
+        vault
+            .create_channel_identity(&id(0x93), &identity)
+            .expect("create sending identity");
+
+        vault
+            .mint_standing_outbound_grant(
+                &id(0x94),
+                &oneiron::genui::GrantMintIntent {
+                    principal_ref: actor.to_hex(),
+                    origin_component_id: "effect_spine_oracle".to_owned(),
+                    origin_action_id: "confirm_booking".to_owned(),
+                    origin_receipt_ref: None,
+                    scope: oneiron::genui::GrantMintIntentScope::Contact {
+                        contact_ref: RECIPIENT.to_owned(),
+                    },
+                },
+                100,
+            )
+            .expect("mint booking grant");
+
+        let ics = oneiron::emit_imip_ics(&oneiron::ImipEmitRequest {
+            method: oneiron::CalendarInviteMethod::Request,
+            uid: UID.to_owned(),
+            sequence: 0,
+            organizer: "me@primary.test".to_owned(),
+            attendees: vec![RECIPIENT.to_owned()],
+            summary: "Confirmed booking".to_owned(),
+            starts_at_utc: 1_800_003_600,
+            ends_at_utc: 1_800_007_200,
+            tz_label: "Europe/Warsaw".to_owned(),
+            dtstamp_utc: 1_800_000_000,
+        })
+        .expect("emit invitation");
+        let blob_ref = oneiron::persist_imip_blob(
+            &vault,
+            &id(0x95),
+            "one-1786 oracle invitation",
+            &ics,
+            &oneiron::blob_artifact::BlobVersionProvenance::AgentRun {
+                run_ref: "one-1786-oracle".to_owned(),
+            },
+            oneiron::WriteActor::new(actor, oneiron::EdgeActorClass::Human),
+            100,
+        )
+        .expect("persist invitation blob");
+        (dir, vault, blob_ref)
+    }
+
+    pub(super) fn invite(blob_ref: &str) -> oneiron::CalendarInviteSurfaceInput {
+        oneiron::CalendarInviteSurfaceInput {
+            method: oneiron::CalendarInviteSurfaceMethod::Request,
+            uid: UID.to_owned(),
+            sequence: 0,
+            ics_blob_ref: blob_ref.to_owned(),
+            recipient: RECIPIENT.to_owned(),
+        }
+    }
+
+    /// Records the `text/calendar` part every dispatched invite carries.
+    #[derive(Default)]
+    pub(super) struct InviteSink {
+        pub(super) parts: Vec<(String, Vec<u8>)>,
+    }
+
+    impl oneiron::outbound::OutboundExecutionSink for InviteSink {
+        fn execute(
+            &mut self,
+            request: &oneiron::outbound::OutboundExecutionRequest<'_>,
+        ) -> oneiron::outbound::OutboundExecutionOutcome {
+            let part = request
+                .calendar_invite
+                .as_ref()
+                .expect("a calendar.invite send carries its iMIP part");
+            self.parts
+                .push((part.content_type.clone(), part.ics.clone()));
+            oneiron::outbound::OutboundExecutionOutcome::delivered_to_channel("oracle:imip-send")
+        }
+    }
+
+    pub(super) fn live_sequence(vault: &Vault) -> Option<u32> {
+        oneiron::calendar::live_passports_for_event(vault, &event_ref())
+            .expect("passports")
+            .into_iter()
+            .find(|(_, value)| value.uid == UID)
+            .map(|(_, value)| value.last_sequence)
+    }
+}
+
+/// CAL-04's spine oracle: gate first, one durable intent, exactly once.
+#[test]
+fn calendar_invite_gate_and_intent_ledger_oracle() {
+    use calendar_invite_fixture as fixture;
+
+    // ── admitted: one gate decision, one intent, one wire send ──────────
+    let (_dir, vault, blob_ref) = fixture::admitted_vault();
+    let facade = vault.memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human);
+
+    let receipt = facade
+        .calendar_invite(&fixture::invite(&blob_ref))
+        .expect("a lawful invite schedules");
+    assert_eq!(receipt.outcome, "held");
+    assert_eq!(receipt.gate_outcome.as_deref(), Some("allow"));
+    assert!(receipt.gate_decision_ref.is_some());
+    assert_eq!(vault.connector_send_tasks().expect("tasks").len(), 1);
+    // The SEQUENCE bump landed with the attempt/TASK, not before it.
+    assert_eq!(fixture::live_sequence(&vault), Some(0));
+    // The schedule side never touches transport, so no intent exists yet.
+    assert!(
+        oneiron::outbound_intent_ledger::intent_ledger_records(&vault)
+            .expect("ledger")
+            .is_empty()
+    );
+
+    let mut sink = fixture::InviteSink::default();
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 200)
+            .expect("execute"),
+        1
+    );
+    assert_eq!(sink.parts.len(), 1, "exactly one wire send");
+    assert_eq!(
+        sink.parts[0].0,
+        "text/calendar; method=REQUEST; charset=utf-8"
+    );
+    assert!(
+        String::from_utf8(sink.parts[0].1.clone())
+            .expect("utf-8")
+            .contains("METHOD:REQUEST\r\n"),
+        "the connector resolved the frozen blob into the real iMIP document"
+    );
+
+    // EXACTLY one intent-ledger record, on the ordinary channel/verb pair.
+    let records = oneiron::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].server, "calendar");
+    assert_eq!(records[0].tool, "calendar.invite");
+    assert!(records[0].idempotency_supported, "iMIP replay is a no-op");
+
+    // Retry is exactly-once and mints nothing: the queue row is done, the
+    // ledger is unchanged, and the SEQUENCE has not moved.
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 300)
+            .expect("re-run"),
+        0
+    );
+    assert_eq!(sink.parts.len(), 1, "a retry sends no second invite");
+    assert_eq!(
+        oneiron::outbound_intent_ledger::intent_ledger_records(&vault)
+            .expect("ledger")
+            .len(),
+        1
+    );
+    assert_eq!(fixture::live_sequence(&vault), Some(0));
+
+    // Re-scheduling the same revision coalesces on the durable delivered-send
+    // index rather than sending a second invitation.
+    let again = facade
+        .calendar_invite(&fixture::invite(&blob_ref))
+        .expect("a re-schedule of a delivered revision coalesces");
+    assert!(again.deduped);
+    assert_eq!(again.outcome, "already_sent");
+    assert_eq!(fixture::live_sequence(&vault), Some(0));
+
+    // ── denied: the gate stops it before anything durable happens ───────
+    let (_dir2, denied_vault, denied_blob) = fixture::admitted_vault();
+    denied_vault
+        .mint_unbudgeted_connector_key("calendar", None, 100)
+        .expect("mint calendar connector key");
+    let (key_id, _) = denied_vault
+        .connector_key_for("calendar", None)
+        .expect("read key")
+        .expect("calendar connector key");
+    denied_vault
+        .suspend_connector_key(&key_id, "oracle_suspension", 100)
+        .expect("suspend calendar connector key");
+
+    let denied_facade = denied_vault.memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human);
+    let denied = denied_facade
+        .calendar_invite(&fixture::invite(&denied_blob))
+        .expect("a gate denial is an audited receipt, not an error");
+    assert_eq!(denied.outcome, "suppressed");
+    assert_eq!(denied.gate_outcome.as_deref(), Some("deny"));
+    assert!(
+        denied.gate_decision_ref.is_some(),
+        "a denial is still a queryable governance receipt"
+    );
+
+    // Nothing executable, nothing durable, and — the calendar-specific half —
+    // no UID minted and no SEQUENCE advanced behind a refused send.
+    assert!(
+        denied_vault
+            .connector_send_tasks()
+            .expect("tasks")
+            .is_empty()
+    );
+    assert!(
+        oneiron::outbound_intent_ledger::intent_ledger_records(&denied_vault)
+            .expect("ledger")
+            .is_empty()
+    );
+    assert_eq!(fixture::live_sequence(&denied_vault), None);
+
+    let mut denied_sink = fixture::InviteSink::default();
+    assert_eq!(
+        denied_vault
+            .run_connector_task_executor(&mut denied_sink, 200)
+            .expect("execute"),
+        0
+    );
+    assert!(
+        denied_sink.parts.is_empty(),
+        "a gate denial produces no connector execution"
+    );
+}

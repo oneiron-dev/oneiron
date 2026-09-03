@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use super::OutboundDeliveryWindowDecision;
 use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
+use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
 use crate::campaign::send_hygiene::ListUnsubscribeTarget;
 use crate::connector_key::EffectorBudgetRead;
 use crate::delivery_window::{
@@ -141,6 +142,12 @@ pub struct OutboundDispatchRequest {
     /// produces the `List-Unsubscribe` / `List-Unsubscribe-Post` headers that
     /// ride the frozen payload to the connector.
     pub campaign_unsubscribe: Option<ListUnsubscribeTarget>,
+    /// CAL-04 iMIP payload for a `calendar.invite` send, frozen with the
+    /// intent. Absent for every send that is not a calendar invite; present, it
+    /// freezes C7's exact five fields — the blob REF, never the `.ics` bytes —
+    /// so the connector-send side resolves the same document a retry replays
+    /// instead of re-rendering one.
+    pub calendar_invite: Option<CalendarInvitePayload>,
 }
 
 impl OutboundDispatchRequest {
@@ -178,6 +185,7 @@ impl OutboundDispatchRequest {
             context_receipt: None,
             linkedin_sandbox_policy: None,
             campaign_unsubscribe: None,
+            calendar_invite: None,
         }
     }
 
@@ -301,6 +309,18 @@ impl OutboundDispatchRequest {
         self.campaign_unsubscribe = Some(target);
         self
     }
+
+    /// Freezes the CAL-04 iMIP payload for a `calendar.invite` send.
+    ///
+    /// The payload is the caller's only channel for the invite's method, UID,
+    /// and SEQUENCE; the chokepoint that admitted it has already checked those
+    /// against the live outbound passport, so nothing downstream recomputes
+    /// them.
+    #[must_use]
+    pub fn calendar_invite(mut self, payload: CalendarInvitePayload) -> Self {
+        self.calendar_invite = Some(payload);
+        self
+    }
 }
 
 /// Connector-adapter execution request after resolve, gate, and window stages.
@@ -319,6 +339,12 @@ pub struct OutboundExecutionRequest<'a> {
     pub hygiene_headers: BTreeMap<String, String>,
     /// Effective APNs level after execute-time delivery-window policy.
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
+    /// CAL-04: the `text/calendar; method=…` part this send carries beside the
+    /// ordinary body, resolved from the FROZEN blob ref at the last boundary
+    /// before transport. `None` for every send that is not a calendar invite,
+    /// so no existing adapter changes; present, an adapter that drops it has
+    /// sent an email about a meeting rather than an invitation.
+    pub calendar_invite: Option<CalendarInviteMimePart>,
 }
 
 /// Adapter execution outcome consumed by the common receipt emitter.

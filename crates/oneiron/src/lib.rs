@@ -178,7 +178,10 @@ pub use crate::bm25::{
     bm25_diagnostics_snapshot,
 };
 pub use crate::calendar::{
-    CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
+    CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarEventView, CalendarInviteConsentBasis,
+    CalendarInviteMethod, CalendarInviteMimePart, CalendarInvitePayload, CalendarRangeDto,
+    CalendarReadRequest, CalendarSearchRequest, CalendarSel, ImipEmitRequest, emit_imip_ics,
+    persist_imip_blob,
 };
 pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
