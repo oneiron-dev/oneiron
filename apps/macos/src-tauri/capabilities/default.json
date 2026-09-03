@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "The recorder window talks to the recorder core and to nothing else: no filesystem, shell, or network permission is granted to the webview.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

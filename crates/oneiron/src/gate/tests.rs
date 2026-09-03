@@ -3869,6 +3869,43 @@ fn default_policy_vad_rule_is_exact() -> Result<()> {
     Ok(())
 }
 
+/// Without a row of its own a recorder's committed segment claim would pend
+/// forever under the shipped default policy: no axes row means Critical, and
+/// Critical with no consent context is `gate.pending.criticality_floor`.
+#[test]
+fn default_policy_voice_segment_rule_is_exact() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let data = encode_first_party_eiri_default_policy_manifest();
+    put_policy_manifest_bytes(&vault, test_id(0xC8), &data)?;
+    let policy = resolve(&vault)?;
+
+    assert_eq!(
+        policy.criticality_for_predicate(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+        PolicyCriticality::Normal
+    );
+    assert_eq!(
+        policy.sensitivity_for_predicate(crate::voice_segment::PREDICATE_VOICE_SEGMENT),
+        PolicySensitivity::Normal
+    );
+
+    // The row is keyed exactly: neither a refinement of the segment predicate
+    // nor the transcript family inherits it, so both stay at the fail-closed
+    // default criticality.
+    for predicate in ["voice.segment.extra", "voice.transcript"] {
+        assert_eq!(
+            policy.criticality_for_predicate(predicate),
+            PolicyCriticality::Critical,
+            "{predicate} must not inherit the voice.segment row"
+        );
+        assert_eq!(
+            policy.sensitivity_for_predicate(predicate),
+            PolicySensitivity::Normal,
+            "{predicate} takes the manifest default sensitivity"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
     for (seed, actor_entity_type, actor_class) in [

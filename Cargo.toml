@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "apps/macos/src-tauri"]
 # ONE-218: the pinned local `heed` vendor lives under `crates/` but is NOT a
 # workspace member. It is upstream heed 0.20.5 plus one audited open seam, and
 # it must not be reformatted, relinted, or test-run as if it were our code.

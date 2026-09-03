@@ -1,0 +1,63 @@
+[package]
+name = "oneiron-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "macOS menu-bar voice recorder that lands segments in an embedded Oneiron vault"
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "oneiron_macos"
+path = "src/lib.rs"
+# No doc-comment code fences in this crate; skip the doctest compile pass.
+doctest = false
+
+[[bin]]
+name = "oneiron-macos"
+path = "src/main.rs"
+
+[features]
+# Opt-in local transcription (M-series). NOT MIN-SPEC: an Intel build ships
+# without it and shows no transcription surface at all. No crate dependency —
+# the adapter shells out to the external transcription tool, so the feature is
+# a pure compile switch over the `SegmentTranscriber` seam.
+asr-mlx = []
+
+[dependencies]
+# The engine is EMBEDDED, in-process: this app is a vault device node, not a
+# client of one. Default (featureless) engine build — the app writes through
+# the ordinary vault doors and never touches the sync wire itself; replication
+# to the elected home node is the existing device-sync path.
+oneiron = { path = "../../../crates/oneiron" }
+tauri = { version = "2", features = ["tray-icon"] }
+cpal = "0.18"
+hound = "3.5"
+# A claim value IS MessagePack; the workspace pin keeps the app's `Value` the
+# same type the engine's claim door reads.
+rmpv = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Core Audio process taps (macOS 14.2+). `coreaudio-rs` 0.14.2 exposes no
+# process-tap surface at all — `CATapDescription` is an Objective-C class, so
+# the tap can only be described through the ObjC runtime — hence the direct
+# `objc2` binding path. `objc2-core-audio` carries both halves:
+# `AudioHardwareCreateProcessTap` and `CATapDescription`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-audio = "0.3"
+objc2-core-audio-types = "0.3"
+objc2-core-foundation = "0.3"
+objc2-foundation = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+tauri-build = "2"
+
+[lints]
+workspace = true
