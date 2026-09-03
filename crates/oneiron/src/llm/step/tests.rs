@@ -92,6 +92,7 @@ fn ctx<'a>(vault: &'a Vault, fixture: &StepFixture, now_ms: u64) -> DurableStepC
         run_id: Some("run-test".to_owned()),
         envelope_actor: fixture.actor,
         subject: fixture.subject,
+        pinned_config: None,
         deadline: None,
         now_ms,
     }
@@ -1646,5 +1647,511 @@ fn a_consent_trap_cannot_register_a_delegation_wait() -> Result<()> {
 
     assert_eq!(usize::from(refused.is_err()), 1);
     assert_eq!(peer_wait_bindings(&vault)?.len(), 0);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1344: opt-in per-call pinned-model admission + WITH-WHAT provenance
+// ---------------------------------------------------------------------------
+
+fn pinned_config(allowed: &[&str], background_tier_enabled: bool) -> PinnedModelConfig {
+    PinnedModelConfig {
+        allowed: allowed
+            .iter()
+            .map(|id| ModelId::new(*id).expect("pinned model id"))
+            .collect(),
+        background_tier_enabled,
+    }
+}
+
+/// Reads every claim attached to `subject` back out of the vault and decodes
+/// the `dreamer.step` rows — never a mock, never the in-memory outcome.
+fn terminal_step_claims(vault: &Vault, subject: &EntityId) -> Result<Vec<DecodedStepClaim>> {
+    let mut decoded = Vec::new();
+    for claim_id in vault.claims_for_subject(subject)? {
+        let body = vault.get_claim(&claim_id)?.expect("claim body");
+        if body.predicate == DREAMER_STEP_PREDICATE {
+            decoded.push(decode_step_claim_value(&body.value)?);
+        }
+    }
+    Ok(decoded)
+}
+
+fn claims_with_predicate(vault: &Vault, subject: &EntityId, predicate: &str) -> Result<usize> {
+    let mut count = 0;
+    for claim_id in vault.claims_for_subject(subject)? {
+        let body = vault.get_claim(&claim_id)?.expect("claim body");
+        if body.predicate == predicate {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn expected_params_hash(request: &LlmRequest) -> String {
+    let bytes = canonical_json_bytes(&request.params).expect("canonical params");
+    bytes_to_hex_lower(blake3::hash(&bytes).as_bytes())
+}
+
+/// Every executed durable step records WITH-WHAT provenance on its terminal
+/// claim: resolved model id, stable purpose string, params hash, and the
+/// absolute input/output usage totals.
+#[test]
+fn provenance_recorded_for_every_call() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("first answer")),
+        Ok(response_fixture("second answer")),
+    ]);
+    let guard = guard_with_limit(10_000);
+
+    let first = request_fixture();
+    let mut second = request_fixture();
+    second.messages[0].content = vec![ContentPart::Text {
+        text: "consolidate a different transcript".to_owned(),
+    }];
+    assert_ne!(
+        first.canonical_hash().expect("hash"),
+        second.canonical_hash().expect("hash"),
+        "the two requests must be distinct durable steps"
+    );
+
+    for request in [first.clone(), second.clone()] {
+        let outcome = block_on(call_as_step(&ctx, &backend, &guard, request)).expect("execution");
+        assert!(matches!(
+            outcome,
+            StepOutcome::Finished {
+                memoized: false,
+                ..
+            }
+        ));
+    }
+    assert_eq!(backend.calls(), 2);
+
+    let claims = terminal_step_claims(&vault, &fixture.subject)?;
+    assert_eq!(claims.len(), 2, "one terminal claim per executed step");
+    let by_hash = claims
+        .into_iter()
+        .map(|decoded| (decoded.step_hash, decoded))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(by_hash.len(), 2, "claims must carry distinct step hashes");
+
+    for request in [&first, &second] {
+        let decoded = by_hash
+            .get(&request.canonical_hash().expect("hash"))
+            .expect("terminal claim for the executed step");
+
+        assert!(!decoded.model_id.is_empty(), "model_id must be present");
+        let model = ModelId::new(decoded.model_id.clone()).expect("stored model_id reparses");
+        assert!(!model.provider().is_empty());
+        assert!(!model.name().is_empty());
+        assert!(!model.revision().is_empty());
+        assert_eq!(
+            model, request.model,
+            "stored model must be the resolved one"
+        );
+        assert_eq!(
+            decoded.model_id,
+            format!("{}/{}@{}", model.provider(), model.name(), model.revision()),
+            "stored model_id must be the fully revisioned provider/name@revision"
+        );
+
+        assert_eq!(decoded.purpose, "consolidation", "stable purpose string");
+
+        let params_hash = expected_params_hash(request);
+        assert_eq!(decoded.params_hash, params_hash);
+        assert_eq!(
+            decoded.params_hash,
+            decoded.params_hash.to_ascii_lowercase(),
+            "params_hash is lowercase hex"
+        );
+
+        assert_eq!(decoded.usage_in, 100, "input usage total on every row");
+        assert_eq!(decoded.usage_out, 50, "output usage total on every row");
+    }
+    Ok(())
+}
+
+/// A pinned model whose purpose is in the background tier is refused when the
+/// tier is disabled — before hashing, memo, state, budget, and backend — and
+/// leaves zero durable and zero private residue. Only the purpose changes for
+/// the admitted half: `Eval` is outside the background tier.
+#[test]
+fn purity_gate_blocks_background_tier() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let config = pinned_config(&["test/model@r1"], false);
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.pinned_config = Some(&config);
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("admitted answer"))]);
+    let guard = guard_with_limit(10_000);
+
+    let refused = request_fixture();
+    let refused_hash = refused.canonical_hash().expect("hash");
+    let error = block_on(call_as_step(&ctx, &backend, &guard, refused))
+        .expect_err("background-tier purpose must be refused while the tier is disabled");
+    assert!(
+        matches!(
+            error,
+            DurableStepError::PinnedConfig(PinnedConfigViolation::BackgroundTierDisabled {
+                purpose: CallPurpose::Consolidation
+            })
+        ),
+        "expected BackgroundTierDisabled, got {error:?}"
+    );
+
+    assert_eq!(backend.calls(), 0, "no backend invocation");
+    let read = guard.read();
+    assert_eq!(read.used_units, 0, "no units spent");
+    assert_eq!(read.reserved_units, 0, "no lease reserved");
+    assert!(
+        step_state_read(&vault, fixture.attempt_id, &refused_hash)?.is_none(),
+        "no private step state"
+    );
+    assert!(
+        step_index_lookup(&vault, fixture.attempt_id, &refused_hash)?.is_none(),
+        "no memo index row"
+    );
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+        0,
+        "no terminal step claim"
+    );
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
+        0,
+        "no trap claim"
+    );
+
+    let mut admitted = request_fixture();
+    admitted.envelope.purpose = CallPurpose::Eval;
+    let outcome =
+        block_on(call_as_step(&ctx, &backend, &guard, admitted)).expect("Eval must be admitted");
+    let StepOutcome::Finished {
+        response, memoized, ..
+    } = outcome
+    else {
+        panic!("expected finished step");
+    };
+    assert!(!memoized);
+    assert_eq!(response, response_fixture("admitted answer"));
+    assert_eq!(backend.calls(), 1, "exactly one backend call");
+    let read = guard.read();
+    assert_eq!(read.used_units, 150, "usage settled");
+    assert_eq!(read.reserved_units, 0, "lease settled");
+
+    let claims = terminal_step_claims(&vault, &fixture.subject)?;
+    assert_eq!(claims.len(), 1, "one readable terminal claim");
+    assert_eq!(claims[0].purpose, "eval");
+    Ok(())
+}
+
+/// Membership is checked BEFORE background-tier classification, and admission
+/// runs BEFORE the memo lookup: an already-memoized step is still refused.
+#[test]
+fn unpinned_model_rejected() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    // Allows a DIFFERENT model with the background tier disabled, so the
+    // Consolidation request on `test/model@r1` fails BOTH checks; reporting
+    // ModelNotPinned proves membership is evaluated first.
+    let config = pinned_config(&["other/model@r9"], false);
+    let mut pinned_ctx = ctx(&vault, &fixture, 10_000);
+    pinned_ctx.pinned_config = Some(&config);
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("terminal answer"))]);
+    let guard = guard_with_limit(10_000);
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+
+    let error = block_on(call_as_step(
+        &pinned_ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+    ))
+    .expect_err("an unpinned model must be refused");
+    match &error {
+        DurableStepError::PinnedConfig(PinnedConfigViolation::ModelNotPinned { model }) => {
+            assert_eq!(*model, ModelId::new("test/model@r1").expect("model id"));
+        }
+        other => panic!("expected ModelNotPinned before the tier check, got {other:?}"),
+    }
+
+    assert_eq!(backend.calls(), 0, "no backend invocation");
+    assert_eq!(guard.read().used_units, 0, "no units spent");
+    assert_eq!(guard.read().reserved_units, 0, "no lease reserved");
+    assert!(step_state_read(&vault, fixture.attempt_id, &step_hash)?.is_none());
+    assert!(step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_none());
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+        0
+    );
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
+        0
+    );
+
+    // Run the identical request unpinned to completion, so the memo index and
+    // a terminal claim exist for this exact step hash.
+    let open_ctx = ctx(&vault, &fixture, 10_000);
+    let outcome = block_on(call_as_step(&open_ctx, &backend, &guard, request_fixture()))
+        .expect("unpinned execution");
+    assert!(matches!(
+        outcome,
+        StepOutcome::Finished {
+            memoized: false,
+            ..
+        }
+    ));
+    assert_eq!(backend.calls(), 1);
+    assert!(
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.is_some(),
+        "memo index populated"
+    );
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+        1
+    );
+    let used_after_execution = guard.read().used_units;
+
+    // The byte-identical request under the rejecting config must still be a
+    // typed refusal — NOT a memoized StepOutcome::Finished.
+    let error = block_on(call_as_step(
+        &pinned_ctx,
+        &backend,
+        &guard,
+        request_fixture(),
+    ))
+    .expect_err("admission must precede the memo lookup");
+    assert!(
+        matches!(
+            error,
+            DurableStepError::PinnedConfig(PinnedConfigViolation::ModelNotPinned { .. })
+        ),
+        "expected ModelNotPinned on the memoized step, got {error:?}"
+    );
+    assert_eq!(backend.calls(), 1, "backend count unchanged");
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+        1,
+        "terminal claim count unchanged"
+    );
+    assert_eq!(guard.read().used_units, used_after_execution);
+    Ok(())
+}
+
+/// With `pinned_config: None` the ONE-1343 path is byte-for-byte unchanged:
+/// one call executes and settles, the identical repeat memo-hits with zero
+/// re-spend and no second claim.
+#[test]
+fn no_pin_no_change() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    assert!(
+        ctx.pinned_config.is_none(),
+        "the helper context stays unpinned by default"
+    );
+    // A single scripted response: any second backend call would panic.
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("unpinned answer"))]);
+    let guard = guard_with_limit(10_000);
+
+    let outcome =
+        block_on(call_as_step(&ctx, &backend, &guard, request_fixture())).expect("first execution");
+    let StepOutcome::Finished {
+        response, memoized, ..
+    } = outcome
+    else {
+        panic!("expected finished step");
+    };
+    assert!(!memoized);
+    assert_eq!(response, response_fixture("unpinned answer"));
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(guard.read().used_units, 150, "exact usage settlement");
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+        1
+    );
+
+    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect("memoized re-execution");
+    let StepOutcome::Finished {
+        response: replayed,
+        memoized,
+        ..
+    } = outcome
+    else {
+        panic!("expected finished step");
+    };
+    assert!(memoized);
+    assert_eq!(replayed, response);
+    assert_eq!(backend.calls(), 1, "backend count unchanged");
+    assert_eq!(guard.read().used_units, 150, "used units unchanged");
+    assert_eq!(guard.read().reserved_units, 0, "reserved units zero");
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_STEP_PREDICATE)?,
+        1,
+        "no second terminal claim"
+    );
+    Ok(())
+}
+
+/// The memo-hit branch is a trust boundary (ONE-1344): a stored response is
+/// returned only when the WITH-WHAT provenance it recorded is THIS request's
+/// identity. An index row that points at a response recorded under a different
+/// model MISSES and the step recomputes — a foreign response is never served.
+#[test]
+fn memo_hit_refuses_foreign_model_provenance() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("model A answer")),
+        Ok(response_fixture("model B answer")),
+    ]);
+    let guard = guard_with_limit(10_000);
+
+    // Model A runs to completion: terminal claim + memo index row.
+    let request_a = request_fixture();
+    let hash_a = request_a.canonical_hash().expect("hash");
+    block_on(call_as_step(&ctx, &backend, &guard, request_a)).expect("model A execution");
+    let claim_a = step_index_lookup(&vault, fixture.attempt_id, &hash_a)?.expect("memo index row");
+
+    // Model B is a DIFFERENT step hash. Point its index slot at model A's
+    // claim — the shape a poisoned index row or a digest collision has.
+    let mut request_b = request_fixture();
+    request_b.model = ModelId::new("other/model@r9").expect("model id");
+    let hash_b = request_b.canonical_hash().expect("hash");
+    assert_ne!(hash_a, hash_b, "the two models are distinct durable steps");
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(
+        &mut wtxn,
+        &step_index_key(fixture.attempt_id, &hash_b),
+        claim_a.as_bytes(),
+    )?;
+    wtxn.commit()?;
+
+    let outcome =
+        block_on(call_as_step(&ctx, &backend, &guard, request_b)).expect("model B execution");
+    let StepOutcome::Finished {
+        response, memoized, ..
+    } = outcome
+    else {
+        panic!("expected finished step");
+    };
+    assert!(!memoized, "a foreign-model row must not memo-hit");
+    assert_eq!(
+        response,
+        response_fixture("model B answer"),
+        "model B must receive its OWN response, never model A's"
+    );
+    assert_eq!(backend.calls(), 2, "the mismatched row recomputed");
+
+    // The recompute replaced the poisoned slot with model B's own claim, and
+    // model A's row is untouched.
+    let claim_b = step_index_lookup(&vault, fixture.attempt_id, &hash_b)?.expect("model B row");
+    assert_ne!(claim_b, claim_a);
+    let body_b = vault.get_claim(&claim_b)?.expect("model B claim");
+    assert_eq!(
+        decode_step_claim_value(&body_b.value)?.model_id,
+        "other/model@r9"
+    );
+    assert_eq!(
+        step_index_lookup(&vault, fixture.attempt_id, &hash_a)?,
+        Some(claim_a),
+        "model A's own memo row is unchanged"
+    );
+    Ok(())
+}
+
+/// Active is not enough to enter the memo index (ONE-1344): a `dreamer.step`
+/// claim is indexed only when it carries a well-formed model binding AND the
+/// runner provenance naming the SAME attempt its value does.
+#[test]
+fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+
+    let step_value = |step_hash: [u8; 32], model_id: &str| {
+        encode_step_claim_value(&EncodedStepClaim {
+            attempt_id: fixture.attempt_id,
+            step_hash,
+            progression: StepProgression::Finished,
+            model_id: model_id.to_owned(),
+            purpose: "consolidation".to_owned(),
+            params_hash: bytes_to_hex_lower(blake3::hash(b"params").as_bytes()),
+            usage_in: 100,
+            usage_out: 50,
+            response: Some("{}".to_owned()),
+            response_ref: None,
+            at: 10_000,
+        })
+    };
+    let write_claim = |value: Value, envelope: &WriteEnvelope| -> Result<EntityId> {
+        let claim_id = EntityId::now();
+        let candidate = ClaimCandidate::new(
+            DREAMER_STEP_PREDICATE,
+            ClaimSubject::Entity(fixture.subject),
+            value,
+            1.0,
+        );
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(&claim_id, candidate, envelope, occurred(10_000), 10_000)
+                .apply(wtxn)
+        })?;
+        Ok(claim_id)
+    };
+
+    // Control: the runner's own envelope with a valid model binding indexes.
+    let runner_envelope = dreamer_runtime_envelope(&ctx)?;
+    let trusted_hash = [0x11_u8; 32];
+    let trusted = write_claim(step_value(trusted_hash, "test/model@r1"), &runner_envelope)?;
+    assert_eq!(
+        step_index_lookup(&vault, fixture.attempt_id, &trusted_hash)?,
+        Some(trusted),
+        "the runner's own terminal claim is indexed"
+    );
+
+    // (1) No runner provenance: the identical value under a foreign envelope.
+    let foreign_envelope = WriteEnvelope::new(
+        fixture.actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("not-the-dreamer-runner"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let foreign_hash = [0x22_u8; 32];
+    write_claim(step_value(foreign_hash, "test/model@r1"), &foreign_envelope)?;
+    assert!(
+        step_index_lookup(&vault, fixture.attempt_id, &foreign_hash)?.is_none(),
+        "a claim without runner provenance must not enter the memo index"
+    );
+
+    // (2) Cross-attempt binding: runner provenance for a DIFFERENT attempt than
+    // the one the value names.
+    let other = step_fixture(&vault, 11)?;
+    let other_ctx = self::ctx(&vault, &other, 10_000);
+    let other_envelope = dreamer_runtime_envelope(&other_ctx)?;
+    let cross_hash = [0x33_u8; 32];
+    write_claim(step_value(cross_hash, "test/model@r1"), &other_envelope)?;
+    assert!(
+        step_index_lookup(&vault, fixture.attempt_id, &cross_hash)?.is_none(),
+        "provenance must bind the attempt the value names"
+    );
+
+    // (3) Malformed model binding under the runner's own envelope.
+    let malformed_hash = [0x44_u8; 32];
+    write_claim(step_value(malformed_hash, "not-a-model"), &runner_envelope)?;
+    assert!(
+        step_index_lookup(&vault, fixture.attempt_id, &malformed_hash)?.is_none(),
+        "an unusable model binding must not enter the memo index"
+    );
     Ok(())
 }
