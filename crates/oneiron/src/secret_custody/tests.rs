@@ -182,11 +182,15 @@ fn resolve_on_empty_vault_returns_defaults() {
 /// engine seeder does (store-level put + type-index row) — the custody floor
 /// resolves over exactly these bodies.
 fn put_policy_manifest(vault: &Vault, seed: u8, rows: Vec<(Value, Value)>) {
-    use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(rows)).expect("encode manifest body");
-    let id = EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("manifest id");
+    put_policy_manifest_body(vault, seed, data);
+}
+
+/// The same row, with the body written VERBATIM — the seam a corrupt or
+/// partially written manifest body arrives through.
+fn put_policy_manifest_body(vault: &Vault, seed: u8, data: Vec<u8>) {
+    let id = manifest_id(seed);
     let learned_at = 2_u64;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
@@ -208,6 +212,202 @@ fn put_policy_manifest(vault: &Vault, seed: u8, rows: Vec<(Value, Value)>) {
         .put(&mut wtxn, &type_key, &[])
         .expect("type index row");
     wtxn.commit().expect("commit manifest");
+}
+
+/// The manifest id a `seed` stands for. Its hex is what a refusal must NEVER
+/// carry.
+fn manifest_id(seed: u8) -> EntityId {
+    EntityId::from_bytes([seed; ENTITY_ID_LEN]).expect("manifest id")
+}
+
+/// Indexes `id` as a POLICY_MANIFEST while the entity plane says something
+/// else: `payload: None` writes NO entity row (the dangling entry corruption
+/// leaves behind), and `Some(bytes)` writes the row verbatim so a header the
+/// floor cannot parse — or one naming another entity type — can be staged.
+fn put_manifest_index_over_entity(vault: &Vault, seed: u8, payload: Option<&[u8]>) {
+    let id = manifest_id(seed);
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    if let Some(bytes) = payload {
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), bytes)
+            .expect("put entity");
+    }
+    let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+    vault
+        .store
+        .type_index
+        .put(&mut wtxn, &type_key, &[])
+        .expect("type index row");
+    wtxn.commit().expect("commit manifest index");
+}
+
+/// An entity payload with a well-formed metadata header naming `entity_type`
+/// and no body — enough to reach the walk's type check.
+fn entity_payload_of_type(entity_type: u8) -> Vec<u8> {
+    let mut payload = vec![entity_type];
+    for _ in 0..3 {
+        payload.extend_from_slice(&2_u64.to_be_bytes());
+    }
+    payload
+}
+
+/// The floor must REFUSE, never resolve: a broken indexed declaration is not a
+/// vault that declared no floor. The refusal is checked for its classification
+/// and for carrying no id hex — the only raw identifier this local error
+/// surface could ever leak.
+fn assert_floor_fails_closed(vault: &Vault, case: &str, leaky: &[&str]) {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    match SecretCustodyFloor::resolve(&vault.store, &rtxn) {
+        Err(err) => {
+            assert!(
+                matches!(err, Error::CorruptedIndex(_)),
+                "case `{case}`: {err:?}"
+            );
+            let rendered = format!("{err} / {err:?}");
+            assert!(rendered.contains("policy-manifest"), "case `{case}`");
+            for secret in leaky {
+                assert!(!rendered.contains(secret), "case `{case}` leaked {secret}");
+            }
+        }
+        Ok(floor) => panic!("case `{case}` resolved {floor:?}"),
+    }
+}
+
+#[test]
+fn every_broken_manifest_index_branch_fails_closed_for_the_custody_floor() {
+    // The custody mirror of the credential door's four-way index audit. Before
+    // the shared strict walk this resolver `continue`d past every one of these
+    // and handed back `SecretCustodyFloor::default()` — the permissive
+    // `T0..T2` band. Deleting one entity row would then have widened the
+    // vault's custody posture, which is the single direction a floor may never
+    // fail. None of them may resolve, and none may put an id or a key byte
+    // into the refusal.
+
+    // 1. A type-index key that is not `[type byte][entity id]` at all.
+    let (_tmp, vault) = temp_vault();
+    {
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        let short_key: &[u8] = &[ENTITY_TYPE_POLICY_MANIFEST, 0x01, 0x02];
+        vault
+            .store
+            .type_index
+            .put(&mut wtxn, short_key, &[])
+            .expect("short type key");
+        wtxn.commit().expect("commit short key");
+    }
+    assert_floor_fails_closed(&vault, "unusable type-index key", &["0102"]);
+
+    // 2. An indexed entry whose entity row is gone.
+    let (_tmp, vault) = temp_vault();
+    put_manifest_index_over_entity(&vault, 0x71, None);
+    let hex = manifest_id(0x71).to_hex();
+    assert_floor_fails_closed(&vault, "dangling entity row", &[hex.as_str()]);
+
+    // 3. An entity row too short to carry a metadata header.
+    let (_tmp, vault) = temp_vault();
+    let stub: &[u8] = &[ENTITY_TYPE_POLICY_MANIFEST, 0x00, 0x00];
+    put_manifest_index_over_entity(&vault, 0x72, Some(stub));
+    let hex = manifest_id(0x72).to_hex();
+    assert_floor_fails_closed(&vault, "unparseable metadata header", &[hex.as_str()]);
+
+    // 4. An entry naming an entity of some other type.
+    let (_tmp, vault) = temp_vault();
+    let other = entity_payload_of_type(ENTITY_TYPE_POLICY_MANIFEST ^ 0x01);
+    put_manifest_index_over_entity(&vault, 0x73, Some(other.as_slice()));
+    let hex = manifest_id(0x73).to_hex();
+    assert_floor_fails_closed(&vault, "entity of another type", &[hex.as_str()]);
+}
+
+#[test]
+fn a_manifest_body_that_is_present_but_unreadable_fails_the_floor_closed() {
+    // The body half of the same audit. A body whose bytes are gone or
+    // truncated is a declaration ERASED, not a pack that never declared — and
+    // the bytes most worth erasing are exactly the ones that narrowed the
+    // floor.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_body(&vault, 0x74, Vec::new());
+    let hex = manifest_id(0x74).to_hex();
+    assert_floor_fails_closed(&vault, "erased body", &[hex.as_str()]);
+
+    // A narrowing declaration truncated mid-value reads the same way.
+    let (_tmp, vault) = temp_vault();
+    let mut narrowing = Vec::new();
+    let rows = vec![(Value::from(floor_keys::CROSS_VAULT_MAX), Value::from(0_u64))];
+    rmpv::encode::write_value(&mut narrowing, &Value::Map(rows)).expect("encode body");
+    narrowing.pop();
+    put_policy_manifest_body(&vault, 0x75, narrowing);
+    let hex = manifest_id(0x75).to_hex();
+    assert_floor_fails_closed(&vault, "truncated body", &[hex.as_str()]);
+
+    // And the door that consumes the floor refuses with it, instead of
+    // admitting a T2 binding against the silently-restored default band.
+    let rec = record(
+        "portable-t2",
+        CustodyClass::CustodyPortable,
+        b"v",
+        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
+    );
+    let err = vault
+        .register_secret(rec)
+        .expect_err("registration must not proceed on an unreadable manifest plane");
+    assert!(matches!(err, Error::CorruptedIndex(_)), "got {err:?}");
+    assert_eq!(
+        vault.resolve_secret_ref("portable-t2").expect("resolve"),
+        None
+    );
+}
+
+#[test]
+fn readable_bodies_of_another_plane_still_leave_the_floor_at_its_defaults() {
+    // The control for the strictness above: READABILITY is the dividing line,
+    // not shape. A body that canonically decodes to something other than a map
+    // belongs to some other policy plane — the manifest body schema is the
+    // gate's — so it carries no custody floor rows and refuses nothing.
+    let (_tmp, vault) = temp_vault();
+    let mut array_body = Vec::new();
+    let rows = vec![Value::from(1_u64)];
+    rmpv::encode::write_value(&mut array_body, &Value::Array(rows)).expect("encode body");
+    put_policy_manifest_body(&vault, 0x76, array_body);
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
+    assert_eq!(floor, SecretCustodyFloor::default());
+}
+
+#[test]
+fn two_narrowing_manifests_still_resolve_most_restrictively() {
+    // The strict walk must still VISIT every valid body and merge them: the
+    // fail-closed arms above may not cost the resolver its ordinary answer.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest(
+        &vault,
+        0x77,
+        vec![
+            (Value::from(floor_keys::PORTABLE_MAX), Value::from(1_u64)),
+            (
+                Value::from(floor_keys::ROTATION_MAX_AGE_SECS),
+                Value::from(900_u64),
+            ),
+        ],
+    );
+    put_policy_manifest(
+        &vault,
+        0x78,
+        vec![
+            (Value::from(floor_keys::PORTABLE_MAX), Value::from(2_u64)),
+            (
+                Value::from(floor_keys::ROTATION_MAX_AGE_SECS),
+                Value::from(600_u64),
+            ),
+        ],
+    );
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
+    assert_eq!(floor.portable.max, CustodyTier::T1Leased);
+    assert_eq!(floor.rotation_max_age_secs, Some(600));
 }
 
 #[test]

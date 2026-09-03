@@ -48,6 +48,24 @@
 //! capability slip (OF-452 D1/D7/D10); see [`crate::secret_custody`] module
 //! docs — this module does not pretend otherwise either.
 //!
+//! # The door's admission travels INSIDE the stamping transaction
+//!
+//! That custody rule is about the RECORD. The credential door adds a second,
+//! independent admission over the same mint — its narrow-only `secret.door.*`
+//! dial — and `Vault::materialize_admitted_lease` is where the two meet. It
+//! takes one `AdmittedLease` (the door's whole proof: proved effector, named
+//! secret, admitted TTL, absolute bound, witnessed instant), RE-RESOLVES the
+//! door dial under the write transaction that is about to stamp, and refuses on
+//! any disagreement — before the record read, the custody floor, or any value
+//! byte. The door resolving its dial in an earlier read transaction is what
+//! made the dial that admitted a request different from the dial the row
+//! committed under; both now happen under the one transaction that writes.
+//!
+//! `Vault::materialize_secret_lease_at` — the raw `(effector, ttl_secs, now,
+//! not_after)` shape — is module-private for that reason: with two ways to
+//! reach a stamp, "the door's admission is atomic with the stamp" would only be
+//! true of whichever one the door happened to call.
+//!
 //! # Teardown honesty (S3/S6)
 //!
 //! [`Vault::revoke_secret_lease`] and expiry flip the lease status, revoke
@@ -91,6 +109,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use crate::authority::{
+    authority_first_seen_clock_sync_key, authority_observation_secs_for_domain,
+    decode_authority_first_seen_secs,
+};
+use crate::credential_door::{AdmittedLease, DoorResult};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
@@ -121,6 +144,93 @@ pub const SECRET_MATERIALIZATION_RECEIPT_KIND: &str = "secret_materialization";
 
 fn invalid_body(reason: &'static str) -> Error {
     Error::InvalidSecretLeaseBody(reason)
+}
+
+// ---------------------------------------------------------------------------
+// The vault's authoritative instant
+// ---------------------------------------------------------------------------
+
+/// ONE reading of the vault's own authoritative clock.
+///
+/// The payload is private and this module is the only place that can put a
+/// number into it: there is no `From<u64>`, no public constructor, and no
+/// clock trait a caller could implement. Code outside `secret_lease` obtains
+/// an instant from [`Vault::instant_in_txn`], reads it back through
+/// [`VaultInstant::secs`], and may only move it FORWARD through
+/// [`VaultInstant::after`].
+///
+/// That is the whole difference from the `now: u64` this replaces. A caller
+/// that hands the credential door a number decides BY ITSELF whether a
+/// credential sits inside its own lifetime — a slip that died an hour ago
+/// authorizes perfectly against `now = issued_at`, and a slip whose remaining
+/// validity is nearly spent buys a full-length ticket against `now =
+/// issued_at` too. The instant this type admits was READ from the engine's
+/// monotone observation clock instead, so "is this credential live, and how
+/// much of it is left" is answered by the vault and never by whoever is
+/// asking.
+///
+/// `Copy` on purpose: an instant is an OBSERVATION, not custody of anything,
+/// and copying an observation cannot duplicate authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct VaultInstant(u64);
+
+impl VaultInstant {
+    /// The reading in unix seconds — for the durable row fields and for the
+    /// external credential facts that are still spelled as numbers on the
+    /// wire.
+    pub(crate) fn secs(self) -> u64 {
+        self.0
+    }
+
+    /// The instant `secs` AFTER this one.
+    ///
+    /// Forward-only, and deliberately the only arithmetic this type offers.
+    /// It exists so a holder of a witnessed reading can name a DEADLINE
+    /// derived from it — a credential live at `now` has its absolute expiry at
+    /// exactly `now + remaining`, because `remaining` is
+    /// `expires_at - now` — without any way to manufacture an EARLIER
+    /// instant. An earlier instant is the dangerous direction: that is the one
+    /// that makes a dead credential look live.
+    pub(crate) fn after(self, secs: u64) -> Self {
+        Self(self.0.saturating_add(secs))
+    }
+}
+
+impl Vault {
+    /// The vault's authoritative instant, read under `txn`.
+    ///
+    /// The single clock seam the credential door authorizes and stamps
+    /// against. It is deliberately NOT the raw wall clock: it is the authority
+    /// plane's monotone observation clock — the persisted first-seen clock
+    /// floor read through `txn`, raised through
+    /// [`authority_observation_secs_for_domain`] — i.e. the same reading
+    /// [`Vault::authority_fold`] and [`Vault::authority_fold_readonly_in_txn`]
+    /// already make widen-maturity decisions on. Two vault answers that both
+    /// turn on "has this window closed" therefore cannot disagree about what
+    /// time it is.
+    ///
+    /// The observation is monotone within a clock domain and never sits below
+    /// the persisted floor, so a wall clock stepped backwards cannot drag a
+    /// door reading below a second this vault has already observed, and the
+    /// anchor only ever advances by time it actually measured.
+    ///
+    /// Pure: it reads the persisted floor and returns. No cache, no epoch, no
+    /// timer, and no write-back — the floor advances only on the authority
+    /// write paths that already own it, which is why this can run inside a
+    /// caller's read transaction at all.
+    pub(crate) fn instant_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<VaultInstant> {
+        let persisted_floor = self
+            .store
+            .sync_state
+            .get(txn, authority_first_seen_clock_sync_key())?
+            .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            .unwrap_or(0);
+        Ok(VaultInstant(authority_observation_secs_for_domain(
+            self.store.authority_clock_domain,
+            persisted_floor,
+            unix_seconds_now(),
+        )))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -910,6 +1020,80 @@ fn read_record_for_ref_in_txn(
     Ok((id, rec))
 }
 
+/// The ONE stamping body, under a write transaction its CALLER owns.
+///
+/// Everything a T1 materialization does except opening and committing that
+/// transaction lives here, exactly once: the record read, the custody floor
+/// resolved under this same transaction, the one admission rule, the value read
+/// through the bound value door, the bound arms, and the receipt-before-lease
+/// row order. Both entries below funnel through it, so composing over the
+/// landed materialization never grows a second, unmarked path to a mint — and
+/// the door's extra in-transaction admission is a check ADDED in front of this
+/// body, never a re-implementation of it.
+///
+/// Module-private on purpose: the caller-owned transaction is the whole reason
+/// this exists, and a `pub(crate)` version of it would be exactly the raw
+/// `(effector, ttl_secs, now, not_after)` mint path the typed admission
+/// removed.
+///
+/// The bound arms are unchanged: `expires_at` is `min(now + ttl_secs,
+/// not_after)`, and a reading at or past `not_after` fails closed. Returning an
+/// error here writes nothing the caller can commit — the caller drops its write
+/// transaction uncommitted — so no lease row, no receipt row, and no value
+/// escape a bound this materialization can no longer honour.
+fn stamp_secret_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    secret_ref: &str,
+    effector: &str,
+    ttl_secs: u64,
+    now: VaultInstant,
+    not_after: Option<VaultInstant>,
+) -> Result<SecretLeaseMaterialization> {
+    let (id, rec) = read_record_for_ref_in_txn(&vault.store, wtxn, secret_ref)?;
+    let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
+    admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
+    let value = read_value_for_ref_in_txn(vault, wtxn, &id, effector)?;
+    // ONE instant stamps `granted_at`, dates the receipt, and answers the
+    // bound. Nothing between authorization and here can move them apart.
+    let now = now.secs();
+    let expires_at = match not_after.map(VaultInstant::secs) {
+        // The window closed before the lease could be stamped. Returning
+        // here leaves the caller's write txn uncommitted, so no row and no
+        // value escape a bound this materialization can no longer honour.
+        Some(bound) if now >= bound => {
+            return Err(Error::InvariantViolation(
+                "secret lease expiry bound elapsed before materialization stamped the lease",
+            ));
+        }
+        Some(bound) => now.saturating_add(ttl_secs).min(bound),
+        None => now.saturating_add(ttl_secs),
+    };
+    let lease = SecretLease {
+        lease_id: EntityId::now(),
+        secret_ref: secret_ref.to_owned(),
+        binding_effector: effector.to_owned(),
+        tier: CustodyTier::T1Leased,
+        granted_at: now,
+        expires_at,
+        status: SecretLeaseStatus::Active,
+        materialization_receipt: EntityId::now(),
+        value_generation: rec.rotation_generation,
+    };
+    let receipt = SecretMaterializationReceipt {
+        receipt_id: lease.materialization_receipt,
+        secret_ref: lease.secret_ref.clone(),
+        effector: lease.binding_effector.clone(),
+        tier: lease.tier,
+        lease_id: lease.lease_id,
+        materialized_at: now,
+        value_generation: lease.value_generation,
+    };
+    write_materialization_receipt_in_txn(&vault.store, wtxn, &receipt)?;
+    write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
+    Ok(SecretLeaseMaterialization { lease, value })
+}
+
 /// Reads the value bytes through the ONE bound value door (ONE-1919), for
 /// a record already admitted at `requested` tier.
 fn read_value_for_ref_in_txn(
@@ -1178,6 +1362,14 @@ impl Vault {
     ///
     /// `not_after: None` is exactly [`Vault::materialize_secret_lease`]'s
     /// unbounded behaviour, unchanged for every existing caller.
+    ///
+    /// This wrapper is the API BOUNDARY, and the only place an external
+    /// absolute second count becomes a [`VaultInstant`] bound. The wall
+    /// reading it has always stamped stays exactly what it was, so every
+    /// current non-door caller keeps its behaviour unchanged. The credential
+    /// door does NOT come through here: it carries its whole admission into
+    /// `Vault::materialize_admitted_lease` instead, so nothing a caller chose
+    /// can date, scope, or size a door-issued lease.
     pub fn materialize_secret_lease_bounded(
         &self,
         secret_ref: &str,
@@ -1185,51 +1377,97 @@ impl Vault {
         ttl_secs: u64,
         not_after: Option<u64>,
     ) -> Result<SecretLeaseMaterialization> {
+        self.materialize_secret_lease_at(
+            secret_ref,
+            effector,
+            ttl_secs,
+            VaultInstant(unix_seconds_now()),
+            not_after.map(VaultInstant),
+        )
+    }
+
+    /// [`Vault::materialize_secret_lease_bounded`] under an instant that has
+    /// already been WITNESSED, carried in as a [`VaultInstant`] rather than
+    /// read here.
+    ///
+    /// One stamping operation under ONE reading: `now` dates `granted_at`,
+    /// computes and clamps `expires_at`, and dates the materialization
+    /// receipt, so the row, its receipt, and the bound check can never
+    /// disagree about when the lease was minted.
+    ///
+    /// PRIVATE to this module, and that is a load-bearing fact rather than
+    /// tidiness. This is the raw shape — a bare effector string, a bare
+    /// `ttl_secs`, a bare instant — and while the credential door could still
+    /// name it, the door had two ways to reach a mint: this one, and the typed
+    /// admission. "Exactly one admission shape reaches the stamp" is only true
+    /// if the other shape is unreachable, so the door cannot see this at all
+    /// any more. What remains is the wall-clock wrapper above, whose behaviour
+    /// every existing non-door caller depends on and which is unchanged.
+    fn materialize_secret_lease_at(
+        &self,
+        secret_ref: &str,
+        effector: &str,
+        ttl_secs: u64,
+        now: VaultInstant,
+        not_after: Option<VaultInstant>,
+    ) -> Result<SecretLeaseMaterialization> {
         let mut wtxn = self.store.env.write_txn()?;
-        let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, secret_ref)?;
-        let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
-        admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
-        let value = read_value_for_ref_in_txn(self, &wtxn, &id, effector)?;
-        // ONE clock reading stamps `granted_at`, dates the receipt, and
-        // answers the bound. Nothing between authorization and here can move
-        // them apart.
-        let now = unix_seconds_now();
-        let expires_at = match not_after {
-            // The window closed before the lease could be stamped. Returning
-            // here drops the write txn uncommitted, so no row and no value
-            // escape a bound this materialization can no longer honour.
-            Some(bound) if now >= bound => {
-                return Err(Error::InvariantViolation(
-                    "secret lease expiry bound elapsed before materialization stamped the lease",
-                ));
-            }
-            Some(bound) => now.saturating_add(ttl_secs).min(bound),
-            None => now.saturating_add(ttl_secs),
-        };
-        let lease = SecretLease {
-            lease_id: EntityId::now(),
-            secret_ref: secret_ref.to_owned(),
-            binding_effector: effector.to_owned(),
-            tier: CustodyTier::T1Leased,
-            granted_at: now,
-            expires_at,
-            status: SecretLeaseStatus::Active,
-            materialization_receipt: EntityId::now(),
-            value_generation: rec.rotation_generation,
-        };
-        let receipt = SecretMaterializationReceipt {
-            receipt_id: lease.materialization_receipt,
-            secret_ref: lease.secret_ref.clone(),
-            effector: lease.binding_effector.clone(),
-            tier: lease.tier,
-            lease_id: lease.lease_id,
-            materialized_at: now,
-            value_generation: lease.value_generation,
-        };
-        write_materialization_receipt_in_txn(&self.store, &mut wtxn, &receipt)?;
-        write_secret_lease_in_txn(&self.store, &mut wtxn, &lease)?;
+        let materialization = stamp_secret_lease_in_txn(
+            self, &mut wtxn, secret_ref, effector, ttl_secs, now, not_after,
+        )?;
         wtxn.commit()?;
-        Ok(SecretLeaseMaterialization { lease, value })
+        Ok(materialization)
+    }
+
+    /// The credential door's materialization: ONE admitted lease in, one
+    /// stamped lease out, and the door's own admission taken AGAIN inside the
+    /// transaction that stamps it.
+    ///
+    /// [`AdmittedLease`] is the whole argument list because it is the whole
+    /// admission — the proved effector, the named secret, the TTL a ceiling
+    /// admitted, the absolute instant the buying authority dies at, and the
+    /// single witnessed reading all of it was decided under. There is no raw
+    /// `max_lease_ttl_secs`, no caller-supplied effector set, and no second
+    /// `now` to disagree with the first.
+    ///
+    /// The order here is the point of the whole step:
+    ///
+    /// 1. open the write transaction that will stamp the lease;
+    /// 2. RE-RESOLVE the door dial under THAT transaction and refuse on any
+    ///    disagreement with what the door admitted
+    ///    ([`AdmittedLease::reaffirm_in_txn`]) — before the record is read,
+    ///    before the custody floor is resolved, before a value byte is touched;
+    /// 3. stamp through the one shared body, which resolves the custody floor
+    ///    and runs the one admission rule under this same transaction;
+    /// 4. commit.
+    ///
+    /// Previously (2) happened in a SEPARATE read transaction the door opened
+    /// earlier, so the dial that admitted a request was never the dial the row
+    /// committed under, and a dial narrowed in between still minted at the
+    /// stale wide reading. Now the check and the commit are one atomic act: a
+    /// refusal at (2) returns with the write transaction dropped uncommitted,
+    /// leaving no lease row, no receipt row, and no value.
+    ///
+    /// No caller closure runs inside this transaction — there is none to run.
+    /// T1 hands the value back to the caller after the commit; it is T0 that
+    /// takes a closure, and T0 keeps its own drop-then-apply shape.
+    pub(crate) fn materialize_admitted_lease(
+        &self,
+        admitted: &AdmittedLease,
+    ) -> DoorResult<SecretLeaseMaterialization> {
+        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
+        admitted.reaffirm_in_txn(&self.store, &wtxn)?;
+        let materialization = stamp_secret_lease_in_txn(
+            self,
+            &mut wtxn,
+            admitted.secret_ref(),
+            admitted.effector(),
+            admitted.ttl_secs(),
+            admitted.instant(),
+            Some(admitted.not_after()),
+        )?;
+        wtxn.commit().map_err(Error::from)?;
+        Ok(materialization)
     }
 
     /// T2 local registration under a live lease. The lease must be `Active`
