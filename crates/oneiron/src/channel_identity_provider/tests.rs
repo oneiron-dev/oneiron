@@ -1,5 +1,18 @@
+use super::gmail::{
+    GMAIL_CONNECTOR_EFFECTOR, GMAIL_INBOX_POLL_ATTEMPT_KIND, GMAIL_METADATA_OAUTH_SCOPE,
+    GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailInboxPollConfig,
+    delegated_scope_for_google_oauth_scope, gmail_inbox_poll_dedupe_key,
+};
 use super::*;
-use crate::channel_identity::ChannelIdentityState;
+use crate::attempt_queue::{AttemptQueue, EnqueueOutcome};
+use crate::channel_identity::{
+    ChannelIdentityState, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
+    delegated_custody_scopes,
+};
+use crate::secret_custody::{
+    CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
+    SecretCustodyRecord, SecretCustodyStatus,
+};
 use crate::surface_event::{InboundSurfaceRouteOutcome, SurfaceCounterpartyStamp};
 use crate::{Vault, VaultConfig};
 
@@ -97,7 +110,7 @@ fn mock_adapter_conformance_suite_consumes_provision_and_inbound() -> Result<()>
     let identity = ChannelIdentity::requested(
         EMAIL_CHANNEL,
         address,
-        ChannelIdentityShape::DedicatedAddress,
+        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent_ref),
         1_000,
     );
@@ -793,5 +806,275 @@ fn line_oa_adapter_validates_provider_native_id_shapes() -> Result<()> {
         Error::InvalidConfig(reason)
             if reason == "LINE source user id must match LINE user id shape U[0-9a-f]{32}"
     ));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Gmail delegated adapter
+// ---------------------------------------------------------------------------
+
+const GMAIL_MAILBOX: &str = "Member@Member-Owned.Example";
+const GMAIL_CUSTODY_REF: &str = "oauth/gmail/member";
+
+fn gmail_adapter() -> Result<GmailDelegatedAdapter> {
+    Ok(GmailDelegatedAdapter::new(
+        GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?,
+    ))
+}
+
+/// Registers the member's OAuth grant: live, `connector:gmail` read-bound, and
+/// naming THIS mailbox as its subject.
+fn register_gmail_custody(vault: &Vault) -> Result<EntityId> {
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: GMAIL_CUSTODY_REF.to_owned(),
+        class: CustodyClass::CrossVault,
+        device_only: true,
+        value_bytes: b"member-oauth-token".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1_800_000_000,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: GMAIL_CONNECTOR_EFFECTOR.to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes(EMAIL_CHANNEL, GMAIL_MAILBOX),
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })
+}
+
+#[test]
+fn gmail_delegated_reads_require_an_active_identity_row() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    register_gmail_custody(&vault)?;
+    let adapter = gmail_adapter()?;
+    let identity_id = entity(0xC1);
+    let agent_ref = entity(0xC2);
+
+    let provisioned =
+        adapter.provision_delegated_identity(&vault, identity_id, agent_ref, 1_800_000_000)?;
+    assert_eq!(provisioned.identity.state, ChannelIdentityState::Requested);
+
+    // The door must never reach the VALUE on a refusal, so every arm below
+    // watches this flag rather than only the returned error.
+    let saw_bytes = std::cell::Cell::new(false);
+    let mut door = |_: &[u8]| -> Result<()> {
+        saw_bytes.set(true);
+        Ok(())
+    };
+
+    // 1. REQUESTED: the grant exists, the row does not yet claim it.
+    let refused = adapter
+        .enqueue_inbox_poll(&vault, identity_id, 1_800_000_001)
+        .expect_err("a not-yet-live row arms no poll");
+    assert!(matches!(
+        refused,
+        Error::InvalidConfig(ref reason)
+            if reason == "gmail delegated reads require an active identity row, not requested"
+    ));
+    adapter
+        .with_delegated_token_at_door(&vault, identity_id, &mut door)
+        .expect_err("a not-yet-live row opens no token door");
+
+    vault.transition_channel_identity(
+        &identity_id,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        1_800_000_002,
+        None,
+    )?;
+
+    // 2. PENDING_FULFILLMENT: same reason.
+    adapter
+        .enqueue_inbox_poll(&vault, identity_id, 1_800_000_003)
+        .expect_err("a pending row arms no poll");
+    adapter
+        .with_delegated_token_at_door(&vault, identity_id, &mut door)
+        .expect_err("a pending row opens no token door");
+
+    // 3. ACTIVE: both doors open, and the token reaches the closure exactly
+    //    once, through the SECRET-02 injection.
+    vault.transition_channel_identity(
+        &identity_id,
+        ChannelIdentityState::Active,
+        None,
+        1_800_000_004,
+        None,
+    )?;
+    let outcome = adapter.enqueue_inbox_poll(&vault, identity_id, 1_800_000_005)?;
+    assert!(matches!(outcome, EnqueueOutcome::Enqueued(_)));
+    let receipt = adapter.with_delegated_token_at_door(&vault, identity_id, &mut door)?;
+    assert!(saw_bytes.get(), "the live row reaches the value");
+    assert_eq!(receipt.effector, GMAIL_CONNECTOR_EFFECTOR);
+    assert_eq!(receipt.secret_ref, GMAIL_CUSTODY_REF);
+    saw_bytes.set(false);
+
+    // 4. RELEASED, then TOMBSTONE. Custody is NOT revoked by either — the
+    //    member's OAuth grant is not ours to revoke — so a custody-only check
+    //    still passes at both stops while the row's authority is gone.
+    for (state, at) in [
+        (ChannelIdentityState::Released, 1_800_000_006),
+        (ChannelIdentityState::Tombstone, 1_800_000_007),
+    ] {
+        vault.transition_channel_identity(&identity_id, state, None, at, None)?;
+        adapter
+            .verify_custody_grant(&vault)
+            .expect("the member's grant outlives the row that pointed at it");
+
+        let refused = adapter
+            .enqueue_inbox_poll(&vault, identity_id, at)
+            .expect_err("a withdrawn row arms no poll");
+        assert!(matches!(
+            refused,
+            Error::InvalidConfig(ref reason)
+                if *reason == format!(
+                    "gmail delegated reads require an active identity row, not {}",
+                    state.as_str()
+                )
+        ));
+        adapter
+            .with_delegated_token_at_door(&vault, identity_id, &mut door)
+            .expect_err("a withdrawn row opens no token door");
+    }
+    assert!(!saw_bytes.get(), "no refusal ever reached the token bytes");
+
+    // No refusal minted or squatted a durable attempt: the only attempt in the
+    // queue is the one the ACTIVE row armed, on its own dedupe key.
+    let attempts: Vec<_> = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .filter(|attempt| attempt.kind == GMAIL_INBOX_POLL_ATTEMPT_KIND)
+        .collect();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(
+        attempts[0].dedupe_key.as_deref(),
+        Some(gmail_inbox_poll_dedupe_key(identity_id).as_str()),
+    );
+    // The durable payload carries NAMES only.
+    let payload: GmailInboxPollConfig =
+        serde_json::from_slice(&attempts[0].payload).expect("poll payload decodes");
+    assert_eq!(payload.custody_record_ref, GMAIL_CUSTODY_REF);
+    assert_eq!(payload.mailbox_address, "member@member-owned.example");
+    assert_eq!(payload.identity_ref, identity_id.to_hex());
+    assert!(!String::from_utf8_lossy(&attempts[0].payload).contains("member-oauth-token"));
+    Ok(())
+}
+
+#[test]
+fn gmail_delegated_doors_refuse_a_row_that_is_not_this_adapters() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    register_gmail_custody(&vault)?;
+    let adapter = gmail_adapter()?;
+
+    // No row at all.
+    assert!(matches!(
+        adapter
+            .enqueue_inbox_poll(&vault, entity(0xD0), 1_800_000_000)
+            .expect_err("an absent row arms no poll"),
+        Error::EntityNotFound
+    ));
+
+    // A SELF-HELD row: real, active, and carrying no grant.
+    let self_held_id = entity(0xD1);
+    let self_held = ChannelIdentity::requested(
+        EMAIL_CHANNEL,
+        "agent@example.com",
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(entity(0xD2)),
+        1_800_000_000,
+    );
+    vault.create_channel_identity(&self_held_id, &self_held)?;
+    assert!(matches!(
+        adapter
+            .enqueue_inbox_poll(&vault, self_held_id, 1_800_000_001)
+            .expect_err("a self-held row is not a delegated mailbox"),
+        Error::InvalidConfig(ref reason)
+            if reason == "gmail inbox poll requires a delegated_grant identity row"
+    ));
+
+    // A delegated row over ANOTHER member's mailbox, live, under its own grant:
+    // the field arms still speak for themselves rather than collapsing into the
+    // state arm.
+    let other_mailbox = "other@member-owned.example";
+    let other_grant = DelegatedGrant::new(
+        "oauth/gmail/other",
+        vec![crate::channel_identity::DelegatedGrantScope::MailRead],
+    );
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: other_grant.custody_record_ref.clone(),
+        class: CustodyClass::CrossVault,
+        device_only: true,
+        value_bytes: b"other-oauth-token".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1_800_000_000,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: GMAIL_CONNECTOR_EFFECTOR.to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes(EMAIL_CHANNEL, other_mailbox),
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let other_id = entity(0xD3);
+    vault.provision_delegated_identity(
+        &other_id,
+        DelegatedProvisionRequest {
+            channel: EMAIL_CHANNEL.to_owned(),
+            address_or_handle: other_mailbox.to_owned(),
+            binding: ChannelIdentityBinding::agent(entity(0xD4)),
+            grant: other_grant,
+        },
+        1_800_000_000,
+    )?;
+    vault.transition_channel_identity(
+        &other_id,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        1_800_000_001,
+        None,
+    )?;
+    vault.transition_channel_identity(
+        &other_id,
+        ChannelIdentityState::Active,
+        None,
+        1_800_000_002,
+        None,
+    )?;
+    assert!(matches!(
+        adapter
+            .enqueue_inbox_poll(&vault, other_id, 1_800_000_003)
+            .expect_err("another member's mailbox is not this adapter's row"),
+        Error::InvalidConfig(ref reason)
+            if reason
+                == "gmail inbox poll identity row is assigned to another channel or mailbox"
+    ));
+    Ok(())
+}
+
+#[test]
+fn gmail_delegated_grant_admits_read_scopes_only() -> Result<()> {
+    let config = GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?;
+    assert_eq!(config.mailbox_address(), "member@member-owned.example");
+    assert_eq!(config.scopes(), &[DelegatedGrantScope::MailRead]);
+
+    let narrowed = GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?
+        .with_google_oauth_scopes(&[GMAIL_METADATA_OAUTH_SCOPE])?;
+    assert_eq!(narrowed.scopes(), &[DelegatedGrantScope::MailMetadata]);
+
+    let widened = GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?
+        .with_google_oauth_scopes(&["https://www.googleapis.com/auth/gmail.send"])
+        .expect_err("an over-broad consent screen fails closed");
+    assert!(matches!(widened, Error::InvalidConfig(_)));
+    assert_eq!(
+        delegated_scope_for_google_oauth_scope("https://mail.google.com/"),
+        None,
+    );
     Ok(())
 }

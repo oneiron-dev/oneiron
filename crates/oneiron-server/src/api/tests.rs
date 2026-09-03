@@ -10023,7 +10023,7 @@ fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> S
     let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
-        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
         1_782_357_000,
     );
@@ -10280,7 +10280,7 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
     let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
-        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::vault(7),
         1_782_357_000,
     );
@@ -10490,7 +10490,7 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
             &oneiron::channel_identity::ChannelIdentity::requested(
                 "email",
                 address,
-                oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+                oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
                 oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
                 1_782_357_000,
             ),

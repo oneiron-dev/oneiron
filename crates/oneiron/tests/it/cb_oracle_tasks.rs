@@ -814,8 +814,8 @@ const CONSULT_NOW: u64 = 1_772_400_000;
 /// shared.
 mod human_fixture {
     use oneiron::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
-        ChannelIdentityState,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        SelfHeldShape,
     };
     use oneiron::code_run::{SelfDurableWait, SelfDurableWaitReason, SelfEffect};
     use oneiron::comm::resolve_or_create_comm_party;
@@ -877,7 +877,7 @@ mod human_fixture {
                     &ChannelIdentity::requested(
                         "email",
                         "assistant@example.test",
-                        ChannelIdentityShape::DedicatedAddress,
+                        SelfHeldShape::DedicatedAddress,
                         ChannelIdentityBinding::vault(1),
                         super::CONSULT_NOW,
                     ),

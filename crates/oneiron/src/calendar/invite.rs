@@ -46,6 +46,8 @@ use super::passport::{
     encode_passport_value, event_ref_for_indexed_uid, live_passport_for, resolve_event_by_uid,
 };
 use crate::Vault;
+#[cfg(test)]
+use crate::channel_identity::SelfHeldShape;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityShape, ChannelIdentityState};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
@@ -925,7 +927,7 @@ mod tests {
         let mut identity = ChannelIdentity::requested(
             channel,
             address,
-            ChannelIdentityShape::DedicatedAddress,
+            SelfHeldShape::DedicatedAddress,
             ChannelIdentityBinding::agent(actor),
             NOW,
         );

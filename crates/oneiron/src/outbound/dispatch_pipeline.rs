@@ -25,9 +25,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::calendar::invite::CalendarInvitePayload;
 use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
-use crate::channel_identity::{
-    ChannelIdentityBinding, ChannelIdentityState, decode_channel_identity_body,
-};
+use crate::channel_identity::{ChannelIdentityBinding, decode_channel_identity_body};
 use crate::counterparty_contact::normalize_channel_class;
 use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 use crate::edge::EdgeActorClass;
@@ -113,7 +111,12 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
             return Err(Error::CorruptedIndex("channel identity entity type"));
         }
         let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if identity.state != ChannelIdentityState::Active
+        // `may_send` rather than `state == Active`: a `delegated_grant` row is
+        // a scoped-READ grant over a mailbox the product does not own, and it
+        // reaches ACTIVE like any other row. Selecting one as the sender of an
+        // outbound effect would be sending AS the member on an authority we
+        // were never given.
+        if !identity.may_send()
             || normalize_channel_class(&identity.channel) != channel_class
             || identity.binding != ChannelIdentityBinding::agent(bound_actor)
         {

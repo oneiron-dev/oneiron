@@ -1037,7 +1037,7 @@ mod tests {
 
     use crate::attempt_queue::AttemptQueue;
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
     };
     use crate::comm::{
         CommClaimValue, record_comm_inbound_stop, resolve_or_create_comm_party, run_comm_projector,
@@ -1197,7 +1197,7 @@ mod tests {
                 &ChannelIdentity::requested(
                     "email",
                     OWN_ADDRESS,
-                    ChannelIdentityShape::DedicatedAddress,
+                    SelfHeldShape::DedicatedAddress,
                     ChannelIdentityBinding::vault(1),
                     NOW,
                 ),
