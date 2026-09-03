@@ -24,6 +24,12 @@ pub const OUTBOUND_VERB_FIELD_CONTRACT: &[&str] = &[
 ///
 /// The verb kind remains data in each connector manifest so connector-specific
 /// verbs can coexist with the common vocabulary without changing engine core.
+///
+/// `calendar.invite` (CAL-04, ONE-1786) is registered here exactly once and by
+/// that ticket alone. It is common rather than connector-specific because iMIP
+/// is a wire format, not one vendor's API: any connector that can put a
+/// `text/calendar` part beside a message body maps onto the same verb, the same
+/// frozen five-field payload, and the same UID/SEQUENCE law.
 pub const COMMON_OUTBOUND_VERB_KINDS: &[&str] = &[
     "send",
     "send_media",
@@ -36,6 +42,7 @@ pub const COMMON_OUTBOUND_VERB_KINDS: &[&str] = &[
     "push",
     "call",
     "schedule_native",
+    crate::calendar::invite::CALENDAR_INVITE_VERB,
 ];
 
 /// Whether a verb may interrupt the recipient.

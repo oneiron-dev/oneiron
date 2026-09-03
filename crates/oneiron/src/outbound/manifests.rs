@@ -445,6 +445,36 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
             ],
         ),
         manifest(
+            "calendar",
+            "calendar",
+            "iMIP invitations are first-party calendar objects rendered from our own event state; the ICS bytes never ride the frozen body, only their blob ref does.",
+            vec![verb(
+                crate::calendar::invite::CALENDAR_INVITE_VERB,
+                "send_imip_invitation",
+                json!({
+                    "method": "REQUEST | CANCEL",
+                    "uid": "event UID, minted once at the first confirm and reused forever",
+                    "sequence": "iTIP SEQUENCE, strictly increasing on the same UID",
+                    "ics_blob_ref": "blob artifact ref the connector resolves into the text/calendar part",
+                    "recipient": "attendee address the invite is addressed to",
+                    "engine_side_safety": "the chokepoint verifies a prior thread or a confirmed booking grant, requires the primary calendar domain, and commits the SEQUENCE bump with the frozen intent"
+                }),
+                OutboundInterruptionClass::Interrupt,
+                // An update or cancel supersedes the prior revision in the
+                // recipient's calendar rather than editing it in place, which
+                // is exactly the email `replace` shape.
+                OutboundDeliverySemanticsKind::Replaceable,
+                None,
+                // Replaying the same (UID, SEQUENCE, METHOD) is a no-op in every
+                // conforming client, so a retry may replay frozen bytes. This is
+                // what keeps the OF-327 classifier's idempotency hint honest.
+                OutboundRetryClass::IdempotentEmulated,
+                OutboundPermissionState::Conditional,
+                false,
+                "iMIP invites require a prior thread or a confirmed booking standing grant, and must leave from the primary calendar domain — never from sequencer-class infrastructure.",
+            )],
+        ),
+        manifest(
             "voice",
             "voice_call",
             "Voice call schema; dialing is interruption-heavy and permission-sensitive.",

@@ -23,6 +23,7 @@ use super::window_door::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::calendar::invite::CalendarInvitePayload;
 use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
 use crate::channel_identity::{
     ChannelIdentityBinding, ChannelIdentityState, decode_channel_identity_body,
@@ -54,6 +55,12 @@ struct FrozenOutboundPayload<'a> {
     intent: &'a OutboundIntent,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     hygiene_headers: BTreeMap<String, String>,
+    /// CAL-04's exact five-field iMIP body, elided for every send that is not
+    /// a calendar invite. It carries `ics_blob_ref` and never the `.ics` bytes,
+    /// so the frozen payload stays small and the document a retry re-sends is
+    /// byte-identical by reference rather than by re-rendering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    calendar_invite: Option<&'a CalendarInvitePayload>,
 }
 
 /// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
@@ -302,6 +309,7 @@ impl OutboundDispatchPipeline {
             let payload = serde_json::to_vec(&FrozenOutboundPayload {
                 intent: &request.intent,
                 hygiene_headers,
+                calendar_invite: request.calendar_invite.as_ref(),
             })
             .map_err(|_| {
                 OutboundDispatchError::Engine(Error::InvariantViolation(
@@ -334,7 +342,8 @@ impl OutboundDispatchPipeline {
                 verified_actor,
             };
             let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
-            let mut transport = DispatchChokepointTransport::new(&request, verb_contract, sink);
+            let mut transport =
+                DispatchChokepointTransport::new(vault, &request, verb_contract, sink);
             let effect_result = crate::outbound_chokepoint::execute_outbound_effect(
                 vault,
                 &authority,
@@ -658,6 +667,7 @@ impl Vault {
 }
 
 struct DispatchChokepointTransport<'a, S> {
+    vault: &'a Vault,
     request: &'a OutboundDispatchRequest,
     verb_contract: &'static OutboundVerbContract,
     sink: &'a mut S,
@@ -666,11 +676,13 @@ struct DispatchChokepointTransport<'a, S> {
 
 impl<'a, S> DispatchChokepointTransport<'a, S> {
     fn new(
+        vault: &'a Vault,
         request: &'a OutboundDispatchRequest,
         verb_contract: &'static OutboundVerbContract,
         sink: &'a mut S,
     ) -> Self {
         Self {
+            vault,
             request,
             verb_contract,
             sink,
@@ -698,6 +710,24 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         else {
             return invalid_frozen_call();
         };
+        // CAL-04, same discipline: a `calendar.invite` send resolves its
+        // `text/calendar` part from the FROZEN blob ref here, at the last
+        // in-process boundary, and never recomputes a UID, a SEQUENCE, or the
+        // document itself. A verb-registered invite whose frozen bytes carry no
+        // five-field body — or whose blob ref no longer dereferences — fails
+        // closed rather than going out as a plain email about a meeting.
+        let calendar_invite = if self.verb_contract.kind == crate::calendar::CALENDAR_INVITE_VERB {
+            let Ok(payload) = crate::calendar::decode_frozen_calendar_invite(call.payload()) else {
+                return invalid_frozen_call();
+            };
+            let Ok(part) = crate::calendar::build_calendar_invite_mime_part(self.vault, &payload)
+            else {
+                return invalid_frozen_call();
+            };
+            Some(part)
+        } else {
+            None
+        };
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
@@ -715,6 +745,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             counterparty_ref: self.request.counterparty_ref.as_deref(),
             hygiene_headers,
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
+            calendar_invite,
         };
         let execution = self.sink.execute(&execution_request);
         let outcome = match execution.kind {

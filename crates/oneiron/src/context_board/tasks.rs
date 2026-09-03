@@ -796,6 +796,8 @@ mod tests {
             human_explicit_instant: false,
             apns_interruption_level: None,
             resolved_level: None,
+            // Not a calendar invite, so no CAL-04 frozen body rides this TASK.
+            calendar_invite: None,
             occurred_at: 1,
         }
     }

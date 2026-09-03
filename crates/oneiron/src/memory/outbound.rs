@@ -134,18 +134,20 @@ pub struct OutboundIntentReceipt {
 }
 
 /// Connector key the calendar invite surface schedules against. CAL-04
-/// (ONE-1786) registers the manifest; until then `outbound_verb_contract`
-/// returns the ordinary unsupported-capability error for this pair.
+/// (ONE-1786) landed the `calendar` connector manifest, so
+/// `outbound_verb_contract` now resolves this pair.
 pub const CALENDAR_INVITE_OUTBOUND_CHANNEL: &str = "calendar";
 
 /// Outbound verb the calendar invite surface schedules.
 ///
-/// This string is the seam with CAL-04 (ONE-1786), which registers
-/// `calendar.invite` in `COMMON_OUTBOUND_VERB_KINDS` and branches its dispatch
-/// chokepoint on `draft.verb == CALENDAR_INVITE_VERB`. A shorter local spelling
-/// would leave that branch dead on arrival — the invite would schedule as a
-/// generic draft and never reach the iMIP payload codec — so the value is
-/// pinned to CAL-04's, not to this module's vocabulary.
+/// This string is the seam with CAL-04 (ONE-1786), which registered
+/// `calendar.invite` in `COMMON_OUTBOUND_VERB_KINDS` and branches on it at the
+/// dispatch chokepoint. A shorter local spelling would leave that branch dead
+/// on arrival — the invite would schedule as a generic draft and never reach
+/// the iMIP payload codec — so the value is pinned to CAL-04's, not to this
+/// module's vocabulary, and
+/// `calendar::invite::tests::verb_and_channel_match_the_cal_09_surface_constants`
+/// keeps the two spellings from drifting apart.
 pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "calendar.invite";
 
 /// iMIP method the invite surface accepts.
@@ -233,13 +235,15 @@ impl CalendarInviteSurfaceInput {
     /// `calendar` connector, and `recipient`/`ics_blob_ref` ride the typed
     /// `target`/`content_ref` fields.
     ///
-    /// KNOWN HOLE (CAL-04's, not fixable from CAL-09): `method`, `uid`, and
-    /// `sequence` have no typed home on [`OutboundDraftInput`] or
-    /// `OutboundIntentDraft` on this baseline, so they reach the chokepoint
-    /// only inside the derived idempotency/trigger strings. Adding the typed
-    /// payload channel means editing `outbound.rs`, which CAL-04 owns and this
-    /// ticket must not touch. When ONE-1786 lands it, this function is the one
-    /// site that fills it — the public surface above does not change.
+    /// KNOWN HOLE, CLOSED BY CAL-04 (ONE-1786): `method`, `uid`, and
+    /// `sequence` had no typed home on [`OutboundDraftInput`] or
+    /// `OutboundIntentDraft` on the CAL-09 baseline, so they reached the
+    /// chokepoint only inside the derived idempotency/trigger strings. CAL-04
+    /// added the typed channel it owns —
+    /// [`crate::calendar::CalendarInvitePayload`], carried beside the draft
+    /// through [`Self::frozen_payload`] below — so nothing here re-parses a key
+    /// back into a method, uid, or sequence and the public surface above is
+    /// unchanged.
     #[must_use]
     pub fn outbound_draft(&self) -> OutboundDraftInput {
         OutboundDraftInput {
@@ -256,6 +260,30 @@ impl CalendarInviteSurfaceInput {
             trigger_ref: self.trigger_ref(),
             job_ref: None,
             occurred_at: None,
+        }
+    }
+
+    /// The exact five-field body CAL-04 freezes beside the draft.
+    ///
+    /// The one fill site for the typed payload channel: the surface's own five
+    /// typed fields become the invite layer's five typed fields, in order, with
+    /// no string round-trip. Crate-private on purpose — the public invite
+    /// surface is [`Self`] and nothing else, so no caller can hand the
+    /// chokepoint a payload that disagrees with the draft it schedules.
+    pub(crate) fn frozen_payload(&self) -> crate::calendar::CalendarInvitePayload {
+        crate::calendar::CalendarInvitePayload {
+            method: match self.method {
+                CalendarInviteSurfaceMethod::Request => {
+                    crate::calendar::CalendarInviteMethod::Request
+                }
+                CalendarInviteSurfaceMethod::Cancel => {
+                    crate::calendar::CalendarInviteMethod::Cancel
+                }
+            },
+            uid: self.uid.clone(),
+            sequence: self.sequence,
+            ics_blob_ref: self.ics_blob_ref.clone(),
+            recipient: self.recipient.clone(),
         }
     }
 
@@ -328,6 +356,23 @@ impl Memory<'_> {
         &self,
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
+    ) -> MemoryResult<OutboundIntentReceipt> {
+        self.schedule_outbound_inner(draft, schedule_context, None)
+    }
+
+    /// The single scheduling implementation.
+    ///
+    /// `calendar_invite` is CAL-04's typed payload channel: the invite surface
+    /// is the only producer, and it is not reachable from the public draft type
+    /// — which is exactly what keeps a hand-rolled `OutboundDraftInput` from
+    /// scheduling an invite. Such a draft still resolves the registered
+    /// capability, but it carries no five-field body, so the chokepoint's verb
+    /// wall refuses it at the last durable boundary.
+    fn schedule_outbound_inner(
+        &self,
+        draft: &OutboundDraftInput,
+        schedule_context: &OutboundScheduleContext,
+        calendar_invite: Option<&crate::calendar::CalendarInvitePayload>,
     ) -> MemoryResult<OutboundIntentReceipt> {
         schedule_context.validate()?;
         if schedule_context.apns_interruption_level.is_some()
@@ -460,6 +505,22 @@ impl Memory<'_> {
             return Ok(self.already_scheduled_outbound_receipt(attempt.id));
         }
 
+        // CAL-04 (ONE-1786) chokepoint admission, in its fixed order: exact
+        // decode (the typed payload is already decoded above), emit/state
+        // validation against the live outbound passport, vault-only hygiene
+        // hydration, hygiene evaluation. It runs AFTER the dedupe returns
+        // above — a coalesced re-schedule must not re-check or re-bump anything
+        // — and BEFORE the gate, so a refused invite consumes no gate decision,
+        // no budget, and no queue row. The passport head it produces is applied
+        // inside the durable transaction below.
+        let invite_admission = match calendar_invite {
+            Some(payload) => Some(
+                crate::calendar::admit_calendar_invite(self.vault, self.actor, payload, now)
+                    .map_err(facade_error_from_calendar)?,
+            ),
+            None => None,
+        };
+
         let gate_intent_ref = format!("intent:task:{}", task_ref.to_hex());
         let actor = OutboundDispatchActor {
             actor_class: self.actor_class.gate_actor_class().to_owned(),
@@ -480,6 +541,9 @@ impl Memory<'_> {
         );
         if let Some(session_ref) = originating_session_ref.as_deref() {
             request = request.originating_session(session_ref);
+        }
+        if let Some(payload) = calendar_invite {
+            request = request.calendar_invite(payload.clone());
         }
         let mut sink = ScheduleOnlySink;
         let result = self
@@ -528,8 +592,18 @@ impl Memory<'_> {
                     self.actor_class,
                     originating_session_ref.as_deref(),
                     schedule_context,
+                    calendar_invite,
                     now,
                 )?;
+                // The SEQUENCE bump joins the SAME transaction as the ready
+                // attempt and the connector TASK that will replay it. No
+                // bumped sequence can survive without its frozen intent,
+                // because both commit here or neither does.
+                if let Some(admission) = invite_admission.as_ref() {
+                    admission
+                        .commit_in_txn(self.vault, wtxn, now)
+                        .map_err(facade_error_from_calendar)?;
+                }
             }
             Ok(outcome)
         })?;
@@ -687,15 +761,53 @@ impl Memory<'_> {
     /// [`OutboundDraftInput`]: this surface owns the invite vocabulary and
     /// constructs the generic draft internally, so no caller can hand-roll a
     /// draft that bypasses the invite contract. Delivery is never performed
-    /// here — [`Self::schedule_outbound`] is the only path, and until CAL-04
-    /// (ONE-1786) registers the `calendar`/`calendar.invite` capability the
-    /// existing unsupported-capability error is returned unchanged.
+    /// here — the ordinary schedule path is the only route, and the invite's
+    /// UID/SEQUENCE law plus its vault-only hygiene rows are checked at that
+    /// chokepoint (CAL-04, ONE-1786) before the gate ever sees the send.
+    ///
+    /// Nothing about hygiene is an argument here: the five fields below are the
+    /// whole public input, and every consent, binding, and sender-domain fact
+    /// is read from the vault at the chokepoint. A caller cannot assert its way
+    /// past a cold-invite refusal.
     pub fn calendar_invite(
         &self,
         input: &CalendarInviteSurfaceInput,
     ) -> MemoryResult<OutboundIntentReceipt> {
         input.validate()?;
-        self.schedule_outbound(&input.outbound_draft())
+        self.schedule_outbound_inner(
+            &input.outbound_draft(),
+            &OutboundScheduleContext::default(),
+            Some(&input.frozen_payload()),
+        )
+    }
+}
+
+/// Maps a calendar-layer verdict onto the facade error vocabulary.
+///
+/// A refusal is a `bad_request`, not an internal fault: the engine declining to
+/// send a cold invite, an off-domain invite, or a SEQUENCE that does not
+/// advance is the correct outcome, and the caller needs to see which law
+/// refused. Store failures stay internal.
+pub(super) fn facade_error_from_calendar(err: crate::calendar::CalendarError) -> MemoryError {
+    match err {
+        crate::calendar::CalendarError::InviteRefused { ref reason } => {
+            MemoryError::bad_request_with(
+                format!("calendar invite refused: {reason}"),
+                &[
+                    "Invite only after a yes: a prior thread or a confirmed booking grant.",
+                    "Send from the primary calendar domain, and advance SEQUENCE on the same UID.",
+                ],
+            )
+        }
+        crate::calendar::CalendarError::ImipEmit { ref reason } => MemoryError::bad_request_with(
+            format!("iMIP emit failure: {reason}"),
+            &["Render the invitation with an explicit METHOD, UID, and zone label."],
+        ),
+        other => MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            format!("calendar invite failed: {other}"),
+            &["Retry after checking local storage health."],
+        ),
     }
 }
 

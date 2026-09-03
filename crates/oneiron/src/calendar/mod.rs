@@ -43,6 +43,13 @@
 //! Like [`outcome`] it owns no clock — it hands the host an exact wake and a
 //! small home-node job payload, and persists no prep artifact of any kind.
 //!
+//! CAL-04 adds [`invite`]: the outbound iMIP adapter. It registers ONE verb
+//! (`calendar.invite`) on the existing OF-327 spine, freezes C7's exact
+//! five-field payload, keeps the UID-once/SEQUENCE-strictly-increasing law in
+//! the CAL-00 outbound passport, and hydrates its hygiene from vault evidence
+//! only — no caller can hand it a consent boolean. The emit half of the ICS
+//! codec lives beside the parse half in [`ics`].
+//!
 //! [`CalendarRemoteTransport`]: connectors::CalendarRemoteTransport
 
 pub mod caldav;
@@ -52,6 +59,7 @@ pub mod freebusy;
 pub mod google_internal;
 pub mod ics;
 pub mod ingest;
+pub mod invite;
 pub mod outcome;
 pub mod passport;
 pub mod prep;
@@ -132,6 +140,22 @@ pub enum CalendarError {
         /// What failed.
         reason: String,
     },
+    /// The iMIP document could not be rendered, or its blob could not be
+    /// stored. Never answered with a partial or method-less `.ics`: a VEVENT
+    /// with no explicit `METHOD` is read as a NEW event by real clients.
+    #[error("iMIP emit failure: {reason}")]
+    ImipEmit {
+        /// What failed, without recipient content.
+        reason: String,
+    },
+    /// The invite failed a UID/SEQUENCE law or a hygiene row. Distinct from a
+    /// store failure on purpose: this is the engine refusing to send, which is
+    /// the correct outcome, not a fault.
+    #[error("calendar invite refused: {reason}")]
+    InviteRefused {
+        /// Which law refused, without recipient content.
+        reason: String,
+    },
 }
 
 impl From<crate::Error> for CalendarError {
@@ -168,13 +192,24 @@ pub use google_internal::{
     GOOGLE_INTERNAL_PROVIDER_KEY, GOOGLE_INTERNAL_SECRET_REF_PREFIX, GoogleInternalConnector,
     GoogleInternalWire, is_workspace_internal_secret_ref,
 };
-pub use ics::{ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
+pub use ics::{
+    IMIP_EVENT_TZID_PROPERTY, IMIP_PRODUCT_ID, ImipEmitRequest, ParsedIcsFeed, ParsedVEvent,
+    emit_imip_ics, parse_ics_feed, persist_imip_blob,
+};
 pub use ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
     IcsFeedPauseException, IcsFeedPollConfig, IcsFeedPollPayload, IcsFeedSource, IcsFetchResponse,
     IcsHttpResponse, IcsHttpTransport, IcsPollRunState, enqueue_ics_feed_poll,
     ics_feed_cursor_snapshot, ics_feed_pause_exceptions, ics_feed_poll_dedupe_key,
     ics_import_actor_id, run_ics_feed_poll, run_ics_feed_poll_with_screener,
+};
+pub use invite::{
+    CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_MEDIA_TYPE, CALENDAR_INVITE_PART_FILENAME,
+    CALENDAR_INVITE_PASSPORT_SYSTEM, CALENDAR_INVITE_TOOL_DESCRIPTOR, CALENDAR_INVITE_VERB,
+    CalendarInviteAdmission, CalendarInviteConsentBasis, CalendarInviteHygieneContext,
+    CalendarInviteMethod, CalendarInviteMimePart, CalendarInvitePayload, CalendarInviteStateChange,
+    admit_calendar_invite, build_calendar_invite_mime_part, decode_frozen_calendar_invite,
+    read_calendar_invite_ics,
 };
 pub use outcome::{
     CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,
@@ -376,8 +411,8 @@ mod tests {
     fn calendar_error_appends_recurrence_variants_in_owner_module() {
         // One error home for the whole calendar surface, grown by appending.
         // CAL-00 opened it, CAL-01 added the four timezone verdicts, CAL-03
-        // the two recurrence verdicts, and CAL-02 the four ingest variants
-        // below.
+        // the two recurrence verdicts, CAL-02 the four ingest variants, and
+        // CAL-04 the two outbound-invite verdicts at the bottom.
         let variants = [
             CalendarError::UnknownTimeZone {
                 tz: "Mars/Olympus_Mons".to_owned(),
@@ -411,6 +446,12 @@ mod tests {
             CalendarError::IcsIngest {
                 reason: "store failure".to_owned(),
             },
+            CalendarError::ImipEmit {
+                reason: "UID must not be blank".to_owned(),
+            },
+            CalendarError::InviteRefused {
+                reason: "a cold invite has no consent basis".to_owned(),
+            },
         ];
 
         // Exhaustive and wildcard-free on purpose. A later layer that appends a
@@ -429,6 +470,7 @@ mod tests {
                 | CalendarError::IcsFetch { .. }
                 | CalendarError::IcsCredential { .. }
                 | CalendarError::IcsIngest { .. } => {}
+                CalendarError::ImipEmit { .. } | CalendarError::InviteRefused { .. } => {}
             }
         }
 
@@ -444,6 +486,14 @@ mod tests {
         assert_eq!(
             variants[8].to_string(),
             "ICS feed credential custody failure: no live custody record"
+        );
+        assert_eq!(
+            variants[10].to_string(),
+            "iMIP emit failure: UID must not be blank"
+        );
+        assert_eq!(
+            variants[11].to_string(),
+            "calendar invite refused: a cold invite has no consent basis"
         );
     }
 }
