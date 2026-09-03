@@ -1632,6 +1632,12 @@ enum McpCarrierPolicy {
     /// `board.refresh` does). Either way the queue behind it is EXPLICITLY
     /// superseded and then drained, so no older carrier rides beside a fresh
     /// keyframe and none is left stranded.
+    ///
+    /// Only a result that states a keyframe the caller has NOT already been
+    /// given may say this. A paged producer states its keyframe on page ONE;
+    /// its continuations restate that same retained frame and therefore
+    /// [`McpCarrierPolicy::Drain`] instead — re-superseding on an already
+    /// delivered keyframe destroys the transitions queued behind it.
     FreshKeyframe(Option<oneiron::context_board::BoardStreamFrame>),
 }
 
@@ -2165,12 +2171,25 @@ pub(crate) async fn execute_mcp_setup(
             actor.metadata(health, page, mcp_setup_help(), args.cache),
         );
     }
+    // ONE-1704 carrier repair: PAGE ONE carries the keyframe it just minted and
+    // supersedes the queue behind it. A CONTINUATION restates the SAME retained
+    // keyframe page one already delivered, so treating it as fresh re-enqueued a
+    // DUPLICATE: that push cleared the same-epoch delta rows queued behind it in
+    // the engine's coalescer and was then consumed as the superseded drain, so
+    // the continuation carried nothing and every later result had lost the
+    // transition. A continuation is an ordinary result — it drains AT MOST ONE
+    // already-queued carrier and re-enqueues nothing.
+    let carrier_policy = if dispatch.continuation.is_some() {
+        McpCarrierPolicy::Drain
+    } else {
+        McpCarrierPolicy::FreshKeyframe(Some(keyframe))
+    };
     Ok(mcp_endpoint_result(
         server,
         actor,
         "board keyframe, verb grammar, and instructions returned",
         structured,
-        McpCarrierPolicy::FreshKeyframe(Some(keyframe)),
+        carrier_policy,
     )
     .await)
 }

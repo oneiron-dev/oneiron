@@ -14201,6 +14201,72 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
             .expect("credential resolves")
             .stream_connection
     };
+
+    // ONE-1704 carrier repair: a setup CONTINUATION restates the keyframe page
+    // one already delivered, so it must NOT re-mint it. Re-minting superseded
+    // the same-epoch delta queued behind it and then drained the duplicate
+    // away, and the transition reached no result at all.
+    let setup_page = |id: &'static str, page: Value| {
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            id,
+            "setup_oneiron",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "page": page }),
+            ),
+        )
+    };
+    let (_, page_one) = route_json(
+        server.clone(),
+        setup_page("carrier-page-1", json!({ "limit": 1 })),
+    )
+    .await;
+    let page_one = &page_one["result"]["structuredContent"];
+    let board_epoch = page_one["board"]["epoch"]
+        .as_u64()
+        .expect("setup states a board epoch");
+    let cursor = page_one["meta"]["page"]["cursor"]
+        .as_str()
+        .expect("a capped setup page carries a successor handle")
+        .to_owned();
+    {
+        let mut registry = server.mcp_registry.lock().await;
+        registry.enqueue_stream_frame(
+            &connection,
+            oneiron::context_board::BoardStreamFrame {
+                epoch: board_epoch,
+                kind: oneiron::context_board::FrameKind::Delta(vec![
+                    oneiron::context_board::DeltaRow {
+                        key: "TASKS:continuation".to_owned(),
+                        line: "queued after page one".to_owned(),
+                    },
+                ]),
+            },
+        );
+    }
+    let (_, continued) = route_json(
+        server.clone(),
+        setup_page("carrier-page-2", json!({ "limit": 50, "cursor": cursor })),
+    )
+    .await;
+    assert_eq!(
+        continued["result"]["carrier"],
+        json!({
+            "class": "carrier",
+            "frame": {
+                "epoch": board_epoch,
+                "kind": {
+                    "kind": "delta",
+                    "payload": [{ "key": "TASKS:continuation", "line": "queued after page one" }],
+                },
+            },
+        }),
+        "a setup continuation drains the queued same-epoch delta instead of \
+         re-minting page one's keyframe: {continued:?}"
+    );
+
     {
         let mut registry = server.mcp_registry.lock().await;
         registry.enqueue_stream_frame(
