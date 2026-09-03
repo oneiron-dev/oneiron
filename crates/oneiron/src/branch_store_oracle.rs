@@ -1472,6 +1472,8 @@ mod seam {
         crate::engine_executor::EngineExecutorConfig {
             run_id: EntityId::now(),
             task: "binding oracle".to_owned(),
+            prompt_package_root: crate::prompt::workspace_prompt_package_root()
+                .expect("workspace prompt package"),
             model: crate::ModelId::new("test/binding@v1").expect("model id"),
             model_locality: crate::ModelLocality::OwnServer,
             global_tier: crate::ModelTierRef("binding-tier".to_owned()),

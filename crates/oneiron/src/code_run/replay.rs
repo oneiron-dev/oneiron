@@ -346,6 +346,71 @@ impl CodeRunAbiLayoutCheck {
     }
 }
 
+/// Engine-authored open mark for a replayed executor program (ONE-1929).
+pub const CODE_RUN_EXEC_OPEN: &str = "<exec>";
+/// Engine-authored close mark for a replayed executor program (ONE-1929).
+pub const CODE_RUN_EXEC_CLOSE: &str = "</exec>";
+/// Engine-authored open mark for a replayed sandbox console (ONE-1929).
+pub const CODE_RUN_CONSOLE_OPEN: &str = "<console>";
+/// Engine-authored close mark for a replayed sandbox console (ONE-1929).
+pub const CODE_RUN_CONSOLE_CLOSE: &str = "</console>";
+
+/// One completed durable step, rendered back into model-facing history
+/// (ONE-1929).
+///
+/// The two payloads come from DIFFERENT provenances and neither is provider
+/// text: `code` is the healed executable interior the sandbox actually ran,
+/// and `console` is the runtime's own
+/// [`crate::engine_executor::JsCodeModeStepOutcome::observation`] (or the
+/// runtime failure observation on the persisted failed-step path). A model
+/// reply's own console bytes are discarded during healing and never reach
+/// this renderer.
+///
+/// Framing is PRESENTATION ONLY. The bare code and the authoritative
+/// observation stay untagged in raw replay storage, so checkpoint hashing and
+/// execution never depend on these marks; the history builder wraps them only
+/// while composing the next LLM request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeRunHistoryTurn {
+    pub code: String,
+    pub console: String,
+}
+
+impl CodeRunHistoryTurn {
+    /// Renders the assistant half: engine-authored exec marks around the
+    /// healed bare program.
+    #[must_use]
+    pub fn assistant_exec(&self) -> String {
+        let escaped_code = escape_code_run_frame_marks(&self.code);
+        format!("{CODE_RUN_EXEC_OPEN}\n{escaped_code}\n{CODE_RUN_EXEC_CLOSE}")
+    }
+
+    /// Renders the user half: engine-authored console marks around the
+    /// authoritative sandbox observation for durable step `seq`.
+    #[must_use]
+    pub fn user_console(&self, seq: u64) -> String {
+        let escaped_console = escape_code_run_frame_marks(&self.console);
+        format!(
+            "Console after durable step {seq}:\n{CODE_RUN_CONSOLE_OPEN}\n{escaped_console}\n{CODE_RUN_CONSOLE_CLOSE}"
+        )
+    }
+}
+
+/// Escapes ALL FOUR engine-authored frame marks in a payload.
+///
+/// The transform is total and deterministic: every literal `<exec>`,
+/// `</exec>`, `<console>`, and `</console>` in either payload renders with its
+/// opening `<` escaped, so neither a program nor an observation can forge or
+/// close the frame the engine wrapped around it. Each replacement's output
+/// contains no input pattern, so the four passes cannot cascade.
+fn escape_code_run_frame_marks(payload: &str) -> String {
+    payload
+        .replace(CODE_RUN_EXEC_OPEN, r"<\exec>")
+        .replace(CODE_RUN_EXEC_CLOSE, r"<\/exec>")
+        .replace(CODE_RUN_CONSOLE_OPEN, r"<\console>")
+        .replace(CODE_RUN_CONSOLE_CLOSE, r"<\/console>")
+}
+
 /// Persisted deterministic replay record for a first-party code run.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

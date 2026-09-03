@@ -3899,3 +3899,136 @@ fn one_tombstone_failure_does_not_lose_the_rest() {
         "replay adds exactly ONE sweep row — siblings stayed idempotent"
     );
 }
+
+/// A canonical six-axis witness MESSAGE body, through the engine's ONE encoder.
+fn replicated_witness_message_body(author: &str, content: &str) -> Vec<u8> {
+    crate::gate::canonical_witness_message_body_for_test(author, "dialogue", content, true, 0)
+        .expect("encode witness message body")
+}
+
+/// ONE-1929 (RT-04 parity on the sync perimeter): Observer B's entity pass must
+/// run the witness envelope's fail-closed checks on a REPLICATED MESSAGE before
+/// it stages any LMDB row.
+///
+/// The structural door refuses hand-written MESSAGE bodies because the six-axis
+/// envelope is what the approval-ceiling door authorizes; replication reaches
+/// LMDB through the generic replicated put and asks nothing on its own. Without
+/// this door a peer could file an unattributed `system` row — the engine-voice
+/// bucket that carries no `AuthoredBy` edge — an attributed row with no local
+/// actor binding behind it, or a body that is not a witness envelope at all.
+///
+/// On this vault the replicated MESSAGE door is CLOSED for every author bucket
+/// (`gate::validate_replicated_witness_message_body`): the protocol carries no
+/// verified source actor at this door, so there is no ceiling to run and no way
+/// to tell an honest attributed row from a forged one. All three refusals are
+/// the existing typed body rejection the sync layer already classifies as a
+/// REMOTE rejection, and ordinary NON-MESSAGE replication is untouched.
+#[test]
+fn observer_b_refuses_replicated_message_bodies_before_any_mutation() -> Result<()> {
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+    let occurred = TimeRange { start: 9, end: 9 };
+
+    // Ordinary, non-MESSAGE replication stays green: this door narrows exactly
+    // one entity kind.
+    let ordinary_id = EntityId::from_bytes([0x61; 16])?;
+    let ordinary = entity_blob(
+        crate::registry::ENTITY_TYPE_EVENT,
+        occurred,
+        9,
+        b"an ordinary replicated row",
+    );
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            materialize_entity_blob_in_txn(
+                &vault,
+                wtxn,
+                &tombstones,
+                "2026-03",
+                &ordinary_id.to_hex(),
+                &ordinary,
+                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+            )?,
+            "a non-MESSAGE peer row still replicates"
+        );
+        Ok(())
+    })?;
+    assert!(vault.get_raw(&ordinary_id)?.is_some());
+
+    // A well-formed envelope with a duplicated axis: the canonical encoder emits
+    // each key once, so a repeat cannot re-encode byte-identically.
+    let mut duplicated_axis = rmpv::decode::read_value(
+        &mut &replicated_witness_message_body(
+            crate::gate::WITNESS_AUTHOR_COMPANION,
+            "smuggled envelope",
+        )[..],
+    )
+    .expect("decode canonical body");
+    let Value::Map(entries) = &mut duplicated_axis else {
+        panic!("witness message body is a map");
+    };
+    entries.push((Value::from("author"), Value::from("system")));
+    let mut duplicated = Vec::new();
+    rmpv::encode::write_value(&mut duplicated, &duplicated_axis).expect("encode forged body");
+
+    for (seed, body, why) in [
+        (
+            0x62_u8,
+            replicated_witness_message_body(
+                crate::gate::WITNESS_AUTHOR_SYSTEM,
+                "peer speaking in the engine's voice",
+            ),
+            "an unattributed system row has no local actor ceiling to authorize it",
+        ),
+        (
+            0x63_u8,
+            replicated_witness_message_body(
+                crate::gate::WITNESS_AUTHOR_COMPANION,
+                "an attributed peer bubble",
+            ),
+            "an attributed row carries no local actor binding over replication",
+        ),
+        (
+            0x64_u8,
+            duplicated,
+            "a second copy of an authorized axis is not the canonical envelope",
+        ),
+        (
+            0x65_u8,
+            b"not messagepack at all".to_vec(),
+            "a body that does not decode is not a transcript row",
+        ),
+    ] {
+        let id = EntityId::from_bytes([seed; 16])?;
+        let blob = entity_blob(crate::registry::ENTITY_TYPE_MESSAGE, occurred, 9, &body);
+        let kind = vault.with_write_txn(|wtxn| {
+            let err = materialize_entity_blob_in_txn(
+                &vault,
+                wtxn,
+                &tombstones,
+                "2026-03",
+                &id.to_hex(),
+                &blob,
+                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+            )
+            .map(|_| ())
+            .expect_err(why);
+            assert!(
+                crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+                "a refused peer MESSAGE must quarantine-and-continue, got {err:?}"
+            );
+            Ok(err.kind())
+        })?;
+        assert_eq!(
+            kind,
+            crate::error::ErrorKind::InvalidWitnessMessageBody,
+            "{why}"
+        );
+        assert!(
+            vault.get_raw(&id)?.is_none(),
+            "the refusal lands before any LMDB row: {why}"
+        );
+    }
+    Ok(())
+}

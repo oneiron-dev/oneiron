@@ -3330,3 +3330,102 @@ fn blocks_edges_are_local_only_when_pending_mirrors_replay() -> Result<()> {
     );
     Ok(())
 }
+
+/// A canonical six-axis witness MESSAGE body, through the engine's ONE encoder.
+fn replicated_witness_message_body(author: &str, content: &str) -> Vec<u8> {
+    crate::gate::canonical_witness_message_body_for_test(author, "dialogue", content, true, 0)
+        .expect("encode witness message body")
+}
+
+/// ONE-1929: forward rematerialization is the OTHER sync door into LMDB, and it
+/// must refuse the same peer MESSAGE bodies Observer B refuses.
+///
+/// A door that only guarded the live observer would leave every restart replay
+/// as the way in: the CRDT mirror keeps the rejected bytes, and this pass is
+/// what re-offers them. Both paths converge on `batch::apply_put`, so the one
+/// check there covers both — an unattributed `system` row, an attributed row
+/// with no local actor binding, and a body that is not the canonical six-axis
+/// envelope are all quarantined here with the same typed body rejection, while
+/// an unrelated non-MESSAGE row still materializes: one poisoned transcript row
+/// must not wedge the window.
+#[test]
+fn forward_remat_refuses_replicated_message_bodies_before_any_mutation() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+
+    let attributed = EntityId::from_bytes([0x71; 16])?;
+    let forged_system = EntityId::from_bytes([0x72; 16])?;
+    let malformed = EntityId::from_bytes([0x73; 16])?;
+    let ordinary_turn = EntityId::from_bytes([0x74; 16])?;
+
+    let mut not_an_envelope = Vec::new();
+    rmpv::encode::write_value(
+        &mut not_an_envelope,
+        &Value::Map(vec![(Value::from("content"), Value::from("bare prose"))]),
+    )
+    .expect("encode non-envelope body");
+
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    for (id, body) in [
+        (
+            attributed,
+            replicated_witness_message_body(
+                crate::gate::WITNESS_AUTHOR_COMPANION,
+                "an attributed peer bubble",
+            ),
+        ),
+        (
+            forged_system,
+            replicated_witness_message_body(
+                crate::gate::WITNESS_AUTHOR_SYSTEM,
+                "peer speaking in the engine's voice",
+            ),
+        ),
+        (malformed, not_an_envelope),
+    ] {
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &make_entity_blob(crate::registry::ENTITY_TYPE_MESSAGE, learned_at, &body),
+        )?;
+    }
+    map_insert_bytes(
+        &entities,
+        &ordinary_turn.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn body"),
+    )?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    assert_eq!(
+        count, 1,
+        "the unrelated turn still materializes; every peer MESSAGE is refused"
+    );
+    assert!(vault.get_raw(&ordinary_turn)?.is_some());
+    assert!(
+        vault.get_raw(&forged_system)?.is_none(),
+        "an unattributed system row must never reach LMDB through replication"
+    );
+    assert!(
+        vault.get_raw(&attributed)?.is_none(),
+        "an attributed row has no local actor binding over replication"
+    );
+    assert!(
+        vault.get_raw(&malformed)?.is_none(),
+        "a body that is not a witness envelope must never reach LMDB"
+    );
+
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 3);
+    for (_, record) in &quarantined {
+        assert_eq!(record.container, QuarantineContainer::Entities);
+        assert_eq!(
+            record.reason_code, "InvalidWitnessMessageBody",
+            "a refused peer MESSAGE classifies as a remote rejection"
+        );
+    }
+    Ok(())
+}

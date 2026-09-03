@@ -2,8 +2,9 @@ use sha2::{Digest, Sha256};
 
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
+use crate::session_overlay::RouteTarget;
 use crate::store::Store;
-use crate::{EntityId, Error, Result, ScoredEntity, Vault, WriteActor};
+use crate::{EntityId, Error, ModelId, Result, ScoredEntity, Vault, WriteActor};
 
 use super::codec::{
     decode_code_run_replay_record, encode_code_run_replay_record, validate_raw_output,
@@ -13,6 +14,19 @@ use super::support::invalid_code_run_replay;
 
 const CODE_RUN_REPLAY_RECORD_KEY_PREFIX: &[u8] = b"code_run:replay:v1:";
 const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
+/// Replay-adjacent, NODE-LOCAL per-model wire-heal tally (ONE-1929).
+const CODE_RUN_MODEL_HEAL_COUNT_PREFIX: &[u8] = b"code_run:heal_count:v1:";
+
+/// How many durable executor turns one model needed wire healing for.
+///
+/// A ROUTING SIGNAL, nothing more: the row lives in the same node-local
+/// `vault_meta` store the replay record does, carries no entity, claim, edge,
+/// or sync hook, and no residency decision reads it in this diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeRunModelHealCount {
+    pub model_id: String,
+    pub healed_turns: u64,
+}
 
 /// Domain tags for a canonical run's speech identities (ONE-1686).
 ///
@@ -140,14 +154,28 @@ impl Vault {
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_code_run_replay_record_if_generation_with_heal(record, expected, None)
+    }
+
+    /// The executor commit primitive: compare-and-put the replay append and,
+    /// for a healed turn, increment its model tally in the SAME transaction.
+    /// A tally decode/overflow/write failure therefore leaves the replay row
+    /// unchanged, and a committed replay can never be followed by a false
+    /// executor failure from a second telemetry transaction.
+    fn put_code_run_replay_record_if_generation_with_heal(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+    ) -> Result<CodeRunReplayGeneration> {
         let encoded = encode_code_run_replay_record(record)?;
         let next_generation = record.generation()?;
-        let key = code_run_replay_record_key(&record.run_id);
+        let replay_key = code_run_replay_record_key(&record.run_id);
         let mut wtxn = self.store.env.write_txn()?;
         let current = self
             .store
             .vault_meta
-            .get(&wtxn, &key)?
+            .get(&wtxn, &replay_key)?
             .map(|raw| decode_code_run_replay_record(&raw))
             .transpose()?;
         let current_generation = current
@@ -159,7 +187,26 @@ impl Vault {
                 "code-run replay record changed; retry executor",
             ));
         }
-        self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        let next_heal_count = healed_model
+            .map(|model| {
+                let key = code_run_model_heal_count_key(model);
+                let current = decode_code_run_model_heal_count(
+                    self.store.vault_meta.get(&wtxn, &key)?.as_deref(),
+                )?;
+                let next = current
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+                Ok::<_, Error>((key, next))
+            })
+            .transpose()?;
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &replay_key, &encoded)?;
+        if let Some((key, count)) = next_heal_count {
+            self.store
+                .vault_meta
+                .put(&mut wtxn, &key, &count.to_be_bytes()[..])?;
+        }
         wtxn.commit()?;
         Ok(next_generation)
     }
@@ -191,6 +238,49 @@ impl Vault {
             .vault_meta
             .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
         Ok(wtxn.commit()?)
+    }
+
+    /// Test-only direct tally increment. Production executor commits use the
+    /// replay-and-heal transaction above so telemetry cannot lag persistence.
+    #[cfg(test)]
+    pub(crate) fn increment_code_run_model_heal_count(
+        &self,
+        model: &ModelId,
+    ) -> Result<CodeRunModelHealCount> {
+        let key = code_run_model_heal_count_key(model);
+        let mut wtxn = self.store.env.write_txn()?;
+        let current =
+            decode_code_run_model_heal_count(self.store.vault_meta.get(&wtxn, &key)?.as_deref())?;
+        let healed_turns = current
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &key, &healed_turns.to_be_bytes()[..])?;
+        wtxn.commit()?;
+        Ok(CodeRunModelHealCount {
+            model_id: model.as_str().to_owned(),
+            healed_turns,
+        })
+    }
+
+    /// Reads the node-local healed-turn tally for `model` (0 when absent).
+    ///
+    /// Deliberately `pub`: the residency-routing consumer is later work, and
+    /// an unread crate-internal accessor would trip the workspace dead-code
+    /// lint under `-D warnings`.
+    pub fn code_run_model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
+        let rtxn = self.store.env.read_txn()?;
+        let healed_turns = decode_code_run_model_heal_count(
+            self.store
+                .vault_meta
+                .get(&rtxn, &code_run_model_heal_count_key(model))?
+                .as_deref(),
+        )?;
+        Ok(CodeRunModelHealCount {
+            model_id: model.as_str().to_owned(),
+            healed_turns,
+        })
     }
 
     /// Loads raw output bytes for `output` and verifies they still match metadata.
@@ -227,6 +317,75 @@ fn code_run_raw_output_key(output: &CodeRunRawOutput) -> Vec<u8> {
     key.extend_from_slice(CODE_RUN_RAW_OUTPUT_KEY_PREFIX);
     key.extend_from_slice(output.handle.as_bytes());
     key
+}
+
+/// The heal-tally key: the fixed prefix followed by the VALIDATED model id
+/// bytes, so two model ids can never share a row.
+fn code_run_model_heal_count_key(model: &ModelId) -> Vec<u8> {
+    let model = model.as_str().as_bytes();
+    let mut key = Vec::with_capacity(CODE_RUN_MODEL_HEAL_COUNT_PREFIX.len() + model.len());
+    key.extend_from_slice(CODE_RUN_MODEL_HEAL_COUNT_PREFIX);
+    key.extend_from_slice(model);
+    key
+}
+
+/// An absent row is zero; any other length is a corrupted LOCAL row, reported
+/// through the existing typed error rather than a new class.
+fn decode_code_run_model_heal_count(raw: Option<&[u8]>) -> Result<u64> {
+    let Some(raw) = raw else {
+        return Ok(0);
+    };
+    let bytes: [u8; 8] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("code-run model heal count row"))?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+fn replay_generation_matches(
+    current: Option<&[u8]>,
+    expected: Option<CodeRunReplayGeneration>,
+) -> Result<()> {
+    let stored = current
+        .map(decode_code_run_replay_record)
+        .transpose()?
+        .as_ref()
+        .map(CodeRunReplayRecord::generation)
+        .transpose()?;
+    if stored == expected {
+        return Ok(());
+    }
+    Err(Error::ConcurrentWrite(
+        "code-run replay record changed; retry executor",
+    ))
+}
+
+/// Advances the contribution owned by `target` and returns both its encoded
+/// next value and the additive overlay + base total.
+fn next_additive_heal_count(
+    base: Option<&[u8]>,
+    overlay: Option<&[u8]>,
+    target: RouteTarget,
+) -> Result<(Vec<u8>, u64)> {
+    let base = decode_code_run_model_heal_count(base)?;
+    let overlay = decode_code_run_model_heal_count(overlay)?;
+    let (base, overlay, next) = match target {
+        RouteTarget::Base => {
+            let next = base
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+            (next, overlay, next)
+        }
+        RouteTarget::Overlay => {
+            let next = overlay
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+            (base, next, next)
+        }
+    };
+    let total = base
+        .checked_add(overlay)
+        .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+    Ok((next.to_be_bytes().to_vec(), total))
 }
 
 /// The session half of an executor binding (ONE-1729/P4b).
@@ -301,33 +460,63 @@ impl SessionBinding<'_> {
     /// `expected` is the replay record's own generation protocol, a separate
     /// concern from the mode-flip route: the number says "no one else
     /// appended", the route says "the room is still the room you bound".
+    #[cfg(test)]
     fn put_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_replay_record_if_generation_with_heal(record, expected, None)
+    }
+
+    /// Commits one replay append and its optional overlay/base heal tally as
+    /// one routed transaction. The overlay stores a DELTA while base stores the
+    /// canonical contribution, so later base commits remain visible in the
+    /// session's additive total instead of being shadowed.
+    fn put_replay_record_if_generation_with_heal(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+    ) -> Result<CodeRunReplayGeneration> {
         let encoded = encode_code_run_replay_record(record)?;
         let next_generation = record.generation()?;
-        self.session.vault_meta_compare_and_put_routed(
-            &self.route,
-            &code_run_replay_record_key(&record.run_id),
-            &encoded,
-            |current| {
-                let stored = current
-                    .map(decode_code_run_replay_record)
-                    .transpose()?
-                    .as_ref()
-                    .map(CodeRunReplayRecord::generation)
-                    .transpose()?;
-                if stored == expected {
-                    return Ok(());
-                }
-                Err(Error::ConcurrentWrite(
-                    "code-run replay record changed; retry executor",
-                ))
-            },
-        )?;
+        let replay_key = code_run_replay_record_key(&record.run_id);
+        if let Some(model) = healed_model {
+            let counter_key = code_run_model_heal_count_key(model);
+            self.session
+                .vault_meta_compare_and_put_with_counter_routed(
+                    &self.route,
+                    &replay_key,
+                    &encoded,
+                    |current| replay_generation_matches(current, expected),
+                    &counter_key,
+                    next_additive_heal_count,
+                )?;
+        } else {
+            self.session.vault_meta_compare_and_put_routed(
+                &self.route,
+                &replay_key,
+                &encoded,
+                |current| replay_generation_matches(current, expected),
+            )?;
+        }
         Ok(next_generation)
+    }
+
+    #[cfg(test)]
+    fn model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
+        let key = code_run_model_heal_count_key(model);
+        let (base, overlay) = self.session.vault_meta_counter_components(&key)?;
+        let base = decode_code_run_model_heal_count(base.as_deref())?;
+        let overlay = decode_code_run_model_heal_count(overlay.as_deref())?;
+        let healed_turns = base
+            .checked_add(overlay)
+            .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
+        Ok(CodeRunModelHealCount {
+            model_id: model.as_str().to_owned(),
+            healed_turns,
+        })
     }
 
     fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
@@ -455,6 +644,16 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// Privacy-route target captured at executor entry. Overlay and base are
+    /// distinct replay bindings; the overlay's RAM-local mode generation is
+    /// deliberately not durable identity and may reset after process restart.
+    pub(crate) fn session_route_target(&self) -> Option<RouteTarget> {
+        match self {
+            Self::Canonical(_) => None,
+            Self::Session(binding) => Some(binding.route.target()),
+        }
+    }
+
     /// Whether the off-record effect policy applies to THIS dispatch.
     ///
     /// Reads the room's LIVE mode, not the captured route: the policy is
@@ -504,6 +703,17 @@ impl<'a> ExecutorStorage<'a> {
     /// program, and no second write boundary is minted here, only the identity
     /// a canonical run needs so its bubbles have somewhere to be and stay
     /// reproducible across a resume.
+    ///
+    /// # Replay-owned identity (ONE-1929)
+    ///
+    /// The TURN and MESSAGE ids below are DERIVED, never minted per attempt,
+    /// so this is also the door that makes speech replay-stable: both the
+    /// explicit `self.speak`/`self.think`/`self.express` family and the
+    /// checkpointed implicit fallback reach materialization through here, and
+    /// a retry of a step whose replay append failed converges on the row it
+    /// already wrote instead of speaking twice. A retry that would put
+    /// DIFFERENT bytes at that identity is refused typed by the witness door
+    /// rather than duplicated.
     #[expect(
         clippy::too_many_arguments,
         reason = "run ref/id, utterance envelope, order, and actor are distinct host-owned witness axes"
@@ -559,6 +769,7 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn put_code_run_replay_record_if_generation(
         &self,
         record: &CodeRunReplayRecord,
@@ -569,6 +780,37 @@ impl<'a> ExecutorStorage<'a> {
                 vault.put_code_run_replay_record_if_generation(record, expected)
             }
             Self::Session(binding) => binding.put_replay_record_if_generation(record, expected),
+        }
+    }
+
+    /// Atomically commits a replay append and the optional one-per-turn heal
+    /// signal through the run's bound storage route.
+    pub(crate) fn put_code_run_replay_record_if_generation_with_heal(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+    ) -> Result<CodeRunReplayGeneration> {
+        match self {
+            Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal(
+                record,
+                expected,
+                healed_model,
+            ),
+            Self::Session(binding) => {
+                binding.put_replay_record_if_generation_with_heal(record, expected, healed_model)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn code_run_model_heal_count(
+        &self,
+        model: &ModelId,
+    ) -> Result<CodeRunModelHealCount> {
+        match self {
+            Self::Canonical(vault) => vault.code_run_model_heal_count(model),
+            Self::Session(binding) => binding.model_heal_count(model),
         }
     }
 

@@ -8,6 +8,7 @@ use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 pub const DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH: &str = "packages/prompts";
 pub const EIRI_V3_PROMPT_RELATIVE_PATH: &str = "eiri/v3.md";
+pub const ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH: &str = "blocks/engine-executor-wire.md";
 pub const PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION: &str = "oneiron.prompt_recompile.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +75,18 @@ pub fn resolve_eiri_v3_prompt(package_root: impl AsRef<Path>) -> Result<Resolved
     let package_root = package_root.as_ref();
     resolve_prompt(
         package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        package_root,
+    )
+}
+
+/// Resolves the canonical engine-executor wire prompt through the package
+/// resolver used by prompt tooling and parity tests.
+pub fn resolve_engine_executor_wire_prompt(
+    package_root: impl AsRef<Path>,
+) -> Result<ResolvedPrompt, io::Error> {
+    let package_root = package_root.as_ref();
+    resolve_prompt(
+        package_root.join(ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH),
         package_root,
     )
 }
