@@ -100,6 +100,10 @@ mod conversations;
 mod core;
 mod discover;
 mod entity;
+// ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
+// the serve wire, the door window, and the single-writer landing all live in
+// `oneiron::origin::smart_http`.
+mod git_http;
 mod lease;
 mod mcp_gateway;
 mod memory;
@@ -498,6 +502,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // BK-08's machine-readable booking surface. Every route addresses the
         // page by opaque token and dispatches into the one shared executor.
         .merge(self::booking::booking_routes())
+        // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
+        // every route streams through one `git http-backend` child.
+        .merge(self::git_http::git_http_routes())
         .nest("/v1/core", core_routes)
         .nest("/v1/companion", companion_routes)
         .route("/api/companion/resume", post(resume))

@@ -219,6 +219,21 @@ impl CoreAuth {
         self.principal_ref.as_deref()
     }
 
+    /// Requires that this credential resolves to a REGISTERED principal.
+    ///
+    /// Additive read over the extractor above; it changes no existing
+    /// behaviour and the dev escape hatch is untouched. It exists because
+    /// "authenticated" and "a registered actor" are different facts, and the
+    /// origin's receive-pack door (ONE-1908, RC4) needs the second one: a
+    /// bare trust-root secret and the unauthenticated-dev fallthrough are both
+    /// authenticated and neither carries a `principal_ref`, so neither may
+    /// push — on loopback exactly as much as anywhere else.
+    pub(crate) fn require_registered_principal(&self) -> Result<&str, ApiError> {
+        self.principal_ref
+            .as_deref()
+            .ok_or_else(|| ApiError::forbidden_scope("core:write+principal_ref"))
+    }
+
     /// The credential's revocable identity, when it carries one.
     ///
     /// A bare trust-root secret and the dev fallthrough have none: neither is

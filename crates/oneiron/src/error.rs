@@ -496,6 +496,11 @@ pub enum ErrorKind {
     CodeMemoryAlwaysOnInvalid,
     CodeMemoryLimitExceeded,
     CompactionPacketRejected,
+    GitHttpInvalidRepoName,
+    GitHttpRepoNotFound,
+    GitHttpServeFailed,
+    ReceivePackDoorRejected,
+    ReceivePackLandingRefused,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -2198,6 +2203,42 @@ pub enum Error {
     /// [`crate::compaction::ValidatedCompactionPacket`] is minted.
     #[error("compaction packet rejected: {0}")]
     CompactionPacketRejected(CompactionPacketError),
+    /// A git smart-HTTP route named a repository the origin will not resolve
+    /// (ONE-1908). The name shape is closed, so nothing outside the serving
+    /// root is ever addressable.
+    #[error("invalid origin repo name: {0}")]
+    GitHttpInvalidRepoName(&'static str),
+    /// The named repository is not served. Phase A serves; it never implicitly
+    /// creates a repository as a side effect of a request.
+    #[error("origin does not serve repository `{repo}`")]
+    GitHttpRepoNotFound {
+        /// The requested repository name.
+        repo: String,
+    },
+    /// The `git http-backend` invocation could not complete. Carries the
+    /// backend's own diagnostic, never request or pack bytes.
+    #[error("git smart-http serve failed: {reason}")]
+    GitHttpServeFailed {
+        /// Why the serve invocation could not complete.
+        reason: String,
+    },
+    /// The credential door refused a push inside the quarantine window
+    /// (ONE-1908). The refs never moved and the objects never became
+    /// reachable. The reason names paths and detector codes only — never a
+    /// matched line, a token, or any value byte.
+    #[error("credential door refused the push: {reason}")]
+    ReceivePackDoorRejected {
+        /// The door's printable refusal.
+        reason: String,
+    },
+    /// The journaled ref publication behind a receive-pack landing was refused:
+    /// the refs moved under the decision, or the published object set is not
+    /// wholly present. Either way no ref was moved by the landing.
+    #[error("receive-pack landing refused: {reason}")]
+    ReceivePackLandingRefused {
+        /// The publication rejection class.
+        reason: String,
+    },
 }
 
 impl From<CompactionPacketError> for Error {
@@ -2544,6 +2585,11 @@ impl Error {
             Self::CodeMemoryAlwaysOnInvalid(_) => ErrorKind::CodeMemoryAlwaysOnInvalid,
             Self::CodeMemoryLimitExceeded { .. } => ErrorKind::CodeMemoryLimitExceeded,
             Self::CompactionPacketRejected(_) => ErrorKind::CompactionPacketRejected,
+            Self::GitHttpInvalidRepoName(_) => ErrorKind::GitHttpInvalidRepoName,
+            Self::GitHttpRepoNotFound { .. } => ErrorKind::GitHttpRepoNotFound,
+            Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
+            Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
+            Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
         }
     }
 

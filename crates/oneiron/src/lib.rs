@@ -99,6 +99,7 @@ pub mod maintain;
 pub mod memory;
 pub mod note;
 pub mod off_record;
+pub mod origin;
 pub mod outbound;
 pub(crate) mod outbound_chokepoint;
 pub mod outbound_consent;
