@@ -60,6 +60,7 @@ pub mod delivery_window;
 pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
+pub mod dreamer_plugin_suggest;
 pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
