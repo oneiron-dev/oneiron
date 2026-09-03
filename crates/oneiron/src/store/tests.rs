@@ -14,7 +14,7 @@ use std::sync::{Arc, Barrier};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
 use crate::config::VaultConfig;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, VaultRootProblem};
 use crate::registry::{TypeByteZone, zone_of};
 use heed::RwTxn;
 use heed::types::Bytes;
@@ -874,6 +874,98 @@ fn retrieval_run_without_trace_omits_trace_field_from_msgpack() -> Result<()> {
     Ok(())
 }
 
+/// The keys of the first `score_breakdown` entry in an encoded run row.
+fn encoded_score_breakdown_keys(encoded: &[u8]) -> Vec<String> {
+    let encoded_value =
+        rmpv::decode::read_value(&mut &encoded[..]).expect("encoded retrieval run msgpack");
+    let rmpv::Value::Map(fields) = encoded_value else {
+        panic!("encoded retrieval run must be a msgpack map");
+    };
+    let breakdowns = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("score_breakdown"))
+        .map(|(_, value)| value)
+        .expect("encoded run carries a score_breakdown field");
+    let rmpv::Value::Array(breakdowns) = breakdowns else {
+        panic!("score_breakdown must encode as an array");
+    };
+    let rmpv::Value::Map(entry) = &breakdowns[0] else {
+        panic!("a score breakdown entry must encode as a map");
+    };
+    entry
+        .iter()
+        .map(|(key, _)| {
+            key.as_str()
+                .expect("score breakdown keys are strings")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// The optional read-side `access_factor` is safe in BOTH directions. A
+/// breakdown carrying `None` encodes byte-identically to the legacy
+/// four-key shape, so an old binary never meets an unknown key and those
+/// same legacy bytes decode back to `None`; a recorded multiplier adds the
+/// key and round-trips exactly. This is what keeps "not applicable"
+/// distinguishable from an applied neutral `Some(1.0)` on the wire.
+#[test]
+fn retrieval_score_breakdown_access_factor_is_backward_compatible_both_ways() -> Result<()> {
+    let run_id = RetrievalRunId::now();
+    let breakdown = |access_factor: Option<f32>| RetrievalScoreBreakdown {
+        result_id: *entity_id(0xD9).as_bytes(),
+        final_rank: 1,
+        final_score: 2.0,
+        components: vec![RetrievalScoreComponent {
+            signal: RetrievalSignal::Text,
+            rank: 1,
+            score: 2.0,
+        }],
+        access_factor,
+    };
+    let record = |access_factor: Option<f32>| {
+        RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            vec![breakdown(access_factor)],
+            0,
+            0,
+            None,
+        )
+    };
+
+    let legacy_shaped = encode_retrieval_run(&record(None))?;
+    assert_eq!(
+        encoded_score_breakdown_keys(&legacy_shaped),
+        vec![
+            "result_id".to_owned(),
+            "final_rank".to_owned(),
+            "final_score".to_owned(),
+            "components".to_owned(),
+        ],
+        "a None multiplier must encode to the legacy key set exactly"
+    );
+    let decoded = decode_retrieval_run(&legacy_shaped)?;
+    assert_eq!(
+        decoded.score_breakdown,
+        vec![breakdown(None)],
+        "legacy bytes without the key decode to None"
+    );
+
+    let attributed = encode_retrieval_run(&record(Some(0.25)))?;
+    assert!(
+        encoded_score_breakdown_keys(&attributed).contains(&"access_factor".to_owned()),
+        "a recorded multiplier must emit the key"
+    );
+    assert_eq!(
+        decode_retrieval_run(&attributed)?.score_breakdown,
+        vec![breakdown(Some(0.25))]
+    );
+    Ok(())
+}
+
 #[test]
 fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -890,6 +982,7 @@ fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
                 rank: 1,
                 score: 2.0,
             }],
+            access_factor: None,
         },
         RetrievalScoreBreakdown {
             result_id: *dropped.as_bytes(),
@@ -900,6 +993,7 @@ fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
                 rank: 2,
                 score: 1.0,
             }],
+            access_factor: None,
         },
     ];
     let record = RetrievalRunRecord::new(
@@ -964,6 +1058,7 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
             rank: 1,
             score: 2.0,
         }],
+        access_factor: None,
     }];
     let fork_hash = [0xD3; 32];
     let record = RetrievalRunRecord::new(
@@ -1034,6 +1129,7 @@ fn unknown_zero_retrieval_trace_fork_hash_is_not_indexed() -> Result<()> {
             rank: 1,
             score: 1.0,
         }],
+        access_factor: None,
     }];
     let record = RetrievalRunRecord::new(
         run_id,
@@ -1090,6 +1186,7 @@ fn delete_retrieval_run_removes_fork_index_when_run_row_is_corrupt() -> Result<(
             rank: 1,
             score: 1.0,
         }],
+        access_factor: None,
     }];
     let fork_hash = [0xD5; 32];
     let record = RetrievalRunRecord::new(
@@ -1450,6 +1547,7 @@ fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Res
                         score: -1.0,
                     },
                 ],
+                access_factor: None,
             },
             RetrievalScoreBreakdown {
                 result_id: *negative.as_bytes(),
@@ -1467,6 +1565,7 @@ fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Res
                         score: 1.0,
                     },
                 ],
+                access_factor: None,
             },
         ],
         2,
@@ -1523,6 +1622,7 @@ fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()>
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1587,6 +1687,7 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1618,6 +1719,7 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1661,6 +1763,7 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
                 rank: 1,
                 score: 1.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -1692,6 +1795,7 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
                 rank: 1,
                 score: 10.0,
             }],
+            access_factor: None,
         }],
         1,
         0,
@@ -4098,5 +4202,487 @@ fn a_persisted_notice_with_unattributable_policy_fields_stops_decoding() -> Resu
             "{case}: append must refuse it too: {appended:?}",
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ONE-218: `Vault::open_existing` / `Store::open_existing` — the fail-closed
+// existing-only open door.
+//
+// These live here rather than under `tests/it/` because they need
+// crate-internal reach: the deterministic in-window interleave seam
+// (`store::test_hooks`) and the raw `hnsw_meta`/`vault_meta` rows that prove a
+// refusal wrote nothing. The public-API behaviours are covered from outside the
+// crate in `tests/it/existing_only_open.rs`.
+// ---------------------------------------------------------------------------
+
+/// A device-shaped config with a test-sized map, so an existing-only fixture
+/// does not reserve a gigabyte of address space per vault.
+#[cfg(target_os = "linux")]
+fn existing_only_config() -> VaultConfig {
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.max_readers = 16;
+    config
+}
+
+/// A config naming a dictionary root that exists but is not the fixture
+/// vault's, so the analyzer identity it derives genuinely differs.
+#[cfg(target_os = "linux")]
+fn wrong_dict_config(dir: &Path) -> VaultConfig {
+    let mut config = existing_only_config();
+    config.dict_search_paths = vec![dir.join("other-dicts")];
+    config
+}
+
+/// Writes a trusted dictionary root whose bytes the Chinese analyzer hashes
+/// into the vault's persisted analyzer manifest.
+#[cfg(target_os = "linux")]
+fn trusted_dict_root(dir: &Path) -> std::path::PathBuf {
+    let root = dir.join("trusted-dicts");
+    std::fs::create_dir_all(root.join("zh")).expect("dict dir");
+    let dict = root.join("zh").join("jieba.dict.utf8");
+    std::fs::write(dict, "研究 100 n\n東京 90 n\n").expect("dict bytes");
+    root
+}
+
+/// The stored analyzer manifest bytes, read through a canonical engine read
+/// transaction on an existing-only open — the one door that never rewrites it.
+#[cfg(target_os = "linux")]
+fn stored_analyzer_manifest(path: &Path, config: &VaultConfig) -> Vec<u8> {
+    let vault = Vault::open_existing(path, config.clone()).expect("existing vault reopens");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let bytes = vault
+        .store
+        .vault_meta
+        .get(&rtxn, TEXT_ANALYZER_MANIFEST_KEY)
+        .expect("manifest row")
+        .expect("manifest present")
+        .to_vec();
+    drop(rtxn);
+    bytes
+}
+
+/// M1, at the exact seam it was reported against: the caller's root is renamed
+/// away and an empty directory takes its place INSIDE the open window, between
+/// the descriptor binding and the LMDB environment open — and, since the
+/// descriptor-stable seam landed, immediately before `mdb_env_open` itself
+/// rather than before a library wrapper that would re-resolve the path
+/// afterwards.
+///
+/// Two facts have to hold together. The replacement gains no vault bytes — the
+/// create-capable door, which hands LMDB the pathname, would have initialized a
+/// whole new vault in it — and the open still refuses, because the root the
+/// caller named is no longer the root that was bound.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_a_root_replaced_inside_the_open_window() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let moved = temp.path().join("moved");
+    drop(Vault::open(&root, existing_only_config())?);
+    let canonical = root.canonicalize()?;
+    let hook_root = canonical.clone();
+    let hook_moved = moved.clone();
+    crate::store::test_hooks::arm_before_lmdb_open(canonical, move |_| {
+        std::fs::rename(&hook_root, &hook_moved).expect("rename the bound root away");
+        std::fs::create_dir(&hook_root).expect("empty replacement at the named path");
+    });
+
+    let opened = Vault::open_existing(&root, existing_only_config());
+
+    let Err(error) = opened else {
+        panic!("a root replaced inside the open window must refuse");
+    };
+    let replaced_after_open = VaultRootProblem::NotAnExistingVaultRoot {
+        after_environment_open: true,
+    };
+    let Error::VaultRootPreflight { problem, .. } = &error else {
+        panic!("expected a vault-root refusal, got {error}");
+    };
+    assert_eq!(*problem, replaced_after_open);
+    assert_eq!(
+        std::fs::read_dir(&root)?.count(),
+        0,
+        "the replacement directory must gain no vault bytes"
+    );
+    assert!(
+        moved.join("data.mdb").exists() && moved.join("lock.mdb").exists(),
+        "the bound vault itself stays intact"
+    );
+    Ok(())
+}
+
+/// M2: stored model `None` against a supplied `Some(id)`. The create-capable
+/// door answers this by STAMPING the supplied id during the open, which makes
+/// every post-open identity comparison trivially agree. The existing-only door
+/// compares the pre-open bytes and refuses, and the vault stays unstamped.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_a_supplied_model_against_an_unstamped_vault() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let vectorless = existing_only_config();
+    assert_eq!(vectorless.embedding_model, None);
+    drop(Vault::open(&root, vectorless.clone())?);
+    let mut supplied = vectorless.clone();
+    supplied.embedding_model = Some("oneiron/existing-only@v1".to_owned());
+
+    let refused = Vault::open_existing(&root, supplied);
+
+    let Err(error) = refused else {
+        panic!("a supplied model against an unstamped vault must refuse");
+    };
+    let Error::EmbeddingModelChanged { stored, requested } = &error else {
+        panic!("expected an embedding-model refusal, got {error}");
+    };
+    assert_eq!(stored.as_str(), "none");
+    assert_eq!(requested.as_str(), "oneiron/existing-only@v1");
+    // Reopening and reading the row is the proof the refusal wrote nothing.
+    let reopened = Vault::open_existing(&root, vectorless)?;
+    let rtxn = reopened.store.env.read_txn()?;
+    assert!(reopened.store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)?.is_none());
+    drop(rtxn);
+    Ok(())
+}
+
+/// The other half of the exact nullable comparison: a stored id against a
+/// supplied `none`. The create-capable gate tolerates that on a vectorless
+/// vault — proved inline below — so only exact `Option` equality refuses it.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_a_none_model_against_a_stamped_vault() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let mut stamped = existing_only_config();
+    stamped.embedding_model = Some("oneiron/existing-only@v1".to_owned());
+    drop(Vault::open(&root, stamped.clone())?);
+    let mut vectorless = stamped.clone();
+    vectorless.embedding_model = None;
+    drop(Vault::open(&root, vectorless.clone())?);
+
+    let refused = Vault::open_existing(&root, vectorless);
+
+    let Err(error) = refused else {
+        panic!("a `none` model against a stamped vault must refuse");
+    };
+    let Error::EmbeddingModelChanged { stored, requested } = &error else {
+        panic!("expected an embedding-model refusal, got {error}");
+    };
+    assert_eq!(stored.as_str(), "oneiron/existing-only@v1");
+    assert_eq!(requested.as_str(), "none");
+    drop(Vault::open_existing(&root, stamped)?);
+    Ok(())
+}
+
+/// M3: an EMPTY text index plus a dictionary root that is not this vault's.
+/// The create-capable door's empty-index branch rewrites the stored analyzer
+/// manifest to whatever the caller supplied; the existing-only door compares it
+/// and refuses, leaving the stored bytes identical.
+///
+/// The last two statements prove that rewrite branch really was reachable here,
+/// so the refusal is load-bearing rather than incidental.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_a_wrong_dictionary_root_on_an_empty_text_index() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let mut config = existing_only_config();
+    config.dict_search_paths = vec![trusted_dict_root(temp.path())];
+    drop(Vault::open(&root, config.clone())?);
+    std::fs::create_dir(temp.path().join("other-dicts"))?;
+    let wrong = wrong_dict_config(temp.path());
+    let before = stored_analyzer_manifest(&root, &config);
+
+    let refused = Vault::open_existing(&root, wrong.clone());
+
+    let Err(error) = refused else {
+        panic!("a wrong dictionary root must refuse even on an empty text index");
+    };
+    assert!(
+        matches!(error, Error::IncompatibleAnalyzer { .. }),
+        "{error}"
+    );
+    assert_eq!(
+        stored_analyzer_manifest(&root, &config),
+        before,
+        "a refused existing-only open must leave the manifest byte-identical"
+    );
+
+    drop(Vault::open(&root, wrong.clone())?);
+    assert_ne!(
+        stored_analyzer_manifest(&root, &wrong),
+        before,
+        "the create-capable door does rewrite it, so the branch was reachable"
+    );
+    Ok(())
+}
+
+/// The existing-only door has no stamp-on-new branch and no ONE-1754 re-key
+/// branch: both are writes against a vault whose identity has not been compared
+/// yet. A predecessor-stamped vault therefore refuses here while
+/// [`Vault::open`] would re-key it.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_a_vault_stamped_at_another_storage_abi() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let config = existing_only_config();
+    drop(Vault::open(&root, config.clone())?);
+    {
+        let vault = Vault::open(&root, config.clone())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            STORAGE_ABI_VERSION_KEY,
+            &STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR.to_le_bytes(),
+        )?;
+        wtxn.commit()?;
+    }
+
+    let refused = Vault::open_existing(&root, config);
+
+    let Err(error) = refused else {
+        panic!("a predecessor-stamped vault must refuse on the existing-only door");
+    };
+    let Error::StorageAbiVersionChanged { stored, current } = &error else {
+        panic!("expected a storage-ABI refusal, got {error}");
+    };
+    assert_eq!(*stored, Some(STORAGE_ABI_VERSION_V3_REKEY_PREDECESSOR));
+    assert_eq!(*current, STORAGE_ABI_VERSION);
+    Ok(())
+}
+
+/// Every entry name in `root` with that entry's exact bytes. A refused
+/// existing-only open must leave this map identical: same names, same bytes,
+/// same lengths, nothing created.
+#[cfg(target_os = "linux")]
+fn root_snapshot(root: &Path) -> BTreeMap<std::ffi::OsString, Vec<u8>> {
+    std::fs::read_dir(root)
+        .expect("readable root")
+        .map(|entry| {
+            let entry = entry.expect("readable directory entry");
+            let bytes = std::fs::read(entry.path()).expect("readable entry bytes");
+            (entry.file_name(), bytes)
+        })
+        .collect()
+}
+
+/// Refuses with the pre-environment-open refusal and leaves the root
+/// byte-for-byte as it was. The `after_environment_open: false` discriminant is
+/// what says no LMDB environment was ever opened over these files.
+#[cfg(target_os = "linux")]
+fn assert_refused_before_any_environment_open(root: &Path) {
+    let before = root_snapshot(root);
+
+    let refused = Vault::open_existing(root, existing_only_config());
+
+    let Err(error) = refused else {
+        panic!("{}: an incomplete LMDB pair must refuse", root.display());
+    };
+    let Error::VaultRootPreflight { problem, .. } = &error else {
+        panic!("expected a vault-root refusal, got {error}");
+    };
+    assert_eq!(
+        *problem,
+        VaultRootProblem::NotAnExistingVaultRoot {
+            after_environment_open: false,
+        },
+        "the refusal must land BEFORE the environment open, not after it",
+    );
+    assert_eq!(
+        root_snapshot(root),
+        before,
+        "a refused root must be byte-identical afterwards",
+    );
+}
+
+/// M2, the whole mechanism: a directory holding two PRE-CREATED ZERO-LENGTH
+/// LMDB files is refused before any environment open, and both files stay
+/// empty.
+///
+/// This door opens read-write (heed defaults to `EnvFlags::empty()`), so
+/// without the bound-header gate LMDB would `ftruncate` and initialize the
+/// zero-length `lock.mdb` and write both meta pages into the zero-length
+/// `data.mdb` — a partial vault, created by the door that must never create —
+/// and only then would the 28-database manifest gate refuse. Zero bytes
+/// afterwards is the discriminating fact.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_a_precreated_empty_lmdb_pair_before_any_environment_open() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("precreated-empty-pair");
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("data.mdb"), b"")?;
+    std::fs::write(root.join("lock.mdb"), b"")?;
+    let before = root_snapshot(&root);
+    assert_eq!(before.len(), 2, "exactly the two LMDB names, nothing else");
+    assert!(
+        before.values().all(std::vec::Vec::is_empty),
+        "both files start at zero bytes",
+    );
+
+    assert_refused_before_any_environment_open(&root);
+
+    assert_eq!(std::fs::metadata(root.join("data.mdb"))?.len(), 0);
+    assert_eq!(std::fs::metadata(root.join("lock.mdb"))?.len(), 0);
+    Ok(())
+}
+
+/// The two bound validators are separately load-bearing. Each fixture pairs one
+/// GENUINE LMDB file, copied out of a real vault, with one that is not, so the
+/// only possible reason for each refusal is the validator under test.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_refuses_headerless_lmdb_pairs_before_any_environment_open() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let real = temp.path().join("real-vault");
+    drop(Vault::open(&real, existing_only_config())?);
+
+    // Only the data-header validator can refuse this one: the lock file is a
+    // real, fully initialized reader table.
+    let headerless_data = temp.path().join("headerless-data");
+    std::fs::create_dir(&headerless_data)?;
+    std::fs::copy(real.join("lock.mdb"), headerless_data.join("lock.mdb"))?;
+    std::fs::write(
+        headerless_data.join("data.mdb"),
+        b"not an lmdb data file".repeat(512),
+    )?;
+    assert_refused_before_any_environment_open(&headerless_data);
+
+    // Only the lock validator can refuse these two: the data file is a real
+    // LMDB data file with a valid meta page. The empty leg is exactly the case
+    // a stock `MDB_RDONLY` validation open would have INITIALIZED instead of
+    // refusing.
+    for (name, lock_bytes) in [
+        ("empty-lock", Vec::new()),
+        ("headerless-lock", vec![0xFF_u8; 4096]),
+    ] {
+        let root = temp.path().join(name);
+        std::fs::create_dir(&root)?;
+        std::fs::copy(real.join("data.mdb"), root.join("data.mdb"))?;
+        std::fs::write(root.join("lock.mdb"), &lock_bytes)?;
+        assert_refused_before_any_environment_open(&root);
+    }
+    Ok(())
+}
+
+/// M1 at the TRUE final dereference: the replacement is staged in the window
+/// between every path/option/cache preparation step and `mdb_env_open` itself
+/// — the window that used to live inside heed, past its own `canonicalize`,
+/// where no hook could reach.
+///
+/// The replacement carries one marker file, so "the open cannot touch it" is
+/// provable by exact entry names and bytes rather than by emptiness alone: an
+/// open that dereferenced the caller's pathname here would have found a
+/// directory with no LMDB pair and created one in it.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_cannot_touch_a_replacement_staged_at_the_final_dereference() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let parked = temp.path().join("parked");
+    let spare = temp.path().join("spare");
+    drop(Vault::open(&root, existing_only_config())?);
+    std::fs::create_dir(&spare)?;
+    std::fs::write(spare.join("replacement-marker"), b"staged, not a vault")?;
+    let staged = root_snapshot(&spare);
+    let canonical = root.canonicalize()?;
+    let (hook_root, hook_parked, hook_spare) = (canonical.clone(), parked.clone(), spare);
+    crate::store::test_hooks::arm_before_lmdb_open(canonical, move |_| {
+        std::fs::rename(&hook_root, &hook_parked).expect("park the bound root");
+        std::fs::rename(&hook_spare, &hook_root).expect("stage the replacement");
+    });
+
+    let opened = Vault::open_existing(&root, existing_only_config());
+
+    let Err(error) = opened else {
+        panic!("a root replaced at the final dereference must refuse");
+    };
+    let Error::VaultRootPreflight { problem, .. } = &error else {
+        panic!("expected a vault-root refusal, got {error}");
+    };
+    assert_eq!(
+        *problem,
+        VaultRootProblem::NotAnExistingVaultRoot {
+            after_environment_open: true,
+        },
+    );
+    assert_eq!(
+        root_snapshot(&root),
+        staged,
+        "the replacement must keep exactly its staged entry names and bytes",
+    );
+    assert!(
+        parked.join("data.mdb").exists() && parked.join("lock.mdb").exists(),
+        "the bound vault itself stays intact",
+    );
+    Ok(())
+}
+
+/// M1's ABA schedule, run across the true final dereference.
+///
+/// The caller's pathname is made to name a DIFFERENT but equally valid vault
+/// for exactly the duration of the C call, and the original is put back the
+/// instant it returns. Both post-open checks therefore pass in either world —
+/// `verify_unchanged` sees the bound descriptor's entries and the original at
+/// the named path — so they cannot be what makes this safe, and the test
+/// deliberately does not credit them. The discriminating fact is WHICH vault
+/// the environment serves: the bound one, because the only path LMDB ever
+/// dereferenced was `/proc/self/fd/<dirfd>`.
+#[cfg(target_os = "linux")]
+#[test]
+fn open_existing_serves_the_bound_vault_across_an_aba_swap_of_the_caller_path() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("vault");
+    let decoy = temp.path().join("decoy");
+    let parked = temp.path().join("parked");
+    let bound_id = entity_id(0xB0);
+    let decoy_id = entity_id(0xDE);
+    {
+        let vault = Vault::open(&root, existing_only_config())?;
+        put_text(&vault, bound_id, "bound vault marker")?;
+    }
+    {
+        let vault = Vault::open(&decoy, existing_only_config())?;
+        put_text(&vault, decoy_id, "decoy vault marker")?;
+    }
+    let canonical = root.canonicalize()?;
+    let (a_root, a_decoy, a_parked) = (canonical.clone(), decoy.clone(), parked.clone());
+    crate::store::test_hooks::arm_before_lmdb_open(canonical.clone(), move |_| {
+        std::fs::rename(&a_root, &a_parked).expect("park the bound root");
+        std::fs::rename(&a_decoy, &a_root).expect("stage the decoy at the caller path");
+    });
+    let (b_root, b_decoy, b_parked) = (canonical.clone(), decoy.clone(), parked);
+    crate::store::test_hooks::arm_after_lmdb_open(canonical.clone(), move |_| {
+        std::fs::rename(&b_root, &b_decoy).expect("restore the decoy");
+        std::fs::rename(&b_parked, &b_root).expect("restore the bound root");
+    });
+
+    let vault = Vault::open_existing(&root, existing_only_config())?;
+
+    assert!(
+        vault.get(&bound_id)?.is_some(),
+        "the environment must serve the vault this door BOUND",
+    );
+    assert!(
+        vault.get(&decoy_id)?.is_none(),
+        "it must not be serving the vault staged at the caller's pathname",
+    );
+    // Cache identity and open path are separate: LMDB dereferenced only
+    // `/proc/self/fd/<dirfd>` (proved above), while heed registered the
+    // environment under the canonical ROOT it was handed as the cache identity.
+    assert!(
+        heed::env_closing_event(&canonical).is_some(),
+        "the environment must be registered under the canonical root identity",
+    );
+    drop(vault);
+
+    let decoy_vault = Vault::open_existing(&decoy, existing_only_config())?;
+    assert!(decoy_vault.get(&decoy_id)?.is_some(), "the decoy is intact");
+    assert!(
+        decoy_vault.get(&bound_id)?.is_none(),
+        "and never received the bound vault's rows",
+    );
     Ok(())
 }

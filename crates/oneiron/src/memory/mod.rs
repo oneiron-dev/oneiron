@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod campaign;
+mod chat;
 mod claims;
 mod dreamer;
 mod error;
@@ -40,6 +41,10 @@ mod tests;
 #[cfg(test)]
 mod tests_regressions;
 
+pub use chat::{
+    ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
+    ChatScope, ComposedChatAnswer,
+};
 pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, SafeDeleteReason,
@@ -48,7 +53,7 @@ pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptVi
 pub use error::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MemoryError, MemoryResult,
+    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MemoryError, MemoryGateDenial, MemoryResult,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

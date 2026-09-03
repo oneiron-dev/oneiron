@@ -1246,6 +1246,11 @@ fn max_neighbors_caps_neighbor_count() -> Result<()> {
 
 #[test]
 fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> Result<()> {
+    // The `learned_at` both fixture writers below stamp every row with
+    // (`put_claim_text_entity` / `put_text_entity`), and the frozen run
+    // clock the pack is assembled under.
+    const BUDGET_BALANCE_NOW: u64 = 1;
+
     let (_dir, vault) = open_test_vault();
 
     let claim_top = EntityId::from_bytes_unchecked([0x85; 16]);
@@ -1296,9 +1301,17 @@ fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> 
     vault.put_vector(&turn, &[0.7, 0.3, 0.0, 0.0])?;
     vault.put_vector(&facet, &[0.6, 0.4, 0.0, 0.0])?;
 
+    // ONE-1402: every row above is learned at `BUDGET_BALANCE_NOW`, so the
+    // run clock is frozen there — each CLAIM candidate then has age `0` and
+    // a read-side decay factor of exactly `2^0 = 1.0`. Without the freeze
+    // these epoch-second claims floor at `ACCESS_FACTOR_FLOOR` while the
+    // neutral TURN/FACET rows keep `1.0`, sinking every claim below every
+    // non-claim: the page would be ordered by decay instead of by the
+    // budget this test exists to pin.
     let pack = vault
         .context_pack()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .with_temporal_now(BUDGET_BALANCE_NOW)
         .limit(3)
         .retrieval_budget(ContextPackRetrievalBudget::new(1, 1, 0, 1, 0, 0))
         .run()?;

@@ -7,11 +7,14 @@ use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
 use crate::test_util::embedding_test_config;
 
-fn open_test_vault() -> (tempfile::TempDir, Vault) {
+// Shared with the sibling `decay_tests` module: the ONE-1402 read-side
+// decay suite owns its own file but keeps using this module's canonical
+// fixture helpers instead of forking them.
+pub(super) fn open_test_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(embedding_test_config())
 }
 
-fn entity_id(byte: u8) -> EntityId {
+pub(super) fn entity_id(byte: u8) -> EntityId {
     crate::test_util::entity(byte)
 }
 
@@ -90,7 +93,12 @@ fn active_claim_body_with_salience(salience: f32) -> Vec<u8> {
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
-fn put_claim_text(vault: &Vault, id: EntityId, text: &str, world: Option<EntityId>) -> Result<()> {
+pub(super) fn put_claim_text(
+    vault: &Vault,
+    id: EntityId,
+    text: &str,
+    world: Option<EntityId>,
+) -> Result<()> {
     vault
         .batch()
         .put(
@@ -215,11 +223,11 @@ fn count_entries(db: &crate::overlay_db::OverlayDb, vault: &Vault) -> Result<usi
     Ok(count)
 }
 
-fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
+pub(super) fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
     scores.iter().map(|entry| (entry.id, entry.score)).collect()
 }
 
-fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
+pub(super) fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
     (left - right).abs() <= eps
 }
 
@@ -316,6 +324,7 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
                     rank: 1,
                     score: 1.0,
                 }],
+                access_factor: None,
             },
             RetrievalScoreBreakdown {
                 result_id: *low.as_bytes(),
@@ -326,6 +335,7 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
                     rank: 2,
                     score: -1.0,
                 }],
+                access_factor: None,
             },
         ],
         2,
@@ -1137,7 +1147,10 @@ fn trace_candidates_contain(candidates: &[RetrievalScoreBreakdown], id: EntityId
         .any(|candidate| candidate.result_id == *id.as_bytes())
 }
 
-fn captured_retrieval_trace(vault: &Vault, builder: PipelineBuilder<'_>) -> Result<RetrievalTrace> {
+pub(super) fn captured_retrieval_trace(
+    vault: &Vault,
+    builder: PipelineBuilder<'_>,
+) -> Result<RetrievalTrace> {
     captured_retrieval_run_trace(vault, builder).map(|(_, trace)| trace)
 }
 
@@ -3591,6 +3604,19 @@ use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 /// The query vector every facet test searches with.
 const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
+/// The frozen run clock every facet test queries under, equal to the
+/// `learned_at` of every fixture row below.
+///
+/// ONE-1402 made read-side decay a post-fusion multiplier on CLAIM
+/// candidates, so an unpinned wall clock would age these epoch-second
+/// fixture claims by decades and floor them at `ACCESS_FACTOR_FLOOR` while
+/// the non-claim rows stayed neutral — the facet contracts would then be
+/// asserting decay arithmetic instead of facet scope. Freezing the clock at
+/// the fixture's own `learned_at` gives every candidate age `0`, hence
+/// factor `2^0 = 1.0` exactly, which is the decay-NEUTRAL baseline these
+/// pins have always meant. Decay's own behavior is owned by `decay_tests`.
+const FACET_NOW: u64 = 1;
+
 /// Neutral four-signal blend score when no optional signals are enabled:
 /// all z-normalized signal columns are zero, so `exp(0) = 1`.
 const FACET_R0: f32 = 1.0;
@@ -3725,7 +3751,11 @@ fn facet_absent_is_a_no_op_regression_pin() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fixture = setup_facet_fixture(&vault)?;
 
-    let results = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+    let results = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .run()?;
     assert_eq!(
         ordered_results(&results),
         vec![
@@ -3752,6 +3782,7 @@ fn facet_strict_removes_other_facet_claims_only() -> Result<()> {
     let results = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     assert_eq!(
@@ -3779,6 +3810,7 @@ fn facet_prefer_boosts_active_facet_with_exact_derived_values() -> Result<()> {
     let results = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Prefer { boost: 3.0 })
         .run()?;
     assert_eq!(
@@ -3807,6 +3839,7 @@ fn facet_strict_excluded_claims_free_result_limit_slots() -> Result<()> {
     let results = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .limit(2)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
@@ -3834,15 +3867,21 @@ fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fixture = setup_facet_fixture(&vault)?;
 
-    let no_facet = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+    let no_facet = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .run()?;
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     let prefer = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Prefer { boost: 2.5 })
         .run()?;
 
@@ -3878,6 +3917,7 @@ fn unfaceted_scope_is_not_invariant_evidence_contract() -> Result<()> {
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     assert!(
@@ -3921,6 +3961,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
         let results = vault
             .query()
             .search_vector(&FACET_QUERY, 10)
+            .with_temporal_now(FACET_NOW)
             .facet(&facet, FacetMode::Strict)
             .run()?;
         assert_eq!(
@@ -3933,6 +3974,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
     let strict_c = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_c, FacetMode::Strict)
         .run()?;
     assert!(
@@ -3944,6 +3986,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
     let prefer = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_a, FacetMode::Prefer { boost: 2.0 })
         .run()?;
     assert_eq!(
@@ -3982,6 +4025,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
     let strict = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_a, FacetMode::Strict)
         .run()?;
     assert_eq!(
@@ -3994,6 +4038,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
     let prefer = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&facet_b, FacetMode::Prefer { boost: 4.0 })
         .run()?;
     assert_eq!(
@@ -4034,6 +4079,7 @@ fn facet_filter_never_rescores_non_claim_entities() -> Result<()> {
         let results = vault
             .query()
             .search_vector(&FACET_QUERY, 10)
+            .with_temporal_now(FACET_NOW)
             .facet(&facet_a, mode)
             .run()?;
         assert_eq!(
@@ -4083,7 +4129,7 @@ fn claim_body_bytes(appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
-fn put_status_claim(
+pub(super) fn put_status_claim(
     vault: &Vault,
     id: EntityId,
     text: &str,
@@ -4351,6 +4397,7 @@ fn facet_query_rejects_invalid_active_facet_typed() -> Result<()> {
     let ok = vault
         .query()
         .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
         .facet(&fixture.facet_a, FacetMode::Strict)
         .run()?;
     assert!(!ok.is_empty(), "a valid FACET must not be rejected");
@@ -4910,6 +4957,73 @@ fn rerank_reorders_block_with_score_ladder_reassignment() -> Result<()> {
             .windows(2)
             .all(|pair| pair[0].score >= pair[1].score),
         "scores must stay globally non-increasing"
+    );
+    Ok(())
+}
+
+/// A post-blend boost belongs to the positional score ladder, while decay
+/// remains bound to whichever entity receives that rung after reranking.
+#[test]
+fn rerank_preserves_facet_prefer_boost_with_receiving_factor_once() -> Result<()> {
+    const BOOST: f32 = 3.0;
+    const FACTOR: f32 = 0.5;
+
+    let (_dir, vault) = open_test_vault();
+    let fixture = setup_facet_fixture(&vault)?;
+    let overrides = HashMap::from([(fixture.claim_other, FACTOR)]);
+    let baseline = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .with_access_factor_overrides(&overrides)
+        .facet(&fixture.facet_a, FacetMode::Prefer { boost: BOOST })
+        .limit(10)
+        .run()?;
+    assert_eq!(baseline[0].id, fixture.claim_active);
+    assert_eq!(baseline[0].score, FACET_R1 * BOOST);
+    assert_eq!(
+        baseline.last().map(|scored| scored.id),
+        Some(fixture.claim_other)
+    );
+
+    let reranker = ReversingReranker;
+    let reranked = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .with_temporal_now(FACET_NOW)
+        .with_access_factor_overrides(&overrides)
+        .facet(&fixture.facet_a, FacetMode::Prefer { boost: BOOST })
+        .rerank(
+            &reranker,
+            RerankOptions {
+                top_n: baseline.len(),
+                query: Some("rerank boosted decay probe".to_owned()),
+            },
+        )
+        .limit(10)
+        .run()?;
+
+    let expected_ids = baseline
+        .iter()
+        .rev()
+        .map(|scored| scored.id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reranked.iter().map(|scored| scored.id).collect::<Vec<_>>(),
+        expected_ids,
+        "the reranker must reverse the full boosted block"
+    );
+    let promoted = &reranked[0];
+    assert_eq!(promoted.id, fixture.claim_other);
+    let expected = FACET_R1 * BOOST * FACTOR;
+    assert!(
+        approx_eq(promoted.score, expected, 1e-6),
+        "the boosted top rung must survive and receive one factor: expected {expected}, got {}",
+        promoted.score
+    );
+    assert!(
+        !approx_eq(promoted.score, expected * FACTOR, 1e-6),
+        "the receiving entity's factor must not be squared"
     );
     Ok(())
 }
@@ -5633,6 +5747,17 @@ fn hyde_vector_validation_fails_closed() {
 mod relationship_scope_filter {
     use super::*;
 
+    /// The frozen run clock every relationship-scope test queries under,
+    /// equal to the `learned_at` of every fixture row in this module.
+    ///
+    /// Same reason as `FACET_NOW`: ONE-1402 read-side decay ages claims
+    /// against the run's resolved clock, so left unpinned these
+    /// epoch-second fixture claims floor at `ACCESS_FACTOR_FLOOR` and sort
+    /// below the neutral non-claim row, turning these relationship
+    /// visibility contracts into decay arithmetic. At the fixture's own
+    /// epoch every claim's age — and therefore its decay — is exactly zero.
+    const RELATIONSHIP_NOW: u64 = 1;
+
     fn relationship_body(rel: Option<EntityId>) -> ClaimBody {
         let mut body = ClaimBody::new(
             "test.relationship_scope",
@@ -5887,6 +6012,7 @@ mod relationship_scope_filter {
         let results = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .run()?;
         assert_eq!(
             relationship_results(&results),
@@ -5909,6 +6035,7 @@ mod relationship_scope_filter {
         let results = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .relationship(&fixture.active_relationship, RelMode::Filter)
             .rerank(
                 &reranker,
@@ -5954,6 +6081,7 @@ mod relationship_scope_filter {
         let rows = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .limit(2)
             .relationship(&active_relationship, RelMode::Filter)
             .run()?;
@@ -6003,6 +6131,7 @@ mod relationship_scope_filter {
         let baseline = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .run()?;
         assert_eq!(
             baseline.iter().map(|row| row.id).collect::<Vec<_>>(),
@@ -6012,6 +6141,7 @@ mod relationship_scope_filter {
         let demoted = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .relationship(&active_relationship, RelMode::Demote)
             .run()?;
         let baseline_scores = baseline
@@ -6045,6 +6175,7 @@ mod relationship_scope_filter {
         let no_demoted_slot = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .limit(2)
             .relationship(&active_relationship, RelMode::Demote)
             .run()?;
@@ -6057,6 +6188,7 @@ mod relationship_scope_filter {
         let one_demoted_slot = vault
             .query()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .with_temporal_now(RELATIONSHIP_NOW)
             .limit(4)
             .relationship(&active_relationship, RelMode::Demote)
             .run()?;

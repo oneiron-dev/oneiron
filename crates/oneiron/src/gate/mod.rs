@@ -12,10 +12,12 @@ mod decode;
 mod default_manifest;
 mod definition_ceiling;
 mod doors;
+mod dreamer_precommit;
 mod effect;
 mod grants;
 mod input;
 mod resolution;
+mod witness_message;
 
 #[cfg(test)]
 mod tests;
@@ -57,8 +59,13 @@ pub(crate) use self::doors::{
     check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
 };
+// The validator itself is reached through the write door; the direct
+// visibility below exists for the tests that pin its checks in isolation.
 #[cfg(test)]
-pub(crate) use self::effect::scoped_mcp_credential_connector_key;
+pub(crate) use self::dreamer_precommit::{
+    DREAMER_DEGENERATE_VALUE_PREFIXES, DREAMER_RUNTIME_RECORD_PREDICATES, DreamerPrecommitInput,
+    validate_dreamer_precommit,
+};
 pub(crate) use self::effect::{
     ExternalEffectGovernance, check_external_effect_policy, evaluate_external_effect_policy,
     record_external_effect_policy,
@@ -71,6 +78,14 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+#[cfg(test)]
+pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
+pub(crate) use self::witness_message::{
+    MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageEnvelope,
+    check_witness_message_ceiling, validate_canonical_witness_message_body,
+    validate_replicated_witness_message_body,
+};
 
 // gate.rs was one flat module: its private `use` header and every item in it
 // were in scope for the inline test module through `use super::*`. After the

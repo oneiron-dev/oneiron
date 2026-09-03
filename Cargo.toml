@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# ONE-218: the pinned local `heed` vendor lives under `crates/` but is NOT a
+# workspace member. It is upstream heed 0.20.5 plus one audited open seam, and
+# it must not be reformatted, relinted, or test-run as if it were our code.
+# See the `[patch.crates-io]` entry at the bottom of this file and
+# `crates/heed/PROVENANCE.md`.
+exclude = ["crates/heed"]
 
 [workspace.package]
 version = "0.1.0"
@@ -27,6 +33,13 @@ rmpv = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# ONE-1961: RFC 8785 (JCS) canonical JSON for the perf bench run certificate.
+# The candidate's hashes have to be reproducible by a Python verifier using
+# `rfc8785`, and raw-byte hashing cannot do that: serde_json (ryu) and Python
+# disagree on float formatting, and key order is a property of whoever built the
+# document. JCS fixes sorted keys, no whitespace and ES6 number formatting on
+# both sides.
+serde_json_canonicalizer = "0.3"
 postcard = "1.1"
 blake3 = "1"
 futures-core = "0.3"
@@ -60,3 +73,20 @@ items_after_statements = "deny"
 unwrap_used = "deny"
 cognitive_complexity = "deny"
 too_many_lines = "deny"
+
+# ONE-218 (existing-only open door): `heed` 0.20.5, vendored locally and pinned.
+#
+# `Store::open_existing` binds the vault root as a directory descriptor and must
+# hand LMDB `/proc/self/fd/<dirfd>` UNCHANGED, so a rename/swap/ABA of the
+# caller's pathname cannot redirect the environment. Upstream
+# `EnvOpenOptions::open` canonicalizes its argument first and opens the ordinary
+# pathname it resolves to, which discards that capability. The vendored copy is
+# upstream 0.20.5 byte-for-byte apart from ONE added open seam that keeps the
+# exact open path and the environment-cache identity separate.
+#
+# Same package, same version (0.20.5), same dependency requirements: no version
+# moves, `lmdb-master-sys` stays at the already-locked 0.2.6, and no dependency
+# is added. Provenance, seam, SAFETY contract, and the LMDB audit are in
+# `crates/heed/PROVENANCE.md`.
+[patch.crates-io]
+heed = { path = "crates/heed/vendor/heed-0.20.5" }

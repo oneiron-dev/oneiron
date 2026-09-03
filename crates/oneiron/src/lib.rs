@@ -31,6 +31,7 @@ pub mod checkout;
 pub mod claim;
 pub mod cluster;
 pub mod code_artifact;
+pub mod code_memory;
 pub mod code_revision;
 pub mod code_run;
 pub mod code_sandbox;
@@ -40,6 +41,7 @@ pub mod comm;
 pub mod commitment;
 pub mod commitment_ledger;
 pub mod commitment_schedule;
+pub mod compaction;
 pub mod companion;
 pub mod config;
 pub mod connector_key;
@@ -51,6 +53,7 @@ pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
 pub mod counterparty_contact;
+pub(crate) mod credential_door;
 pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
@@ -75,6 +78,7 @@ pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
+pub mod git_wire;
 pub mod graph_fs;
 pub mod habit;
 pub(crate) mod hnsw;
@@ -88,6 +92,7 @@ pub mod ingest;
 pub mod interlocutor;
 pub mod lens;
 pub(crate) mod limits;
+pub mod linear_sync;
 pub mod linkedin_connector;
 pub mod llm;
 pub mod maintain;
@@ -142,6 +147,10 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_identity;
+pub mod wave_orchestration;
+pub mod web_fetch;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -183,6 +192,10 @@ pub use crate::claim::{
 pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
+};
+pub use crate::compaction::{
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
+    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
 };
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
@@ -227,7 +240,7 @@ pub use crate::eiri::{
     UnprocessedItem,
 };
 pub use crate::entity_id::{EntityId, parse_presentation_id};
-pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 pub use crate::federation::FederationGrantScope;
@@ -239,6 +252,12 @@ pub use crate::gate::{
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
 };
+pub use crate::linear_sync::{
+    LinearChangePage, LinearChangeSource, LinearEgress, LinearFieldConflict, LinearIssueChange,
+    LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus, LinearPullReceipt, LinearSyncAdapter,
+    LinearSyncDirection, LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
+    TaskIssueLink, TaskMirrorSnapshot, WaveResult, linear_operation_id,
+};
 pub use crate::llm::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend,
@@ -249,13 +268,14 @@ pub use crate::llm::{
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
-    CompanionRecordInput, ConsolidationAttemptInput, Effort, EntityRefReceipt, EntityView,
-    ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MEMORY_PACK_VERSION,
-    Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason,
-    StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage,
-    WitnessTurn, parse_actor_key,
+    CalendarInviteSurfaceMethod, ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth,
+    ChatOptions, ChatResponse, ChatScope, ClaimInput, ClaimListFilter, ClaimView, CommitReceipt,
+    CompanionRecordInput, ComposedChatAnswer, ConsolidationAttemptInput, Effort, EntityRefReceipt,
+    EntityView, ExpressionPreferenceInput, HabitCheckinInput, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND,
+    MEMORY_PACK_VERSION, Memory, MemoryError, NeighborOpts, OutboundDraftInput, RecallScope,
+    SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
+    WitnessMessage, WitnessTurn, parse_actor_key,
 };
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
@@ -298,6 +318,19 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+};
+pub use crate::web_fetch::{
+    CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
+    DEFAULT_MIN_EXTRACTED_CONTENT_BYTES, FetchResult, FirecrawlRenderer, HeadlessDocument,
+    HeadlessRenderer, MinExtractedContentBytes, NativeHeadlessRenderer, NativeReadabilityRenderer,
+    RenderedPage, Renderer, RendererAttemptFailure, RendererError, RendererErrorKind, RendererKind,
+    RendererResult, WEB_FETCH_CONTENT_HASH_DOMAIN, WebFetchError, WebFetchResult, WebFetcher,
+};
+
+pub use crate::wave_orchestration::{
+    BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan,
+    WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
+    blocked_by_edge_write,
 };
 pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 

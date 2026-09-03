@@ -4,7 +4,8 @@
 //! manifest append, cleanup, and the read paths are one transactional
 //! discipline over the same LMDB row set. Supporting concerns live beside it —
 //! types in [`super::types`], validators in [`super::validate`], key/row
-//! encoding in [`super::encoding`], counters in [`super::telemetry`].
+//! encoding in [`super::encoding`], counters in [`super::telemetry`], and the
+//! ONE-1896 graceful-cancel/landing doors in [`super::cancel`].
 
 use std::collections::HashSet;
 
@@ -15,6 +16,10 @@ use crate::dreamer_runner::{
 use crate::error::{Error, Result};
 use crate::store::Store;
 
+use super::cancel::{
+    ATTEMPT_RUNTIME_ACTOR, AttemptCancelState, AttemptLandingReserve, ForceCancelAuthority,
+    force_cancel_record, validate_force_authority,
+};
 use super::encoding::{
     DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, dedupe_index_key,
     encode_record, lease_expired, legacy_dedupe_index_key, ready_at, ready_key,
@@ -67,7 +72,10 @@ enum ClaimKindWriteAttempt {
 
 /// Queue handle over a vault store.
 pub struct AttemptQueue<'a> {
-    store: &'a Store,
+    /// Visible to the whole `attempt_queue` module tree: the ONE-1896 cancel
+    /// doors in [`super::cancel`] are inherent methods on this same handle and
+    /// run against this same store under the same transactional discipline.
+    pub(super) store: &'a Store,
 }
 
 impl<'a> AttemptQueue<'a> {
@@ -179,6 +187,7 @@ impl<'a> AttemptQueue<'a> {
             updated_at: input.now,
             events: Vec::new(),
             manifest: Vec::new(),
+            cancel_state: AttemptCancelState::default(),
         };
 
         let encoded = encode_record(&record)?;
@@ -680,6 +689,19 @@ impl<'a> AttemptQueue<'a> {
             // A retry is a NEW attempt: its attribution manifest starts empty,
             // the finalized source keeps the prior try's.
             manifest: Vec::new(),
+            // Likewise its cancel lifecycle: the new try inherits neither the
+            // source's refusal history nor its spent landing reserve. It DOES
+            // inherit the dial's VALUES, so a retried try lands on the same
+            // terms — but not its one-shot mark, because the new row's own
+            // admission dials it against the new row's own lease generation.
+            cancel_state: AttemptCancelState {
+                reserve: AttemptLandingReserve {
+                    spent_units: 0,
+                    dial_generation: None,
+                    ..source.cancel_state.reserve
+                },
+                ..AttemptCancelState::default()
+            },
         };
 
         // A `Failed` row must carry a reason, so an omitted retry cause
@@ -759,7 +781,10 @@ impl<'a> AttemptQueue<'a> {
                 AttemptState::Queued
                 | AttemptState::Leased
                 | AttemptState::Paused
-                | AttemptState::Scheduled => {
+                | AttemptState::Scheduled
+                // A landing row is still live work, so it can still be handed
+                // an operator note; interrupt changes no claimability.
+                | AttemptState::Landing => {
                     append_attempt_event(
                         &mut record,
                         input.kind,
@@ -767,7 +792,12 @@ impl<'a> AttemptQueue<'a> {
                         input.note,
                         input.now,
                     )?;
-                    record.updated_at = input.now;
+                    // A landing has one bounded lease window. An operator
+                    // note must not become a hidden heartbeat that extends
+                    // that window; only accepting the landing starts it.
+                    if record.state != AttemptState::Landing {
+                        record.updated_at = input.now;
+                    }
                     AttemptInterventionEffect::Interrupted
                 }
                 state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
@@ -922,13 +952,13 @@ impl<'a> AttemptQueue<'a> {
                         report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
                     }
                 }
-                AttemptState::Leased
+                AttemptState::Leased | AttemptState::Landing
                     if lease_expired(&record, input.now, input.lease_timeout_secs) =>
                 {
                     report.running += 1;
                     expired_candidates.push(id);
                 }
-                AttemptState::Leased => {
+                AttemptState::Leased | AttemptState::Landing => {
                     report.running += 1;
                 }
                 AttemptState::Completed => {
@@ -982,7 +1012,45 @@ impl<'a> AttemptQueue<'a> {
                         report.stale_requeued += 1;
                         report.increment_retry_reason(AttemptQueueRetryReason::LeaseTimeout);
                     }
-                    AttemptState::Leased => {}
+                    // A landing whose lease actually expired cannot be requeued
+                    // as ordinary work — it is mid-flight, not pre-flight — and
+                    // it must not hold a dead lease forever. Expiry is the hard
+                    // rung's runtime ground, so the runtime authors a terminal
+                    // force cancellation and the landing's own accounting rides
+                    // the receipt.
+                    AttemptState::Landing
+                        if lease_expired(&record, input.now, input.lease_timeout_secs) =>
+                    {
+                        // The runtime's own ground, minted through the same
+                        // authority token the owner path uses — cleanup never
+                        // hand-writes an actor onto a terminal receipt.
+                        let authority = ForceCancelAuthority::lease_expiry();
+                        validate_force_authority(&authority)?;
+                        force_cancel_record(
+                            &mut record,
+                            authority.grounds(),
+                            authority.actor().to_owned(),
+                            Some(RETRY_REASON_LEASE_TIMEOUT.to_owned()),
+                            input.now,
+                        )?;
+                        let encoded = encode_record(&record)?;
+                        self.store.attempt_records.put(
+                            &mut wtxn,
+                            record.id.as_bytes(),
+                            &encoded,
+                        )?;
+                        crate::receipt::stamp_attempt_pack_receipt_in_txn(
+                            self.store,
+                            &mut wtxn,
+                            &record,
+                            ATTEMPT_RUNTIME_ACTOR,
+                        )?;
+                        self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.done += 1;
+                        report.landing_force_cancelled += 1;
+                    }
+                    AttemptState::Leased | AttemptState::Landing => {}
                     AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.pending += 1;
@@ -1169,7 +1237,7 @@ impl<'a> AttemptQueue<'a> {
         Ok(Some(record))
     }
 
-    fn delete_dedupe_entry_for_record(
+    pub(super) fn delete_dedupe_entry_for_record(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
@@ -1205,7 +1273,7 @@ impl<'a> AttemptQueue<'a> {
         Ok(())
     }
 
-    fn delete_ready_entry_for_record(
+    pub(super) fn delete_ready_entry_for_record(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,

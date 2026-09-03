@@ -214,6 +214,27 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
+/// Seeds one MESSAGE row for a fixture that only needs the row to EXIST.
+///
+/// ONE-1686 closed the public raw MESSAGE door — a MESSAGE body is a gated
+/// witness envelope now — so these fixtures carry canonical envelope bytes and
+/// go through the crate's test-only seeding door instead of `put_entity`. They
+/// deliberately do NOT witness: a real witness call would also mint the
+/// conversation, turn and edges these tests are counting.
+fn seed_message_fixture(vault: &Vault, id: &EntityId, content: &str, at: u64) -> Result<()> {
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "companion",
+        "dialogue",
+        content,
+        true,
+        0,
+    )?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(id, test_time_range(at, at), at, &body)
+        .commit()
+}
+
 fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     let waker = std::task::Waker::noop();
     let mut context = std::task::Context::from_waker(waker);
@@ -563,7 +584,7 @@ impl ContractEdgeLayout {
     }
 }
 
-const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 21] = [
+const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 22] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -586,6 +607,8 @@ const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 21] = [
     (EdgeKind::SetIn, ContractEdgeLayout::SemanticBare),
     // ONE-1924: u8 23 `blocked_by`, structural 12 B (contracts.ts edgeKinds).
     (EdgeKind::BlockedBy, ContractEdgeLayout::Structural),
+    // ONE-1608: u8 24 `blocks`, structural 12 B (contracts.ts edgeKinds).
+    (EdgeKind::Blocks, ContractEdgeLayout::Structural),
 ];
 
 fn assert_f32_exact(actual: f32, expected: f32) {
@@ -978,7 +1001,8 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
         serde_json::json!([
             "historical_loro_updates",
             "historical_loro_snapshots",
-            "derived_carriers"
+            "derived_carriers",
+            "redirect_table"
         ])
     );
     assert_eq!(job["retry_state"]["attempt_count"], 0);
@@ -993,6 +1017,90 @@ fn hard_delete_enqueues_bounded_historical_carrier_sweep() -> Result<()> {
     let receipt = receipt_body(&receipt_raw);
     assert_eq!(receipt["sweep_queued_at"].as_u64(), Some(queued_at));
     assert!(receipt["sweep_complete_at"].is_null());
+    Ok(())
+}
+
+/// ARCH-0055 §9 (r6) end to end: hard-erasing a canonical head empties its
+/// redirect shell, widens the erasure's sweep scope to cover the shell's
+/// historical carriers, drops the author stamp from the type-76 event the
+/// walk touched — and does NOT turn the shell into a deletion (§10:
+/// merge-away is not deletion).
+#[test]
+fn hard_erase_of_a_merge_head_cascades_to_its_redirect_shell() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = EntityId::now();
+    let survivor = EntityId::now();
+    let loser = EntityId::now();
+    for id in [&actor, &survivor, &loser] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(200, 200),
+            201,
+            b"cascade fixture body",
+        )?;
+    }
+
+    let event = match vault.apply_identity_topology_op(
+        &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
+            sources: vec![loser],
+            survivor,
+            evidence: crate::identity_topology::IdentityOpEvidence::default(),
+            survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
+        }),
+        &crate::identity_topology::IdentityOpWrite::auto(ClaimSource::Inferred)
+            .with_actor(WriteActor::new(actor, EdgeActorClass::Human)),
+        202,
+    )? {
+        crate::identity_topology::IdentityOpOutcome::Applied { event, .. } => event,
+        outcome => panic!("auto merge must apply, got {outcome:?}"),
+    };
+    assert_eq!(vault.resolve_entity(&loser)?, vec![survivor]);
+    assert!(!vault.get(&loser)?.expect("shell body").is_empty());
+
+    let outcome = vault.delete_entity_with_reason(&survivor, DeleteReason::UserHardDelete)?;
+    assert!(outcome.existed);
+
+    // The leak r6 §9 names: neither the head nor its shell may still read.
+    assert_eq!(vault.get(&survivor)?, None);
+    assert_eq!(vault.get(&loser)?.expect("shell row").len(), 0);
+    assert_eq!(vault.count_dangling_redirect_payloads()?, 0);
+
+    // §10: the shell was EMPTIED, not deleted — its row survives and it
+    // carries no hard-delete marker of its own.
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.local_hard_delete_marker_exists_in_txn(&rtxn, &survivor)?);
+    assert!(!vault.local_hard_delete_marker_exists_in_txn(&rtxn, &loser)?);
+    drop(rtxn);
+
+    // The shell rides the head's `h:` row, or its historical carriers are
+    // never swept and the bytes survive in history.
+    let rows = hard_erase_sweep_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+    let scoped: BTreeSet<String> = job["scope"]["entity_ids"]
+        .as_array()
+        .expect("entity_ids array")
+        .iter()
+        .map(|hex| hex.as_str().expect("hex string").to_owned())
+        .collect();
+    assert_eq!(scoped, BTreeSet::from([survivor.to_hex(), loser.to_hex()]));
+
+    // The author-stamp rider: the touched merge event loses its actor while
+    // staying the same effective ledger event (same seq, same action, and a
+    // shell state the fold still speaks for).
+    let raw = vault.get_raw(&event)?.expect("ledger event");
+    let stored = crate::identity_topology::decode_identity_topology_event_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    assert_eq!(stored.actor, None);
+    assert_eq!(
+        stored.action,
+        crate::identity_topology::StoredIdentityOpAction::Merge {
+            sources: vec![loser],
+            survivor,
+        }
+    );
     Ok(())
 }
 
@@ -6893,7 +7001,7 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 22] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 23] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -6920,6 +7028,9 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 22] = [
     // ONE-1924: minted at byte 23, above the 21/22 identity-redirect pair and
     // clear of the byte-20 ONE-1414 `same_as` slot.
     (23, EdgeKind::BlockedBy),
+    // ONE-1608: minted at byte 24, appended last. Byte 23 stays ONE-1924's
+    // TASK-plane `blocked_by`; this is the ARCH-0050 L2 readiness edge.
+    (24, EdgeKind::Blocks),
 ];
 
 #[test]
@@ -6936,8 +7047,8 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 24 and up stay unallocated.
-    assert!(EdgeKind::try_from_u8(24).is_none());
+    // The frontier: 25 and up stay unallocated (ONE-1608 took 24).
+    assert!(EdgeKind::try_from_u8(25).is_none());
 }
 
 /// ONE-1924 — minting `blocked_by` at u8 23 must leave the edge byte frontier
@@ -8429,19 +8540,7 @@ fn turn_vad_annotation_persists_supported_sources() -> Result<()> {
 fn message_vad_annotation_round_trip() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message-level affect",
-        "spkr": "assistant",
-        "at": 110_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(110, 110),
-        110,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message-level affect", 110)?;
     let raw_before = vault.get_raw(&message)?.expect("message raw body");
 
     let annotation = VadAnnotation::new(
@@ -8492,13 +8591,7 @@ fn fresh_default_policy_allows_internal_vad_annotations() -> Result<()> {
         120,
         b"turn",
     )?;
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(121, 121),
-        121,
-        b"message",
-    )?;
+    seed_message_fixture(&vault, &message, "message", 121)?;
 
     let turn_annotation = VadAnnotation::new(
         Vad {
@@ -8628,19 +8721,7 @@ fn batch_delete_removes_turn_vad_annotation_claim_and_edges() -> Result<()> {
 fn soft_delete_removes_message_vad_annotation_claim_and_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message soft delete affect",
-        "spkr": "assistant",
-        "at": 131_u64,
-    }))
-    .expect("encode message body");
-    vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(131, 131),
-        131,
-        &body,
-    )?;
+    seed_message_fixture(&vault, &message, "message soft delete affect", 131)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.2,
@@ -8711,19 +8792,7 @@ fn soft_deleted_vad_claim_shell_is_absent_for_reads_cleanup_and_reannotation() -
 
     let (_annotate_dir, annotate_vault) = open_test_vault();
     let message = EntityId::now();
-    let message_body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim shell",
-        "spkr": "assistant",
-        "at": 134_u64,
-    }))
-    .expect("encode message body");
-    annotate_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(134, 134),
-        134,
-        &message_body,
-    )?;
+    seed_message_fixture(&annotate_vault, &message, "message claim shell", 134)?;
     let first = VadAnnotation::new(
         Vad {
             valence: 0.15,
@@ -8814,19 +8883,7 @@ fn headerless_delete_treats_vad_only_residue_as_active_scope() -> Result<()> {
 
     let (_claim_dir, claim_vault) = open_test_vault();
     let message = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "txt": "message claim residue",
-        "spkr": "assistant",
-        "at": 132_u64,
-    }))
-    .expect("encode message body");
-    claim_vault.put_entity(
-        &message,
-        ENTITY_TYPE_MESSAGE,
-        test_time_range(132, 132),
-        132,
-        &body,
-    )?;
+    seed_message_fixture(&claim_vault, &message, "message claim residue", 132)?;
     let annotation = VadAnnotation::new(
         Vad {
             valence: 0.3,
@@ -12388,6 +12445,18 @@ fn claim_body_keys_pin_d11_vocabulary() {
 
 #[test]
 fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
+    // The `learned_at` every claim below is written at, and the frozen run
+    // clock every scoring query below reads under.
+    //
+    // ONE-1402 multiplies a read-side decay factor onto the fused score, so
+    // on an unpinned wall clock these epoch-second claims would age by
+    // decades and each exact expectation here would silently become
+    // `blend * ACCESS_FACTOR_FLOOR`. Freezing the clock at the fixture's own
+    // `learned_at` gives age `0` and factor `2^0 = 1.0` exactly, keeping the
+    // assertions below a pure `sal`/`conf` KEY contract instead of a decay
+    // one (decay's own arithmetic is pinned in `claim::tests` and
+    // `pipeline::decay_tests`).
+    const CLAIM_LEARNED_AT: u64 = 11;
     fn z_score(value: f32, values: &[f32]) -> f32 {
         let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
         let variance = values
@@ -12427,7 +12496,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     body.salience = Some(0.9);
-    vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
+    vault.put_claim(&claim, &body, test_time_range(10, 10), CLAIM_LEARNED_AT)?;
 
     let other_claim = EntityId::now();
     let mut other_body = ClaimBody::new(
@@ -12439,7 +12508,12 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     other_body.salience = Some(0.3);
-    vault.put_claim(&other_claim, &other_body, test_time_range(10, 10), 11)?;
+    vault.put_claim(
+        &other_claim,
+        &other_body,
+        test_time_range(10, 10),
+        CLAIM_LEARNED_AT,
+    )?;
 
     let third_claim = EntityId::now();
     let mut third_body = ClaimBody::new(
@@ -12451,7 +12525,12 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         ClaimLifecycleStatus::Active,
     );
     third_body.salience = Some(0.0);
-    vault.put_claim(&third_claim, &third_body, test_time_range(10, 10), 11)?;
+    vault.put_claim(
+        &third_claim,
+        &third_body,
+        test_time_range(10, 10),
+        CLAIM_LEARNED_AT,
+    )?;
     vault
         .batch()
         .text(&claim, &[("body", "matcha preference")])
@@ -12459,12 +12538,17 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         .text(&third_claim, &[("body", "matcha preference")])
         .commit()?;
 
-    let baseline = vault.query().search_text("matcha", 10).run()?;
+    let baseline = vault
+        .query()
+        .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
+        .run()?;
     assert_eq!(baseline.len(), 3);
 
     let sal_boosted = vault
         .query()
         .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
         .boost_salience()
         .run()?;
     assert_eq!(sal_boosted.len(), 3);
@@ -12478,6 +12562,7 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
     let conf_boosted = vault
         .query()
         .search_text("matcha", 10)
+        .with_temporal_now(CLAIM_LEARNED_AT)
         .boost_confidence()
         .run()?;
     assert_eq!(conf_boosted.len(), 3);
@@ -16636,7 +16721,8 @@ fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Resu
         serde_json::json!([
             "historical_loro_updates",
             "historical_loro_snapshots",
-            "derived_carriers"
+            "derived_carriers",
+            "redirect_table"
         ])
     );
 

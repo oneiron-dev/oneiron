@@ -68,8 +68,6 @@ use axum::routing::get;
 use axum::routing::post;
 use oneiron::ErrorKind;
 #[cfg(test)]
-use oneiron::registry::ENTITY_TYPE_MESSAGE;
-#[cfg(test)]
 use oneiron::registry::ENTITY_TYPE_TURN;
 use serde::Deserialize;
 use serde::Serialize;
@@ -716,6 +714,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidTaskBody
         | ErrorKind::InvalidCodeArtifactBody
         | ErrorKind::InvalidBlobArtifactBody
+        | ErrorKind::InvalidWitnessMessageBody
         | ErrorKind::InvalidEditManifest
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody

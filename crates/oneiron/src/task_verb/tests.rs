@@ -17,8 +17,11 @@ use crate::agent_dispatch::{
     DispatchAgent, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CompleteAttempt, EnqueueAttempt, EnqueueOutcome, FailAttempt, RetryAttempt, RetryOutcome,
+    AcceptAttemptLanding, AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord,
+    AttemptState, CancelMode, CancelStanding, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    EnqueueAttempt, EnqueueOutcome, FailAttempt, ForceCancelGrounds, InterveneAttempt,
+    LandingOutcome, LandingTrigger, RejectAttemptCancel, RequestAttemptCancel, RetryAttempt,
+    RetryOutcome, SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
@@ -2006,6 +2009,10 @@ fn leased_realization_keeps_cancel_receipt_running() {
     // P1-a: a leased realization is NOT stoppable in-txn, so the cancel is
     // honest — it does not claim effect and does not hide the task.
     assert_eq!(usize::from(cancel.effected), 0);
+    assert!(
+        cancel.cancel_requested,
+        "the live worker received a soft request"
+    );
     assert_eq!(cancel.status, Some(RunTreeStatus::Running));
     assert_eq!(
         usize::from(cancel.status == Some(RunTreeStatus::Cancelled)),
@@ -2752,9 +2759,14 @@ fn malformed_dreamer_row_does_not_poison_the_board() {
     assert!(facade.tasks_expand(task_ref).is_ok());
 }
 
-/// P1-a: a Queued+Leased mix cannot be fully cancelled in-txn (the lease
-/// can't be stopped), so the cancel is honest — uneffected, nothing hidden,
-/// nothing intervened — and the task stays visible under its live lease.
+/// P1-a, as amended by ONE-1896 §9: a Queued+Leased mix stops what CAN be
+/// stopped and asks what cannot.
+///
+/// The lease still cannot be killed in this transaction, so the task stays
+/// visible under it and the receipt never claims the whole target was
+/// cancelled. What changed is the queued sibling: leaving it claimable while
+/// reporting the cancel handled was the hole — an owner-approved cancel that
+/// stopped nothing.
 #[test]
 fn queued_leased_mix_cancel_is_honest_and_not_hidden() {
     let (_dir, vault) = open_vault();
@@ -2802,26 +2814,54 @@ fn queued_leased_mix_cancel_is_honest_and_not_hidden() {
     let records = queue.list().expect("list attempts");
     let section = facade.tasks_check().expect("check tasks");
 
-    assert_eq!(usize::from(cancel.effected), 0);
-    assert_eq!(cancel.status, Some(RunTreeStatus::Running));
+    assert_eq!(
+        usize::from(cancel.effected),
+        1,
+        "the queued sibling really stopped"
+    );
+    assert_eq!(
+        usize::from(cancel.cancel_requested),
+        1,
+        "the live lease was asked to land"
+    );
+    assert_eq!(
+        cancel.status,
+        Some(RunTreeStatus::Running),
+        "a live lease keeps the target running, not cancelled"
+    );
     assert_eq!(
         usize::from(task_is_cancelled(&vault, task_ref).expect("cancel state")),
-        0
+        0,
+        "nothing is hidden while a lease is live"
     );
-    // Neither attempt was touched: exactly one Leased, exactly one Queued.
+    // The lease is untouched — it can only be asked — and the queued sibling
+    // is terminal.
+    let leased: Vec<_> = records
+        .iter()
+        .filter(|r| {
+            r.task_ref.as_deref() == Some(task_hex.as_str()) && r.state == AttemptState::Leased
+        })
+        .collect();
+    assert_eq!(leased.len(), 1);
     assert_eq!(
-        records
-            .iter()
-            .filter(|r| r.task_ref.as_deref() == Some(task_hex.as_str())
-                && r.state == AttemptState::Leased)
-            .count(),
-        1
+        leased[0].cancel_pressure().pending,
+        1,
+        "the running worker owes an answer"
     );
     assert_eq!(
         records
             .iter()
             .filter(|r| r.task_ref.as_deref() == Some(task_hex.as_str())
                 && r.state == AttemptState::Queued)
+            .count(),
+        0,
+        "no pre-lease sibling survives an owner-approved cancel"
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r.task_ref.as_deref() == Some(task_hex.as_str())
+                && r.state == AttemptState::Cancelled)
             .count(),
         1
     );
@@ -3494,18 +3534,49 @@ fn put_envelope_claim(
     actor_class: EdgeActorClass,
     provenance: Value,
 ) {
+    put_envelope_claim_citing(
+        vault,
+        claim_ref,
+        subject,
+        actor,
+        actor_class,
+        provenance,
+        None,
+    );
+}
+
+/// `put_envelope_claim`, optionally citing one already-seeded entity as
+/// candidate evidence.
+///
+/// A write stamped with the Dreamer run surface is Dreamer-AUTHORED whatever
+/// its evidence source, so it clears the GATE-12 evidence floor like every
+/// other Dreamer write. The magistrate fixtures below mean their
+/// Dreamer-surface writes, so they cite real evidence rather than dodging the
+/// detector by rewriting their provenance, source or actor class.
+fn put_envelope_claim_citing(
+    vault: &Vault,
+    claim_ref: EntityId,
+    subject: EntityId,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    provenance: Value,
+    cited: Option<EntityId>,
+) {
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, actor_class),
         ClaimSource::Observed,
         WriteProvenance::new(provenance).expect("provenance is not nil"),
         ClaimApprovalStatus::Proposed,
     );
-    let candidate = EnvelopeClaimCandidate::new(
+    let mut candidate = EnvelopeClaimCandidate::new(
         "profile.note",
         ClaimSubject::Entity(subject),
         Value::from("state"),
         1.0,
     );
+    if let Some(cited) = cited {
+        candidate = candidate.with_evidence(cited_candidate_evidence(cited));
+    }
     vault
         .with_write_txn(|wtxn| {
             vault
@@ -3523,6 +3594,18 @@ fn put_envelope_claim(
                 .apply(wtxn)
         })
         .expect("claim write lands");
+}
+
+/// The consolidation evidence envelope the GATE-12 floor reads, citing one
+/// entity the caller has already seeded.
+fn cited_candidate_evidence(cited: EntityId) -> Value {
+    crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![cited],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Observed,
+        },
+    )
 }
 
 fn dreamer_provenance() -> Value {
@@ -4905,13 +4988,16 @@ fn magistrate_recuses_on_vault_derived_dreamer_authorship() {
     let dreamer_state = ladder_id(0x94);
     let agent_state = ladder_id(0x95);
     let delta = ladder_id(0x96);
-    put_envelope_claim(
+    // Dreamer-surface state, so GATE-12 asks it for evidence: cite the
+    // subject this fixture seeds. Authorship derivation below is unchanged.
+    put_envelope_claim_citing(
         &vault,
         dreamer_state,
         subject,
         actor,
         EdgeActorClass::Agent,
         dreamer_provenance(),
+        Some(subject),
     );
     put_envelope_claim(
         &vault,
@@ -4975,13 +5061,16 @@ fn forged_authorship_cannot_defeat_the_provenance_derivation() {
         EdgeActorClass::Agent,
         agent_provenance(),
     );
-    put_envelope_claim(
+    // Same GATE-12 evidence floor on the Dreamer-surface DELTA; the forged
+    // case summary and its assertions are untouched.
+    put_envelope_claim_citing(
         &vault,
         dreamer_delta,
         subject,
         actor,
         EdgeActorClass::Agent,
         dreamer_provenance(),
+        Some(subject),
     );
 
     let forged = magistrate_case(agent_state, dreamer_delta, CaseCriticality::Normal);
@@ -6706,4 +6795,363 @@ mod paged_scan_property {
             }
         }
     }
+}
+
+/// Claims the next realizing job of a freshly created TASK.
+fn claim_realization(queue: &AttemptQueue<'_>, lease_owner: &str, now: u64) -> AttemptRecord {
+    match queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: lease_owner.to_owned(),
+                now,
+            },
+        )
+        .expect("claim realization")
+    {
+        ClaimOutcome::Claimed(claimed) => claimed,
+        ClaimOutcome::Empty => panic!("a realization must be claimable"),
+    }
+}
+
+fn enqueue_sibling(queue: &AttemptQueue<'_>, task_hex: &str, now: u64) -> AttemptRecord {
+    match queue
+        .enqueue_with_task_ref(
+            EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            },
+            Some(task_hex.to_owned()),
+        )
+        .expect("enqueue sibling")
+    {
+        EnqueueOutcome::Enqueued(record) => record,
+        EnqueueOutcome::Existing(_) => panic!("a sibling must be fresh"),
+    }
+}
+
+/// ONE-1896 §9: a LANDING parent must not shelter its siblings.
+///
+/// The landing row holds a lease and can only be ASKED, but the queued, paused
+/// and scheduled siblings have no worker at all — an owner-approved cancel that
+/// returned early at the landing parent left every one of them claimable while
+/// the receipt implied the target was handled.
+#[test]
+fn cancel_stops_every_sibling_while_the_landing_parent_is_preserved() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xD9);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let created = facade.tasks_create(&spec(120)).expect("create task");
+    let task_ref = created.task_ref.expect("task ref");
+    let task_hex = task_ref.to_hex();
+    let queue = AttemptQueue::new(&vault);
+
+    // The parent realization accepted a stop and is LANDING.
+    let parent = claim_realization(&queue, "worker-parent", 120);
+    queue
+        .request_cancel(RequestAttemptCancel {
+            id: parent.id,
+            actor: "peer-1".to_owned(),
+            standing: CancelStanding::PeerAgent,
+            trigger: LandingTrigger::CancelRequest,
+            reason: None,
+            now: 121,
+        })
+        .expect("a peer may ask");
+    let LandingOutcome::Landing(landing) = queue
+        .accept_landing(AcceptAttemptLanding {
+            id: parent.id,
+            lease_owner: "worker-parent".to_owned(),
+            attempt_count: parent.attempt_count,
+            trigger: LandingTrigger::CancelRequest,
+            status: Some("green + pushed".to_owned()),
+            resume_point: None,
+            request_sequence: None,
+            now: 122,
+        })
+        .expect("the worker accepts")
+    else {
+        panic!("expected a fresh landing");
+    };
+    assert_eq!(landing.state, AttemptState::Landing);
+
+    // A scheduled sibling (a retry waiting on its instant).
+    let to_retry = enqueue_sibling(&queue, &task_hex, 123);
+    let retried = claim_realization(&queue, "worker-retry", 124);
+    assert_eq!(retried.id, to_retry.id);
+    let RetryOutcome::Retried(scheduled) = queue
+        .retry(RetryAttempt {
+            id: retried.id,
+            lease_owner: "worker-retry".to_owned(),
+            attempt_count: retried.attempt_count,
+            backoff_until: 9_999,
+            last_error: None,
+            now: 125,
+        })
+        .expect("retry mints the next try");
+    assert_eq!(scheduled.state, AttemptState::Scheduled);
+    // A queued sibling and a paused one.
+    let queued = enqueue_sibling(&queue, &task_hex, 126);
+    let to_pause = enqueue_sibling(&queue, &task_hex, 127);
+    let paused = queue
+        .intervene(InterveneAttempt {
+            id: to_pause.id,
+            kind: AttemptInterventionKind::Pause,
+            actor: "operator".to_owned(),
+            note: None,
+            now: 128,
+        })
+        .expect("pause the sibling")
+        .record;
+    assert_eq!(paused.state, AttemptState::Paused);
+
+    let cancel = facade
+        .tasks_cancel(TaskCancelTarget::Task(task_ref))
+        .expect("owner cancel");
+
+    assert_eq!(cancel.approval, ClaimApprovalStatus::Auto);
+    assert!(
+        cancel.cancel_requested,
+        "the landing parent was asked, not killed"
+    );
+    assert!(
+        cancel.effected,
+        "the siblings that could be stopped really were"
+    );
+    assert_eq!(
+        cancel.status,
+        Some(RunTreeStatus::Running),
+        "a live lease keeps the target visible as running"
+    );
+    assert!(!cancel.forced, "the cooperative verb never forces");
+
+    // No sibling is left alive.
+    for id in [queued.id, paused.id, scheduled.id] {
+        let record = queue.get(id).expect("read").expect("row");
+        assert_eq!(
+            record.state,
+            AttemptState::Cancelled,
+            "a sibling of a landing parent is still stopped"
+        );
+    }
+    // The landing parent and the request it accepted are preserved.
+    let parent_row = queue.get(parent.id).expect("read").expect("row");
+    assert_eq!(parent_row.state, AttemptState::Landing);
+    assert_eq!(
+        parent_row.landing().expect("landing record").requested_by,
+        "peer-1"
+    );
+    assert_eq!(
+        parent_row.cancel_pressure().pending,
+        0,
+        "asking a landing row again is idempotent, not a second obligation"
+    );
+    // The TASK stays visible while its lease is live.
+    assert!(!task_is_cancelled(&vault, task_ref).expect("cancel state"));
+}
+
+/// ONE-1896 §5/§8: the hard rung exists, is owner-only, and its receipt is
+/// runtime-authored.
+#[test]
+fn only_a_verified_owner_reaches_the_hard_cancel_rung() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xDF);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let created = facade.tasks_create(&spec(120)).expect("create task");
+    let task_ref = created.task_ref.expect("task ref");
+    let queue = AttemptQueue::new(&vault);
+    let claimed = claim_realization(&queue, "stubborn-worker", 120);
+
+    // An ordinary actor cannot force another principal's task: it gets the
+    // ordinary proposal, and nothing durable moves.
+    let stranger_ref = EntityId::from_bytes([0xE7; 16]).expect("stranger id");
+    put_person(&vault, stranger_ref);
+    grant_cancel(&vault, stranger_ref, 0xDE);
+    let stranger = vault.memory(stranger_ref, EdgeActorClass::Agent);
+    let refused = stranger
+        .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)
+        .expect("a stranger's force is refused, not an error");
+    assert_eq!(refused.approval, ClaimApprovalStatus::Proposed);
+    assert!(!refused.forced);
+    assert!(!refused.effected);
+    assert!(refused.proposal_ref.is_some());
+    let untouched = queue.get(claimed.id).expect("read").expect("row");
+    assert_eq!(
+        untouched.state,
+        AttemptState::Leased,
+        "an unauthorized force changes no durable state"
+    );
+    assert!(untouched.cancellation().is_none());
+
+    // The verified owner can, and the runtime authors the receipt.
+    let forced = facade
+        .tasks_cancel_force(
+            TaskCancelTarget::Task(task_ref),
+            Some("refused to land three times".to_owned()),
+        )
+        .expect("the owner forces");
+    assert_eq!(forced.approval, ClaimApprovalStatus::Auto);
+    assert!(forced.forced);
+    assert!(forced.effected);
+    assert_eq!(forced.status, Some(RunTreeStatus::Cancelled));
+
+    let stopped = queue.get(claimed.id).expect("read").expect("row");
+    assert_eq!(stopped.state, AttemptState::Cancelled);
+    let cancellation = stopped.cancellation().expect("terminal receipt");
+    assert_eq!(cancellation.mode, CancelMode::Forced);
+    assert_eq!(cancellation.grounds, Some(ForceCancelGrounds::Owner));
+    assert_eq!(
+        cancellation.actor,
+        own.to_hex(),
+        "the receipt names the VERIFIED owner, never caller-supplied text"
+    );
+    assert_eq!(
+        cancellation.reason.as_deref(),
+        Some("refused to land three times")
+    );
+    assert_eq!(stopped.lease_owner, None);
+    assert!(task_is_cancelled(&vault, task_ref).expect("cancel state"));
+
+    // Replay is idempotent: a settled target is reported, never re-killed.
+    let replay = facade
+        .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)
+        .expect("replay");
+    assert!(!replay.effected, "there was nothing left to stop");
+    assert_eq!(
+        queue
+            .get(claimed.id)
+            .expect("read")
+            .expect("row")
+            .cancellation()
+            .expect("receipt")
+            .reason
+            .as_deref(),
+        Some("refused to land three times"),
+        "the first authority's receipt is not overwritten"
+    );
+}
+
+/// ONE-1896 §1: repeated refusal reaches the OWNER's surface.
+///
+/// A count buried in queue telemetry is not a signal an owner can act on; the
+/// board row is what they read every turn.
+#[test]
+fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xDB);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let created = facade.tasks_create(&spec(120)).expect("create task");
+    let task_ref = created.task_ref.expect("task ref");
+    let task_hex = task_ref.to_hex();
+    let queue = AttemptQueue::new(&vault);
+    let claimed = claim_realization(&queue, "stubborn-worker", 120);
+
+    let refuse_once = |round: u64| {
+        queue
+            .request_cancel(RequestAttemptCancel {
+                id: claimed.id,
+                actor: "peer-1".to_owned(),
+                standing: CancelStanding::PeerAgent,
+                trigger: LandingTrigger::CancelRequest,
+                reason: None,
+                now: 130 + round,
+            })
+            .expect("a peer may ask");
+        queue
+            .reject_cancel(RejectAttemptCancel {
+                id: claimed.id,
+                lease_owner: "stubborn-worker".to_owned(),
+                attempt_count: claimed.attempt_count,
+                reason: "mid-write; landing now would corrupt the packet".to_owned(),
+                status: Some("red + unpushed".to_owned()),
+                request_sequence: None,
+                now: 131 + round,
+            })
+            .expect("the worker refuses");
+    };
+
+    // One refusal is a legitimate "not yet" and must not clutter the board.
+    refuse_once(0);
+    let quiet = facade.tasks_check().expect("board");
+    let quiet_row = quiet
+        .rows
+        .iter()
+        .find(|row| row.id == task_hex)
+        .expect("the task renders");
+    assert!(
+        quiet_row.cancel_pathology.is_none(),
+        "one refusal is not a pathology"
+    );
+    assert!(!quiet_row.line.contains("cancel-refused"));
+    assert_eq!(quiet_row.status, TaskBoardStatus::Running);
+
+    for round in 1..u64::from(SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD) {
+        refuse_once(round * 10);
+    }
+
+    let board = facade.tasks_check().expect("board");
+    let row = board
+        .rows
+        .iter()
+        .find(|row| row.id == task_hex)
+        .expect("the task renders");
+    let pathology = row
+        .cancel_pathology
+        .as_ref()
+        .expect("repeated refusal reaches the owner");
+    assert_eq!(
+        pathology.rejections,
+        SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD
+    );
+    assert_eq!(
+        pathology.threshold,
+        SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD
+    );
+    assert_eq!(pathology.attempt_id, attempt_hex(claimed.id));
+    assert_eq!(
+        pathology.last_status.as_deref(),
+        Some("red + unpushed"),
+        "the worker's own last word rides the signal"
+    );
+    assert!(
+        row.line.contains("cancel-refused=3/3"),
+        "the rendered row carries the bounded token: {}",
+        row.line
+    );
+    assert_eq!(
+        row.status,
+        TaskBoardStatus::Running,
+        "the refusal narrows the row; it does not relabel live work"
+    );
+
+    // The by-id owner path carries it too: a row past the collapsed board's
+    // scan prefix is hidden, never gone, so `tasks.expand` must not be the one
+    // owner surface where the refusal disappears.
+    let expanded = facade.tasks_expand(task_ref).expect("expand");
+    assert!(
+        expanded
+            .iter()
+            .any(|line| line.contains("cancel-refused=3/3")),
+        "the expanded owner view carries the same bounded token: {expanded:?}"
+    );
+
+    // Settling the attempt retires the signal: an owner can no longer act on it.
+    let stopped = facade
+        .tasks_cancel_force(TaskCancelTarget::Task(task_ref), None)
+        .expect("the owner forces");
+    assert!(stopped.forced);
+    let settled = facade.tasks_check().expect("board");
+    assert!(
+        settled
+            .rows
+            .iter()
+            .all(|row| row.cancel_pathology.is_none()),
+        "a settled attempt is history, not an open decision"
+    );
 }

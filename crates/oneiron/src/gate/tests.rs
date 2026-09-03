@@ -2899,7 +2899,7 @@ fn scoped_mcp_grant_is_payload_aware_at_external_effect_gate() -> Result<()> {
     vault.register_connector_key(
         &test_id(0xDA),
         crate::connector_key::ConnectorKeyRecord::active(
-            scoped_mcp_credential_connector_key("files", &grant_id),
+            scoped_capability_connector("files", &grant_id),
             None,
             Vec::new(),
             10,
@@ -3020,7 +3020,7 @@ fn scoped_mcp_grant_budget_matches_its_synthetic_governing_key() -> Result<()> {
         },
         10,
     )?;
-    let governing_connector = scoped_mcp_credential_connector_key("files", &grant_id);
+    let governing_connector = scoped_capability_connector("files", &grant_id);
     let key_id = test_id(0xC2);
     vault.register_connector_key(
         &key_id,
@@ -3094,7 +3094,7 @@ fn scoped_mcp_grant_dissolves_only_its_proposed_external_effect_fork() -> Result
     vault.register_connector_key(
         &test_id(0xBA),
         crate::connector_key::ConnectorKeyRecord::active(
-            scoped_mcp_credential_connector_key("files", &grant_id),
+            scoped_capability_connector("files", &grant_id),
             None,
             Vec::new(),
             10,
@@ -3145,7 +3145,7 @@ fn scoped_mcp_grant_does_not_cross_an_unverified_identity_pair() -> Result<()> {
     vault.register_connector_key(
         &test_id(0xBF),
         crate::connector_key::ConnectorKeyRecord::active(
-            scoped_mcp_credential_connector_key("files", &grant_id),
+            scoped_capability_connector("files", &grant_id),
             None,
             Vec::new(),
             10,
@@ -3739,7 +3739,13 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
     put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
     let claim_id = test_id(0xC5);
-    let body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    // The evidence floor applies to every Dreamer-authored write; the fixture
+    // actor is a real seeded entity, so the signature denial (not the floor)
+    // is what this test observes.
+    body.evidence = Some(precommit_evidence(vec![
+        first_party_eiri_connector_actor_id(),
+    ]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -3772,7 +3778,10 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
     put_policy_manifest_bytes(&vault, test_id(0xC6), &data)?;
 
     let claim_id = test_id(0xC7);
-    let body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.evidence = Some(precommit_evidence(vec![
+        first_party_eiri_connector_actor_id(),
+    ]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -4116,6 +4125,11 @@ fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> R
         body.subject = ClaimSubject::Entity(test_id(subject_seed));
         body.value = Value::from(value);
         body.approval = ClaimApprovalStatus::Proposed;
+        // Dreamer-authored bodies satisfy the evidence floor with their own
+        // seeded subject entity; UserStated writes are not floor-checked.
+        if source == ClaimSource::Generated {
+            body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
+        }
         body
     };
 
@@ -4282,6 +4296,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
     let id = test_id(0xA7);
     let mut proposed = source_trust_claim(ClaimSource::Generated);
     proposed.approval = ClaimApprovalStatus::Proposed;
+    proposed.evidence = Some(precommit_evidence(vec![test_id(0xA8)]));
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &proposed, test_id(0xA8), "run-a")?;
     vault.put_claim_candidate_without_lexical_query_reconcile(
@@ -5996,8 +6011,9 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
         )]),
     )?;
     // Registered with the messy owner-typed connector string.
+    let key_id = test_id(0x78);
     vault.register_connector_key(
-        &test_id(0x78),
+        &key_id,
         crate::connector_key::ConnectorKeyRecord::active(
             " Slack-Chat ",
             None,
@@ -6012,6 +6028,14 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     let charge = charge.expect("normalized connector governs the effect");
     assert_eq!(charge.read.rows[0].used, 1);
+
+    // The ordinary never-list compiler retains the raw operand, but matching
+    // uses the normalized stored connector for ordinary rows.
+    let pending = vault.propose_connector_charter(&key_id, "never send on Slack-Chat", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert!(charge.is_none(), "never-list deny must not reach budgets");
     Ok(())
 }
 
@@ -6457,6 +6481,411 @@ fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
         gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
     assert!(deny_after > deny_before, "CharterPolicy deny metric counts");
 
+    Ok(())
+}
+
+// --- ONE-1885 per-grant capability never-list --------------------------------
+
+/// The real engine-produced per-grant capability connector. Tests may only
+/// obtain a capability spelling through the engine producer (ONE-1885).
+fn scoped_capability_connector(server: &str, grant_id: &EntityId) -> String {
+    crate::connector_key::ScopedCapabilityProvenance::mint(server, grant_id)
+        .expect("safe canonical scoped server")
+        .connector()
+        .to_owned()
+}
+
+fn scoped_mcp_grant_intent(
+    principal_ref: &str,
+    server: &str,
+) -> crate::outbound_grant::ScopedMcpGrantMintIntent {
+    crate::outbound_grant::ScopedMcpGrantMintIntent {
+        principal_ref: principal_ref.to_owned(),
+        origin_component_id: "ask-mcp".to_owned(),
+        origin_action_id: "grant-scoped-mcp".to_owned(),
+        origin_receipt_ref: Some("gate:ask-mcp".to_owned()),
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        data_class_ceiling: crate::outbound_consent::DataClass::Personal,
+        endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
+    }
+}
+
+fn scoped_mcp_effect(principal: EntityId, server: &str) -> ExternalEffectGateInput {
+    let mut effect = external_effect_gate_input(&principal.to_hex(), "send", "mcp:calendar");
+    effect.provenance.actor_entity_ref = Some(principal);
+    effect.has_opted_in = false;
+    effect.scoped_mcp_call = Some(crate::outbound_consent::ScopedMcpCallContext {
+        server: server.to_owned(),
+        tool: "read_file".to_owned(),
+        payload_data_class: crate::outbound_consent::DataClass::Personal,
+        resolved_endpoint: "https://files.internal.example".to_owned(),
+    });
+    effect
+}
+
+#[test]
+fn charter_never_key_denies_one_scoped_grant_without_widening() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &encode_policy_manifest(vec![]))?;
+    let denied_principal = test_id(0xE0);
+    let neighbour_principal = test_id(0xE3);
+    let denied_grant = test_id(0xC7);
+    let neighbour_grant = test_id(0xC8);
+    let hyphen_grant = test_id(0xC9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &denied_grant,
+        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "files"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &neighbour_grant,
+        &scoped_mcp_grant_intent(&neighbour_principal.to_hex(), "files"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &hyphen_grant,
+        &scoped_mcp_grant_intent(&denied_principal.to_hex(), "my-server"),
+        10,
+    )?;
+    let denied_key = test_id(0xCA);
+    let neighbour_key = test_id(0xCB);
+    let hyphen_key = test_id(0xCC);
+    for (key_id, grant_id, server) in [
+        (denied_key, denied_grant, "files"),
+        (neighbour_key, neighbour_grant, "files"),
+        (hyphen_key, hyphen_grant, "my-server"),
+    ] {
+        vault.register_connector_key(
+            &key_id,
+            crate::connector_key::ConnectorKeyRecord::active(
+                scoped_capability_connector(server, &grant_id),
+                None,
+                Vec::new(),
+                10,
+            ),
+        )?;
+    }
+    let policy = resolve(&vault)?;
+    let denied_effect = scoped_mcp_effect(denied_principal, "files");
+    let neighbour_effect = scoped_mcp_effect(neighbour_principal, "files");
+    let hyphen_effect = scoped_mcp_effect(denied_principal, "my-server");
+
+    // Every in-scope scoped call auto-fires before any charter is stamped.
+    for effect in [&denied_effect, &neighbour_effect, &hyphen_effect] {
+        let (decision, _) = check_effect(&vault, effect, &policy)?;
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+    }
+
+    // The owner stamps a deny naming ONE exact per-grant capability key. Before
+    // ONE-1885 this charter could not even be stored: the entry carries three
+    // colons, so the record validator rejected it and the prohibition was
+    // inexpressible.
+    let denied_capability = scoped_capability_connector("files", &denied_grant);
+    let text = format!("never key {denied_capability}");
+    let pending = vault.propose_connector_charter(&denied_key, &text, 1_001)?;
+    vault.approve_connector_charter(&denied_key, pending.compiled_hash, "owner", 1_002)?;
+    // The neighbour key carries the SAME stamped text, naming the other grant.
+    let pending = vault.propose_connector_charter(&neighbour_key, &text, 1_001)?;
+    vault.approve_connector_charter(&neighbour_key, pending.compiled_hash, "owner", 1_002)?;
+
+    let (decision, charge) = check_effect(&vault, &denied_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(decision.receipt_reasons().contains(&"charter_never_list"));
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+
+    // Discriminating: the deny binds that grant's identity, not the server, the
+    // channel, or the tool. A second grant on the SAME server, with the same
+    // tool and channel and the SAME stamped text, keeps its prior outcome — a
+    // first-segment or prefix reading of the entry would deny it too.
+    let (decision, _) = check_effect(&vault, &neighbour_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // A canonical hyphenated server stays hyphenated through grant, key,
+    // charter compilation, and gate matching.
+    let hyphen_hex = hyphen_grant.to_hex();
+    let hyphen_text = format!("never key mcp:my-server:grant:{hyphen_hex}");
+    let pending = vault.propose_connector_charter(&hyphen_key, &hyphen_text, 1_003)?;
+    vault.approve_connector_charter(&hyphen_key, pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &hyphen_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    Ok(())
+}
+
+#[test]
+fn charter_never_channel_preserves_hyphen_and_underscore_for_scoped_calls() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xD0);
+    let hyphen_grant = test_id(0xD1);
+    let underscore_grant = test_id(0xD2);
+    vault.mint_scoped_mcp_outbound_grant(
+        &hyphen_grant,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.mint_scoped_mcp_outbound_grant(
+        &underscore_grant,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo_bar"),
+        10,
+    )?;
+    let hyphen_key = test_id(0xD3);
+    let underscore_key = test_id(0xD4);
+    vault.register_connector_key(
+        &hyphen_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &hyphen_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    vault.register_connector_key(
+        &underscore_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo_bar", &underscore_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let hyphen_effect = scoped_mcp_effect(principal, "foo-bar");
+    let underscore_effect = scoped_mcp_effect(principal, "foo_bar");
+    assert_eq!(
+        check_effect(&vault, &hyphen_effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+    assert_eq!(
+        check_effect(&vault, &underscore_effect, &policy)?
+            .0
+            .outcome(),
+        GateOutcome::Allow
+    );
+
+    // The ordinary-channel wildcard preserves the complete scoped server
+    // connector. It denies the hyphenated server and never aliases `_` to `-`.
+    for key_id in [hyphen_key, underscore_key] {
+        let pending = vault.propose_connector_charter(&key_id, "never * on mcp:foo-bar", 1_001)?;
+        vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    }
+    let (decision, charge) = check_effect(&vault, &hyphen_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none());
+    let (decision, _) = check_effect(&vault, &underscore_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // A named ordinary rule spelled the OTHER way never reaches the typed call:
+    // the normalized ordinary entry (`mcp:foo_bar:*` for either spelling) is not
+    // an axis a typed dispatch reads, so no aliasing can occur in either
+    // direction.
+    let alias_key = test_id(0xD6);
+    let alias_grant = test_id(0xD8);
+    let alias_principal = test_id(0xD9);
+    vault.mint_scoped_mcp_outbound_grant(
+        &alias_grant,
+        &scoped_mcp_grant_intent(&alias_principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.register_connector_key(
+        &alias_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &alias_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let alias_effect = scoped_mcp_effect(alias_principal, "foo-bar");
+    let pending = vault.propose_connector_charter(&alias_key, "never * on mcp:foo_bar", 1_003)?;
+    vault.approve_connector_charter(&alias_key, pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &alias_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+#[test]
+fn charter_wildcard_channel_still_binds_typed_scoped_calls() -> Result<()> {
+    // `never <verb>` names NO channel spelling, so it cannot alias `foo-bar`
+    // onto `foo_bar` and must keep binding every dispatch — a typed scoped-MCP
+    // call included. The private exact-scoped entry deliberately never carries a
+    // wildcard channel, so this whole-fleet form is the one ordinary rule a
+    // typed call reads.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xE5), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xE6);
+    let grant_id = test_id(0xE7);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    let key_id = test_id(0xE8);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let effect = scoped_mcp_effect(principal, "foo-bar");
+    assert_eq!(
+        check_effect(&vault, &effect, &policy)?.0.outcome(),
+        GateOutcome::Allow
+    );
+
+    let pending = vault.propose_connector_charter(&key_id, "never read_file", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+
+    // Discriminating: the wildcard binds only the VERB it names. A second
+    // capability whose owner prohibited a DIFFERENT verb fleet-wide keeps its
+    // prior outcome, so this is not a blanket scoped deny.
+    let other_principal = test_id(0xE9);
+    let other_grant = test_id(0xEA);
+    let other_key = test_id(0xEB);
+    vault.mint_scoped_mcp_outbound_grant(
+        &other_grant,
+        &scoped_mcp_grant_intent(&other_principal.to_hex(), "foo-bar"),
+        10,
+    )?;
+    vault.register_connector_key(
+        &other_key,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("foo-bar", &other_grant),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let pending = vault.propose_connector_charter(&other_key, "never send", 1_003)?;
+    vault.approve_connector_charter(&other_key, pending.compiled_hash, "owner", 1_004)?;
+    let other_effect = scoped_mcp_effect(other_principal, "foo-bar");
+    let (decision, _) = check_effect(&vault, &other_effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+/// One manifest granting `external:send` on each ordinary colon-bearing
+/// channel, so an ordinary dispatch on it reaches the connector-key stage.
+fn ordinary_channels_send_manifest(channels: &[&str]) -> Vec<u8> {
+    let grant_row = |channel: &str| {
+        Value::Map(vec![
+            (Value::from(ACTOR_REF_KEY), Value::from("sender")),
+            (
+                Value::from(GRANT_EFFECTOR_KEY),
+                Value::from("external:send"),
+            ),
+            (
+                Value::from(GRANT_SCOPE_KEY),
+                Value::Map(vec![(
+                    Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                    Value::from(channel),
+                )]),
+            ),
+        ])
+    };
+    encode_policy_manifest(vec![(
+        Value::from(POLICY_SCOPED_GRANTS_KEY),
+        Value::Array(channels.iter().copied().map(grant_row).collect()),
+    )])
+}
+
+#[test]
+fn charter_never_key_never_reaches_an_ordinary_connector() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // An ordinary connector spelled EXACTLY like a real per-grant capability
+    // key. It is ordinary because of how it was constructed — an ordinary
+    // registration, with no typed provenance — not because its text fails a
+    // heuristic.
+    let lookalike = scoped_capability_connector("calendar", &test_id(0xB1));
+    let channels = ["mcp:calendar", "mcp:calendar:grant:foo", lookalike.as_str()];
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0xD2),
+        &ordinary_channels_send_manifest(&channels),
+    )?;
+    let key_ids = [test_id(0xB2), test_id(0xB3), test_id(0xB4)];
+    for (key_id, channel) in key_ids.iter().zip(channels) {
+        vault.register_connector_key(
+            key_id,
+            crate::connector_key::ConnectorKeyRecord::active(channel, None, Vec::new(), 10),
+        )?;
+    }
+    let policy = resolve(&vault)?;
+    let ordinary_effect = |channel: &str| {
+        let mut effect = external_effect_gate_input("sender", "send", channel);
+        effect.send_ref = Some("intent:ordinary".to_owned());
+        effect
+    };
+
+    // A capability-only rule naming the lookalike spelling is stamped on every
+    // ordinary key. None of them may be denied by it: `never key` is consulted
+    // only against a typed capability identity, which no ordinary row has.
+    let capability_text = format!("never key {lookalike}");
+    for key_id in &key_ids {
+        let pending = vault.propose_connector_charter(key_id, &capability_text, 1_001)?;
+        vault.approve_connector_charter(key_id, pending.compiled_hash, "owner", 1_002)?;
+    }
+    for channel in channels {
+        let (decision, _) = check_effect(&vault, &ordinary_effect(channel), &policy)?;
+        assert_eq!(
+            decision.outcome(),
+            GateOutcome::Allow,
+            "ordinary connector {channel} must stay ordinary under a never-key rule"
+        );
+    }
+
+    // The ordinary channel/verb form matches the COMPLETE connector string.
+    let pending =
+        vault.propose_connector_charter(&key_ids[0], "never send on mcp:calendar", 1_003)?;
+    vault.approve_connector_charter(&key_ids[0], pending.compiled_hash, "owner", 1_004)?;
+    let (decision, charge) = check_effect(&vault, &ordinary_effect("mcp:calendar"), &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+    // A DIFFERENT whole connector is untouched: a first-colon reading of the
+    // same rule would deny every `mcp:*` channel.
+    let pending = vault.propose_connector_charter(
+        &key_ids[1],
+        "never send on mcp:calendar:grant:foo",
+        1_003,
+    )?;
+    vault.approve_connector_charter(&key_ids[1], pending.compiled_hash, "owner", 1_004)?;
+    let (decision, _) = check_effect(&vault, &ordinary_effect("mcp:calendar:grant:foo"), &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    let (decision, _) = check_effect(&vault, &ordinary_effect(&lookalike), &policy)?;
+    assert_eq!(
+        decision.outcome(),
+        GateOutcome::Allow,
+        "an ordinary rule on another connector must not widen"
+    );
     Ok(())
 }
 
@@ -9336,12 +9765,22 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
     // Build ordinary Pending through the public local gate, rather than
     // fabricating a renamed critical attachment in the storage helper.
     put_policy_manifest_bytes(&vault, test_id(0xed), &encode_policy_manifest(vec![]))?;
+    let dreamer_actor = test_id(0xef);
     let mut ordinary_body = replacement;
     ordinary_body.source = Some(ClaimSource::Generated);
     ordinary_body.approval = ClaimApprovalStatus::Proposed;
+    // This body was read back from the earlier UserStated write, so its
+    // `evidence` is still THAT write's envelope stamp — a map carrying no
+    // `candidate_evidence` key at all. Re-signing it as Dreamer-authored puts
+    // it under the GATE-12 evidence floor, which every Dreamer candidate must
+    // clear on its own, so cite a real consolidation envelope naming the actor
+    // entity `dreamer_claim_candidate_write_parts` seeds just below. The
+    // semantic hash asserted further down is unchanged by this: the claim
+    // inbox hash normalizes `evidence` and `source` away before hashing.
+    ordinary_body.evidence = Some(precommit_evidence(vec![dreamer_actor]));
     let run_id = "dreamer-c3-index-run";
     let (candidate, envelope) =
-        dreamer_claim_candidate_write_parts(&vault, &ordinary_body, test_id(0xef), run_id)?;
+        dreamer_claim_candidate_write_parts(&vault, &ordinary_body, dreamer_actor, run_id)?;
     vault
         .batch()
         .claim_candidate(&claim, candidate, &envelope, test_time(10), 10)
@@ -10179,6 +10618,1300 @@ fn critical_confirm_index_tracks_replace_delete_and_reattach_lifecycle() -> Resu
     Ok(())
 }
 
+// ---- GATE-12: Dreamer-output pre-commit validation ----
+
+const PRECOMMIT_RUN_ID: &str = "gate12-precommit-run";
+/// `refs` key of the consolidation evidence envelope
+/// (`dreamer_consolidation/provenance.rs`). Spelled out here only so a test
+/// can corrupt one ref inside an otherwise well-formed envelope.
+const PRECOMMIT_EVIDENCE_REFS_KEY: &str = "refs";
+
+/// A vault whose manifest lets the Dreamer's `agent` actor land Auto writes,
+/// so pre-commit validation is the only thing that can refuse the write.
+fn precommit_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
+    let (tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::Generated, 0),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
+    Ok((tmp, vault))
+}
+
+fn precommit_evidence(refs: Vec<EntityId>) -> Value {
+    crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs,
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    )
+}
+
+/// The evidence-map shape the door-level validator input carries: the
+/// envelope-encoded payload rides under the pinned `candidate_evidence` key
+/// (`write_envelope_evidence` composes exactly this map on real writes).
+fn precommit_evidence_map(refs: Vec<EntityId>) -> Value {
+    Value::Map(vec![(
+        Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY),
+        precommit_evidence(refs),
+    )])
+}
+
+fn precommit_body(value: Value, evidence: Option<Value>) -> ClaimBody {
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.value = value;
+    body.evidence = evidence;
+    body
+}
+
+fn seed_precommit_evidence_entity(vault: &crate::Vault, id: &EntityId) -> Result<()> {
+    vault.put_entity(id, ENTITY_TYPE_PERSON, test_time(1), 1, b"evidence ref")
+}
+
+fn attempt_precommit_write(
+    vault: &crate::Vault,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let (candidate, envelope) = dreamer_claim_candidate_write_parts(
+        vault,
+        body,
+        first_party_eiri_connector_actor_id(),
+        PRECOMMIT_RUN_ID,
+    )?;
+    vault
+        .batch()
+        .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()
+}
+
+/// A pre-commit denial is a DENY carrying exactly the pinned code, and it
+/// leaves nothing claim-side behind: no claim entity, no Proposed row, no
+/// pending-consent row.
+fn assert_precommit_denied(
+    vault: &crate::Vault,
+    err: Error,
+    claim_id: &EntityId,
+    reason_code: &'static str,
+) -> Result<()> {
+    match err {
+        Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => {
+            assert_eq!(outcome, "deny", "validity failures deny, never downgrade");
+            assert_eq!(reason_codes, vec![reason_code]);
+        }
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+    assert!(
+        vault.get_raw(claim_id)?.is_none(),
+        "a denied Dreamer write must land no claim"
+    );
+    assert!(
+        !has_pending_gate_consent(vault, claim_id)?,
+        "a validity denial must not mint a pending-consent row"
+    );
+    Ok(())
+}
+
+fn stub_resolver(resolves: bool) -> impl Fn(&EntityId) -> Result<bool> {
+    move |_: &EntityId| Ok(resolves)
+}
+
+#[test]
+fn invalid_dreamer_write_rejected_precommit() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let evidence_ref = test_id(0x31);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+
+    // Check 1 — every degenerate narration form, matched case-insensitively.
+    // The claim codec accepts these values, so the pre-commit validator is
+    // the only thing standing between them and the vault.
+    for (seed, value) in [
+        (0x40_u8, ""),
+        (0x41, "   "),
+        (0x4A, "I will remember this later"),
+        (0x43, "I'll get to it"),
+        (0x44, "Working on it"),
+        (0x45, "IN PROGRESS"),
+        (0x46, "todo: ask the owner"),
+        (0x4B, "TBD"),
+        (0x48, "Placeholder"),
+        (0x49, "As an AI, I cannot"),
+    ] {
+        let claim_id = test_id(seed);
+        let body = precommit_body(
+            Value::from(value),
+            Some(precommit_evidence(vec![evidence_ref])),
+        );
+        let err = attempt_precommit_write(&vault, &claim_id, &body)
+            .expect_err("degenerate Dreamer narration must be refused");
+        assert_precommit_denied(
+            &vault,
+            err,
+            &claim_id,
+            "gate.deny.dreamer_precommit.degenerate_output",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_dreamer_write_rejected_precommit_evidence_floor() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let resolving = test_id(0x32);
+    seed_precommit_evidence_entity(&vault, &resolving)?;
+
+    // A well-formed envelope whose single ref is 4 bytes rather than 16: the
+    // decode breaks, which counts as no admissible evidence, never an abort.
+    let mut malformed = precommit_evidence(vec![resolving]);
+    if let Value::Map(entries) = &mut malformed {
+        for (key, value) in entries {
+            if key.as_str() == Some(PRECOMMIT_EVIDENCE_REFS_KEY) {
+                *value = Value::Array(vec![Value::Binary(vec![0x01, 0x02, 0x03, 0x04])]);
+            }
+        }
+    }
+
+    // Check 3 — no candidate_evidence key at all; a legacy (non-envelope)
+    // payload; a malformed ref; and a well-formed ref that resolves to
+    // nothing. `test_id(0x33)` is deliberately never seeded.
+    for (seed, evidence) in [
+        (0x50_u8, None),
+        (0x51, Some(Value::Array(Vec::new()))),
+        (0x52, Some(malformed)),
+        (0x53, Some(precommit_evidence(vec![test_id(0x33)]))),
+    ] {
+        let claim_id = test_id(seed);
+        let body = precommit_body(Value::from("Ada Lovelace"), evidence);
+        let err = attempt_precommit_write(&vault, &claim_id, &body)
+            .expect_err("a non-runtime-record claim must cite resolving evidence");
+        assert_precommit_denied(
+            &vault,
+            err,
+            &claim_id,
+            "gate.deny.dreamer_precommit.no_evidence",
+        )?;
+    }
+
+    // The same claim with one resolving ref lands.
+    let claim_id = test_id(0x54);
+    let body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![resolving])),
+    );
+    attempt_precommit_write(&vault, &claim_id, &body)?;
+    assert_eq!(
+        stored_claim_body(&vault, &claim_id)?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+// ---- GATE-12: an ERASED ref is not evidence (ARCH-0038 shells) ----
+
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+
+/// `DeleteReason::UserDelete` deliberately keeps a parseable 25-byte header
+/// shell, and that shell is exactly what the floor must refuse: the ticket
+/// pins evidence as an EXISTING, NON-ERASED entity, so however well the
+/// header still reads, an erased ref cannot carry a Dreamer write.
+#[test]
+fn dreamer_precommit_evidence_floor_denies_soft_deleted_ref() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let evidence_ref = test_id(0x56);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&evidence_ref, crate::deletion::DeleteReason::UserDelete)?
+            .existed,
+        "the seeded evidence entity was there to delete"
+    );
+    let shell = vault
+        .get_raw(&evidence_ref)?
+        .expect("a soft delete keeps the shell");
+    assert_eq!(
+        shell.len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN,
+        "the surviving row is the bodyless header shell"
+    );
+    assert!(vault.is_deleted_shell(&evidence_ref)?);
+
+    let claim_id = test_id(0x57);
+    let body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![evidence_ref])),
+    );
+    let err = attempt_precommit_write(&vault, &claim_id, &body)
+        .expect_err("an erased shell is not evidence");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &claim_id,
+        "gate.deny.dreamer_precommit.no_evidence",
+    )?;
+    Ok(())
+}
+
+/// Fail-closed is per-REF, never a wedge on the writer: the same Dreamer run
+/// that was denied on an erased ref lands as soon as it cites a live one.
+#[test]
+fn dreamer_precommit_evidence_floor_retry_after_shell_denial() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let deleted = test_id(0x58);
+    seed_precommit_evidence_entity(&vault, &deleted)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&deleted, crate::deletion::DeleteReason::UserDelete)?
+            .existed
+    );
+
+    let denied_claim = test_id(0x59);
+    let body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![deleted])),
+    );
+    let err = attempt_precommit_write(&vault, &denied_claim, &body)
+        .expect_err("the erased ref is refused");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &denied_claim,
+        "gate.deny.dreamer_precommit.no_evidence",
+    )?;
+
+    // Same writer, same shape, one LIVE ref.
+    let live = test_id(0x5B);
+    seed_precommit_evidence_entity(&vault, &live)?;
+    let retry_claim = test_id(0x5C);
+    let body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![live])),
+    );
+    attempt_precommit_write(&vault, &retry_claim, &body)?;
+    assert_eq!(
+        stored_claim_body(&vault, &retry_claim)?.approval,
+        ClaimApprovalStatus::Auto,
+        "a per-ref denial never wedges the writer"
+    );
+    Ok(())
+}
+
+/// The shared liveness body both repaired call sites read, at the vault
+/// level: a deleted shell and a live zero-byte payload have the SAME row
+/// shape, and only the deletion metadata tells them apart. Body-bearing rows
+/// and same-write-transaction visibility (the miner's write-then-gate order)
+/// are pinned here too, because the resolver may never open a transaction of
+/// its own to answer.
+#[test]
+fn live_entity_rows_separate_shells_from_live_zero_byte_payloads() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let shell = test_id(0x5D);
+    vault.put_entity(&shell, ENTITY_TYPE_PERSON, test_time(1), 1, b"deleted body")?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&shell, crate::deletion::DeleteReason::UserDelete)?
+            .existed
+    );
+    assert_eq!(
+        vault
+            .get_raw(&shell)?
+            .expect("a soft delete keeps the shell")
+            .len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    let body_bearing = test_id(0x5E);
+    vault.put_entity(
+        &body_bearing,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"live body",
+    )?;
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    // A live zero-byte payload: the shell's exact row shape, with no deletion
+    // metadata anywhere.
+    let zero_byte = test_id(0x60);
+    vault.store.entities.put(
+        &mut wtxn,
+        zero_byte.as_bytes(),
+        &entity_record(ENTITY_TYPE_PERSON, test_time(1), 1, b""),
+    )?;
+    // Written in THIS transaction and never committed: the miner's evidence
+    // record is exactly this case.
+    let in_txn = test_id(0x61);
+    vault.store.entities.put(
+        &mut wtxn,
+        in_txn.as_bytes(),
+        &entity_record(ENTITY_TYPE_PERSON, test_time(1), 1, b"in-txn body"),
+    )?;
+    // Shorter than the metadata header: unparseable.
+    let truncated = test_id(0x62);
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, truncated.as_bytes(), b"short")?;
+
+    assert!(live_entity_row_in_txn(&vault.store, &wtxn, &body_bearing)?.is_live());
+    assert!(
+        live_entity_row_in_txn(&vault.store, &wtxn, &in_txn)?.is_live(),
+        "a row written in the caller's own write transaction still resolves"
+    );
+    assert!(
+        live_entity_row_in_txn(&vault.store, &wtxn, &zero_byte)?.is_live(),
+        "a header-only row with no deletion metadata is a live zero-byte payload"
+    );
+    assert_eq!(
+        live_entity_row_in_txn(&vault.store, &wtxn, &shell)?,
+        LiveEntityRow::DeletedShell,
+        "the same row shape WITH deletion metadata is an erased shell"
+    );
+    assert_eq!(
+        live_entity_row_in_txn(&vault.store, &wtxn, &test_id(0x63))?,
+        LiveEntityRow::Absent
+    );
+    assert!(
+        live_entity_row_in_txn(&vault.store, &wtxn, &truncated).is_err(),
+        "an unparseable header fails closed rather than resolving"
+    );
+    wtxn.abort();
+    Ok(())
+}
+
+/// A deletion-metadata read that cannot be decoded is fail-closed: no live
+/// answer comes out of an unreadable window, so the floor is not met.
+#[cfg(feature = "sync")]
+#[test]
+fn live_entity_rows_fail_closed_on_unreadable_deletion_metadata() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let zero_byte = test_id(0x64);
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.store.entities.put(
+        &mut wtxn,
+        zero_byte.as_bytes(),
+        &entity_record(ENTITY_TYPE_PERSON, test_time(1), 1, b""),
+    )?;
+    vault.store.sync_state.put(
+        &mut wtxn,
+        &format!("d:w:{}", crate::deletion::window_label_from_timestamp(1)),
+        b"not a loro snapshot",
+    )?;
+    assert!(
+        live_entity_row_in_txn(&vault.store, &wtxn, &zero_byte).is_err(),
+        "an undecodable published-tombstone window never resolves"
+    );
+    wtxn.abort();
+    Ok(())
+}
+
+#[test]
+fn invalid_dreamer_write_precommit_denial_leaves_no_proposed_row() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let claim_id = test_id(0x55);
+    // A Proposed request is exactly the lane a validity failure must NOT be
+    // downgraded into.
+    let mut body = precommit_body(Value::from("todo"), None);
+    body.approval = ClaimApprovalStatus::Proposed;
+
+    let err = attempt_precommit_write(&vault, &claim_id, &body)
+        .expect_err("a degenerate Proposed candidate is denied, not queued");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &claim_id,
+        "gate.deny.dreamer_precommit.degenerate_output",
+    )?;
+    assert!(
+        vault.pending_gate_consents(10)?.is_empty(),
+        "no pending-consent row anywhere"
+    );
+    Ok(())
+}
+
+#[test]
+fn runtime_record_predicates_exempt_from_evidence_floor() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+
+    // The Dreamer's own runtime record cannot cite evidence for itself, so
+    // the floor is skipped for exactly these three predicates.
+    for (seed, predicate) in [
+        (0x60_u8, crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE),
+        (0x61, crate::llm::DREAMER_STEP_PREDICATE),
+        (0x62, crate::llm::DREAMER_TRAP_PREDICATE),
+    ] {
+        let claim_id = test_id(seed);
+        let mut body = precommit_body(Value::from("checkpoint reached"), None);
+        body.predicate = predicate.to_owned();
+        attempt_precommit_write(&vault, &claim_id, &body)?;
+        assert_eq!(
+            stored_claim_body(&vault, &claim_id)?.approval,
+            ClaimApprovalStatus::Auto,
+            "{predicate} is exempt from the evidence floor"
+        );
+    }
+
+    // Exemption is from the FLOOR only: a degenerate runtime record still
+    // fails check 1.
+    let claim_id = test_id(0x63);
+    let mut body = precommit_body(Value::from("  "), None);
+    body.predicate = crate::llm::DREAMER_STEP_PREDICATE.to_owned();
+    let err = attempt_precommit_write(&vault, &claim_id, &body)
+        .expect_err("an exempt predicate is still refused a degenerate value");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &claim_id,
+        "gate.deny.dreamer_precommit.degenerate_output",
+    )
+}
+
+#[test]
+fn runtime_record_exemption_table_is_built_from_the_writers_constants() {
+    assert_eq!(
+        DREAMER_RUNTIME_RECORD_PREDICATES,
+        [
+            crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE,
+            crate::llm::DREAMER_STEP_PREDICATE,
+            crate::llm::DREAMER_TRAP_PREDICATE,
+        ],
+        "the exemption table must stay composed from the writers' constants"
+    );
+}
+
+#[test]
+fn non_dreamer_writes_unaffected() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::UserStated, 0),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(&mut data, actor_ceiling_row("human", "auto"));
+    put_policy_manifest_bytes(&vault, test_id(0x12), &data)?;
+
+    // An owner write with an empty-like value and no candidate evidence:
+    // both would be refused if this claim were Dreamer-authored. The Dreamer
+    // branch is never entered, so it passes exactly as before.
+    let claim_id = test_id(0x64);
+    let mut body = public_stamped(source_trust_claim(ClaimSource::UserStated));
+    body.value = Value::from("   ");
+    let (candidate, envelope) =
+        claim_candidate_write_parts_for_actor(&vault, &body, test_id(0x65), EdgeActorClass::Human)?;
+    vault
+        .batch()
+        .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()?;
+
+    assert_eq!(
+        stored_claim_body(&vault, &claim_id)?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+#[test]
+fn replay_path_skips_dreamer_precommit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x13), &encode_policy_manifest(vec![]))?;
+
+    // A Dreamer-shaped, degenerate, evidence-free claim arriving over
+    // replication: replay stays trust-blind and must not consult the
+    // validator.
+    let id = test_id(0x66);
+    let body = precommit_body(Value::from("I will do it later"), None);
+    let data = crate::claim::encode_claim_body(&body)?;
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time(5),
+            5,
+            &data,
+        )
+        .commit()?;
+
+    assert!(
+        vault.get_raw(&id)?.is_some(),
+        "replicated replay must not call the Dreamer pre-commit validator"
+    );
+    Ok(())
+}
+
+#[test]
+fn dreamer_precommit_refuses_malformed_shape() {
+    let resolves = stub_resolver(true);
+    let evidence = precommit_evidence_map(vec![test_id(0x34)]);
+    let value = Value::from("Ada");
+
+    // Check 2 restates bounds the claim codec also owns, so these are pinned
+    // against the validator directly: a body carrying them cannot reach the
+    // door in the first place.
+    let base = DreamerPrecommitInput {
+        predicate: "profile.name",
+        value: &value,
+        confidence: 0.7,
+        subject_present: true,
+        evidence: Some(&evidence),
+    };
+    let long_predicate = format!("profile.{}", "n".repeat(crate::claim::MAX_PREDICATE_BYTES));
+    let nil = Value::Nil;
+
+    let cases: [DreamerPrecommitInput<'_>; 7] = [
+        DreamerPrecommitInput {
+            predicate: "",
+            ..base
+        },
+        DreamerPrecommitInput {
+            predicate: &long_predicate,
+            ..base
+        },
+        DreamerPrecommitInput {
+            predicate: "edge.provenance",
+            ..base
+        },
+        DreamerPrecommitInput {
+            confidence: f32::NAN,
+            ..base
+        },
+        DreamerPrecommitInput {
+            confidence: 1.5,
+            ..base
+        },
+        DreamerPrecommitInput {
+            subject_present: false,
+            ..base
+        },
+        DreamerPrecommitInput {
+            value: &nil,
+            ..base
+        },
+    ];
+    for case in &cases {
+        assert_eq!(
+            validate_dreamer_precommit(case, &resolves),
+            Err(GateReasonCode::DenyDreamerMalformed),
+            "predicate {:?} confidence {} must be refused as malformed",
+            case.predicate,
+            case.confidence
+        );
+    }
+
+    assert_eq!(validate_dreamer_precommit(&base, &resolves), Ok(()));
+}
+
+#[test]
+fn dreamer_precommit_first_failure_wins_pinned_order() {
+    let resolves = stub_resolver(false);
+    let degenerate = Value::from("TODO");
+    let sound = Value::from("Ada");
+
+    // Degenerate value + reserved predicate + no evidence: check 1 wins.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "edge.provenance",
+                value: &degenerate,
+                confidence: 2.0,
+                subject_present: false,
+                evidence: None,
+            },
+            &resolves,
+        ),
+        Err(GateReasonCode::DenyDreamerDegenerateOutput)
+    );
+
+    // Sound value, reserved predicate, no evidence: check 2 wins.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "edge.provenance",
+                value: &sound,
+                confidence: 0.5,
+                subject_present: true,
+                evidence: None,
+            },
+            &resolves,
+        ),
+        Err(GateReasonCode::DenyDreamerMalformed)
+    );
+
+    // Sound value and shape, unresolvable evidence: check 3 wins.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "profile.name",
+                value: &sound,
+                confidence: 0.5,
+                subject_present: true,
+                evidence: None,
+            },
+            &resolves,
+        ),
+        Err(GateReasonCode::DenyDreamerNoEvidence)
+    );
+}
+
+#[test]
+fn dreamer_precommit_degenerate_prefixes_are_matched_case_insensitively() {
+    let resolves = stub_resolver(true);
+    let evidence = precommit_evidence(vec![test_id(0x35)]);
+
+    for prefix in DREAMER_DEGENERATE_VALUE_PREFIXES {
+        let value = Value::from(format!("  {} the rest", prefix.to_uppercase()));
+        assert_eq!(
+            validate_dreamer_precommit(
+                &DreamerPrecommitInput {
+                    predicate: "profile.name",
+                    value: &value,
+                    confidence: 0.5,
+                    subject_present: true,
+                    evidence: Some(&evidence),
+                },
+                &resolves,
+            ),
+            Err(GateReasonCode::DenyDreamerDegenerateOutput),
+            "{prefix} must match case-insensitively after trimming"
+        );
+    }
+}
+
+#[test]
+fn dreamer_precommit_skips_degeneracy_for_non_string_values() {
+    let resolves = stub_resolver(true);
+    let evidence = precommit_evidence_map(vec![test_id(0x36)]);
+    let value = Value::from(7_u64);
+
+    // Only strings can be degenerate narration; other value shapes are
+    // judged structurally and pass.
+    assert_eq!(
+        validate_dreamer_precommit(
+            &DreamerPrecommitInput {
+                predicate: "profile.age",
+                value: &value,
+                confidence: 0.5,
+                subject_present: true,
+                evidence: Some(&evidence),
+            },
+            &resolves,
+        ),
+        Ok(())
+    );
+}
+
+/// Pre-commit validation is claim VALIDITY, so an absent manifest must not
+/// buy a way around it.
+///
+/// The validator used to be computed inside the `enforces_write_gate()` arm,
+/// which a vault with no manifest skips wholesale. `Proposed` is the sharp
+/// case: the door's tail source-trust check returns early for anything that is
+/// not `Auto`, so on the bootstrap path nothing else looked at the claim at
+/// all and a degenerate Dreamer candidate simply landed.
+#[test]
+fn absent_manifest_cannot_bypass_dreamer_precommit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    assert!(
+        !resolve(&vault)?.enforces_write_gate(),
+        "this fixture must exercise the absent-manifest bootstrap path"
+    );
+    let evidence_ref = test_id(0x36);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+
+    // Check 1 on the path that used to skip the validator entirely.
+    let proposed_id = test_id(0x37);
+    let mut proposed = precommit_body(
+        Value::from("I will remember this later"),
+        Some(precommit_evidence(vec![evidence_ref])),
+    );
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let err = attempt_precommit_write(&vault, &proposed_id, &proposed)
+        .expect_err("an absent manifest must not smuggle a degenerate Dreamer claim past GATE-12");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &proposed_id,
+        "gate.deny.dreamer_precommit.degenerate_output",
+    )?;
+
+    // An Auto candidate denies with the pinned GATE-12 code, rather than
+    // falling through to the unrelated source-trust refusal at the door tail.
+    let auto_id = test_id(0x38);
+    let auto = precommit_body(
+        Value::from("   "),
+        Some(precommit_evidence(vec![evidence_ref])),
+    );
+    let err = attempt_precommit_write(&vault, &auto_id, &auto)
+        .expect_err("a degenerate Auto Dreamer claim is refused without a manifest too");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &auto_id,
+        "gate.deny.dreamer_precommit.degenerate_output",
+    )?;
+
+    // The evidence floor is part of the same validator, so it holds here too.
+    let no_evidence_id = test_id(0x39);
+    let mut no_evidence = precommit_body(Value::from("Ada"), None);
+    no_evidence.approval = ClaimApprovalStatus::Proposed;
+    let err = attempt_precommit_write(&vault, &no_evidence_id, &no_evidence)
+        .expect_err("the evidence floor still applies without a manifest");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &no_evidence_id,
+        "gate.deny.dreamer_precommit.no_evidence",
+    )?;
+
+    // Control: only INVALID candidates are refused. The bootstrap path still
+    // lands a well-formed Dreamer candidate exactly as it did before.
+    let valid_id = test_id(0x3A);
+    let mut valid = precommit_body(
+        Value::from("Ada"),
+        Some(precommit_evidence(vec![evidence_ref])),
+    );
+    valid.approval = ClaimApprovalStatus::Proposed;
+    attempt_precommit_write(&vault, &valid_id, &valid)?;
+    assert!(
+        vault.get_raw(&valid_id)?.is_some(),
+        "an absent manifest must still land a valid Dreamer candidate"
+    );
+    Ok(())
+}
+
+/// The three GATE-12 codes reach callers through `Error::GateWriteRejected`,
+/// so they must parse back through the public typed taxonomy.
+///
+/// `Error::gate_denial()` returns `None` for the WHOLE denial as soon as one
+/// reason code is unknown to `GateDenialReason`, so an unmapped code does not
+/// degrade gracefully — it silently erases the reason a caller was given.
+#[test]
+fn dreamer_precommit_codes_round_trip_through_the_typed_denial_taxonomy() {
+    for (emitted, typed) in [
+        (
+            GateReasonCode::DenyDreamerDegenerateOutput,
+            GateDenialReason::DenyDreamerPrecommitDegenerateOutput,
+        ),
+        (
+            GateReasonCode::DenyDreamerMalformed,
+            GateDenialReason::DenyDreamerPrecommitMalformed,
+        ),
+        (
+            GateReasonCode::DenyDreamerNoEvidence,
+            GateDenialReason::DenyDreamerPrecommitNoEvidence,
+        ),
+    ] {
+        // The door emits the internal code; the public taxonomy must spell the
+        // exact same string or the two enums have silently drifted apart.
+        assert_eq!(emitted.as_str(), typed.as_str());
+        assert_eq!(GateDenialReason::from_code(emitted.as_str()), Some(typed));
+        assert_eq!(
+            typed.outcome(),
+            GateDenialOutcome::Deny,
+            "validity failures deny, never pend"
+        );
+
+        let err = Error::GateWriteRejected {
+            outcome: GateDenialOutcome::Deny.as_str(),
+            reason_codes: vec![emitted.as_str()],
+        };
+        let denial = err
+            .gate_denial()
+            .expect("a Dreamer pre-commit denial must parse into the typed taxonomy");
+        assert_eq!(denial.outcome(), GateDenialOutcome::Deny);
+        assert_eq!(denial.reason_codes(), &[typed]);
+    }
+}
+
+// ---- GATE-12: authorship is provenance, never the evidence source ----
+
+use super::doors::dreamer_run_id_from_write_envelope;
+
+/// Every `ClaimSource` the engine can compute as an evidence meet.
+///
+/// The Dreamer's promotion writer stamps the COMPUTED meet on its envelope
+/// (`effective_evidence_source`), so a `ToolOutput`, `Imported` or `Observed`
+/// Dreamer write is the ordinary case rather than a forgery.
+const ALL_CLAIM_SOURCES: [ClaimSource; 6] = [
+    ClaimSource::UserStated,
+    ClaimSource::Observed,
+    ClaimSource::Inferred,
+    ClaimSource::Imported,
+    ClaimSource::ToolOutput,
+    ClaimSource::Generated,
+];
+
+/// Names each source explicitly, so adding a `ClaimSource` variant is a
+/// COMPILE error here rather than a silent hole in the pins below: whoever
+/// adds one has to decide what the source-agnostic detector does with it.
+fn claim_source_pin_label(source: ClaimSource) -> &'static str {
+    match source {
+        ClaimSource::UserStated => "user_stated",
+        ClaimSource::Observed => "observed",
+        ClaimSource::Inferred => "inferred",
+        ClaimSource::Imported => "imported",
+        ClaimSource::ToolOutput => "tool_output",
+        ClaimSource::Generated => "generated",
+    }
+}
+
+/// A Dreamer-shaped provenance map: the surface marker, plus an optional
+/// run handle under either accepted key.
+fn dreamer_surface_provenance(surface: &str, run: Option<(&str, &str)>) -> Value {
+    let mut entries = vec![(
+        Value::from(DREAMER_PROVENANCE_SURFACE_KEY),
+        Value::from(surface),
+    )];
+    if let Some((run_key, run_id)) = run {
+        entries.push((Value::from(run_key), Value::from(run_id)));
+    }
+    Value::Map(entries)
+}
+
+fn dreamer_detector_envelope(
+    actor_class: EdgeActorClass,
+    source: ClaimSource,
+    provenance: Value,
+) -> Result<WriteEnvelope> {
+    Ok(WriteEnvelope::new(
+        WriteActor::new(first_party_eiri_connector_actor_id(), actor_class),
+        source,
+        WriteProvenance::new(provenance)?,
+        ClaimApprovalStatus::Proposed,
+    ))
+}
+
+/// GATE-12 candidacy is exactly `Agent` class + the Dreamer run surface + a
+/// non-empty run id, and NOTHING else.
+///
+/// Pinned on the detector itself, because the two ways to get this wrong are
+/// both invisible from a single door test: a source allowlist (which lets a
+/// truthful non-`Generated` meet disable the deny-first floor) and
+/// surface-only detection (which would sweep the dormant-magistrate bridge
+/// writes, surface marker with no run id, into GATE-12).
+#[test]
+fn dreamer_detector_is_source_agnostic_provenance() -> Result<()> {
+    // 1. Authorship holds across EVERY evidence meet. `source` is epistemic
+    //    taint computed FROM the candidate's evidence; it says how well the
+    //    claim is known, never who wrote it.
+    for source in ALL_CLAIM_SOURCES {
+        // The label is spelled independently of the enum, so a renamed
+        // on-disk source string cannot drift past this pin either.
+        let label = claim_source_pin_label(source);
+        assert_eq!(label, source.as_str());
+        for run_key in [DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY] {
+            let envelope = dreamer_detector_envelope(
+                EdgeActorClass::Agent,
+                source,
+                dreamer_surface_provenance(
+                    DREAMER_RUNNER_ATTEMPT_KIND,
+                    Some((run_key, PRECOMMIT_RUN_ID)),
+                ),
+            )?;
+            assert_eq!(
+                dreamer_run_id_from_write_envelope(&envelope).as_deref(),
+                Some(PRECOMMIT_RUN_ID),
+                "a {label} meet under `{run_key}` is still Dreamer-authored"
+            );
+        }
+    }
+
+    // 2. The run id stays REQUIRED. Blank, whitespace-only and absent are
+    //    all outside GATE-12, so the magistrate bridge (surface marker, no
+    //    run) keeps its ONE-1888 behaviour.
+    for run in [
+        Some((DREAMER_PROVENANCE_RUN_ID_KEY, "")),
+        Some((DREAMER_PROVENANCE_RUN_KEY, "   ")),
+        None,
+    ] {
+        let envelope = dreamer_detector_envelope(
+            EdgeActorClass::Agent,
+            ClaimSource::Generated,
+            dreamer_surface_provenance(DREAMER_RUNNER_ATTEMPT_KIND, run),
+        )?;
+        assert_eq!(
+            dreamer_run_id_from_write_envelope(&envelope),
+            None,
+            "a surface marker with no run handle is not a GATE-12 candidate"
+        );
+    }
+
+    // 3. A different surface is a different author, run id or not.
+    let other_surface = dreamer_detector_envelope(
+        EdgeActorClass::Agent,
+        ClaimSource::Generated,
+        dreamer_surface_provenance(
+            "agent.dispatch",
+            Some((DREAMER_PROVENANCE_RUN_ID_KEY, PRECOMMIT_RUN_ID)),
+        ),
+    )?;
+    assert_eq!(
+        dreamer_run_id_from_write_envelope(&other_surface),
+        None,
+        "only the Dreamer run surface carries Dreamer authorship"
+    );
+
+    // 4. The `Agent` class requirement holds: owner writes and the
+    //    System-actor projection shape stay outside GATE-12 on a fully valid
+    //    Dreamer provenance map, whatever their meet.
+    for actor_class in [EdgeActorClass::Human, EdgeActorClass::System] {
+        for source in ALL_CLAIM_SOURCES {
+            let envelope = dreamer_detector_envelope(
+                actor_class,
+                source,
+                dreamer_surface_provenance(
+                    DREAMER_RUNNER_ATTEMPT_KIND,
+                    Some((DREAMER_PROVENANCE_RUN_ID_KEY, PRECOMMIT_RUN_ID)),
+                ),
+            )?;
+            assert_eq!(
+                dreamer_run_id_from_write_envelope(&envelope),
+                None,
+                "{actor_class:?} is not the Dreamer, whatever the {} meet",
+                claim_source_pin_label(source)
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `dreamer_claim_candidate_write_parts`, with the evidence meet under test
+/// instead of its hardcoded `Generated`. Seeding is shared with that helper
+/// so these writes differ from the pinned `Generated` fixtures on exactly
+/// one axis.
+fn dreamer_write_parts_with_source(
+    vault: &crate::Vault,
+    body: &ClaimBody,
+    source: ClaimSource,
+) -> Result<(ClaimCandidate, WriteEnvelope)> {
+    let actor = first_party_eiri_connector_actor_id();
+    let (candidate, _) = dreamer_claim_candidate_write_parts(vault, body, actor, PRECOMMIT_RUN_ID)?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        source,
+        WriteProvenance::new(dreamer_surface_provenance(
+            DREAMER_RUNNER_ATTEMPT_KIND,
+            Some((DREAMER_PROVENANCE_RUN_ID_KEY, PRECOMMIT_RUN_ID)),
+        ))?,
+        body.approval,
+    );
+    Ok((candidate, envelope))
+}
+
+fn attempt_dreamer_write_with_source(
+    vault: &crate::Vault,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+    source: ClaimSource,
+) -> Result<()> {
+    let (candidate, envelope) = dreamer_write_parts_with_source(vault, body, source)?;
+    vault
+        .batch()
+        .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()
+}
+
+/// The deny-first floor is not an allowlist: a degenerate Dreamer value is
+/// refused under EVERY evidence meet, including the `ToolOutput`,
+/// `Imported` and `Observed` meets a truthful promotion stamps.
+#[test]
+fn dreamer_precommit_denies_degenerate_output_under_every_evidence_meet() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let evidence_ref = test_id(0x70);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+
+    for (index, source) in ALL_CLAIM_SOURCES.into_iter().enumerate() {
+        let seed = u8::try_from(index).expect("source index fits a byte");
+        let claim_id = test_id(0x71 + seed);
+        // Evidence resolves and the value is the only defect, so this
+        // discriminates check 1 rather than the evidence floor.
+        let mut body = precommit_body(
+            Value::from("I will remember this next pass"),
+            Some(precommit_evidence(vec![evidence_ref])),
+        );
+        body.approval = ClaimApprovalStatus::Proposed;
+        let err = attempt_dreamer_write_with_source(&vault, &claim_id, &body, source)
+            .expect_err("a degenerate Dreamer value is refused whatever its meet");
+        assert_precommit_denied(
+            &vault,
+            err,
+            &claim_id,
+            "gate.deny.dreamer_precommit.degenerate_output",
+        )?;
+        assert!(
+            vault.pending_gate_consents(10)?.is_empty(),
+            "a {} meet must not mint an owner-review row behind the deny",
+            claim_source_pin_label(source)
+        );
+    }
+    Ok(())
+}
+
+/// The evidence floor holds for a non-`Generated` meet too: a well-formed
+/// `ToolOutput` Dreamer value that cites nothing is still refused.
+#[test]
+fn dreamer_precommit_evidence_floor_holds_for_a_tool_output_meet() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let claim_id = test_id(0x78);
+    let mut body = precommit_body(Value::from("Ada Lovelace"), None);
+    body.approval = ClaimApprovalStatus::Proposed;
+
+    let err = attempt_dreamer_write_with_source(&vault, &claim_id, &body, ClaimSource::ToolOutput)
+        .expect_err("a tool-output Dreamer claim must cite resolving evidence too");
+    assert_precommit_denied(
+        &vault,
+        err,
+        &claim_id,
+        "gate.deny.dreamer_precommit.no_evidence",
+    )
+}
+
+/// Detection widened; GROUPING did not.
+///
+/// A valid `ToolOutput` Dreamer candidate clears GATE-12 and pends on its own
+/// (unrelated) source-trust posture. The pending row it mints carries
+/// `dreamer_run_id == None`, because `pending_consent_dreamer_run_id` keeps
+/// its `Proposed` + `Generated` pre-filter exactly as narrow as before.
+#[test]
+fn valid_tool_output_dreamer_write_pends_without_joining_a_run_group() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let evidence_ref = test_id(0x79);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+
+    let claim_id = test_id(0x7A);
+    let mut body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![evidence_ref])),
+    );
+    body.approval = ClaimApprovalStatus::Proposed;
+    // The source-trust posture is only reachable on a door that FEEDS the
+    // meet to the evaluator: `claim_gate_input` drops `source` (and the
+    // sensitivity band with it) for anything that is not `Auto` unless the
+    // caller asked for `include_source_in_gate_input`. The public batch
+    // `claim_candidate` door does not, so a `Proposed` candidate can never
+    // pend on source trust there whatever the manifest says. This is the same
+    // door the `Generated` source-trust pend is already pinned on by
+    // `allowed_gate_consent_resolution_rejects_drifted_source_trust_pending`,
+    // so the two meets differ on exactly one axis here too.
+    let (candidate, envelope) =
+        dreamer_write_parts_with_source(&vault, &body, ClaimSource::ToolOutput)?;
+    vault.put_claim_candidate_without_lexical_query_reconcile(
+        &claim_id,
+        candidate,
+        &envelope,
+        test_time(3),
+        3,
+    )?;
+
+    let stored = stored_claim_body(&vault, &claim_id)?;
+    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(
+        stored.source,
+        Some(ClaimSource::ToolOutput),
+        "the computed meet is stamped truthfully, never rewritten to pass"
+    );
+
+    let pending = vault.pending_gate_consents(10)?;
+    assert_eq!(pending.len(), 1, "the write pends for owner review");
+    let row = &pending[0];
+    assert_eq!(row.claim_id, *claim_id.as_bytes());
+    assert_eq!(
+        row.dreamer_run_id, None,
+        "run grouping stays Proposed + Generated only"
+    );
+    // The pend is the unrelated source-trust posture, and it is the ONLY
+    // reason: no GATE-12 denial rides along on a valid candidate.
+    assert_eq!(
+        row.reason_codes,
+        vec!["gate.pending.source_trust"],
+        "a valid Dreamer candidate pends on source trust alone"
+    );
+    Ok(())
+}
+
+// ---- GATE-12: host-typed synthetic operation bodies are not candidates ----
+
+/// The manifest these two pins run under: the Dreamer's `agent` actor is
+/// granted `auto`, and the manifest carries NO signature block — so
+/// `dreamer_auto_grant_requires_manifest_signature`, which fires ONLY when the
+/// evaluator input carries a Dreamer run handle, is observable in the verdict.
+fn operation_effect_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
+    let (tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, test_id(0x26), &data)?;
+    Ok((tmp, vault))
+}
+
+/// The synthetic effect body a `self.memory.*` verb presents at the door:
+/// host-typed predicate, `Approved`, a typed operand value, and envelope
+/// evidence with NO candidate evidence — because there is no candidate. The
+/// envelope is an ordinary Dreamer-admitted one, so the detector fires on it.
+fn operation_effect_parts(vault: &crate::Vault) -> Result<(ClaimBody, WriteEnvelope)> {
+    let actor = first_party_eiri_connector_actor_id();
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"dreamer operation actor",
+    )?;
+    let subject = test_id(0x27);
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"operation subject",
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (
+                Value::from(DREAMER_PROVENANCE_RUNNER_KEY),
+                Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
+            (
+                Value::from(DREAMER_PROVENANCE_RUN_ID_KEY),
+                Value::from(PRECOMMIT_RUN_ID),
+            ),
+        ]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let mut body = ClaimBody::new(
+        "self.memory.supersede_claim",
+        ClaimSubject::Entity(subject),
+        Value::Binary(test_id(0x28).as_bytes().to_vec()),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+        &envelope, None,
+    ));
+    body.source = Some(envelope.source());
+    Ok((body, envelope))
+}
+
+/// The claim door as the code-run traps call it, with the host mode under test
+/// as its ONLY variable.
+fn attempt_operation_effect_write(
+    vault: &crate::Vault,
+    id: &EntityId,
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    operation_effect_body: bool,
+) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &wtxn)?;
+    let result = check_claim_policy_for_write(
+        &vault.store,
+        &mut wtxn,
+        id,
+        body,
+        Some(envelope),
+        &policy,
+        GateWriteMode {
+            record_decision: true,
+            persist_pending_consent: false,
+            resolve_pending: false,
+            can_resolve_pending_consent: false,
+            include_source_in_gate_input: true,
+        },
+        operation_effect_body,
+    );
+    wtxn.commit()?;
+    result
+}
+
+fn gate_rejection_parts(err: Error) -> (&'static str, Vec<&'static str>) {
+    match err {
+        Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => (outcome, reason_codes),
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+}
+
+/// A host-typed synthetic operation body is gate material for a memory VERB,
+/// never a persisted claim candidate, so the pre-commit candidate checks do not
+/// run on it — and everything else still does.
+#[test]
+fn door_operation_effect_skips_precommit() -> Result<()> {
+    let (_tmp, vault) = operation_effect_vault()?;
+    let (body, envelope) = operation_effect_parts(&vault)?;
+    let gate_id = test_id(0x29);
+    let before = vault.store.gate_decisions(100)?.len();
+
+    let err = attempt_operation_effect_write(&vault, &gate_id, &body, &envelope, true)
+        .expect_err("the unsigned manifest still refuses the Dreamer's Approved operation");
+    let (outcome, reason_codes) = gate_rejection_parts(err);
+    assert!(
+        !reason_codes
+            .iter()
+            .any(|code| code.starts_with("gate.deny.dreamer_precommit.")),
+        "an operation-effect body is not a candidate, so no pre-commit code may appear: \
+         {reason_codes:?}"
+    );
+    // The verdict is the POLICY's, and it is one the evaluator could only reach
+    // with the Dreamer run handle in its provenance input: the manifest
+    // signature rule keys on exactly that handle.
+    assert_eq!(outcome, "pending");
+    let manifest_authority = "gate.pending.policy_manifest_authority";
+    assert!(
+        reason_codes.contains(&manifest_authority),
+        "the Dreamer provenance handles must still reach policy evaluation: {reason_codes:?}"
+    );
+
+    // Detection, evaluation AND recording all still happened.
+    let decisions = vault.store.gate_decisions(100)?;
+    assert_eq!(decisions.len(), before + 1, "the decision is recorded");
+    assert_eq!(decisions[0].claim_id, Some(*gate_id.as_bytes()));
+    assert_eq!(decisions[0].outcome, "pending");
+    assert!(
+        !has_pending_gate_consent(&vault, &gate_id)?,
+        "an Approved operation body mints no consent row"
+    );
+    Ok(())
+}
+
+/// The skip is bound to the HOST MODE, not to the body's shape.
+///
+/// Byte-identical predicate, value, approval, evidence and envelope — the only
+/// difference from the pin above is that this write claims to be a persisted
+/// candidate, and the evidence floor refuses it on the spot.
+#[test]
+fn door_operation_effect_flag_never_set_for_candidates() -> Result<()> {
+    let (_tmp, vault) = operation_effect_vault()?;
+    let (body, envelope) = operation_effect_parts(&vault)?;
+    let claim_id = test_id(0x2A);
+
+    let err = attempt_operation_effect_write(&vault, &claim_id, &body, &envelope, false)
+        .expect_err("a candidate citing no resolving evidence is denied");
+    let (outcome, reason_codes) = gate_rejection_parts(err);
+    assert_eq!(outcome, "deny", "validity failures deny, never downgrade");
+    assert_eq!(reason_codes, ["gate.deny.dreamer_precommit.no_evidence"]);
+    assert!(
+        vault.get_raw(&claim_id)?.is_none(),
+        "a denied write lands no claim"
+    );
+    assert!(
+        !has_pending_gate_consent(&vault, &claim_id)?,
+        "a validity denial mints no pending-consent row"
+    );
+    Ok(())
+}
+
 #[test]
 fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -10548,5 +12281,687 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
         ),
         "an unattributed write never rides an actor-bound permit"
     );
+    Ok(())
+}
+
+// ── ONE-1686 (RT-04) · the witness MESSAGE ceiling door ─────────────────────
+
+fn witness_envelope() -> WitnessMessageEnvelope<'static> {
+    WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_COMPANION,
+        message_type: "dialogue",
+        content: "the answer",
+        metadata: Some(Value::Map(vec![(
+            Value::from("client"),
+            Value::from("cli"),
+        )])),
+        is_visible: true,
+        order: 1,
+    }
+}
+
+/// Class-wide claim ceilings do not mute transcript recording. Only an exact
+/// actor-ref row clamps an ordinary witness MESSAGE, and class-wide rows are not
+/// folded into that exact-row verdict. The elevated `system` bucket still needs
+/// exact actor-bound Auto authority.
+#[test]
+fn witness_message_ignores_class_wide_ceilings_but_honors_actor_bound_rows() -> Result<()> {
+    let actor_id = test_id(0x20);
+    let actor_ref = actor_id.to_hex();
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+
+    for (label, rows, should_allow) in [
+        (
+            "class proposed only",
+            vec![actor_ceiling_row("agent", "proposed")],
+            true,
+        ),
+        (
+            "class proposed plus exact auto",
+            vec![
+                actor_ceiling_row("agent", "proposed"),
+                actor_ceiling_row_for_ref("agent", &actor_ref, "auto"),
+            ],
+            true,
+        ),
+        (
+            "class auto plus exact proposed",
+            vec![
+                actor_ceiling_row("agent", "auto"),
+                actor_ceiling_row_for_ref("agent", &actor_ref, "proposed"),
+            ],
+            false,
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let mut manifest = default_policy_manifest();
+        replace_actor_ceilings(&mut manifest, rows);
+        put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
+        let rtxn = vault.store.env.read_txn()?;
+        let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+        let envelope = witness_envelope();
+        let body = envelope.encode_body()?;
+        let result =
+            check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy);
+        if should_allow {
+            result.unwrap_or_else(|error| panic!("{label} must allow ordinary recording: {error}"));
+        } else {
+            let error = result.expect_err("exact proposed row must clamp ordinary recording");
+            assert_eq!(
+                error.gate_denial().expect("typed denial").reason_codes(),
+                &[GateDenialReason::PendingActorCeiling],
+                "{label}",
+            );
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let mut manifest = default_policy_manifest();
+    replace_actor_ceilings(&mut manifest, vec![actor_ceiling_row("agent", "auto")]);
+    put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let system = WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_SYSTEM,
+        ..witness_envelope()
+    };
+    let body = system.encode_body()?;
+    let error = check_witness_message_ceiling(&vault.store, &rtxn, actor, &system, &body, &policy)
+        .expect_err("class-wide auto is not authority for system authorship");
+    assert_eq!(
+        error.gate_denial().expect("typed denial").reason_codes(),
+        &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized],
+    );
+    Ok(())
+}
+
+/// A malformed manifest stays fail-closed even when its decoded rows happen to
+/// contain an exact actor-bound auto ceiling. The system-author floor must not
+/// treat partially decoded policy data as authority.
+#[test]
+fn witness_message_system_authority_rejects_fail_closed_policy_with_auto_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor_id = test_id(0x21);
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+    let mut manifest = default_policy_manifest();
+    replace_actor_ceilings(
+        &mut manifest,
+        vec![actor_ceiling_row_for_ref(
+            "agent",
+            &actor_id.to_hex(),
+            "auto",
+        )],
+    );
+    rewrite_policy_manifest_entries(&mut manifest, |entries| {
+        for (key, value) in entries {
+            if key.as_str() == Some(POLICY_DEFAULTS_KEY) {
+                let Value::Map(defaults) = value else {
+                    unreachable!("defaults are a map");
+                };
+                defaults.push((Value::from("future_axis"), Value::from("permit")));
+            }
+        }
+    });
+    put_policy_manifest_bytes(&vault, default_policy_manifest_id()?, &manifest)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(policy.is_fail_closed());
+    let envelope = WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_SYSTEM,
+        ..witness_envelope()
+    };
+    let body = envelope.encode_body()?;
+    let error =
+        check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy)
+            .expect_err("fail-closed policy cannot authorize system authorship");
+    assert_eq!(
+        error.gate_denial().expect("typed denial").reason_codes(),
+        &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized],
+    );
+    Ok(())
+}
+
+/// Metadata is bounded by bytes as well as shape. A single value is capped,
+/// multibyte UTF-8 counts by encoded bytes, and individually legal values may
+/// not combine into an oversized canonical metadata map.
+#[test]
+fn witness_message_metadata_enforces_string_and_total_byte_ceilings() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let actor = WriteActor::new(test_id(0x2F), EdgeActorClass::Human);
+    let authorize = |metadata: Value| {
+        let envelope = WitnessMessageEnvelope {
+            metadata: Some(metadata),
+            ..witness_envelope()
+        };
+        let body = envelope.encode_body().expect("metadata encodes");
+        check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy)
+            .map(|_| ())
+    };
+
+    authorize(Value::Map(vec![(
+        Value::from("value"),
+        Value::from("a".repeat(16 * 1024)),
+    )]))
+    .expect("one string exactly at the byte ceiling is allowed");
+    authorize(Value::Map(vec![(
+        Value::from("value"),
+        Value::from("é".repeat(8 * 1024)),
+    )]))
+    .expect("multibyte text exactly at the UTF-8 byte ceiling is allowed");
+
+    for (label, metadata) in [
+        (
+            "one byte past the string ceiling",
+            Value::Map(vec![(
+                Value::from("value"),
+                Value::from("a".repeat(16 * 1024 + 1)),
+            )]),
+        ),
+        (
+            "one multibyte scalar past the string ceiling",
+            Value::Map(vec![(
+                Value::from("value"),
+                Value::from("é".repeat(8 * 1024 + 1)),
+            )]),
+        ),
+        (
+            "aggregate metadata past the encoded ceiling",
+            Value::Map(
+                (0..4)
+                    .map(|index| {
+                        (
+                            Value::from(format!("value_{index}")),
+                            Value::from("a".repeat(16 * 1024)),
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+    ] {
+        let error = authorize(metadata)
+            .err()
+            .unwrap_or_else(|| panic!("{label} must be refused"));
+        assert_eq!(
+            error.gate_denial().expect("typed denial").reason_codes(),
+            &[GateDenialReason::DenyWitnessMessageMalformedEnvelope],
+            "{label}",
+        );
+    }
+    Ok(())
+}
+
+/// Invariant 3: EVERY envelope axis feeds the binding, so no axis can move
+/// between the authorization and the write without the binding moving with it.
+/// Content-only or author-only hashing would collapse most of these to one
+/// value; each variant here changes exactly one axis.
+#[test]
+fn witness_message_binding_moves_with_every_envelope_axis() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let actor = WriteActor::new(test_id(0x21), EdgeActorClass::Human);
+    let base = witness_envelope();
+
+    let variants = vec![
+        (
+            "author",
+            WitnessMessageEnvelope {
+                author: WITNESS_AUTHOR_USER,
+                ..base.clone()
+            },
+        ),
+        (
+            "message_type",
+            WitnessMessageEnvelope {
+                message_type: "executor.speak",
+                ..base.clone()
+            },
+        ),
+        (
+            "content",
+            WitnessMessageEnvelope {
+                content: "the answer.",
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata value",
+            WitnessMessageEnvelope {
+                metadata: Some(Value::Map(vec![(
+                    Value::from("client"),
+                    Value::from("gui"),
+                )])),
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata key",
+            WitnessMessageEnvelope {
+                metadata: Some(Value::Map(vec![(
+                    Value::from("surface"),
+                    Value::from("cli"),
+                )])),
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata nested one level down",
+            WitnessMessageEnvelope {
+                metadata: Some(Value::Map(vec![(
+                    Value::from("client"),
+                    Value::Map(vec![(Value::from("build"), Value::from("cli"))]),
+                )])),
+                ..base.clone()
+            },
+        ),
+        (
+            "metadata absent",
+            WitnessMessageEnvelope {
+                metadata: None,
+                ..base.clone()
+            },
+        ),
+        (
+            "is_visible",
+            WitnessMessageEnvelope {
+                is_visible: false,
+                ..base.clone()
+            },
+        ),
+        (
+            "order",
+            WitnessMessageEnvelope {
+                order: 2,
+                ..base.clone()
+            },
+        ),
+    ];
+
+    let authorize = |envelope: &WitnessMessageEnvelope<'_>, actor| -> Result<[u8; 32]> {
+        let body = envelope.encode_body()?;
+        Ok(
+            check_witness_message_ceiling(&vault.store, &rtxn, actor, envelope, &body, &policy)?
+                .binding(),
+        )
+    };
+
+    let mut seen = vec![authorize(&base, actor)?];
+    for (label, variant) in variants {
+        let binding = authorize(&variant, actor)?;
+        assert!(
+            !seen.contains(&binding),
+            "changing {label} left the binding unmoved"
+        );
+        seen.push(binding);
+    }
+
+    // The ACTOR is bound too: the same envelope presented by another writer is
+    // a different authorization, not a reusable one.
+    let other_actor = WriteActor::new(test_id(0x22), EdgeActorClass::Human);
+    let rebound = authorize(&base, other_actor)?;
+    assert!(
+        !seen.contains(&rebound),
+        "the binding must name the actor that presented the envelope"
+    );
+    Ok(())
+}
+
+/// Invariant 1: the pre-write check and the final write bind the SAME immutable
+/// values. The door re-encodes the axes it authorized and refuses bytes that
+/// are not that encoding, so a caller cannot have the door approve one envelope
+/// and stage another.
+#[test]
+fn witness_message_door_refuses_staged_bytes_that_are_not_the_authorized_envelope() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let actor = WriteActor::new(test_id(0x23), EdgeActorClass::Human);
+    let declared = witness_envelope();
+    let staged = WitnessMessageEnvelope {
+        content: "a completely different answer",
+        is_visible: false,
+        ..declared.clone()
+    };
+
+    let err = check_witness_message_ceiling(
+        &vault.store,
+        &rtxn,
+        actor,
+        &declared,
+        &staged.encode_body()?,
+        &policy,
+    )
+    .expect_err("staged bytes that are not the authorized envelope are refused");
+    assert_eq!(err.kind(), ErrorKind::GateWriteRejected);
+    assert_eq!(
+        err.gate_denial().expect("typed denial").reason_codes(),
+        &[GateDenialReason::DenyWitnessMessageMalformedEnvelope]
+    );
+
+    // The door's own bytes are what a write may consume, and they are the
+    // canonical encoding of the axes it authorized.
+    let body = declared.encode_body()?;
+    let authorized =
+        check_witness_message_ceiling(&vault.store, &rtxn, actor, &declared, &body, &policy)?;
+    assert_eq!(authorized.body(), body.as_slice());
+    Ok(())
+}
+
+/// A vault with NO policy manifest loaded keeps the fail-closed author floor:
+/// an absent manifest is not consent for an engine-voiced `system` row, even
+/// when the actor is a store-verified MACHINE/system identity.
+#[test]
+fn witness_message_author_floor_holds_without_a_policy_manifest() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let machine = test_id(0x24);
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        test_time(1),
+        1,
+        b"engine machine",
+    )?;
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    assert!(
+        !policy.enforces_write_gate(),
+        "the fixture vault carries no manifest"
+    );
+
+    let system_row = WitnessMessageEnvelope {
+        author: WITNESS_AUTHOR_SYSTEM,
+        ..witness_envelope()
+    };
+    let body = system_row.encode_body()?;
+
+    for actor in [
+        WriteActor::new(test_id(0x25), EdgeActorClass::Human),
+        WriteActor::new(machine, EdgeActorClass::System),
+    ] {
+        let err =
+            check_witness_message_ceiling(&vault.store, &rtxn, actor, &system_row, &body, &policy)
+                .expect_err("no manifest or actor-bound row is consent");
+        assert_eq!(
+            err.gate_denial().expect("typed denial").reason_codes(),
+            &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized]
+        );
+    }
+    Ok(())
+}
+
+/// The metric class is its own label, so a witness refusal is not filed under
+/// some other family's counter.
+#[test]
+fn witness_message_refusals_meter_under_their_own_reason_class() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let before = gate_metrics_snapshot();
+
+    let malformed = WitnessMessageEnvelope {
+        message_type: "not a token",
+        ..witness_envelope()
+    };
+    let body = malformed.encode_body()?;
+    check_witness_message_ceiling(
+        &vault.store,
+        &rtxn,
+        WriteActor::new(test_id(0x26), EdgeActorClass::Human),
+        &malformed,
+        &body,
+        &policy,
+    )
+    .expect_err("an out-of-shape message type is refused");
+
+    let after = gate_metrics_snapshot();
+    assert_metric_counter_advanced(
+        &before,
+        &after,
+        GateOutcome::Deny,
+        GateMetricReasonClass::WitnessMessageCeiling,
+        1,
+    );
+    Ok(())
+}
+
+/// ONE-1686 (RT-04): the REPLICATED MESSAGE door fails closed for EVERY author
+/// bucket — and closing it does not wedge the window.
+///
+/// The local witness ceiling is an ACTOR question, and the sync replay door has
+/// no actor to ask it about: `WriteEnvelope` (the type that carries
+/// `WriteActor` provenance into a write) appears nowhere in `crate::sync`, the
+/// window key is a calendar month, the CRDT map key is the entity id, and the
+/// six-axis envelope carries no signer. The kinds that DO admit remote rows
+/// carry their proof INSIDE the body (an AUTHORITY_LOG entry names its signer;
+/// a REDACTION_AUDIT receipt carries an attestation bound to a mirrored lease);
+/// a MESSAGE has no such half, so there is nothing to bind remote authorship
+/// to and admitting it would make sync a second, weaker MESSAGE authorization.
+///
+/// Four hostile rows arrive in one window — bytes that are not an envelope at
+/// all, a forged `user` row, a forged `companion` row, and a row in the
+/// engine's own unattributed `system` voice. All four are quarantined with the
+/// typed reason and none leaves a body behind, while an ordinary TURN in the
+/// SAME window still converges: this narrows one entity kind's remote door, not
+/// sync in general.
+#[cfg(feature = "sync")]
+#[test]
+fn forward_rematerialize_refuses_every_replicated_witness_message() -> Result<()> {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::map_insert_bytes;
+    use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window::forward_rematerialize;
+
+    let (_tmp, vault) = temp_vault();
+    let window_key = WindowKey::new("2026-04");
+    let doc = create_window_doc("local", &window_key);
+    let entities = doc.get_map("entities");
+    let at = TimeRange { start: 1, end: 1 };
+
+    let insert = |id: &EntityId, entity_type: u8, body: &[u8]| {
+        map_insert_bytes(
+            &entities,
+            &id.to_hex(),
+            &entity_record(entity_type, at, 1, body),
+        )
+        .expect("insert replicated row");
+    };
+
+    // Not the canonical envelope at all.
+    let malformed = test_id(0xB1);
+    insert(
+        &malformed,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        b"not an envelope",
+    );
+
+    // Well-formed transcript rows, which is exactly the point: the door cannot
+    // tell an honest remote row from a forged one, because nothing here binds
+    // either to an actor this vault verified.
+    let forged_user = test_id(0xB2);
+    insert(
+        &forged_user,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        &canonical_witness_message_body_for_test("user", "dialogue", "i said this", true, 0)?,
+    );
+    let forged_companion = test_id(0xB3);
+    insert(
+        &forged_companion,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        &canonical_witness_message_body_for_test("companion", "dialogue", "and i this", true, 1)?,
+    );
+    // The engine's OWN voice: no `AuthoredBy` edge, so downstream it reads as
+    // the vault speaking. Locally this needs an owner-authored, actor-bound
+    // `auto` ceiling; no replicated envelope can present one.
+    let forged_system = test_id(0xB4);
+    insert(
+        &forged_system,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        &canonical_witness_message_body_for_test("system", "tool_result", "ok", false, 2)?,
+    );
+
+    // An unrelated kind in the SAME window. One refused transcript row must not
+    // cost this its convergence.
+    let turn = test_id(0xB5);
+    insert(&turn, crate::registry::ENTITY_TYPE_TURN, b"turn");
+    doc.commit();
+
+    let materialized = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    for refused in [malformed, forged_user, forged_companion, forged_system] {
+        assert!(
+            vault.get_raw(&refused)?.is_none(),
+            "a refused replicated MESSAGE must leave no body behind: {}",
+            refused.to_hex()
+        );
+    }
+    assert!(
+        vault.get_raw(&turn)?.is_some(),
+        "an unrelated entity kind must still converge in the same window"
+    );
+    assert_eq!(materialized, 1, "only the TURN may materialize");
+
+    let records = quarantined_records(&vault)?;
+    let refusals = records
+        .iter()
+        .filter(|(_, record)| {
+            record.container == QuarantineContainer::Entities
+                && record.reason_code == "InvalidWitnessMessageBody"
+        })
+        .count();
+    assert_eq!(
+        refusals, 4,
+        "every refused MESSAGE is quarantined as a remote-op rejection, got {records:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1686 (RT-04): a refused replicated MESSAGE rolls its whole batch back.
+///
+/// Observer B applies a replay batch as ONE transaction, so the refusal must
+/// abort the batch rather than land the rows that happened to precede it —
+/// otherwise a forged transcript row would still cost the window a partial
+/// write. The sibling TURN here is a valid replicated put that would otherwise
+/// have committed.
+#[cfg(feature = "sync")]
+#[test]
+fn a_refused_replicated_witness_message_rolls_its_batch_back() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let turn = test_id(0xB6);
+    let forged = test_id(0xB7);
+    let at = TimeRange { start: 1, end: 1 };
+    let body = canonical_witness_message_body_for_test("user", "dialogue", "forged", true, 0)?;
+
+    let err = vault
+        .batch()
+        .put_replicated(&turn, crate::registry::ENTITY_TYPE_TURN, at, 1, b"turn")
+        .put_replicated(&forged, crate::registry::ENTITY_TYPE_MESSAGE, at, 1, &body)
+        .commit()
+        .expect_err("a replicated MESSAGE has no local actor binding and is refused");
+    assert_eq!(err.kind(), ErrorKind::InvalidWitnessMessageBody);
+    assert!(
+        crate::sync::quarantine::remote_rejection_reason(&err).is_some(),
+        "the refusal must classify as a remote-op rejection so replay quarantines and continues"
+    );
+    assert!(vault.get_raw(&forged)?.is_none());
+    assert!(
+        vault.get_raw(&turn)?.is_none(),
+        "the sibling op in the aborted batch must not survive the refusal"
+    );
+    Ok(())
+}
+
+/// ONE-1686 (RT-04): the LOCAL road is unchanged by the replicated closure.
+///
+/// The same canonical bytes the replicated door refuses are exactly what the
+/// witness door writes, so this pins that the closure is about the ROAD (no
+/// actor to authorize against) and not about the envelope: a locally witnessed
+/// row still lands, and a raw local put of non-envelope bytes still fails on
+/// the envelope floor rather than on the replicated rule.
+#[test]
+fn the_replicated_closure_leaves_the_local_message_road_intact() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xB8);
+    let conversation = test_id(0xB9);
+    let message = test_id(0xBA);
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"actor")?;
+
+    vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&crate::memory::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            messages: vec![crate::memory::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::memory::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "a locally witnessed row".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 2,
+        })
+        .expect("the local witness door still writes MESSAGE rows");
+    assert!(vault.get_raw(&message)?.is_some());
+
+    let raw = test_id(0xBB);
+    let err = vault
+        .put_entity(
+            &raw,
+            crate::registry::ENTITY_TYPE_MESSAGE,
+            test_time(1),
+            1,
+            b"not an envelope",
+        )
+        .expect_err("the public raw MESSAGE door stays closed");
+    assert_eq!(err.kind(), ErrorKind::InvalidWitnessMessageBody);
+    assert!(vault.get_raw(&raw)?.is_none());
+    Ok(())
+}
+
+/// The shared materialization chokepoint treats a MESSAGE id as immutable.
+/// Byte-identical replay is accepted, but a different canonical envelope at
+/// the same id is refused and cannot replace the winner.
+#[test]
+fn witness_message_id_refuses_a_divergent_canonical_reput() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xBC);
+    let first = canonical_witness_message_body_for_test(
+        WITNESS_AUTHOR_COMPANION,
+        "executor.speak",
+        "winner",
+        true,
+        3,
+    )?;
+    let divergent = canonical_witness_message_body_for_test(
+        WITNESS_AUTHOR_COMPANION,
+        "executor.speak",
+        "loser",
+        true,
+        3,
+    )?;
+
+    vault
+        .batch()
+        .put_canonical_message_for_test(&id, test_time(1), 1, &first)
+        .commit()?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(&id, test_time(1), 1, &first)
+        .commit()
+        .expect("byte-identical MESSAGE retry is idempotent");
+    let before = vault.get_raw(&id)?.expect("winning MESSAGE exists");
+
+    let error = vault
+        .batch()
+        .put_canonical_message_for_test(&id, test_time(2), 2, &divergent)
+        .commit()
+        .expect_err("same-id divergent canonical body is refused");
+    assert_eq!(error.kind(), ErrorKind::InvalidWitnessMessageBody);
+    assert_eq!(vault.get_raw(&id)?.as_deref(), Some(before.as_slice()));
     Ok(())
 }

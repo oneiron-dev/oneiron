@@ -691,7 +691,9 @@ fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixture {
         .register_connector_key(
             &EntityId::from_bytes([0x92; 16]).expect("connector key id"),
             crate::connector_key::ConnectorKeyRecord::active(
-                crate::gate::scoped_mcp_credential_connector_key("files", &grant_id),
+                crate::connector_key::ScopedCapabilityProvenance::mint("files", &grant_id)
+                    .expect("safe canonical scoped server")
+                    .connector(),
                 None,
                 vec![crate::connector_key::EffectorBudget::sends(
                     100,

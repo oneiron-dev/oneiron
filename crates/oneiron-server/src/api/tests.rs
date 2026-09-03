@@ -7560,49 +7560,67 @@ async fn consumer_usage_route_reports_allowance_warning_thresholds() {
     }
 }
 
+/// Seeds one witnessed TURN + MESSAGE pair for the VAD annotation fixtures.
+///
+/// ONE-1686 closed the public raw MESSAGE put: a MESSAGE body is the gated
+/// six-axis witness envelope now, and the engine's witness door is its only
+/// writer. These fixtures therefore mint their rows through that door — the
+/// same one production transcripts go through — under caller-pinned ids, so
+/// what they annotate is a real transcript row rather than opaque bytes.
+///
+/// The door does NOT author the `ChildOf` message -> turn edge (it writes
+/// `PartOf`/`BelongsTo`/`AuthoredBy`), and `require_message_in_turn` is what
+/// reads `ChildOf`, so callers still add that edge themselves exactly as
+/// before.
+fn witness_vad_message_fixture(
+    server: &SyncServer,
+    turn: &oneiron::EntityId,
+    message: &oneiron::EntityId,
+    content: &str,
+    occurred_at: u64,
+) {
+    let actor = oneiron::EntityId::now();
+    let conversation = oneiron::EntityId::now();
+    let at = oneiron::TimeRange {
+        start: occurred_at,
+        end: occurred_at,
+    };
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at,
+            occurred_at,
+            b"vad fixture",
+        )
+        .expect("put fixture actor");
+    server
+        .vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![oneiron::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: content.to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at,
+        })
+        .expect("witness fixture turn");
+}
+
 #[tokio::test]
 async fn turn_vad_annotate_route_persists_and_reads_annotations() {
     let (_dir, server) = test_server();
     let turn = oneiron::EntityId::now();
     let message = oneiron::EntityId::now();
-    let turn_body = rmp_serde::to_vec_named(&json!({
-        "txt": "turn affect",
-        "spkr": "user",
-        "at": 100_u64,
-    }))
-    .expect("encode turn body");
-    let message_body = rmp_serde::to_vec_named(&json!({
-        "txt": "message affect",
-        "spkr": "assistant",
-        "at": 101_u64,
-    }))
-    .expect("encode message body");
-    server
-        .vault
-        .put_entity(
-            &turn,
-            ENTITY_TYPE_TURN,
-            oneiron::TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-            &turn_body,
-        )
-        .expect("put turn");
-    server
-        .vault
-        .put_entity(
-            &message,
-            ENTITY_TYPE_MESSAGE,
-            oneiron::TimeRange {
-                start: 101,
-                end: 101,
-            },
-            101,
-            &message_body,
-        )
-        .expect("put message");
+    witness_vad_message_fixture(&server, &turn, &message, "message affect", 101);
     server
         .vault
         .put_edge(&message, oneiron::EdgeKind::ChildOf, &turn, 1.0)
@@ -7754,32 +7772,11 @@ async fn turn_vad_annotate_route_rejects_message_outside_supplied_turn() {
             &body,
         )
         .expect("put requested turn");
-    server
-        .vault
-        .put_entity(
-            &actual_turn,
-            ENTITY_TYPE_TURN,
-            oneiron::TimeRange {
-                start: 101,
-                end: 101,
-            },
-            101,
-            &body,
-        )
-        .expect("put actual turn");
-    server
-        .vault
-        .put_entity(
-            &message,
-            ENTITY_TYPE_MESSAGE,
-            oneiron::TimeRange {
-                start: 102,
-                end: 102,
-            },
-            102,
-            &body,
-        )
-        .expect("put message");
+    // The message and the turn it really belongs to are witnessed together
+    // (ONE-1686: the witness door is the only MESSAGE writer); the REQUESTED
+    // turn above stays a bare TURN row, because the point of this fixture is
+    // that the message was never in it.
+    witness_vad_message_fixture(&server, &actual_turn, &message, "affect", 102);
     server
         .vault
         .put_edge(&message, oneiron::EdgeKind::ChildOf, &actual_turn, 1.0)
@@ -8140,6 +8137,11 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         Value::Array(vec![Value::from(id.clone())])
     );
     assert_eq!(body["evidence"]["scores"][0]["result_id"], Value::from(id));
+    assert_eq!(
+        body["evidence"]["scores"][0]["access_factor"],
+        Value::from(1.0),
+        "HTTP score evidence must expose the applied neutral factor"
+    );
     assert_eq!(
         body["evidence"]["scores"][0]["components"][0]["signal"],
         Value::from("text")

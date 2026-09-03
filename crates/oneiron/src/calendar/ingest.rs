@@ -439,6 +439,9 @@ fn pending_poll_record(
                 | AttemptState::Leased
                 | AttemptState::Paused
                 | AttemptState::Scheduled
+                // A landing poll row has not settled: minting a second one
+                // would double-poll the feed while the first still finishes.
+                | AttemptState::Landing
         );
         if pending && is_feed_poll_row(&record, &dedupe_key) {
             return Ok(Some(record));

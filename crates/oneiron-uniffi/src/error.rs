@@ -42,6 +42,9 @@ mod tests {
             message: "subject_ref is not a known entity".to_owned(),
             suggestions: vec!["first".to_owned(), "second".to_owned(), "third".to_owned()],
             successor_short_id: None,
+            // ONE-1686: the typed Gate denial rides as an additive field. This
+            // fixture is not a gate refusal, so it carries none.
+            gate_denial: None,
         };
         let expected = source.clone();
 
@@ -63,6 +66,7 @@ mod tests {
             message: "no hints".to_owned(),
             suggestions: Vec::new(),
             successor_short_id: None,
+            gate_denial: None,
         });
 
         assert!(suggestions.is_empty());

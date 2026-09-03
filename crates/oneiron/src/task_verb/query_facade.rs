@@ -4,7 +4,8 @@ use rmpv::Value;
 
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, AttemptState,
-    InterveneAttempt,
+    CancelRequestOutcome, CancelStanding, ForceAttemptCancel, ForceCancelAuthority,
+    ForceCancelOutcome, InterveneAttempt, LandingTrigger, RequestAttemptCancel,
 };
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
@@ -25,14 +26,15 @@ use crate::unix_seconds_now;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 use super::consts::{
-    TASK_CANCEL_GATE_CHANNEL, TASK_CANCEL_PROPOSAL_PREDICATE, TASK_GATE_RECEIPT_SCAN_LIMIT,
+    TASK_CANCEL_FORCE_MODE, TASK_CANCEL_GATE_CHANNEL, TASK_CANCEL_PROPOSAL_PREDICATE,
+    TASK_GATE_RECEIPT_SCAN_LIMIT,
 };
 use super::consult_result::CancelTargetState;
 use super::presence_scan::{
-    cancel_target_state, is_cancelable_attempt_state, superseded_attempt_ids, task_presence,
-    task_presence_for_id, terminal_attempt_status,
+    cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
+    superseded_attempt_ids, task_presence, task_presence_for_id, terminal_attempt_status,
 };
-use super::rate_limit::task_verb_contract;
+use super::rate_limit::{task_create_owner_in, task_verb_contract};
 use super::route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
 };
@@ -135,6 +137,176 @@ impl Memory<'_> {
         self.tasks_cancel_resolved(mode, state)
     }
 
+    /// RUNG 2: the owner's nonrefusable stop.
+    ///
+    /// Distinct verb, deliberately: [`Self::tasks_cancel`] stays SOFT — it asks
+    /// a running worker to land and lets it refuse with a reason — and this is
+    /// the door for the case that rung cannot answer (a worker that will not
+    /// land, evidence of pathology, an owner who needs the machine back now).
+    ///
+    /// Three things make it unforgeable:
+    ///
+    /// * only a TASK whose durable `tasks.create` owner record names THIS actor
+    ///   can be forced. A spawn target's parent link is peer standing, not
+    ///   authority, so it is refused into the ordinary proposal path;
+    /// * ownership is re-verified INSIDE the write transaction, before any row
+    ///   changes, so a create-owner rewrite racing the call cannot slip through;
+    /// * the terminal receipt's actor comes from the runtime-minted
+    ///   [`ForceCancelAuthority`], never from caller text — the worker's own
+    ///   status/notes cannot author it.
+    ///
+    /// Lease expiry and criticality keep their own runtime grounds and do not
+    /// pass through here.
+    pub fn tasks_cancel_force(
+        &self,
+        target: TaskCancelTarget,
+        reason: Option<String>,
+    ) -> MemoryResult<TaskCancelReceipt> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let state = cancel_target_state(self.vault(), self.actor(), target)?;
+        let verb = task_verb_contract(TasksVerb::Cancel);
+        let now = unix_seconds_now();
+        let provenance = facade_provenance(verb);
+
+        // Not the owner, or not an owner-addressable TASK target: nothing hard
+        // happens, and the caller gets the same typed proposal the soft ladder
+        // gives a foreign cancel.
+        let owner_task_ref = state.task_ref.filter(|_| state.owned);
+        let Some(task_ref) = owner_task_ref else {
+            let (proposal_ref, gate_decision_ref) = self.persist_task_proposal(
+                TASK_CANCEL_PROPOSAL_PREDICATE,
+                Value::Map(vec![
+                    (Value::from("target_ref"), Value::from(state.target_ref)),
+                    (Value::from("mode"), Value::from(TASK_CANCEL_FORCE_MODE)),
+                ]),
+                state.proposal_subject,
+                now,
+                provenance,
+            )?;
+            return Ok(TaskCancelReceipt {
+                approval: ClaimApprovalStatus::Proposed,
+                effected: false,
+                proposal_ref: Some(proposal_ref),
+                gate_decision_ref,
+                status: None,
+                cancel_requested: false,
+                forced: false,
+            });
+        };
+
+        let (gate_decision_ref, gate_outcome, forced_count) =
+            self.with_verified_actor_write_txn(|wtxn| {
+                let policy = resolve_policy_manifest(&self.vault().store, &*wtxn)?;
+                let effect = self.task_cancel_gate_input(verb, &state.target_ref);
+                let (decision_id, decision, _charge) = check_external_effect_policy(
+                    &self.vault().store,
+                    wtxn,
+                    &effect,
+                    &policy,
+                    false,
+                )?;
+                let decision_ref = format!("gate:{}", decision_id.to_hex());
+                if decision.outcome() != GateOutcome::Allow {
+                    return Ok((decision_ref, decision.outcome(), 0usize));
+                }
+                // Authority re-verified against durable create provenance in
+                // THIS transaction, before a single row is touched.
+                if task_create_owner_in(self.vault(), &*wtxn, task_ref)? != Some(self.actor()) {
+                    return Ok((decision_ref, decision.outcome(), 0usize));
+                }
+                let authority = ForceCancelAuthority::owner(self.actor().to_hex().as_str())
+                    .map_err(MemoryError::from)?;
+
+                let queue = AttemptQueue::new(self.vault());
+                let records = queue.list_task_in_write_txn(&*wtxn, task_ref.to_hex().as_str())?;
+                let superseded = superseded_attempt_ids(&records);
+                let mut forced_count = 0usize;
+                for record in &records {
+                    if superseded.contains(&record.id) || record.state.is_terminal() {
+                        continue;
+                    }
+                    let outcome = queue.force_cancel_in_txn(
+                        wtxn,
+                        ForceAttemptCancel {
+                            id: record.id,
+                            authority: authority.clone(),
+                            reason: reason.clone(),
+                            now,
+                        },
+                    )?;
+                    if matches!(outcome, ForceCancelOutcome::Cancelled(_)) {
+                        forced_count += 1;
+                    }
+                }
+                if forced_count > 0 {
+                    cancel_task_in_txn(self.vault(), wtxn, task_ref)?;
+                }
+                Ok((decision_ref, decision.outcome(), forced_count))
+            })?;
+
+        if gate_outcome != GateOutcome::Allow {
+            let (proposal_ref, _proposal_gate_decision_ref) = self.persist_task_proposal(
+                TASK_CANCEL_PROPOSAL_PREDICATE,
+                Value::Map(vec![
+                    (Value::from("target_ref"), Value::from(state.target_ref)),
+                    (Value::from("mode"), Value::from(TASK_CANCEL_FORCE_MODE)),
+                ]),
+                state.proposal_subject,
+                now,
+                provenance,
+            )?;
+            return Ok(TaskCancelReceipt {
+                approval: ClaimApprovalStatus::Proposed,
+                effected: false,
+                proposal_ref: Some(proposal_ref),
+                gate_decision_ref: Some(gate_decision_ref),
+                status: None,
+                cancel_requested: false,
+                forced: false,
+            });
+        }
+
+        Ok(TaskCancelReceipt {
+            approval: ClaimApprovalStatus::Auto,
+            effected: forced_count > 0,
+            proposal_ref: None,
+            gate_decision_ref: Some(gate_decision_ref),
+            status: (forced_count > 0).then_some(RunTreeStatus::Cancelled),
+            cancel_requested: false,
+            forced: forced_count > 0,
+        })
+    }
+
+    /// The one gate input both cancel rungs present, so the hard rung cannot
+    /// quietly ask an easier question than the soft one.
+    fn task_cancel_gate_input(&self, verb: &str, target_ref: &str) -> ExternalEffectGateInput {
+        ExternalEffectGateInput {
+            actor: GateActor {
+                actor_class: self.actor_class().gate_actor_class().to_owned(),
+                actor_ref: Some(self.actor().to_hex()),
+                delegation_grant_ref: None,
+            },
+            provenance: GateProvenanceHandles {
+                actor_entity_ref: Some(self.actor()),
+                ..GateProvenanceHandles::default()
+            },
+            verb: verb.to_owned(),
+            channel: TASK_CANCEL_GATE_CHANNEL.to_owned(),
+            channel_identity_ref: None,
+            counterparty: None,
+            brief_ref: Some(target_ref.to_owned()),
+            send_ref: None,
+            standing_grant_ref: None,
+            scoped_mcp_call: None,
+            counterparty_first_touch: None,
+            counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
+            has_opted_in: true,
+            has_permission: true,
+            policy_risk: ExternalEffectPolicyRisk::Normal,
+        }
+    }
+
     fn tasks_cancel_resolved(
         &self,
         mode: TaskCancelMode,
@@ -160,37 +332,15 @@ impl Memory<'_> {
                 proposal_ref: Some(proposal_ref),
                 gate_decision_ref,
                 status: None,
+                cancel_requested: false,
+                forced: false,
             });
         }
 
-        let (gate_decision_ref, gate_outcome, effected, status) = self
+        let (gate_decision_ref, gate_outcome, effected, status, cancel_requested) = self
             .with_verified_actor_write_txn(|wtxn| {
                 let policy = resolve_policy_manifest(&self.vault().store, &*wtxn)?;
-                let effect = ExternalEffectGateInput {
-                    actor: GateActor {
-                        actor_class: self.actor_class().gate_actor_class().to_owned(),
-                        actor_ref: Some(self.actor().to_hex()),
-                        delegation_grant_ref: None,
-                    },
-                    provenance: GateProvenanceHandles {
-                        actor_entity_ref: Some(self.actor()),
-                        ..GateProvenanceHandles::default()
-                    },
-                    verb: verb.to_owned(),
-                    channel: TASK_CANCEL_GATE_CHANNEL.to_owned(),
-                    channel_identity_ref: None,
-                    counterparty: None,
-                    brief_ref: Some(state.target_ref.clone()),
-                    send_ref: None,
-                    standing_grant_ref: None,
-                    scoped_mcp_call: None,
-                    counterparty_first_touch: None,
-                    counterparty_opted_out: false,
-                    counterparty_opt_out_receipt_reason: None,
-                    has_opted_in: true,
-                    has_permission: true,
-                    policy_risk: ExternalEffectPolicyRisk::Normal,
-                };
+                let effect = self.task_cancel_gate_input(verb, &state.target_ref);
                 let (decision_id, decision, _charge) = check_external_effect_policy(
                     &self.vault().store,
                     wtxn,
@@ -200,7 +350,7 @@ impl Memory<'_> {
                 )?;
                 let decision_ref = format!("gate:{}", decision_id.to_hex());
                 if decision.outcome() != GateOutcome::Allow {
-                    return Ok((decision_ref, decision.outcome(), false, None));
+                    return Ok((decision_ref, decision.outcome(), false, None, false));
                 }
 
                 // P1-b (TOCTOU): decide on transaction-current attempt state,
@@ -253,38 +403,63 @@ impl Memory<'_> {
                     }
                 };
 
-                // P1-a (leased-cancel honesty): a leased realization cannot be
-                // stopped in this txn (`intervene` refuses a leased attempt) and
-                // its local/outbound work keeps running. Report the honest
-                // partial — do NOT hide the task and do NOT claim effect while a
-                // live lease remains; the task stays VISIBLE (it folds to
-                // Running under its live lease) until the lease releases. A
-                // Queued+Leased mix is uneffected too: nothing is intervened and
-                // nothing is hidden, so the receipt never conceals live work.
-                if live_attempts
+                // P1-a (leased-cancel honesty): a running realization cannot be
+                // stopped in this txn and its local/outbound work keeps running.
+                // Report the honest partial — do NOT hide the task and do NOT
+                // claim effect while a live lease remains; the task stays
+                // VISIBLE (it folds to Running under its live lease) until the
+                // lease releases. A Queued+Leased mix is uneffected too: nothing
+                // is intervened and nothing is hidden, so the receipt never
+                // conceals live work.
+                //
+                // ONE-1896: it is no longer a dead end. The gate has already
+                // ALLOWED an owner-scoped cancel, which is standing to ASK, so
+                // the running worker gets a durable soft `cancel.request` and
+                // must answer it by landing or by refusing with a reason.
+                // `effected` stays false — nothing stopped yet — and the receipt
+                // says a request was made rather than pretending the attempt was
+                // synchronously killed.
+                let running: Vec<AttemptId> = live_attempts
                     .iter()
-                    .any(|(_, attempt_state)| *attempt_state == AttemptState::Leased)
-                {
-                    return Ok((
-                        decision_ref,
-                        decision.outcome(),
-                        false,
-                        Some(RunTreeStatus::Running),
-                    ));
+                    .filter(|(_, attempt_state)| is_running_attempt_state(*attempt_state))
+                    .map(|(attempt_id, _)| *attempt_id)
+                    .collect();
+                let has_running = !running.is_empty();
+                let mut cancel_requested = false;
+                for attempt_id in running {
+                    let outcome = queue.request_cancel_in_txn(
+                        wtxn,
+                        RequestAttemptCancel {
+                            id: attempt_id,
+                            actor: self.actor().to_hex(),
+                            standing: CancelStanding::Authority,
+                            trigger: LandingTrigger::CancelRequest,
+                            reason: None,
+                            now,
+                        },
+                    )?;
+                    if matches!(
+                        outcome,
+                        CancelRequestOutcome::Requested { .. }
+                            | CancelRequestOutcome::AlreadyLanding(_)
+                    ) {
+                        cancel_requested = true;
+                    }
                 }
 
                 // A `Scheduled` retry is live work waiting on its instant: it
                 // cancels exactly like a queued one. Omitting it would report
                 // the task terminal off its failed source row while the next
                 // try still ran and sent.
+                //
+                // ONE-1896: this walk runs even when a sibling is RUNNING or
+                // LANDING. Returning early there left every queued, paused and
+                // scheduled sibling of a landing parent alive and claimable —
+                // an owner-approved cancel that stopped nothing while the
+                // receipt said the target was handled. The running sibling is
+                // still only ASKED (it holds the lease), so the two rungs
+                // compose: ask what can answer, stop what cannot.
                 let terminal_status = terminal_attempt_status(&live_attempts);
-                if !live_attempts
-                    .iter()
-                    .any(|(_, attempt_state)| is_cancelable_attempt_state(*attempt_state))
-                {
-                    return Ok((decision_ref, decision.outcome(), false, terminal_status));
-                }
-
                 let mut cancelled_count = 0usize;
                 for (attempt_id, attempt_state) in &live_attempts {
                     if !is_cancelable_attempt_state(*attempt_state) {
@@ -310,8 +485,27 @@ impl Memory<'_> {
                         }
                     }
                 }
+                if has_running {
+                    // A live lease remains, so the TASK stays VISIBLE and folds
+                    // to Running: it is not hidden and the whole target is not
+                    // claimed cancelled. `effected` is still honest — it names
+                    // the siblings this call really did stop.
+                    return Ok((
+                        decision_ref,
+                        decision.outcome(),
+                        cancelled_count > 0,
+                        Some(RunTreeStatus::Running),
+                        cancel_requested,
+                    ));
+                }
                 if cancelled_count == 0 {
-                    return Ok((decision_ref, decision.outcome(), false, terminal_status));
+                    return Ok((
+                        decision_ref,
+                        decision.outcome(),
+                        false,
+                        terminal_status,
+                        false,
+                    ));
                 }
                 // A Completed/Failed sibling remains real terminal work. Keep
                 // its TASK intent visible so the unchanged job stays folded
@@ -330,6 +524,7 @@ impl Memory<'_> {
                     decision.outcome(),
                     true,
                     preserved_terminal_status.or(Some(RunTreeStatus::Cancelled)),
+                    false,
                 ))
             })?;
 
@@ -350,6 +545,8 @@ impl Memory<'_> {
                 proposal_ref: Some(proposal_ref),
                 gate_decision_ref: Some(gate_decision_ref),
                 status: None,
+                cancel_requested: false,
+                forced: false,
             });
         }
 
@@ -363,6 +560,9 @@ impl Memory<'_> {
             proposal_ref: None,
             gate_decision_ref: Some(gate_decision_ref),
             status,
+            cancel_requested,
+            // The cooperative verb never forces. Rung 2 is its own door.
+            forced: false,
         })
     }
 

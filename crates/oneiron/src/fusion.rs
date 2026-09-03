@@ -32,6 +32,8 @@ pub(crate) struct RetrievalBlendInput {
     pub(crate) salience: f32,
     pub(crate) confidence: f32,
     pub(crate) gravity: f32,
+    /// Read-side multiplier in [0,1]. Non-claims are 1.0.
+    pub(crate) access_factor: f32,
 }
 
 pub(crate) fn retrieval_candidates_from_ranked_lists(
@@ -55,6 +57,10 @@ pub(crate) fn retrieval_candidates_from_ranked_lists(
             salience: 0.0,
             confidence: 0.0,
             gravity: 0.0,
+            // Neutral until read-side decay populates it: a candidate the
+            // decay stage never classifies (every non-claim) surfaces
+            // exactly as it did before the factor existed.
+            access_factor: 1.0,
         })
         .collect()
 }
@@ -64,29 +70,66 @@ pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEnti
     linear_log_blend_with_weights(inputs, RetrievalBlendWeights::bootstrap())
 }
 
+/// Both faces of one linear-log blend.
+pub(crate) struct LinearLogBlendScores {
+    /// The run's fused scores: `exp(log_blend)` times each candidate's
+    /// read-side access factor, sorted descending.
+    pub(crate) scores: Vec<ScoredEntity>,
+    /// The same fused scores BEFORE the access multiplier, sorted
+    /// descending. A stage that reassigns scores BETWEEN entities — the
+    /// RET-010 rerank score ladder — reads this face, so it can never hand
+    /// one entity another entity's decay, and never squares a factor the
+    /// receiving entity already carries.
+    pub(crate) base_scores: Vec<ScoredEntity>,
+}
+
+pub(crate) fn linear_log_blend_scores_with_weights(
+    inputs: &[RetrievalBlendInput],
+    weights: RetrievalBlendWeights,
+) -> LinearLogBlendScores {
+    let inputs = canonical_blend_inputs(inputs);
+    let columns = normalized_blend_columns(&inputs);
+
+    let mut scores = Vec::with_capacity(inputs.len());
+    let mut base_scores = Vec::with_capacity(inputs.len());
+    for (index, input) in inputs.iter().enumerate() {
+        let log_score = weights.recency * columns.recency[index]
+            + weights.salience * columns.salience[index]
+            + weights.confidence * columns.confidence[index]
+            + weights.gravity * columns.gravity[index];
+        let base = log_score.exp();
+        base_scores.push(ScoredEntity {
+            id: input.id,
+            score: base,
+        });
+        scores.push(ScoredEntity {
+            id: input.id,
+            // Read-side memory decay is a surfacing multiplier, not a
+            // fifth blend signal: it lands ONCE here, on the exp() of
+            // the z-normalized log blend, so it never enters
+            // `normalized_blend_columns` and never becomes a
+            // `RetrievalSignal`.
+            score: base * input.access_factor,
+        });
+    }
+    sort_scored_entities_desc(&mut scores);
+    sort_scored_entities_desc(&mut base_scores);
+    LinearLogBlendScores {
+        scores,
+        base_scores,
+    }
+}
+
+/// The applied face alone, for callers that want only `scores`. Every
+/// production caller reads both faces through
+/// [`linear_log_blend_scores_with_weights`], so this wrapper is reached
+/// from tests only.
+#[cfg(test)]
 pub(crate) fn linear_log_blend_with_weights(
     inputs: &[RetrievalBlendInput],
     weights: RetrievalBlendWeights,
 ) -> Vec<ScoredEntity> {
-    let inputs = canonical_blend_inputs(inputs);
-    let columns = normalized_blend_columns(&inputs);
-
-    let mut scores: Vec<ScoredEntity> = inputs
-        .iter()
-        .enumerate()
-        .map(|(index, input)| {
-            let log_score = weights.recency * columns.recency[index]
-                + weights.salience * columns.salience[index]
-                + weights.confidence * columns.confidence[index]
-                + weights.gravity * columns.gravity[index];
-            ScoredEntity {
-                id: input.id,
-                score: log_score.exp(),
-            }
-        })
-        .collect();
-    sort_scored_entities_desc(&mut scores);
-    scores
+    linear_log_blend_scores_with_weights(inputs, weights).scores
 }
 
 pub(crate) fn retrieval_blend_score_components(
