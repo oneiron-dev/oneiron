@@ -5992,6 +5992,75 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
     session.close().expect("close session");
 }
 
+/// A replay-owned base witness makes its existing-row decision under the
+/// writer transaction. The inner call deterministically commits in the outer
+/// call's pre-transaction window, reproducing two retries that both observed
+/// absence before one won the writer.
+#[test]
+fn replay_owned_base_witness_race_is_an_exact_no_op() {
+    let (_dir, vault) = open_vault();
+    let (session, actor) = session_witness_fixture(&vault, "sess-replay-witness-race", 0x57);
+    let facade = facade_for(&vault, actor);
+    session.flip_on_record().expect("flip on record");
+    let route = session.write_route().expect("mint base route");
+    let continuation = session
+        .on_record_continuation_shell()
+        .expect("continuation shell");
+    let turn_id = crate::test_util::entity(0x58);
+    let message_id = crate::test_util::entity(0x59);
+    let mut message = witness_message(0, WitnessAuthor::Companion, "one replay bubble");
+    message.id = Some(message_id.to_hex());
+    let turn = WitnessTurn {
+        conversation_ref: continuation.to_hex(),
+        turn_ref: Some(turn_id.to_hex()),
+        messages: vec![message],
+        occurred_at: 970,
+    };
+
+    let winning = std::cell::RefCell::new(None);
+    let losing = facade
+        .witness_with_route_and_before_txn(&turn, Some(&route), || {
+            let receipt = facade
+                .witness_with_route_and_before_txn(&turn, Some(&route), || {})
+                .expect("winning retry commits");
+            winning.replace(Some(receipt));
+        })
+        .expect("racing retry converges");
+    assert_eq!(
+        winning.into_inner().expect("winning receipt"),
+        losing,
+        "both retries report the same stable materialization"
+    );
+    let turn_raw = vault
+        .get_raw(&turn_id)
+        .expect("turn lookup")
+        .expect("turn exists");
+    let header = crate::batch::EntityMetadataHeader::parse(&turn_raw).expect("turn header");
+    assert_eq!(
+        header.learned_at, 970,
+        "the losing retry must not re-dirty the committed TURN"
+    );
+    assert!(
+        vault
+            .get_raw(&message_id)
+            .expect("message lookup")
+            .is_some()
+    );
+
+    let later = facade
+        .witness_with_route_and_before_txn(&turn, Some(&route), || {})
+        .expect("later retry is also a no-op");
+    assert_eq!(later, losing);
+    let turn_raw = vault
+        .get_raw(&turn_id)
+        .expect("turn lookup")
+        .expect("turn exists");
+    let header = crate::batch::EntityMetadataHeader::parse(&turn_raw).expect("turn header");
+    assert_eq!(header.learned_at, 970);
+
+    session.close().expect("close session");
+}
+
 /// K10, the durable half: a BASE-routed session witness whose route went stale
 /// commits ZERO base rows.
 ///

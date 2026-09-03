@@ -27,11 +27,13 @@ pub use self::codec::{
 pub(crate) use self::dispatcher::check_write_gate_against_vault;
 pub use self::dispatcher::{GatedActorWrite, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS};
 pub use self::replay::{
+    CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
-    CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunOutputPreview,
-    CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayGeneration, CodeRunReplayRecord,
-    CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
+    CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
+    CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayGeneration,
+    CodeRunReplayRecord, CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
 };
+pub use self::storage::CodeRunModelHealCount;
 pub(crate) use self::storage::ExecutorStorage;
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
