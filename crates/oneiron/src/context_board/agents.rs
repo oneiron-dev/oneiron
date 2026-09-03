@@ -234,6 +234,7 @@ mod tests {
             run_id: Some("agent-run".to_owned()),
             envelope_actor: WriteActor::new(subject, EdgeActorClass::Agent),
             subject,
+            pinned_config: None,
             deadline: None,
             now_ms: 1,
         };

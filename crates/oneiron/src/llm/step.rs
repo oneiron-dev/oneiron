@@ -39,7 +39,8 @@ use crate::write_envelope::{
 
 use super::{
     BudgetDenied, BudgetGuard, CallClass, CallPurpose, LlmBackend, LlmError, LlmRequest,
-    LlmResponse, LlmResult, canonical_json_bytes,
+    LlmResponse, LlmResult, ModelId, PinnedConfigViolation, PinnedModelConfig,
+    canonical_json_bytes,
 };
 
 /// Claim predicate for terminal durable-step records (design D13).
@@ -128,6 +129,16 @@ const KEY_TRAP_CLAIM_ID: &str = "trap_claim_id";
 const KEY_STARTED_AT: &str = "started_at";
 const KEY_UPDATED_AT: &str = "updated_at";
 
+// Runtime write-envelope provenance keys stamped by `dreamer_runtime_envelope`
+// onto every step/trap record. The memo-index admission gate (ONE-1344) reads
+// them back off the stored claim, so writer and reader share these constants.
+const ENVELOPE_PROVENANCE_SURFACE_KEY: &str = "surface";
+const ENVELOPE_PROVENANCE_RUN_KEY: &str = "run";
+const ENVELOPE_PROVENANCE_ATTEMPT_KEY: &str = "job_id";
+
+/// A `params_hash` / `step_hash` is a BLAKE3 digest rendered as lowercase hex.
+const STEP_HEX_DIGEST_LEN: usize = 64;
+
 const TRAP_CHAIN_WALK_CAP: usize = 64;
 
 pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
@@ -156,6 +167,11 @@ pub enum DurableStepError {
     /// lease was aborted and the attempt parked at the hard cut (ONE-1305).
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
+    /// The request was refused by the caller's opt-in pinned-model config
+    /// (ONE-1344) before any hashing, memo lookup, state write, spend, or
+    /// claim — the refusal leaves zero durable and zero private residue.
+    #[error(transparent)]
+    PinnedConfig(#[from] PinnedConfigViolation),
 }
 
 /// Live progression of one durable step, stored as `u8` in the private
@@ -291,6 +307,9 @@ pub struct DurableStepContext<'a> {
     pub run_id: Option<String>,
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
+    /// Opt-in pinned-model admission policy (ONE-1344): checked before
+    /// hashing, memo, state, budget, backend, and claims. None = no policy.
+    pub pinned_config: Option<&'a PinnedModelConfig>,
     /// The wake-pass deadline (ONE-1305): Some inside wake passes. Enables
     /// the finalize-window refusal for NEW steps, the mid-call deadline
     /// race, and the budget legibility envelope on finished outcomes.
@@ -345,20 +364,36 @@ pub async fn call_as_step(
     guard: &BudgetGuard,
     request: LlmRequest,
 ) -> DurableStepResult<StepOutcome> {
+    // Purity gate (ONE-1344): the FIRST executable branch, so a refused
+    // request never hashes, never reads the memo index, never writes private
+    // step state, never reserves budget, and never reaches the backend.
+    if let Some(pinned) = ctx.pinned_config {
+        pinned.admit(&request)?;
+    }
+
     let step_hash = request.canonical_hash()?;
 
+    // Memo-hit provenance check (ONE-1344): a stored terminal response is
+    // returned ONLY when the WITH-WHAT identity it recorded — model id,
+    // purpose, and params hash — is the identity of THIS request. The index key
+    // is `(attempt, step_hash)` and the step hash already covers model and
+    // params, so a divergent row means the index points at a foreign response
+    // (a poisoned/forged index row, a rewritten claim, or a digest collision).
+    // Such a row MISSES and the step recomputes; it is never returned.
     if let Some(claim_id) = step_index_lookup(ctx.vault, ctx.attempt_id, &step_hash)? {
         let body = ctx
             .vault
             .get_claim(&claim_id)?
             .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
         let decoded = decode_step_claim_value(&body.value)?;
-        let response = load_step_response(ctx.vault, &decoded)?;
-        return Ok(StepOutcome::Finished {
-            response,
-            memoized: true,
-            legibility: step_legibility(ctx, guard),
-        });
+        if step_claim_matches_request(&decoded, &request)? {
+            let response = load_step_response(ctx.vault, &decoded)?;
+            return Ok(StepOutcome::Finished {
+                response,
+                memoized: true,
+                legibility: step_legibility(ctx, guard),
+            });
+        }
     }
 
     if let Some(row) = step_state_read(ctx.vault, ctx.attempt_id, &step_hash)?
@@ -676,8 +711,7 @@ fn log_terminal_step(
     response: &LlmResponse,
     payload: &[u8],
 ) -> DurableStepResult<EntityId> {
-    let params_hash =
-        bytes_to_hex_lower(blake3::hash(&canonical_json_bytes(&request.params)?).as_bytes());
+    let params_hash = request_params_hash(request)?;
     let claim_id = EntityId::now();
     let occurred = TimeRange {
         start: ctx.now_ms,
@@ -793,6 +827,27 @@ fn load_step_response(vault: &Vault, decoded: &DecodedStepClaim) -> DurableStepR
     }
 }
 
+/// The WITH-WHAT params identity: BLAKE3 of the request's canonical params
+/// JSON, lowercase hex. The terminal claim writer and the memo-hit provenance
+/// check MUST agree byte-for-byte, so both go through this one helper.
+fn request_params_hash(request: &LlmRequest) -> DurableStepResult<String> {
+    Ok(bytes_to_hex_lower(
+        blake3::hash(&canonical_json_bytes(&request.params)?).as_bytes(),
+    ))
+}
+
+/// True iff a stored terminal `dreamer.step` claim was recorded for exactly
+/// this request's model/purpose/params identity. Used by the memo-hit branch:
+/// a `false` here is a MISS (recompute), never a returned foreign response.
+fn step_claim_matches_request(
+    decoded: &DecodedStepClaim,
+    request: &LlmRequest,
+) -> DurableStepResult<bool> {
+    Ok(decoded.model_id == request.model.as_str()
+        && decoded.purpose == call_purpose_str(&request.envelope.purpose)
+        && decoded.params_hash == request_params_hash(request)?)
+}
+
 fn call_purpose_str(purpose: &CallPurpose) -> String {
     match purpose {
         CallPurpose::Extraction => "extraction".to_owned(),
@@ -808,14 +863,17 @@ fn call_purpose_str(purpose: &CallPurpose) -> String {
 
 fn dreamer_runtime_envelope(ctx: &DurableStepContext<'_>) -> Result<WriteEnvelope> {
     let mut entries = vec![(
-        Value::from("surface"),
+        Value::from(ENVELOPE_PROVENANCE_SURFACE_KEY),
         Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
     )];
     if let Some(run_id) = &ctx.run_id {
-        entries.push((Value::from("run"), Value::from(run_id.as_str())));
+        entries.push((
+            Value::from(ENVELOPE_PROVENANCE_RUN_KEY),
+            Value::from(run_id.as_str()),
+        ));
     }
     entries.push((
-        Value::from("job_id"),
+        Value::from(ENVELOPE_PROVENANCE_ATTEMPT_KEY),
         Value::from(bytes_to_hex_lower(ctx.attempt_id.as_bytes())),
     ));
     Ok(WriteEnvelope::new(
@@ -887,11 +945,22 @@ fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
 }
 
 /// Consumed fields of a decoded `dreamer.step` claim value. The decoder
-/// validates EVERY pinned key fail-closed and stores only what readers use:
-/// the memo-index key pair and the response location.
+/// validates EVERY pinned key fail-closed and stores what production readers
+/// use: the memo-index key pair, the response location, and the WITH-WHAT
+/// provenance triple the memo-hit check and the index admission gate compare
+/// against the live request (ONE-1344).
 pub(crate) struct DecodedStepClaim {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
+    pub(crate) model_id: String,
+    pub(crate) purpose: String,
+    pub(crate) params_hash: String,
+    // Usage totals are an audit surface on the durable record; no production
+    // reader consumes them yet.
+    #[allow(dead_code)]
+    pub(crate) usage_in: u64,
+    #[allow(dead_code)]
+    pub(crate) usage_out: u64,
     pub(crate) response: Option<String>,
     pub(crate) response_ref: Option<EntityId>,
 }
@@ -1002,16 +1071,21 @@ pub(crate) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
     }
 
     progression.ok_or(invalid_step("missing dreamer step value progression"))?;
-    model_id.ok_or(invalid_step("missing dreamer step value model_id"))?;
-    purpose.ok_or(invalid_step("missing dreamer step value purpose"))?;
-    params_hash.ok_or(invalid_step("missing dreamer step value params_hash"))?;
-    usage_in.ok_or(invalid_step("missing dreamer step value usage_in"))?;
-    usage_out.ok_or(invalid_step("missing dreamer step value usage_out"))?;
+    let model_id = model_id.ok_or(invalid_step("missing dreamer step value model_id"))?;
+    let purpose = purpose.ok_or(invalid_step("missing dreamer step value purpose"))?;
+    let params_hash = params_hash.ok_or(invalid_step("missing dreamer step value params_hash"))?;
+    let usage_in = usage_in.ok_or(invalid_step("missing dreamer step value usage_in"))?;
+    let usage_out = usage_out.ok_or(invalid_step("missing dreamer step value usage_out"))?;
     at.ok_or(invalid_step("missing dreamer step value at"))?;
 
     Ok(DecodedStepClaim {
         attempt_id: attempt_id.ok_or(invalid_step("missing dreamer step value job_id"))?,
         step_hash: step_hash.ok_or(invalid_step("missing dreamer step value step_hash"))?,
+        model_id,
+        purpose,
+        params_hash,
+        usage_in,
+        usage_out,
         response,
         response_ref,
     })
@@ -1034,6 +1108,14 @@ fn parse_progression_str(value: &str) -> Result<StepProgression> {
 /// Indexes a `dreamer.step` claim into the private memo index inside the
 /// caller's write txn. Twin of `index_dreamer_milestone_claim_for_put`;
 /// non-Active/stale bodies deindex.
+///
+/// Active is NOT sufficient (ONE-1344): the memo index decides which stored
+/// response a later `call_as_step` may return without spending, so only a
+/// claim carrying a well-formed model binding AND the runner provenance that
+/// binds it to the attempt its own value names is admitted. Anything else
+/// (a forged body, a replicated peer row, a hand-written claim) stays an
+/// ordinary claim and is deindexed here — a tolerant skip, never a write
+/// error, so replay of a peer's write can never fail on local index policy.
 pub(crate) fn index_dreamer_step_claim_for_put(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1052,6 +1134,9 @@ pub(crate) fn index_dreamer_step_claim_for_put(
     let Ok(decoded) = decode_step_claim_value(&body.value) else {
         return Ok(());
     };
+    if !step_claim_binding_is_trusted(&decoded, body) {
+        return Ok(());
+    }
 
     let forward_key = step_index_key(decoded.attempt_id, &decoded.step_hash);
     store
@@ -1061,6 +1146,58 @@ pub(crate) fn index_dreamer_step_claim_for_put(
         .vault_meta
         .put(wtxn, &step_index_claim_key(claim_id), &forward_key)?;
     Ok(())
+}
+
+/// Memo-index admission gate (ONE-1344). A claim is trusted for the index only
+/// when BOTH bindings hold:
+///
+/// * WITH-WHAT identity present and well formed — a fully revisioned
+///   `provider/name@revision` model id, a non-empty purpose, and a lowercase
+///   hex params digest. This is exactly what the memo-hit branch compares the
+///   live request against, so an unusable identity must never be indexed;
+/// * runner provenance binding — the stamped write-envelope provenance names
+///   the dreamer runner surface AND the SAME attempt id the claim value
+///   carries, so a body cannot buy a memo row for an attempt it does not
+///   belong to.
+fn step_claim_binding_is_trusted(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
+    if ModelId::new(decoded.model_id.clone()).is_err()
+        || decoded.purpose.is_empty()
+        || !is_lowercase_hex_digest(&decoded.params_hash)
+    {
+        return false;
+    }
+    step_claim_provenance_binds_attempt(body, decoded.attempt_id)
+}
+
+/// True iff the claim's stamped write-envelope provenance is a runner-surface
+/// map whose attempt id equals `attempt_id`.
+fn step_claim_provenance_binds_attempt(body: &ClaimBody, attempt_id: AttemptId) -> bool {
+    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
+        return false;
+    };
+    let provenance = evidence.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
+    });
+    let Some(Value::Map(entries)) = provenance else {
+        return false;
+    };
+    let field = |name: &str| {
+        entries
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+            .and_then(Value::as_str)
+    };
+    let expected_attempt = bytes_to_hex_lower(attempt_id.as_bytes());
+    field(ENVELOPE_PROVENANCE_SURFACE_KEY) == Some(DREAMER_RUNNER_ATTEMPT_KIND)
+        && field(ENVELOPE_PROVENANCE_ATTEMPT_KEY) == Some(expected_attempt.as_str())
+}
+
+/// True for a BLAKE3 digest rendered as 64 lowercase hex characters.
+fn is_lowercase_hex_digest(value: &str) -> bool {
+    value.len() == STEP_HEX_DIGEST_LEN
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Removes a claim's memo-index rows inside the caller's write txn.
