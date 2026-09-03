@@ -20,6 +20,7 @@ use crate::cli::{
     ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenMintArgs, TokenRevokeArgs, VaultArgs,
 };
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
+use crate::managed::{self, ServeListener};
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
@@ -34,7 +35,17 @@ pub struct DictSearchResolution {
     pub warning: Option<&'static str>,
 }
 
+/// Runs the daemon.
+///
+/// The one fork in the road: with `--managed-by-hypnos` this becomes a
+/// supervised child process whose configuration is argv alone; without it,
+/// nothing below this line has changed. `ManagedArgs::from_serve_args` returns
+/// `None` for every argv that does not carry the switch, so the unmanaged path
+/// is reached exactly as often as it was before.
 pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
+    if let Some(managed) = managed::ManagedArgs::from_serve_args(&args)? {
+        return managed::serve_managed(&args, managed).await;
+    }
     let config = resolve_serve_config(&args)?;
     init_tracing(&config.log_level);
     serve_with_config(config).await
@@ -484,10 +495,13 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Same bind, named through the listener enum managed mode also uses.
+    // `Tcp` is the only variant this path can produce, so unmanaged serve
+    // still binds host:port and nothing else.
+    let listener = ServeListener::Tcp(addr).bind().await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let app = build_app(sync_server).layer(cors_layer);
-    let result = axum::serve(listener, app).await;
+    let result = listener.serve(app).await;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
     result?;
