@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use oneiron::{ModelId, PinnedModelConfig, llm::ModelIdError};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -408,6 +409,12 @@ struct SmokeRunRow {
     memo_key: String,
     request_hash: String,
     request_nonce: String,
+    /// Pin attestation (ONE-1344): present exactly when the run that wrote this
+    /// row transmitted under `--pinned-config`, absent on unpinned rows — which
+    /// keeps unpinned row JSON byte-identical to pre-pin campaigns. A pinned run
+    /// refuses to reuse a row whose attestation is not its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pinned: Option<PinnedAttestation>,
     generation_id: Option<String>,
     judge_generation_id: Option<String>,
     accuracy: f64,
@@ -512,6 +519,13 @@ struct RunSettings {
     model: String,
     provider: String,
     full_reps: u32,
+    /// Opt-in pinned-model admission policy (ONE-1344), populated only by an
+    /// explicit `--pinned-config`. None means the run is unpinned, exactly as
+    /// before the flag existed. When present it carries the resolved pinned
+    /// revision for every wire id this run transmits: each request is checked
+    /// against it before transmit, and the resolved pin is bound into the
+    /// request hash, the memo key, and the stored row.
+    pinned: Option<PinnedRun>,
 }
 
 impl Default for RunSettings {
@@ -520,6 +534,7 @@ impl Default for RunSettings {
             model: MODEL.to_owned(),
             provider: DEFAULT_PROVIDER.to_owned(),
             full_reps: FULL_REP_COUNT,
+            pinned: None,
         }
     }
 }
@@ -584,6 +599,10 @@ fn print_help() {
                                   (default {DEFAULT_PROVIDER})\n\
            --reps N               reps per task+arm for full runs, 1..={MAX_FULL_REPS}\n\
                                   (default {FULL_REP_COUNT}; probe always runs 2 reps)\n\
+           --pinned-config PATH   pinned model config JSON; refuses the run before any\n\
+                                  provider call unless exactly one pinned revision\n\
+                                  covers the transmitted model. Rows written under a\n\
+                                  pin record it and are never reused by another pin\n\
          \n\
          default output dir: {DEFAULT_OUT_DIR}"
     );
@@ -670,6 +689,183 @@ fn run_full_cli(args: &[String]) -> ExitCode {
     }
 }
 
+/// Wire shape of a pinned model config file: `{"allowed":[...],
+/// "background_tier_enabled":bool}`. Entries are fully revisioned
+/// `provider/name@revision` ids. The engine type carries no JSON concern, so
+/// this DTO and its parse error stay in the bench crate.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinnedModelConfigJson {
+    allowed: Vec<String>,
+    background_tier_enabled: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PinnedConfigParseError {
+    #[error("pinned model config JSON is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("allowed[{index}] is not a valid model id `{value}`: {source}")]
+    InvalidModelId {
+        index: usize,
+        value: String,
+        #[source]
+        source: ModelIdError,
+    },
+    #[error("allowed[{index}] duplicates pinned model `{model}`")]
+    Duplicate { index: usize, model: ModelId },
+}
+
+/// Parses a pinned model config file into the engine-owned
+/// [`PinnedModelConfig`]. Every entry is validated through `ModelId::new`, and
+/// a repeated entry is a typed `Duplicate` failure rather than a silent set
+/// deduplication. An empty `allowed` array is valid and admits nothing.
+pub(crate) fn parse_pinned_model_config(
+    json: &str,
+) -> Result<PinnedModelConfig, PinnedConfigParseError> {
+    let parsed: PinnedModelConfigJson = serde_json::from_str(json)?;
+    let mut allowed = BTreeSet::new();
+    for (index, value) in parsed.allowed.into_iter().enumerate() {
+        let model = ModelId::new(value.clone()).map_err(|source| {
+            PinnedConfigParseError::InvalidModelId {
+                index,
+                value,
+                source,
+            }
+        })?;
+        if !allowed.insert(model.clone()) {
+            return Err(PinnedConfigParseError::Duplicate { index, model });
+        }
+    }
+    Ok(PinnedModelConfig {
+        allowed,
+        background_tier_enabled: parsed.background_tier_enabled,
+    })
+}
+
+/// Why a transmitted wire id is not covered by the pin file. Both variants are
+/// refusals: a pinned run NEVER falls back to transmitting unpinned.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum PinnedCoverageError {
+    #[error("pinned config does not cover transmitted model `{wire_id}`; pinned ids: [{pinned}]")]
+    NotCovered { wire_id: String, pinned: String },
+    #[error(
+        "pinned config covers transmitted model `{wire_id}` at more than one revision \
+         ([{revisions}]); the revision actually served is not wire-attested"
+    )]
+    AmbiguousRevision { wire_id: String, revisions: String },
+}
+
+/// Resolves the wire id the bench actually transmits to THE ONE fully
+/// revisioned pinned entry that covers it — the identity every pinned row is
+/// attested and keyed by.
+///
+/// * a wire id that already carries `@revision` must equal a pinned entry
+///   exactly, so a revision mismatch refuses rather than matching on the
+///   unrevised `provider/name` pair;
+/// * a bare `provider/name` wire id resolves only when EXACTLY ONE pinned
+///   revision covers it. Two candidate revisions are ambiguous and refuse:
+///   the revision the provider would serve is operator-asserted, not
+///   wire-attested, so the bench must not guess which pin a row claims.
+fn pinned_model_for_wire_id(
+    config: &PinnedModelConfig,
+    wire_id: &str,
+) -> Result<ModelId, PinnedCoverageError> {
+    let pinned_ids = || {
+        config
+            .allowed
+            .iter()
+            .map(ModelId::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if wire_id.contains('@') {
+        return config
+            .allowed
+            .iter()
+            .find(|model| model.as_str() == wire_id)
+            .cloned()
+            .ok_or_else(|| PinnedCoverageError::NotCovered {
+                wire_id: wire_id.to_owned(),
+                pinned: pinned_ids(),
+            });
+    }
+    let candidates = config
+        .allowed
+        .iter()
+        .filter(|model| format!("{}/{}", model.provider(), model.name()) == wire_id)
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [] => Err(PinnedCoverageError::NotCovered {
+            wire_id: wire_id.to_owned(),
+            pinned: pinned_ids(),
+        }),
+        [single] => Ok((*single).clone()),
+        many => Err(PinnedCoverageError::AmbiguousRevision {
+            wire_id: wire_id.to_owned(),
+            revisions: many
+                .iter()
+                .map(|model| model.revision())
+                .collect::<Vec<_>>()
+                .join(", "),
+        }),
+    }
+}
+
+/// A run launched under `--pinned-config`: the parsed policy plus the fully
+/// revisioned pinned entry every wire id this run transmits resolves to.
+/// Coverage is resolved ONCE, at flag-parse time, and every transmitted body
+/// is re-checked against this map before it leaves the process.
+#[derive(Debug, Clone)]
+struct PinnedRun {
+    config: PinnedModelConfig,
+    wire_models: BTreeMap<String, ModelId>,
+}
+
+impl PinnedRun {
+    /// Deterministic digest of the admission policy this run was launched
+    /// under: the sorted fully revisioned allow-list plus the background-tier
+    /// switch. Recorded on every row so a reader can tell two runs under
+    /// different pin files apart even when they pin the same revision.
+    fn config_digest(&self) -> String {
+        let allowed = self
+            .config
+            .allowed
+            .iter()
+            .map(ModelId::as_str)
+            .collect::<Vec<_>>();
+        blake3_hex(
+            json!({
+                "allowed": allowed,
+                "backgroundTierEnabled": self.config.background_tier_enabled,
+            })
+            .to_string()
+            .as_bytes(),
+        )
+    }
+
+    /// The pin a transmitted wire id resolves to, or None when this run's pin
+    /// file does not cover it (always a refusal at the call site).
+    fn attestation_for(&self, wire_id: &str) -> Option<PinnedAttestation> {
+        self.wire_models
+            .get(wire_id)
+            .map(|model| PinnedAttestation {
+                model: model.as_str().to_owned(),
+                config_digest: self.config_digest(),
+            })
+    }
+}
+
+/// The pin a single transmitted request rides under, recorded verbatim on the
+/// row it produces: the fully revisioned pinned id covering the wire model the
+/// body carries, plus the digest of the pin file that admitted it. A reader of
+/// a row can therefore verify WHICH pinned revision that row claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PinnedAttestation {
+    model: String,
+    config_digest: String,
+}
+
 fn parse_out_dir(args: &[String]) -> Result<PathBuf, String> {
     let mut out_dir = None;
     let mut index = 0;
@@ -692,6 +888,7 @@ fn parse_out_dir(args: &[String]) -> Result<PathBuf, String> {
 fn parse_run_flags(args: &[String]) -> Result<(PathBuf, RunSettings), String> {
     let mut out_dir = None;
     let mut settings = RunSettings::default();
+    let mut pinned_config_path: Option<PathBuf> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -731,14 +928,62 @@ fn parse_run_flags(args: &[String]) -> Result<(PathBuf, RunSettings), String> {
                 settings.full_reps = reps;
                 index += 2;
             }
+            "--pinned-config" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "--pinned-config requires a file path".to_owned())?;
+                pinned_config_path = Some(PathBuf::from(value));
+                index += 2;
+            }
             other => return Err(format!("unknown flag `{other}`")),
         }
+    }
+
+    // Resolved AFTER the flag loop so a later `--model` is honored by the
+    // coverage check. With the flag absent nothing below runs and behavior is
+    // byte-identical to an unpinned run.
+    if let Some(path) = pinned_config_path {
+        let pinned = resolve_pinned_run(&path, &settings)?;
+        settings.pinned = Some(pinned);
     }
 
     Ok((
         out_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_OUT_DIR)),
         settings,
     ))
+}
+
+/// Reads `--pinned-config`, parses it, and resolves the pinned revision for
+/// every wire id this run would actually transmit. An uncovered or
+/// ambiguously-revisioned model refuses the run before any provider call is
+/// made; on success the run carries the exact revision each transmit is
+/// attested under.
+fn resolve_pinned_run(path: &Path, settings: &RunSettings) -> Result<PinnedRun, String> {
+    let json = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "--pinned-config {} could not be read: {error}",
+            path.display()
+        )
+    })?;
+    let config = parse_pinned_model_config(&json)
+        .map_err(|error| format!("--pinned-config {}: {error}", path.display()))?;
+
+    // The configured wire-id set is exactly what the bench transmits:
+    // `settings.model` populates both `ModelBinding.model` and
+    // `browse_judge_model`, and both enter the set should they ever diverge.
+    let binding = campaign_config_for(settings).model_binding;
+    let wire_ids = BTreeSet::from([binding.model, binding.browse_judge_model]);
+    let mut wire_models = BTreeMap::new();
+    for wire_id in wire_ids {
+        let model = pinned_model_for_wire_id(&config, &wire_id)
+            .map_err(|error| format!("--pinned-config {}: {error}", path.display()))?;
+        wire_models.insert(wire_id, model);
+    }
+    Ok(PinnedRun {
+        config,
+        wire_models,
+    })
 }
 
 fn interface_bench_1_config() -> CampaignConfig {
@@ -1239,6 +1484,7 @@ where
     serde_json::from_reader(file).map_err(|error| format!("parse {}: {error}", path.display()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_loaded_row(
     row: &SmokeRunRow,
     task: &BenchTask,
@@ -1247,7 +1493,23 @@ fn validate_loaded_row(
     memo_key: &str,
     request_hash: &str,
     request_nonce: &str,
+    pinned: Option<&PinnedAttestation>,
 ) -> Result<(), String> {
+    // Pinned identity is the FIRST check (ONE-1344): a row whose attestation is
+    // not exactly this run's — an unpinned row read by a pinned run, a pinned
+    // row read by an unpinned run, or a row pinned to another revision or pin
+    // file — is never reused, it is a hard refusal.
+    if row.pinned.as_ref() != pinned {
+        return Err(format!(
+            "pinned identity mismatch for task={} arm={} rep={} key={memo_key}: \
+             row={:?}, run={:?}",
+            task.task_id,
+            arm.as_str(),
+            rep_index,
+            row.pinned,
+            pinned,
+        ));
+    }
     if row.task_id != task.task_id
         || row.class != task.class
         || row.arm != arm
@@ -1467,7 +1729,10 @@ fn run_or_load_eval_row(
     ];
     let request_nonce = request_nonce(task, arm, rep_index);
     let request = openrouter_request_body(&messages, 900, &request_nonce, settings);
-    let request_hash = blake3_hex(request.to_string().as_bytes());
+    // Resolved from the body that will actually be transmitted: an uncovered
+    // wire id refuses here, before any row is read, written, or reused.
+    let pinned = pinned_transmit_attestation(settings, &request)?;
+    let request_hash = request_hash(&request, pinned.as_ref());
     let judge_cache_key = judge_cache_key(task);
     let memo_key = eval_memo_key(
         task,
@@ -1488,6 +1753,7 @@ fn run_or_load_eval_row(
             &memo_key,
             &request_hash,
             &request_nonce,
+            pinned.as_ref(),
         )?;
         return Ok(row);
     }
@@ -1519,6 +1785,7 @@ fn run_or_load_eval_row(
         memo_key,
         request_hash,
         request_nonce,
+        pinned,
         generation_id: response.generation_id,
         judge_generation_id,
         accuracy,
@@ -1709,6 +1976,58 @@ fn openrouter_request_body(
     })
 }
 
+/// The wire model id a built request body actually transmits.
+fn transmitted_wire_model(request: &Value) -> Result<&str, String> {
+    request
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "request body carries no transmitted model id".to_owned())
+}
+
+/// The pin THIS body transmits under, or `Ok(None)` for an unpinned run.
+///
+/// Fail-closed trust boundary (ONE-1344): when the run is pinned, the model the
+/// body actually carries must resolve to a pinned revision. A body whose wire id
+/// the pin file does not cover refuses — a pinned run never silently transmits
+/// unpinned.
+fn pinned_transmit_attestation(
+    settings: &RunSettings,
+    request: &Value,
+) -> Result<Option<PinnedAttestation>, String> {
+    let Some(pinned) = settings.pinned.as_ref() else {
+        return Ok(None);
+    };
+    let wire_id = transmitted_wire_model(request)?;
+    pinned.attestation_for(wire_id).map(Some).ok_or_else(|| {
+        format!(
+            "--pinned-config does not cover transmitted model `{wire_id}`; \
+             refusing to transmit unpinned"
+        )
+    })
+}
+
+/// The request hash a row is keyed and validated by.
+///
+/// An unpinned run hashes exactly the transmitted body, byte-identical to
+/// pre-pin campaigns. A pinned run hashes the body TOGETHER with the pinned
+/// revision and pin-file digest it transmits under, so a pinned run can never
+/// key onto — and therefore never reuse — a row written by an unpinned run or
+/// by a run pinned to a different revision.
+fn request_hash(request: &Value, pinned: Option<&PinnedAttestation>) -> String {
+    match pinned {
+        None => blake3_hex(request.to_string().as_bytes()),
+        Some(pinned) => blake3_hex(
+            json!({
+                "body": request.to_string(),
+                "pinnedModel": pinned.model,
+                "pinnedConfigDigest": pinned.config_digest,
+            })
+            .to_string()
+            .as_bytes(),
+        ),
+    }
+}
+
 fn eval_memo_key(
     task: &BenchTask,
     arm: ArmId,
@@ -1757,6 +2076,10 @@ fn call_openrouter(
         return Err("OPENROUTER_API_KEY contains unsupported newline characters".to_owned());
     }
     let request = openrouter_request_body(messages, max_tokens, request_user, settings);
+    // The single transmit chokepoint (eval rows AND the browse judge): a pinned
+    // run refuses here, before curl is spawned, unless the model this body
+    // actually carries resolves to a pinned revision.
+    pinned_transmit_attestation(settings, &request)?;
     let mut request_file =
         tempfile::NamedTempFile::new().map_err(|error| format!("create request body: {error}"))?;
     request_file
@@ -2419,6 +2742,7 @@ mod tests {
             memo_key: "memo".to_owned(),
             request_hash: "request".to_owned(),
             request_nonce: "nonce".to_owned(),
+            pinned: None,
             generation_id: Some("gen-1".to_owned()),
             judge_generation_id: None,
             accuracy,
@@ -2485,6 +2809,7 @@ mod tests {
             model: "example/alt-model".to_owned(),
             provider: "groq".to_owned(),
             full_reps: 1,
+            pinned: None,
         };
         let config = campaign_config_for(&settings);
         assert_eq!(config.model_binding.model, "example/alt-model");
@@ -2763,6 +3088,7 @@ mod tests {
             model: "example/alt-model".to_owned(),
             provider: "groq".to_owned(),
             full_reps: 1,
+            pinned: None,
         };
         let rows = vec![test_row(
             "task",
@@ -2947,8 +3273,9 @@ mod tests {
             .expect("retrieval task");
         let row = test_row(&task.task_id, TaskClass::MultiHop, ArmId::Sdk, 0, 10, 1.0);
 
-        let error = validate_loaded_row(&row, task, ArmId::Sdk, 0, "memo", "request", "nonce")
-            .expect_err("class mismatch should reject cached row");
+        let error =
+            validate_loaded_row(&row, task, ArmId::Sdk, 0, "memo", "request", "nonce", None)
+                .expect_err("class mismatch should reject cached row");
         assert!(error.contains("memo row mismatch"));
     }
 
@@ -3045,5 +3372,416 @@ mod tests {
         ] {
             assert!(temp.path().join(name).exists(), "missing {name}");
         }
+    }
+
+    #[test]
+    fn pinned_config_parse_roundtrip() {
+        let config = parse_pinned_model_config(
+            r#"{"allowed":["z-ai/glm-5.2@r1","openai/gpt-4.1@2026-07-02"],"background_tier_enabled":true}"#,
+        )
+        .expect("valid pinned config parses");
+        assert_eq!(config.allowed.len(), 2);
+        assert_eq!(
+            config.allowed,
+            BTreeSet::from([
+                ModelId::new("z-ai/glm-5.2@r1").expect("model id"),
+                ModelId::new("openai/gpt-4.1@2026-07-02").expect("model id"),
+            ])
+        );
+        assert!(config.background_tier_enabled);
+
+        let disabled =
+            parse_pinned_model_config(r#"{"allowed":[],"background_tier_enabled":false}"#)
+                .expect("empty allowed is a valid config");
+        assert!(disabled.allowed.is_empty(), "empty allowed admits nothing");
+        assert!(!disabled.background_tier_enabled);
+
+        // A malformed id reports its index and the ModelIdError source.
+        let error = parse_pinned_model_config(
+            r#"{"allowed":["z-ai/glm-5.2@r1","not-a-model"],"background_tier_enabled":true}"#,
+        )
+        .expect_err("malformed model id must reject");
+        match error {
+            PinnedConfigParseError::InvalidModelId {
+                index,
+                value,
+                source,
+            } => {
+                assert_eq!(index, 1);
+                assert_eq!(value, "not-a-model");
+                assert_eq!(source, ModelIdError::MissingProviderSeparator);
+            }
+            other => panic!("expected InvalidModelId, got {other:?}"),
+        }
+
+        // A repeated id fires on the SECOND occurrence; no silent dedup.
+        let error = parse_pinned_model_config(
+            r#"{"allowed":["z-ai/glm-5.2@r1","z-ai/glm-5.2@r1"],"background_tier_enabled":false}"#,
+        )
+        .expect_err("duplicate pinned model must reject");
+        match error {
+            PinnedConfigParseError::Duplicate { index, model } => {
+                assert_eq!(index, 1);
+                assert_eq!(model, ModelId::new("z-ai/glm-5.2@r1").expect("model id"));
+            }
+            other => panic!("expected Duplicate, got {other:?}"),
+        }
+
+        // Wrong JSON types, missing fields, and unknown fields are all Json.
+        for malformed in [
+            r#"{"allowed":[7],"background_tier_enabled":true}"#,
+            r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":"yes"}"#,
+            r#"{"allowed":["z-ai/glm-5.2@r1"]}"#,
+            r#"{"background_tier_enabled":true}"#,
+            r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true,"extra":1}"#,
+            r#"not json"#,
+        ] {
+            let error = parse_pinned_model_config(malformed)
+                .expect_err("malformed pinned config must reject");
+            assert!(
+                matches!(error, PinnedConfigParseError::Json(_)),
+                "expected Json for {malformed}, got {error:?}"
+            );
+        }
+    }
+
+    /// Coverage resolves to the ONE pinned revision a transmit is attested
+    /// under: a bare wire id needs an unambiguous pin, a revisioned wire id
+    /// must match the pinned revision exactly, and everything else refuses.
+    #[test]
+    fn pinned_coverage_is_revision_aware() {
+        let config = parse_pinned_model_config(
+            r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true}"#,
+        )
+        .expect("valid pinned config parses");
+
+        assert_eq!(
+            pinned_model_for_wire_id(&config, "z-ai/glm-5.2").expect("covered wire id"),
+            ModelId::new("z-ai/glm-5.2@r1").expect("model id"),
+            "a covered wire id resolves to its full pinned revision"
+        );
+        assert_eq!(
+            pinned_model_for_wire_id(&config, "z-ai/glm-5.2@r1").expect("exact revisioned wire id"),
+            ModelId::new("z-ai/glm-5.2@r1").expect("model id"),
+        );
+
+        // Revision mismatch refuses: the unrevised provider/name pair is NOT
+        // enough to cover a transmit that names another revision.
+        for uncovered in ["z-ai/glm-5.2@r2", "z-ai/glm-5.3", "other/glm-5.2"] {
+            assert!(
+                matches!(
+                    pinned_model_for_wire_id(&config, uncovered),
+                    Err(PinnedCoverageError::NotCovered { .. })
+                ),
+                "{uncovered} must not be covered"
+            );
+        }
+
+        // Two pinned revisions of the same provider/name leave the transmitted
+        // revision unattested, so a bare wire id refuses instead of guessing.
+        let ambiguous = parse_pinned_model_config(
+            r#"{"allowed":["z-ai/glm-5.2@r1","z-ai/glm-5.2@r2"],"background_tier_enabled":true}"#,
+        )
+        .expect("valid pinned config parses");
+        assert!(matches!(
+            pinned_model_for_wire_id(&ambiguous, "z-ai/glm-5.2"),
+            Err(PinnedCoverageError::AmbiguousRevision { .. })
+        ));
+        assert_eq!(
+            pinned_model_for_wire_id(&ambiguous, "z-ai/glm-5.2@r2").expect("exact revision"),
+            ModelId::new("z-ai/glm-5.2@r2").expect("model id"),
+        );
+
+        let empty = parse_pinned_model_config(r#"{"allowed":[],"background_tier_enabled":true}"#)
+            .expect("empty allowed parses");
+        assert!(pinned_model_for_wire_id(&empty, "z-ai/glm-5.2").is_err());
+    }
+
+    fn pinned_settings(allowed: &str) -> RunSettings {
+        let config = parse_pinned_model_config(allowed).expect("valid pinned config parses");
+        let model = pinned_model_for_wire_id(&config, MODEL).expect("covered wire id");
+        RunSettings {
+            pinned: Some(PinnedRun {
+                config,
+                wire_models: BTreeMap::from([(MODEL.to_owned(), model)]),
+            }),
+            ..RunSettings::default()
+        }
+    }
+
+    /// A pinned run transmits the SAME wire body as an unpinned run, records
+    /// which pinned revision it rode under, and keys its row by a hash that
+    /// binds that pin.
+    #[test]
+    fn pinned_run_transmits_wire_body_and_records_its_pin() {
+        let settings =
+            pinned_settings(r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true}"#);
+        let messages = vec![chat_message("system", "pinned prompt".to_owned())];
+        let body = openrouter_request_body(&messages, 900, "nonce", &settings);
+        let unpinned_body =
+            openrouter_request_body(&messages, 900, "nonce", &RunSettings::default());
+
+        assert_eq!(
+            body.to_string(),
+            unpinned_body.to_string(),
+            "the transmitted body stays the campaign's exact wire shape"
+        );
+
+        let attestation = pinned_transmit_attestation(&settings, &body)
+            .expect("covered transmit")
+            .expect("pinned run attests its transmit");
+        assert_eq!(attestation.model, "z-ai/glm-5.2@r1");
+        assert_eq!(
+            attestation.config_digest,
+            settings
+                .pinned
+                .as_ref()
+                .expect("pinned run")
+                .config_digest(),
+        );
+
+        // The pin is bound into the request hash, so it also separates memo keys.
+        let pinned_hash = request_hash(&body, Some(&attestation));
+        let unpinned_hash = request_hash(&unpinned_body, None);
+        assert_ne!(pinned_hash, unpinned_hash);
+        assert_eq!(
+            unpinned_hash,
+            blake3_hex(unpinned_body.to_string().as_bytes()),
+            "unpinned hashing stays byte-identical to pre-pin campaigns"
+        );
+    }
+
+    /// A transmit the pin file does not cover refuses at the transmit
+    /// chokepoint — a pinned run never falls back to running unpinned.
+    #[test]
+    fn uncovered_transmit_refuses_instead_of_running_unpinned() {
+        let mut settings =
+            pinned_settings(r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true}"#);
+        settings.model = "z-ai/glm-5.3".to_owned();
+        let body = openrouter_request_body(&[], 900, "nonce", &settings);
+
+        let error = pinned_transmit_attestation(&settings, &body)
+            .expect_err("an uncovered transmitted model must refuse");
+        assert!(error.contains("does not cover transmitted model `z-ai/glm-5.3`"));
+
+        // The same refusal guards the single provider-call chokepoint, before
+        // any request is spawned.
+        let error = call_openrouter("test-key", &[], 900, "nonce", &settings)
+            .expect_err("call_openrouter must refuse an uncovered transmit");
+        assert!(error.contains("refusing to transmit unpinned"));
+
+        // Flag parsing refuses the same way, before the run starts.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pinned.json");
+        fs::write(
+            &path,
+            r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true}"#,
+        )
+        .expect("write pinned config");
+        let args = [
+            "--model".to_owned(),
+            "z-ai/glm-5.3".to_owned(),
+            "--pinned-config".to_owned(),
+            path.display().to_string(),
+        ];
+        let error = parse_run_flags(&args).expect_err("uncovered model must refuse the run");
+        assert!(error.contains("does not cover transmitted model `z-ai/glm-5.3`"));
+    }
+
+    /// A pinned run must not reuse a row written by an unpinned run, and two
+    /// pinned revisions must not share rows.
+    #[test]
+    fn pinned_run_refuses_rows_of_another_pinned_identity() {
+        let bundle = build_task_bundle();
+        let task = &bundle.full_tasks[0];
+        let arm = ArmId::Sdk;
+        let nonce = request_nonce(task, arm, 0);
+        let messages = vec![chat_message("system", "prompt".to_owned())];
+
+        let unpinned = RunSettings::default();
+        let pinned_r1 =
+            pinned_settings(r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true}"#);
+        let pinned_r2 =
+            pinned_settings(r#"{"allowed":["z-ai/glm-5.2@r2"],"background_tier_enabled":true}"#);
+        let identity = |settings: &RunSettings| {
+            let body = openrouter_request_body(&messages, 900, &nonce, settings);
+            let pinned = pinned_transmit_attestation(settings, &body).expect("covered transmit");
+            let hash = request_hash(&body, pinned.as_ref());
+            let memo_key = eval_memo_key(
+                task,
+                arm,
+                0,
+                &nonce,
+                &hash,
+                judge_cache_key(task).as_deref(),
+            );
+            (pinned, hash, memo_key)
+        };
+
+        let (no_pin, unpinned_hash, unpinned_key) = identity(&unpinned);
+        let (pin_r1, hash_r1, key_r1) = identity(&pinned_r1);
+        let (pin_r2, hash_r2, key_r2) = identity(&pinned_r2);
+
+        assert!(no_pin.is_none());
+        assert_ne!(unpinned_hash, hash_r1, "a pin changes the request hash");
+        assert_ne!(hash_r1, hash_r2, "two pinned revisions never share a hash");
+        assert_ne!(unpinned_key, key_r1, "a pin changes the memo key");
+        assert_ne!(
+            key_r1, key_r2,
+            "two pinned revisions never share a memo key"
+        );
+
+        // Row validation is the second belt: an unpinned row is refused by a
+        // pinned run, a pinned row is refused by an unpinned run, and a row
+        // pinned to another revision is refused too.
+        let mut row = test_row(&task.task_id, task.class, arm, 0, 10, 1.0);
+        row.memo_key = key_r1.clone();
+        row.request_hash = hash_r1.clone();
+        row.request_nonce = nonce.clone();
+
+        let error = validate_loaded_row(
+            &row,
+            task,
+            arm,
+            0,
+            &key_r1,
+            &hash_r1,
+            &nonce,
+            pin_r1.as_ref(),
+        )
+        .expect_err("an unpinned row must not be reused by a pinned run");
+        assert!(error.contains("pinned identity mismatch"));
+
+        row.pinned = pin_r1.clone();
+        validate_loaded_row(
+            &row,
+            task,
+            arm,
+            0,
+            &key_r1,
+            &hash_r1,
+            &nonce,
+            pin_r1.as_ref(),
+        )
+        .expect("the run's own pinned row is reusable");
+
+        let error = validate_loaded_row(
+            &row,
+            task,
+            arm,
+            0,
+            &key_r1,
+            &hash_r1,
+            &nonce,
+            pin_r2.as_ref(),
+        )
+        .expect_err("another pinned revision's row must not be reused");
+        assert!(error.contains("pinned identity mismatch"));
+
+        let error = validate_loaded_row(&row, task, arm, 0, &key_r1, &hash_r1, &nonce, None)
+            .expect_err("a pinned row must not be reused by an unpinned run");
+        assert!(error.contains("pinned identity mismatch"));
+        assert_ne!(hash_r2, hash_r1);
+        assert_ne!(key_r2, key_r1);
+    }
+
+    /// The production resume path itself (`run_or_load_eval_row`) refuses a row
+    /// that is not this run's pinned identity, and reuses its own row without
+    /// ever reaching the provider. Offline: the refusal and the reuse both
+    /// happen before any request is transmitted.
+    #[test]
+    fn pinned_resume_path_refuses_a_row_of_another_identity() {
+        let bundle = build_task_bundle();
+        let task = &bundle.full_tasks[0];
+        let arm = ArmId::Sdk;
+        let settings =
+            pinned_settings(r#"{"allowed":["z-ai/glm-5.2@r1"],"background_tier_enabled":true}"#);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let row_dir = dir.path();
+
+        // Reproduce exactly what the run computes for this task/arm/rep.
+        let context = arm_context(arm, task, &bundle.fixture).expect("arm context");
+        let messages = vec![
+            chat_message("system", shared_system_prompt(arm)),
+            chat_message("user", eval_user_prompt(task, &context)),
+        ];
+        let nonce = request_nonce(task, arm, 0);
+        let body = openrouter_request_body(&messages, 900, &nonce, &settings);
+        let pinned = pinned_transmit_attestation(&settings, &body).expect("covered transmit");
+        let hash = request_hash(&body, pinned.as_ref());
+        let memo_key = eval_memo_key(
+            task,
+            arm,
+            0,
+            &nonce,
+            &hash,
+            judge_cache_key(task).as_deref(),
+        );
+
+        let mut row = test_row(&task.task_id, task.class, arm, 0, 10, 1.0);
+        row.memo_key = memo_key.clone();
+        row.request_hash = hash;
+        row.request_nonce = nonce;
+        row.tool_calls = context.tool_calls;
+        row.answer = "carried-over answer".to_owned();
+        let row_path = row_dir.join(format!("{memo_key}.json"));
+
+        // A row written by an UNPINNED run, sitting at this pinned run's key.
+        write_json_atomic(&row_path, &row).expect("seed unpinned row");
+        let error = run_or_load_eval_row(
+            "test-key",
+            row_dir,
+            task,
+            arm,
+            0,
+            &bundle.fixture,
+            &settings,
+        )
+        .expect_err("a pinned run must not reuse an unpinned row");
+        assert!(
+            error.contains("pinned identity mismatch"),
+            "unexpected error: {error}"
+        );
+
+        // The run's OWN row is reused, offline, with its pin intact.
+        row.pinned = pinned.clone();
+        write_json_atomic(&row_path, &row).expect("seed pinned row");
+        let loaded = run_or_load_eval_row(
+            "test-key",
+            row_dir,
+            task,
+            arm,
+            0,
+            &bundle.fixture,
+            &settings,
+        )
+        .expect("the run's own pinned row is reusable");
+        assert_eq!(loaded.answer, "carried-over answer");
+        assert_eq!(loaded.pinned, pinned);
+    }
+
+    /// Unpinned rows serialize exactly as before the pin field existed, so a
+    /// resumed pre-pin campaign still loads and revalidates.
+    #[test]
+    fn unpinned_row_json_is_unchanged_and_pinned_row_carries_its_pin() {
+        let row = test_row("task", TaskClass::RetrievalQa, ArmId::Sdk, 0, 10, 1.0);
+        let value = serde_json::to_value(&row).expect("serialize row");
+        assert!(
+            value.get("pinned").is_none(),
+            "an unpinned row must not gain a field"
+        );
+        let reloaded: SmokeRunRow = serde_json::from_value(value).expect("round-trip");
+        assert!(reloaded.pinned.is_none());
+
+        let mut pinned_row = row;
+        pinned_row.pinned = Some(PinnedAttestation {
+            model: "z-ai/glm-5.2@r1".to_owned(),
+            config_digest: "digest".to_owned(),
+        });
+        let value = serde_json::to_value(&pinned_row).expect("serialize pinned row");
+        assert_eq!(value["pinned"]["model"], json!("z-ai/glm-5.2@r1"));
+        assert_eq!(value["pinned"]["configDigest"], json!("digest"));
+        let reloaded: SmokeRunRow = serde_json::from_value(value).expect("round-trip");
+        assert_eq!(reloaded.pinned, pinned_row.pinned);
     }
 }

@@ -1866,6 +1866,7 @@ mod cb_a {
                 run_id: Some("byoa-run".to_owned()),
                 envelope_actor: WriteActor::new(asker, EdgeActorClass::Agent),
                 subject: peer,
+                pinned_config: None,
                 deadline: None,
                 now_ms: NOW,
             };
@@ -2137,6 +2138,7 @@ mod cb_a {
             run_id: Some("human-run".to_owned()),
             envelope_actor: WriteActor::new(fixture.owner, EdgeActorClass::Agent),
             subject: fixture.person,
+            pinned_config: None,
             deadline: None,
             now_ms: NOW,
         };

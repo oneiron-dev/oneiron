@@ -519,6 +519,50 @@ pub enum CallPurpose {
     Other { name: String },
 }
 
+/// Opt-in per-call model pin (ONE-1344): an explicit allow-list of fully
+/// revisioned model ids plus the background-tier switch. There is NO default
+/// policy, no environment lookup, and no catalog discovery — a caller either
+/// supplies a config or runs unpinned. An empty `allowed` set is valid and
+/// admits nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedModelConfig {
+    pub allowed: std::collections::BTreeSet<ModelId>,
+    pub background_tier_enabled: bool,
+}
+
+/// Typed refusal from [`PinnedModelConfig::admit`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PinnedConfigViolation {
+    #[error("model is not present in the pinned model config: {model}")]
+    ModelNotPinned { model: ModelId },
+    #[error("background model tier is disabled for call purpose {purpose:?}")]
+    BackgroundTierDisabled { purpose: CallPurpose },
+}
+
+impl PinnedModelConfig {
+    /// Pre-admission check: membership FIRST, then background-tier
+    /// classification. An unpinned model is always `ModelNotPinned`, even when
+    /// its purpose would also fail the tier check.
+    pub fn admit(&self, request: &LlmRequest) -> std::result::Result<(), PinnedConfigViolation> {
+        if !self.allowed.contains(&request.model) {
+            return Err(PinnedConfigViolation::ModelNotPinned {
+                model: request.model.clone(),
+            });
+        }
+        if !self.background_tier_enabled
+            && matches!(
+                &request.envelope.purpose,
+                CallPurpose::Consolidation | CallPurpose::Extraction
+            )
+        {
+            return Err(PinnedConfigViolation::BackgroundTierDisabled {
+                purpose: request.envelope.purpose.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
 const ORCHESTRATOR_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1@2026-07-02";
 const SUBAGENT_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1-mini@2026-07-02";
 const SUMMARIZER_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1-nano@2026-07-02";
