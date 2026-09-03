@@ -368,6 +368,102 @@
       }
     },
     {
+      "name": "setup_valid_page_limit_integral_spelling",
+      "mode": "primary",
+      "tool": "setup_oneiron",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_board"
+        },
+        "page": {
+          "limit": 4.0
+        }
+      }
+    },
+    {
+      "name": "setup_invalid_page_limit_fraction",
+      "mode": "primary",
+      "tool": "setup_oneiron",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_board"
+        },
+        "page": {
+          "limit": 1.5
+        }
+      }
+    },
+    {
+      "name": "setup_valid_board_budget_integral_spelling",
+      "mode": "primary",
+      "tool": "setup_oneiron",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_board"
+        },
+        "board_budget_tok": 4.0e2
+      }
+    },
+    {
+      "name": "setup_invalid_negative_board_budget",
+      "mode": "primary",
+      "tool": "setup_oneiron",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_board"
+        },
+        "board_budget_tok": -1
+      }
+    },
+    {
       "name": "setup_valid_cache_ttl_at_the_advertised_maximum",
       "mode": "primary",
       "tool": "setup_oneiron",
@@ -440,6 +536,58 @@
         "arguments": {
           "key": "TASKS",
           "frame_epoch": 7
+        }
+      }
+    },
+    {
+      "name": "board_expand_valid_frame_epoch_integral_spelling",
+      "mode": "tool_first",
+      "tool": "board.expand",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_board"
+        },
+        "arguments": {
+          "key": "TASKS",
+          "frame_epoch": 7.0
+        }
+      }
+    },
+    {
+      "name": "board_expand_invalid_fractional_frame_epoch",
+      "mode": "tool_first",
+      "tool": "board.expand",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_board"
+        },
+        "arguments": {
+          "key": "TASKS",
+          "frame_epoch": 7.5
         }
       }
     },
@@ -863,6 +1011,63 @@
         },
         "arguments": {
           "task_ref": "44444444444444444444444444444444"
+        }
+      }
+    },
+    {
+      "name": "tasks_expand_valid_page_cursor",
+      "mode": "tool_first",
+      "tool": "tasks.expand",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_tasks"
+        },
+        "arguments": {
+          "task_ref": "44444444444444444444444444444444"
+        },
+        "page": {
+          "limit": 5,
+          "cursor": "mcpc1:0123456789abcdef0123456789abcdef"
+        }
+      }
+    },
+    {
+      "name": "tasks_expand_invalid_blank_page_cursor",
+      "mode": "tool_first",
+      "tool": "tasks.expand",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_tasks"
+        },
+        "arguments": {
+          "task_ref": "44444444444444444444444444444444"
+        },
+        "page": {
+          "cursor": "   "
         }
       }
     },

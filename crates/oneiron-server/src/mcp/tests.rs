@@ -2487,10 +2487,293 @@ fn retained_cursor_carries_the_exact_producer_snapshot() {
         Some(snapshot.clone()),
     );
     let state = registry
-        .consume_page_cursor_state(&connection, "tasks.check", digest, 1, &cursor)
+        .consume_page_cursor_state(&connection, "tasks.check", digest, None, &cursor)
         .expect("the live handle consumes once");
     assert_eq!(state.position, 1);
+    assert_eq!(
+        state.snapshot_epoch, 1,
+        "the retained producer epoch comes back with the snapshot it belongs to",
+    );
     assert_eq!(state.snapshot, Some(snapshot));
+}
+
+/// The exact producer material one retained continuation carries.
+fn page_snapshot(row: &str) -> McpPageSnapshot {
+    McpPageSnapshot {
+        output: json!({ "kind": "expanded", "lines": [row] }),
+        source: McpPageSource::complete(1),
+        health: McpRetrievalHealth::Healthy,
+        keyframe: None,
+    }
+}
+
+/// ONE-1704 repair: ONE connection owns MANY outstanding continuations.
+///
+/// A second `More` page used to overwrite the first page's retained row, so a
+/// client could not hold two live reads and one refusal destroyed an unrelated
+/// enumeration. Each cursor is now its own row: consuming one consumes exactly
+/// one, and every refusal consumes none.
+#[test]
+fn one_connection_owns_many_independent_continuations() {
+    let actor = id(0xF201);
+    let mut registry = registry();
+    for credential in ["multi-key", "multi-other-key"] {
+        registry
+            .register(
+                credential,
+                McpConnectorActorRecord::new(
+                    actor,
+                    EdgeActorClass::Agent,
+                    McpConnectorScope::vault_wide(),
+                ),
+            )
+            .expect("registration succeeds");
+    }
+    let connection = registry
+        .resolve(
+            "multi-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+    let other = registry
+        .resolve(
+            "multi-other-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+
+    let setup_digest = mcp_page_argument_digest(&json!({ "query": "setup" }));
+    let tasks_digest = mcp_page_argument_digest(&json!({ "query": "tasks" }));
+    let first = registry.mint_page_cursor_with_snapshot(
+        &connection,
+        MCP_SETUP_TOOL,
+        setup_digest,
+        3,
+        5,
+        Some(page_snapshot("first")),
+    );
+    let second = registry.mint_page_cursor_with_snapshot(
+        &connection,
+        "tasks.check",
+        tasks_digest,
+        4,
+        2,
+        Some(page_snapshot("second")),
+    );
+    assert_ne!(first, second);
+    assert_eq!(
+        registry.live_page_continuations(&connection),
+        2,
+        "a second More page does not destroy the first page's handle",
+    );
+    assert!(registry.page_continuation_live_cursor(&connection, &first));
+    assert!(registry.page_continuation_live_cursor(&connection, &second));
+    assert_eq!(
+        registry.live_page_continuations(&other),
+        0,
+        "another connector owns none of them",
+    );
+
+    // Every refusal axis, and none of them consumes anything.
+    let mut refused = |owner: &StreamConnectionId, tool: &str, digest: [u8; 32]| {
+        registry
+            .consume_page_cursor_state(owner, tool, digest, None, &first)
+            .expect_err("this presentation must be refused")
+    };
+    assert_eq!(
+        refused(&other, MCP_SETUP_TOOL, setup_digest),
+        McpPageCursorError::Unknown,
+    );
+    assert_eq!(
+        refused(&connection, "tasks.check", setup_digest),
+        McpPageCursorError::ToolMismatch,
+    );
+    assert_eq!(
+        refused(&connection, MCP_SETUP_TOOL, tasks_digest),
+        McpPageCursorError::ArgumentsMismatch,
+    );
+    // A caller that PINS another producer epoch is refused on that axis too.
+    assert_eq!(
+        registry.consume_page_cursor(&connection, MCP_SETUP_TOOL, setup_digest, 9, &first),
+        Err(McpPageCursorError::SnapshotMismatch),
+    );
+    assert_eq!(
+        registry.live_page_continuations(&connection),
+        2,
+        "a refused presentation consumes nothing, sibling handles included",
+    );
+
+    // Consuming one consumes exactly one, and returns ITS retained producer.
+    let continued = registry
+        .consume_page_cursor_state(&connection, MCP_SETUP_TOOL, setup_digest, None, &first)
+        .expect("the first handle continues its own producer");
+    assert_eq!(continued.position, 5);
+    assert_eq!(continued.snapshot_epoch, 3);
+    assert_eq!(continued.snapshot, Some(page_snapshot("first")));
+    assert!(!registry.page_continuation_live_cursor(&connection, &first));
+    assert!(
+        registry.page_continuation_live_cursor(&connection, &second),
+        "the sibling continuation survives its sibling's consumption",
+    );
+    assert_eq!(registry.live_page_continuations(&connection), 1);
+
+    // The second is still consumable, independently and exactly once.
+    let continued = registry
+        .consume_page_cursor_state(&connection, "tasks.check", tasks_digest, None, &second)
+        .expect("the second handle continues its own producer");
+    assert_eq!(continued.position, 2);
+    assert_eq!(continued.snapshot, Some(page_snapshot("second")));
+    assert_eq!(registry.live_page_continuations(&connection), 0);
+    assert_eq!(
+        registry.consume_page_cursor_state(&connection, "tasks.check", tasks_digest, None, &second),
+        Err(McpPageCursorError::Unknown),
+        "a replayed handle is refused, never a silent page one",
+    );
+}
+
+/// ONE-1704 repair: a retained continuation is validated against the IMMUTABLE
+/// producer snapshot it carries, not against the latest board epoch.
+///
+/// An unrelated board change between page one and page two cannot make page two
+/// wrong — it is served from retained rows — so it must not destroy the
+/// enumeration either. Producer identity stays bound on every other axis.
+#[test]
+fn a_retained_continuation_outlives_an_unrelated_board_epoch_change() {
+    let actor = id(0xF202);
+    let mut registry = registry();
+    registry
+        .register(
+            "epoch-key",
+            McpConnectorActorRecord::new(
+                actor,
+                EdgeActorClass::Agent,
+                McpConnectorScope::vault_wide(),
+            ),
+        )
+        .expect("registration succeeds");
+    let connection = registry
+        .resolve(
+            "epoch-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+
+    let digest = mcp_page_argument_digest(&json!({ "query": "tasks" }));
+    let produced = registry.board_snapshot_epoch(
+        &connection,
+        mcp_board_state_hash("VaultWide", &["row-a".to_owned()]),
+    );
+    let cursor = registry.mint_page_cursor_with_snapshot(
+        &connection,
+        "tasks.check",
+        digest,
+        produced,
+        1,
+        Some(page_snapshot("retained")),
+    );
+
+    // An UNRELATED later render moves this connection's latest board epoch.
+    let latest = registry.board_snapshot_epoch(
+        &connection,
+        mcp_board_state_hash("VaultWide", &["row-b".to_owned()]),
+    );
+    assert_eq!(latest, produced + 1, "the latest board epoch moved");
+
+    // Producer identity is still enforced on every axis that IS the producer.
+    assert_eq!(
+        registry.consume_page_cursor_state(&connection, MCP_SETUP_TOOL, digest, None, &cursor),
+        Err(McpPageCursorError::ToolMismatch),
+    );
+    assert_eq!(
+        registry.consume_page_cursor_state(
+            &connection,
+            "tasks.check",
+            mcp_page_argument_digest(&json!({ "query": "other" })),
+            None,
+            &cursor,
+        ),
+        Err(McpPageCursorError::ArgumentsMismatch),
+    );
+    // A caller that PINS a producer epoch other than the retained one is still
+    // refused: the fence moved, it did not disappear.
+    assert_eq!(
+        registry.consume_page_cursor(&connection, "tasks.check", digest, latest, &cursor),
+        Err(McpPageCursorError::SnapshotMismatch),
+    );
+
+    let continued = registry
+        .consume_page_cursor_state(&connection, "tasks.check", digest, None, &cursor)
+        .expect("the retained continuation survives an unrelated board epoch change");
+    assert_eq!(continued.position, 1);
+    assert_eq!(
+        continued.snapshot_epoch, produced,
+        "the continuation is of the producer snapshot it was minted against",
+    );
+    assert_eq!(continued.snapshot, Some(page_snapshot("retained")));
+}
+
+/// ONE-1704 repair: an omission the REQUESTED SCOPE made and a truncation the
+/// page WINDOW made are separate facts, and the result metadata states both.
+#[test]
+fn page_omissions_separate_requested_scope_from_the_page_window() {
+    let source = McpPageSource::scoped_window(4, 3, 2, true);
+    assert_eq!(source.scope_omitted, 3);
+    assert_eq!(source.window_truncated, 2);
+    assert_eq!(source.withheld(), 5);
+    assert_eq!(source.health(), McpRetrievalHealth::Partial);
+
+    let request = page_request(Some(2), false);
+    let page = McpPageBudget::resolve_page(Some(&request), source, 0);
+    assert_eq!(page.returned, 2);
+    assert_eq!(
+        page.scope_omitted, 3,
+        "only rows the requested actor scope removed are counted here",
+    );
+    assert_eq!(
+        page.window_truncated, 4,
+        "the producer's own truncation plus this transport window's remainder",
+    );
+    assert_eq!(page.hidden, 7, "hidden stays the honest total of both axes");
+    assert_eq!(page.end(), McpResultEnd::More);
+    assert_eq!(page.successor_position(), Some(2));
+
+    let value = McpResultMetadata::new(
+        "req-omissions",
+        McpSurfaceMode::ToolFirst,
+        McpConnectorScope::vault_wide(),
+        source.health(),
+        page,
+        Vec::new(),
+        None,
+    )
+    .to_value();
+    assert_eq!(value["page"]["scope_omitted"], Value::from(3));
+    assert_eq!(value["page"]["window_truncated"], Value::from(4));
+    assert_eq!(value["page"]["hidden"], Value::from(7));
+    assert_eq!(value["retrieval_health"], Value::from("partial"));
+
+    // A page WINDOW that hides rows never reports a scope omission...
+    let window_only = McpPageBudget::resolve_page(Some(&request), McpPageSource::complete(9), 0);
+    assert_eq!(window_only.scope_omitted, 0);
+    assert_eq!(window_only.window_truncated, 7);
+    assert_eq!(window_only.hidden, 7);
+    assert_eq!(window_only.successor_position(), Some(2));
+
+    // ...and a scope omission is never reported as a window truncation. It is
+    // also unreachable by any continuation, so no successor is named.
+    let scope_only =
+        McpPageBudget::resolve_page(Some(&request), McpPageSource::truncated(2, 3, true), 0);
+    assert_eq!(scope_only.scope_omitted, 3);
+    assert_eq!(scope_only.window_truncated, 0);
+    assert_eq!(scope_only.hidden, 3);
+    assert_eq!(scope_only.end(), McpResultEnd::More);
+    assert_eq!(scope_only.successor_position(), None);
 }
 
 /// A small Draft 2020-12 evaluator for the closed schema vocabulary this
@@ -2782,6 +3065,592 @@ fn advertised_numeric_domains_equal_the_decoder_domains() {
     let blank = serde_json::from_str::<McpPageRequest>(r#"{"cursor":"   "}"#)
         .expect("a blank cursor decodes but must not validate");
     assert!(blank.validate(MCP_SETUP_TOOL).is_err());
+}
+
+/// Every candidate spelling one advertised unsigned 32-bit field is audited
+/// against: integral spellings, a fraction, a negative, and both exact bounds.
+const U32_FIELD_CANDIDATES: &[&str] = &[
+    "-1",
+    "0",
+    "0.0",
+    "1",
+    "1.0",
+    "1e0",
+    "1.5",
+    "4294967295",
+    "4294967295.0",
+    "4294967296",
+];
+
+const U64_FIELD_CANDIDATES: &[&str] = &[
+    "-1",
+    "0",
+    "0.0",
+    "1",
+    "1.0",
+    "1e0",
+    "1.5",
+    "18446744073709551615",
+    "18446744073709551616",
+];
+
+const U8_FIELD_CANDIDATES: &[&str] = &[
+    "-1", "0", "0.0", "1", "1.0", "1e0", "1.5", "19", "19.0", "20", "255", "255.0", "256",
+];
+
+/// Whether the ADVERTISED field schema admits one candidate number, evaluated
+/// from its JSON TEXT so `1.0` and `1e0` exercise the standard's mathematical
+/// integer rule rather than a Rust type's spelling rule.
+fn schema_admits_number(schema: &Value, number: &str) -> bool {
+    let instance =
+        serde_json::from_str::<Value>(number).expect("a numeric candidate is valid JSON");
+    draft2020_12_accepts(schema, &instance)
+}
+
+/// One argument template with the audited numeric field replaced by the
+/// candidate's own JSON text.
+fn with_number(mut args: Value, pointer: &str, number: &str) -> Value {
+    let instance =
+        serde_json::from_str::<Value>(number).expect("a numeric candidate is valid JSON");
+    let slot = args
+        .pointer_mut(pointer)
+        .unwrap_or_else(|| panic!("{pointer} names a field the template carries"));
+    *slot = instance;
+    args
+}
+
+/// Asserts the advertised domain and the runtime door agree at every candidate
+/// spelling of one legacy-catalog numeric field.
+fn assert_legacy_numeric_domain(
+    tool: McpToolName,
+    field_schema: &Value,
+    template: &Value,
+    pointer: &str,
+    numbers: &[&str],
+) {
+    for number in numbers {
+        let args = with_number(template.clone(), pointer, number);
+        assert_eq!(
+            schema_admits_number(field_schema, number),
+            validate_mcp_tool_args(tool, args).is_ok(),
+            "{tool}{pointer} at {number}: the advertised domain and the decoder disagree",
+            tool = tool.as_str(),
+        );
+    }
+}
+
+/// The same audit for a tool an ENDPOINT registered.
+fn assert_endpoint_numeric_domain(
+    tool: McpEndpointTool,
+    field_schema: &Value,
+    template: &Value,
+    pointer: &str,
+    numbers: &[&str],
+) {
+    for number in numbers {
+        let args = with_number(template.clone(), pointer, number);
+        assert_eq!(
+            schema_admits_number(field_schema, number),
+            validate_mcp_endpoint_tool_args(tool, args).is_ok(),
+            "{tool}{pointer} at {number}: the advertised domain and the decoder disagree",
+            tool = tool.name(),
+        );
+    }
+}
+
+/// ONE-1704 repair: the REGISTERED endpoint tools' remaining numeric fields
+/// have the same domain at the advertised schema and at the runtime door.
+#[test]
+fn endpoint_board_and_epoch_numeric_domains_equal_the_decoder_domains() {
+    let setup = registered_surface(McpSurfaceMode::Primary)
+        .resolve(MCP_SETUP_TOOL)
+        .expect("setup is registered");
+    let mut setup_args = endpoint_envelope("read_board");
+    setup_args["board_budget_tok"] = Value::from(1);
+    assert_endpoint_numeric_domain(
+        setup,
+        &setup.schema().input_schema["properties"]["board_budget_tok"],
+        &setup_args,
+        "/board_budget_tok",
+        U32_FIELD_CANDIDATES,
+    );
+
+    let expand = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("board.expand")
+        .expect("board.expand is registered");
+    let mut expand_args = endpoint_envelope("read_board");
+    expand_args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
+    assert_endpoint_numeric_domain(
+        expand,
+        &expand.schema().input_schema["properties"]["arguments"]["properties"]["frame_epoch"],
+        &expand_args,
+        "/arguments/frame_epoch",
+        U64_FIELD_CANDIDATES,
+    );
+}
+
+/// One argument template rendered as JSON TEXT, each named position carrying a
+/// candidate's EXACT spelling.
+///
+/// The number never becomes a `serde_json::Value` on the way in, which is the
+/// whole point of these rows: a template built with [`with_number`] has already
+/// rounded `18446744073709551615.0` through `f64` before any decoder sees it,
+/// so it can only ever audit what the parsed walk can still tell apart.
+fn raw_args_with_numbers(template: &Value, slots: &[(&str, &str)]) -> String {
+    let mut args = template.clone();
+    for (index, (pointer, _)) in slots.iter().enumerate() {
+        let slot = args
+            .pointer_mut(pointer)
+            .unwrap_or_else(|| panic!("{pointer} names a field the template carries"));
+        *slot = Value::from(format!("__oneiron_raw_number_{index}__"));
+    }
+    let mut rendered = args.to_string();
+    for (index, (pointer, number)) in slots.iter().enumerate() {
+        let quoted = format!("\"__oneiron_raw_number_{index}__\"");
+        assert!(
+            rendered.contains(&quoted),
+            "{pointer} survives template rendering"
+        );
+        rendered = rendered.replace(&quoted, number);
+    }
+    rendered
+}
+
+fn raw_args_with_number(template: &Value, pointer: &str, number: &str) -> String {
+    raw_args_with_numbers(template, &[(pointer, number)])
+}
+
+/// Whether the RAW decode boundary admits one candidate spelling: the bytes go
+/// in exactly as the caller wrote them, the way the gateway hands them over.
+fn raw_endpoint_decode_admits(
+    tool: McpEndpointTool,
+    template: &Value,
+    pointer: &str,
+    number: &str,
+) -> bool {
+    validate_mcp_endpoint_tool_args(
+        tool,
+        McpToolArguments::from_raw_json(raw_args_with_number(template, pointer, number)),
+    )
+    .is_ok()
+}
+
+/// ONE-1704 / Codex 3907570260: the decoder keeps a JSON number's own TEXT
+/// until the schema-directed integer decision has been taken.
+///
+/// `18446744073709551615.0` is the mathematical `u64::MAX`, which Draft
+/// 2020-12 `type: integer` admits. Parsed into a `serde_json::Value` first — as
+/// this build must, carrying `preserve_order` and not `arbitrary_precision` —
+/// it rounds through `f64` into a value that prints ABOVE that ceiling, and
+/// `cache.ttl_ms` and `frame_epoch` refused what their own advertised schema
+/// accepts. Every row below enters through the RAW boundary, so the first one
+/// fails under the old lossy path.
+#[test]
+fn raw_decode_boundary_preserves_advertised_integer_number_text() {
+    let expand = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("board.expand")
+        .expect("board.expand is registered");
+    let mut expand_args = endpoint_envelope("read_board");
+    expand_args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
+    expand_args["cache"] = json!({ "ttl_ms": 0 });
+
+    // Both advertised `u64` positions, one nested a level deeper than the
+    // other, judged at the same ceiling.
+    for pointer in ["/arguments/frame_epoch", "/cache/ttl_ms"] {
+        for (number, admitted) in [
+            // THE repair: the exact `u64::MAX`, spelled with a fraction.
+            ("18446744073709551615.0", true),
+            // ... and as an exponent, which its text proves just as integral.
+            ("1.8446744073709551615e19", true),
+            // The bounds that already held, unmoved.
+            ("0", true),
+            ("1", true),
+            ("18446744073709551615", true),
+            // Integral spellings the standard admits.
+            ("0.0", true),
+            ("1.0", true),
+            ("1e0", true),
+            ("0e0", true),
+            // One above the maximum is still refused, by one.
+            ("18446744073709551616", false),
+            ("18446744073709551615.5", false),
+            // Not an integer at all.
+            ("1.5", false),
+            // Negative, at an unsigned position.
+            ("-1", false),
+            ("-1.0", false),
+            // Beyond anything this domain can restate without loss.
+            ("1e30", false),
+        ] {
+            assert_eq!(
+                raw_endpoint_decode_admits(expand, &expand_args, pointer, number),
+                admitted,
+                "{pointer} at {number}: the raw boundary and the advertised integer domain disagree",
+            );
+        }
+
+        // What the raw boundary is FOR. The same value handed over as an
+        // already-parsed `Value` has lost its spelling before this door is
+        // reached — `f64` rounded it above the ceiling — so it is refused.
+        // That is the path every row above used to take.
+        assert!(
+            validate_mcp_endpoint_tool_args(
+                expand,
+                with_number(expand_args.clone(), pointer, "18446744073709551615.0",),
+            )
+            .is_err(),
+            "{pointer}: a rounded `Value` cannot carry the caller's ceiling value",
+        );
+    }
+}
+
+/// The same raw boundary at the advertised 32-bit positions: restating a
+/// spelling never widens a field, so THIS field's own ceiling still decides.
+#[test]
+fn raw_decode_boundary_keeps_bounded_integer_domains() {
+    let setup = registered_surface(McpSurfaceMode::Primary)
+        .resolve(MCP_SETUP_TOOL)
+        .expect("setup is registered");
+    let mut setup_args = endpoint_envelope("read_board");
+    setup_args["board_budget_tok"] = Value::from(1);
+    setup_args["page"] = json!({ "limit": 1 });
+
+    for pointer in ["/board_budget_tok", "/page/limit"] {
+        for (number, admitted) in [
+            ("1", true),
+            ("1.0", true),
+            ("1e0", true),
+            ("4294967295", true),
+            ("4294967295.0", true),
+            ("4294967296", false),
+            ("4294967296.0", false),
+            ("1.5", false),
+            ("-1", false),
+            // An exact `u64` the token walk CAN restate, and this field still
+            // refuses: the restatement is a spelling, never a wider domain.
+            ("18446744073709551615.0", false),
+            // `minimum: 1` is a runtime refusal at both, whatever the spelling.
+            ("0", false),
+            ("0.0", false),
+            ("0e0", false),
+        ] {
+            assert_eq!(
+                raw_endpoint_decode_admits(setup, &setup_args, pointer, number),
+                admitted,
+                "{pointer} at {number}: the raw boundary and the advertised integer domain disagree",
+            );
+        }
+    }
+}
+
+/// The repair is SCHEMA-DIRECTED, so a free-form payload the catalog types `{}`
+/// is never rewritten: a caller's `spec` that says `1.0` still stores `1.0`,
+/// and a number the integer positions WOULD have restated is left alone here.
+#[test]
+fn raw_decode_boundary_leaves_free_form_numbers_untouched() {
+    let create = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("tasks.create")
+        .expect("tasks.create is registered");
+    let mut args = endpoint_envelope("write_tasks");
+    args["arguments"] = json!({ "spec": { "kind": "review", "weight": 0, "epoch": 0 } });
+    let raw = raw_args_with_numbers(
+        &args,
+        &[
+            ("/arguments/spec/weight", "1.0"),
+            ("/arguments/spec/epoch", "18446744073709551615.0"),
+        ],
+    );
+
+    let decoded = validate_mcp_endpoint_tool_args(create, McpToolArguments::from_raw_json(raw))
+        .expect("a free-form spec decodes");
+    let McpValidatedToolArgs::Verb(verb) = decoded else {
+        panic!("tasks.create decodes to a verb payload");
+    };
+    let spec = verb.payload.arguments.spec.expect("spec is present");
+    assert_eq!(
+        serde_json::to_string(&spec["weight"]).expect("a free-form number reserializes"),
+        "1.0",
+        "a free-form number keeps the caller's own spelling",
+    );
+    assert_ne!(
+        spec["epoch"],
+        Value::from(u64::MAX),
+        "the integer repair must not reach a position the schema types as free form",
+    );
+}
+
+/// The legacy catalog decodes through the same raw boundary, at a position the
+/// advertised schema nests inside an engine-owned input type.
+#[test]
+fn raw_decode_boundary_covers_the_legacy_catalog() {
+    let nav_args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("read_memory"),
+        "mode": "list",
+        "limit": 1,
+    });
+    for (number, admitted) in [
+        ("1", true),
+        ("1.0", true),
+        ("1e0", true),
+        ("4294967295.0", true),
+        ("4294967296", false),
+        ("1.5", false),
+        ("-1", false),
+    ] {
+        assert_eq!(
+            validate_mcp_tool_args(
+                McpToolName::Nav,
+                McpToolArguments::from_raw_json(raw_args_with_number(&nav_args, "/limit", number)),
+            )
+            .is_ok(),
+            admitted,
+            "nav.limit at {number}: the raw boundary and the advertised integer domain disagree",
+        );
+    }
+}
+
+/// The gateway's own raw-argument read: `params.arguments` comes back as the
+/// caller's EXACT bytes, and any other shape falls back to the routed value
+/// rather than guessing at one.
+#[test]
+fn raw_call_arguments_read_the_callers_own_request_bytes() {
+    let body = br#"{"jsonrpc":"2.0","id":"n1","method":"tools/call",
+        "params":{"name":"board.expand","arguments":{"cache":{"ttl_ms":18446744073709551615.0}}}}"#;
+    assert_eq!(
+        mcp_raw_call_arguments(body).as_deref(),
+        Some(r#"{"cache":{"ttl_ms":18446744073709551615.0}}"#),
+        "the arguments arrive as the bytes the caller sent",
+    );
+
+    // An escaped key resolves exactly as `serde_json` resolves it, so the raw
+    // walk and the routed value never disagree about which member is which.
+    assert_eq!(
+        mcp_raw_call_arguments(br#"{"params":{"arguments":[1.0,2]}}"#).as_deref(),
+        Some("[1.0,2]"),
+    );
+    // A duplicated key takes the LAST occurrence, as the routed value does.
+    assert_eq!(
+        mcp_raw_call_arguments(br#"{"params":{"arguments":1},"params":{"arguments":2}}"#)
+            .as_deref(),
+        Some("2"),
+    );
+    // Strings carrying JSON punctuation never confuse the scan.
+    assert_eq!(
+        mcp_raw_call_arguments(br#"{"params":{"name":"}\",{","arguments":{"a":1.0}}}"#).as_deref(),
+        Some(r#"{"a":1.0}"#),
+    );
+
+    for body in [
+        &br#"{"params":[1,2]}"#[..],
+        &br#"{"params":{"name":"board.expand"}}"#[..],
+        &br#"{"jsonrpc":"2.0"}"#[..],
+        &br#"{"params":{"arguments":1}"#[..],
+        &b"not json"[..],
+    ] {
+        assert_eq!(
+            mcp_raw_call_arguments(body),
+            None,
+            "{:?} carries no raw arguments to hand over",
+            std::str::from_utf8(body),
+        );
+    }
+}
+
+/// ONE-1704 repair: EVERY numeric field the catalog advertises — the retired
+/// plain-verb schemas included, and the engine-owned booking inputs they nest —
+/// admits exactly what its runtime decoder admits.
+///
+/// The audit is done from JSON TEXT at each candidate: mathematically integral
+/// spellings the standard admits, a fraction, a negative, and both exact
+/// bounds. No candidate is converted through a float on either side.
+#[test]
+fn legacy_advertised_numeric_domains_equal_the_decoder_domains() {
+    let nav = nav_tool_schema();
+    let nav_args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("read_memory"),
+        "mode": "list",
+        "limit": 1,
+    });
+    assert_legacy_numeric_domain(
+        McpToolName::Nav,
+        &nav["properties"]["limit"],
+        &nav_args,
+        "/limit",
+        U32_FIELD_CANDIDATES,
+    );
+
+    let edit = edit_tool_schema();
+    let claim_args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("write_memory"),
+        "verb": "propose_claim",
+        "idempotency_key": "mcp-numeric-domain",
+        "subject": { "edge": { "source": ACTOR_ID, "kind": 0, "target": RESULT_ID } },
+        "predicate": "status",
+        "value": "shipped",
+        "confidence": 0.5,
+        "valid_from": 0,
+    });
+    assert_legacy_numeric_domain(
+        McpToolName::Edit,
+        &edit["properties"]["valid_from"],
+        &claim_args,
+        "/valid_from",
+        U64_FIELD_CANDIDATES,
+    );
+    assert_legacy_numeric_domain(
+        McpToolName::Edit,
+        &edit_subject_schema()["properties"]["edge"]["properties"]["kind"],
+        &claim_args,
+        "/subject/edge/kind",
+        U8_FIELD_CANDIDATES,
+    );
+
+    let entity_args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("write_memory"),
+        "verb": "propose_entity",
+        "idempotency_key": "mcp-numeric-domain",
+        "entity_type": 1,
+        "occurred": { "start": 0, "end": u64::MAX },
+        "data": { "note": "one row" },
+    });
+    assert_legacy_numeric_domain(
+        McpToolName::Edit,
+        &edit["properties"]["entity_type"],
+        &entity_args,
+        "/entity_type",
+        U8_FIELD_CANDIDATES,
+    );
+    assert_legacy_numeric_domain(
+        McpToolName::Edit,
+        &occurred_range_schema()["properties"]["start"],
+        &entity_args,
+        "/occurred/start",
+        U64_FIELD_CANDIDATES,
+    );
+
+    let calendar_branches = calendar_operation_schema();
+    let calendar_branches = calendar_branches["oneOf"]
+        .as_array()
+        .expect("the calendar operation branches");
+    assert_legacy_numeric_domain(
+        McpToolName::Calendar,
+        &calendar_branches[1]["properties"]["limit"],
+        &calendar_args(json!({ "op": "search", "limit": 1 })),
+        "/operation/limit",
+        U32_FIELD_CANDIDATES,
+    );
+    assert_legacy_numeric_domain(
+        McpToolName::Calendar,
+        &calendar_branches[3]["properties"]["sequence"],
+        &calendar_args(json!({
+            "op": "invite",
+            "method": "REQUEST",
+            "uid": "uid-1",
+            "sequence": 0,
+            "ics_blob_ref": "blob:one-1704",
+            "recipient": "guest@example.test",
+        })),
+        "/operation/sequence",
+        U32_FIELD_CANDIDATES,
+    );
+    assert_legacy_numeric_domain(
+        McpToolName::Calendar,
+        &calendar_range_schema()["properties"]["start"],
+        &calendar_args(json!({
+            "op": "freebusy",
+            "range": { "start": 0, "end": u64::MAX },
+        })),
+        "/operation/range/start",
+        U64_FIELD_CANDIDATES,
+    );
+
+    let routed_args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "context_pack": {
+            "schema_version": MCP_CONTEXT_PACK_REF_SCHEMA_VERSION,
+            "pack_ref": "context-pack:one-1704",
+        },
+        "consent": consent_json("answer_question"),
+        "query": "what is the launch plan?",
+        "route": { "model_tier": "routed-small", "max_latency_ms": 1 },
+    });
+    assert_legacy_numeric_domain(
+        McpToolName::RoutedAsk,
+        &ask_route_schema()["properties"]["max_latency_ms"],
+        &routed_args,
+        "/route/max_latency_ms",
+        U32_FIELD_CANDIDATES,
+    );
+
+    // The booking arm's numeric fields are decoded by ENGINE-owned input types
+    // this door does not define; the advertised schema is still what decides
+    // where an integer lives, so they agree too.
+    let book_args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("book_meeting"),
+        "page_token": "bkp_00000000000000000000000000000000",
+        "operation": {
+            "op": "reschedule",
+            "input": {
+                "reschedule_token": "0".repeat(64),
+                "selected_slot": { "start_utc": 0, "end_utc": u64::MAX },
+                "visitor_tz": "UTC",
+                "idempotency_key": "mcp-numeric-domain",
+            },
+        },
+    });
+    assert_legacy_numeric_domain(
+        McpToolName::Book,
+        &booking_selected_slot_schema()["properties"]["start_utc"],
+        &book_args,
+        "/operation/input/selected_slot/start_utc",
+        U64_FIELD_CANDIDATES,
+    );
+}
+
+/// The schema-directed rewrite restates integral spellings and NOTHING else: a
+/// free-form caller payload is not a schema integer position and keeps the
+/// number it arrived with.
+#[test]
+fn integral_spellings_never_rewrite_free_form_payload_numbers() {
+    let args = json!({
+        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+        "actor": actor_json(),
+        "consent": consent_json("write_memory"),
+        "verb": "propose_claim",
+        "idempotency_key": "mcp-free-form-payload",
+        "subject": { "entity": ACTOR_ID },
+        "predicate": "status",
+        "value": { "reading": 1.0, "exact": 2, "fraction": 1.5 },
+        "confidence": 0.5,
+        "valid_from": 7.0,
+    });
+    let McpValidatedToolArgs::Edit(edit) =
+        validate_mcp_tool_args(McpToolName::Edit, args).expect("the edit arguments validate")
+    else {
+        panic!("oneiron.edit must validate into the Edit arm");
+    };
+    assert_eq!(
+        edit.valid_from,
+        Some(7),
+        "an advertised integer position accepts the integral spelling",
+    );
+    let value = edit.value.expect("the free-form value survives");
+    assert_eq!(
+        mcp_canonical_json(&value),
+        r#"{"exact":2,"fraction":1.5,"reading":1.0}"#,
+        "a free-form payload keeps the numbers the caller wrote",
+    );
 }
 
 #[test]

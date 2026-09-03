@@ -12016,6 +12016,88 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
     }
 }
 
+/// ONE-1704 / Codex 3907570260: a JSON number's own TEXT survives the HTTP
+/// request boundary, so the wire admits exactly what the schema advertises.
+///
+/// `18446744073709551615.0` is the mathematical `u64::MAX` that Draft 2020-12
+/// `type: integer` accepts. The gateway routes the JSON-RPC envelope through a
+/// `serde_json::Value`, which — on this build's feature set — rounds that
+/// number through `f64` into a value printing ABOVE the advertised ceiling.
+/// The arguments are therefore read back out of the REQUEST BYTES, so the
+/// decoder still sees the spelling the caller actually sent.
+#[tokio::test]
+async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0052);
+    let credential = "one-1704-raw-number";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    // The candidate is substituted as TEXT, so it never becomes a `Value` on
+    // the way out either: these are the exact bytes a client would put on the
+    // wire.
+    let call = |id: &str, ttl_ms: &str| {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "tasks.check",
+                "arguments": mcp_merge_args(
+                    mcp_endpoint_envelope(actor_ref, "read_tasks"),
+                    json!({ "cache": { "ttl_ms": "__oneiron_raw_ttl__" } }),
+                ),
+            },
+        })
+        .to_string()
+        .replace("\"__oneiron_raw_ttl__\"", ttl_ms);
+        Request::builder()
+            .method("POST")
+            .uri(MCP_TOOL_FIRST_PATH)
+            .header(CONTENT_TYPE, "application/json")
+            .header(AUTHORIZATION, format!("Bearer {credential}"))
+            .body(Body::from(body))
+            .expect("raw mcp endpoint request")
+    };
+
+    // The exact advertised ceiling, spelled with a fraction, is ADMITTED.
+    let (status, body) = route_json(
+        server.clone(),
+        call("raw-ceiling", "18446744073709551615.0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("error").is_none(),
+        "the advertised integer ceiling must decode over the wire: {body:?}"
+    );
+    assert_eq!(
+        body["result"]["structuredContent"]["tool"],
+        Value::from("tasks.check")
+    );
+
+    // One above the ceiling, and a value that is not an integer at all, are
+    // still refused at the same door: the repair moved a spelling, not a bound.
+    for (id, ttl_ms) in [
+        ("raw-above", "18446744073709551616"),
+        ("raw-above-fraction", "18446744073709551615.5"),
+        ("raw-fraction", "1.5"),
+        ("raw-negative", "-1.0"),
+    ] {
+        let refusal = mcp_refusal(&server, call(id, ttl_ms)).await;
+        assert_eq!(
+            refusal["error"]["data"]["kind"],
+            Value::from("tool_args_invalid"),
+            "cache.ttl_ms {ttl_ms} must stay refused: {refusal:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
     let (_dir, server) = test_server();
@@ -13015,6 +13097,18 @@ async fn mcp_page_budget_enforces_limit_end_marker_and_cursor() {
         meta["page"]["hidden"],
         Value::from(mcp_expected_generated_names().len() - 1)
     );
+    // ONE-1704 repair: the two axes are stated apart. Rows this transport page
+    // window did not return are a WINDOW fact; the requested actor scope
+    // removed none of them.
+    assert_eq!(
+        meta["page"]["window_truncated"],
+        Value::from(mcp_expected_generated_names().len() - 1)
+    );
+    assert_eq!(
+        meta["page"]["scope_omitted"],
+        Value::from(0),
+        "a page window is never counted as a requested-scope omission: {meta:?}"
+    );
     assert_eq!(meta["end"], Value::from("More"));
     assert!(
         meta["page"]["cursor"]
@@ -13254,14 +13348,17 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
     .await;
     assert_mcp_structured_error(&replay, "mcp_page_cursor_invalid");
 
-    // SNAPSHOT-BOUND: a handle minted against one board snapshot is refused
-    // once that snapshot's epoch has moved.
+    // SNAPSHOT-RETAINED (ONE-1704 repair): a continuation is a continuation of
+    // the IMMUTABLE producer snapshot its handle carries. An unrelated later
+    // board epoch cannot make those retained rows wrong, so it does not destroy
+    // the enumeration either — while every producer-identity axis above
+    // (connector, tool, arguments) stays refused.
     let (_, fresh) = route_json(
         server.clone(),
         setup(credential, "cursor-4", json!({ "limit": 5 })),
     )
     .await;
-    let stale_cursor = fresh["result"]["structuredContent"]["meta"]["page"]["cursor"]
+    let retained_cursor = fresh["result"]["structuredContent"]["meta"]["page"]["cursor"]
         .as_str()
         .expect("a fresh successor handle")
         .to_owned();
@@ -13274,18 +13371,43 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
         // A different board STATE advances the snapshot epoch by exactly one,
         // reading no clock at all.
         let moved = crate::mcp::mcp_board_state_hash("VaultWide", &["moved".to_owned()]);
-        registry.board_snapshot_epoch(&connection, moved);
+        let latest = registry.board_snapshot_epoch(&connection, moved);
+        assert!(
+            latest > 1,
+            "an unrelated board state moved this connection's latest epoch",
+        );
     }
-    let stale = mcp_refusal(
-        &server,
+    let (_, continued) = route_json(
+        server.clone(),
         setup(
             credential,
-            "cursor-stale",
-            json!({ "limit": 5, "cursor": stale_cursor }),
+            "cursor-epoch-moved",
+            json!({ "limit": 7, "cursor": retained_cursor.clone() }),
         ),
     )
     .await;
-    assert_mcp_structured_error(&stale, "mcp_page_cursor_invalid");
+    assert!(
+        continued.get("error").is_none(),
+        "a moved unrelated board epoch must not refuse a retained continuation: {continued:?}"
+    );
+    let continued = &continued["result"]["structuredContent"];
+    assert_eq!(
+        mcp_setup_verb_names(continued),
+        whole[5..].to_vec(),
+        "the continuation returns exactly the retained producer remainder: {continued:?}"
+    );
+    assert_eq!(continued["meta"]["end"], Value::from("Complete"));
+    // Still one-time: the handle the moved epoch did not invalidate is spent.
+    let replayed = mcp_refusal(
+        &server,
+        setup(
+            credential,
+            "cursor-epoch-replay",
+            json!({ "limit": 7, "cursor": retained_cursor }),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&replayed, "mcp_page_cursor_invalid");
 }
 
 /// ONE-1704 M6: a live cursor from a read producer cannot reach a mutating
@@ -13322,6 +13444,7 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
         .as_str()
         .expect("page one minted a live setup continuation")
         .to_owned();
+    let cursor_handle = cursor.clone();
     let connection = {
         let registry = server.mcp_registry.lock().await;
         registry
@@ -13423,6 +13546,15 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
         registry.page_continuation_live(&connection),
         "unsupported cursor presentations do not consume the live read continuation"
     );
+    assert!(
+        registry.page_continuation_live_cursor(&connection, &cursor_handle),
+        "the refused presentations consumed no cursor at all, this one included"
+    );
+    assert_eq!(
+        registry.live_page_continuations(&connection),
+        1,
+        "exactly the one live read continuation remains"
+    );
     assert_eq!(
         registry
             .streams_mut()
@@ -13432,6 +13564,455 @@ async fn mcp_cursor_refusal_precedes_mutating_and_subscription_dispatch() {
         subscribed_before,
         "cursor refusal did not change board subscriptions",
     );
+}
+
+/// ONE-1704 repair: `tasks.expand` is a continuable READ producer.
+///
+/// Its continuation is served from the retained producer rows — proven by a
+/// target the facade itself refuses — and a mutating verb still cannot use the
+/// handle, which the untouched live continuation proves happened before
+/// dispatch.
+#[tokio::test]
+async fn mcp_tasks_expand_continues_retained_rows_and_refuses_mutating_cursor_use() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0103);
+    let credential = "one-1704-tasks-expand-cursor";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    // An entity that exists — so the scope gate admits it — but is not a TASK,
+    // so the expand FACADE refuses it. A result that nevertheless returns rows
+    // can only have come from the retained snapshot.
+    let expand_args = mcp_merge_args(
+        mcp_endpoint_envelope(actor_ref, "read_tasks"),
+        json!({ "arguments": { "task_ref": actor_ref.to_hex() } }),
+    );
+    let direct = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "expand-direct",
+            "tasks.expand",
+            expand_args.clone(),
+        ),
+    )
+    .await;
+    assert_eq!(
+        direct["error"]["data"]["error_code"],
+        Value::from("facade_error"),
+        "a cursorless expand of a non-task row reaches the facade and is refused: {direct:?}"
+    );
+
+    // The handle is minted for the EXACT payload this call carries: the digest
+    // comes from the production binding, never a hand-built copy.
+    let tool = crate::mcp::registered_surface(crate::mcp::McpSurfaceMode::ToolFirst)
+        .resolve("tasks.expand")
+        .expect("tasks.expand is registered on the tool-first endpoint");
+    let crate::mcp::McpValidatedToolArgs::Verb(validated) =
+        crate::mcp::validate_mcp_endpoint_tool_args(tool, expand_args.clone())
+            .expect("the expand payload validates")
+    else {
+        panic!("tasks.expand must validate into the generated verb arm");
+    };
+    let digest = crate::mcp::mcp_page_argument_digest(&validated.payload);
+    let retained = json!({
+        "kind": "expanded",
+        "lines": ["task line", "  realizing job", "  result=abc"],
+    });
+    let (connection, cursor) = {
+        let mut registry = server.mcp_registry.lock().await;
+        let connection = registry
+            .resolve(credential, 1, |_, _| true)
+            .expect("credential resolves")
+            .stream_connection;
+        let cursor = registry.mint_page_cursor_with_snapshot(
+            &connection,
+            "tasks.expand",
+            digest,
+            7,
+            1,
+            Some(crate::mcp::McpPageSnapshot {
+                output: retained.clone(),
+                source: crate::mcp::McpPageSource::complete(3),
+                health: crate::mcp::McpRetrievalHealth::Healthy,
+                keyframe: None,
+            }),
+        );
+        (connection, cursor)
+    };
+
+    // A MUTATING verb is refused before dispatch and consumes nothing.
+    let ack_refusal = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "expand-cursor-ack",
+            "tasks.ack",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "ack_task"),
+                json!({
+                    "arguments": { "task_ref": actor_ref.to_hex() },
+                    "page": { "cursor": cursor.clone() },
+                }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&ack_refusal, "mcp_page_cursor_invalid");
+    {
+        let registry = server.mcp_registry.lock().await;
+        assert!(
+            registry.page_continuation_live_cursor(&connection, &cursor),
+            "a mutating verb's refused cursor use consumes no live read continuation"
+        );
+    }
+
+    let continued = mcp_endpoint_call_request(
+        MCP_TOOL_FIRST_PATH,
+        credential,
+        "expand-cursor-continue",
+        "tasks.expand",
+        mcp_merge_args(
+            expand_args.clone(),
+            json!({ "page": { "limit": 50, "cursor": cursor.clone() } }),
+        ),
+    );
+    let (status, continued) = route_json(server.clone(), continued).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        continued.get("error").is_none(),
+        "the continuation is served from retained rows, not a second facade read: {continued:?}"
+    );
+    let structured = &continued["result"]["structuredContent"];
+    assert_eq!(
+        structured["output"]["lines"],
+        json!(["  realizing job", "  result=abc"]),
+        "page two is exactly the retained producer remainder: {structured:?}"
+    );
+    assert_eq!(structured["meta"]["end"], Value::from("Complete"));
+    assert_eq!(structured["meta"]["page"]["returned"], Value::from(2));
+    assert_eq!(structured["meta"]["page"]["scope_omitted"], Value::from(0));
+    assert_eq!(
+        structured["meta"]["page"]["window_truncated"],
+        Value::from(0)
+    );
+
+    // ONE-TIME, exactly like every other continuation.
+    let replay = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "expand-cursor-replay",
+            "tasks.expand",
+            mcp_merge_args(
+                expand_args,
+                json!({ "page": { "limit": 50, "cursor": cursor } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&replay, "mcp_page_cursor_invalid");
+}
+
+/// ONE-1704 repair: one connection holds SEVERAL live continuations and
+/// consumes them independently.
+#[tokio::test]
+async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0101);
+    let credential = "one-1704-two-cursor-credential";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    // Two different producer QUERIES on one connection: `board_budget_tok` is
+    // bound argument identity, the page member is not.
+    let setup = |id: &'static str, budget: u32, page: Value| {
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            id,
+            "setup_oneiron",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "board_budget_tok": budget, "page": page }),
+            ),
+        )
+    };
+    let cursor_of = |body: &Value| {
+        body["result"]["structuredContent"]["meta"]["page"]["cursor"]
+            .as_str()
+            .expect("a non-terminal page carries an opaque successor")
+            .to_owned()
+    };
+
+    let (_, first) = route_json(
+        server.clone(),
+        setup("two-cursor-a1", 900, json!({ "limit": 2 })),
+    )
+    .await;
+    let (_, second) = route_json(
+        server.clone(),
+        setup("two-cursor-b1", 1000, json!({ "limit": 3 })),
+    )
+    .await;
+    let first_cursor = cursor_of(&first);
+    let second_cursor = cursor_of(&second);
+    assert_ne!(first_cursor, second_cursor);
+
+    let connection = {
+        let registry = server.mcp_registry.lock().await;
+        let connection = registry
+            .resolve(credential, 1, |_, _| true)
+            .expect("credential resolves")
+            .stream_connection;
+        assert_eq!(
+            registry.live_page_continuations(&connection),
+            2,
+            "a second More page does not destroy the first page's handle"
+        );
+        assert!(registry.page_continuation_live_cursor(&connection, &first_cursor));
+        assert!(registry.page_continuation_live_cursor(&connection, &second_cursor));
+        connection
+    };
+
+    let whole = mcp_expected_generated_names()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    // Consuming the SECOND handle consumes exactly that handle.
+    let (_, second_page) = route_json(
+        server.clone(),
+        setup(
+            "two-cursor-b2",
+            1000,
+            json!({ "limit": 50, "cursor": second_cursor }),
+        ),
+    )
+    .await;
+    let second_page = &second_page["result"]["structuredContent"];
+    assert_eq!(mcp_setup_verb_names(second_page), whole[3..].to_vec());
+    assert_eq!(second_page["meta"]["end"], Value::from("Complete"));
+    {
+        let registry = server.mcp_registry.lock().await;
+        assert_eq!(
+            registry.live_page_continuations(&connection),
+            1,
+            "consuming one cursor consumed only that cursor"
+        );
+        assert!(registry.page_continuation_live_cursor(&connection, &first_cursor));
+    }
+
+    // The first is still exactly where page one left it.
+    let (_, first_page) = route_json(
+        server.clone(),
+        setup(
+            "two-cursor-a2",
+            900,
+            json!({ "limit": 50, "cursor": first_cursor }),
+        ),
+    )
+    .await;
+    let first_page = &first_page["result"]["structuredContent"];
+    assert_eq!(mcp_setup_verb_names(first_page), whole[2..].to_vec());
+    assert_eq!(first_page["meta"]["end"], Value::from("Complete"));
+    let registry = server.mcp_registry.lock().await;
+    assert_eq!(registry.live_page_continuations(&connection), 0);
+}
+
+
+/// ONE-1704 repair: a client on the NEGOTIATED protocol receives usable result
+/// data in `content`, not only through the `structuredContent` side channel.
+#[tokio::test]
+async fn mcp_results_carry_usable_data_in_negotiated_content() {
+    let (_dir, server) = test_server();
+    let actor_ref = seeded_test_entity_id(0x1704_0105);
+    let credential = "one-1704-negotiated-content";
+    register_mcp_actor(
+        &server,
+        credential,
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+
+    let (_, handshake) = route_json(
+        server.clone(),
+        mcp_endpoint_request(
+            "/mcp",
+            credential,
+            json!({ "jsonrpc": "2.0", "id": "negotiated-init", "method": "initialize" }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        handshake["result"]["protocolVersion"],
+        Value::from(MCP_PROTOCOL_VERSION),
+        "the content contract below is the one this handshake negotiates"
+    );
+
+    let (_, setup) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "negotiated-setup",
+            "setup_oneiron",
+            mcp_endpoint_envelope(actor_ref, "read_board"),
+        ),
+    )
+    .await;
+    let result = &setup["result"];
+    let content = result["content"]
+        .as_array()
+        .expect("the negotiated result carries content");
+    assert_eq!(content.len(), 2, "{result:?}");
+    assert_eq!(content[0]["type"], Value::from("text"));
+    assert_eq!(content[1]["type"], Value::from("text"));
+    let data = serde_json::from_str::<Value>(
+        content[1]["text"]
+            .as_str()
+            .expect("the data content item is text"),
+    )
+    .expect("the negotiated content item states the result data as JSON");
+    assert_eq!(
+        data, result["structuredContent"],
+        "the negotiated content and the structured side channel state the SAME data"
+    );
+    assert_eq!(data["tool"], Value::from("setup_oneiron"));
+    assert!(
+        data["board"]["keyframe"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty()),
+        "{data:?}"
+    );
+    assert_eq!(
+        data["verb_grammar"]["verbs"].as_array().map(Vec::len),
+        Some(mcp_expected_generated_names().len()),
+    );
+    assert_eq!(data["meta"]["end"], Value::from("Complete"));
+
+    // A carrier frame stays BESIDE the result: it is not folded into the
+    // negotiated content, and the content still states the tool's own data.
+    let connection = {
+        let registry = server.mcp_registry.lock().await;
+        registry
+            .resolve(credential, 1, |_, _| true)
+            .expect("credential resolves")
+            .stream_connection
+    };
+    {
+        let mut registry = server.mcp_registry.lock().await;
+        registry.enqueue_stream_frame(
+            &connection,
+            oneiron::context_board::BoardStreamFrame {
+                epoch: 4,
+                kind: oneiron::context_board::FrameKind::Keyframe("queued board".to_owned()),
+            },
+        );
+    }
+    let (_, checked) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "negotiated-check",
+            "tasks.check",
+            mcp_endpoint_envelope(actor_ref, "read_tasks"),
+        ),
+    )
+    .await;
+    let result = &checked["result"];
+    assert_eq!(result["carrier"]["class"], Value::from("carrier"));
+    let content = result["content"]
+        .as_array()
+        .expect("the negotiated result carries content");
+    assert_eq!(content.len(), 2, "{result:?}");
+    let data = serde_json::from_str::<Value>(
+        content[1]["text"]
+            .as_str()
+            .expect("the data content item is text"),
+    )
+    .expect("the negotiated content item states the result data as JSON");
+    assert_eq!(data, result["structuredContent"]);
+    assert_eq!(data["tool"], Value::from("tasks.check"));
+    assert_eq!(data["output"]["kind"], Value::from("tasks_section"));
+    assert!(
+        data.get("carrier").is_none(),
+        "a carrier frame is never folded into the tool's own content: {data:?}"
+    );
+}
+
+/// ONE-1704 repair: a board page's omission count is the REQUESTED SCOPE's
+/// filtering only. A render window's truncation is stated on its own axis, and
+/// a section the scope did not narrow is not reported partial because another
+/// section was.
+#[test]
+fn mcp_board_page_omissions_count_requested_scope_only() {
+    let expand = crate::mcp::McpVerbBinding::BoardExpand;
+    let refresh = crate::mcp::McpVerbBinding::BoardRefresh;
+    let subscribe = crate::mcp::McpVerbBinding::BoardSubscribe;
+    let healthy = crate::mcp::McpRetrievalHealth::Healthy;
+    let omissions = McpBoardOmissions {
+        scope_omitted: 3,
+        window_truncated: 2,
+        source_exhausted: true,
+    };
+
+    let tasks = json!({ "kind": "expanded", "key": "TASKS", "lines": ["a", "b"] });
+    let source = mcp_board_verb_page_source(expand, &tasks, omissions);
+    assert_eq!(source.produced, 2);
+    assert_eq!(source.scope_omitted, 3);
+    assert_eq!(source.window_truncated, 2);
+    assert_eq!(source.withheld(), 5);
+    assert_eq!(source.health(), crate::mcp::McpRetrievalHealth::Partial);
+
+    // Another section's page is not partial because a TASKS row was outside
+    // the credential's ceiling.
+    let verbs = json!({ "kind": "expanded", "key": "VERBS", "lines": ["board.expand"] });
+    let source = mcp_board_verb_page_source(expand, &verbs, omissions);
+    assert_eq!(source.produced, 1);
+    assert_eq!(source.scope_omitted, 0);
+    assert_eq!(source.window_truncated, 0);
+    assert_eq!(source.health(), healthy);
+
+    // A refresh renders the whole board, so both axes ride it — apart.
+    let frame = json!({ "kind": "frame", "frame": { "epoch": 1 } });
+    let source = mcp_board_verb_page_source(refresh, &frame, omissions);
+    assert_eq!(source.produced, 1);
+    assert_eq!(source.scope_omitted, 3);
+    assert_eq!(source.window_truncated, 2);
+
+    // A capped scan is a WINDOW fact and is degraded, never a scope omission.
+    let capped_scan = McpBoardOmissions {
+        scope_omitted: 0,
+        window_truncated: 4,
+        source_exhausted: false,
+    };
+    let capped = mcp_board_verb_page_source(refresh, &frame, capped_scan);
+    assert_eq!(capped.scope_omitted, 0);
+    assert_eq!(capped.window_truncated, 4);
+    assert_eq!(capped.health(), crate::mcp::McpRetrievalHealth::Degraded);
+
+    // A subscription receipt states itself completely on both axes.
+    let receipt = json!({ "kind": "subscription", "active": [] });
+    let source = mcp_board_verb_page_source(subscribe, &receipt, omissions);
+    assert_eq!(source.scope_omitted, 0);
+    assert_eq!(source.window_truncated, 0);
+    assert_eq!(source.health(), healthy);
 }
 
 #[tokio::test]

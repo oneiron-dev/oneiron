@@ -206,7 +206,13 @@ async fn mcp_endpoint(
     };
     let id = request.id.clone().unwrap_or(id);
 
-    let result = handle_mcp_request(mode, &headers, &server, request).await;
+    // The envelope above is routed from a `Value`, which rounds a JSON number
+    // through `f64`. Tool arguments are decoded against the ADVERTISED schema
+    // instead, so their ORIGINAL spelling is read back out of the request bytes
+    // and carried to that decoder unrounded (ONE-1704 repair).
+    let raw_arguments = crate::mcp::mcp_raw_call_arguments(&body);
+    let result =
+        handle_mcp_request(mode, &headers, &server, request, raw_arguments.as_deref()).await;
     Json(match result {
         Ok(result) => json!({
             "jsonrpc": "2.0",
@@ -231,6 +237,7 @@ pub(crate) async fn handle_mcp_request(
     headers: &HeaderMap,
     server: &Arc<SyncServer>,
     request: McpJsonRpcRequest,
+    raw_arguments: Option<&str>,
 ) -> Result<Value, McpGatewayError> {
     if request.jsonrpc != "2.0" {
         return Err(
@@ -273,7 +280,7 @@ pub(crate) async fn handle_mcp_request(
             let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                let args = mcp_validated_call_args(mode, params)?;
+                let args = mcp_validated_call_args(mode, params, raw_arguments)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;
                 execute_mcp_tool(server, args, &actor).await
@@ -513,6 +520,7 @@ fn mcp_scope_covers_entity(
 fn mcp_validated_call_args(
     mode: McpSurfaceMode,
     params: McpToolCallParams,
+    raw_arguments: Option<&str>,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let Some(tool) = crate::mcp::registered_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
@@ -529,8 +537,13 @@ fn mcp_validated_call_args(
         )
         .with_field("name"));
     };
-    crate::mcp::validate_mcp_endpoint_tool_args(tool, params.arguments)
-        .map_err(mcp_tool_validation_error)
+    // The wire's own bytes when this call arrived over HTTP; the routed
+    // `Value` only when it did not (ONE-1704 repair).
+    let arguments = raw_arguments.map_or_else(
+        || crate::mcp::McpToolArguments::from(params.arguments),
+        crate::mcp::McpToolArguments::from_raw_json,
+    );
+    crate::mcp::validate_mcp_endpoint_tool_args(tool, arguments).map_err(mcp_tool_validation_error)
 }
 
 /// The ONE stable typed refusal a direct `execute_code` call receives
@@ -1662,7 +1675,7 @@ async fn mcp_endpoint_result(
         }
     };
     let mut result = json!({
-        "content": [mcp_text_content(message.into())],
+        "content": mcp_negotiated_content(message.into(), &structured),
         "structuredContent": structured,
         "isError": false,
     });
@@ -1675,6 +1688,26 @@ async fn mcp_endpoint_result(
         );
     }
     result
+}
+
+/// The result data a client reads over the NEGOTIATED protocol.
+///
+/// [`MCP_PROTOCOL_VERSION`] is what this server negotiates, and its
+/// `CallToolResult` carries `content` alone — `structuredContent` is a later
+/// protocol addition. A result that put its data ONLY there handed a conforming
+/// client one sentence of prose and no data at all (ONE-1704 repair). The same
+/// typed structured payload is therefore ALSO stated as protocol text content,
+/// serialized canonically so the bytes are stable, while `structuredContent`
+/// stays exactly as it was for clients that read it.
+///
+/// The carrier frame is deliberately not folded in: it is stream data BESIDE
+/// the result, and mixing it into the tool's own content would be the carrier
+/// leak the envelope keeps out.
+fn mcp_negotiated_content(message: String, structured: &Value) -> Value {
+    json!([
+        mcp_text_content(message),
+        mcp_text_content(crate::mcp::mcp_canonical_json(structured)),
+    ])
 }
 
 fn mcp_board_frame_error(error: oneiron::context_board::BoardFrameError) -> McpGatewayError {
@@ -1702,8 +1735,14 @@ struct McpBoardState {
     scope_label: String,
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     epoch: u64,
-    /// TASKS rows the credential's scope ceiling removed.
+    /// TASKS rows the credential's REQUESTED SCOPE ceiling removed.
     scope_omitted: usize,
+    /// TASKS rows the engine's own render row cap truncated away. A page
+    /// WINDOW fact, kept apart from the scope fact above (ONE-1704 repair).
+    window_truncated: usize,
+    /// False when the producer's own TASK scan stopped at its cap, so the
+    /// truncation count above is a lower bound rather than a census.
+    source_exhausted: bool,
 }
 
 /// Reads the current board for one connector and fences it to a STATE epoch.
@@ -1717,7 +1756,7 @@ async fn mcp_current_board(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
 ) -> Result<McpBoardState, McpGatewayError> {
-    let (sections, scope_omitted) = mcp_board_sections(server, actor)?;
+    let (sections, omissions) = mcp_board_sections(server, actor)?;
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
     let state_hash =
         crate::mcp::mcp_board_state_hash(&scope_label, &mcp_board_state_rows(&sections));
@@ -1729,8 +1768,20 @@ async fn mcp_current_board(
         sections,
         scope_label,
         epoch,
-        scope_omitted,
+        scope_omitted: omissions.scope_omitted,
+        window_truncated: omissions.window_truncated,
+        source_exhausted: omissions.source_exhausted,
     })
+}
+
+/// What one rendered board did NOT show, on its two independent axes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct McpBoardOmissions {
+    /// Rows the REQUESTED ACTOR SCOPE removed.
+    pub(crate) scope_omitted: usize,
+    /// Rows the producer's own render window truncated away.
+    pub(crate) window_truncated: usize,
+    pub(crate) source_exhausted: bool,
 }
 
 /// Every board row, in section order: the exact material the snapshot epoch is
@@ -1754,20 +1805,29 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
-) -> Result<(Vec<oneiron::context_board::BoardSection>, usize), McpGatewayError> {
+) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
     let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
     let tasks = facade.tasks_check().map_err(mcp_facade_error)?;
     let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, tasks)?;
+    // The engine's own footer states the render WINDOW's truncation and
+    // whether its scan was exhausted. That is a different fact from the scope
+    // filtering above, and the two are carried separately from here on.
+    let omissions = McpBoardOmissions {
+        scope_omitted,
+        window_truncated: tasks
+            .overflow
+            .map_or(0, |overflow| overflow.known_omitted_rows),
+        source_exhausted: tasks
+            .overflow
+            .is_none_or(|overflow| overflow.source_exhausted),
+    };
     let agents = oneiron::context_board::render_agents_section(&[], &[]);
     let [tasks_section, agents_section] =
         oneiron::context_board::assemble_task_agent_sections(&tasks, &agents)
             .map_err(mcp_board_frame_error)?;
-    Ok((
-        vec![verb_section, tasks_section, agents_section],
-        scope_omitted,
-    ))
+    Ok((vec![verb_section, tasks_section, agents_section], omissions))
 }
 
 /// Narrows one TASKS section to the credential's registered world/facet.
@@ -1873,7 +1933,15 @@ struct McpPageDispatchState {
 /// A cursor on a one-row/non-continuable operation is refused at this door.
 /// For a continuable operation, successful consumption returns the exact
 /// producer snapshot retained with the handle. A mismatch returns before any
-/// facade, board dispatcher, stream operation, or vault write.
+/// facade, board dispatcher, stream operation, or vault write, and consumes
+/// nothing — this connection's other live continuations survive a refusal.
+///
+/// The fence is the IMMUTABLE snapshot RETAINED with the handle, never the
+/// latest board epoch (ONE-1704 repair). A continued page is served from that
+/// retained producer result, so a board mutation somewhere else between page
+/// one and page two cannot make page two wrong — and refusing it there simply
+/// destroyed a valid enumeration. Connector, tool, argument, and producer
+/// identity stay bound: the registry checks all four against the retained row.
 async fn mcp_preflight_page(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -1896,17 +1964,12 @@ async fn mcp_preflight_page(
     }
     let mut registry = server.mcp_registry.lock().await;
     // Read only: this lookup does not render a board or touch stream state.
-    // The page-one producer's exact snapshot epoch was retained in this same
-    // registry and is the only epoch accepted for its continuation.
-    let snapshot_epoch = registry
-        .board_snapshot(&actor.stream_connection)
-        .map_or(0, |snapshot| snapshot.epoch);
     let state = registry
         .consume_page_cursor_state(
             &actor.stream_connection,
             tool,
             argument_digest,
-            snapshot_epoch,
+            None,
             cursor,
         )
         .map_err(mcp_page_cursor_error)?;
@@ -1979,8 +2042,8 @@ pub(crate) async fn execute_mcp_setup(
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
     // Bind BEFORE any board/facade read. A presented cursor is consumed only
-    // after its connector/tool/arguments/epoch checks pass, and its retained
-    // producer result is then used directly below.
+    // after its connector/tool/arguments checks pass against the row retained
+    // with it, and its retained producer result is then used directly below.
     let argument_digest = crate::mcp::mcp_page_argument_digest(&args);
     let mut dispatch = mcp_preflight_page(
         server,
@@ -2460,7 +2523,11 @@ async fn execute_mcp_board_verb(
     actor: &McpCallContext,
 ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, u64), McpGatewayError> {
     let board = mcp_current_board(server, actor).await?;
-    let scope_omitted = board.scope_omitted;
+    let omissions = McpBoardOmissions {
+        scope_omitted: board.scope_omitted,
+        window_truncated: board.window_truncated,
+        source_exhausted: board.source_exhausted,
+    };
     let source = mcp_live_board(actor, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
     let call = mcp_board_verb_call(args)?;
@@ -2484,7 +2551,7 @@ async fn execute_mcp_board_verb(
     .map_err(mcp_board_verb_error)?;
 
     let value = mcp_board_verb_output_value(&output);
-    let page_source = mcp_board_verb_page_source(args.tool.binding, &value, scope_omitted);
+    let page_source = mcp_board_verb_page_source(args.tool.binding, &value, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the
     // central chokepoint supersedes and drains the queue behind it, so it is
     // never also attached as a carrier beside itself and nothing is stranded.
@@ -2496,11 +2563,17 @@ async fn execute_mcp_board_verb(
     Ok((value, page_source, carrier, board.epoch))
 }
 
-/// What this board verb actually produced, and what the scope ceiling hid.
-fn mcp_board_verb_page_source(
+/// What this board verb actually produced, what the REQUESTED SCOPE removed,
+/// and what the board's own render window truncated.
+///
+/// ONE-1704 repair: the two are reported on separate axes, and only the section
+/// the omissions are OF carries them. A `board.expand` of `VERBS` is not partial
+/// because a TASKS row was outside the credential's ceiling, and rows the render
+/// row cap dropped are a window fact rather than a scope one.
+pub(crate) fn mcp_board_verb_page_source(
     binding: crate::mcp::McpVerbBinding,
     output: &Value,
-    scope_omitted: usize,
+    omissions: McpBoardOmissions,
 ) -> crate::mcp::McpPageSource {
     match binding {
         crate::mcp::McpVerbBinding::BoardExpand => {
@@ -2508,15 +2581,31 @@ fn mcp_board_verb_page_source(
                 .get("lines")
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len);
-            crate::mcp::McpPageSource::truncated(produced, scope_omitted, true)
+            if output.get("key").and_then(Value::as_str) == Some(MCP_BOARD_TASKS_SECTION) {
+                crate::mcp::McpPageSource::scoped_window(
+                    produced,
+                    omissions.scope_omitted,
+                    omissions.window_truncated,
+                    omissions.source_exhausted,
+                )
+            } else {
+                crate::mcp::McpPageSource::complete(produced)
+            }
         }
-        crate::mcp::McpVerbBinding::BoardRefresh => {
-            crate::mcp::McpPageSource::truncated(1, scope_omitted, true)
-        }
+        // A refresh renders the WHOLE board, so both axes apply to it.
+        crate::mcp::McpVerbBinding::BoardRefresh => crate::mcp::McpPageSource::scoped_window(
+            1,
+            omissions.scope_omitted,
+            omissions.window_truncated,
+            omissions.source_exhausted,
+        ),
         // A subscription receipt is one row and states itself completely.
         _ => crate::mcp::McpPageSource::complete(1),
     }
 }
+
+/// The board section the TASKS producer's omissions belong to.
+pub(crate) const MCP_BOARD_TASKS_SECTION: &str = "TASKS";
 
 /// `tasks.*`: dispatched through the engine's gated TASKS facades, under the
 /// credential's own world/facet ceiling.
@@ -2541,11 +2630,12 @@ fn execute_mcp_tasks_verb(
             };
             // The producer's OWN honesty bits decide the end marker and the
             // health: a capped scan is degraded and non-terminal, never a
-            // hard-coded healthy/complete.
-            let omitted = section
+            // hard-coded healthy/complete. The render cap's omissions are a
+            // WINDOW fact and stay apart from the requested scope's filtering
+            // (ONE-1704 repair), so a caller can tell which one withheld rows.
+            let window_truncated = section
                 .overflow
-                .map_or(0, |overflow| overflow.known_omitted_rows)
-                .saturating_add(scope_omitted);
+                .map_or(0, |overflow| overflow.known_omitted_rows);
             let exhausted = section
                 .overflow
                 .is_none_or(|overflow| overflow.source_exhausted);
@@ -2561,7 +2651,12 @@ fn execute_mcp_tasks_verb(
                     })
                 })
                 .collect::<Vec<_>>();
-            let source = crate::mcp::McpPageSource::truncated(rows.len(), omitted, exhausted);
+            let source = crate::mcp::McpPageSource::scoped_window(
+                rows.len(),
+                scope_omitted,
+                window_truncated,
+                exhausted,
+            );
             Ok((
                 json!({
                     "kind": "tasks_section",
@@ -2572,6 +2667,10 @@ fn execute_mcp_tasks_verb(
                 source,
             ))
         }
+        // A direct expand by id is a READ producer with an enumerable row set,
+        // so its whole result is retained and paged like any other continuable
+        // read (ONE-1704 repair). It inherits no board scan cap, so it states
+        // its own set complete.
         crate::mcp::McpVerbBinding::TasksExpand => {
             let lines = facade
                 .tasks_expand(mcp_task_ref(arguments)?)
@@ -2659,9 +2758,15 @@ pub(crate) async fn execute_mcp_generated_verb(
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
     let argument_digest = crate::mcp::mcp_page_argument_digest(&args.payload);
+    // Every continuable READ producer, and only those: a mutating or one-row
+    // verb refuses a cursor at the pre-dispatch door below. `tasks.expand` is a
+    // read whose rows are an enumerable set, so it continues under the same
+    // retained-snapshot protocol as the board/task pages (ONE-1704 repair).
     let continuable = matches!(
         args.tool.binding,
-        crate::mcp::McpVerbBinding::BoardExpand | crate::mcp::McpVerbBinding::TasksCheck
+        crate::mcp::McpVerbBinding::BoardExpand
+            | crate::mcp::McpVerbBinding::TasksCheck
+            | crate::mcp::McpVerbBinding::TasksExpand
     );
     // This is deliberately before the board/tasks producer. A cursor presented
     // to a mutating or one-row verb is refused here, so it cannot hide a write
@@ -2702,12 +2807,11 @@ pub(crate) async fn execute_mcp_generated_verb(
                     // Establish the board epoch before reading a continuable
                     // task set. The result itself is retained below, so a
                     // later continuation never re-reads mutable task rows.
-                    let producer_epoch =
-                        if matches!(args.tool.binding, crate::mcp::McpVerbBinding::TasksCheck) {
-                            Some(mcp_current_board(server, actor).await?.epoch)
-                        } else {
-                            None
-                        };
+                    let producer_epoch = if continuable {
+                        Some(mcp_current_board(server, actor).await?.epoch)
+                    } else {
+                        None
+                    };
                     let (output, source) = execute_mcp_tasks_verb(server, &args, actor)?;
                     (output, source, McpCarrierPolicy::Drain, producer_epoch)
                 }
