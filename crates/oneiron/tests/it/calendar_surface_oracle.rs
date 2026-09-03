@@ -13,9 +13,13 @@
 //!    representative `source` ref cannot cross it, while the internal
 //!    `BusyInterval` keeps `source` for engine consumers like BK-00.
 //! 3. **Invites route through the gate.** The typed invite surface reaches a
-//!    connector only via `schedule_outbound`, so before CAL-04 registers the
-//!    capability it returns the ordinary unsupported-capability error and
-//!    schedules nothing.
+//!    connector only via `schedule_outbound`. CAL-04 (ONE-1786) registered the
+//!    `calendar`/`calendar.invite` capability, so that route now completes:
+//!    exactly one gate-decided connector-send TASK carrying CAL-04's frozen
+//!    five-field body. The property this file pins did not change with that
+//!    landing — the route did not become a side door, it just stopped ending in
+//!    an unsupported-capability error — and the hygiene wall still refuses a
+//!    cold invite at the same door.
 //!
 //! ## The surface is live on a default vault
 //!
@@ -35,11 +39,11 @@
 use crate::common::entity as test_id;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest,
-    CalendarSearchRequest, CalendarSel, ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus,
-    ClaimSource, ClaimSubject, EdgeActorClass, EntityId, MEMORY_CODE_BAD_REQUEST, Memory,
-    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
-    calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
+    CalendarInviteMethod, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
+    CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
+    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+    MEMORY_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
     memory::CALENDAR_INVITE_OUTBOUND_VERB, memory::CalendarFreebusyIntervalDto,
 };
 use rmpv::Value;
@@ -414,54 +418,236 @@ fn calendar_invite_draft_is_cal_04s_verb_and_typed_five_field_payload() {
     assert_eq!(payload["sequence"], serde_json::json!(3));
 }
 
+/// CAL-04's arrival contract, as this file promised it.
+///
+/// Before ONE-1786 this test pinned the UNREGISTERED failure: the invite
+/// reached `schedule_outbound`'s capability preflight and stopped there. CAL-04
+/// registered `calendar.invite` and the `calendar` connector manifest, so the
+/// same call now travels the whole ordinary rail. What is pinned here is that
+/// it is still the ORDINARY rail — one connector-send TASK, gate-decided,
+/// carrying CAL-04's frozen five-field body — and never a direct connector
+/// call. The `schedule_outbound` route is unchanged; only the door at the end
+/// of it opened.
 #[test]
 fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
     let (_dir, vault) = temp_vault();
-    let (_actor, facade) = actor_facade(&vault);
+    let (actor, facade) = actor_facade(&vault);
 
-    let error = facade
+    // The pair the preflight used to refuse now resolves in the manifest, and
+    // the verb is in the common vocabulary exactly once. Spelled literally on
+    // purpose: asserting against the constant alone would pass for whatever the
+    // constant happens to say.
+    let contract = oneiron::outbound_verb_contract("calendar", "calendar.invite")
+        .expect("CAL-04 registers the calendar/calendar.invite pair");
+    assert_eq!(contract.kind, "calendar.invite");
+    assert_eq!(
+        oneiron::COMMON_OUTBOUND_VERB_KINDS
+            .iter()
+            .filter(|verb| **verb == "calendar.invite")
+            .count(),
+        1,
+        "calendar.invite is registered exactly once, by CAL-04"
+    );
+
+    seed_invite_preconditions(&vault, actor);
+    let blob_ref = store_invite_blob(&vault, actor);
+
+    let receipt = facade
         .calendar_invite(&CalendarInviteSurfaceInput {
             method: CalendarInviteSurfaceMethod::Request,
-            uid: "uid-one-1791".to_owned(),
+            uid: INVITE_UID.to_owned(),
             sequence: 0,
-            ics_blob_ref: "blob:one-1791".to_owned(),
-            recipient: "guest@example.test".to_owned(),
+            ics_blob_ref: blob_ref.clone(),
+            recipient: INVITE_RECIPIENT.to_owned(),
         })
-        .expect_err("calendar.invite is unregistered until CAL-04");
+        .expect("a registered invite schedules through the ordinary gate");
 
-    // This message is produced only by `schedule_outbound`'s capability
-    // preflight, so reaching it proves the invite took the ordinary outbound
-    // path rather than a direct connector call.
-    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(
-        error.message.contains("unsupported outbound capability"),
-        "invite must fail at the outbound capability preflight; got {error}"
-    );
-    // The preflight echoes the verb it could not resolve, so this also proves
-    // CAL-04's pinned verb — not a local shorthand — is what reaches the door.
-    // Spelled literally on purpose: asserting against the constant would pass
-    // for whatever the constant happens to say.
-    assert!(
-        error.message.contains("\"calendar.invite\""),
-        "the pinned calendar.invite verb must reach the outbound door; got {error}"
+    // The schedule-only Hold window is what admits the durable TASK, exactly as
+    // it does for every other verb: the bridge never delivers.
+    assert_eq!(receipt.outcome, "held");
+    assert_eq!(receipt.gate_outcome.as_deref(), Some("allow"));
+    assert!(receipt.gate_decision_ref.is_some(), "the gate ruled on it");
+    assert!(!receipt.deduped);
+
+    // ONE connector-send TASK, on the calendar connector, carrying the frozen
+    // five-field body — not a second queue and not a bespoke payload.
+    let tasks = vault.connector_send_tasks().expect("connector tasks");
+    assert_eq!(tasks.len(), 1);
+    let task = &tasks[0];
+    assert_eq!(task.intent.verb, CALENDAR_INVITE_OUTBOUND_VERB);
+    assert_eq!(task.intent.channel, CALENDAR_INVITE_OUTBOUND_CHANNEL);
+    assert_eq!(task.intent.target, INVITE_RECIPIENT);
+    let payload = task
+        .calendar_invite
+        .as_ref()
+        .expect("CAL-04's typed payload rides the TASK");
+    assert_eq!(payload.method, CalendarInviteMethod::Request);
+    assert_eq!(payload.uid, INVITE_UID);
+    assert_eq!(payload.sequence, 0);
+    assert_eq!(payload.ics_blob_ref, blob_ref);
+    assert_eq!(payload.recipient, INVITE_RECIPIENT);
+
+    // Scheduling the same revision again coalesces on the idempotency key
+    // rather than minting a second invite or bumping a sequence.
+    let again = facade
+        .calendar_invite(&CalendarInviteSurfaceInput {
+            method: CalendarInviteSurfaceMethod::Request,
+            uid: INVITE_UID.to_owned(),
+            sequence: 0,
+            ics_blob_ref: blob_ref.clone(),
+            recipient: INVITE_RECIPIENT.to_owned(),
+        })
+        .expect("a re-schedule of the same revision coalesces");
+    assert!(again.deduped);
+    assert_eq!(again.outcome, "already_scheduled");
+    assert_eq!(
+        vault.connector_send_tasks().expect("tasks").len(),
+        1,
+        "a coalesced re-schedule mints no second TASK"
     );
 
-    // Nothing was scheduled: no receipt exists for this actor.
-    assert!(
-        facade.receipts(32).expect("receipts").is_empty(),
-        "an unregistered invite schedules nothing"
-    );
-
-    // Blank required fields fail before any scheduling work.
+    // Blank required fields still fail before any scheduling work.
     let blank = facade
         .calendar_invite(&CalendarInviteSurfaceInput {
             method: CalendarInviteSurfaceMethod::Cancel,
             uid: String::new(),
             sequence: 1,
-            ics_blob_ref: "blob:one-1791".to_owned(),
-            recipient: "guest@example.test".to_owned(),
+            ics_blob_ref: blob_ref,
+            recipient: INVITE_RECIPIENT.to_owned(),
         })
         .expect_err("a blank uid is a typed rejection");
     assert_eq!(blank.code, MEMORY_CODE_BAD_REQUEST);
     assert!(blank.message.contains("uid"));
+}
+
+/// A cold invite is still refused at the same door, with a typed error — the
+/// registration opened the capability, not the hygiene wall.
+#[test]
+fn oneiron_calendar_invite_still_refuses_a_cold_invite() {
+    let (_dir, vault) = temp_vault();
+    let (actor, facade) = actor_facade(&vault);
+    // Everything a lawful invite needs EXCEPT a consent basis.
+    let event_ref = store_calendar_event(
+        &vault,
+        actor,
+        BUSY_SEED,
+        "Confirmed booking",
+        TimeRange {
+            start: 100,
+            end: 200,
+        },
+        "busy",
+        ClaimApprovalStatus::Approved,
+    );
+    oneiron::calendar::index_passport_uid(&vault, INVITE_UID, &event_ref)
+        .expect("index invite uid");
+    store_sending_identity(&vault, actor);
+    let blob_ref = store_invite_blob(&vault, actor);
+
+    let error = facade
+        .calendar_invite(&CalendarInviteSurfaceInput {
+            method: CalendarInviteSurfaceMethod::Request,
+            uid: INVITE_UID.to_owned(),
+            sequence: 0,
+            ics_blob_ref: blob_ref,
+            recipient: INVITE_RECIPIENT.to_owned(),
+        })
+        .expect_err("cold outreach never attaches an .ics");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
+    assert!(
+        error.message.contains("cold invite"),
+        "the refusal must name the hygiene row; got {error}"
+    );
+    assert!(
+        vault.connector_send_tasks().expect("tasks").is_empty(),
+        "a refused invite schedules nothing"
+    );
+}
+
+const INVITE_UID: &str = "one-1786@oneiron.test";
+const INVITE_RECIPIENT: &str = "guest@example.test";
+const INVITE_ARTIFACT_SEED: u8 = 0x8A;
+const IDENTITY_SEED: u8 = 0x8B;
+const GRANT_SEED: u8 = 0x8C;
+
+/// The vault evidence a lawful REQUEST stands on: an EVENT whose UID is
+/// indexed, an active dedicated sending identity, and a prior thread.
+fn seed_invite_preconditions(vault: &Vault, actor: EntityId) {
+    let event_ref = store_calendar_event(
+        vault,
+        actor,
+        BUSY_SEED,
+        "Confirmed booking",
+        TimeRange {
+            start: 100,
+            end: 200,
+        },
+        "busy",
+        ClaimApprovalStatus::Approved,
+    );
+    oneiron::calendar::index_passport_uid(vault, INVITE_UID, &event_ref).expect("index invite uid");
+    store_sending_identity(vault, actor);
+
+    // R7: publishing the booking page IS the consent. BK-03 (ONE-1814) owns
+    // minting this grant; CAL-04 only ever verifies it, so the oracle drives
+    // the existing mint door here to prove the verification leg works.
+    vault
+        .mint_standing_outbound_grant(
+            &test_id(GRANT_SEED),
+            &oneiron::genui::GrantMintIntent {
+                principal_ref: actor.to_hex(),
+                origin_component_id: "one_1786_oracle".to_owned(),
+                origin_action_id: "confirm_booking".to_owned(),
+                origin_receipt_ref: None,
+                scope: oneiron::genui::GrantMintIntentScope::Contact {
+                    contact_ref: INVITE_RECIPIENT.to_owned(),
+                },
+            },
+            100,
+        )
+        .expect("mint the booking-page standing grant");
+}
+
+fn store_sending_identity(vault: &Vault, actor: EntityId) {
+    let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
+        "email",
+        "me@primary.test",
+        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
+        100,
+    );
+    identity.state = oneiron::channel_identity::ChannelIdentityState::Active;
+    vault
+        .create_channel_identity(&test_id(IDENTITY_SEED), &identity)
+        .expect("create sending identity");
+}
+
+/// Renders and stores the invitation the frozen payload will reference. The
+/// bytes live in the blob store; only the ref ever travels.
+fn store_invite_blob(vault: &Vault, actor: EntityId) -> String {
+    let ics = oneiron::emit_imip_ics(&oneiron::ImipEmitRequest {
+        method: CalendarInviteMethod::Request,
+        uid: INVITE_UID.to_owned(),
+        sequence: 0,
+        organizer: "me@primary.test".to_owned(),
+        attendees: vec![INVITE_RECIPIENT.to_owned()],
+        summary: "Confirmed booking".to_owned(),
+        starts_at_utc: 1_800_003_600,
+        ends_at_utc: 1_800_007_200,
+        tz_label: "Europe/Warsaw".to_owned(),
+        dtstamp_utc: 1_800_000_000,
+    })
+    .expect("emit invitation");
+    oneiron::persist_imip_blob(
+        vault,
+        &test_id(INVITE_ARTIFACT_SEED),
+        "one-1786 invitation",
+        &ics,
+        &oneiron::blob_artifact::BlobVersionProvenance::AgentRun {
+            run_ref: "one-1786-oracle".to_owned(),
+        },
+        oneiron::WriteActor::new(actor, EdgeActorClass::Human),
+        100,
+    )
+    .expect("persist invitation blob")
 }

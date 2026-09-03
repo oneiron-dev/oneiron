@@ -4,6 +4,7 @@ use super::capability::normalize_key;
 use super::intent::OutboundIntent;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::calendar::invite::CalendarInvitePayload;
 use crate::delivery_window::{DeliveryWindowApnsInterruptionLevel, DeliveryWindowResolvedLevel};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -70,6 +71,14 @@ pub(super) struct ConnectorSendTaskBody {
     /// class stands; the executor never guesses ambient.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) resolved_level: Option<DeliveryWindowResolvedLevel>,
+    /// CAL-04's frozen five-field iMIP body for a `calendar.invite` schedule.
+    ///
+    /// Additive and elided when absent, so every pre-change TASK body hydrates
+    /// unchanged. It exists because the schedule chokepoint — not the executor
+    /// — is where the UID/SEQUENCE transition was checked and committed; the
+    /// executor replays this frozen body rather than recomputing any of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) calendar_invite: Option<CalendarInvitePayload>,
     pub(super) occurred_at: u64,
 }
 
@@ -120,6 +129,10 @@ pub struct ConnectorSendTask {
     /// Host-resolved level for a compatibility verb; see
     /// [`DeliveryWindowResolvedLevel`].
     pub resolved_level: Option<DeliveryWindowResolvedLevel>,
+    /// CAL-04's frozen five-field iMIP body, when this TASK is a calendar
+    /// invite. The executor re-freezes exactly these bytes; it never mints a
+    /// UID or bumps a SEQUENCE.
+    pub calendar_invite: Option<CalendarInvitePayload>,
     pub occurred_at: u64,
 }
 
@@ -158,6 +171,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
     schedule_context: &crate::memory::OutboundScheduleContext,
+    calendar_invite: Option<&CalendarInvitePayload>,
     occurred_at: u64,
 ) -> Result<(), Error> {
     let connector_class = normalize_key(&intent.channel);
@@ -186,6 +200,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         human_explicit_instant: schedule_context.human_explicit_instant,
         apns_interruption_level: schedule_context.apns_interruption_level,
         resolved_level: schedule_context.resolved_level,
+        calendar_invite: calendar_invite.cloned(),
         occurred_at,
     };
     let task_body = rmp_serde::to_vec_named(&task_body)
@@ -324,6 +339,7 @@ impl Vault {
             human_explicit_instant: body.human_explicit_instant,
             apns_interruption_level: body.apns_interruption_level,
             resolved_level: body.resolved_level,
+            calendar_invite: body.calendar_invite,
             occurred_at: body.occurred_at,
         }))
     }

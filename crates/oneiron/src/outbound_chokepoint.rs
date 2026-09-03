@@ -170,6 +170,27 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         crate::provenance::validate_actor_class(entity_type, actor_class)?;
     }
 
+    // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
+    // frozen bytes must carry a payload this lane can vouch for: C7's exact
+    // five-field iMIP body. A call that claims the verb without one is a
+    // hand-rolled draft reaching for the calendar connector past the invite
+    // contract, so the last durable boundary refuses it instead of admitting a
+    // send with no method, no UID, and no SEQUENCE.
+    //
+    // Recognition ONLY. The UID/SEQUENCE transition and the vault-only hygiene
+    // evaluation already ran at the schedule chokepoint, atomically with the
+    // attempt and TASK that produced this call; re-running either here would be
+    // the second state transition per logical mutation the contract forbids,
+    // and a connector retry replays this record without re-entering the branch
+    // at all.
+    if prepared.tool == crate::calendar::CALENDAR_INVITE_VERB
+        && crate::calendar::decode_frozen_calendar_invite(&prepared.payload).is_err()
+    {
+        return Err(IntentLedgerError::InvalidInput(
+            "calendar.invite requires its exact five-field frozen payload",
+        ));
+    }
+
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let required_grant_id = match &prepared.authorization {
         PreparedAuthorization::None => None,
