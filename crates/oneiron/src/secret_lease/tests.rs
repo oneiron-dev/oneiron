@@ -615,6 +615,85 @@ fn a_bounded_materialization_is_clamped_by_the_clock_that_stamps_it() {
 }
 
 #[test]
+fn the_typed_instant_path_stamps_from_the_vault_clock_and_honours_its_bound() {
+    // The witnessed-instant half of the bounded materialization, exercised
+    // through the module-private raw entry. Both entries — this one and the
+    // credential door's `materialize_admitted_lease` — funnel through the ONE
+    // stamping body, so what is asserted here is that body's contract: the
+    // instant handed in dates `granted_at`, dates the receipt, and answers the
+    // bound. `VaultInstant` has no `From<u64>` and no public constructor, so an
+    // instant arriving here can only have come from `Vault::instant_in_txn`.
+    //
+    // The door no longer reaches this entry at all (it is private to this
+    // module now): it carries its whole admission into
+    // `Vault::materialize_admitted_lease`, which re-checks the door dial under
+    // the stamping transaction before calling the same body. The door-side
+    // regressions for that live in `credential_door::tests`.
+    let (_tmp, vault) = temp_vault();
+    register(
+        &vault,
+        default_record(
+            "typed",
+            CustodyClass::CustodyPortable,
+            CustodyTier::T1Leased,
+        ),
+    );
+
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let now = vault
+        .instant_in_txn(&rtxn)
+        .expect("the vault's own instant");
+    // The read is pure: it takes the persisted floor and returns, so it is
+    // safe inside a caller's transaction and writes no clock row of its own.
+    let again = vault.instant_in_txn(&rtxn).expect("and is repeatable");
+    drop(rtxn);
+    assert!(again >= now, "the observation clock ran backwards");
+
+    let bound = now.after(60);
+    let materialization = vault
+        .materialize_secret_lease_at("typed", EFFECTOR, 3600, now, Some(bound))
+        .expect("a live bound admits");
+    let lease = materialization.lease;
+    // ONE reading: the stamp IS the instant that was handed in, and the same
+    // reading answered the bound, so no delay between authorization and
+    // persistence can widen the ticket.
+    assert_eq!(lease.granted_at, now.secs());
+    assert_eq!(lease.expires_at, bound.secs());
+    assert!(lease.expires_at < lease.granted_at + 3600);
+    // Receipt before value: the row the returned lease points at is already
+    // durable, and the clamped instant is what landed rather than what
+    // returned.
+    let stored = read_lease_row(&vault, &lease.lease_id).expect("lease row present");
+    assert_eq!(stored, lease);
+    assert!(!read_receipt_row(&vault, &lease.materialization_receipt).is_empty());
+
+    // A bound that has already elapsed against that SAME reading mints
+    // nothing: no lease row, no receipt row, no value.
+    let leases_before = count_rows(&vault, SECRET_LEASE_KEY_PREFIX);
+    let receipts_before = count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX);
+    let err = vault
+        .materialize_secret_lease_at("typed", EFFECTOR, 3600, now, Some(now))
+        .expect_err("an elapsed bound cannot be honoured");
+    assert!(matches!(err, Error::InvariantViolation(_)), "got {err:?}");
+    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), leases_before);
+    assert_eq!(
+        count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX),
+        receipts_before
+    );
+
+    // And an unbounded typed materialization is the plain `granted_at + ttl`
+    // every existing non-door caller still gets.
+    let unbounded = vault
+        .materialize_secret_lease_at("typed", EFFECTOR, 3600, now, None)
+        .expect("unbounded");
+    assert_eq!(
+        unbounded.lease.expires_at,
+        unbounded.lease.granted_at + 3600
+    );
+    assert_eq!(unbounded.lease.granted_at, now.secs());
+}
+
+#[test]
 fn receipt_write_failure_leaves_no_lease_row_and_no_value() {
     let (_tmp, vault) = temp_vault();
     register(
