@@ -37,6 +37,7 @@ use oneiron::{
 };
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
+use oneiron_server::mcp::{McpSurfaceMode, registered_surface};
 use oneiron_server::server::SyncServer;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1377,14 +1378,71 @@ fn booking_handlers_use_sync_server_state() {
     );
 }
 
+/// Asserts that discovery's MCP vocabulary IS the two REGISTERED endpoints'
+/// tool sets, nothing more and nothing less (ONE-1704).
+///
+/// Derived from `registered_surface` — the same immutable registrations
+/// `tools/list` projects and `tools/call` resolves against — so every asserted
+/// token names a tool the endpoint it names actually accepts, and the check
+/// cannot drift into a second hand-kept catalog.
+///
+/// The retired plain-verb catalog, `oneiron.book` and its four operations
+/// included, is registered on NEITHER endpoint: both answer `unknown_tool` for
+/// it, so discovery must advertise none of it. Booking's callable contract is
+/// the HTTP surface and the `booking.agent_api.*` capabilities asserted beside
+/// this call, which are unchanged.
+fn assert_registered_mcp_capabilities(capabilities: &BTreeSet<&str>) {
+    let mut registered = BTreeSet::new();
+    for mode in McpSurfaceMode::ALL {
+        let surface = registered_surface(mode);
+        assert!(
+            !surface.tool_names().is_empty(),
+            "the {} endpoint registers at least one tool",
+            mode.as_str()
+        );
+        for name in surface.tool_names() {
+            assert!(
+                surface.resolve(name).is_some(),
+                "{name} is advertised only because the {} endpoint accepts it",
+                mode.as_str()
+            );
+            assert!(
+                capabilities.contains(&format!("mcp.tool.{name}")[..]),
+                "discovery advertises the registered tool {name}"
+            );
+            registered.insert(format!("mcp.endpoint.{}.{name}", mode.as_str()));
+        }
+    }
+    for token in &registered {
+        assert!(
+            capabilities.contains(&token[..]),
+            "discovery advertises {token}"
+        );
+    }
+    assert_eq!(
+        capabilities
+            .iter()
+            .filter(|token| token.starts_with("mcp.endpoint."))
+            .count(),
+        registered.len(),
+        "the advertised endpoint vocabulary is exactly the registrations"
+    );
+    assert!(
+        !capabilities
+            .iter()
+            .any(|token| token.starts_with("mcp.tool.oneiron.")),
+        "the retired plain-verb catalog is advertised nowhere: {capabilities:?}"
+    );
+}
+
 #[tokio::test]
 async fn booking_discover_openapi_skills_are_consistent() {
     let (_dir, vault, page) = seeded_vault(None);
     let (addr, handle) = spawn(vault).await;
     let token = page_token(page);
 
-    // Discovery advertises the tool, its four ops, and the instructions
-    // version.
+    // Discovery advertises the registered MCP endpoints, booking's four HTTP
+    // operations, and the instructions version.
     let discover = json_of(&http_get(addr, "/api/core/discover", None).await);
     let capabilities: BTreeSet<&str> = discover["feature_flags"]["capabilities"]
         .as_array()
@@ -1392,15 +1450,11 @@ async fn booking_discover_openapi_skills_are_consistent() {
         .iter()
         .map(|value| value.as_str().unwrap())
         .collect();
-    assert!(capabilities.contains("mcp.tool.oneiron.book"));
+    assert_registered_mcp_capabilities(&capabilities);
     assert!(capabilities.contains(
         &format!("booking.agent_instructions.v{BOOKING_AGENT_INSTRUCTIONS_VERSION}")[..]
     ));
     for op in ["availability", "book", "reschedule", "cancel"] {
-        assert!(
-            capabilities.contains(&format!("mcp.tool.oneiron.book.{op}")[..]),
-            "discovery advertises mcp.tool.oneiron.book.{op}"
-        );
         assert!(
             capabilities.contains(&format!("booking.agent_api.{op}")[..]),
             "discovery advertises booking.agent_api.{op}"

@@ -3679,3 +3679,273 @@ fn page_argument_digest_excludes_page_and_sorts_nested_objects() {
         "a producer-query value remains bound",
     );
 }
+
+/// ONE-1704 repair: retained continuation state is BOUNDED per connection.
+///
+/// A retained handle keeps a whole immutable producer result alive, so a
+/// connector that mints page-one handles under distinct argument digests and
+/// never presents them would grow that retention without limit. The registry
+/// that already owns the handles owns the bound: at most
+/// [`MCP_MAX_LIVE_PAGE_CONTINUATIONS`] per connection, evicting that
+/// connection's own OLDEST-minted handle first, with no side map, no clock, and
+/// no expiry thread.
+#[test]
+fn retained_continuations_are_bounded_per_connection() {
+    let actor = id(0xF401);
+    let mut registry = registry();
+    for credential in ["bound-key", "bound-other-key"] {
+        registry
+            .register(
+                credential,
+                McpConnectorActorRecord::new(
+                    actor,
+                    EdgeActorClass::Agent,
+                    McpConnectorScope::vault_wide(),
+                ),
+            )
+            .expect("registration succeeds");
+    }
+    let connection = registry
+        .resolve(
+            "bound-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+    let other = registry
+        .resolve(
+            "bound-other-key",
+            10,
+            actor_ceiling_for(EdgeActorClass::Agent, actor),
+        )
+        .expect("connector resolves")
+        .stream_connection;
+
+    // A neighbouring connector's live handle, minted before the flood.
+    let other_digest = mcp_page_argument_digest(&json!({ "query": "other" }));
+    let other_cursor = registry.mint_page_cursor_with_snapshot(
+        &other,
+        MCP_SETUP_TOOL,
+        other_digest,
+        1,
+        1,
+        Some(page_snapshot("other")),
+    );
+
+    // One more page-one handle than the bound allows, each under its own
+    // argument digest and none of them ever consumed.
+    let digest_for = |index: usize| mcp_page_argument_digest(&json!({ "query": index }));
+    let minted = (0..=MCP_MAX_LIVE_PAGE_CONTINUATIONS)
+        .map(|index| {
+            registry.mint_page_cursor_with_snapshot(
+                &connection,
+                MCP_SETUP_TOOL,
+                digest_for(index),
+                1,
+                1,
+                Some(page_snapshot("row")),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        minted.len(),
+        MCP_MAX_LIVE_PAGE_CONTINUATIONS + 1,
+        "every mint published its own distinct handle",
+    );
+    assert_eq!(
+        registry.live_page_continuations(&connection),
+        MCP_MAX_LIVE_PAGE_CONTINUATIONS,
+        "a connector that never consumes cannot grow retained state past the bound",
+    );
+
+    // The eviction choice is this connection's OLDEST handle, and it stays
+    // fail-closed at the door: presenting it is the same refusal an unknown
+    // handle receives, never a silent restart at page one.
+    assert!(!registry.page_continuation_live_cursor(&connection, &minted[0]));
+    assert_eq!(
+        registry.consume_page_cursor_state(
+            &connection,
+            MCP_SETUP_TOOL,
+            digest_for(0),
+            None,
+            &minted[0],
+        ),
+        Err(McpPageCursorError::Unknown),
+        "an evicted handle is refused, never restarted",
+    );
+    for (index, cursor) in minted.iter().enumerate().skip(1) {
+        assert!(
+            registry.page_continuation_live_cursor(&connection, cursor),
+            "handle {index} is younger than the evicted one and survives",
+        );
+    }
+
+    // The bound is PER CONNECTION: one connector's mint pattern evicts nothing
+    // of another's.
+    assert_eq!(
+        registry.live_page_continuations(&other),
+        1,
+        "a neighbouring connector keeps its own handle",
+    );
+    assert!(registry.page_continuation_live_cursor(&other, &other_cursor));
+
+    // Re-minting the SAME handle replaces its row rather than retaining a
+    // second one, so it evicts nothing.
+    let newest = MCP_MAX_LIVE_PAGE_CONTINUATIONS;
+    let repeat = registry.mint_page_cursor_with_snapshot(
+        &connection,
+        MCP_SETUP_TOOL,
+        digest_for(newest),
+        1,
+        1,
+        Some(page_snapshot("row")),
+    );
+    assert_eq!(repeat, minted[newest]);
+    assert_eq!(
+        registry.live_page_continuations(&connection),
+        MCP_MAX_LIVE_PAGE_CONTINUATIONS,
+    );
+    assert!(
+        registry.page_continuation_live_cursor(&connection, &minted[1]),
+        "a re-mint of an existing handle is not a second retention",
+    );
+
+    // A survivor keeps every binding axis and its one-time consumption.
+    assert_eq!(
+        registry.consume_page_cursor_state(
+            &connection,
+            "tasks.check",
+            digest_for(1),
+            None,
+            &minted[1],
+        ),
+        Err(McpPageCursorError::ToolMismatch),
+    );
+    assert_eq!(
+        registry.consume_page_cursor_state(
+            &connection,
+            MCP_SETUP_TOOL,
+            digest_for(2),
+            None,
+            &minted[1],
+        ),
+        Err(McpPageCursorError::ArgumentsMismatch),
+    );
+    let state = registry
+        .consume_page_cursor_state(&connection, MCP_SETUP_TOOL, digest_for(1), None, &minted[1])
+        .expect("a surviving handle continues its own producer");
+    assert_eq!(state.position, 1);
+    assert_eq!(state.snapshot, Some(page_snapshot("row")));
+    assert_eq!(
+        registry.consume_page_cursor_state(
+            &connection,
+            MCP_SETUP_TOOL,
+            digest_for(1),
+            None,
+            &minted[1],
+        ),
+        Err(McpPageCursorError::Unknown),
+        "the bound does not weaken one-time consumption",
+    );
+
+    // Teardown still takes the WHOLE set with the authority that minted it.
+    assert!(registry.unregister("bound-key"));
+    assert_eq!(
+        registry.live_page_continuations(&connection),
+        0,
+        "teardown drops every retained continuation, bounded or not",
+    );
+    assert_eq!(
+        registry.live_page_continuations(&other),
+        1,
+        "and takes none of another connector's",
+    );
+}
+
+/// ONE-1704 repair: `tasks.create` refuses a label the engine's board row
+/// ceiling could not render, at the WRITER, before anything is persisted.
+///
+/// The generated schema and the runtime admission previously accepted any
+/// nonblank label, so a label just over `MAX_BOARD_ROW_BYTES` could be stored
+/// and then make the rendered intent row — and with it the whole TASKS section
+/// — unrenderable for every later reader of that board.
+#[test]
+fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
+    // One limit system: the bound IS the engine's row ceiling less the fixed
+    // tokens the rendered row adds beside the label.
+    assert_eq!(
+        MCP_TASK_LABEL_MAX_BYTES + MCP_TASK_ROW_FIXED_TOKEN_BYTES,
+        oneiron::context_board::MAX_BOARD_ROW_BYTES,
+        "the label ceiling is derived from the row ceiling, not invented beside it",
+    );
+
+    let create = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("tasks.create")
+        .expect("tasks.create is registered");
+    let args_with_label = |label: &str| {
+        let mut args = endpoint_envelope("write_tasks");
+        args["arguments"] = json!({ "spec": { "kind": "review" }, "label": label });
+        args
+    };
+    let decode = |label: &str| {
+        validate_mcp_endpoint_tool_args(create, McpToolArguments::from(args_with_label(label)))
+    };
+
+    // The advertised closed schema states the same ceiling, so a caller learns
+    // it from `tools/list` rather than from a refusal.
+    let schema = create.schema().input_schema;
+    assert_eq!(
+        schema["properties"]["arguments"]["properties"]["label"]["maxLength"],
+        Value::from(MCP_TASK_LABEL_MAX_BYTES),
+    );
+
+    // Exactly at the boundary: admitted, and carried through unchanged.
+    let boundary = "x".repeat(MCP_TASK_LABEL_MAX_BYTES);
+    let McpValidatedToolArgs::Verb(verb) =
+        decode(&boundary).expect("a label exactly at the ceiling is admitted")
+    else {
+        panic!("tasks.create decodes to a verb payload");
+    };
+    assert_eq!(
+        verb.payload.arguments.label.as_deref(),
+        Some(boundary.as_str()),
+        "the boundary label reaches the writer unchanged",
+    );
+
+    // One byte over: the established typed argument error, on the label's own
+    // field, before any facade is reached.
+    let over = "x".repeat(MCP_TASK_LABEL_MAX_BYTES + 1);
+    let error = decode(&over).expect_err("a label one byte over the ceiling is refused");
+    assert!(
+        matches!(
+            &error,
+            McpToolValidationError::Field { tool, field, .. }
+                if *tool == "tasks.create" && *field == "arguments.label"
+        ),
+        "the refusal names the label field: {error}",
+    );
+
+    // The bound is on BYTES because the row ceiling is: a multi-byte label
+    // inside the advertised code-point ceiling is still refused here.
+    let multibyte = "é".repeat(MCP_TASK_LABEL_MAX_BYTES / 2 + 1);
+    assert!(
+        multibyte.chars().count() <= MCP_TASK_LABEL_MAX_BYTES,
+        "the multi-byte case is inside the advertised code-point ceiling",
+    );
+    assert!(multibyte.len() > MCP_TASK_LABEL_MAX_BYTES);
+    decode(&multibyte).expect_err("a multi-byte label over the byte ceiling is refused");
+
+    // Every ordinary label an actual caller writes is untouched, and a blank
+    // one keeps its settled refusal.
+    let McpValidatedToolArgs::Verb(verb) =
+        decode("review the draft").expect("an ordinary label is admitted")
+    else {
+        panic!("tasks.create decodes to a verb payload");
+    };
+    assert_eq!(
+        verb.payload.arguments.label.as_deref(),
+        Some("review the draft")
+    );
+    decode("   ").expect_err("a blank label keeps its settled refusal");
+}

@@ -1745,6 +1745,21 @@ struct McpBoardState {
     source_exhausted: bool,
 }
 
+impl McpBoardState {
+    /// The COMPLETE omission facts this rendered board carries, on both axes
+    /// and with the producer's own exhaustion bit.
+    ///
+    /// Every consumer of a board's honesty reads it from here, so no caller can
+    /// derive a result fact from one axis while the board states two.
+    const fn omissions(&self) -> McpBoardOmissions {
+        McpBoardOmissions {
+            scope_omitted: self.scope_omitted,
+            window_truncated: self.window_truncated,
+            source_exhausted: self.source_exhausted,
+        }
+    }
+}
+
 /// Reads the current board for one connector and fences it to a STATE epoch.
 ///
 /// The epoch is minted by the registry from a hash of the rendered state, not
@@ -1782,6 +1797,31 @@ pub(crate) struct McpBoardOmissions {
     /// Rows the producer's own render window truncated away.
     pub(crate) window_truncated: usize,
     pub(crate) source_exhausted: bool,
+}
+
+impl McpBoardOmissions {
+    /// The retrieval health these omission facts force, in the SAME meanings
+    /// every other producer states ([`crate::mcp::McpPageSource::health`]).
+    ///
+    /// ONE-1704 repair: a board that withheld rows on EITHER axis is not
+    /// healthy, and a board whose own TASK scan stopped at its cap is degraded
+    /// rather than partial, because it does not know what it skipped. Reading
+    /// only the scope axis let a board the render WINDOW had truncated be
+    /// reported healthy, which told a caller an incomplete working set was the
+    /// whole one.
+    ///
+    /// `produced` is not a health axis — [`crate::mcp::McpPageSource::health`]
+    /// reads only the two omission counts and the exhaustion bit — so the row
+    /// count is deliberately not restated here.
+    pub(crate) const fn health(self) -> McpRetrievalHealth {
+        crate::mcp::McpPageSource::scoped_window(
+            0,
+            self.scope_omitted,
+            self.window_truncated,
+            self.source_exhausted,
+        )
+        .health()
+    }
 }
 
 /// Every board row, in section order: the exact material the snapshot epoch is
@@ -2074,6 +2114,12 @@ pub(crate) async fn execute_mcp_setup(
         // No cursor: this is page one, so produce and retain the exact
         // un-capped grammar/result before resolving its window.
         let board = mcp_current_board(server, actor).await?;
+        // The GRAMMAR rows this page partitions are complete, but the health
+        // this result states is the BOARD's, and the board has two omission
+        // axes plus its own exhaustion bit. Deriving it from scope omission
+        // alone reported a keyframe the render window had truncated — or one
+        // whose TASK scan stopped at its cap — as healthy (ONE-1704 repair).
+        let health = board.omissions().health();
         let header = oneiron::context_board::BoardBlockHeader {
             epoch: board.epoch,
             scope: board.scope_label,
@@ -2087,11 +2133,6 @@ pub(crate) async fn execute_mcp_setup(
         };
         let structured = payload.to_value();
         let source = crate::mcp::McpPageSource::complete(mcp_setup_grammar_rows(&structured).len());
-        let health = if board.scope_omitted == 0 {
-            McpRetrievalHealth::Healthy
-        } else {
-            McpRetrievalHealth::Partial
-        };
         let snapshot = McpPageSnapshot {
             output: structured.clone(),
             source,
@@ -2523,11 +2564,7 @@ async fn execute_mcp_board_verb(
     actor: &McpCallContext,
 ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, u64), McpGatewayError> {
     let board = mcp_current_board(server, actor).await?;
-    let omissions = McpBoardOmissions {
-        scope_omitted: board.scope_omitted,
-        window_truncated: board.window_truncated,
-        source_exhausted: board.source_exhausted,
-    };
+    let omissions = board.omissions();
     let source = mcp_live_board(actor, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
     let call = mcp_board_verb_call(args)?;

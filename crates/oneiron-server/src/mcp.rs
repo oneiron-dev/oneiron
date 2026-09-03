@@ -3051,6 +3051,22 @@ pub const MCP_BOARD_BUDGET_TOK: usize = 1_200;
 /// budget.
 pub const MCP_PAGE_ITEM_CAP: u32 = 50;
 
+/// How many outstanding continuation handles ONE connection may hold at once
+/// (ONE-1704 repair).
+///
+/// A retained continuation keeps a whole immutable producer result alive, and a
+/// connector that mints page-one handles under distinct argument digests and
+/// never presents them would otherwise grow that retention without limit. This
+/// is the bound: the registry keeps at most this many per connection, so the
+/// process's total retained continuation state is bounded by the number of
+/// REGISTERED credentials times this constant, with no side map, no clock, and
+/// no expiry thread.
+///
+/// It is well above any legitimate interleaving — a client reading several
+/// enumerations at once holds one handle per live read — so reaching it is a
+/// mint pattern that never consumes, not a working client.
+pub const MCP_MAX_LIVE_PAGE_CONTINUATIONS: usize = 16;
+
 /// Process-local STREAM connection prefix. The suffix is the credential
 /// FINGERPRINT, never a credential, an actor id, or a tool argument.
 pub const MCP_STREAM_CONNECTION_PREFIX: &str = "mcp-connector:";
@@ -3724,6 +3740,35 @@ pub struct McpVerbArguments {
     pub label: Option<String>,
 }
 
+/// Bytes of one rendered TASKS intent row that belong to tokens the WRITER does
+/// not supply.
+///
+/// The engine's `intent_row` joins, with single spaces, the task's 32-byte hex
+/// id, the caller's label, an optional resolved `assignee=<handle>` token, the
+/// status token (at most `scheduled`, nine bytes), any cause/ladder tokens, a
+/// `jobs=<count>` token, and the `cancel-refused=<n>/<m>` pathology token —
+/// then hands the line to the board renderer, which refuses ANY row over
+/// [`oneiron::context_board::MAX_BOARD_ROW_BYTES`]. Every one of those tokens
+/// is bounded far inside a kibibyte, so reserving one keeps the writer's label
+/// from being the reason the whole TASKS section is rejected at render time.
+const MCP_TASK_ROW_FIXED_TOKEN_BYTES: usize = 1_024;
+
+/// Hard ceiling on one `tasks.create` label, in BYTES (ONE-1704 repair).
+///
+/// The engine's row ceiling is the ONE limit system here: this is that ceiling
+/// less the row's own fixed tokens, not a second budget. Enforcing it at the
+/// writer is what keeps an oversized label from being persisted and then making
+/// the rendered row — and with it the whole TASKS section — unrenderable for
+/// every later reader of that board.
+///
+/// The bound is on BYTES because [`oneiron::context_board::MAX_BOARD_ROW_BYTES`]
+/// is; the advertised closed schema states the same number as a Draft 2020-12
+/// `maxLength`, which is the closest a code-point keyword comes to it. A
+/// multi-byte label inside that code-point ceiling is still refused here, with
+/// the established typed argument error, before anything is written.
+pub const MCP_TASK_LABEL_MAX_BYTES: usize =
+    oneiron::context_board::MAX_BOARD_ROW_BYTES - MCP_TASK_ROW_FIXED_TOKEN_BYTES;
+
 const fn verb_argument_fields(binding: McpVerbBinding) -> &'static [&'static str] {
     match binding {
         McpVerbBinding::BoardExpand => &["key", "frame_epoch"],
@@ -3783,6 +3828,21 @@ impl McpVerbArguments {
         }
         validate_optional_nonblank(tool, "arguments.key", self.key.as_deref())?;
         validate_optional_nonblank(tool, "arguments.label", self.label.as_deref())?;
+        // The WRITER's bound, applied before any persistence: a label the
+        // engine's board row ceiling cannot render is refused here rather than
+        // stored and then made to reject the whole TASKS section on every later
+        // render (ONE-1704 repair).
+        if self
+            .label
+            .as_deref()
+            .is_some_and(|label| label.len() > MCP_TASK_LABEL_MAX_BYTES)
+        {
+            return Err(McpToolValidationError::field(
+                tool,
+                "arguments.label",
+                format!("must be at most {MCP_TASK_LABEL_MAX_BYTES} bytes"),
+            ));
+        }
         validate_optional_entity_ref(tool, "arguments.task_ref", self.task_ref.as_deref())?;
         if self.scopes.as_ref().is_some_and(Vec::is_empty) {
             return Err(McpToolValidationError::field(
@@ -4033,7 +4093,16 @@ fn verb_argument_field_schema(field: &str) -> Value {
             },
         }),
         "task_ref" => entity_id_schema(),
-        "label" => nonblank_string_schema(),
+        // The advertised ceiling IS the writer's ceiling, stated in the closed
+        // schema so a caller learns the bound from `tools/list` instead of from
+        // a refusal. `maxLength` counts code points, so the byte bound the
+        // runtime enforces is the narrower of the two by construction.
+        "label" => json!({
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "maxLength": MCP_TASK_LABEL_MAX_BYTES,
+        }),
         _ => json!({}),
     }
 }
@@ -4747,6 +4816,10 @@ struct McpPageContinuation {
     position: u32,
     /// The immutable producer result this position indexes.
     snapshot: Option<McpPageSnapshot>,
+    /// Mint order within this registry, from its own monotonic counter and no
+    /// clock. It is the ONLY input to the retention bound's eviction choice, so
+    /// which handle a full connection loses is deterministic and replayable.
+    minted_seq: u64,
 }
 
 /// A foreign TTL can only narrow this endpoint's refusal to cache.
@@ -5334,7 +5407,15 @@ pub struct McpConnectorActorRegistry {
     /// the first one's handle, so two live reads could not be interleaved and a
     /// refused presentation could consume an unrelated cursor. The key carries
     /// the connection, so no connector can name another's handle.
+    ///
+    /// The set one connection owns is BOUNDED by
+    /// [`MCP_MAX_LIVE_PAGE_CONTINUATIONS`]; see
+    /// [`McpConnectorActorRegistry::make_room_for_page_continuation`].
     page_continuations: BTreeMap<(StreamConnectionId, String), McpPageContinuation>,
+    /// Monotonic mint counter for the retention bound's eviction order. It
+    /// orders mints within this registry and is never published, never a clock,
+    /// and never part of a cursor token.
+    page_continuation_seq: u64,
 }
 
 impl fmt::Debug for McpConnectorActorRegistry {
@@ -5355,6 +5436,7 @@ impl McpConnectorActorRegistry {
             streams: BoardStreamRegistry::default(),
             board_epochs: BTreeMap::new(),
             page_continuations: BTreeMap::new(),
+            page_continuation_seq: 0,
         }
     }
 
@@ -5389,6 +5471,9 @@ impl McpConnectorActorRegistry {
     /// Mints a cursor while retaining the exact producer result it continues.
     /// The old five-argument method remains useful for registry-only callers;
     /// gateway continuations always use this snapshot-bearing form.
+    ///
+    /// The retention this mint adds is BOUNDED: see
+    /// [`Self::make_room_for_page_continuation`].
     pub(crate) fn mint_page_cursor_with_snapshot(
         &mut self,
         connection: &StreamConnectionId,
@@ -5400,8 +5485,17 @@ impl McpConnectorActorRegistry {
     ) -> String {
         let cursor =
             self.page_cursor_token(connection, tool, argument_digest, snapshot_epoch, position);
+        let key = (connection.clone(), cursor.clone());
+        // Re-minting the SAME handle — same connection, tool, arguments,
+        // producer epoch, and position — replaces its row in place and is not a
+        // second retention, so it never evicts a sibling.
+        if !self.page_continuations.contains_key(&key) {
+            self.make_room_for_page_continuation(connection);
+        }
+        self.page_continuation_seq = self.page_continuation_seq.saturating_add(1);
+        let minted_seq = self.page_continuation_seq;
         self.page_continuations.insert(
-            (connection.clone(), cursor.clone()),
+            key,
             McpPageContinuation {
                 cursor: cursor.clone(),
                 tool: tool.to_owned(),
@@ -5409,9 +5503,43 @@ impl McpConnectorActorRegistry {
                 snapshot_epoch,
                 position,
                 snapshot,
+                minted_seq,
             },
         );
         cursor
+    }
+
+    /// Enforces this connection's continuation retention bound BEFORE one more
+    /// handle is retained (ONE-1704 repair).
+    ///
+    /// The policy is EXPLICIT and deterministic: a connection holds at most
+    /// [`MCP_MAX_LIVE_PAGE_CONTINUATIONS`] outstanding handles, and the mint
+    /// that would exceed it evicts this connection's OLDEST-minted handles
+    /// until there is room for exactly one more. Eviction is chosen over
+    /// refusing the mint because refusing it would publish a `More` end marker
+    /// with no handle to continue from — a page a caller can neither finish nor
+    /// re-enter — while an evicted handle stays fail-closed at the door: the
+    /// next presentation of it is [`McpPageCursorError::Unknown`], never a
+    /// silent restart at page one that would re-ship rows the caller already
+    /// has and then call the enumeration complete.
+    ///
+    /// Only THIS connection's rows are considered and only its own oldest rows
+    /// are dropped, so one connector's mint pattern can never evict another's
+    /// continuation, and nothing here weakens the connector/tool/argument/
+    /// producer binding or the one-time consumption a surviving handle carries.
+    fn make_room_for_page_continuation(&mut self, connection: &StreamConnectionId) {
+        while self.live_page_continuations(connection) >= MCP_MAX_LIVE_PAGE_CONTINUATIONS {
+            let Some(oldest) = self
+                .page_continuations
+                .iter()
+                .filter(|((owner, _), _)| owner == connection)
+                .min_by_key(|(_, state)| state.minted_seq)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.page_continuations.remove(&oldest);
+        }
     }
 
     /// Consumes one presented continuation handle and returns the producer

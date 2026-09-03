@@ -13835,7 +13835,6 @@ async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
     assert_eq!(registry.live_page_continuations(&connection), 0);
 }
 
-
 /// ONE-1704 repair: a client on the NEGOTIATED protocol receives usable result
 /// data in `content`, not only through the `structuredContent` side channel.
 #[tokio::test]
@@ -14015,6 +14014,167 @@ fn mcp_board_page_omissions_count_requested_scope_only() {
     assert_eq!(source.scope_omitted, 0);
     assert_eq!(source.window_truncated, 0);
     assert_eq!(source.health(), healthy);
+}
+
+/// ONE-1704 repair: setup health is derived from the board's COMPLETE omission
+/// facts, not from the requested scope's filtering alone.
+///
+/// A vault-wide connector omits no row by scope, so the old derivation called
+/// EVERY board it rendered healthy — including one whose render WINDOW had
+/// truncated rows away, and one whose own TASK scan stopped at its cap and so
+/// cannot say what it skipped. Both are incomplete boards, and setup said
+/// `healthy` over them.
+#[test]
+fn mcp_setup_health_reads_every_board_omission_axis() {
+    let omissions = |scope_omitted, window_truncated, source_exhausted| McpBoardOmissions {
+        scope_omitted,
+        window_truncated,
+        source_exhausted,
+    };
+    let healthy = crate::mcp::McpRetrievalHealth::Healthy;
+    let partial = crate::mcp::McpRetrievalHealth::Partial;
+    let degraded = crate::mcp::McpRetrievalHealth::Degraded;
+
+    // A complete board is the only healthy one.
+    assert_eq!(omissions(0, 0, true).health(), healthy);
+
+    // The exact defect: a vault-wide connector's board whose bounded renderer
+    // could not return every TASKS row. Nothing was omitted by scope, and the
+    // board is still incomplete.
+    assert_eq!(omissions(0, 7, true).health(), partial);
+
+    // A scan that stopped at its own cap does not know what it skipped, so it
+    // is degraded even with nothing counted on either axis.
+    assert_eq!(omissions(0, 0, false).health(), degraded);
+    assert_eq!(omissions(0, 7, false).health(), degraded);
+
+    // The scope axis keeps its settled meaning, and the two axes together
+    // never read healthier than either alone.
+    assert_eq!(omissions(3, 0, true).health(), partial);
+    assert_eq!(omissions(3, 7, true).health(), partial);
+    assert_eq!(omissions(3, 0, false).health(), degraded);
+
+    // It is the SAME derivation every other producer states, so a board's
+    // health and a page's health cannot drift apart.
+    for (scope_omitted, window_truncated, source_exhausted) in [
+        (0, 0, true),
+        (0, 7, true),
+        (3, 0, true),
+        (3, 7, true),
+        (0, 0, false),
+        (3, 7, false),
+    ] {
+        assert_eq!(
+            omissions(scope_omitted, window_truncated, source_exhausted).health(),
+            crate::mcp::McpPageSource::scoped_window(
+                0,
+                scope_omitted,
+                window_truncated,
+                source_exhausted,
+            )
+            .health(),
+            "board health and producer health must be one meaning",
+        );
+    }
+}
+
+/// ONE-1704 repair: `/api/core/discover` describes the MCP surfaces this
+/// process actually REGISTERS, and says which endpoint each name is callable
+/// on.
+///
+/// The capability vocabulary used to be derived from the retired plain-verb
+/// catalog alone, so discovery advertised names both endpoints answer
+/// `unknown_tool` for and advertised none of the names they do accept.
+#[test]
+fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
+    let flags = serde_json::to_value(feature_flags()).expect("feature flags serialize");
+    let capabilities = flags["capabilities"]
+        .as_array()
+        .expect("capabilities is an array")
+        .iter()
+        .map(|token| token.as_str().expect("a capability is a string").to_owned())
+        .collect::<Vec<_>>();
+
+    // Every REGISTERED tool is advertised, and its endpoint is named beside it.
+    let mut expected_endpoint_tokens = std::collections::BTreeSet::new();
+    for mode in crate::mcp::McpSurfaceMode::ALL {
+        let surface = crate::mcp::registered_surface(mode);
+        assert!(
+            !surface.tool_names().is_empty(),
+            "{} registers at least one tool",
+            mode.as_str()
+        );
+        for name in surface.tool_names() {
+            assert!(
+                surface.resolve(name).is_some(),
+                "{name} is advertised only because {} accepts it",
+                mode.as_str(),
+            );
+            assert!(
+                capabilities.contains(&format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}")),
+                "discovery advertises the registered tool {name}",
+            );
+            expected_endpoint_tokens.insert(format!(
+                "{MCP_ENDPOINT_CAPABILITY_PREFIX}{mode}.{name}",
+                mode = mode.as_str(),
+            ));
+        }
+    }
+
+    // The endpoint vocabulary is EXACTLY the registrations: nothing advertised
+    // that a surface would reject, and nothing registered left unstated.
+    let advertised_endpoint_tokens = capabilities
+        .iter()
+        .filter(|token| token.starts_with(MCP_ENDPOINT_CAPABILITY_PREFIX))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(advertised_endpoint_tokens, expected_endpoint_tokens);
+    assert_eq!(
+        capabilities
+            .iter()
+            .filter(|token| token.starts_with(MCP_ENDPOINT_CAPABILITY_PREFIX))
+            .count(),
+        expected_endpoint_tokens.len(),
+        "each endpoint token is advertised exactly once",
+    );
+
+    // The primary endpoint is the ONE setup tool, and the verbs live on the
+    // tool-first endpoint. A caller can tell them apart from discovery alone.
+    assert!(capabilities.contains(&format!(
+        "{MCP_ENDPOINT_CAPABILITY_PREFIX}primary.{}",
+        crate::mcp::MCP_SETUP_TOOL
+    )));
+    assert!(capabilities.contains(&format!(
+        "{MCP_ENDPOINT_CAPABILITY_PREFIX}tool_first.tasks.create"
+    )));
+    assert!(
+        !capabilities.contains(&format!(
+            "{MCP_ENDPOINT_CAPABILITY_PREFIX}tool_first.{}",
+            crate::mcp::MCP_SETUP_TOOL
+        )),
+        "a tool one endpoint registers is not advertised on the other",
+    );
+
+    // `execute_code` is registered on neither endpoint in this release, so no
+    // endpoint token names it.
+    for mode in crate::mcp::McpSurfaceMode::ALL {
+        assert!(
+            crate::mcp::registered_surface(mode)
+                .resolve(crate::mcp::MCP_EXECUTE_CODE_TOOL)
+                .is_none(),
+        );
+        assert!(!capabilities.contains(&format!(
+            "{MCP_ENDPOINT_CAPABILITY_PREFIX}{mode}.{tool}",
+            mode = mode.as_str(),
+            tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
+        )));
+    }
+
+    // Discovery stays deterministic: the same registrations, the same bytes.
+    assert_eq!(
+        serde_json::to_value(feature_flags()).expect("feature flags serialize"),
+        flags,
+    );
 }
 
 #[tokio::test]
