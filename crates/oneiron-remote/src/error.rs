@@ -69,11 +69,12 @@ pub(crate) fn transport_error(message: impl Into<String>) -> MemoryError {
 
 /// The single-writer refusal (I8).
 ///
-/// Minted at exactly one place — the embedded constructor, when the lease
-/// acquire refused with `Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD)` —
-/// and at one more: the per-verb PID gate that catches a post-`fork` child
-/// holding an inherited handle. Both are "somebody else owns this directory's
-/// write side", which is what the code says.
+/// Minted at exactly three places: the embedded constructor, when the lease
+/// acquire refused with `Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD)`;
+/// the `open_shared` registry join, when a post-`fork` child would otherwise
+/// be handed the parent's live entry; and the per-verb PID gate, which catches
+/// that same child dispatching on an inherited handle. All three are "somebody
+/// else owns this directory's write side", which is what the code says.
 ///
 /// The first suggestion names `connect` on purpose: the single-writer rule is
 /// not a wall, it is a redirection, and the process that owns the vault is

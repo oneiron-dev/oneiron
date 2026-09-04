@@ -139,6 +139,20 @@ pub(crate) fn open_shared(
 
     let mut registry = registry_guard()?;
     if let Some(existing) = registry.get(&canonical).and_then(Weak::upgrade) {
+        // I8: the registry and the lease's descriptor BOTH survive `fork`, so a
+        // child calling the constructor would otherwise be handed the parent's
+        // entry and walk straight into the owner bootstrap's write transaction
+        // — a core write that runs before any per-verb gate could refuse it.
+        // The ownership check therefore belongs here, on the join, and not only
+        // on dispatch.
+        //
+        // It runs BEFORE the options comparison on purpose: a process that does
+        // not own this vault is refused for WHOSE the vault is, not for how it
+        // asked. Telling a forked child to "reopen with the same options" would
+        // name a fix that cannot work.
+        if !existing.held_by_current_process() {
+            return Err(vault_locked());
+        }
         // I9: a same-PID reopen JOINS, and only when it asked for the same
         // vault. Divergent options are refused rather than honored-or-ignored,
         // because both alternatives are wrong: honoring them would need a

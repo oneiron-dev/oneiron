@@ -73,12 +73,22 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
 
 
 def _translate(operation: Callable[[], _T]) -> _T:
-    """Runs ``operation``, converting a native refusal into ``OneironError``."""
+    """Runs ``operation``, converting a native refusal into ``OneironError``.
+
+    ``TypeError`` and ``ValueError`` are caught alongside the native
+    ``RuntimeError`` because the verbs serialize their argument INSIDE
+    ``operation``: a caller passing a set, ``bytes``, or a ``datetime`` fails in
+    ``json.dumps`` rather than below the boundary, and I7 promises one
+    ``except`` clause for every failure — not one for refusals and a second for
+    unserializable input. Neither is a native payload, so both fall through to
+    the ``_typed_error`` fallback as ``INTERNAL_SERVER_ERROR`` carrying the raw
+    message.
+    """
     try:
         return operation()
     except OneironError:
         raise
-    except RuntimeError as error:
+    except (RuntimeError, TypeError, ValueError) as error:
         raw = str(error)
         try:
             payload = json.loads(raw)
@@ -165,10 +175,15 @@ class Oneiron:
         simulates a lease. ``format`` takes the engine's exact tokens:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
         """
-        scope_json = json.dumps(scope) if scope is not None else None
         return json.loads(
             _translate(
-                lambda: self._client.recall(query, effort, scope_json, limit, format)
+                lambda: self._client.recall(
+                    query,
+                    effort,
+                    json.dumps(scope) if scope is not None else None,
+                    limit,
+                    format,
+                )
             )
         )
 
