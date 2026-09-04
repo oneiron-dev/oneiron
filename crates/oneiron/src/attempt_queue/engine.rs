@@ -1183,7 +1183,9 @@ impl<'a> AttemptQueue<'a> {
         id: AttemptId,
     ) -> Result<Option<AttemptId>> {
         let Some(raw) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
-            return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW));
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RETRY_CHAIN_MISSING_ROW,
+            ));
         };
         Ok(decode_record(&raw, id)?.retry_of)
     }
