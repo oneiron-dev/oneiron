@@ -84,6 +84,223 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
+/// Lock-file name for the embedded single-writer lease (ONE-1441 WIRE-P1).
+///
+/// Deliberately its own file, NOT a reuse of the off-record sweep lock: that
+/// one is dedicated to off-record recovery and pairs a different lifetime with
+/// a different owner. Two unrelated exclusions sharing one inode would make
+/// either feature's hold silently deny the other.
+pub const VAULT_WRITER_LOCK_FILE: &str = "oneiron.writer.lock";
+
+/// The `Error::ConcurrentWrite` message that means "another process holds this
+/// vault directory's writer lease" (ONE-1441 WIRE-P1).
+///
+/// Load-bearing as an EXACT string: the SDK's embedded constructor maps
+/// `Error::ConcurrentWrite(message)` to the typed
+/// `VAULT_LOCKED_SINGLE_WRITER` binding code ONLY when
+/// `message == VAULT_WRITER_LEASE_HELD`. Every other `ConcurrentWrite` keeps
+/// the existing `From<Error>` mapping to `INVALID_STATE`, and that impl is not
+/// amended.
+pub const VAULT_WRITER_LEASE_HELD: &str = "vault writer lease is held by another process";
+
+/// An exclusive, process-scoped hold on one vault directory's write side
+/// (ONE-1441 WIRE-P1 single-writer ownership).
+///
+/// The AUTHORITY is the live OS lock held on the open file description, never
+/// the file's contents. The bytes are diagnostics only — the acquiring PID and
+/// a newline — so a stale pidfile left by a crashed owner blocks nothing: the
+/// kernel dropped its lock when the process died, and the next acquirer
+/// truncates and rewrites the line.
+///
+/// The guard OWNS the open file. Releasing is `Drop` and nothing else: there
+/// is deliberately no public unlock method, because an explicit release could
+/// run while another in-process handle still believed it held the lease. A
+/// shared native vault keeps one lease value alive (behind an `Arc`) for its
+/// whole lifetime, so the single drop that releases it is the last one.
+///
+/// [`Self::pid`] records the acquiring process. A post-`fork` child inherits
+/// the descriptor — and therefore the kernel's lock — without ever having
+/// acquired it, so the SDK dispatcher compares [`Self::pid`] against the
+/// current PID before every verb and fails closed when they differ. That check
+/// is [`Self::held_by_current_process`]; the lease does not enforce it itself,
+/// because the enforcement point is the dispatcher, not the handle.
+pub struct VaultWriterLease {
+    /// Held for the lease's whole lifetime: dropping the file closes the
+    /// descriptor, and closing the descriptor is what releases the OS lock.
+    ///
+    /// `None` on targets where this crate has no advisory-lock primitive —
+    /// the same `#[cfg(not(unix))]` posture `git_wire`'s repository guard
+    /// already takes. See [`VaultWriterLease::acquire`].
+    file: Option<std::fs::File>,
+    pid: u32,
+}
+
+impl VaultWriterLease {
+    /// Acquires the exclusive writer lease on `vault_dir`, or refuses.
+    ///
+    /// Non-blocking: a directory already owned by another process fails
+    /// immediately with `Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD)`
+    /// rather than parking. Contention is a fact about the deployment, not a
+    /// transient the caller should wait out.
+    ///
+    /// Non-contention failures — a missing directory, a permission denial, a
+    /// read-only filesystem — keep their ordinary typed `Error::Io` and never
+    /// masquerade as lock contention, so an operator's diagnosis is not
+    /// redirected at a process that does not exist.
+    ///
+    /// UNIX ONLY today: `flock` is the primitive this crate already depends on
+    /// and the one this lease is specified against. On other targets no lock
+    /// file is opened and no exclusion is claimed, exactly as `git_wire`'s
+    /// repository guard already behaves. The Windows arm needs `LockFileEx`,
+    /// whose `OVERLAPPED` lives in a `windows-sys` feature this crate does not
+    /// enable — a dependency change, and therefore its own bounded change.
+    pub fn acquire(vault_dir: &Path) -> Result<Self> {
+        let pid = std::process::id();
+        let file = Self::lock_exclusive_nonblocking(vault_dir)?;
+        if let Some(file) = file.as_ref() {
+            Self::write_pid_line(file, pid)?;
+        }
+        Ok(Self { file, pid })
+    }
+
+    /// The process that acquired this lease.
+    #[must_use]
+    pub const fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// Whether the CALLING process is the one that acquired this lease.
+    ///
+    /// `false` in a post-`fork` child holding an inherited handle: the child
+    /// never took the lock, so it must not write through it even though the
+    /// inherited descriptor would let the kernel say yes.
+    #[must_use]
+    pub fn held_by_current_process(&self) -> bool {
+        self.pid == std::process::id()
+    }
+
+    #[cfg(unix)]
+    fn lock_exclusive_nonblocking(vault_dir: &Path) -> Result<Option<std::fs::File>> {
+        use std::os::fd::AsRawFd;
+
+        // `create(true)` + `truncate(false)`: the file is a rendezvous point,
+        // not state. Truncating before the lock is granted would let a REFUSED
+        // acquirer erase the live owner's diagnostics.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(vault_dir.join(VAULT_WRITER_LOCK_FILE))?;
+        // SAFETY: `file` is a live, open `std::fs::File` owned by this frame
+        // and closed nowhere within it, so `as_raw_fd()` yields a descriptor
+        // valid for the whole call. `flock` reads only that descriptor and the
+        // flag word, and writes nothing through a pointer.
+        let granted = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if granted == 0 {
+            return Ok(Some(file));
+        }
+        let error = std::io::Error::last_os_error();
+        // EWOULDBLOCK (EAGAIN on Linux and macOS) is the ONLY contention
+        // answer. Everything else is a real I/O failure and keeps its typed
+        // error, so a permission problem is never reported as a busy vault.
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            return Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD));
+        }
+        Err(error.into())
+    }
+
+    #[cfg(not(unix))]
+    fn lock_exclusive_nonblocking(_vault_dir: &Path) -> Result<Option<std::fs::File>> {
+        Ok(None)
+    }
+
+    /// Records the owning PID for humans reading the directory. Diagnostics
+    /// only: nothing reads this back to decide who owns the lease.
+    fn write_pid_line(mut file: &std::fs::File, pid: u32) -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(format!("{pid}\n").as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn release(file: &std::fs::File) {
+        use std::os::fd::AsRawFd;
+
+        // SAFETY: `file` is the live `File` this guard has owned since
+        // `acquire`, borrowed for the duration of this call, so its descriptor
+        // is valid. `flock(LOCK_UN)` reads only that descriptor and the flag
+        // word.
+        unsafe {
+            libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn release(_file: &std::fs::File) {}
+}
+
+impl Drop for VaultWriterLease {
+    fn drop(&mut self) {
+        if let Some(file) = self.file.take() {
+            // Closing the descriptor releases the lock on its own; the
+            // explicit unlock keeps the release visible at the drop site.
+            Self::release(&file);
+        }
+    }
+}
+
+impl std::fmt::Debug for VaultWriterLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultWriterLease")
+            .field("pid", &self.pid)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Namespace the embedded default owner actor's id is derived from
+/// (ONE-1441 WIRE-P1).
+///
+/// Pinned: changing it changes the owner id every embedded vault already
+/// carries, which would strand every claim that names the old one.
+const EMBEDDED_OWNER_ACTOR_NAMESPACE: &[u8] = b"oneiron 2026-08 embedded-owner-actor v1";
+
+/// `name` of the embedded owner PERSON — the one field the PERSON projection
+/// profile reads at every profile level.
+const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
+
+/// The pinned, namespace-derived id of the embedded default owner actor.
+///
+/// Derived rather than literal so the derivation is auditable from the
+/// namespace above, and stamped with the RFC 9562 version-8 (custom) and
+/// variant bits so the value is a well-formed UUID like every other
+/// [`EntityId`] — which also guarantees it can never collide with the
+/// all-zero/all-`0xFF` reserved sentinels [`EntityId::from_bytes`] rejects.
+fn embedded_owner_actor_id() -> Result<EntityId> {
+    let digest = blake3::hash(EMBEDDED_OWNER_ACTOR_NAMESPACE);
+    let mut bytes = [0u8; ENTITY_ID_LEN];
+    bytes.copy_from_slice(&digest.as_bytes()[..ENTITY_ID_LEN]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    EntityId::from_bytes(bytes)
+}
+
+/// Encodes the minimal PERSON body the bootstrap writes.
+fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
+    let value = rmpv::Value::Map(vec![(
+        rmpv::Value::from("name"),
+        rmpv::Value::from(EMBEDDED_OWNER_ACTOR_NAME),
+    )]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &value)
+        .map_err(|_| Error::InvariantViolation("embedded owner actor body encode"))?;
+    Ok(encoded)
+}
+
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
 pub(crate) fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
@@ -879,6 +1096,71 @@ impl Vault {
             actor,
             actor_class,
         }
+    }
+
+    /// Ensures and returns the generic owner actor unauthenticated embedded SDK
+    /// constructors bind (ONE-1441 WIRE-P1 embedded ownership bootstrap).
+    ///
+    /// Constructor bootstrap: embedded ownership IS the authority, so no
+    /// verifier chain runs (OF-452 D10). The wire fixture also reaches this
+    /// seam to bind an owner PERSON on a pre-server vault — the same
+    /// construction-time binding, before any facade gate exists to consult.
+    ///
+    /// IDEMPOTENT and single-transaction. The id is derived from a pinned
+    /// namespace, so it is the same in every vault and across every process;
+    /// the check and the create share ONE write transaction, so two racing
+    /// constructors cannot both observe "absent" and both write. An occupant
+    /// that is present but is NOT a `PERSON` is a typed refusal, never an
+    /// overwrite: the bootstrap creates the owner, it does not retype whatever
+    /// it finds.
+    ///
+    /// The write goes through the ordinary `batch_in().put(...)` entity door
+    /// this crate uses everywhere else — no bespoke storage path, no
+    /// placeholder timestamps. `put_structural`'s verified-human-owner gate is
+    /// deliberately NOT invoked: by D10 it does not run at construction time,
+    /// and it could not, because the actor it would verify is the one being
+    /// created.
+    ///
+    /// `#[doc(hidden)] pub` — housekeeping, and housekeeping is public, so the
+    /// crate-boundary census does not draft it into the public catalog.
+    /// Bindings call THIS; they never call `put_entity`, `batch().put`, or any
+    /// other storage mutation directly.
+    #[doc(hidden)]
+    pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
+        let owner = embedded_owner_actor_id()?;
+        let now = unix_seconds_now();
+        self.try_with_write_txn(|wtxn| {
+            match self.get_entity_type_in_txn(wtxn, &owner)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
+                // Present but not a PERSON: refuse, never retype. The typed
+                // engine error carries the occupant's byte, and the central
+                // `From<Error>` mapping renders it — no bespoke code is minted
+                // for a case the vocabulary already spells.
+                Some(existing) => {
+                    return Err(crate::memory::MemoryError::from(
+                        Error::EntityTypeImmutable {
+                            id: owner,
+                            existing,
+                            attempted: crate::registry::ENTITY_TYPE_PERSON,
+                        },
+                    ));
+                }
+                None => {}
+            }
+            self.batch_in()
+                .put(
+                    &owner,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &encode_embedded_owner_actor_body()?,
+                )
+                .apply(wtxn)?;
+            Ok(owner)
+        })
     }
 
     pub(crate) fn scoped_read_search_candidate_limit(

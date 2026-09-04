@@ -104,6 +104,7 @@ pub fn token_mint(args: TokenMintArgs) -> anyhow::Result<()> {
         &auth_secret,
         args.scope.as_deref(),
         args.principal_ref.as_deref(),
+        args.actor_class.as_deref(),
     )?;
 
     if let Some(warning) = &mint.warning {
@@ -127,8 +128,9 @@ fn prepare_token_mint(
     auth_secret: &str,
     scope: Option<&[String]>,
     principal_ref: Option<&str>,
+    actor_class: Option<&str>,
 ) -> anyhow::Result<TokenMint> {
-    let claims = build_token_claims(scope, principal_ref);
+    let claims = build_token_claims(scope, principal_ref, actor_class);
     validate_bearer_claims(&claims).map_err(|_| {
         anyhow::anyhow!("refusing to mint a token the server would reject: {claims}")
     })?;
@@ -196,7 +198,16 @@ fn weak_auth_secret_warning(secret: &str) -> Option<String> {
 
 /// Assembles a claims string in the bearer grammar. No flags yields an empty
 /// claims string, which mints an owner-grade token.
-fn build_token_claims(scope: Option<&[String]>, principal_ref: Option<&str>) -> String {
+///
+/// ONE-1441: `actor_class` appends one `;actor_class=<v>` segment when the
+/// operator asked for one, in the pinned position AFTER `principal_ref`. The
+/// segment order is the wire form, not a detail — the MAC covers these exact
+/// bytes, so reordering them would invalidate every previously minted slip.
+fn build_token_claims(
+    scope: Option<&[String]>,
+    principal_ref: Option<&str>,
+    actor_class: Option<&str>,
+) -> String {
     let mut claims = String::new();
     if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
         claims.push_str("scope=");
@@ -208,6 +219,13 @@ fn build_token_claims(scope: Option<&[String]>, principal_ref: Option<&str>) -> 
         }
         claims.push_str("principal_ref=");
         claims.push_str(principal_ref);
+    }
+    if let Some(actor_class) = actor_class {
+        if !claims.is_empty() {
+            claims.push(';');
+        }
+        claims.push_str("actor_class=");
+        claims.push_str(actor_class);
     }
     claims
 }
