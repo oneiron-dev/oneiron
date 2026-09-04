@@ -183,8 +183,14 @@ impl RemoteClient {
 /// one place to put one.
 fn normalize_origin(url: &str) -> Result<Url, MemoryError> {
     let mut parsed = Url::parse(url).map_err(|error| {
+        // The raw origin is NEVER echoed here. A malformed URL can still carry
+        // `user:password@`, and a syntax failure such as a bad port fires
+        // before the userinfo arm below could refuse it, so repeating the input
+        // would put the credential in exactly the logs this function exists to
+        // keep it out of. The parse error names the syntax fault, not the
+        // credential.
         bad_request(
-            format!("{url:?} is not a valid URL: {error}"),
+            format!("the Oneiron URL is not a valid URL: {error}"),
             &["Pass an absolute origin such as http://127.0.0.1:8080."],
         )
     })?;
