@@ -41,6 +41,7 @@ pub mod codebase;
 pub mod comm;
 pub mod commitment;
 pub mod commitment_ledger;
+pub mod commitment_lifecycle;
 pub mod commitment_schedule;
 pub mod compaction;
 pub mod companion;
@@ -207,6 +208,13 @@ pub use crate::claim::{
 pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
+};
+pub use crate::commitment::FulfillmentSource;
+pub use crate::commitment_lifecycle::{
+    BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
+    LapseSweepReport, PREDICATE_COMMITMENT_FULFILLMENT_PROPOSAL, fulfill_commitment_from,
+    fulfill_commitments_for_brief, lapse_overdue_commitments, link_brief_fulfillment,
+    propose_commitment_fulfilled, release_commitment_with_close, supersede_commitment_with_close,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,

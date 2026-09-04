@@ -1091,6 +1091,13 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         // proves acyclicity; a guest `self.memory.put_edge` carries neither,
         // so guest code may not mint readiness dependencies.
         | EdgeKind::Blocks
+        // ONE-1541 (CMT-4): the brief-fulfillment pair is structural and its
+        // ruled directions are only meaningful written together, after both
+        // endpoint classes have been proven. Guest code proves neither and
+        // can only ask for one direction at a time, so both bytes land on
+        // the refusal side with the rest of the structural kinds.
+        | EdgeKind::Fulfills
+        | EdgeKind::DischargedBy
         // ONE-1414: `same_as` is structural and its writes belong to the
         // federation coreference door (`put_coreference_link`), which writes
         // the link and its status Claim in ONE transaction under an actor

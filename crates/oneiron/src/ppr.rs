@@ -127,6 +127,9 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
         // strictly stronger than λ = 0.0 — so a note attached to a blocked
         // symbol can never inherit relevance through a readiness dependency.
         EdgeKind::Blocks => None,
+        // CMT-4 (ONE-1541): a brief discharging an obligation says nothing
+        // about retrieval relevance, so neither ruled direction is traversed.
+        EdgeKind::Fulfills | EdgeKind::DischargedBy => None,
         EdgeKind::DerivedFrom => Some(0.2),
         EdgeKind::Mentions => Some(0.6),
         EdgeKind::About => Some(0.5),

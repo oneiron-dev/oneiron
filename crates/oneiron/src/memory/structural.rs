@@ -219,6 +219,8 @@ pub(super) fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
         "split_into" => EdgeKind::SplitInto,
         "blocked_by" => EdgeKind::BlockedBy,
         "blocks" => EdgeKind::Blocks,
+        "fulfills" => EdgeKind::Fulfills,
+        "discharged_by" => EdgeKind::DischargedBy,
         "same_as" => EdgeKind::SameAs,
         _ => return None,
     };
