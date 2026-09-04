@@ -987,9 +987,15 @@ fn greenfield_row_rejects_every_missing_chokepoint_field() {
             .put(&mut wtxn, &key, &encoded)
             .expect("replace row");
         wtxn.commit().expect("commit missing-field row");
+        // The audit listing is per row: the damaged row is reported as corrupt
+        // with its exact key and typed error, and is never returned as valid.
+        let listing = intent_ledger_records(&vault).expect("listing survives the damaged row");
+        assert!(listing.is_empty(), "a damaged row is never listed as valid");
+        assert_eq!(listing.corrupt.len(), 1);
+        assert_eq!(&*listing.corrupt[0].key, key.as_slice());
         assert!(matches!(
-            intent_ledger_records(&vault),
-            Err(IntentLedgerError::InvalidRecord(_))
+            listing.corrupt[0].error,
+            IntentLedgerError::InvalidRecord(_)
         ));
     }
 }
@@ -1443,4 +1449,904 @@ fn capability_provenance_round_trips_and_fails_closed_when_forged() {
             "forged capability provenance {forged:?} must fail closed"
         );
     }
+}
+
+// --- ONE-1769 digest preimage, storage ABI, and tolerant listing -------------
+
+/// Writes one raw `vault_meta` row, bypassing every encoder, so a former-format
+/// or damaged row can be observed exactly as a crashed device would leave it.
+fn put_raw_row(vault: &Vault, key: &[u8], row: &[u8]) {
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, key, row)
+        .expect("put raw row");
+    wtxn.commit().expect("commit raw row");
+}
+
+fn raw_row(vault: &Vault, key: &[u8]) -> Vec<u8> {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&rtxn, key)
+        .expect("read raw row")
+        .expect("raw row exists")
+        .to_vec();
+    drop(rtxn);
+    raw
+}
+
+fn row_entries(encoded: &[u8]) -> Vec<(Value, Value)> {
+    let Value::Map(entries) =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("decode row")
+    else {
+        panic!("an intent row must be a map");
+    };
+    entries
+}
+
+fn encode_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode row");
+    encoded
+}
+
+fn row_with_content_digest(encoded: &[u8], digest: [u8; 32]) -> Vec<u8> {
+    let mut entries = row_entries(encoded);
+    for (candidate, slot) in &mut entries {
+        if candidate.as_str() == Some(KEY_CONTENT_DIGEST) {
+            *slot = Value::Binary(digest.to_vec());
+        }
+    }
+    encode_entries(entries)
+}
+
+/// The typed reason one row was reported corrupt, so a listing assertion names
+/// the failure it means instead of accepting any error at all.
+fn corrupt_reason(row: &IntentLedgerCorruptRow) -> &'static str {
+    match row.error {
+        IntentLedgerError::InvalidRecord(reason) => reason,
+        ref other => panic!("a corrupt row must be an invalid record, not {other:?}"),
+    }
+}
+
+#[test]
+fn content_digest_is_hash_of_msgpack_minus_digest_key() {
+    // The preimage IS the stored body minus one key. Rebuilding it here from
+    // the persisted bytes — without calling the production digest — is what
+    // catches a future second body representation.
+    let (_dir, vault) = open_vault();
+    let payload: &[u8] = b"digest preimage payload";
+    let record = persist_pending(&vault, attempt(41), 0, payload, 100, true);
+    let raw = raw_row(&vault, &intent_ledger_key(&record.id));
+
+    let mut entries = row_entries(&raw);
+    let stored_keys: Vec<&str> = entries
+        .iter()
+        .map(|(key, _)| key.as_str().expect("row keys are strings"))
+        .collect();
+    assert_eq!(stored_keys, INTENT_LEDGER_VALUE_KEYS);
+
+    let (digest_key, digest_value) = entries.pop().expect("the row carries a final entry");
+    assert_eq!(digest_key.as_str(), Some(KEY_CONTENT_DIGEST));
+    let Value::Binary(stored_digest) = digest_value else {
+        panic!("the stored content digest must be binary");
+    };
+    assert_eq!(stored_digest.len(), 32);
+    assert_eq!(entries.len(), 19);
+
+    let preimage = encode_entries(entries);
+    // A 19-entry map is `map16`: the map header itself is inside the preimage.
+    assert_eq!(preimage[..3], [0xde, 0x00, 0x13]);
+    let width = payload.len();
+    assert!(
+        preimage.windows(width).any(|window| window == payload),
+        "the raw payload rides the preimage"
+    );
+    assert_eq!(blake3::hash(&preimage).as_bytes()[..], stored_digest[..]);
+    assert_eq!(
+        encode_record_digest_preimage(&record).expect("preimage"),
+        preimage
+    );
+    assert_eq!(
+        record_content_digest(&record).expect("digest")[..],
+        stored_digest[..]
+    );
+}
+
+/// Hand-typed storage ABI of one persisted intent row. These literals are
+/// deliberately NOT read from `INTENT_LEDGER_VALUE_KEYS` or recomputed from the
+/// encoder: producer and expectation must be able to disagree, or a co-drifting
+/// change would rewrite both sides at once. Pre-launch, a deliberate ABI change
+/// re-pins them with a stated rationale.
+const GOLDEN_ROW_KEYS: [&str; 20] = [
+    "schema_version",
+    "id",
+    "attempt_id",
+    "call_seq",
+    "server",
+    "tool",
+    "payload_hash",
+    "payload",
+    "idempotency_key",
+    "idempotency_supported",
+    "authorization_binding",
+    "binding_version",
+    "resolved_endpoint",
+    "capability_provenance",
+    "budget_accounting",
+    "recorded_outcome",
+    "state",
+    "created_ms",
+    "updated_ms",
+    "content_digest",
+];
+const GOLDEN_ATTEMPT_BYTE: u8 = 0x2B;
+const GOLDEN_CALL_SEQ: u64 = 7;
+const GOLDEN_PAYLOAD: &[u8] = b"golden fixture payload";
+const GOLDEN_NOW_MS: u64 = 1_700_000_000_000;
+/// The identity this fixture's attempt, sequence, server, tool, and payload
+/// hash derive, in lowercase hex.
+const GOLDEN_INTENT_ID_HEX: &str =
+    "311135d83a39aeef442248566c71583daf41968a7e78ca7688da8119259086d3";
+/// BLAKE3 of the 19-entry MessagePack body of that row at schema version 3.
+const GOLDEN_CONTENT_DIGEST_HEX: &str =
+    "770b0b4308af5fa80600143e4620adb0d5e5360c345905b404f38343bb0084c0";
+
+#[test]
+fn storage_abi_golden_fixture() {
+    let (_dir, vault) = open_vault();
+    let record = persist_pending(
+        &vault,
+        attempt(GOLDEN_ATTEMPT_BYTE),
+        GOLDEN_CALL_SEQ,
+        GOLDEN_PAYLOAD,
+        GOLDEN_NOW_MS,
+        true,
+    );
+    // Identity is pinned beside the row: the keyspace and the id it addresses
+    // rows by cannot drift apart unnoticed.
+    assert_eq!(
+        derive_intent_id(
+            attempt(GOLDEN_ATTEMPT_BYTE),
+            GOLDEN_CALL_SEQ,
+            "test-server",
+            "test-tool",
+            &hash_frozen_payload(GOLDEN_PAYLOAD),
+        )
+        .expect("golden identity"),
+        record.id
+    );
+    assert_eq!(bytes_to_hex_lower(&record.id), GOLDEN_INTENT_ID_HEX);
+
+    let entries = row_entries(&raw_row(&vault, &intent_ledger_key(&record.id)));
+    let stored_keys: Vec<&str> = entries
+        .iter()
+        .map(|(key, _)| key.as_str().expect("row keys are strings"))
+        .collect();
+    assert_eq!(stored_keys, GOLDEN_ROW_KEYS);
+    let Some((_, Value::Binary(stored_digest))) = entries.last() else {
+        panic!("the final entry is the binary content digest");
+    };
+    assert_eq!(bytes_to_hex_lower(stored_digest), GOLDEN_CONTENT_DIGEST_HEX);
+}
+
+#[test]
+fn record_content_digest_has_no_json_detour() {
+    // The requirement is about REACHABILITY, not one function body: the digest
+    // path must not reach canonical JSON through any callee, in any function
+    // order. `derive_intent_id` is the sole exception — it hashes the shipped
+    // identity preimage — so its body is sliced out and everything that remains
+    // must be JSON-free.
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/outbound_intent_ledger.rs");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    let start = src
+        .find("\npub fn derive_intent_id(")
+        .expect("the identity derivation must be findable by its signature")
+        + 1;
+    let end = start
+        + src[start..]
+            .find("\n}\n")
+            .expect("the identity derivation must terminate")
+        + "\n}\n".len();
+    let identity = &src[start..end];
+    assert!(
+        identity.contains("canonical_hash(&IntentIdentity {"),
+        "the sliced body must be the identity derivation itself"
+    );
+    let remainder = format!("{}{}", &src[..start], &src[end..]);
+    assert!(
+        remainder.contains("fn record_content_digest("),
+        "the remainder must still hold the digest path being audited"
+    );
+    for token in ["canonical_hash", "canonicalize_json", "serde_json"] {
+        assert!(
+            identity.contains(token),
+            "{token} must remain inside derive_intent_id"
+        );
+        assert!(
+            !remainder.contains(token),
+            "{token} is reachable outside derive_intent_id"
+        );
+    }
+}
+
+#[test]
+fn content_digest_is_stable_for_one_logical_record() {
+    let (_dir, vault) = open_vault();
+    let payload: &[u8] = b"stable digest payload";
+    let persisted = persist_pending(&vault, attempt(42), 3, payload, 500, true);
+    // Built through a different constructor, never read back from storage.
+    let rebuilt = IntentLedgerRecord::pending(
+        request(attempt(42), 3, payload, 500),
+        true,
+        BudgetChargeMarker {
+            key_ref: None,
+            budget_class: BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: 500,
+        },
+    )
+    .expect("independently built record");
+    assert_eq!(persisted, rebuilt);
+    assert_eq!(
+        encode_record_digest_preimage(&persisted).expect("persisted preimage"),
+        encode_record_digest_preimage(&rebuilt).expect("rebuilt preimage")
+    );
+    assert_eq!(
+        record_content_digest(&persisted).expect("persisted digest"),
+        record_content_digest(&rebuilt).expect("rebuilt digest")
+    );
+
+    // Entry order in a raw row is not the canonical order: a reordered but
+    // otherwise equivalent map decodes to the same record and re-encodes to the
+    // same canonical bytes and digest.
+    let key = intent_ledger_key(&persisted.id);
+    let canonical = encode_record(&persisted).expect("encode canonical row");
+    let mut entries = row_entries(&canonical);
+    entries.reverse();
+    let reordered = encode_entries(entries);
+    assert_ne!(reordered, canonical);
+    let decoded = decode_record(&key, &reordered).expect("a reordered row still decodes");
+    assert_eq!(decoded, persisted);
+    assert_eq!(encode_record(&decoded).expect("re-encode"), canonical);
+    assert_eq!(
+        record_content_digest(&decoded).expect("reordered digest"),
+        record_content_digest(&persisted).expect("canonical digest")
+    );
+}
+
+const OTHER_BINDING: OutboundAuthorizationBinding = OutboundAuthorizationBinding::new([0x5A; 32]);
+
+/// Applies one mutation and re-establishes the identity fields it moves, so
+/// every mutated fixture is still a row this engine could have written. A field
+/// is digest-bound only if a row the engine ACCEPTS still gets another digest.
+fn mutated(
+    base: &IntentLedgerRecord,
+    change: impl FnOnce(&mut IntentLedgerRecord),
+) -> IntentLedgerRecord {
+    let mut record = base.clone();
+    change(&mut record);
+    record.payload_hash = hash_frozen_payload(record.payload());
+    record.id = derive_intent_id(
+        record.attempt_id,
+        record.call_seq,
+        &record.server,
+        &record.tool,
+        &record.payload_hash,
+    )
+    .expect("mutated identity");
+    record.idempotency_key = bytes_to_hex_lower(&record.id);
+    record
+}
+
+#[test]
+fn every_body_field_is_digest_bound() {
+    let (_dir, vault) = open_vault();
+    let base = persist_pending(&vault, attempt(50), 11, b"digest binding", 1_000, true);
+    let capability = capability_fixture();
+    let scoped = capability_record(capability.clone());
+    let other_grant = EntityId::from_bytes([0x5E; 16]).expect("other grant id");
+
+    // Fields coupled by validation move together; the case names the body keys
+    // it moves so the table can prove it covers every one of them.
+    let cases: Vec<(&str, Vec<&str>, IntentLedgerRecord, IntentLedgerRecord)> = vec![
+        (
+            "attempt_id",
+            vec![KEY_ID, KEY_ATTEMPT_ID, KEY_IDEMPOTENCY_KEY],
+            base.clone(),
+            mutated(&base, |record| record.attempt_id = attempt(51)),
+        ),
+        (
+            "call_seq",
+            vec![KEY_CALL_SEQ],
+            base.clone(),
+            mutated(&base, |record| record.call_seq = 12),
+        ),
+        (
+            "server",
+            vec![KEY_SERVER],
+            base.clone(),
+            mutated(&base, |record| record.server = "other".to_owned()),
+        ),
+        (
+            "tool",
+            vec![KEY_TOOL],
+            base.clone(),
+            mutated(&base, |record| record.tool = "other".to_owned()),
+        ),
+        (
+            "payload",
+            vec![KEY_PAYLOAD, KEY_PAYLOAD_HASH],
+            base.clone(),
+            mutated(&base, |record| record.payload = b"other body".to_vec()),
+        ),
+        (
+            "idempotency_supported",
+            vec![KEY_IDEMPOTENCY_SUPPORTED],
+            base.clone(),
+            mutated(&base, |record| record.idempotency_supported = false),
+        ),
+        (
+            "authorization_binding",
+            vec![KEY_AUTHORIZATION_BINDING],
+            base.clone(),
+            mutated(&base, |record| {
+                record.authorization_binding = Some(OTHER_BINDING);
+            }),
+        ),
+        (
+            "budget key_ref, matched_rows, and sends_debit",
+            vec![KEY_BUDGET_ACCOUNTING],
+            base.clone(),
+            mutated(&base, |record| {
+                record.budget_accounting.key_ref =
+                    Some(EntityId::from_bytes([0x77; 16]).expect("budget key ref"));
+                record.budget_accounting.matched_rows = vec![1, 2];
+                record.budget_accounting.sends_debit = 1;
+            }),
+        ),
+        (
+            "budget_class",
+            vec![KEY_BUDGET_ACCOUNTING],
+            base.clone(),
+            mutated(&base, |record| {
+                record.budget_accounting.budget_class = BudgetClass::Operation;
+            }),
+        ),
+        (
+            "budget accounted_at_ms",
+            vec![KEY_BUDGET_ACCOUNTING],
+            base.clone(),
+            mutated(&base, |record| {
+                record.budget_accounting.accounted_at_ms = 2_000;
+            }),
+        ),
+        (
+            "state and recorded_outcome",
+            vec![KEY_STATE, KEY_RECORDED_OUTCOME],
+            base.clone(),
+            mutated(&base, |record| {
+                record.state = IntentState::Done;
+                record.recorded_outcome = Some(RecordedOutboundOutcome::Acked);
+            }),
+        ),
+        (
+            "created_ms",
+            vec![KEY_CREATED_MS],
+            base.clone(),
+            mutated(&base, |record| record.created_ms = 900),
+        ),
+        (
+            "updated_ms",
+            vec![KEY_UPDATED_MS],
+            base.clone(),
+            mutated(&base, |record| record.updated_ms = 1_100),
+        ),
+        (
+            "capability provenance stripped with its endpoint",
+            vec![KEY_RESOLVED_ENDPOINT, KEY_CAPABILITY_PROVENANCE],
+            scoped.clone(),
+            mutated(&scoped, |record| {
+                record.resolved_endpoint = None;
+                record.capability_provenance = None;
+            }),
+        ),
+        (
+            "capability provenance swapped for another grant",
+            vec![KEY_CAPABILITY_PROVENANCE],
+            scoped.clone(),
+            mutated(&scoped, |record| {
+                record.capability_provenance = Some(
+                    ScopedCapabilityProvenance::mint(capability.server(), &other_grant)
+                        .expect("safe canonical scoped server"),
+                );
+            }),
+        ),
+    ];
+
+    let mut covered: HashSet<&str> = HashSet::new();
+    for (label, keys, case_base, case_mutated) in cases {
+        for key in keys {
+            assert!(
+                INTENT_LEDGER_VALUE_KEYS[..19].contains(&key),
+                "{label} names a key outside the digest preimage"
+            );
+            covered.insert(key);
+        }
+        let base_digest = record_content_digest(&case_base).expect("base digest");
+        let moved_digest = record_content_digest(&case_mutated).expect("mutated digest");
+        assert_ne!(base_digest, moved_digest, "{label} must move the digest");
+        assert_ne!(
+            encode_record_digest_preimage(&case_base).expect("base preimage"),
+            encode_record_digest_preimage(&case_mutated).expect("moved preimage"),
+            "{label} must move the digest preimage"
+        );
+        let key = intent_ledger_key(&case_mutated.id);
+        let encoded = encode_record(&case_mutated).expect("encode mutated row");
+        assert_eq!(
+            decode_record(&key, &encoded).expect("the mutated row is itself valid"),
+            case_mutated,
+            "{label} must stay a row this engine could write"
+        );
+        let spliced = row_with_content_digest(&encoded, base_digest);
+        assert!(
+            matches!(
+                decode_record(&key, &spliced),
+                Err(IntentLedgerError::InvalidRecord(_))
+            ),
+            "{label} must fail decode once the unmutated digest is spliced in"
+        );
+    }
+
+    // Keys 0 and 11 are digest-bound STRUCTURALLY, not mutationally: no valid
+    // row can carry another schema_version or binding_version, so the fixture
+    // pins their byte-exact preimage entries instead of mutating them.
+    assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 3);
+    assert_eq!(OUTBOUND_BINDING_VERSION, 2);
+    let preimage = encode_record_digest_preimage(&base).expect("base preimage");
+    for (key, value) in [("schema_version", 3_u64), ("binding_version", 2_u64)] {
+        let mut entry = Vec::new();
+        rmpv::encode::write_value(&mut entry, &Value::from(key)).expect("encode pinned key");
+        rmpv::encode::write_value(&mut entry, &Value::from(value)).expect("encode pinned value");
+        assert!(
+            preimage
+                .windows(entry.len())
+                .any(|window| window == entry.as_slice()),
+            "the preimage must carry a byte-exact ({key}, {value}) entry"
+        );
+    }
+
+    let expected: HashSet<&str> = INTENT_LEDGER_VALUE_KEYS[..19]
+        .iter()
+        .copied()
+        .filter(|key| *key != KEY_SCHEMA_VERSION && *key != KEY_BINDING_VERSION)
+        .collect();
+    assert_eq!(covered, expected, "every body key needs a mutation case");
+    assert_eq!(covered.len(), 17, "19 body keys minus 2 structural ones");
+}
+
+/// The FORMER canonical-JSON content digest, reconstructed locally. Production
+/// must never carry a second body representation; a test may, and this copy is
+/// the only way to seed a row in the exact format this change retires.
+fn legacy_json_content_digest(record: &IntentLedgerRecord) -> [u8; 32] {
+    use std::collections::BTreeMap;
+
+    use serde::Serialize;
+    use serde_json::{Map as JsonMap, Value as JsonValue};
+
+    #[derive(Serialize)]
+    struct LegacyRecordContent<'a> {
+        schema_version: u64,
+        id: &'a [u8; 32],
+        attempt_id: &'a [u8; 16],
+        call_seq: u64,
+        server: &'a str,
+        tool: &'a str,
+        payload_hash: &'a [u8; 32],
+        idempotency_key: &'a str,
+        idempotency_supported: bool,
+        authorization_binding: Option<&'a [u8; 32]>,
+        binding_version: u64,
+        resolved_endpoint: Option<&'a str>,
+        budget_key_ref: Option<&'a [u8; 16]>,
+        budget_class: &'a str,
+        budget_matched_rows: &'a [u16],
+        budget_sends_debit: u64,
+        budget_accounted_at_ms: u64,
+        recorded_outcome: Option<&'a str>,
+        recorded_outcome_reason: Option<&'a str>,
+        state: &'a str,
+        created_ms: u64,
+        updated_ms: u64,
+    }
+
+    fn canonicalize(value: JsonValue) -> JsonValue {
+        match value {
+            JsonValue::Array(values) => {
+                JsonValue::Array(values.into_iter().map(canonicalize).collect())
+            }
+            JsonValue::Object(entries) => {
+                let mut sorted = BTreeMap::new();
+                for (key, value) in entries {
+                    sorted.insert(key, canonicalize(value));
+                }
+                let mut canonical = JsonMap::new();
+                for (key, value) in sorted {
+                    canonical.insert(key, value);
+                }
+                JsonValue::Object(canonical)
+            }
+            scalar => scalar,
+        }
+    }
+
+    let content = LegacyRecordContent {
+        schema_version: 2,
+        id: &record.id,
+        attempt_id: record.attempt_id.as_bytes(),
+        call_seq: record.call_seq,
+        server: &record.server,
+        tool: &record.tool,
+        payload_hash: &record.payload_hash,
+        idempotency_key: &record.idempotency_key,
+        idempotency_supported: record.idempotency_supported,
+        authorization_binding: record
+            .authorization_binding
+            .as_ref()
+            .map(OutboundAuthorizationBinding::as_bytes),
+        binding_version: record.binding_version,
+        resolved_endpoint: record.resolved_endpoint.as_deref(),
+        budget_key_ref: record
+            .budget_accounting
+            .key_ref
+            .as_ref()
+            .map(EntityId::as_bytes),
+        budget_class: record.budget_accounting.budget_class.as_str(),
+        budget_matched_rows: &record.budget_accounting.matched_rows,
+        budget_sends_debit: record.budget_accounting.sends_debit,
+        budget_accounted_at_ms: record.budget_accounting.accounted_at_ms,
+        recorded_outcome: record.recorded_outcome.map(|outcome| match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery => "definite_non_delivery",
+            RecordedOutboundOutcome::Acked => "acked",
+            RecordedOutboundOutcome::Abandoned(_) => "abandoned",
+        }),
+        recorded_outcome_reason: record.recorded_outcome.and_then(|outcome| match outcome {
+            RecordedOutboundOutcome::DefiniteNonDelivery | RecordedOutboundOutcome::Acked => None,
+            RecordedOutboundOutcome::Abandoned(reason) => Some(reason.as_str()),
+        }),
+        state: record.state.as_str(),
+        created_ms: record.created_ms,
+        updated_ms: record.updated_ms,
+    };
+    let value = serde_json::to_value(&content).expect("legacy canonical value");
+    let bytes = serde_json::to_vec(&canonicalize(value)).expect("legacy canonical bytes");
+    *blake3::hash(&bytes).as_bytes()
+}
+
+#[test]
+fn old_json_digest_is_flagged_not_accepted() {
+    // Pre-launch posture: no grandfather path, no dual verifier, no migration.
+    // A former-format row is EVIDENCE of damage, never an accepted record.
+    let (_dir, vault) = open_vault();
+    let record = persist_pending(&vault, attempt(60), 0, b"former format", 300, true);
+    let key = intent_ledger_key(&record.id);
+    let canonical = raw_row(&vault, &key);
+    let legacy_digest = legacy_json_content_digest(&record);
+    assert_ne!(
+        legacy_digest,
+        record_content_digest(&record).expect("current digest"),
+        "the retired JSON digest is not the MessagePack digest"
+    );
+
+    let json_digest_row = row_with_content_digest(&canonical, legacy_digest);
+    put_raw_row(&vault, &key, &json_digest_row);
+    assert!(matches!(
+        read_intent_record(&vault, &record.id),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    let listing = intent_ledger_records(&vault).expect("listing sees the row");
+    assert!(listing.is_empty(), "no fallback accepts a JSON digest");
+    assert_eq!(listing.corrupt.len(), 1);
+    assert_eq!(&*listing.corrupt[0].key, key.as_slice());
+    assert_eq!(
+        corrupt_reason(&listing.corrupt[0]),
+        "outbound intent content digest mismatch"
+    );
+    assert_eq!(
+        raw_row(&vault, &key),
+        json_digest_row,
+        "the listing observes the row, it never rewrites it"
+    );
+
+    // The same row as a full v2 row: old schema version, no typed capability
+    // provenance, old digest. Corrupt evidence, not a readable record.
+    let mut entries = row_entries(&canonical);
+    entries.retain(|(candidate, _)| candidate.as_str() != Some(KEY_CAPABILITY_PROVENANCE));
+    for (candidate, slot) in &mut entries {
+        if candidate.as_str() == Some(KEY_SCHEMA_VERSION) {
+            *slot = Value::from(2_u64);
+        }
+        if candidate.as_str() == Some(KEY_CONTENT_DIGEST) {
+            *slot = Value::Binary(legacy_digest.to_vec());
+        }
+    }
+    let v2_row = encode_entries(entries);
+    put_raw_row(&vault, &key, &v2_row);
+    assert!(matches!(
+        read_intent_record(&vault, &record.id),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    let listing = intent_ledger_records(&vault).expect("listing sees the v2 row");
+    assert!(listing.is_empty());
+    assert_eq!(listing.corrupt.len(), 1);
+    assert_eq!(
+        corrupt_reason(&listing.corrupt[0]),
+        "unsupported outbound intent schema_version"
+    );
+}
+
+#[test]
+fn listing_is_per_row_tolerant() {
+    let (_dir, vault) = open_vault();
+    let mut valid = Vec::new();
+    for index in 0..3u8 {
+        let row = persist_pending(&vault, attempt(100 + index), 0, b"tolerant", 100, true);
+        valid.push(row);
+    }
+    // The lowest possible id sorts this damaged row FIRST under the private
+    // prefix: a fail-closed listing would return nothing at all.
+    let corrupt_key = intent_ledger_key(&[0x00; 32]);
+    let corrupt_row: &[u8] = &[0xde, 0x00];
+    put_raw_row(&vault, &corrupt_key, corrupt_row);
+
+    let listing = intent_ledger_records(&vault).expect("listing tolerates the row");
+    assert_eq!(listing.len(), valid.len());
+    assert_eq!(listing.corrupt.len(), 1);
+    assert_eq!(&*listing.corrupt[0].key, corrupt_key.as_slice());
+    assert_eq!(
+        corrupt_reason(&listing.corrupt[0]),
+        "outbound intent MessagePack decode failed"
+    );
+    for record in &listing.records {
+        assert!(
+            intent_ledger_key(&record.id) > corrupt_key,
+            "the damaged row precedes every valid row in the walk"
+        );
+    }
+    let mut listed: Vec<[u8; 32]> = listing.iter().map(|record| record.id).collect();
+    listed.sort_unstable();
+    let mut expected: Vec<[u8; 32]> = valid.iter().map(|record| record.id).collect();
+    expected.sort_unstable();
+    assert_eq!(listed, expected);
+    assert_eq!(
+        raw_row(&vault, &corrupt_key),
+        corrupt_row,
+        "the corrupt row stays byte-identical in storage"
+    );
+}
+
+#[test]
+fn listing_tolerates_multiple_independent_failures() {
+    let (_dir, vault) = open_vault();
+    let first = persist_pending(&vault, attempt(110), 0, b"multi one", 100, true);
+    let second = persist_pending(&vault, attempt(111), 0, b"multi two", 100, true);
+    let canonical = raw_row(&vault, &intent_ledger_key(&first.id));
+
+    let unknown_version = {
+        let mut entries = row_entries(&canonical);
+        for (candidate, slot) in &mut entries {
+            if candidate.as_str() == Some(KEY_SCHEMA_VERSION) {
+                *slot = Value::from(INTENT_LEDGER_SCHEMA_VERSION + 1);
+            }
+        }
+        encode_entries(entries)
+    };
+    let missing_field = {
+        let mut entries = row_entries(&canonical);
+        entries.retain(|(candidate, _)| candidate.as_str() != Some(KEY_STATE));
+        encode_entries(entries)
+    };
+    let duplicate_key = {
+        let mut entries = row_entries(&canonical);
+        let repeated = entries
+            .iter()
+            .find(|(candidate, _)| candidate.as_str() == Some(KEY_STATE))
+            .cloned()
+            .expect("the canonical row carries a state entry");
+        entries.push(repeated);
+        encode_entries(entries)
+    };
+    let digest_mismatch = row_with_content_digest(&canonical, [0xEE; 32]);
+    let malformed = vec![0xde, 0x00];
+
+    // Five rows, five independent causes, all keyed below the valid rows.
+    let damaged = [
+        (0x00u8, malformed),
+        (0x01, unknown_version),
+        (0x02, missing_field),
+        (0x03, duplicate_key),
+        (0x04, digest_mismatch),
+    ];
+    let reasons = [
+        "outbound intent MessagePack decode failed",
+        "unsupported outbound intent schema_version",
+        "missing outbound intent state",
+        "duplicate outbound intent key",
+        "outbound intent content digest mismatch",
+    ];
+    let mut expected = Vec::new();
+    for ((id_byte, row), reason) in damaged.into_iter().zip(reasons) {
+        let key = intent_ledger_key(&[id_byte; 32]);
+        put_raw_row(&vault, &key, &row);
+        expected.push((key, reason));
+    }
+
+    let listing = intent_ledger_records(&vault).expect("listing survives five rows");
+    assert_eq!(listing.corrupt.len(), 5);
+    for (corrupt, (key, reason)) in listing.corrupt.iter().zip(expected) {
+        assert_eq!(&*corrupt.key, key.as_slice());
+        assert_eq!(
+            corrupt_reason(corrupt),
+            reason,
+            "each damaged row must fail for its own reason"
+        );
+    }
+    let mut listed: Vec<[u8; 32]> = listing.iter().map(|record| record.id).collect();
+    listed.sort_unstable();
+    let mut expected_ids = vec![first.id, second.id];
+    expected_ids.sort_unstable();
+    assert_eq!(listed, expected_ids, "later valid rows stay visible");
+}
+
+#[test]
+fn listing_storage_errors_stay_top_level_by_construction() {
+    // Tolerance is for row damage, never for an unavailable substrate. The
+    // guard is structural because the byte-identical iteration line also lives
+    // in the recovery walks, so a whole-file `contains` would prove nothing —
+    // and no LMDB fault-injection harness exists or is wanted.
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/outbound_intent_ledger.rs");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    let iteration = "let (key, value) = row?;";
+    assert!(
+        src.matches(iteration).count() >= 2,
+        "the recovery walks share this line, which is why the scan slices"
+    );
+    let start = src
+        .find("\npub fn intent_ledger_records(")
+        .expect("the listing must be findable by its signature")
+        + 1;
+    let end = start
+        + src[start..]
+            .find("\n}\n")
+            .expect("the listing must terminate")
+        + "\n}\n".len();
+    let body = &src[start..end];
+    assert!(
+        body.contains("read_txn().map_err(Error::from)?"),
+        "opening the read transaction stays a top-level error"
+    );
+    assert!(
+        body.contains("prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?"),
+        "creating the prefix iterator stays a top-level error"
+    );
+    let iteration_at = body
+        .find(iteration)
+        .expect("advancing a failed iterator stays a top-level error");
+    let tolerance_at = body
+        .find("match decode_record(&key, &value)")
+        .expect("per-row tolerance must be a decode match");
+    assert!(
+        iteration_at < tolerance_at,
+        "the storage error propagates BEFORE any per-row tolerance"
+    );
+}
+
+#[test]
+fn deref_len_counts_valid_rows_only() {
+    let (_dir, vault) = open_vault();
+    let mut valid = Vec::new();
+    for index in 0..3u8 {
+        let row = persist_pending(&vault, attempt(120 + index), 0, b"deref", 100, true);
+        valid.push(row);
+    }
+    put_raw_row(&vault, &intent_ledger_key(&[0x00; 32]), &[0xde, 0x00]);
+    let mut expected: Vec<[u8; 32]> = valid.iter().map(|record| record.id).collect();
+    expected.sort_unstable();
+
+    let listing = intent_ledger_records(&vault).expect("listing");
+    assert_eq!(listing.len(), valid.len());
+    assert_eq!(listing.corrupt.len(), 1);
+    assert!(!listing.is_empty());
+    assert_eq!(
+        listing.first().map(|record| record.state),
+        Some(IntentState::Pending)
+    );
+    // Consuming iteration yields the valid rows and drops the corrupt ones.
+    let mut owned: Vec<[u8; 32]> = listing.into_iter().map(|record| record.id).collect();
+    owned.sort_unstable();
+    assert_eq!(owned, expected);
+}
+
+#[test]
+fn recovery_walk_is_unchanged() {
+    let (_dir, vault) = open_vault();
+    let first = persist_pending(&vault, attempt(70), 0, b"recovery one", 100, true);
+    let second = persist_pending(&vault, attempt(71), 0, b"recovery two", 100, true);
+    let corrupt_key = intent_ledger_key(&[0x00; 32]);
+    let corrupt_row: &[u8] = &[0xde, 0x00];
+    put_raw_row(&vault, &corrupt_key, corrupt_row);
+
+    let mut sender = CountingSender::default();
+    let recovery = recover_outbound_intents(&vault, &mut sender, 200).expect("recovery");
+    assert_eq!(recovery.scanned, 3, "recovery still scans every row");
+    assert_eq!(recovery.resent, 2);
+    assert_eq!(recovery.completed, 2);
+    assert_eq!(sender.calls, 2, "the corrupt row is never sent");
+    assert_eq!(
+        recovery.escalations,
+        vec![IntentEscalation {
+            intent_id: Some([0x00; 32]),
+            reason: IntentEscalationReason::CorruptLedgerRow,
+        }],
+        "one CorruptLedgerRow escalation per corrupt row, unchanged"
+    );
+
+    let listing = intent_ledger_records(&vault).expect("listing after recovery");
+    assert_eq!(listing.corrupt.len(), 1);
+    for record in &listing.records {
+        assert_eq!(record.state, IntentState::Done);
+    }
+    let mut listed: Vec<[u8; 32]> = listing.iter().map(|record| record.id).collect();
+    listed.sort_unstable();
+    let mut expected = vec![first.id, second.id];
+    expected.sort_unstable();
+    assert_eq!(listed, expected);
+    assert_eq!(raw_row(&vault, &corrupt_key), corrupt_row);
+}
+
+#[test]
+fn strict_targeted_reads_remain_strict() {
+    let (_dir, vault) = open_vault();
+    let payload: &[u8] = b"strict target payload";
+    let target = persist_pending(&vault, attempt(80), 0, payload, 100, true);
+    let neighbour = persist_pending(&vault, attempt(81), 0, b"neighbour", 100, true);
+    let key = intent_ledger_key(&target.id);
+    let damaged = row_with_content_digest(&raw_row(&vault, &key), [0xEE; 32]);
+    put_raw_row(&vault, &key, &damaged);
+
+    assert!(matches!(
+        read_intent_record(&vault, &target.id),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    assert!(matches!(
+        transition_record(&vault, target.id, IntentState::Done, 101),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    // Replay re-reads the targeted row and refuses: listing tolerance is
+    // observation, never execution authority.
+    let mut sender = CountingSender::default();
+    assert!(matches!(
+        execute_outbound_call(
+            &vault,
+            descriptor(None, Some(true)),
+            request(attempt(80), 0, payload, 102),
+            &mut sender,
+        ),
+        Err(IntentLedgerError::InvalidRecord(_))
+    ));
+    assert_eq!(sender.calls, 0);
+
+    let listing = intent_ledger_records(&vault).expect("listing");
+    assert_eq!(listing.len(), 1);
+    assert_eq!(listing[0].id, neighbour.id);
+    assert_eq!(listing.corrupt.len(), 1);
+    assert_eq!(&*listing.corrupt[0].key, key.as_slice());
 }
