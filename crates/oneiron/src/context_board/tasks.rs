@@ -1,15 +1,21 @@
 //! TASKS section projections — intent rows, realizing jobs, and the
 //! render-tier ack/cancel state helpers behind the `tasks.*` verb surface.
+//!
+//! Ack and cancel state is READ from, and WRITTEN as, the TASK's replicated
+//! authority facts (`task_authority`). The UI tier never parses a fact body or
+//! walks an edge: it reads these two bits and the stable
+//! `TaskIntentPresence.acked` lens, exactly as it did when they were
+//! node-local `vault_meta` rows.
 
 use super::one_line_token;
 use crate::consult_ladder::LadderTerminalDisposition;
 use crate::outbound::ConnectorSendTask;
 use crate::run_tree::{RunTreeNode, RunTreeStatus};
+use crate::task_authority::{
+    TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+};
 use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};
-use crate::{EntityId, Error, Result, Vault};
-
-const TASK_ACK_KEY_PREFIX: &[u8] = b"context_board.task.ack.v1\0";
-const TASK_CANCELLED_KEY_PREFIX: &[u8] = b"context_board.task.cancelled.v1\0";
+use crate::{EntityId, Result, Vault};
 
 /// Maximum concrete TASKS rows rendered before the additive overflow footer.
 ///
@@ -436,6 +442,25 @@ impl TaskIntentPresence {
     /// read transaction, so assembling one board page costs ONE render-state
     /// transaction instead of two per TASK.
     ///
+    /// Both bits come from the TASK's own replicated authority facts, so a
+    /// cancellation or acknowledgement made on one device renders the same way
+    /// on every other one — no node-local `vault_meta` bit decides what a peer
+    /// sees. Cancellation is read INDEPENDENTLY of the owner proof: a cancel
+    /// that really happened hides the row whether or not the task also carries
+    /// an Owner fact.
+    ///
+    /// The FOLD stays STRICT and the board CALL SITES degrade. A companion
+    /// fact set that will not read — an owner fork, a malformed fact body, a
+    /// fact re-pointed at a subject it does not name — returns `Err` here, and
+    /// `Vault::task_authority_state` keeps failing closed on it so the cancel /
+    /// force-cancel doors refuse that task. The board never asks who the owner
+    /// is, so its readers map that same `Err` to a per-row outcome instead:
+    /// `task_verb::presence_scan` skips the poisoned row inside the page loop
+    /// (P2 F8 — one bad row must never abort `tasks.check`, and these rows
+    /// replicate), and the by-id door answers `Ok(None)`. The degrade is a
+    /// SKIP, never a render with false bits, because a row whose facts cannot
+    /// be read may really be cancelled.
+    ///
     /// Hung off the presence type rather than standing as a free function
     /// because `context_board`'s re-export list is a shared chokepoint this
     /// ticket does not claim; an associated item travels with the type that is
@@ -445,14 +470,19 @@ impl TaskIntentPresence {
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<TaskRenderState> {
+        let facts = vault.task_authority_facts_in(rtxn, task_ref)?;
         Ok(TaskRenderState {
-            acked: task_state_in(vault, rtxn, TASK_ACK_KEY_PREFIX, task_ref)?,
-            cancelled: task_state_in(vault, rtxn, TASK_CANCELLED_KEY_PREFIX, task_ref)?,
+            acked: facts.acked,
+            cancelled: facts.cancelled,
         })
     }
 }
 
 /// Both render-tier state bits for one TASK.
+///
+/// `cancelled` is answered BEFORE `acked` by every consumer: a Cancelled fact
+/// takes the row off the active surface even when an Acked fact merged in
+/// beside it, in either order, on either replica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TaskRenderState {
     pub(crate) acked: bool,
@@ -463,68 +493,81 @@ pub(crate) fn task_is_acked(vault: &Vault, task_ref: EntityId) -> Result<bool> {
     Ok(task_render_state(vault, task_ref)?.acked)
 }
 
+/// Appends the immutable Acked fact for one TASK, inside the caller's
+/// transaction — so the acknowledgement commits with the verified `tasks.ack`
+/// effect that earned it, or not at all.
 pub(crate) fn ack_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
+    actor: EntityId,
+    now: u64,
 ) -> Result<()> {
-    set_task_state_in_txn(vault, wtxn, TASK_ACK_KEY_PREFIX, task_ref)
+    put_task_state_fact_in_txn(
+        vault,
+        wtxn,
+        task_ref,
+        TaskAuthorityFactKind::Acked,
+        actor,
+        now,
+    )
 }
 
 pub(crate) fn task_is_cancelled(vault: &Vault, task_ref: EntityId) -> Result<bool> {
     Ok(task_render_state(vault, task_ref)?.cancelled)
 }
 
+/// Appends the immutable Cancelled fact for one TASK. Monotonic by
+/// construction: the fact is a row, never a flag, so nothing that merges in
+/// later can clear it.
 pub(crate) fn cancel_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
+    actor: EntityId,
+    now: u64,
 ) -> Result<()> {
-    set_task_state_in_txn(vault, wtxn, TASK_CANCELLED_KEY_PREFIX, task_ref)
+    put_task_state_fact_in_txn(
+        vault,
+        wtxn,
+        task_ref,
+        TaskAuthorityFactKind::Cancelled,
+        actor,
+        now,
+    )
+}
+
+fn put_task_state_fact_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    kind: TaskAuthorityFactKind,
+    actor: EntityId,
+    now: u64,
+) -> Result<()> {
+    put_task_authority_fact_in_txn(
+        vault,
+        wtxn,
+        TaskAuthorityFact {
+            task_ref,
+            kind,
+            actor_ref: actor,
+            occurred_at: now,
+        },
+    )
+    .map(|_fact_ref| ())
 }
 
 /// One transaction for a direct caller that holds none of its own; the page
 /// scan reaches the same read through [`TaskIntentPresence::render_state_in`].
+///
+/// Strictness travels with the fold: the `Err` a poisoned companion set
+/// produces reaches [`task_is_cancelled`] / [`task_is_acked`] unchanged. Board
+/// call sites degrade it per row (skip in the page scan, `Ok(None)` by id);
+/// authority call sites keep failing closed on it.
 fn task_render_state(vault: &Vault, task_ref: EntityId) -> Result<TaskRenderState> {
     let rtxn = vault.store.env.read_txn()?;
     TaskIntentPresence::render_state_in(vault, &rtxn, task_ref)
-}
-
-fn task_state_in(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    prefix: &[u8],
-    task_ref: EntityId,
-) -> Result<bool> {
-    match vault
-        .store
-        .vault_meta
-        .get(rtxn, task_state_key(prefix, task_ref).as_slice())?
-    {
-        None => Ok(false),
-        Some(value) if *value == [1] => Ok(true),
-        Some(_) => Err(Error::InvariantViolation("context_board.task.state")),
-    }
-}
-
-fn set_task_state_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    prefix: &[u8],
-    task_ref: EntityId,
-) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, task_state_key(prefix, task_ref).as_slice(), &[1])?;
-    Ok(())
-}
-
-fn task_state_key(prefix: &[u8], task_ref: EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + task_ref.as_bytes().len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(task_ref.as_bytes());
-    key
 }
 
 /// Renders provided task presence into stable, collapsed rows — intent rows
@@ -1409,6 +1452,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault =
             Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("open vault");
+        let actor = EntityId::from_bytes([0xC1; 16]).expect("actor id");
         // acked-only, cancelled-only, both, neither.
         let rows: Vec<(EntityId, bool, bool)> = [
             (0xA1, true, false),
@@ -1427,11 +1471,13 @@ mod tests {
         .collect();
         let mut wtxn = vault.store.env.write_txn().expect("write txn");
         for (task_ref, acked, cancelled) in &rows {
+            // Ack FIRST wherever both apply: an acknowledgement that merged in
+            // before a cancellation must not read as "not cancelled".
             if *acked {
-                ack_task_in_txn(&vault, &mut wtxn, *task_ref).expect("ack");
+                ack_task_in_txn(&vault, &mut wtxn, *task_ref, actor, 100).expect("ack");
             }
             if *cancelled {
-                cancel_task_in_txn(&vault, &mut wtxn, *task_ref).expect("cancel");
+                cancel_task_in_txn(&vault, &mut wtxn, *task_ref, actor, 101).expect("cancel");
             }
         }
         wtxn.commit().expect("commit render state");
@@ -1458,6 +1504,39 @@ mod tests {
                     acked: task_is_acked(&vault, *task_ref).expect("wrapper ack"),
                     cancelled: task_is_cancelled(&vault, *task_ref).expect("wrapper cancel"),
                 }
+            );
+        }
+    }
+
+    /// Cancel-wins is a property of the FACT SET, not of arrival order: the
+    /// same two facts in either order leave the same render state, and the
+    /// acknowledgement never clears the cancellation.
+    #[test]
+    fn cancel_wins_under_both_ack_cancel_orders() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault =
+            Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("open vault");
+        let actor = EntityId::from_bytes([0xC2; 16]).expect("actor id");
+        let ack_first = EntityId::from_bytes([0xB1; 16]).expect("ack-first task id");
+        let cancel_first = EntityId::from_bytes([0xB2; 16]).expect("cancel-first task id");
+
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        ack_task_in_txn(&vault, &mut wtxn, ack_first, actor, 10).expect("ack");
+        cancel_task_in_txn(&vault, &mut wtxn, ack_first, actor, 11).expect("cancel");
+        cancel_task_in_txn(&vault, &mut wtxn, cancel_first, actor, 10).expect("cancel");
+        ack_task_in_txn(&vault, &mut wtxn, cancel_first, actor, 11).expect("ack");
+        wtxn.commit().expect("commit facts");
+
+        for task_ref in [ack_first, cancel_first] {
+            let state = task_render_state(&vault, task_ref).expect("render state");
+            assert_eq!(
+                state,
+                TaskRenderState {
+                    acked: true,
+                    cancelled: true,
+                },
+                "{}",
+                task_ref.to_hex()
             );
         }
     }
