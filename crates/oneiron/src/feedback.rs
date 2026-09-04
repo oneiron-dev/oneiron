@@ -91,7 +91,7 @@ use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchRequest, OutboundDispatchResult,
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundIntentDraft, OutboundIntentTrigger, outbound_verb_contract,
 };
 
 /// Stable encoding token for the v1 feedback bundle wire contract.
@@ -801,10 +801,11 @@ where
     })
 }
 
-/// The disclosure lines shown with a feedback approval ask.
+/// The consent data lines shown under the content view on a feedback ask.
 ///
-/// Everything a person needs to decide is here: what it is, how big it is,
-/// exactly where it goes, and how far the approval reaches.
+/// Every consent fact a person needs to decide is here: what it is, how big it
+/// is, exactly where it goes, and how far the approval reaches. The content
+/// itself is the redacted bundle render the card places above these lines.
 #[must_use]
 pub fn feedback_approval_disclosure(
     preview: &FeedbackPreview,
@@ -836,6 +837,17 @@ pub fn feedback_approval_disclosure(
 
 /// Mints the consent ask for one bundle at one destination.
 ///
+/// The card shows the person exactly two things: the redacted content that
+/// would leave the vault, rendered from the same post-redaction value the
+/// bytes were encoded from, and the consent data lines that say where it goes
+/// and how far the approval reaches. Deciding about content you cannot see is
+/// not consent, so the content view is part of the ask rather than something a
+/// caller has to remember to display.
+///
+/// The `prompt` is the caller's: this is a generic engine, and product copy is
+/// the product's to write. A blank prompt is refused rather than silently
+/// replaced with engine-authored wording.
+///
 /// The card is built as a validated struct literal with an EMPTY escalator
 /// list on purpose. Routing through the card constructor would replace an
 /// empty list with the full standing/widening set, which is exactly the
@@ -843,14 +855,22 @@ pub fn feedback_approval_disclosure(
 /// escalators the card's actions are exactly approve-once and decline.
 pub fn feedback_approval_card(
     preview: &FeedbackPreview,
-    scope: &FeedbackApprovalScope,
     principal_ref: &str,
+    prompt: &str,
+    scope: &FeedbackApprovalScope,
 ) -> Result<ConsentAskCard, FeedbackError> {
     checked_token(
         "approval principal_ref",
         principal_ref,
         FEEDBACK_REF_MAX_BYTES,
     )?;
+    if prompt.trim().is_empty() {
+        return Err(FeedbackError::InvalidBundle(
+            "approval prompt must not be blank".to_owned(),
+        ));
+    }
+    let content = preview.display_json()?;
+    let disclosure = feedback_approval_disclosure(preview, scope);
     let channel = match scope {
         FeedbackApprovalScope::Send(route) => Some(route.channel.clone()),
         FeedbackApprovalScope::Export => None,
@@ -862,12 +882,8 @@ pub fn feedback_approval_card(
     Ok(ConsentAskCard {
         card_id: preview.approval_component_id(scope),
         principal_ref: principal_ref.to_owned(),
-        prompt: format!(
-            "Share this {} feedback bundle: {}?",
-            preview.bundle.category.as_str(),
-            scope.destination_label()
-        ),
-        preview: feedback_approval_disclosure(preview, scope),
+        prompt: prompt.to_owned(),
+        preview: format!("{content}\n\n{disclosure}"),
         verb_class: FEEDBACK_SEND_VERB.to_owned(),
         counterparty_ref,
         channel,
@@ -1084,7 +1100,10 @@ fn append_feedback_receipt_fields(
 ///
 /// Validates the approval FIRST, so a stale digest or a different destination
 /// fails before an outbound contract is resolved, before the gate runs, and
-/// before any transport exists. The logical send identity is written
+/// before any transport exists. The route's carrier pair is then resolved
+/// against the carriers this deployment already registers, so a channel and
+/// verb it cannot dispatch through fails typed here instead of travelling as
+/// far as the dispatch pipeline. The logical send identity is written
 /// byte-for-byte into the request receipt id, the intent reference, the ledger
 /// identity, and the intent idempotency key, so every replay of one approved
 /// send is one send.
@@ -1107,6 +1126,8 @@ pub fn feedback_dispatch_request(
                 "feedback send requires a dispatch actor with an actor_ref".to_owned(),
             )
         })?;
+    outbound_verb_contract(&context.route.channel, &context.route.verb)
+        .map_err(|capability| FeedbackError::UnsupportedRoute(capability.to_string()))?;
     let logical_send_ref =
         feedback_logical_send_ref(&preview.digest, approval.approval_receipt_ref());
     let intent = feedback_intent(preview, context, &approval, actor_ref, &logical_send_ref);
@@ -1320,6 +1341,10 @@ pub enum FeedbackError {
     /// The caller-supplied export writer failed.
     #[error("writing the feedback bundle to the export writer failed: {0}")]
     ExportWrite(#[source] std::io::Error),
+    /// The route names a carrier channel and verb this deployment does not
+    /// register, so there is nothing to dispatch through.
+    #[error("unsupported feedback carrier route: {0}")]
+    UnsupportedRoute(String),
     /// The ordinary outbound dispatch failed.
     #[error("dispatching the feedback bundle failed: {0}")]
     Dispatch(#[source] Box<OutboundDispatchError>),

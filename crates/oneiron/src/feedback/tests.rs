@@ -23,6 +23,10 @@ const PII_CANARY: &str = "canary-person@example.invalid";
 
 const REDACTED_MARKER: &str = "[redacted]";
 
+/// Presentation copy a caller owns. The engine carries it through untouched
+/// and never substitutes wording of its own.
+const CALLER_PROMPT: &str = "Share this feedback bundle with the engine team?";
+
 const MSGPACK_NIL: u8 = 0xc0;
 
 // ---------------------------------------------------------------- fixtures
@@ -672,7 +676,8 @@ fn prepare_and_redact_never_dispatch() {
     // no parameter through which they could reach one.
     let preview = preview_of(full_bundle());
     let scope = send_scope();
-    let card = feedback_approval_card(&preview, &scope, "owner").expect("approval card");
+    let card =
+        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
     assert!(!card.preview.is_empty());
     assert!(!preview.display_json().expect("render preview").is_empty());
 
@@ -724,10 +729,26 @@ fn redactor_output_is_the_only_preview_and_send_payload() {
     );
 
     let scope = send_scope();
-    let card = feedback_approval_card(&preview, &scope, "owner").expect("approval card");
+    let card =
+        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
     assert!(card.preview.contains(preview.digest()));
     assert!(card.preview.contains("feedback@example.com"));
     assert!(card.preview.contains(FEEDBACK_BUNDLE_ENCODING));
+
+    // The person approves what they can see: the card carries the redacted
+    // content view itself, not just consent facts about it.
+    assert!(
+        card.preview.contains(&rendered),
+        "the redacted content render reaches the approval card"
+    );
+    assert!(
+        card.preview.contains(REDACTED_MARKER),
+        "the redacted note is visible on the card"
+    );
+    assert!(
+        !card.preview.contains(PII_CANARY),
+        "the pre-redaction value never reaches the card"
+    );
 
     let (_dir, vault, actor) = seeded_send_vault(0x61, 0x62);
     let mut transport = RecordingTransport::default();
@@ -783,7 +804,8 @@ fn redactor_output_is_the_only_preview_and_send_payload() {
 fn feedback_approval_is_exact_and_once_only() {
     let preview = preview_of(full_bundle());
     let scope = send_scope();
-    let card = feedback_approval_card(&preview, &scope, "owner").expect("approval card");
+    let card =
+        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
 
     assert_eq!(
         card.card_id,
@@ -792,6 +814,19 @@ fn feedback_approval_is_exact_and_once_only() {
     );
     assert_eq!(card.verb_class, FEEDBACK_SEND_VERB);
     assert_eq!(card.verb_class, "feedback.send");
+    assert_eq!(
+        card.prompt, CALLER_PROMPT,
+        "the caller's prompt reaches the card verbatim"
+    );
+    for blank in ["", "   ", "\n"] {
+        assert!(
+            matches!(
+                feedback_approval_card(&preview, "owner", blank, &scope),
+                Err(FeedbackError::InvalidBundle(_))
+            ),
+            "a blank prompt {blank:?} is refused, not replaced with engine copy"
+        );
+    }
     assert_eq!(
         card.origin_receipt_ref.as_deref(),
         Some(preview.content_ref().as_str())
@@ -968,7 +1003,8 @@ fn feedback_approval_rides_the_landed_consent_surface() {
 
     let preview = preview_of(full_bundle());
     let scope = send_scope();
-    let card = feedback_approval_card(&preview, &scope, "owner").expect("approval card");
+    let card =
+        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
     let request = ConsentActionRequest::new(
         card.card_id.clone(),
         FEEDBACK_APPROVE_ONCE_ACTION,
@@ -1220,6 +1256,52 @@ fn send_without_an_actor_ref_fails_before_the_gate() {
     let mut transport = RecordingTransport::default();
     assert!(send_feedback(&vault, &preview, &context, &approval, &mut transport).is_err());
     assert!(transport.payloads.is_empty());
+}
+
+#[test]
+fn unsupported_carrier_route_fails_before_the_gate() {
+    let preview = preview_of(full_bundle());
+    // `email` is a registered connector, but it carries no `edit` verb: the
+    // route names a carrier pair this deployment cannot dispatch through.
+    let route = FeedbackSendRoute::new("email", "edit", "feedback@example.com");
+    let scope = FeedbackApprovalScope::Send(route.clone());
+    let approval = approved_for(&preview, &scope);
+    let context = send_context(route, dispatch_actor(0x76));
+
+    // The approval is exact for this route, so what fails is the carrier
+    // contract and not the binding — the contract is resolved after the
+    // approval check and before anything can dispatch.
+    match feedback_dispatch_request(&preview, &context, &approval) {
+        Err(FeedbackError::UnsupportedRoute(detail)) => {
+            assert!(
+                detail.contains("edit") && detail.contains("email"),
+                "the typed error names the carrier pair, got {detail:?}"
+            );
+        }
+        other => panic!("an unregistered carrier pair must fail typed, got {other:?}"),
+    }
+
+    let (_dir, vault, actor) = seeded_send_vault(0x77, 0x78);
+    let vault_context = send_context(
+        FeedbackSendRoute::new("email", "edit", "feedback@example.com"),
+        actor,
+    );
+    let mut transport = RecordingTransport::default();
+    assert!(matches!(
+        send_feedback(&vault, &preview, &vault_context, &approval, &mut transport),
+        Err(FeedbackError::UnsupportedRoute(_))
+    ));
+    assert!(
+        transport.payloads.is_empty(),
+        "an unsupported route never reaches the transport"
+    );
+
+    // A registered carrier pair still resolves, so the check discriminates.
+    let supported = send_context(send_route(), dispatch_actor(0x79));
+    assert!(
+        feedback_dispatch_request(&preview, &supported, &approved_for(&preview, &send_scope()))
+            .is_ok()
+    );
 }
 
 // ------------------------------------------------------------------ 11. gate
