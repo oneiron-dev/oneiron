@@ -277,8 +277,10 @@ pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidatio
 pub use crate::federation::FederationGrantScope;
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED,
-    GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
+    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
@@ -324,8 +326,10 @@ pub use crate::repo_mutation::{
     repo_commit_provenance,
 };
 pub use crate::run_tree::{
-    RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeNode, RunTreeRepair,
-    RunTreeStatus,
+    GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_FALLBACK_LABEL,
+    GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle, GateConsentBundleAction,
+    GateConsentBundleMember, GateConsentBundleReceipt, RunTree, RunTreeAdapter, RunTreeEvent,
+    RunTreeEventKind, RunTreeNode, RunTreeRepair, RunTreeStatus,
 };
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
