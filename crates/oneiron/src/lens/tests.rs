@@ -1146,7 +1146,8 @@ fn fallback_text_requirement_bumps_atom_kit_version() {
         text("loading"),
     ))
     .expect("valid lens");
-    assert_eq!(lens.kit_version(), 2);
+    // v2 is what this tree *needs*; the constructor stamps what the build *ships*.
+    assert_eq!(lens.kit_version(), LENS_ATOM_KIT_VERSION);
 
     let legacy_v1_without_fallback = json!({
         "kit_version": 1,
@@ -4186,11 +4187,14 @@ fn v2_tree_remains_v2_after_result_set_kit_bump() -> Result<()> {
         "the generated-ui wire version is untouched by the atom-kit bump"
     );
 
+    // What survives the bump is the tree's own catalog *floor*: a stored v2 envelope
+    // still decodes at 2 and every pre-v3 primitive still negotiates at 2. The stamp a
+    // fresh body carries is the live pair, so the constructor tracks the constant.
     let v2_only = GeneratedLens::new(v2_only_root())?;
     assert_eq!(
-        v2_only.kit_version(),
-        2,
-        "a tree of pre-v3 atoms keeps declaring 2 after the bump"
+        v2_only.version_stamp(),
+        LensVersionStamp::current(),
+        "a freshly built body is stamped live, whatever minimum its atoms need"
     );
     let mixed = card_root(vec![LensNode::with_fallback_text(
         id("loading"),
@@ -4200,9 +4204,9 @@ fn v2_tree_remains_v2_after_result_set_kit_bump() -> Result<()> {
         text("loading"),
     )]);
     assert_eq!(
-        GeneratedLens::new(mixed)?.kit_version(),
-        2,
-        "a whole v2 card still stamps 2"
+        GeneratedLens::new(mixed)?.version_stamp(),
+        LensVersionStamp::current(),
+        "a whole v2 card is stamped live too"
     );
     assert_eq!(
         GeneratedLens::new(standalone_result_set_root())?.kit_version(),
@@ -5296,12 +5300,13 @@ fn generated_lens_stamps_version_pair() -> Result<()> {
     );
     assert_eq!(
         v2.kit_version(),
-        2,
-        "the atom-kit component stays the contained minimum of this exact tree"
+        LENS_ATOM_KIT_VERSION,
+        "the atom-kit component is the running constant, not this tree's contained minimum"
     );
     assert_eq!(
         v2.version_stamp(),
-        LensVersionStamp::new(2, LENS_APPS_CONTRACT_VERSION)
+        LensVersionStamp::current(),
+        "the constructor stamps the live pair, so its output is never born stale"
     );
 
     let v3 = GeneratedLens::new(standalone_result_set_root())?;
@@ -5445,6 +5450,19 @@ fn matched_version_pair_mounts_current() -> Result<()> {
     assert_eq!(body.version_stamp(), live);
     let card = GeneratedUiCard::new(render_id("card-1"), body)?;
     assert_eq!(card.load_action(), LensLoadAction::MountCurrent);
+
+    // The public constructor mints the other live body, and it must agree with the
+    // decoded one: a freshly built pre-v3 tree mounts current instead of queueing a
+    // regeneration it does not owe (and that regeneration could never satisfy, since
+    // `regenerate_lens` only accepts a candidate stamped with the live target).
+    let constructed = GeneratedLens::new(v2_only_root())?;
+    assert_eq!(
+        lens_load_action(constructed.version_stamp(), live),
+        LensLoadAction::MountCurrent,
+        "GeneratedLens::new output is current by construction"
+    );
+    let constructed_card = GeneratedUiCard::new(render_id("card-2"), constructed)?;
+    assert_eq!(constructed_card.load_action(), LensLoadAction::MountCurrent);
 
     Ok(())
 }

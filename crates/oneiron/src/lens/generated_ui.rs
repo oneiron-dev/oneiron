@@ -126,17 +126,26 @@ pub struct GeneratedLens {
 }
 
 impl GeneratedLens {
-    /// Stamp the atom-kit version this exact tree needs, not the version the crate is
-    /// built at: a tree of pre-v3 atoms keeps declaring 2 after a kit bump, so a v2-only
-    /// surface never has to re-negotiate for atoms it already understands.
+    /// Stamp the live pair, [`LensVersionStamp::current`]: a body built here was by
+    /// construction compiled against the atom kit and the shell contracts this build
+    /// ships, so it is exactly what [`lens_load_action`] calls current and what
+    /// [`regenerate_lens`] accepts as a candidate for the requested target.
     ///
-    /// The apps-contract component has no per-tree minimum to compute — it records the
-    /// shell contracts this body was generated against — so it is always stamped
-    /// [`LENS_APPS_CONTRACT_VERSION`].
+    /// Neither component is derived from the tree. The contained-atom minimum is a
+    /// *floor* an envelope may not under-declare (see the tree validator below), never
+    /// the stamp: stamping it would mint bodies that are born stale against the running
+    /// constants, so every freshly built pre-v3 card would report
+    /// [`LensLoadAction::MountLastGoodAndQueueRegeneration`] and a regenerator using
+    /// this constructor could never match its own target. The accepted consequence is
+    /// that a v2-only surface re-negotiates after a kit bump like any other body.
+    ///
+    /// The apps-contract component records the shell contracts this body was generated
+    /// against, so it is likewise always the running [`LENS_APPS_CONTRACT_VERSION`].
     pub fn new(root: LensNode) -> Result<Self> {
+        let current = LensVersionStamp::current();
         let lens = Self {
-            kit_version: contained_atom_kit_version(&root),
-            apps_contract_version: LENS_APPS_CONTRACT_VERSION,
+            kit_version: current.kit_version(),
+            apps_contract_version: current.apps_contract_version(),
             root,
         };
         lens.validate()?;
