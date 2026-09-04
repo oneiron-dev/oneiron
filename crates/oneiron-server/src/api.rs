@@ -108,6 +108,10 @@ mod git_lfs;
 mod lease;
 mod mcp_gateway;
 mod memory;
+// ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
+// depth cost gate, the extractive answer for the model-free tiers, and the
+// citation gate over whatever a host composer returns.
+mod memory_reason;
 mod openapi;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
@@ -134,6 +138,7 @@ pub(crate) use self::entity::*;
 pub(crate) use self::lease::*;
 pub(crate) use self::mcp_gateway::*;
 pub(crate) use self::memory::*;
+pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
 pub(crate) use self::reactive::*;
 pub(crate) use self::resume::*;
@@ -198,6 +203,7 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         update_companion_register_record,
         retire_companion_register_record,
         end_companion_register_relationship,
+        companion_memory_reason,
         record_usage_event,
         get_usage_rollup,
         get_consumer_usage,
@@ -346,6 +352,11 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         CompanionGoodbyeArtifactHookPayload,
         CompanionEndRelationshipResponse,
         CompanionRegisterRecordResponse,
+        MemoryReasonRequest,
+        MemoryReasonResponse,
+        MemoryReasonFormat,
+        MemoryReasonSessionContext,
+        MemoryReasonTrace,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
         ConsumerAllowanceState,
@@ -460,6 +471,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/register/records/{record_id}",
             get(get_companion_register_record),
         )
+        // ONE-207: the depth-dialed reasoning read. A POST that WRITES
+        // NOTHING, so it stays off `companion_mutation_routes` and out of the
+        // idempotency layer above: an idempotency key on a pure read would
+        // cache an answer against a vault that moves under it, and there is no
+        // replayed mutation for the layer to protect.
+        .route("/memory/reason", post(companion_memory_reason))
         .merge(companion_mutation_routes);
 
     Router::new()

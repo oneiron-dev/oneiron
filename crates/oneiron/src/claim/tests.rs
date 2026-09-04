@@ -4608,3 +4608,53 @@ fn classifier_table() {
         assert_eq!(dreamer_isolation_class(predicate), None, "{predicate}");
     }
 }
+
+// ── ONE-207 · the effort dial enters this lane through one door ─────────
+
+/// [`ScopedRead::search_with_effort`] is a DELEGATION, and this row exists so
+/// it stays one.
+///
+/// The tier policy lives in `retrieval_depth` and is tested there. What this
+/// lane owns is the guarantee that the dial's cheapest setting is not a second
+/// read path at all: at `Effort::Minimal` the result must be, hit for hit, the
+/// one [`ScopedRead::search_text`] already returns for the same actor. A
+/// future tier that quietly fetched through anything else would show up here
+/// as a difference, not as a passing test with a wider read behind it.
+#[test]
+fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door() -> Result<()> {
+    let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let note = crate::test_util::entity(0x24);
+    vault
+        .batch()
+        .put(
+            &note,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"note",
+        )
+        .text(&note, &[("body", "quarterly ledger reconciliation")])
+        .commit()?;
+
+    let scoped = vault.scoped_read(ScopedReadActorKey::new("agent:reader").expect("actor key"));
+    let request = crate::retrieval_depth::DepthSearchRequest {
+        probe: crate::retrieval_depth::SearchProbe::Text {
+            query: "ledger".to_owned(),
+        },
+        effort: crate::Effort::Minimal,
+        limit: 10,
+        lease: None,
+        backend: None,
+    };
+
+    let dialed = scoped.search_with_effort(&request)?;
+    let direct = scoped.search_text("ledger", 10)?;
+    assert_eq!(
+        dialed.hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        direct.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        "the minimal tier must resolve to this lane's own text door"
+    );
+    assert!(!dialed.backend_used, "no tier reaches a host by default");
+    assert_eq!(dialed.tokens_used, 0);
+    Ok(())
+}

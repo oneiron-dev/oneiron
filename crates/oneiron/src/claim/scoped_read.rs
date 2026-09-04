@@ -168,6 +168,28 @@ impl<'a> ScopedRead<'a> {
         self.filter_scored_entities_to_limit(results, limit)
     }
 
+    /// ONE-207: the effort-dialed read.
+    ///
+    /// The ONE door a depth request enters this lane through, and deliberately
+    /// a THIN one: `retrieval_depth` owns the tier policy, the caps and the
+    /// deep-lease rule, while every channel it runs comes back through the
+    /// three search doors above and through
+    /// [`crate::ppr::PprNodeVisibility`] — which is
+    /// [`Self::is_entity_readable_with_policy_in`], the same predicate those
+    /// doors filter on, used as a traversal gate.
+    ///
+    /// So the effort dial cannot widen admission. It changes how many
+    /// admitted channels run, never which entities an admitted channel is
+    /// allowed to return, and the deep tier's host-proposed queries are
+    /// ordinary text searches on this same lane rather than a second read
+    /// path that would need its own gate.
+    pub fn search_with_effort(
+        &self,
+        request: &crate::retrieval_depth::DepthSearchRequest<'_>,
+    ) -> Result<crate::retrieval_depth::DepthSearchResult> {
+        crate::retrieval_depth::execute(self, request)
+    }
+
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         Ok(self.get_entity_parts(id)?.map(|(_, _, body)| body))
     }

@@ -126,6 +126,7 @@ pub mod recovery;
 pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
+pub mod retrieval_depth;
 pub mod run_tree;
 pub mod saved_query;
 pub mod secret_custody;
@@ -213,6 +214,10 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
+};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
@@ -226,10 +231,6 @@ pub use crate::commitment_wake::{
     CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip, CommitmentWakeSkip,
     approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
-};
-pub use crate::comm::{
-    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
-    send_override_for_send,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
