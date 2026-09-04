@@ -1500,7 +1500,13 @@ impl Vault {
     /// re-registration. The record must register `Active`, carry the resolved
     /// floor snapshot narrower-or-equal to the live floor, and name its
     /// manifest ref when it came from a declared entry.
-    pub fn register_secret(&self, rec: SecretCustodyRecord) -> Result<EntityId> {
+    ///
+    /// Reclaiming a `Revoked` name does NOT restart the generation counter:
+    /// the new life is stamped one above the dead life's `rotation_generation`
+    /// (SECRET-04 monotonicity, see the reclaim branch below). A caller that
+    /// supplies a nonzero generation at or below that high-water is refused
+    /// rather than silently corrected.
+    pub fn register_secret(&self, mut rec: SecretCustodyRecord) -> Result<EntityId> {
         if rec.status != SecretCustodyStatus::Active {
             return Err(invalid_body("registration requires status active"));
         }
@@ -1541,10 +1547,42 @@ impl Vault {
             let existing_id = EntityId::from_bytes(id_bytes)
                 .map_err(|_| Error::CorruptedIndex("secret name index id"))?;
             // A live name denies; a revoked or missing record frees the index.
-            if read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)?
-                .is_some_and(|existing| existing.status != SecretCustodyStatus::Revoked)
-            {
-                return Err(Error::SecretNameInUse { name: rec.name });
+            if let Some(existing) = read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)? {
+                if existing.status != SecretCustodyStatus::Revoked {
+                    return Err(Error::SecretNameInUse { name: rec.name });
+                }
+                // NAME RECLAIM. The dead record's generation is this name's
+                // HIGH-WATER, and the new life must start strictly above it.
+                //
+                // `SecretTaintRef` identity is `(secret_ref, generation)` and
+                // nothing else, and the taint check resolves the name to
+                // whatever record the index points at NOW. A reclaimed name
+                // that restarted at the caller's generation (every in-tree
+                // constructor writes 0, exactly where the dead life started)
+                // would let exhaust tagged against the REVOKED value compare
+                // equal to the live record and read `TaintedLive` — dead
+                // exhaust publishing unstamped and ungated as live. Advancing
+                // the counter across the reclaim is what keeps the old tag
+                // unmatched forever, without a reverse index and without
+                // rewriting one byte of exhaust (S7, amended 2026-08-05).
+                //
+                // The vault stamps this generation itself: the caller's
+                // number is not evidence of anything. A caller that
+                // nonetheless ASSERTS a generation the dead life already
+                // used is refused rather than silently corrected — that
+                // assertion is a replay of a dead value's identity. The
+                // default 0 asserts nothing and is simply stamped over.
+                if rec.rotation_generation != 0
+                    && rec.rotation_generation <= existing.rotation_generation
+                {
+                    return Err(invalid_body(
+                        "reclaimed name requires a generation above the revoked record",
+                    ));
+                }
+                rec.rotation_generation = existing
+                    .rotation_generation
+                    .checked_add(1)
+                    .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
             }
         }
 

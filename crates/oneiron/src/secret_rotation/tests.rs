@@ -6,7 +6,9 @@
 //! * S6 rotation — generation/timestamp/receipt, the NEW value on the next
 //!   lease, and the OLD lease left alive and observably stale;
 //! * doored invisibility across a rotation;
-//! * revoke as terminal value death (leases, doors, derived taint);
+//! * revoke as terminal value death (leases, doors, derived taint), and the
+//!   name reclaim after it, which starts the new life above the dead one's
+//!   generation so the dead value's exhaust cannot read live again;
 //! * action-boundary taint attach on both exhaust planes, read back at
 //!   READ time;
 //! * the publish gate and its override stamp;
@@ -427,6 +429,115 @@ fn revoke_derives_stale_taint_without_writing_any_index() {
         0,
         "body-carried taint needs no sidecar row at all"
     );
+}
+
+/// Reclaiming a revoked NAME must not resurrect its exhaust.
+///
+/// `SecretTaintRef` identity is `(secret_ref, generation)` and the check
+/// resolves the name to whatever record holds it NOW. If the re-registration
+/// started the new life at the caller's generation — 0, where the dead life
+/// started, in every constructor in this tree — exhaust tagged against the
+/// REVOKED value would compare equal to the live record and read
+/// `TaintedLive` again: a dead value's build exhaust publishing unstamped and
+/// ungated. The reclaim advances the generation past the dead life's
+/// high-water instead, so the old tag can never match again.
+#[test]
+fn a_reclaimed_name_starts_above_the_dead_generation_and_its_old_exhaust_stays_stale() {
+    let (_tmp, vault) = temp_vault();
+    let first = register(&vault, SECRET, VALUE_V1);
+    let (site_id, fork_hash) = publishable_site(&vault);
+
+    // Exhaust of the FIRST life, tagged at the generation it was produced
+    // under, publishing live as it should while that life is live.
+    vault
+        .mark_artifact_tainted(&site_id, &[taint(SECRET, 0)])
+        .expect("attach taint at the action boundary");
+    assert_eq!(
+        vault.artifact_taint_state(&site_id).expect("state"),
+        ArtifactTaintState::TaintedLive
+    );
+
+    vault.revoke_secret(SECRET, AT_ROTATED).expect("revoke");
+    assert_eq!(
+        vault.artifact_taint_state(&site_id).expect("state"),
+        ArtifactTaintState::TaintedStale
+    );
+
+    // The freed name is re-registered with the SAME record shape the first
+    // life used — `rotation_generation: 0`, as every constructor writes it.
+    let second = register(&vault, SECRET, VALUE_V2);
+    assert_ne!(second, first, "a reclaim mints a NEW record");
+    assert_eq!(
+        generation_of(&vault, &second),
+        1,
+        "the new life starts above the dead life's high-water, not back at 0"
+    );
+
+    assert_eq!(
+        vault.artifact_taint_state(&site_id).expect("state"),
+        ArtifactTaintState::TaintedStale,
+        "exhaust of the DEAD value must not read live against the reclaimed name"
+    );
+
+    // And the publish gate still refuses it: the reclaim bought the old
+    // exhaust no admission the dial does not grant.
+    let refused = vault
+        .publish_artifact_pointer("site", ArtifactPointerChannel::Preview, &fork_hash)
+        .expect_err("the dead life's exhaust refuses publish");
+    assert!(
+        matches!(refused, Error::TaintedArtifactStale { ref artifact } if artifact == "site"),
+        "got {refused:?}"
+    );
+
+    put_policy_manifest(
+        &vault,
+        0x93,
+        vec![(
+            Value::from(POLICY_TAINT_ALLOW_STALE_PUBLISH_KEY),
+            Value::from(true),
+        )],
+    );
+    let overridden = vault
+        .publish_artifact_pointer("site", ArtifactPointerChannel::Preview, &fork_hash)
+        .expect("the dial admits the publish");
+    assert!(
+        overridden.stale_taint_override,
+        "the override is stamped: a dial, not a wall, and never a silent pass"
+    );
+}
+
+/// The reclaim stamps the generation itself. A caller ASSERTING one the dead
+/// life already used is asking to replay a dead value's identity: refused,
+/// not silently corrected.
+#[test]
+fn a_reclaim_asserting_a_dead_generation_is_refused() {
+    let (_tmp, vault) = temp_vault();
+    let first = register(&vault, SECRET, VALUE_V1);
+    vault
+        .rotate_secret(SECRET, VALUE_V2, AT_ROTATED)
+        .expect("rotate");
+    assert_eq!(generation_of(&vault, &first), 1);
+    vault.revoke_secret(SECRET, AT_ROTATED).expect("revoke");
+
+    let mut replay = record(SECRET, VALUE_V1);
+    replay.rotation_generation = 1; // the dead life's own generation
+    let err = vault
+        .register_secret(replay)
+        .expect_err("a generation at or below the high-water is refused");
+    assert!(
+        matches!(err, Error::InvalidSecretCustodyBody(_)),
+        "got {err:?}"
+    );
+    assert_eq!(
+        vault.resolve_secret_ref(SECRET).expect("resolve"),
+        Some(first),
+        "the refused registration wrote nothing: the name still points at the dead record"
+    );
+
+    // The default registration reclaims the name, one above the high-water.
+    let second = register(&vault, SECRET, VALUE_V1);
+    assert_ne!(second, first);
+    assert_eq!(generation_of(&vault, &second), 2);
 }
 
 /// Rotation writes the record and its receipt. Not one byte of exhaust.
