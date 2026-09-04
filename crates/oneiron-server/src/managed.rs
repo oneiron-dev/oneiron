@@ -289,6 +289,10 @@ enum ArgvUse {
     Refused(&'static str),
 }
 
+/// One [`MANAGED_ARGV`] row: the flag as the operator types it, the probe that
+/// says whether they typed it, and what managed mode does with it.
+type ArgvRule = (&'static str, fn(&ServeArgs) -> bool, ArgvUse);
+
 /// The whole `ServeArgs` surface in one table: the flag as the operator types
 /// it, the probe that says whether they typed it, and what managed mode does
 /// with it.
@@ -299,7 +303,7 @@ enum ArgvUse {
 /// this table the two halves were written separately, and the gap between them
 /// was silent: clap accepted `--auth-secret` and `serve_config` dropped it, so
 /// an operator who typed it got neither the setting nor an error.
-const MANAGED_ARGV: &[(&str, fn(&ServeArgs) -> bool, ArgvUse)] = &[
+const MANAGED_ARGV: &[ArgvRule] = &[
     // The managed group: argv is the whole configuration.
     (
         "config",
