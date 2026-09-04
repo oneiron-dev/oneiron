@@ -1339,6 +1339,9 @@ mod tests {
 
     use super::*;
 
+    /// One field mutation applied to a cloned decision in the fabrication tests.
+    type DecisionMutation = fn(&mut CampaignHeldOutDecision);
+
     /// The module's own source, used by the scope/API audits below. Needles are
     /// assembled with `concat!` so the audit text cannot satisfy itself.
     const MODULE_SOURCE: &str = include_str!("autoreason_campaign.rs");
@@ -1841,7 +1844,7 @@ mod tests {
             &budget_less,
             fixture.single_pass.clone(),
             fixture.tournament.clone(),
-            fixture.decision.clone(),
+            fixture.decision,
         )
         .expect_err("budget-less comparison is refused");
         assert!(matches!(
@@ -2426,7 +2429,7 @@ mod tests {
         assert!(!fixture.decision.tournament_wins_held_out);
         assert!(fixture.decision.ab_dominated);
 
-        let fabrications: [(&str, fn(&mut CampaignHeldOutDecision)); 3] = [
+        let fabrications: [(&str, DecisionMutation); 3] = [
             ("tournament_wins_held_out", |decision| {
                 decision.tournament_wins_held_out = true;
             }),
