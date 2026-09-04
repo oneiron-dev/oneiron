@@ -3020,6 +3020,68 @@ fn send_override_standing_vs_one_shot() -> CommResult<()> {
     Ok(())
 }
 
+/// An override does not match before the ruling it records starts. `issued_at`
+/// is the claim's `valid_from`, so a head dated ahead of the clock is not yet
+/// effective — for either scope — and the held send stays held until its own
+/// start time, not one second earlier.
+///
+/// A fresh party, because a standing head already in force would answer for
+/// every later query and hide the bound under test.
+#[test]
+fn send_override_future_issued_at_not_yet_effective() -> CommResult<()> {
+    let (_tmp, vault) = open_vault();
+    let owner = owner_actor(&vault, 0x72).map_err(CommError::Engine)?;
+
+    // A one-shot ruling that starts at 100 and expires at 200.
+    mint_send_override(
+        &vault,
+        "party-future",
+        Some("email"),
+        SendOverrideScope::OneShot,
+        Some("intent:future"),
+        owner,
+        100,
+        Some(200),
+    )?;
+    // Before its start it matches nothing, though ref and channel are exact
+    // and its expiry is still far away.
+    assert_eq!(
+        send_override_for_send(&vault, "party-future", "email", Some("intent:future"), 50)?,
+        None
+    );
+    // From the ruling's own start time it matches, inclusively.
+    assert_eq!(
+        send_override_for_send(&vault, "party-future", "email", Some("intent:future"), 100)?,
+        Some(SendOverrideMatch::OneShot)
+    );
+
+    // A standing ruling dated later still, with no expiry at all: an unbounded
+    // upper end never turns into an unbounded lower one.
+    mint_send_override(
+        &vault,
+        "party-future",
+        Some("email"),
+        SendOverrideScope::Standing,
+        None,
+        owner,
+        300,
+        None,
+    )?;
+    assert_eq!(
+        send_override_for_send(&vault, "party-future", "email", None, 250)?,
+        None
+    );
+    assert_eq!(
+        send_override_for_send(&vault, "party-future", "email", None, 300)?,
+        Some(SendOverrideMatch::Standing)
+    );
+    assert_eq!(
+        send_override_for_send(&vault, "party-future", "email", None, 1_000)?,
+        Some(SendOverrideMatch::Standing)
+    );
+    Ok(())
+}
+
 /// The encoded bytes of every standing `comm.opt_out` head for one party.
 fn standing_opt_out_bytes(vault: &Vault, party_ref: EntityId) -> CommResult<Vec<Vec<u8>>> {
     let rtxn = vault.store.env.read_txn()?;

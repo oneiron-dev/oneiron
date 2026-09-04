@@ -2791,7 +2791,11 @@ pub fn send_override_for_send(
 ///
 /// Three rules, and nothing else:
 ///
-/// * an expired head (`valid_to < now`) never matches, whatever its scope;
+/// * a head outside its lifetime window never matches, whatever its scope:
+///   neither before the owner's ruling starts (`issued_at > now`) nor after it
+///   expires (`valid_to < now`). Those are the bounds
+///   [`CommClaim::is_effective_at`] already carries, because a send override's
+///   `issued_at` IS its claim `valid_from`;
 /// * a one-shot matches only when its minted `send_ref` BYTE-equals this
 ///   send's, so an absent or different ref is simply no match;
 /// * standing wins on overlap, because it is the wider decision the owner made.
@@ -2824,6 +2828,7 @@ pub(crate) fn send_override_for_send_in_txn(
             channel_class: head_channel,
             scope,
             send_ref: head_send_ref,
+            issued_at,
             valid_to,
             ..
         } = claim.value
@@ -2834,6 +2839,12 @@ pub(crate) fn send_override_for_send_in_txn(
             .as_deref()
             .is_some_and(|stored| stored != channel_class)
         {
+            continue;
+        }
+        // A ruling dated ahead of the clock has not started: `is_standing`
+        // carries no time bounds, so the lower bound is enforced here or
+        // nowhere, and a future-dated override would release a held send early.
+        if issued_at > now {
             continue;
         }
         if valid_to.is_some_and(|valid_to| valid_to < now) {
