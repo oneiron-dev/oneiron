@@ -27,6 +27,19 @@ pub const CUSTOMIZATION_SETTINGS_LAYER_COUNT: usize = 4;
 /// Stable event kind for Eiri-readable customization change notifications.
 pub const CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND: &str = "settings.customization.changed";
 
+/// ONE-1707: the one additive knob over Dreamer plugin suggestions.
+///
+/// ABSENCE MEANS ON. The ticket's contract is "disableable, default ON", so
+/// an untouched vault — which has never written this key — must read `true`
+/// without any seeding step. A default that had to be written at open time
+/// would make "fresh config" mean "config we already touched", and a
+/// migration that missed a vault would silently disable the feature.
+const PLUGIN_SUGGESTIONS_ENABLED_KEY: &[u8] = b"settings:dreamer:v1:plugin_suggestions_enabled";
+
+/// Pinned on-disk encoding of the boolean knob above.
+const SETTINGS_BOOL_TRUE: [u8; 1] = [1];
+const SETTINGS_BOOL_FALSE: [u8; 1] = [0];
+
 const CUSTOMIZATION_SETTINGS_KEY: &[u8] = b"settings:customization:v1:profile";
 const CUSTOMIZATION_EVENT_SEQUENCE_KEY: &[u8] = b"settings:customization:v1:event_sequence";
 const CUSTOMIZATION_EVENT_KEY_PREFIX: &[u8] = b"settings:customization:v1:event:";
@@ -349,6 +362,53 @@ impl CustomizationSettingsChangeEvent {
 }
 
 impl Vault {
+    /// Reads the Dreamer plugin-suggestion knob. **Absent means enabled.**
+    ///
+    /// There is no environment override and no second cadence key: this one
+    /// boolean is the entire dial. A corrupt value fails closed as a typed
+    /// error rather than silently reverting to the default, because a
+    /// disabled knob that reads back as enabled would resume proactive
+    /// suggestions an owner switched off.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and [`Error::CorruptedIndex`] when the stored byte is
+    /// not the pinned boolean encoding.
+    pub fn plugin_suggestions_enabled(&self) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&rtxn, PLUGIN_SUGGESTIONS_ENABLED_KEY)?
+        else {
+            return Ok(true);
+        };
+        match raw.as_ref() {
+            b if b == SETTINGS_BOOL_TRUE => Ok(true),
+            b if b == SETTINGS_BOOL_FALSE => Ok(false),
+            _ => Err(Error::CorruptedIndex("plugin suggestions knob")),
+        }
+    }
+
+    /// Persists the Dreamer plugin-suggestion knob.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn set_plugin_suggestions_enabled(&self, enabled: bool) -> Result<()> {
+        let encoded = if enabled {
+            SETTINGS_BOOL_TRUE
+        } else {
+            SETTINGS_BOOL_FALSE
+        };
+        self.with_write_txn(|wtxn| {
+            self.store
+                .vault_meta
+                .put(wtxn, PLUGIN_SUGGESTIONS_ENABLED_KEY, &encoded)?;
+            Ok(())
+        })
+    }
+
     /// Reads the persisted customization settings, or the default four-layer model.
     pub fn customization_settings(&self) -> Result<CustomizationSettings> {
         let rtxn = self.store.env.read_txn()?;
