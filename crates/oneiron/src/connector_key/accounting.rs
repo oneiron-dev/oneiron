@@ -4,9 +4,9 @@ use crate::error::{Error, Result};
 
 use super::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
-    ConnectorKeyUsage, EffectorBudgetChargeOutcome, EffectorBudgetRead, EffectorBudgetRowRead,
-    budget_exhausted_reason, budget_read_from_states, budget_row_read, charge_effector_budgets,
-    connector_key_usage_row_key, load_budget_row_states,
+    ConnectorKeyUsage, EffectorBudgetCharge, EffectorBudgetChargeOutcome, EffectorBudgetRead,
+    EffectorBudgetRowRead, budget_exhausted_reason, budget_read_from_states, budget_row_read,
+    charge_effector_budgets, connector_key_usage_row_key, load_budget_row_states,
 };
 use super::record::{
     ConnectorKeyStatus, EffectorBudgetDimension, EffectorBudgetOnExhaust, invalid_body,
@@ -32,6 +32,67 @@ pub const CONNECTOR_KEY_MAX_DISPATCH_BATCH: u64 = 4096;
 pub(crate) const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
 
 const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
+
+/// vault_meta logical-send admission rows: prefix ++ key id (16 bytes) ++
+/// `logical_send_ref` bytes -> admitted_at u64 BE ++ sends_debit u64 BE ++
+/// normalized effect channel.
+///
+/// The row is the proof that ONE LOGICAL SEND already debited this key. The
+/// admission ref is the owning TASK/intent reference and NEVER an
+/// `AttemptId`: `attempt_queue::retry` re-queues the same AttemptId in place
+/// (there is no `retry_of` link), so an attempt-keyed row could not tell a
+/// retry of one send from a second send. Keying on the logical send makes the
+/// `Sends` debit exactly-once across whatever retry shape the attempt layer
+/// takes. The stored value is first-writer-wins EVIDENCE, not replay
+/// identity — replay is `(key, logical_send_ref)`.
+pub const CONNECTOR_KEY_SEND_ADMIT_PREFIX: &[u8] = b"connector_key/send_admit/v1\0";
+
+const CONNECTOR_KEY_LOGICAL_SEND_REF_MAX_LEN: usize = 128;
+
+/// Outcome of admitting ONE logical send through a connector key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectorKeySendAdmission {
+    /// First eligible admission of this logical send: budgets were debited
+    /// and the identity row written.
+    Admitted(EffectorBudgetCharge),
+    /// This logical send already debited the key. Nothing was written and
+    /// nothing was charged: `sends_debit` is 0, `matched_rows` and
+    /// `ladder_events` are empty, and the carried `read` is a live read-only
+    /// echo of the key's meter.
+    Replayed(EffectorBudgetCharge),
+    /// The send was refused. NO identity row is written, so the refusal does
+    /// not poison a later admission of the same logical send.
+    Refused {
+        /// `"connector_key_not_active"`, or the exhausted row's
+        /// `budget_exhausted:*` reason.
+        reason: String,
+        /// The first exceeding row, when a budget row refused.
+        row_index: Option<u16>,
+        /// Set when an `on_exhaust: Suspend` row flipped the key Suspended in
+        /// the same transaction.
+        suspended: bool,
+        /// The evaluated (undebited) meter, when the charger ran.
+        charge: Option<EffectorBudgetCharge>,
+    },
+}
+
+pub(crate) fn connector_key_send_admit_key(id: &EntityId, logical_send_ref: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(
+        CONNECTOR_KEY_SEND_ADMIT_PREFIX.len() + ENTITY_ID_LEN + logical_send_ref.len(),
+    );
+    key.extend_from_slice(CONNECTOR_KEY_SEND_ADMIT_PREFIX);
+    key.extend_from_slice(id.as_bytes());
+    key.extend_from_slice(logical_send_ref.as_bytes());
+    key
+}
+
+fn send_admit_value(admitted_at: u64, sends_debit: u64, effect_channel: &str) -> Vec<u8> {
+    let mut value = Vec::with_capacity(2 * size_of::<u64>() + effect_channel.len());
+    value.extend_from_slice(&admitted_at.to_be_bytes());
+    value.extend_from_slice(&sends_debit.to_be_bytes());
+    value.extend_from_slice(effect_channel.as_bytes());
+    value
+}
 
 /// Length of the settlement-event IDENTITY prefix (row_index ++ minor_units
 /// — the settlement's actual content). The declared `cost_occurred_at`
@@ -221,6 +282,175 @@ impl Vault {
         }
         wtxn.commit()?;
         Ok(tally)
+    }
+
+    /// Admits ONE LOGICAL SEND through a connector key, debiting `Sends`
+    /// exactly once no matter how many physical attempts the transport layer
+    /// makes.
+    ///
+    /// `logical_send_ref` names the owning TASK/intent, never an `AttemptId`
+    /// (see [`CONNECTOR_KEY_SEND_ADMIT_PREFIX`]), and is validated like
+    /// `settle_connector_spend`'s `event_ref`: nonblank, ≤128 bytes, no NUL —
+    /// checked BEFORE any charge or dedupe write.
+    ///
+    /// Accounting time is the ENGINE clock, sampled once here, exactly as
+    /// [`Self::admit_connector_key_dispatches`] does: a caller cannot pick the
+    /// budget window it debits.
+    ///
+    /// This is the SENDS half of the split the live-transport wiring
+    /// follow-on will land: `Rate` stays a per-physical-effector-call charge
+    /// through `charge_effector_budgets` at the execution chokepoint, while
+    /// `Sends` is charged once per logical send here. Until that follow-on,
+    /// the chokepoint and consent paths keep charging as they do today.
+    pub fn admit_connector_key_send(
+        &self,
+        id: &EntityId,
+        effect_channel: &str,
+        logical_send_ref: &str,
+    ) -> Result<ConnectorKeySendAdmission> {
+        self.admit_connector_key_send_inner(
+            id,
+            effect_channel,
+            logical_send_ref,
+            crate::unix_seconds_now(),
+        )
+    }
+
+    /// Freezes the accounting clock for one logical-send admission.
+    ///
+    /// The same test-only seam as `admit_connector_key_dispatches_at`, and for
+    /// the same reason: budget-window behavior must be testable without
+    /// sleeping. Compiled out of production builds.
+    #[cfg(any(test, feature = "test-support", feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn admit_connector_key_send_at(
+        &self,
+        id: &EntityId,
+        effect_channel: &str,
+        logical_send_ref: &str,
+        accounting_now: u64,
+    ) -> Result<ConnectorKeySendAdmission> {
+        self.admit_connector_key_send_inner(id, effect_channel, logical_send_ref, accounting_now)
+    }
+
+    /// Sole body of logical-send admission. `accounting_now` reaches it from
+    /// the public door above and, under test cfg only, from the freezing seam.
+    fn admit_connector_key_send_inner(
+        &self,
+        id: &EntityId,
+        effect_channel: &str,
+        logical_send_ref: &str,
+        accounting_now: u64,
+    ) -> Result<ConnectorKeySendAdmission> {
+        if logical_send_ref.trim().is_empty() {
+            return Err(invalid_body("logical_send_ref must not be blank"));
+        }
+        if logical_send_ref.len() > CONNECTOR_KEY_LOGICAL_SEND_REF_MAX_LEN {
+            return Err(invalid_body("logical_send_ref too long"));
+        }
+        if logical_send_ref.as_bytes().contains(&0) {
+            return Err(invalid_body("logical_send_ref must not contain NUL"));
+        }
+        let effect_channel = normalize_connector_key(effect_channel);
+        if effect_channel.is_empty() {
+            return Err(invalid_body("effect channel must not be blank"));
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        let admit_key = connector_key_send_admit_key(id, logical_send_ref);
+
+        // Replay: this logical send already debited the key. Echo the meter
+        // read-only (no matched rows ⇒ no amounts ⇒ nothing written) and let
+        // the transaction abort, so a retried send cannot debit twice.
+        if self.store.vault_meta.get(&wtxn, &admit_key)?.is_some() {
+            let states = load_budget_row_states(
+                &self.store,
+                &wtxn,
+                id,
+                &record,
+                None,
+                false,
+                accounting_now,
+            )?;
+            let read = budget_read_from_states(id, &record, &states);
+            return Ok(ConnectorKeySendAdmission::Replayed(EffectorBudgetCharge {
+                key_ref: *id,
+                sends_debit: 0,
+                read,
+                matched_rows: Vec::new(),
+                ladder_events: Vec::new(),
+            }));
+        }
+
+        if record.status != ConnectorKeyStatus::Active {
+            return Ok(ConnectorKeySendAdmission::Refused {
+                reason: "connector_key_not_active".to_owned(),
+                row_index: None,
+                suspended: false,
+                charge: None,
+            });
+        }
+
+        match charge_effector_budgets(
+            &self.store,
+            &mut wtxn,
+            id,
+            &mut record,
+            &effect_channel,
+            true,
+            accounting_now,
+        )? {
+            EffectorBudgetChargeOutcome::NoRows(charge)
+            | EffectorBudgetChargeOutcome::Charged(charge) => {
+                self.store.vault_meta.put(
+                    &mut wtxn,
+                    &admit_key,
+                    &send_admit_value(accounting_now, charge.sends_debit, &effect_channel),
+                )?;
+                wtxn.commit()?;
+                Ok(ConnectorKeySendAdmission::Admitted(charge))
+            }
+            EffectorBudgetChargeOutcome::Exhausted {
+                row_index,
+                on_exhaust,
+                charge,
+            } => {
+                // A refusal writes NO admission row: the logical send never
+                // debited, so the same ref must still be admittable once the
+                // window rolls or the owner widens the budget.
+                let mut suspended = false;
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                    record = suspend_connector_key_in_txn(
+                        &self.store,
+                        &mut wtxn,
+                        id,
+                        &record,
+                        budget_exhausted_reason(row_index),
+                        accounting_now,
+                    )?;
+                    let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+                    append_connector_key_op_record(
+                        &self.store,
+                        &mut wtxn,
+                        id,
+                        "gate.connector_key.dispatch_suspend",
+                        &record,
+                        policy.read_frontier_hash()?,
+                        accounting_now,
+                    )?;
+                    suspended = true;
+                }
+                wtxn.commit()?;
+                Ok(ConnectorKeySendAdmission::Refused {
+                    reason: budget_exhausted_reason(row_index),
+                    row_index: Some(row_index),
+                    suspended,
+                    charge: Some(charge),
+                })
+            }
+        }
     }
 
     /// Settles actual engine-recorded spend into a Spend row (v1 settle-only
