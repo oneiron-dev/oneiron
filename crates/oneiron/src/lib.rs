@@ -43,6 +43,7 @@ pub mod commitment;
 pub mod commitment_ledger;
 pub mod commitment_lifecycle;
 pub mod commitment_schedule;
+pub mod commitment_wake;
 pub mod compaction;
 pub mod companion;
 pub mod config;
@@ -215,6 +216,13 @@ pub use crate::commitment_lifecycle::{
     LapseSweepReport, PREDICATE_COMMITMENT_FULFILLMENT_PROPOSAL, fulfill_commitment_from,
     fulfill_commitments_for_brief, lapse_overdue_commitments, link_brief_fulfillment,
     propose_commitment_fulfilled, release_commitment_with_close, supersede_commitment_with_close,
+};
+pub use crate::commitment_wake::{
+    ApprovedCommitmentWake, CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakeExecutor,
+    CommitmentWakeFireOutcome, CommitmentWakePhase, CommitmentWakeProposalDraft,
+    CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip, CommitmentWakeSkip,
+    approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
+    encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
