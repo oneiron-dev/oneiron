@@ -14,6 +14,10 @@ use crate::codebase::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_rotation::{
+    ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
+    taint_state_for_refs_in_txn,
+};
 
 pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
 pub const ARTIFACT_PUBLISH_VERB_FEATURE: &str = "artifact-publish-verb";
@@ -21,6 +25,17 @@ pub const ARTIFACT_PUBLISH_VERB_FEATURE: &str = "artifact-publish-verb";
 const ARTIFACT_POINTER_KEY_PREFIX: &[u8] = b"artifact:pointer:v1:";
 const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
 const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+
+/// The pointer row's value framing.
+///
+/// A pointer row was, and by default still is, EXACTLY the 32-byte fork
+/// hash. SECRET-04 (ONE-1922) needs one more fact on the row — that this
+/// publish went through the stale-taint override — and the row has no
+/// framing slack, so the stamp is a single trailing byte and both read paths
+/// accept both lengths. An ordinary publish writes 32 bytes and is
+/// byte-identical to every pointer written before this change; only an
+/// overridden publish writes 33.
+const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,6 +93,13 @@ pub struct ArtifactPointer {
     pub channel: ArtifactPointerChannel,
     pub fork_hash: CodebaseForkHash,
     pub code_artifact_id: EntityId,
+    /// Whether this pointer was published over a `TaintedStale` refusal
+    /// through the `secret.taint.allow_stale_publish` dial (SECRET-04).
+    ///
+    /// Read back off the row, not remembered in process: an override is a
+    /// durable fact about how this pointer came to exist, and someone
+    /// auditing the channel later deserves to see it.
+    pub stale_taint_override: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +167,26 @@ pub struct ArtifactPublishVerbOutcome {
 }
 
 impl Vault {
+    /// Publishes a channel pointer at a resolved snapshot.
+    ///
+    /// SECRET-04 (ONE-1922) adds the taint gate, and only the gate: the
+    /// artifact's stored taint refs are compared against the custody
+    /// records' CURRENT generations right here, at the check — read-time
+    /// invalidation (ARCH-0069 S7, amended 2026-08-05). An artifact whose
+    /// secrets have rotated or been revoked reads `TaintedStale` and the
+    /// publish refuses with [`Error::TaintedArtifactStale`].
+    ///
+    /// It is a DIAL, not a wall. When the resolved policy key
+    /// `secret.taint.allow_stale_publish` is on, the publish proceeds and
+    /// the pointer row is STAMPED, so the override is durable evidence
+    /// rather than an unrecorded decision. `TaintedLive` publishes
+    /// unstamped and ungated: live tainted exhaust is not stale exhaust.
+    ///
+    /// The dial is resolved and the state derived inside the SAME write
+    /// transaction that puts the row, so a rotation landing mid-publish
+    /// cannot slip a stale pointer past a check taken against an older
+    /// reading. No receipt plane is minted here — the publish gate is the
+    /// whole of this ticket's business in this module.
     pub fn publish_artifact_pointer(
         &self,
         artifact: &str,
@@ -155,13 +197,33 @@ impl Vault {
             .resolve_artifact_snapshot_by_fork(artifact, fork_hash)?
             .ok_or(Error::EntityNotFound)?;
         let mut wtxn = self.store.env.write_txn()?;
-        put_artifact_pointer_in_txn(&self.store, &mut wtxn, artifact, channel, fork_hash)?;
+        let refs = exhaust_taint_refs_in_txn(&self.store, &wtxn, &snapshot_ref.code_artifact_id)?;
+        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, &wtxn, &refs)? {
+            ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
+            ArtifactTaintState::TaintedStale => {
+                if !allow_stale_publish_in_txn(&self.store, &wtxn)? {
+                    return Err(Error::TaintedArtifactStale {
+                        artifact: artifact.to_owned(),
+                    });
+                }
+                true
+            }
+        };
+        put_artifact_pointer_in_txn(
+            &self.store,
+            &mut wtxn,
+            artifact,
+            channel,
+            fork_hash,
+            stale_taint_override,
+        )?;
         wtxn.commit()?;
         Ok(ArtifactPointer {
             artifact: artifact.to_owned(),
             channel,
             fork_hash: *fork_hash,
             code_artifact_id: snapshot_ref.code_artifact_id,
+            stale_taint_override,
         })
     }
 
@@ -197,6 +259,7 @@ impl Vault {
             return Ok(None);
         };
         let fork_hash = decode_pointer_fork_hash(&raw)?;
+        let stale_taint_override = decode_pointer_stale_override(&raw)?;
         let Some(snapshot_ref) = self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
         else {
             return Ok(None);
@@ -206,6 +269,7 @@ impl Vault {
             channel,
             fork_hash,
             code_artifact_id: snapshot_ref.code_artifact_id,
+            stale_taint_override,
         }))
     }
 
@@ -350,11 +414,19 @@ fn put_artifact_pointer_in_txn(
     artifact: &str,
     channel: ArtifactPointerChannel,
     fork_hash: &CodebaseForkHash,
+    stale_taint_override: bool,
 ) -> Result<()> {
     validate_artifact_id(artifact)?;
-    store
-        .vault_meta
-        .put(wtxn, &artifact_pointer_key(artifact, channel)?, fork_hash)?;
+    let key = artifact_pointer_key(artifact, channel)?;
+    if stale_taint_override {
+        let mut value = Vec::with_capacity(CODEBASE_FORK_HASH_LEN + 1);
+        value.extend_from_slice(fork_hash);
+        value.push(ARTIFACT_POINTER_STALE_OVERRIDE_STAMP);
+        store.vault_meta.put(wtxn, &key, &value)?;
+    } else {
+        // Byte-identical to every pointer row written before SECRET-04.
+        store.vault_meta.put(wtxn, &key, fork_hash)?;
+    }
     Ok(())
 }
 
@@ -370,9 +442,31 @@ fn artifact_pointer_key(artifact: &str, channel: ArtifactPointerChannel) -> Resu
     Ok(key)
 }
 
+/// Reads the fork hash out of either framing: the bare 32-byte row, or the
+/// stamped 33-byte one. Any other length is a corrupted row.
 fn decode_pointer_fork_hash(raw: &[u8]) -> Result<CodebaseForkHash> {
-    raw.try_into()
-        .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))
+    raw.get(..CODEBASE_FORK_HASH_LEN)
+        .filter(|_| raw.len() == CODEBASE_FORK_HASH_LEN || raw.len() == CODEBASE_FORK_HASH_LEN + 1)
+        .and_then(|head| head.try_into().ok())
+        .ok_or(Error::CorruptedIndex("artifact pointer fork hash"))
+}
+
+/// Reads the stale-taint override stamp. An unstamped (32-byte) row is
+/// `false`; a 33-byte row must carry the one defined stamp byte, because a
+/// pointer row asserting an override nobody minted is corruption, not a
+/// default.
+fn decode_pointer_stale_override(raw: &[u8]) -> Result<bool> {
+    match raw.len() {
+        CODEBASE_FORK_HASH_LEN => Ok(false),
+        len if len == CODEBASE_FORK_HASH_LEN + 1 => {
+            if raw[CODEBASE_FORK_HASH_LEN] == ARTIFACT_POINTER_STALE_OVERRIDE_STAMP {
+                Ok(true)
+            } else {
+                Err(Error::CorruptedIndex("artifact pointer taint stamp"))
+            }
+        }
+        _ => Err(Error::CorruptedIndex("artifact pointer fork hash")),
+    }
 }
 
 fn snapshot_file_entry<'a>(

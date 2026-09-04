@@ -129,6 +129,7 @@ pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod secret_manifest;
+pub mod secret_rotation;
 pub mod secret_snapshot;
 pub mod serialize;
 pub mod session_lifecycle;

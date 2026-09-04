@@ -619,7 +619,7 @@ fn encode_secret_lease_body(lease: &SecretLease) -> Result<Vec<u8>> {
     ])
 }
 
-fn decode_secret_lease_body(bytes: &[u8]) -> Result<SecretLease> {
+pub(crate) fn decode_secret_lease_body(bytes: &[u8]) -> Result<SecretLease> {
     let entries = decode_map_body(bytes, "secret lease body must be a map")?;
     let status_raw = u64_at(&entries, SECRET_LEASE_BODY_KEYS[6], "lease status")?;
     Ok(SecretLease {
@@ -868,7 +868,7 @@ fn read_secret_lease_in_txn(
     decode_secret_lease_body(&raw).map(Some)
 }
 
-fn write_secret_lease_in_txn(
+pub(crate) fn write_secret_lease_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     lease: &SecretLease,
@@ -940,7 +940,11 @@ fn write_local_registration_in_txn(
 /// already absent); a failed removal retains the row with the error and
 /// the attempt time recorded, so the path stays in SECRET-03's exclusion
 /// set for as long as the file may still hold the value.
-fn teardown_local_registration_in_txn(
+///
+/// `pub(crate)` for SECRET-04's `revoke_secret` (ONE-1922), which revokes
+/// every lease over a ref inside its own write transaction and must tear
+/// down through this ONE body rather than a second, unmarked copy of it.
+pub(crate) fn teardown_local_registration_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     lease_id: &EntityId,

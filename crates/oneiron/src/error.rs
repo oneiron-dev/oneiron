@@ -469,6 +469,8 @@ pub enum ErrorKind {
     SecretLeasePathRefused,
     SecretLeaseReceiptWriteFailed,
     InvalidSecretLeaseBody,
+    InvalidSecretRotationBody,
+    TaintedArtifactStale,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,
@@ -2051,6 +2053,19 @@ pub enum Error {
     /// validation (SECRET-02).
     #[error("invalid secret lease body: {0}")]
     InvalidSecretLeaseBody(&'static str),
+    /// A rotation-receipt row or a stored taint-ref list failed structural
+    /// validation (SECRET-04, ONE-1922).
+    #[error("invalid secret rotation body: {0}")]
+    InvalidSecretRotationBody(&'static str),
+    /// A publish was refused because the artifact is secret-tainted by a
+    /// record that has since ROTATED or been REVOKED (ARCH-0069 S7,
+    /// read-time invalidation). A dial, not a wall: the resolved policy key
+    /// `secret.taint.allow_stale_publish` permits the publish anyway, and
+    /// the pointer row is stamped when it does.
+    #[error(
+        "artifact `{artifact}` is secret-tainted by a rotated or revoked record; publish refused (set secret.taint.allow_stale_publish to override)"
+    )]
+    TaintedArtifactStale { artifact: String },
     /// A guest tier that must run isolated has no microVM backend available
     /// (CODE-01 — the fail-closed release path; never a silent no-sandbox run).
     #[error("no microVM backend is available for guest tier `{tier}`")]
@@ -2545,6 +2560,8 @@ impl Error {
             Self::SecretLeasePathConflict { .. } => ErrorKind::SecretLeasePathConflict,
             Self::SecretLeasePathRefused { .. } => ErrorKind::SecretLeasePathRefused,
             Self::SecretLeaseReceiptWriteFailed(_) => ErrorKind::SecretLeaseReceiptWriteFailed,
+            Self::InvalidSecretRotationBody(_) => ErrorKind::InvalidSecretRotationBody,
+            Self::TaintedArtifactStale { .. } => ErrorKind::TaintedArtifactStale,
             Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
             Self::MicroVmBackendError { .. } => ErrorKind::MicroVmBackendError,
