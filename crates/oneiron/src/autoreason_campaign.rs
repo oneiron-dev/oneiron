@@ -19,7 +19,7 @@
 //! boundary is a separate type ([`CampaignExecutableArm`]) that has no
 //! strong-critic variant, so no invocation path can select a stronger model.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
@@ -736,8 +736,17 @@ pub enum CampaignVerdictReason {
 }
 
 /// The campaign verdict with the numerics it was derived from.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
+///
+/// `quality_delta` and `cost_penalty` are the raw numbers the ladder was
+/// applied to. `net_delta` is not a third number: it is their difference, so
+/// it is derived on construction and derived again on decode rather than read
+/// back from the wire. A decimal encoding of an `f64` is not guaranteed to
+/// decode to the bits it was encoded from, and a decoded difference that lands
+/// one unit in the last place away from the difference of the decoded operands
+/// would make an untouched report disagree with the ladder replayed over its
+/// own numbers in [`CampaignComparisonReport::validate`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub struct CampaignVerdict {
     /// Keep or discard.
     pub verdict: ExperimentVerdict,
@@ -747,8 +756,58 @@ pub struct CampaignVerdict {
     pub quality_delta: f64,
     /// Raw cost penalty, carried on every reason.
     pub cost_penalty: f64,
-    /// `quality_delta - cost_penalty`, carried on every reason.
+    /// `quality_delta - cost_penalty`, carried on every reason. Derived from
+    /// the two fields above, never trusted on input.
     pub net_delta: f64,
+}
+
+impl CampaignVerdict {
+    /// Assembles a verdict whose `net_delta` follows its own numerics.
+    fn new(
+        verdict: ExperimentVerdict,
+        reason: CampaignVerdictReason,
+        quality_delta: f64,
+        cost_penalty: f64,
+    ) -> Self {
+        Self {
+            verdict,
+            reason,
+            quality_delta,
+            cost_penalty,
+            net_delta: net_delta(quality_delta, cost_penalty),
+        }
+    }
+}
+
+/// Decoded shape of [`CampaignVerdict`].
+///
+/// The encoded `net_delta` is still required — the field set this module emits
+/// round-trips unchanged, and an unknown field is still refused — but the
+/// value is dropped in favour of the re-derived difference.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+struct CampaignVerdictWire {
+    verdict: ExperimentVerdict,
+    reason: CampaignVerdictReason,
+    quality_delta: f64,
+    cost_penalty: f64,
+    net_delta: f64,
+}
+
+impl<'de> Deserialize<'de> for CampaignVerdict {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let CampaignVerdictWire {
+            verdict,
+            reason,
+            quality_delta,
+            cost_penalty,
+            net_delta: _encoded_net_delta,
+        } = CampaignVerdictWire::deserialize(deserializer)?;
+        Ok(Self::new(verdict, reason, quality_delta, cost_penalty))
+    }
 }
 
 /// Full campaign comparison, re-derivable from its own contents.
@@ -917,14 +976,14 @@ fn campaign_verdict(
 ) -> CampaignVerdict {
     let quality_delta = decision.quality_delta;
     let cost_penalty = decision.cost_penalty;
-    let net_delta = quality_delta - cost_penalty;
+    let net_gain = net_delta(quality_delta, cost_penalty);
     let reason = if smoke_is_killed(single_pass_smoke) || smoke_is_killed(tournament_smoke) {
         CampaignVerdictReason::SmokeKilled
     } else if decision.ab_dominated {
         CampaignVerdictReason::AbDominated
     } else if !decision.tournament_wins_held_out {
         CampaignVerdictReason::NoHeldOutWin
-    } else if net_delta < verdict_epsilon {
+    } else if net_gain < verdict_epsilon {
         CampaignVerdictReason::QualityDeltaBelowEpsilon
     } else {
         CampaignVerdictReason::HeldOutWinNetOfCost
@@ -936,13 +995,7 @@ fn campaign_verdict(
         | CampaignVerdictReason::NoHeldOutWin
         | CampaignVerdictReason::QualityDeltaBelowEpsilon => ExperimentVerdict::Discard,
     };
-    CampaignVerdict {
-        verdict,
-        reason,
-        quality_delta,
-        cost_penalty,
-        net_delta,
-    }
+    CampaignVerdict::new(verdict, reason, quality_delta, cost_penalty)
 }
 
 fn cross_check_held_out_decision(
@@ -1061,6 +1114,11 @@ fn check_metric_pin(
         return Err(CampaignError::MetricPinMismatch);
     }
     Ok(())
+}
+
+/// The one definition of the net held-out gain the ladder is applied to.
+fn net_delta(quality_delta: f64, cost_penalty: f64) -> f64 {
+    quality_delta - cost_penalty
 }
 
 fn effective_taste_score(smoke: &CampaignSmokeOutcome, taste: &CampaignTasteJudgment) -> f64 {
