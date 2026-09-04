@@ -26,6 +26,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Run the Oneiron sync daemon.
+    ///
+    /// `--managed-by-hypnos` (plus its argv group) switches the daemon into
+    /// managed serve mode, where it runs as a supervised child process. The
+    /// flags ride [`ServeArgs`] so both the bare and the explicit `serve`
+    /// forms accept them; the mode is selected in `commands::serve`.
     Serve(Box<ServeArgs>),
     /// Revoke an existing device lease binding.
     Revoke(Box<RevokeArgs>),
@@ -298,6 +303,75 @@ mod tests {
                 assert_eq!(args.vault_path, Some(PathBuf::from("/tmp/oneiron-vault")));
                 assert_eq!(args.host.as_deref(), Some("127.0.0.1"));
                 assert_eq!(args.port, Some(9191));
+            }
+            _ => panic!("expected serve command"),
+        }
+    }
+
+    /// The managed argv group has to survive the parser as one coherent set,
+    /// on the explicit `serve` form as well as the bare one — the supervisor
+    /// spawns `oneiron-server serve ...`, and every field it passes must reach
+    /// `ServeArgs` for the managed-mode validator to act on.
+    #[test]
+    fn explicit_serve_accepts_the_managed_argv_group() {
+        let cli = Cli::try_parse_from([
+            "oneiron-server",
+            "serve",
+            "--managed-by-hypnos",
+            "--contract-version",
+            "1",
+            "--vault-name",
+            "canary-vault",
+            "--data-dir",
+            "/run/oneiron/canary",
+            "--http-socket",
+            "/run/oneiron/canary/http.sock",
+            "--ctl-socket",
+            "/run/oneiron/canary/ctl.sock",
+            "--hypnos-socket",
+            "/run/hypnos/sup.sock",
+            "--ready-fd",
+            "7",
+            "--credentials-fd",
+            "9",
+        ])
+        .unwrap();
+
+        match cli.into_command() {
+            Command::Serve(args) => {
+                assert!(args.managed_by_hypnos);
+                assert_eq!(args.contract_version, Some(1));
+                assert_eq!(args.vault_name.as_deref(), Some("canary-vault"));
+                assert_eq!(args.data_dir, Some(PathBuf::from("/run/oneiron/canary")));
+                assert_eq!(
+                    args.http_socket,
+                    Some(PathBuf::from("/run/oneiron/canary/http.sock"))
+                );
+                assert_eq!(
+                    args.ctl_socket,
+                    Some(PathBuf::from("/run/oneiron/canary/ctl.sock"))
+                );
+                assert_eq!(
+                    args.hypnos_socket,
+                    Some(PathBuf::from("/run/hypnos/sup.sock"))
+                );
+                assert_eq!(args.ready_fd, Some(7));
+                assert_eq!(args.credentials_fd, Some(9));
+            }
+            _ => panic!("expected serve command"),
+        }
+    }
+
+    /// Off by default: the switch is the ONLY thing that selects managed mode,
+    /// so today's argv must still land on an unmanaged serve.
+    #[test]
+    fn serve_is_unmanaged_without_the_switch() {
+        let cli = Cli::try_parse_from(["oneiron-server", "serve", "--port", "9191"]).unwrap();
+        match cli.into_command() {
+            Command::Serve(args) => {
+                assert!(!args.managed_by_hypnos);
+                assert!(args.contract_version.is_none());
+                assert!(args.credentials_fd.is_none());
             }
             _ => panic!("expected serve command"),
         }

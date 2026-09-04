@@ -27,6 +27,11 @@ doctest = false
 
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
+# Supervisor ⇄ vault child-process contract, consumed READ-ONLY: managed serve
+# mode speaks exactly the wire types, framing and limits this crate freezes, so
+# a framing bug cannot diverge between supervisor and engine. No wire reshape
+# and no CONTRACT_VERSION bump belongs on this side of the seam.
+oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
