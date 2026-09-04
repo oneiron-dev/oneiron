@@ -60,6 +60,8 @@ pub(super) const RETRY_CHAIN_DEPTH_LIMIT: u32 = 1_024;
 pub(super) const ERR_RETRY_CHAIN_MISSING_ROW: &str = "retry chain names a missing attempt";
 /// A `retry_of` link returning to a row already on the walk.
 pub(super) const ERR_RETRY_CHAIN_CYCLE: &str = "retry chain cycles";
+/// A `retry_of` link naming an existing row that is not a try of this attempt.
+pub(super) const ERR_RETRY_CHAIN_MISMATCH: &str = "retry chain links unrelated attempts";
 
 #[derive(Debug, Default)]
 struct ClaimKindReadScan {
@@ -1151,43 +1153,58 @@ impl<'a> AttemptQueue<'a> {
     /// read the depth here rather than infer one from a per-row lease counter.
     ///
     /// Corruption fails CLOSED. A link naming a row this queue does not hold,
-    /// or one returning to a row already on the walk, is an
+    /// one returning to a row already on the walk, or one whose parent exists
+    /// but is NOT a try of this same attempt, is an
     /// [`Error::InvalidAttemptQueueRecord`] — never a silently short depth,
-    /// which would collapse a long backoff back onto its first rung. The walk
-    /// spends at most `RETRY_CHAIN_DEPTH_LIMIT` (1,024) point reads and
-    /// saturates there, so a legitimately vast lineage is bounded work rather
-    /// than an error. All hops read one snapshot, so a concurrent retry cannot
-    /// make the walk observe half of two different chains.
+    /// which would collapse a long backoff back onto its first rung. Identity
+    /// is re-checked at EVERY hop, not just the first: a structurally valid
+    /// row pointing at an unrelated chain would otherwise be counted, and the
+    /// depth a caller spaces its backoff by would be some foreign lineage's.
+    /// The walk spends at most `RETRY_CHAIN_DEPTH_LIMIT` (1,024) point reads
+    /// and saturates there, so a legitimately vast lineage is bounded work
+    /// rather than an error. All hops read one snapshot, so a concurrent retry
+    /// cannot make the walk observe half of two different chains.
     pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
         let rtxn = self.store.env.read_txn()?;
         let mut visited = HashSet::from([id]);
-        let mut cursor = self.retry_parent_in_txn(&rtxn, id)?;
+        let mut child = self.retry_chain_record_in_txn(&rtxn, id)?;
         let mut depth = 0_u32;
-        while let Some(parent) = cursor {
-            if !visited.insert(parent) {
+        while let Some(parent_id) = child.retry_of {
+            // A revisit is a CYCLE before it is anything else: a row already on
+            // the walk trivially matches itself on identity, so the field
+            // compare below could never be the one to stop an endless loop.
+            if !visited.insert(parent_id) {
                 return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE));
+            }
+            let parent = self.retry_chain_record_in_txn(&rtxn, parent_id)?;
+            if !retries_the_same_attempt(&child, &parent) {
+                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH));
             }
             depth = depth.saturating_add(1);
             if depth >= RETRY_CHAIN_DEPTH_LIMIT {
                 return Ok(RETRY_CHAIN_DEPTH_LIMIT);
             }
-            cursor = self.retry_parent_in_txn(&rtxn, parent)?;
+            child = parent;
         }
         Ok(depth)
     }
 
-    /// One hop of the lineage walk: the row must exist, or the chain is broken.
-    fn retry_parent_in_txn(
+    /// One row of the lineage walk: it must exist, or the chain is broken.
+    ///
+    /// Yields the whole decoded record, not just its link, so the hop that
+    /// follows can check parent-child identity within the same one read and
+    /// one decode this walk already spends per visited row.
+    fn retry_chain_record_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: AttemptId,
-    ) -> Result<Option<AttemptId>> {
+    ) -> Result<AttemptRecord> {
         let Some(raw) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
             return Err(Error::InvalidAttemptQueueRecord(
                 ERR_RETRY_CHAIN_MISSING_ROW,
             ));
         };
-        Ok(decode_record(&raw, id)?.retry_of)
+        decode_record(&raw, id)
     }
 
     /// Reads an attempt by id inside a caller-owned write transaction.
@@ -1460,6 +1477,25 @@ impl<'a> AttemptQueue<'a> {
 
 fn mark_rechecked_candidate_not_running(report: &mut AttemptQueueCleanupReport) {
     report.running = report.running.saturating_sub(1);
+}
+
+/// Whether a `retry_of` link joins two tries of the SAME attempt.
+///
+/// Both writers of that link — [`AttemptQueue::retry`] and the landing
+/// successor in [`super::cancel`] — copy exactly these six fields verbatim
+/// from the source row to the row that supersedes it, so a hop differing on
+/// any of them is corruption by construction rather than a lineage. Nothing
+/// else in the row is comparable: state, lease, counters, timestamps and the
+/// event/manifest/cancel logs are all EXPECTED to diverge between a finalized
+/// source and its fresh successor, which is why the link cannot be checked by
+/// record equality.
+fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
+    child.kind == parent.kind
+        && child.payload == parent.payload
+        && child.task_ref == parent.task_ref
+        && child.run_id == parent.run_id
+        && child.dedupe_key == parent.dedupe_key
+        && child.dedupe_actor_ref == parent.dedupe_actor_ref
 }
 
 /// Resolves the OF-193 Dreamer root for one stamped run id using the durable

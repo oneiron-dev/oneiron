@@ -3,8 +3,8 @@ use super::encoding::{
     dedupe_index_key_v2, encode_record, legacy_dedupe_index_key, ready_at, ready_key,
 };
 use super::engine::{
-    ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISSING_ROW, RETRY_CHAIN_DEPTH_LIMIT,
-    RETRY_REASON_UNSPECIFIED,
+    ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW,
+    RETRY_CHAIN_DEPTH_LIMIT, RETRY_REASON_UNSPECIFIED,
 };
 use super::telemetry::emit_attempt_queue_cleanup_span;
 use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
@@ -1568,6 +1568,138 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result
 
     // None of it reached the honest row beside them.
     assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_fails_closed_on_a_cross_chain_link() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:cross"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // One case per field both `retry_of` writers copy verbatim from a source
+    // row to the row superseding it. Each parent is otherwise a perfect clone
+    // of its child, so the single mutated field is the only thing the walk can
+    // be rejecting — a link naming an EXISTING but unrelated attempt.
+    let cases: [(&str, fn(&mut AttemptRecord)); 6] = [
+        ("kind", |record| record.kind = "dreamer_runner".to_owned()),
+        ("payload", |record| {
+            record.payload = b"payload-of-another-attempt".to_vec();
+        }),
+        ("task_ref", |record| {
+            record.task_ref = Some("task:other".to_owned());
+        }),
+        ("run_id", |record| {
+            record.run_id = Some("run-other".to_owned());
+        }),
+        ("dedupe_key", |record| {
+            record.dedupe_key = Some("turn:other".to_owned());
+        }),
+        // Same dedupe key, different scope: two actors sharing one client key
+        // hold disjoint attempts, so a link across them is no lineage either.
+        ("dedupe_actor_ref", |record| {
+            record.dedupe_actor_ref = Some("actor:other".to_owned());
+        }),
+    ];
+
+    for (index, (field, mutate)) in cases.into_iter().enumerate() {
+        let step = u32::try_from(index).expect("six cases fit") * 2;
+        let mut parent = root.clone();
+        parent.id = synthetic_attempt_id(step + 10);
+        mutate(&mut parent);
+        let child_id = synthetic_attempt_id(step + 11);
+        let mut child = root.clone();
+        child.id = child_id;
+        child.retry_of = Some(parent.id);
+        put_raw_attempts(&vault, &[parent, child])?;
+
+        // Counting this hop would hand the caller a backoff rung measured on
+        // somebody else's history, so it is corruption, not a short chain.
+        let err = queue.retry_chain_depth(child_id).expect_err(field);
+        assert!(
+            matches!(
+                err,
+                Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+            ),
+            "a differing {field} must fail closed, got {err:?}"
+        );
+    }
+
+    // None of it reached the honest row beside them.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_counts_real_successors_but_not_a_deep_cross_link() -> Result<()>
+{
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:deep"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // ANTI-OVER-MATCH: a genuine successor differs from its source on state,
+    // lease owner, lease counter, timestamps and the stamped failure reason.
+    // The identity check must ignore every one of those and still count.
+    let mut now = 20;
+    let mut head = root.id;
+    for expected_depth in 1..4_u32 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some("retryable".to_owned()),
+            now: now + 1,
+        })?;
+        assert_eq!(queue.retry_chain_depth(next.id)?, expected_depth);
+        head = next.id;
+        now += 10;
+    }
+    assert_eq!(queue.retry_chain_depth(head)?, 3);
+
+    // A cross-chain link buried DEEP in an otherwise honest lineage: three
+    // truthful hops, then one that leaves the attempt entirely. Validating
+    // only the first hop would have counted the whole chain.
+    let foreign_id = synthetic_attempt_id(20);
+    let mut foreign = root.clone();
+    foreign.id = foreign_id;
+    foreign.run_id = Some("run-foreign".to_owned());
+    let mut rows = vec![foreign];
+    let mut parent = foreign_id;
+    for index in 0..4_u32 {
+        let mut row = root.clone();
+        row.id = synthetic_attempt_id(21 + index);
+        row.retry_of = Some(parent);
+        parent = row.id;
+        rows.push(row);
+    }
+    put_raw_attempts(&vault, &rows)?;
+
+    assert!(matches!(
+        queue.retry_chain_depth(parent).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+    ));
+    // The honest lineage beside it still counts exactly.
+    assert_eq!(queue.retry_chain_depth(head)?, 3);
 
     Ok(())
 }
