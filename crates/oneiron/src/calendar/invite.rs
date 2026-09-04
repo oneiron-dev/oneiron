@@ -1553,7 +1553,7 @@ mod tests {
             "text/calendar; method=REQUEST; charset=utf-8"
         );
         assert_eq!(part.filename, CALENDAR_INVITE_PART_FILENAME);
-        let text = String::from_utf8(part.ics.clone()).expect("utf-8");
+        let text = String::from_utf8(part.ics).expect("utf-8");
         assert!(text.starts_with("BEGIN:VCALENDAR\r\n"));
         assert!(text.contains("METHOD:REQUEST\r\n"));
         assert!(text.contains(&format!("UID:{UID}\r\n")));
