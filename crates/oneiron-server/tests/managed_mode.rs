@@ -19,6 +19,11 @@
 //!   `aliased_descriptors_are_refused_before_any_of_them_is_adopted` is the
 //!   other half of the same ownership claim, on the inputs rather than the
 //!   path: every adoption path here assumes it alone owns its descriptor.
+//!   `the_serve_entry_refuses_an_aliased_listen_fd_before_it_consumes_anything`
+//!   is where that claim becomes an ordering one — a child process, real argv,
+//!   and the proof that the credential frame's offset never moved and no data
+//!   directory appeared. A helper that refuses correctly but is consulted too
+//!   late passes the row above and fails this one.
 //! - **socket paths** —
 //!   `a_socket_bind_replaces_a_stale_socket_and_refuses_a_regular_file`. The
 //!   path is argv, and the bind replaces what is at it, so the row that matters
@@ -557,6 +562,105 @@ fn aliased_descriptors_are_refused_before_any_of_them_is_adopted() {
     managed
         .refuse_listen_fd_alias(managed.ready_fd + managed.credentials_fd + 1)
         .unwrap();
+
+    // Where in the boot the refusal lands is the other half, and this row
+    // cannot see it: calling the helper directly proves it refuses, not that
+    // `serve_managed` asks it before it consumes anything. That is
+    // `the_serve_entry_refuses_an_aliased_listen_fd_before_it_consumes_anything`.
+}
+
+/// One managed boot in a child process, with an aliased `HYPNOS_LISTEN_FD`.
+///
+/// A subprocess because `HYPNOS_LISTEN_FD` is process-wide: this harness runs
+/// its rows on parallel threads, so setting it here would race every other row
+/// through `ServeListener::for_managed`. It also buys the real entry point —
+/// argv through clap, `ManagedArgs::from_serve_args`, then `serve_managed` —
+/// which is the only place the ordering under test exists.
+///
+/// The child's stdin is the credential frame (`--credentials-fd 0`) and its
+/// stdout is the ready file (`--ready-fd 1`), because those are the two
+/// descriptor numbers a parent can hand a child through `std::process`.
+/// `frame_probe` is a `dup` of the frame's descriptor, so it shares the file
+/// offset the child would move by reading: after the child exits, a non-zero
+/// offset is proof the frame was consumed.
+fn boot_with_aliased_listen_fd(run: &Path, listen_fd: RawFd) -> (std::process::Output, u64) {
+    let frame_path = run.join("creds");
+    let mut frame = Vec::new();
+    write_credentials(&mut frame, &[0x11; DEK_LEN], &[0x22; TOKEN_LEN]).unwrap();
+    std::fs::write(&frame_path, &frame).unwrap();
+    let frame_file = std::fs::File::open(&frame_path).unwrap();
+    let mut frame_probe = frame_file.try_clone().unwrap();
+    let ready = std::fs::File::create(run.join("ready")).unwrap();
+
+    let mut argv = with_flag_value(&managed_argv(run), "--credentials-fd", "0");
+    argv = with_flag_value(&argv, "--ready-fd", "1");
+    // Managed tracing writes to stdout, which is the ready file here; quieting
+    // it keeps that file's bytes about the ready byte and nothing else.
+    argv.push("--log-level".to_owned());
+    argv.push("error".to_owned());
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_oneiron-server"))
+        .arg("serve")
+        .args(&argv)
+        .env(HYPNOS_LISTEN_FD, listen_fd.to_string())
+        .stdin(std::process::Stdio::from(frame_file))
+        .stdout(std::process::Stdio::from(ready))
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    let consumed = std::io::Seek::stream_position(&mut frame_probe).unwrap();
+    (output, consumed)
+}
+
+/// The refusal has to come before anything is consumed, and only the serve
+/// entry can show that.
+///
+/// `refuse_listen_fd_alias` returning an error says nothing about when
+/// `serve_managed` calls it, and the order it used to be called in was the
+/// whole bug: an inherited listener that is also `--credentials-fd` had
+/// `read_exact` run against a listening socket and then closed under the
+/// `File` that read it, and one that is also `--ready-fd` was not refused
+/// until the credential frame was spent and the vault opened — which seals a
+/// DEK MAC on first open. So the evidence here is not the message: it is that
+/// the credential frame's offset never moved and the data directory was never
+/// created.
+#[test]
+fn the_serve_entry_refuses_an_aliased_listen_fd_before_it_consumes_anything() {
+    for (flag, listen_fd) in [("--credentials-fd", 0), ("--ready-fd", 1)] {
+        let dir = tempfile::tempdir().unwrap();
+        let run = sockets_dir(dir.path());
+        let (output, consumed) = boot_with_aliased_listen_fd(&run, listen_fd);
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+        assert!(
+            !output.status.success(),
+            "an aliased listen fd must not boot; stderr: {stderr}"
+        );
+        // Naming both sides is what tells the operator which input collided,
+        // and it is also what proves this exit is the refusal under test
+        // rather than some earlier argv failure.
+        assert!(stderr.contains(HYPNOS_LISTEN_FD), "stderr: {stderr}");
+        assert!(stderr.contains(flag), "stderr: {stderr}");
+        assert!(
+            stderr.contains("both name file descriptor"),
+            "stderr: {stderr}"
+        );
+
+        assert_eq!(
+            consumed, 0,
+            "{flag}: the credential frame must not be read before the refusal; stderr: {stderr}"
+        );
+        assert!(
+            !run.join("data").exists(),
+            "{flag}: no storage may be opened before the refusal; stderr: {stderr}"
+        );
+        assert!(
+            !std::fs::read(run.join("ready"))
+                .unwrap()
+                .contains(&READY_BYTE),
+            "{flag}: a refused boot never signals ready; stderr: {stderr}"
+        );
+    }
 }
 
 #[test]

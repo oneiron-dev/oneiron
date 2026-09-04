@@ -273,7 +273,9 @@ impl ManagedArgs {
     /// pipe. Each closes what it holds on drop, so a listener that is also
     /// `--credentials-fd` is read as a credential frame and closed under the
     /// listener, and one that is also `--ready-fd` has the ready byte written
-    /// into it. Called before adoption, so neither becomes reachable.
+    /// into it. [`serve_managed`] calls this before any of the three is
+    /// consumed and before the vault is opened, so neither the frame nor
+    /// storage is touched on the way to the refusal.
     pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {
         refuse_fd_alias((HYPNOS_LISTEN_FD, listen_fd), ("--ready-fd", self.ready_fd))?;
         refuse_fd_alias(
@@ -1745,7 +1747,8 @@ fn init_managed_tracing(log_level: &str) {
 
 /// Boots the engine as a supervised child process.
 ///
-/// The startup order is the contract, not an implementation detail:
+/// The startup order is the contract, not an implementation detail: the
+/// delivered descriptor numbers are checked before any of them is consumed,
 /// credentials are consumed before the data directory is opened, the open
 /// gates run before anything is served, both sockets are bound before the
 /// ready byte, and the ready byte is what tells the supervisor any of it
@@ -1759,6 +1762,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         contract_version = CONTRACT_VERSION,
         "starting managed vault process"
     );
+
+    // Resolution, not adoption, and it comes first on purpose. This is the
+    // integer check over the three delivered descriptor numbers, and every
+    // consequence of an alias is paid by whoever consumes one of them first:
+    // an inherited listener that is also `--credentials-fd` gets `read_exact`
+    // called on a listening socket and closed under the `File` that read it,
+    // and one that is also `--ready-fd` is not refused until the credential
+    // frame is spent and the vault — including its sealed DEK MAC — has been
+    // opened. Refusing here costs nothing and consumes nothing; `bind` below
+    // is still the only adoption.
+    let http = ServeListener::for_managed(&managed)?;
 
     // The contract requires the credential frame to be read before the data
     // directory is opened, so a refused frame never touches storage.
@@ -1775,7 +1789,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?,
     );
 
-    let http = ServeListener::for_managed(&managed)?.bind().await?;
+    // Adoption stays here, after the gates: the listener was only resolved
+    // above, and `bind` is what takes the descriptor over.
+    let http = http.bind().await?;
     let http_owned_path = http.owned_path().map(Path::to_path_buf);
     let ctl = ManagedCtl::bind(&managed.ctl_socket)?;
 
