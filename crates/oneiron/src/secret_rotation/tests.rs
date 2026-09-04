@@ -37,7 +37,8 @@ use crate::config::VaultConfig;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::secret_custody::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyRecord,
+    CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
+    SecretCustodyRecord,
 };
 use crate::secret_lease::SecretLeaseStatus;
 use crate::store::Store;

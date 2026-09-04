@@ -1413,6 +1413,86 @@ pub(crate) fn read_secret_custody_admission_in_txn(
 // Vault doors
 // ---------------------------------------------------------------------------
 
+/// Enforces the narrow-only rule against the LIVE floor and hands back the
+/// live band for `rec`'s class.
+///
+/// The floor is resolved from the vault INSIDE the caller's transaction,
+/// never from the caller-supplied snapshot (which may be stale). Every
+/// binding's tier ceiling must fit inside the live band for the record's
+/// class: a CrossVault record read against the default snapshot (its band
+/// T0..T0) but binding T2 is rejected here, not after commit.
+///
+/// `pub(crate)` for SECRET-04's `Vault::rotate_secret` (ONE-1922): a
+/// rotation is a FRESH authorization of the record's exposure, not a
+/// grandfather clause for the posture it registered under, so a floor
+/// narrowed since registration must refuse to re-bless a wider binding
+/// through exactly this body rather than a second, unmarked copy of it.
+pub(crate) fn refuse_bindings_wider_than_live_floor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    rec: &SecretCustodyRecord,
+) -> Result<TierBand> {
+    let live_band = SecretCustodyFloor::resolve(store, txn)?.band_for(rec.class);
+    for b in &rec.bindings {
+        if b.tier_ceiling > live_band.max {
+            return Err(Error::ManifestWidensFloor {
+                secret_ref: rec.name.clone(),
+                class: rec.class,
+                requested: b.tier_ceiling,
+                floor_max: live_band.max,
+            });
+        }
+    }
+    Ok(live_band)
+}
+
+/// Writes one custody body through the ONE sealed put shape, stamping
+/// `occurred_at` as both the occurrence range and the learned-at.
+///
+/// Type-77 bodies are sealed from the raw/CRDT planes until ONE-1865: the
+/// `apply_put` seal admits byte 77 only through the engine-internal
+/// non-replicated shape (`allow_maintenance && !allow_reserved_predicate`,
+/// the shape the default policy-manifest seeder uses). Any public or
+/// replicated CRDT carry of byte 77 rejects there until then.
+///
+/// `pub(crate)` for SECRET-04's `Vault::rotate_secret` and
+/// `Vault::revoke_secret` (ONE-1922), which re-put an existing record inside
+/// their own write transaction: registration mints the id and all three land
+/// through this body, so the seal shape has exactly one definition.
+pub(crate) fn put_secret_custody_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &SecretCustodyRecord,
+    occurred_at: u64,
+) -> Result<()> {
+    let data = encode_secret_custody_body(rec)?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_SECRET_CUSTODY,
+            occurred: TimeRange {
+                start: occurred_at,
+                end: occurred_at,
+            },
+            learned_at: occurred_at,
+            data,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )
+}
+
 impl Vault {
     /// Registers a secret-custody record, minting the `EntityId` and writing
     /// the name index. Denies a duplicate LIVE name (a name held by an
@@ -1430,7 +1510,6 @@ impl Vault {
         if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
             return Err(invalid_body("unsupported secret custody schema version"));
         }
-        let data = encode_secret_custody_body(&rec)?;
         let id = EntityId::now();
 
         let mut wtxn = self.store.env.write_txn()?;
@@ -1438,22 +1517,8 @@ impl Vault {
 
         // Resolve the floor against the LIVE vault inside this write
         // transaction and enforce narrow-only against it (never against the
-        // caller-supplied snapshot, which may be stale). Every binding's tier
-        // ceiling must fit inside the live floor's band for the record's
-        // class: a CrossVault record read against the default snapshot (its
-        // band T0..T0) but binding T2 must be rejected here, not after commit.
-        let live_floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
-        let live_band = live_floor.band_for(rec.class);
-        for b in &rec.bindings {
-            if b.tier_ceiling > live_band.max {
-                return Err(Error::ManifestWidensFloor {
-                    secret_ref: rec.name.clone(),
-                    class: rec.class,
-                    requested: b.tier_ceiling,
-                    floor_max: live_band.max,
-                });
-            }
-        }
+        // caller-supplied snapshot, which may be stale).
+        let live_band = refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec)?;
         // The audit snapshot attached to the record must be narrower-or-equal
         // to the live floor: a caller-attested WIDER floor would lie about
         // the register-time posture. Most-restrictive-wins merge means a
@@ -1483,34 +1548,9 @@ impl Vault {
             }
         }
 
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            vec![BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_SECRET_CUSTODY,
-                occurred: TimeRange {
-                    start: rec.registered_at,
-                    end: rec.registered_at,
-                },
-                learned_at: rec.registered_at,
-                data,
-                // SECRET-01 dedicated door: the `apply_put` seal admits byte 77
-                // only through the engine-internal non-replicated shape
-                // (`allow_maintenance && !allow_reserved_predicate`, the shape
-                // the default policy-manifest seeder uses). Any public or
-                // replicated CRDT carry of byte 77 rejects there until ONE-1865.
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        // SECRET-01 dedicated door: the sealed type-77 put shape lives in
+        // `put_secret_custody_in_txn`, shared with SECRET-04's rotate/revoke.
+        put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, rec.registered_at)?;
         self.store
             .vault_meta
             .put(&mut wtxn, &index_key, id.as_bytes())?;

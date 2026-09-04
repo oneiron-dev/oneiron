@@ -33,7 +33,8 @@
 //! # Where taint refs are stored
 //!
 //! * blob artifacts carry them IN BODY under the pinned
-//!   `secret_taint.refs` key ([`crate::blob_artifact::BLOB_ARTIFACT_BODY_KEYS`]),
+//!   `secret_taint.refs` key
+//!   ([`crate::blob_artifact::BLOB_ARTIFACT_OPTIONAL_BODY_KEYS`]),
 //!   so the attach is the artifact put itself;
 //! * code-run raw outputs carry them in a `vault_meta` SIDECAR row written in
 //!   the same transaction as the raw-output row
@@ -52,27 +53,24 @@
 //! ref and a generation. Neither has a value field to leak, and the
 //! grep-guard test asserts it of their `Debug` and their wire bodies.
 
-use std::sync::atomic::Ordering;
-
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::decode_blob_artifact_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::secret_custody::{
-    SecretCustodyFloor, SecretCustodyStatus, encode_secret_custody_body,
-    policy_manifest_bodies_strict, read_secret_custody_admission_in_txn,
-    read_secret_custody_in_txn, resolve_secret_ref_in_txn,
+    SecretCustodyStatus, policy_manifest_bodies_strict, put_secret_custody_in_txn,
+    read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
+    refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
 };
 use crate::secret_lease::{
     SECRET_LEASE_KEY_PREFIX, SecretLeaseStatus, SecretTaintRef, decode_secret_lease_body,
     teardown_local_registration_in_txn, write_secret_lease_in_txn,
 };
 use crate::store::Store;
-use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
 // Row keys and policy keys
@@ -628,21 +626,11 @@ impl Vault {
             return Err(Error::SecretCustodyNotActive { name: rec.name });
         }
 
-        // Narrow-only, re-checked against the LIVE floor: a rotation is a
-        // fresh authorization of this record's exposure, not a grandfather
-        // clause for the posture it registered under.
-        let live_floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
-        let live_band = live_floor.band_for(rec.class);
-        for b in &rec.bindings {
-            if b.tier_ceiling > live_band.max {
-                return Err(Error::ManifestWidensFloor {
-                    secret_ref: rec.name.clone(),
-                    class: rec.class,
-                    requested: b.tier_ceiling,
-                    floor_max: live_band.max,
-                });
-            }
-        }
+        // Narrow-only, re-checked against the LIVE floor through the body
+        // registration enforces: a rotation is a fresh authorization of this
+        // record's exposure, not a grandfather clause for the posture it
+        // registered under.
+        refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec)?;
 
         let from_generation = rec.rotation_generation;
         let to_generation = from_generation
@@ -663,7 +651,7 @@ impl Vault {
             rotated_at: at,
             kind: RotationKind::Rotated,
         };
-        self.write_custody_record_in_txn(&mut wtxn, &id, &rec, at)?;
+        put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, at)?;
         self.store.vault_meta.put(
             &mut wtxn,
             &receipt_key(&receipt.receipt_id),
@@ -701,7 +689,7 @@ impl Vault {
 
         if rec.status != SecretCustodyStatus::Revoked {
             rec.status = SecretCustodyStatus::Revoked;
-            self.write_custody_record_in_txn(&mut wtxn, &id, &rec, at)?;
+            put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, at)?;
         }
 
         // The prefix sweep, collected before mutating: a cursor is not held
@@ -739,41 +727,6 @@ impl Vault {
         )?;
         wtxn.commit()?;
         Ok(receipt)
-    }
-
-    /// Re-encodes and re-puts a custody body through the ONE sealed put
-    /// shape [`Vault::register_secret`] uses.
-    ///
-    /// Type-77 bodies are sealed from the raw/CRDT planes until ONE-1865;
-    /// `allow_maintenance` with no reserved-predicate grant is the
-    /// engine-internal non-replicated shape that seal admits.
-    fn write_custody_record_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        id: &EntityId,
-        rec: &crate::secret_custody::SecretCustodyRecord,
-        at: u64,
-    ) -> Result<()> {
-        let data = encode_secret_custody_body(rec)?;
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            vec![BatchOp::Put {
-                id: *id,
-                entity_type: ENTITY_TYPE_SECRET_CUSTODY,
-                occurred: TimeRange { start: at, end: at },
-                learned_at: at,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            self.text_index_trusted.load(Ordering::Acquire),
-            false,
-            true,
-        )
     }
 
     /// Reads one durable rotation receipt.

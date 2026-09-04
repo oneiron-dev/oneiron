@@ -258,8 +258,7 @@ impl Vault {
         let Some(raw) = raw else {
             return Ok(None);
         };
-        let fork_hash = decode_pointer_fork_hash(&raw)?;
-        let stale_taint_override = decode_pointer_stale_override(&raw)?;
+        let (fork_hash, stale_taint_override) = decode_artifact_pointer_row(&raw)?;
         let Some(snapshot_ref) = self.resolve_artifact_snapshot_by_fork(artifact, &fork_hash)?
         else {
             return Ok(None);
@@ -442,31 +441,28 @@ fn artifact_pointer_key(artifact: &str, channel: ArtifactPointerChannel) -> Resu
     Ok(key)
 }
 
-/// Reads the fork hash out of either framing: the bare 32-byte row, or the
-/// stamped 33-byte one. Any other length is a corrupted row.
-fn decode_pointer_fork_hash(raw: &[u8]) -> Result<CodebaseForkHash> {
-    raw.get(..CODEBASE_FORK_HASH_LEN)
-        .filter(|_| raw.len() == CODEBASE_FORK_HASH_LEN || raw.len() == CODEBASE_FORK_HASH_LEN + 1)
-        .and_then(|head| head.try_into().ok())
-        .ok_or(Error::CorruptedIndex("artifact pointer fork hash"))
-}
-
-/// Reads the stale-taint override stamp. An unstamped (32-byte) row is
-/// `false`; a 33-byte row must carry the one defined stamp byte, because a
-/// pointer row asserting an override nobody minted is corruption, not a
-/// default.
-fn decode_pointer_stale_override(raw: &[u8]) -> Result<bool> {
-    match raw.len() {
-        CODEBASE_FORK_HASH_LEN => Ok(false),
+/// Reads one pointer row into its fork hash and its stale-taint override,
+/// branching ONCE on the framing the row length declares.
+///
+/// The bare 32-byte row is every pointer written before SECRET-04 and
+/// carries no override; a 33-byte row must carry the one defined stamp byte,
+/// because a pointer row asserting an override nobody minted is corruption,
+/// not a default. Any other length is a corrupted row.
+fn decode_artifact_pointer_row(raw: &[u8]) -> Result<(CodebaseForkHash, bool)> {
+    let stale_taint_override = match raw.len() {
+        CODEBASE_FORK_HASH_LEN => false,
         len if len == CODEBASE_FORK_HASH_LEN + 1 => {
-            if raw[CODEBASE_FORK_HASH_LEN] == ARTIFACT_POINTER_STALE_OVERRIDE_STAMP {
-                Ok(true)
-            } else {
-                Err(Error::CorruptedIndex("artifact pointer taint stamp"))
+            if raw[CODEBASE_FORK_HASH_LEN] != ARTIFACT_POINTER_STALE_OVERRIDE_STAMP {
+                return Err(Error::CorruptedIndex("artifact pointer taint stamp"));
             }
+            true
         }
-        _ => Err(Error::CorruptedIndex("artifact pointer fork hash")),
-    }
+        _ => return Err(Error::CorruptedIndex("artifact pointer fork hash")),
+    };
+    let fork_hash = raw[..CODEBASE_FORK_HASH_LEN]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("artifact pointer fork hash"))?;
+    Ok((fork_hash, stale_taint_override))
 }
 
 fn snapshot_file_entry<'a>(
