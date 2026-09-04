@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::Vault;
+use crate::agent_def::MemoryProfile;
 use crate::claim::ClaimBody;
 use crate::codebase::RepoRef;
 use crate::disclosure::{DisclosureContext, DisclosureMode};
@@ -34,7 +35,7 @@ use super::quarantine::load_pack_quarantine_index;
 use super::telemetry::{discard_failed_context_pack_telemetry, finalize_context_pack_telemetry};
 use super::types::{
     ContextPack, ContextPackRetrievalBudget, DEFAULT_MAX_FIELD_CHARS, DEFAULT_MAX_NEIGHBORS,
-    DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_TOKEN_BUDGET, FieldProfile,
+    DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET, FieldProfile,
     MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat, PackStats, TokenAllocation,
 };
 use super::validation::{
@@ -246,7 +247,7 @@ impl<'a> ContextPackBuilder<'a> {
             merge_neighbors: true,
             format: PackFormat::default(),
             field_profile: FieldProfile::default(),
-            token_budget: DEFAULT_TOKEN_BUDGET,
+            token_budget: DEFAULT_WINDOW_TOKEN_BUDGET,
             token_allocation: TokenAllocation::default(),
             max_field_chars: DEFAULT_MAX_FIELD_CHARS,
             max_item_tokens: 0,
@@ -578,6 +579,42 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn token_budget(mut self, budget: usize) -> Self {
         self.token_budget = budget;
         self
+    }
+
+    /// Applies an agent's RT-05 memory profile as construction-time defaults
+    /// (ONE-1687): the window budget and, when present, the per-class split.
+    ///
+    /// `None` is a NO-OP — today's defaults hold and the assembled pack is
+    /// byte-for-byte what it was before the profile existed. Call order is
+    /// deliberate: a later explicit [`Self::token_budget`] or
+    /// [`Self::token_allocation`] overrides these profile defaults, so a
+    /// per-request override always wins over the stored profile.
+    #[must_use]
+    pub fn memory_profile(mut self, profile: Option<&MemoryProfile>) -> Self {
+        let Some(profile) = profile else {
+            return self;
+        };
+        self.token_budget = usize::try_from(profile.window_token_budget)
+            .unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET);
+        if let Some(split) = profile.budget_split {
+            self.token_allocation = TokenAllocation {
+                claims: split.claims,
+                turns: split.turns,
+                summaries: split.summaries,
+                other: split.other,
+            };
+        }
+        self
+    }
+
+    /// The effective window budget after defaults and profile application.
+    ///
+    /// The ONE public read of the assembled budget. A default builder answers
+    /// the engine default through the same machinery a profiled builder uses,
+    /// so a cross-read never re-spells the constant.
+    #[must_use]
+    pub const fn effective_token_budget(&self) -> usize {
+        self.token_budget
     }
 
     pub fn token_allocation(mut self, allocation: TokenAllocation) -> Self {

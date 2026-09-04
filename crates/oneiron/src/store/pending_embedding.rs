@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY};
 
 use super::*;
 
@@ -104,7 +104,7 @@ impl Store {
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
         Ok(self
-            .claim_body_from_record(&record)
+            .embeddable_body_from_record(&record)
             .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
             .map(|_| marker.to_vec()))
     }
@@ -124,7 +124,7 @@ impl Store {
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         Ok(self
-            .claim_body_from_record(&record)
+            .embeddable_body_from_record(&record)
             .filter(|body| Self::pending_marker_is_current(&marker, epoch, body))
             .map(|_| marker.to_vec()))
     }
@@ -143,7 +143,7 @@ impl Store {
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         Ok(self
-            .claim_body_from_record(&record)
+            .embeddable_body_from_record(&record)
             .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
     }
 
@@ -165,12 +165,23 @@ impl Store {
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         Ok(self
-            .claim_body_from_record(&record)
+            .embeddable_body_from_record(&record)
             .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body)))
     }
 
-    fn claim_body_from_record<'a>(&self, record: &'a [u8]) -> Option<&'a [u8]> {
-        if record.len() <= ENTITY_BODY_OFFSET || record[0] != ENTITY_TYPE_CLAIM {
+    /// The embeddable body of a base record, or `None` when the row carries no
+    /// vector-bearing body.
+    ///
+    /// Every marker reader above funnels through here, and the token is computed
+    /// over exactly the bytes this returns, so the accepted type set IS the set
+    /// of rows whose marker can be matched, cleared, or turned into embed work.
+    /// RT-05 (ONE-1687) adds SUMMARY: while this refused it, the epoch-summary
+    /// keyframe's mint-time marker was durably unreadable and leaked.
+    fn embeddable_body_from_record<'a>(&self, record: &'a [u8]) -> Option<&'a [u8]> {
+        if record.len() <= ENTITY_BODY_OFFSET {
+            return None;
+        }
+        if record[0] != ENTITY_TYPE_CLAIM && record[0] != ENTITY_TYPE_SUMMARY {
             return None;
         }
         let body = &record[ENTITY_BODY_OFFSET..];

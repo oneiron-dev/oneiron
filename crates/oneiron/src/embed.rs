@@ -595,12 +595,30 @@ fn pending_input_in_txn(
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(None);
-    }
+    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
+    // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
+    // record's framing keys carry no retrievable meaning. The pending-embedding
+    // token still commits to the whole record, so a re-mint invalidates it.
+    let embed_body = match header.entity_type {
+        crate::registry::ENTITY_TYPE_CLAIM => body.to_vec(),
+        crate::registry::ENTITY_TYPE_SUMMARY => {
+            // An ordinary witness SUMMARY shares the type byte and is not an
+            // epoch record. SKIP it — the same `None` this arm returned for
+            // every SUMMARY before RT-05 — which the caller retires as stale.
+            let Ok(summary) = crate::compaction::decode_epoch_summary_body(body) else {
+                return Ok(None);
+            };
+            if summary.text.is_empty() {
+                return Ok(None);
+            }
+            summary.text.into_bytes()
+        }
+        _ => return Ok(None),
+    };
     Ok(Some(PendingEmbeddingInput {
         entity_id: *id,
-        claim_body: raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        claim_body: embed_body,
         pending_embedding_token: token,
     }))
 }
