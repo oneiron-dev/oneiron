@@ -15,8 +15,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use crate::{Error, Result, llm::ContentPart};
 
 use super::atom::{
-    CollectionAtom, FiniteF64, LENS_ATOM_KIT_VERSION, LensAtom, LensNode, LensNodeSeed, LensText,
-    LensTextSpan, MetaLineAtom, RESULT_SET_ATOM_KIND, TextBlockAtom,
+    CollectionAtom, FiniteF64, GeneratedUiResultSetSelectAll, LENS_ATOM_KIT_VERSION, LensAtom,
+    LensNode, LensNodeSeed, LensText, LensTextSpan, MetaLineAtom, RESULT_SET_ATOM_KIND,
+    TextBlockAtom,
 };
 use super::self_ui::{SelfUiAction, SelfUiValue};
 use super::validate::{
@@ -2025,11 +2026,17 @@ pub struct LensBehaviorFingerprint {
     cases: BTreeMap<String, LensFixtureBehavior>,
 }
 
-/// The three semantic dimensions compared per fixture.
+/// The four semantic dimensions compared per fixture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LensFixtureBehavior {
     atom_tree: Vec<LensAtomTreeEntry>,
     bound_handles: BTreeSet<LensHandleBinding>,
+    /// The subset of declared reach a result-set atom actually *points at*: every row
+    /// `target_handle` and every select-all `predicate_handle`, resolved to the
+    /// `(name, role)` pair its own node declared. This is not a second declared set —
+    /// each pair here is by construction already in `bound_handles` — it is which of
+    /// those declarations the host is really told to read.
+    referenced_handles: BTreeSet<LensHandleBinding>,
     atom_inventory: BTreeMap<GeneratedUiPrimitive, u32>,
 }
 
@@ -2104,13 +2111,14 @@ impl LensBehaviorFingerprint {
     }
 }
 
-/// Reduce one validated render to its three behavior dimensions.
+/// Reduce one validated render to its four behavior dimensions.
 ///
 /// Node ids, fallback text, literal/interpolated text values, labels, layout payloads,
 /// and any source or prompt material are deliberately not inputs.
 fn fingerprint_render(rendered: &GeneratedLens) -> Result<LensFixtureBehavior> {
     let mut atom_tree = Vec::new();
     let mut bound_handles = BTreeSet::new();
+    let mut referenced_handles = BTreeSet::new();
     let mut atom_inventory: BTreeMap<GeneratedUiPrimitive, u32> = BTreeMap::new();
     let mut stack = vec![rendered.root()];
 
@@ -2150,6 +2158,24 @@ fn fingerprint_render(rendered: &GeneratedLens) -> Result<LensFixtureBehavior> {
             }
         }
 
+        // A result set's row `target_handle` and its select-all `predicate_handle` are
+        // *references*, not declarations: each one has to name reach this same node
+        // already advertised, and `super::mediation::select_atom` copies the host
+        // backing row for exactly that handle. So swapping a row from one declared
+        // handle to another leaves the declared set above byte-identical while moving
+        // which host rows the selection actually reads — a data-read change the
+        // `bound_handles` dimension alone cannot see.
+        if let LensAtom::ResultSet(result_set) = &node.atom {
+            for row in &result_set.rows {
+                referenced_handles.insert(referenced_binding(node, &row.target_handle)?);
+            }
+            if let GeneratedUiResultSetSelectAll::WithinFilter { predicate_handle } =
+                &result_set.select_all
+            {
+                referenced_handles.insert(referenced_binding(node, predicate_handle)?);
+            }
+        }
+
         // Reversed push keeps the pop order equal to the source child order.
         stack.extend(node.children.iter().rev());
     }
@@ -2157,11 +2183,40 @@ fn fingerprint_render(rendered: &GeneratedLens) -> Result<LensFixtureBehavior> {
     Ok(LensFixtureBehavior {
         atom_tree,
         bound_handles,
+        referenced_handles,
         atom_inventory,
     })
 }
 
-/// One `(fixture, name, role)` bound read that was added or removed.
+/// Resolve one result-set handle reference against the declaring node's own bindings.
+///
+/// The tree validator already proved every such reference names a handle this node
+/// declares exactly once, so a missing or duplicated declaration is a broken invariant.
+/// It fails the fingerprint rather than resolving to nothing: a reference silently
+/// dropped here would read as "no reference changed" and could auto-adopt.
+fn referenced_binding(node: &LensNode, handle: &LensHandleName) -> Result<LensHandleBinding> {
+    let mut declared = node
+        .bindings
+        .iter()
+        .filter(|binding| &binding.name == handle);
+    let binding = declared.next().ok_or_else(|| {
+        Error::InvalidConfig(
+            "lens result set handle must be declared by the node that references it".to_string(),
+        )
+    })?;
+    if declared.next().is_some() {
+        return Err(Error::InvalidConfig(
+            "lens result set handle must be declared exactly once by its own node".to_string(),
+        ));
+    }
+    Ok(LensHandleBinding {
+        name: binding.name.clone(),
+        role: binding.role,
+    })
+}
+
+/// One `(fixture, name, role)` data read that was added or removed — either a
+/// declared binding or the reach a result-set reference resolves to.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LensBehaviorHandle {
     fixture_id: String,
@@ -2251,13 +2306,16 @@ impl LensAtomInventoryChange {
 
 /// The full behavior delta between two corpus fingerprints.
 ///
-/// All three dimensions are reported, but only bound-handle changes drive the adoption
-/// lane: structure and inventory are evidence, not approval authority.
+/// All four dimensions are reported, but only handle changes — declared *or*
+/// referenced — drive the adoption lane: structure and inventory are evidence, not
+/// approval authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensBehaviorDiff {
     structural_cases: BTreeSet<String>,
     added_handles: BTreeSet<LensBehaviorHandle>,
     removed_handles: BTreeSet<LensBehaviorHandle>,
+    added_referenced_handles: BTreeSet<LensBehaviorHandle>,
+    removed_referenced_handles: BTreeSet<LensBehaviorHandle>,
     role_changes: Vec<LensHandleRoleChange>,
     inventory_changes: BTreeSet<LensAtomInventoryChange>,
 }
@@ -2281,6 +2339,8 @@ impl LensBehaviorDiff {
             structural_cases: BTreeSet::new(),
             added_handles: BTreeSet::new(),
             removed_handles: BTreeSet::new(),
+            added_referenced_handles: BTreeSet::new(),
+            removed_referenced_handles: BTreeSet::new(),
             role_changes: Vec::new(),
             inventory_changes: BTreeSet::new(),
         };
@@ -2309,6 +2369,7 @@ impl LensBehaviorDiff {
         }
         self.push_inventory_changes(fixture_id, before, after);
         self.push_handle_changes(fixture_id, before, after);
+        self.push_referenced_handle_changes(fixture_id, before, after);
         self.push_role_changes(fixture_id, before, after);
     }
 
@@ -2355,6 +2416,27 @@ impl LensBehaviorDiff {
         }
     }
 
+    /// The same set difference over the *referenced* dimension. A pair can appear here
+    /// while `added_handles`/`removed_handles` stay empty: that is exactly a result set
+    /// retargeted between two handles the node declares either way.
+    fn push_referenced_handle_changes(
+        &mut self,
+        fixture_id: &str,
+        before: &LensFixtureBehavior,
+        after: &LensFixtureBehavior,
+    ) {
+        let before_referenced = &before.referenced_handles;
+        let after_referenced = &after.referenced_handles;
+        for binding in after_referenced.difference(before_referenced) {
+            self.added_referenced_handles
+                .insert(behavior_handle(fixture_id, binding));
+        }
+        for binding in before_referenced.difference(after_referenced) {
+            self.removed_referenced_handles
+                .insert(behavior_handle(fixture_id, binding));
+        }
+    }
+
     fn push_role_changes(
         &mut self,
         fixture_id: &str,
@@ -2381,21 +2463,28 @@ impl LensBehaviorDiff {
         }
     }
 
-    /// True when all five collections are empty.
+    /// True when all seven collections are empty.
     #[must_use]
     pub fn is_identical(&self) -> bool {
         self.structural_cases.is_empty()
             && self.added_handles.is_empty()
             && self.removed_handles.is_empty()
+            && self.added_referenced_handles.is_empty()
+            && self.removed_referenced_handles.is_empty()
             && self.role_changes.is_empty()
             && self.inventory_changes.is_empty()
     }
 
-    /// The single adoption predicate. Structural and inventory churn never forces a
-    /// human stamp on its own.
+    /// The single adoption predicate: which reach is declared, *and* which of it a
+    /// result set points at. Structural and inventory churn never forces a human stamp
+    /// on its own, and `role_changes` stays evidence — every role move is already a
+    /// removed/added pair here.
     #[must_use]
     pub fn has_data_read_change(&self) -> bool {
-        !self.added_handles.is_empty() || !self.removed_handles.is_empty()
+        !self.added_handles.is_empty()
+            || !self.removed_handles.is_empty()
+            || !self.added_referenced_handles.is_empty()
+            || !self.removed_referenced_handles.is_empty()
     }
 
     #[must_use]
@@ -2411,6 +2500,18 @@ impl LensBehaviorDiff {
     #[must_use]
     pub const fn removed_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
         &self.removed_handles
+    }
+
+    /// Reach a result-set row or select-all predicate newly points at.
+    #[must_use]
+    pub const fn added_referenced_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
+        &self.added_referenced_handles
+    }
+
+    /// Reach a result-set row or select-all predicate no longer points at.
+    #[must_use]
+    pub const fn removed_referenced_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
+        &self.removed_referenced_handles
     }
 
     #[must_use]

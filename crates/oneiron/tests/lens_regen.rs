@@ -15,12 +15,13 @@ use serde::Deserialize;
 use serde_json::json;
 
 use oneiron::lens::{
-    AnswerSheetAtom, ClaimLineAtom, CollectionAtom, GeneratedLens, LENS_APPS_CONTRACT_VERSION,
+    AnswerSheetAtom, ClaimLineAtom, CollectionAtom, GeneratedLens, GeneratedUiResultSetAtom,
+    GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll, LENS_APPS_CONTRACT_VERSION,
     LENS_ATOM_KIT_VERSION, LensAtom, LensAtomId, LensBehaviorFingerprint, LensBehaviorHandle,
     LensEvaluatedRevision, LensHandleName, LensHandleRef, LensHandleRole, LensLoadAction, LensNode,
     LensRegenFailure, LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator,
-    LensStatus, LensText, LensTextSpan, LensVersionStamp, MetaLineAtom, StatusDotAtom,
-    TextBlockAtom, lens_load_action, regenerate_lens,
+    LensResultSetRowId, LensStatus, LensText, LensTextSpan, LensVersionStamp, MetaLineAtom,
+    StatusDotAtom, TextBlockAtom, lens_load_action, regenerate_lens,
 };
 
 // ── Golden corpus ────────────────────────────────────────────────────────────
@@ -40,6 +41,16 @@ const DROPPED_CASE_ID: &str = "empty-state";
 
 /// The regenerator's own input. It never crosses the `regenerate_lens` API.
 const BASELINE_PROMPT: &str = "summarize the open claims";
+
+// The result-set node declares all four of these handles in *every* flavor, so the
+// declared bound-read set is identical no matter which one the rows and the select-all
+// actually point at. The two claim-set handles share a role, and so do the two
+// query-result handles: a retarget between them moves no name and no role out of the
+// declared set — only the reference.
+const ROWS_PRIMARY_HANDLE: &str = "rows-primary";
+const ROWS_SECONDARY_HANDLE: &str = "rows-secondary";
+const FILTER_PRIMARY_HANDLE: &str = "filter-primary";
+const FILTER_SECONDARY_HANDLE: &str = "filter-secondary";
 
 /// The same prompt with leading/trailing whitespace only.
 const WHITESPACE_PROMPT: &str = "\n   summarize the open claims \t \n";
@@ -93,11 +104,19 @@ fn text(value: &str) -> LensText {
     LensText::new(value).expect("valid lens text")
 }
 
+fn handle_name(name: &str) -> LensHandleName {
+    LensHandleName::new(name).expect("valid lens handle name")
+}
+
 fn handle(name: &str, role: LensHandleRole) -> LensHandleRef {
     LensHandleRef {
-        name: LensHandleName::new(name).expect("valid lens handle name"),
+        name: handle_name(name),
         role,
     }
+}
+
+fn row_id(value: &str) -> LensResultSetRowId {
+    LensResultSetRowId::new(value).expect("valid result set row id")
 }
 
 fn meta_node(id: &str, label: &str, value: &str) -> LensNode {
@@ -154,6 +173,8 @@ enum CandidateFlavor {
     StructuralRestyle,
     AddHandle,
     ChangeHandleRole,
+    RetargetResultSetRows,
+    SwapSelectAllPredicate,
     FailSummaryPromptRerun,
     FailCompile,
     FailValidate,
@@ -193,6 +214,17 @@ impl CandidateFlavor {
     const fn duplicates_a_node_id(self) -> bool {
         matches!(self, Self::FailValidate)
     }
+
+    /// Point every result-set row at the *other* declared claim-set handle. Nothing is
+    /// declared, undeclared, or re-roled: only the reference moves.
+    const fn retargets_result_set_rows(self) -> bool {
+        matches!(self, Self::RetargetResultSetRows)
+    }
+
+    /// The same move for the select-all predicate, between two declared query handles.
+    const fn swaps_select_all_predicate(self) -> bool {
+        matches!(self, Self::SwapSelectAllPredicate)
+    }
 }
 
 /// The per-fixture golden render. Every section count and every row node comes from the
@@ -225,8 +257,60 @@ fn render_root(fixture: &FixtureVault, heading: &str, flavor: CandidateFlavor) -
     if !fixture.timeline.is_empty() {
         root.children.push(timeline_section(fixture));
     }
+    root.children.push(results_section(fixture, flavor));
     root.children.push(answer_node(fixture, flavor));
     root
+}
+
+/// The selectable result set. Its rows and its select-all predicate *reference* reach
+/// this node already declares, so they add no `(name, role)` pair of their own — but
+/// `super::mediation::select_atom` resolves a selection through exactly those
+/// references, which is what makes a retarget a real change in host reads.
+fn results_section(fixture: &FixtureVault, flavor: CandidateFlavor) -> LensNode {
+    let target = if flavor.retargets_result_set_rows() {
+        ROWS_SECONDARY_HANDLE
+    } else {
+        ROWS_PRIMARY_HANDLE
+    };
+    let predicate = if flavor.swaps_select_all_predicate() {
+        FILTER_SECONDARY_HANDLE
+    } else {
+        FILTER_PRIMARY_HANDLE
+    };
+
+    // A case row plus one row per claim, so every fixture — including the empty case —
+    // really carries a reference.
+    let mut rows = vec![GeneratedUiResultSetRow {
+        id: row_id(&format!("case-{}", fixture.case_id)),
+        label: text(&fixture.case_id),
+        target_handle: handle_name(target),
+    }];
+    for claim in &fixture.claims {
+        rows.push(GeneratedUiResultSetRow {
+            id: row_id(&claim.id),
+            label: text(&claim.predicate),
+            target_handle: handle_name(target),
+        });
+    }
+
+    let mut node = LensNode::with_fallback_text(
+        atom_id("results"),
+        LensAtom::ResultSet(GeneratedUiResultSetAtom {
+            rows,
+            select_all: GeneratedUiResultSetSelectAll::WithinFilter {
+                predicate_handle: handle_name(predicate),
+            },
+            action_bar: Vec::new(),
+        }),
+        text("results"),
+    );
+    node.bindings = vec![
+        handle(ROWS_PRIMARY_HANDLE, LensHandleRole::ClaimSet),
+        handle(ROWS_SECONDARY_HANDLE, LensHandleRole::ClaimSet),
+        handle(FILTER_PRIMARY_HANDLE, LensHandleRole::QueryResult),
+        handle(FILTER_SECONDARY_HANDLE, LensHandleRole::QueryResult),
+    ];
+    node
 }
 
 fn entities_section(fixture: &FixtureVault, flavor: CandidateFlavor) -> LensNode {
@@ -641,6 +725,14 @@ fn structural_diff_with_same_handles_auto_adopts() {
         "no bound read was removed"
     );
     assert!(diff.role_changes().is_empty(), "no role moved");
+    // The result set is re-rendered in every case, but it points at the same handles,
+    // so the reference dimension stays silent under pure chrome churn.
+    assert!(
+        diff.added_referenced_handles().is_empty() && diff.removed_referenced_handles().is_empty(),
+        "an unchanged reference reports nothing: {:?} / {:?}",
+        diff.added_referenced_handles(),
+        diff.removed_referenced_handles()
+    );
     assert!(!diff.is_identical(), "the diff is not empty");
     assert!(!diff.has_data_read_change(), "structure is not authority");
     assert_eq!(
@@ -773,6 +865,258 @@ fn changed_handle_role_needs_human_stamp() {
         );
     }
     assert_eq!(outcome.active_revision(), &baseline_revision());
+}
+
+// ── 5a-5d. Result-set reference lane ─────────────────────────────────────────
+//
+// A result-set row and a select-all predicate name reach the node already declared,
+// so retargeting one moves no declared `(name, role)` pair at all. The declared-set
+// dimension alone would call that identical behavior and auto-adopt it, while the
+// host would start reading different rows on the next selection.
+
+/// Every reference a render's result sets carry, in tree order.
+fn result_set_reference_names(root: &LensNode) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if let LensAtom::ResultSet(result_set) = &node.atom {
+            for row in &result_set.rows {
+                names.push(row.target_handle.as_str().to_owned());
+            }
+            if let GeneratedUiResultSetSelectAll::WithinFilter { predicate_handle } =
+                &result_set.select_all
+            {
+                names.push(predicate_handle.as_str().to_owned());
+            }
+        }
+        stack.extend(node.children.iter());
+    }
+    names
+}
+
+/// The corpus really exercises the atom. Without this the lane below could pass on a
+/// corpus that renders no result set at all.
+#[test]
+fn every_golden_render_carries_result_set_references() {
+    let fixtures = corpus();
+    for fixture in &fixtures {
+        let names = result_set_reference_names(&render_root(
+            fixture,
+            BASELINE_PROMPT.trim(),
+            CandidateFlavor::SameBehavior,
+        ));
+        assert!(
+            names.contains(&ROWS_PRIMARY_HANDLE.to_owned()),
+            "case {} renders a row reference: {names:?}",
+            fixture.case_id
+        );
+        assert!(
+            names.contains(&FILTER_PRIMARY_HANDLE.to_owned()),
+            "case {} renders a select-all reference: {names:?}",
+            fixture.case_id
+        );
+        assert!(
+            !names.contains(&ROWS_SECONDARY_HANDLE.to_owned())
+                && !names.contains(&FILTER_SECONDARY_HANDLE.to_owned()),
+            "the baseline points at the primary handles only: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn retargeted_result_set_row_needs_human_stamp() {
+    let outcome = run(CandidateFlavor::RetargetResultSetRows);
+    let LensRegenOutcome::NeedsHumanStamp {
+        last_good,
+        candidate,
+        diff,
+    } = &outcome
+    else {
+        panic!("a retargeted result-set row needs a human stamp, got {outcome:?}");
+    };
+
+    // Nothing the old dimensions can see moved: both handles stay declared, at the
+    // same role, in a tree of exactly the same shape and inventory.
+    assert!(diff.added_handles().is_empty(), "no bound read was added");
+    assert!(
+        diff.removed_handles().is_empty(),
+        "no bound read was removed"
+    );
+    assert!(diff.role_changes().is_empty(), "no role moved");
+    assert!(
+        diff.structural_cases().is_empty(),
+        "the atom-tree shape is identical: {:?}",
+        diff.structural_cases()
+    );
+    assert!(
+        diff.inventory_changes().is_empty(),
+        "the atom inventory is identical: {:?}",
+        diff.inventory_changes()
+    );
+
+    // ...and yet the rows now resolve against different host reach.
+    assert!(
+        diff.has_data_read_change(),
+        "a retarget between two declared handles is a data-read change"
+    );
+    assert!(!diff.is_identical(), "the diff is not empty");
+    assert_eq!(
+        handle_pairs(diff.added_referenced_handles()),
+        BTreeSet::from([(ROWS_SECONDARY_HANDLE.to_owned(), "ClaimSet".to_owned())]),
+        "the newly referenced pair is reported: {:?}",
+        diff.added_referenced_handles()
+    );
+    assert_eq!(
+        handle_pairs(diff.removed_referenced_handles()),
+        BTreeSet::from([(ROWS_PRIMARY_HANDLE.to_owned(), "ClaimSet".to_owned())]),
+        "the dropped reference is reported: {:?}",
+        diff.removed_referenced_handles()
+    );
+    assert_eq!(
+        diff.added_referenced_handles().len(),
+        3,
+        "the retarget shows up in every case"
+    );
+    assert_eq!(diff.removed_referenced_handles().len(), 3);
+
+    assert_eq!(
+        outcome.active_revision(),
+        last_good,
+        "the last-good revision stays active"
+    );
+    assert_eq!(last_good, &baseline_revision());
+    assert_eq!(
+        outcome.pending_candidate(),
+        Some(candidate),
+        "the candidate is offered for approval"
+    );
+}
+
+#[test]
+fn swapped_select_all_predicate_needs_human_stamp() {
+    let outcome = run(CandidateFlavor::SwapSelectAllPredicate);
+    let LensRegenOutcome::NeedsHumanStamp { diff, .. } = &outcome else {
+        panic!("a swapped select-all predicate needs a human stamp, got {outcome:?}");
+    };
+
+    assert!(
+        diff.added_handles().is_empty()
+            && diff.removed_handles().is_empty()
+            && diff.role_changes().is_empty(),
+        "the declared bound-read set is untouched"
+    );
+    assert!(
+        diff.structural_cases().is_empty() && diff.inventory_changes().is_empty(),
+        "shape and inventory are untouched"
+    );
+    assert!(
+        diff.has_data_read_change(),
+        "a select-all predicate decides which rows a whole-filter write reaches"
+    );
+    assert_eq!(
+        handle_pairs(diff.added_referenced_handles()),
+        BTreeSet::from([(FILTER_SECONDARY_HANDLE.to_owned(), "QueryResult".to_owned())]),
+        "the new predicate is reported: {:?}",
+        diff.added_referenced_handles()
+    );
+    assert_eq!(
+        handle_pairs(diff.removed_referenced_handles()),
+        BTreeSet::from([(FILTER_PRIMARY_HANDLE.to_owned(), "QueryResult".to_owned())]),
+        "the old predicate is reported: {:?}",
+        diff.removed_referenced_handles()
+    );
+    assert_eq!(outcome.active_revision(), &baseline_revision());
+}
+
+/// The false-positive guard: a reference that did not move never forces a stamp, even
+/// when the tree around it is restyled and the inventory moves.
+#[test]
+fn unchanged_result_set_references_with_new_shape_auto_adopt() {
+    let outcome = run(CandidateFlavor::StructuralRestyle);
+    let LensRegenOutcome::AutoAdopt { candidate, diff } = &outcome else {
+        panic!("unchanged references auto-adopt, got {outcome:?}");
+    };
+
+    assert!(
+        !diff.structural_cases().is_empty() && !diff.inventory_changes().is_empty(),
+        "the shape and inventory really did move"
+    );
+    assert!(
+        diff.added_referenced_handles().is_empty() && diff.removed_referenced_handles().is_empty(),
+        "no reference moved"
+    );
+    assert!(
+        !diff.has_data_read_change(),
+        "the reference dimension does not fire on chrome"
+    );
+    assert_eq!(outcome.active_revision(), candidate);
+
+    // The same guard for a candidate that is identical in every dimension.
+    let identical = run(CandidateFlavor::SameBehavior);
+    let LensRegenOutcome::AutoAdopt { diff, .. } = &identical else {
+        panic!("identical behavior auto-adopts, got {identical:?}");
+    };
+    assert!(
+        diff.is_identical(),
+        "the reference dimension adds no phantom delta"
+    );
+}
+
+/// A reference resolves at the role *its own node declared* for that name, not at a
+/// role guessed from the reference. Both retargets move between same-role handles, so
+/// the reported role has to come from the declaration on either side.
+#[test]
+fn result_set_references_resolve_at_their_declared_role() {
+    for (flavor, expected_role, expected_names) in [
+        (
+            CandidateFlavor::RetargetResultSetRows,
+            "ClaimSet",
+            (ROWS_PRIMARY_HANDLE, ROWS_SECONDARY_HANDLE),
+        ),
+        (
+            CandidateFlavor::SwapSelectAllPredicate,
+            "QueryResult",
+            (FILTER_PRIMARY_HANDLE, FILTER_SECONDARY_HANDLE),
+        ),
+    ] {
+        let outcome = run(flavor);
+        let LensRegenOutcome::NeedsHumanStamp { diff, .. } = &outcome else {
+            panic!("{flavor:?} needs a human stamp, got {outcome:?}");
+        };
+
+        for entry in diff
+            .removed_referenced_handles()
+            .iter()
+            .chain(diff.added_referenced_handles())
+        {
+            assert_eq!(
+                format!("{:?}", entry.role()),
+                expected_role,
+                "{flavor:?} resolves {} at its declared role",
+                entry.name().as_str()
+            );
+        }
+        assert_eq!(
+            handle_pairs(diff.removed_referenced_handles())
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([expected_names.0.to_owned()])
+        );
+        assert_eq!(
+            handle_pairs(diff.added_referenced_handles())
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([expected_names.1.to_owned()])
+        );
+
+        // A reference is never a declaration: it reports only in its own dimension.
+        assert!(
+            diff.added_handles().is_empty() && diff.removed_handles().is_empty(),
+            "{flavor:?} declared no new reach"
+        );
+    }
 }
 
 // ── 6-9. Fail-safe lanes ─────────────────────────────────────────────────────
