@@ -208,7 +208,8 @@ pub(super) fn promotion_replay_op(entry: &JournalEntry) -> Result<BatchOp> {
         | BatchOp::SetEdgeWeight { .. }
         | BatchOp::SetEdgeVad { .. }
         | BatchOp::Delete { .. }
-        | BatchOp::DeleteEdge { .. } => {
+        | BatchOp::DeleteEdge { .. }
+        | BatchOp::CommitmentGapDecay { .. } => {
             return Err(Error::InvariantViolation(
                 "promotion replay found a journal op the session write path cannot stage",
             ));
@@ -247,6 +248,11 @@ fn batch_op_payload_bytes(op: &BatchOp) -> usize {
         | BatchOp::SetEdgeVad { .. }
         | BatchOp::Delete { .. }
         | BatchOp::DeleteEdge { .. } => 0,
+        // The lapse op names ids and carries no body; the rows it rewrites are
+        // derived inside the applying transaction, not staged here.
+        BatchOp::CommitmentGapDecay { ids, .. } => {
+            ids.len().saturating_mul(std::mem::size_of::<EntityId>())
+        }
     }
 }
 
