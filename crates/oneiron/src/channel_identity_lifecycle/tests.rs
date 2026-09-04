@@ -65,7 +65,7 @@ fn requested_identity(agent: EntityId, at: u64) -> ChannelIdentity {
     ChannelIdentity::requested(
         "email",
         format!("agent-{}@example.test", agent.to_hex()),
-        crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
         crate::channel_identity::ChannelIdentityBinding::agent(agent),
         at,
     )

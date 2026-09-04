@@ -1,7 +1,7 @@
 use super::*;
 use crate::channel_identity::{
     CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
-    ChannelIdentityShape,
+    SelfHeldShape,
 };
 use crate::config::VaultConfig;
 use crate::test_util::open_test_vault_with;
@@ -20,7 +20,7 @@ fn identity(address: &str, agent_ref: EntityId, state: ChannelIdentityState) -> 
     let mut identity = ChannelIdentity::requested(
         "email",
         address,
-        ChannelIdentityShape::DedicatedAddress,
+        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent_ref),
         1_800_000_000,
     );
@@ -411,7 +411,7 @@ fn inbound_vault_bound_identity_rejects_as_non_agent_bound() -> Result<()> {
     let mut vault_bound = ChannelIdentity::requested(
         "email",
         "vault-bound@example.com",
-        ChannelIdentityShape::DedicatedAddress,
+        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
         1_800_000_000,
     );
@@ -917,7 +917,7 @@ fn unruled_channel_key_is_refused_before_a_source_app_is_stamped() -> Result<()>
     let mut unruled = ChannelIdentity::requested(
         "carrier-pigeon",
         "coop@example.com",
-        ChannelIdentityShape::DedicatedAddress,
+        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(agent_ref),
         1_800_000_000,
     );
@@ -985,7 +985,7 @@ fn identity_rejections_never_enqueue() -> Result<()> {
     let mut vault_bound = ChannelIdentity::requested(
         "email",
         "vault-bound@example.com",
-        ChannelIdentityShape::DedicatedAddress,
+        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
         1_800_000_000,
     );
