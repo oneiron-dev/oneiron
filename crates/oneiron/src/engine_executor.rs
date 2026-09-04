@@ -646,6 +646,14 @@ impl<'a> EngineNativeExecutor<'a> {
             )?;
 
             let bridge_start = record.bridge_calls.len();
+            // ONE-1314: the DURABLE history is the load-bearing half of the
+            // lineage seam. An outbound effect parks its step, so a run that
+            // reached outside and then writes always spans a resume, and the
+            // resuming step's only record of that hop is the replay record
+            // being read here. Observed before any write of this step can
+            // dispatch; the dispatcher owns the history-to-lineage mapping.
+            self.gated_write
+                .observe_bridge_history(&record.bridge_calls);
             let mut host = RecordingJsHost::new(
                 self.gated_write,
                 config.run_id,
@@ -1265,6 +1273,12 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome));
         }
+        // ONE-1314: the current step's own history, observed at the last
+        // moment before this call dispatches. The durable half was observed
+        // when the step opened; together they are every bridge call this run
+        // has made, so a write can never be sealed against a narrower history
+        // than the one already recorded.
+        self.gated_write.observe_bridge_history(&self.bridge_calls);
         let outcome = match self
             .gated_write
             .dispatch_for_executor_run(self.run_id, call.clone())

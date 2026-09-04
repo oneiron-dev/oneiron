@@ -2603,3 +2603,240 @@ fn pre_framing_change_replay_record_resumes() -> Result<()> {
     );
     Ok(())
 }
+
+// ─── ONE-1314 · the write envelope carries source lineage ───────────────────
+
+/// An observed external effect, shaped exactly as the executor records one.
+fn outbound_bridge_call(seq: u64, at_ms: u64) -> Result<CodeRunBridgeCall> {
+    let call = SelfCall::OutboundFixture(SelfFixtureEffectCall::new("send message"));
+    let outcome = SelfDispatchOutcome::DurableWait(SelfDurableWait {
+        wait_id: EntityId::from_bytes([0x1C; 16]).expect("wait id"),
+        effect: SelfEffect::OutboundFixture,
+        reason: SelfDurableWaitReason::OutboundEffect,
+        prompt: Some("send message".to_owned()),
+    });
+    CodeRunBridgeCall::record(seq, &call, &outcome, at_ms, at_ms)
+}
+
+/// A vault-local read, which is NOT a tool effect.
+fn memory_search_bridge_call(seq: u64, at_ms: u64) -> Result<CodeRunBridgeCall> {
+    let call = SelfCall::MemorySearch(SelfMemorySearchCall::new("tea", 1));
+    let outcome = SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
+        query: "tea".to_owned(),
+        results: Vec::new(),
+    });
+    CodeRunBridgeCall::record(seq, &call, &outcome, at_ms, at_ms)
+}
+
+fn put_claim_through(
+    dispatcher: &HostSelfDispatcher<'_>,
+    claim: EntityId,
+    subject: EntityId,
+) -> Result<()> {
+    let candidate = ClaimCandidate::new(
+        "profile.favorite_drink",
+        ClaimSubject::Entity(subject),
+        Value::from("sencha"),
+        0.9,
+    );
+    dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+        claim,
+        candidate,
+        range(5),
+        6,
+    )))?;
+    Ok(())
+}
+
+fn stored_evidence(vault: &Vault, claim: EntityId) -> Result<Vec<(Value, Value)>> {
+    let stored = vault.get_claim(&claim)?.expect("stored claim");
+    let Some(Value::Map(evidence)) = stored.evidence else {
+        panic!("expected write envelope evidence");
+    };
+    Ok(evidence)
+}
+
+fn evidence_lineage(evidence: &[(Value, Value)]) -> Option<Vec<String>> {
+    let entry = evidence.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
+            .then_some(value)
+    })?;
+    let Value::Array(members) = entry else {
+        panic!("lineage evidence is an array of source strings");
+    };
+    Some(
+        members
+            .iter()
+            .map(|member| member.as_str().expect("source string").to_owned())
+            .collect(),
+    )
+}
+
+#[test]
+fn lineage_for_run_maps_history_to_source_classes() -> Result<()> {
+    let generated = crate::SourceLineage::of(ClaimSource::Generated);
+
+    assert_eq!(super::dispatcher::lineage_for_run(&[]), generated);
+    assert_eq!(
+        super::dispatcher::lineage_for_run(&[memory_search_bridge_call(0, 1_000)?]),
+        generated,
+        "memory access is not a tool effect"
+    );
+
+    let with_effect = super::dispatcher::lineage_for_run(&[
+        memory_search_bridge_call(0, 1_000)?,
+        outbound_bridge_call(1, 1_001)?,
+    ]);
+    assert!(with_effect.contains(ClaimSource::Generated));
+    assert!(with_effect.contains(ClaimSource::ToolOutput));
+    assert!(with_effect.requires_explicit_auto_permit());
+    Ok(())
+}
+
+/// A run that reached outside cannot re-stamp its later writes as bare
+/// first-party `Generated` and ride the auto lane on that label.
+///
+/// The host-bound DECLARATION is untouched (it was never the guest's to set);
+/// what changes is that the envelope now also carries the observed history, so
+/// every auto-permit decision downstream reads the tool-output hop. With the
+/// observation bit unset the very same call sequence writes exactly what it
+/// wrote before the axis existed.
+#[test]
+fn restamp_cannot_ride_auto_lane() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x71);
+    let subject = seed_person(&vault, 0x72);
+    let claim = EntityId::from_bytes([0x73; 16]).expect("claim id");
+
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-lineage-restamp",
+    )?;
+    // The host observes the run's recorded history — never a lineage value.
+    dispatcher.observe_bridge_history(&[
+        memory_search_bridge_call(0, 1_000)?,
+        outbound_bridge_call(1, 1_001)?,
+    ]);
+    put_claim_through(&dispatcher, claim, subject)?;
+
+    let stored = vault.get_claim(&claim)?.expect("stored claim");
+    assert_eq!(
+        stored.source,
+        Some(ClaimSource::Generated),
+        "the declared label stays host-bound; lineage is the second axis"
+    );
+    let evidence = stored_evidence(&vault, claim)?;
+    let lineage = evidence_lineage(&evidence).expect("observed lineage is recorded");
+    assert!(lineage.contains(&ClaimSource::Generated.as_str().to_owned()));
+    assert!(
+        lineage.contains(&ClaimSource::ToolOutput.as_str().to_owned()),
+        "the external hop rides the write it preceded"
+    );
+
+    // The pre-existing engine-owned keys are untouched by the addition.
+    assert_eq!(
+        map_value(&evidence, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+        &Value::Binary(actor.as_bytes().to_vec())
+    );
+    let Value::Map(provenance) = map_value(&evidence, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)
+    else {
+        panic!("expected provenance map");
+    };
+    assert_eq!(
+        map_value(provenance, SELF_PROVENANCE_CALL_KEY).as_str(),
+        Some(SelfEffect::MemoryPutClaim.as_str())
+    );
+
+    // Unset bit, same call: today's behaviour, byte for byte.
+    let unobserved_claim = EntityId::from_bytes([0x74; 16]).expect("claim id");
+    let unobserved = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-lineage-restamp",
+    )?;
+    put_claim_through(&unobserved, unobserved_claim, subject)?;
+    assert!(
+        evidence_lineage(&stored_evidence(&vault, unobserved_claim)?).is_none(),
+        "an unobserved run stamps no lineage entry at all"
+    );
+    Ok(())
+}
+
+/// Trivial lineage is IDENTITY: a run whose history says nothing the declared
+/// source did not already say writes exactly the bytes it wrote before.
+#[test]
+fn trivial_lineage_is_identity() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x75);
+    let subject = seed_person(&vault, 0x76);
+
+    let untouched_claim = EntityId::from_bytes([0x77; 16]).expect("claim id");
+    let untouched = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-lineage-identity",
+    )?;
+    put_claim_through(&untouched, untouched_claim, subject)?;
+
+    let read_only_claim = EntityId::from_bytes([0x78; 16]).expect("claim id");
+    let read_only = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-lineage-identity",
+    )?;
+    // A history of vault-local reads leaves the bit unset.
+    read_only.observe_bridge_history(&[
+        memory_search_bridge_call(0, 1_000)?,
+        memory_search_bridge_call(1, 1_001)?,
+    ]);
+    put_claim_through(&read_only, read_only_claim, subject)?;
+
+    let untouched_evidence = stored_evidence(&vault, untouched_claim)?;
+    let read_only_evidence = stored_evidence(&vault, read_only_claim)?;
+    assert!(evidence_lineage(&untouched_evidence).is_none());
+    assert!(evidence_lineage(&read_only_evidence).is_none());
+    assert_eq!(
+        untouched_evidence, read_only_evidence,
+        "observing a read-only history changes nothing about the write"
+    );
+
+    let untouched_body = vault.get_claim(&untouched_claim)?.expect("stored claim");
+    let read_only_body = vault.get_claim(&read_only_claim)?.expect("stored claim");
+    assert_eq!(untouched_body.source, read_only_body.source);
+    assert_eq!(untouched_body.approval, read_only_body.approval);
+    Ok(())
+}
+
+/// The internal fixture write is not one of the sealed memory-write effects
+/// the lineage qualifies, so it stays trivial even after an external effect.
+#[test]
+fn observed_lineage_does_not_touch_the_memory_write_fixture() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x79);
+    let subject = seed_person(&vault, 0x7A);
+    let claim = EntityId::from_bytes([0x7B; 16]).expect("claim id");
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-lineage-fixture",
+    )?;
+    dispatcher.observe_bridge_history(&[outbound_bridge_call(0, 1_000)?]);
+
+    let candidate = ClaimCandidate::new(
+        "profile.favorite_drink",
+        ClaimSubject::Entity(subject),
+        Value::from("sencha"),
+        0.9,
+    );
+    let outcome = dispatcher.dispatch(SelfCall::MemoryWriteFixture(
+        SelfMemoryWriteFixtureCall::new(claim, candidate, range(3), 4),
+    ))?;
+
+    assert_eq!(
+        outcome,
+        SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: claim })
+    );
+    assert!(evidence_lineage(&stored_evidence(&vault, claim)?).is_none());
+    Ok(())
+}
