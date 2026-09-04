@@ -284,7 +284,28 @@ pub(super) fn task_presence_with_limits(
             let rtxn = vault.store.env.read_txn()?;
             let mut slots = Vec::with_capacity(page.len());
             for &task_ref in page {
-                let state = TaskIntentPresence::render_state_in(vault, &rtxn, task_ref)?;
+                // P2 F8 (board poisoning) covers the render-state read too: a
+                // companion fact set that will not FOLD — an owner fork, a
+                // malformed fact body, a fact re-pointed at a subject it does
+                // not name — poisons exactly one row, never the section. Those
+                // companions REPLICATE, so propagating here would let one
+                // peer's corrupt row take `tasks.check` down on every node.
+                //
+                // The degrade is a SKIP, not a render with false bits: a task
+                // whose facts cannot be read may really carry a Cancelled
+                // fact, and rendering it as `cancelled: false` would resurrect
+                // it on the active surface — cancel-wins holds under EVERY
+                // merge order, including one that also forked the owner.
+                // Nothing is lost by hiding the row: the skipped row's
+                // realizing jobs re-emit as bare work below (P2 F7), and the
+                // by-id door reads the same task the same way.
+                //
+                // Authority itself stays strict: `Vault::task_authority_state`
+                // still refuses a forked proof, so the cancel / force-cancel
+                // doors keep failing closed on exactly this task.
+                let Ok(state) = TaskIntentPresence::render_state_in(vault, &rtxn, task_ref) else {
+                    continue;
+                };
                 if state.cancelled {
                     continue;
                 }
@@ -367,15 +388,24 @@ pub(super) fn task_presence_for_id(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<TaskIntentPresence>> {
-    if task_is_cancelled(vault, task_ref)? {
-        return Ok(None);
+    match task_is_cancelled(vault, task_ref) {
+        Ok(false) => {}
+        // Cancelled, or a companion fact set that will not fold at all (owner
+        // fork / malformed fact body / a fact re-pointed at another subject).
+        // Both leave the row off the surface, which is exactly what the board
+        // scan does with the same task — the two doors must agree on a
+        // poisoned companion, and unverifiable facts are never answered as
+        // "not cancelled".
+        Ok(true) | Err(_) => return Ok(None),
     }
     let task_hex = task_ref.to_hex();
     let jobs = job_backlinks(vault)?
         .realizing
         .remove(&task_hex)
         .unwrap_or_default();
-    let acked = task_is_acked(vault, task_ref)?;
+    let Ok(acked) = task_is_acked(vault, task_ref) else {
+        return Ok(None);
+    };
     match task_intent_presence(vault, task_ref, &task_hex, jobs, acked, unix_seconds_now()) {
         Ok(found) => Ok(found),
         // A malformed body degrades to "not board-visible" here exactly as it

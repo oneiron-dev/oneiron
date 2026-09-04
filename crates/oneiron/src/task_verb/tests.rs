@@ -3604,6 +3604,186 @@ fn malformed_task_body_does_not_poison_the_board() {
     assert_eq!(section.rows.len(), 1);
 }
 
+/// P2 F8 reaches the AUTHORITY-fact read, not just the typed body: an owner
+/// FORK on one task — two distinct Owner facts, which any peer can replicate
+/// onto any TASK id — takes exactly THAT row off the board and leaves the rest
+/// of the page rendering. Nothing about the fork is softened where it binds:
+/// the authority lens still refuses to pick an owner, so the direct-cancel
+/// door keeps failing closed on that one task while `tasks.check` survives.
+#[test]
+fn a_forked_owner_companion_does_not_poison_the_board() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let create = || {
+        facade
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+    let forked = create();
+    let healthy = create();
+    // A second Owner fact naming a DIFFERENT owner, minted through the engine
+    // door that replication also writes through: this is the shape a peer's
+    // conflicting proof arrives in.
+    let intruder = EntityId::from_bytes([0xF7; 16]).expect("intruder id");
+    vault
+        .with_write_txn(|wtxn| {
+            crate::task_authority::put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                crate::task_authority::TaskAuthorityFact {
+                    task_ref: forked,
+                    kind: crate::task_authority::TaskAuthorityFactKind::Owner,
+                    actor_ref: intruder,
+                    occurred_at: 121,
+                },
+            )
+            .map(|_fact_ref| ())
+        })
+        .expect("append the forked owner proof");
+
+    assert!(matches!(
+        vault.task_authority_state(forked),
+        Err(crate::error::Error::InvariantViolation(
+            "task authority owner fork"
+        ))
+    ));
+
+    let section = facade.tasks_check().expect("check tasks survives the fork");
+
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == healthy.to_hex())
+            .count(),
+        1
+    );
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == forked.to_hex())
+            .count(),
+        0
+    );
+    // P2 F7: the skipped row's realizing job re-emits as the bare work it is,
+    // rather than vanishing with the row it can no longer fold under.
+    let orphaned = attempts_for(&vault, forked);
+    assert_eq!(orphaned.len(), 1);
+    let orphaned_job = attempt_hex(orphaned[0].id);
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == orphaned_job && !row.is_intent)
+            .count(),
+        1
+    );
+    assert_eq!(section.rows.len(), 2);
+    // The by-id door agrees with the scan on the poisoned task: hidden here
+    // too, never answered with bits the fold could not verify.
+    assert_eq!(
+        task_presence_for_id(&vault, forked).expect("by-id door survives the fork"),
+        None
+    );
+}
+
+/// P2 F8 for a MALFORMED authority-fact row: the edge is the index and the
+/// body is the claim, so a fact reachable from a task it does not name is
+/// refused by the fold — and any peer can ship that edge. The refusal hides
+/// exactly one row; the task whose proof was re-pointed still renders and
+/// still proves its own owner.
+#[test]
+fn a_malformed_authority_fact_row_does_not_poison_the_board() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let create = || {
+        facade
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+    let poisoned = create();
+    let healthy = create();
+    let proof = vault
+        .edges_in(&healthy)
+        .expect("inbound edges")
+        .into_iter()
+        .find(|edge| {
+            edge.kind == crate::edge::EdgeKind::ScopedTo
+                && task_entity_role(&vault, edge.target).expect("role")
+                    == Some(TaskRole::AuthorityFact)
+        })
+        .expect("the create minted an owner proof")
+        .target;
+    // Scoping `healthy`'s proof to `poisoned` as well makes `poisoned`'s fact
+    // set unreadable without touching the proof `healthy` really carries.
+    vault
+        .batch()
+        .edge(&proof, crate::edge::EdgeKind::ScopedTo, &poisoned, 0.7)
+        .commit()
+        .expect("re-point the proof at another task");
+
+    assert!(matches!(
+        vault.task_authority_state(poisoned),
+        Err(crate::error::Error::InvalidTaskBody(
+            "task authority fact subject"
+        ))
+    ));
+    assert_eq!(
+        vault
+            .task_authority_state(healthy)
+            .expect("the re-pointed proof still names its own subject"),
+        Some(crate::task_authority::TaskAuthorityState {
+            owner_ref: own,
+            cancelled: false,
+            acked: false,
+        })
+    );
+
+    let section = facade
+        .tasks_check()
+        .expect("check tasks survives the poison");
+
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == healthy.to_hex())
+            .count(),
+        1
+    );
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == poisoned.to_hex())
+            .count(),
+        0
+    );
+    let orphaned = attempts_for(&vault, poisoned);
+    assert_eq!(orphaned.len(), 1);
+    let orphaned_job = attempt_hex(orphaned[0].id);
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == orphaned_job && !row.is_intent)
+            .count(),
+        1
+    );
+    assert_eq!(section.rows.len(), 2);
+    assert_eq!(
+        task_presence_for_id(&vault, poisoned).expect("by-id door survives the poison"),
+        None
+    );
+}
+
 // ── ONE-1888: consult ladder, routing, magistrate ───────────────────
 
 use crate::claim::PREDICATE_CONFLICT_OPEN;

@@ -449,6 +449,18 @@ impl TaskIntentPresence {
     /// that really happened hides the row whether or not the task also carries
     /// an Owner fact.
     ///
+    /// The FOLD stays STRICT and the board CALL SITES degrade. A companion
+    /// fact set that will not read — an owner fork, a malformed fact body, a
+    /// fact re-pointed at a subject it does not name — returns `Err` here, and
+    /// `Vault::task_authority_state` keeps failing closed on it so the cancel /
+    /// force-cancel doors refuse that task. The board never asks who the owner
+    /// is, so its readers map that same `Err` to a per-row outcome instead:
+    /// `task_verb::presence_scan` skips the poisoned row inside the page loop
+    /// (P2 F8 — one bad row must never abort `tasks.check`, and these rows
+    /// replicate), and the by-id door answers `Ok(None)`. The degrade is a
+    /// SKIP, never a render with false bits, because a row whose facts cannot
+    /// be read may really be cancelled.
+    ///
     /// Hung off the presence type rather than standing as a free function
     /// because `context_board`'s re-export list is a shared chokepoint this
     /// ticket does not claim; an associated item travels with the type that is
@@ -548,6 +560,11 @@ fn put_task_state_fact_in_txn(
 
 /// One transaction for a direct caller that holds none of its own; the page
 /// scan reaches the same read through [`TaskIntentPresence::render_state_in`].
+///
+/// Strictness travels with the fold: the `Err` a poisoned companion set
+/// produces reaches [`task_is_cancelled`] / [`task_is_acked`] unchanged. Board
+/// call sites degrade it per row (skip in the page scan, `Ok(None)` by id);
+/// authority call sites keep failing closed on it.
 fn task_render_state(vault: &Vault, task_ref: EntityId) -> Result<TaskRenderState> {
     let rtxn = vault.store.env.read_txn()?;
     TaskIntentPresence::render_state_in(vault, &rtxn, task_ref)
