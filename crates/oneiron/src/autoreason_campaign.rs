@@ -256,6 +256,8 @@ pub struct CampaignConfig {
     pub tournament: CampaignTournamentConfig,
     /// Budget lease line.
     pub budget: Option<CampaignBudgetLine>,
+    /// Pinned OF-360 metric definitions this config was built against.
+    pub metric_pin: CampaignMetricPin,
     /// Minimum net held-out gain that still counts as a win.
     pub verdict_epsilon: f64,
 }
