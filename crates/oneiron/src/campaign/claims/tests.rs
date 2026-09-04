@@ -1130,10 +1130,18 @@ fn write_do_not_contact(
     vault.put_claim(id, &claim, TimeRange { start: 1, end: 1 }, 1)
 }
 
+/// The terminal the folded opt-out bit produces. ONE-1752 moved it from an
+/// owner-facing deny to a held owner decision; CA's fold — WHICH heads set the
+/// bit and which do not — is unchanged, and every assertion below still
+/// measures that fold.
 fn deny_opt_out() -> (GateOutcome, Vec<String>) {
     (
-        GateOutcome::Deny,
-        vec![GateReasonCode::DenyCounterpartyOptOut.as_str().to_owned()],
+        GateOutcome::Pending,
+        vec![
+            GateReasonCode::PendingCounterpartyOptOut
+                .as_str()
+                .to_owned(),
+        ],
     )
 }
 
@@ -1199,7 +1207,7 @@ fn do_not_contact_restrictive_wins_until_authorized_clear() -> Result<()> {
     assert_eq!(stored.valid_to, Some(2));
     assert_eq!(
         evaluate(&vault, &gate_effect(Some(COUNTERPARTY)))?.0,
-        GateOutcome::Deny
+        GateOutcome::Pending
     );
 
     // Only an authorized clear stamp — the claim-lifecycle retraction door —
@@ -1259,7 +1267,7 @@ fn do_not_contact_scope_and_channel_gate_the_deny() -> Result<()> {
     )?;
     assert_eq!(
         evaluate(&vault, &gate_effect(Some(COUNTERPARTY)))?.0,
-        GateOutcome::Deny
+        GateOutcome::Pending
     );
     Ok(())
 }

@@ -42,6 +42,7 @@ pub(crate) use self::ops_pipeline::{
     apply_ops_with_origin, apply_session_bundle_claim_puts, reject_overlay_member_base_write,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
+pub(crate) use self::put_apply::delete_entity_index_rows;
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader,

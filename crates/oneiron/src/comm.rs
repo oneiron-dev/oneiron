@@ -13,6 +13,9 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     encode_claim_body,
 };
+use crate::counterparty_contact::{
+    CounterpartyOptOutReason, normalize_channel_class, rematerialize_contact_cache_in_txn,
+};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -22,6 +25,7 @@ use crate::identity_topology::{
 };
 use crate::provenance::validate_actor_class;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_PERSON};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, entity_id_from_type_index_key};
 use crate::write_envelope::WriteActor;
@@ -30,6 +34,11 @@ use crate::write_envelope::WriteActor;
 pub const COMM_SCHEMA_VERSION: u64 = 1;
 
 /// Standing opt-out state for one `(party, channel_class)` key.
+///
+/// An ABSENT `channel_class` is the party-wide key: it means every channel
+/// class, and it is what a contact-level opt-out projects (ONE-1752). Landed
+/// channel-scoped heads keep validating and keep matching only their own
+/// normalized class.
 pub const PREDICATE_COMM_OPT_OUT: &str = "comm.opt_out";
 /// Most recent successful send for one `(party, channel_class)` key.
 pub const PREDICATE_COMM_LAST_TOUCH: &str = "comm.last_touch";
@@ -37,13 +46,21 @@ pub const PREDICATE_COMM_LAST_TOUCH: &str = "comm.last_touch";
 pub const PREDICATE_COMM_THREAD_MEMBER: &str = "comm.thread_member";
 /// Reachability state for one `(party, channel_class)` key.
 pub const PREDICATE_COMM_REACHABLE_VIA: &str = "comm.reachable_via";
+/// Owner decision authorizing sends to an opted-out party (ARCH-0057 §3.1).
+///
+/// It never clears an opt-out: `comm.opt_out`, `comm.do_not_contact` and the
+/// contact-level opt-out all stand untouched, and CLEAR remains a distinct op.
+/// The override only changes what the external-effect gate does with the
+/// suppression it still sees.
+pub const PREDICATE_COMM_SEND_OVERRIDE: &str = "comm.send_override";
 
 /// Complete `comm.*` standing-state claim family.
-pub const COMM_CLAIM_PREDICATES: [&str; 4] = [
+pub const COMM_CLAIM_PREDICATES: [&str; 5] = [
     PREDICATE_COMM_OPT_OUT,
     PREDICATE_COMM_LAST_TOUCH,
     PREDICATE_COMM_THREAD_MEMBER,
     PREDICATE_COMM_REACHABLE_VIA,
+    PREDICATE_COMM_SEND_OVERRIDE,
 ];
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
@@ -55,6 +72,10 @@ const KEY_OPTED_OUT: &str = "opted_out";
 const KEY_JOINED: &str = "joined";
 const KEY_REACHABLE: &str = "reachable";
 const KEY_REASON: &str = "reason";
+const KEY_SCOPE: &str = "scope";
+const KEY_SEND_REF: &str = "send_ref";
+const KEY_ISSUED_AT: &str = "issued_at";
+const KEY_VALID_TO: &str = "valid_to";
 /// Synced-truth field on a comm-owned PERSON body. `PARTY_INDEX_PREFIX` caches
 /// the lookup; THIS is what the cache is a cache of.
 const KEY_PARTY_KEY: &str = "party_key";
@@ -81,8 +102,21 @@ const RECORD_KIND_GATE: &str = "gate";
 const RECORD_KIND_RECEIPT: &str = "receipt";
 const GATE_STATUS_PENDING: &str = "pending";
 const GATE_STATUS_CONSUMED: &str = "consumed";
-const OPT_OUT_REASON_STOP: &str = "counterparty_opt_out_stop";
-const OPT_OUT_REASONS: [&str; 1] = [OPT_OUT_REASON_STOP];
+/// The `comm.opt_out` reason vocabulary is the RECEIPT vocabulary
+/// (`CounterpartyOptOutReason::receipt_reason`), never the `as_str()` one: the
+/// landed heads carry these tokens, and swapping vocabularies would invalidate
+/// them. Pinned to the enum's own const fn so the two can never drift.
+const OPT_OUT_REASON_STOP: &str = CounterpartyOptOutReason::Stop.receipt_reason();
+const OPT_OUT_REASON_UNSUBSCRIBE: &str = CounterpartyOptOutReason::Unsubscribe.receipt_reason();
+const OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL: &str =
+    CounterpartyOptOutReason::BlockOrFriendRemoval.receipt_reason();
+const OPT_OUT_REASONS: [&str; 3] = [
+    OPT_OUT_REASON_STOP,
+    OPT_OUT_REASON_UNSUBSCRIBE,
+    OPT_OUT_REASON_BLOCK_OR_FRIEND_REMOVAL,
+];
+/// Longest `send_ref` a one-shot override may bind.
+const MAX_SEND_REF_BYTES: usize = 256;
 const OPT_OUT_CLEAR_REASON: &str = "comm_opt_out_clear";
 const OPT_OUT_CLEAR_APPROVED: &str = "comm_opt_out_clear_approved";
 const PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
@@ -143,6 +177,122 @@ pub enum CommClearOptOutOutcome {
     PendingHumanRuling,
 }
 
+/// How widely one `comm.send_override` authorizes sends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendOverrideScope {
+    /// Every send to the party (and channel class, when one is named) until the
+    /// head is retracted or expires.
+    Standing,
+    /// Exactly one send, bound at mint time to that send's `send_ref` and
+    /// expiry-bound by a mandatory `valid_to`.
+    OneShot,
+}
+
+impl SendOverrideScope {
+    /// Stable machine token stored in the claim value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standing => "standing",
+            Self::OneShot => "one_shot",
+        }
+    }
+
+    /// Exact inverse of [`Self::as_str`].
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "standing" => Some(Self::Standing),
+            "one_shot" => Some(Self::OneShot),
+            _ => None,
+        }
+    }
+}
+
+/// Which override authorized a send, for the gate receipt.
+///
+/// A send matches at most ONE of these: on overlap, standing wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendOverrideMatch {
+    /// A standing head covered the send.
+    Standing,
+    /// A one-shot head bound to exactly this send ref covered it.
+    OneShot,
+}
+
+/// One row of the ARCH-0057 §4 claim-class table for the `comm.*` family.
+///
+/// PURE DATA. There is no descriptor runtime in the engine and this ticket
+/// mints none: the rows DESCRIBE the write classes the family's own verbs
+/// enforce, so a future descriptor registry has something exact to register and
+/// a reader has something exact to check the verbs against. Nothing here is
+/// persisted, and nothing here gates a write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimClassDescriptorRow {
+    /// The predicate this row describes.
+    pub predicate: &'static str,
+    /// `recorded` | `human_ruled` | `ordinary`.
+    pub write_class: &'static str,
+    /// Whether a door enforces the write class today.
+    pub enforcement: bool,
+    /// Whether the predicate is restrictive (a head can only add suppression).
+    pub restrictive: bool,
+    /// Whether only a projector authors the predicate.
+    pub projector_only: bool,
+}
+
+/// The six `comm.*` claim-class rows, in family order.
+///
+/// `comm.do_not_contact` is CA-owned; this row DESCRIBES the door CA landed and
+/// never redefines it.
+#[must_use]
+pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
+    vec![
+        ClaimClassDescriptorRow {
+            predicate: PREDICATE_COMM_OPT_OUT,
+            write_class: "recorded",
+            enforcement: true,
+            restrictive: true,
+            projector_only: true,
+        },
+        ClaimClassDescriptorRow {
+            predicate: PREDICATE_COMM_LAST_TOUCH,
+            write_class: "recorded",
+            enforcement: false,
+            restrictive: false,
+            projector_only: true,
+        },
+        ClaimClassDescriptorRow {
+            predicate: PREDICATE_COMM_THREAD_MEMBER,
+            write_class: "recorded",
+            enforcement: false,
+            restrictive: false,
+            projector_only: true,
+        },
+        ClaimClassDescriptorRow {
+            predicate: PREDICATE_COMM_REACHABLE_VIA,
+            write_class: "ordinary",
+            enforcement: false,
+            restrictive: false,
+            projector_only: false,
+        },
+        ClaimClassDescriptorRow {
+            predicate: PREDICATE_COMM_SEND_OVERRIDE,
+            write_class: "human_ruled",
+            enforcement: true,
+            restrictive: false,
+            projector_only: false,
+        },
+        ClaimClassDescriptorRow {
+            predicate: crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
+            write_class: "human_ruled",
+            enforcement: true,
+            restrictive: true,
+            projector_only: false,
+        },
+    ]
+}
+
 /// Typed value carried by one claim in the `comm.*` family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -151,12 +301,27 @@ pub enum CommClaimValue {
     OptOut {
         /// Party duplicated in the value key for deterministic folding.
         party_ref: EntityId,
-        /// Normalized communication channel class.
-        channel_class: String,
+        /// Normalized communication channel class, or `None` for every channel.
+        channel_class: Option<String>,
         /// Stable machine reason for the restrictive state.
         reason: String,
         /// Event time at which the state became valid.
         occurred_at: u64,
+    },
+    /// Owner decision authorizing sends to an opted-out party.
+    SendOverride {
+        /// Party duplicated in the value key for deterministic folding.
+        party_ref: EntityId,
+        /// Normalized channel class, or `None` for every channel.
+        channel_class: Option<String>,
+        /// How widely this override authorizes.
+        scope: SendOverrideScope,
+        /// One-shot binding to exactly one send ref. Forbidden for standing.
+        send_ref: Option<String>,
+        /// When the owner ruled.
+        issued_at: u64,
+        /// Expiry. REQUIRED for one-shot, optional for standing.
+        valid_to: Option<u64>,
     },
     /// Most recent successful send state.
     LastTouch {
@@ -197,25 +362,69 @@ impl CommClaimValue {
                 channel_class,
                 reason,
                 occurred_at,
-            } => (
-                PREDICATE_COMM_OPT_OUT,
-                *party_ref,
-                Value::Map(vec![
+            } => {
+                // The channel key is ELIDED, never nulled, when the head covers
+                // every channel: a landed channel-scoped head keeps its exact
+                // bytes, and absence is the only shape that means "all".
+                let mut entries = vec![
                     (
                         Value::from(KEY_SCHEMA_VERSION),
                         Value::from(COMM_SCHEMA_VERSION),
                     ),
                     (Value::from(KEY_PARTY_REF), Value::from(party_ref.to_hex())),
-                    (
+                ];
+                if let Some(channel_class) = channel_class {
+                    entries.push((
                         Value::from(KEY_CHANNEL_CLASS),
                         Value::from(channel_class.as_str()),
+                    ));
+                }
+                entries.push((Value::from(KEY_OPTED_OUT), Value::Boolean(true)));
+                entries.push((Value::from(KEY_REASON), Value::from(reason.as_str())));
+                entries.push((Value::from(KEY_OCCURRED_AT), Value::from(*occurred_at)));
+                (
+                    PREDICATE_COMM_OPT_OUT,
+                    *party_ref,
+                    Value::Map(entries),
+                    Some(*occurred_at),
+                )
+            }
+            Self::SendOverride {
+                party_ref,
+                channel_class,
+                scope,
+                send_ref,
+                issued_at,
+                valid_to,
+            } => {
+                let mut entries = vec![
+                    (
+                        Value::from(KEY_SCHEMA_VERSION),
+                        Value::from(COMM_SCHEMA_VERSION),
                     ),
-                    (Value::from(KEY_OPTED_OUT), Value::Boolean(true)),
-                    (Value::from(KEY_REASON), Value::from(reason.as_str())),
-                    (Value::from(KEY_OCCURRED_AT), Value::from(*occurred_at)),
-                ]),
-                Some(*occurred_at),
-            ),
+                    (Value::from(KEY_PARTY_REF), Value::from(party_ref.to_hex())),
+                ];
+                if let Some(channel_class) = channel_class {
+                    entries.push((
+                        Value::from(KEY_CHANNEL_CLASS),
+                        Value::from(channel_class.as_str()),
+                    ));
+                }
+                entries.push((Value::from(KEY_SCOPE), Value::from(scope.as_str())));
+                if let Some(send_ref) = send_ref {
+                    entries.push((Value::from(KEY_SEND_REF), Value::from(send_ref.as_str())));
+                }
+                entries.push((Value::from(KEY_ISSUED_AT), Value::from(*issued_at)));
+                if let Some(valid_to) = valid_to {
+                    entries.push((Value::from(KEY_VALID_TO), Value::from(*valid_to)));
+                }
+                (
+                    PREDICATE_COMM_SEND_OVERRIDE,
+                    *party_ref,
+                    Value::Map(entries),
+                    Some(*issued_at),
+                )
+            }
             Self::LastTouch {
                 party_ref,
                 channel_class,
@@ -302,6 +511,7 @@ impl CommClaimValue {
     fn party_ref(&self) -> EntityId {
         match self {
             Self::OptOut { party_ref, .. }
+            | Self::SendOverride { party_ref, .. }
             | Self::LastTouch { party_ref, .. }
             | Self::ThreadMember { party_ref, .. }
             | Self::ReachableVia { party_ref, .. } => *party_ref,
@@ -335,9 +545,18 @@ impl CommClaim {
         let value = match body.predicate.as_str() {
             PREDICATE_COMM_OPT_OUT => CommClaimValue::OptOut {
                 party_ref,
-                channel_class: required_string(entries, KEY_CHANNEL_CLASS)?.to_owned(),
+                channel_class: elided_string(entries, KEY_CHANNEL_CLASS)?.map(str::to_owned),
                 reason: required_string(entries, KEY_REASON)?.to_owned(),
                 occurred_at: required_u64(entries, KEY_OCCURRED_AT)?,
+            },
+            PREDICATE_COMM_SEND_OVERRIDE => CommClaimValue::SendOverride {
+                party_ref,
+                channel_class: elided_string(entries, KEY_CHANNEL_CLASS)?.map(str::to_owned),
+                scope: SendOverrideScope::parse(required_string(entries, KEY_SCOPE)?)
+                    .ok_or_else(|| invalid_claim("comm.send_override scope is invalid"))?,
+                send_ref: elided_string(entries, KEY_SEND_REF)?.map(str::to_owned),
+                issued_at: required_u64(entries, KEY_ISSUED_AT)?,
+                valid_to: elided_u64(entries, KEY_VALID_TO)?,
             },
             PREDICATE_COMM_LAST_TOUCH => CommClaimValue::LastTouch {
                 party_ref,
@@ -412,18 +631,23 @@ pub(crate) fn validate_comm_claim_structure(body: &ClaimBody) -> Result<()> {
     }
     match body.predicate.as_str() {
         PREDICATE_COMM_OPT_OUT => {
-            validate_keys(
+            // ADDITIVE: `channel_class` may be elided, and then the head covers
+            // every channel class. Every landed head names one and validates
+            // exactly as before.
+            validate_keys_with_optional(
                 entries,
                 &[
                     KEY_SCHEMA_VERSION,
                     KEY_PARTY_REF,
-                    KEY_CHANNEL_CLASS,
                     KEY_OPTED_OUT,
                     KEY_REASON,
                     KEY_OCCURRED_AT,
                 ],
+                &[KEY_CHANNEL_CLASS],
             )?;
-            validate_channel_class(required_string(entries, KEY_CHANNEL_CLASS)?)?;
+            if let Some(channel_class) = elided_string(entries, KEY_CHANNEL_CLASS)? {
+                validate_channel_class(channel_class)?;
+            }
             if !required_bool(entries, KEY_OPTED_OUT)? {
                 return Err(invalid_claim("comm.opt_out must be restrictive"));
             }
@@ -432,6 +656,52 @@ pub(crate) fn validate_comm_claim_structure(body: &ClaimBody) -> Result<()> {
                 return Err(invalid_claim("comm.opt_out reason is invalid"));
             }
             required_u64(entries, KEY_OCCURRED_AT).map(|_| ())
+        }
+        PREDICATE_COMM_SEND_OVERRIDE => {
+            validate_keys_with_optional(
+                entries,
+                &[KEY_SCHEMA_VERSION, KEY_PARTY_REF, KEY_SCOPE, KEY_ISSUED_AT],
+                &[KEY_CHANNEL_CLASS, KEY_SEND_REF, KEY_VALID_TO],
+            )?;
+            if let Some(channel_class) = elided_string(entries, KEY_CHANNEL_CLASS)? {
+                validate_channel_class(channel_class)?;
+            }
+            let scope = SendOverrideScope::parse(required_string(entries, KEY_SCOPE)?)
+                .ok_or_else(|| invalid_claim("comm.send_override scope is invalid"))?;
+            let send_ref = elided_string(entries, KEY_SEND_REF)?;
+            let issued_at = required_u64(entries, KEY_ISSUED_AT)?;
+            let valid_to = elided_u64(entries, KEY_VALID_TO)?;
+            match scope {
+                // A one-shot override that outlived its send would be a
+                // standing override nobody named: the send ref BINDS it and the
+                // expiry BOUNDS it, so both are required at mint (Q-025.3).
+                SendOverrideScope::OneShot => {
+                    let send_ref = send_ref.ok_or_else(|| {
+                        invalid_claim("comm.send_override one_shot requires send_ref")
+                    })?;
+                    validate_send_ref(send_ref)?;
+                    if valid_to.is_none() {
+                        return Err(invalid_claim(
+                            "comm.send_override one_shot requires valid_to",
+                        ));
+                    }
+                }
+                // A standing override is not bound to any one send, so carrying
+                // a send ref would state a binding it does not have.
+                SendOverrideScope::Standing => {
+                    if send_ref.is_some() {
+                        return Err(invalid_claim(
+                            "comm.send_override standing forbids send_ref",
+                        ));
+                    }
+                }
+            }
+            if valid_to.is_some_and(|valid_to| valid_to < issued_at) {
+                return Err(invalid_claim(
+                    "comm.send_override valid_to precedes issued_at",
+                ));
+            }
+            Ok(())
         }
         PREDICATE_COMM_LAST_TOUCH => {
             validate_keys(
@@ -1168,6 +1438,24 @@ pub fn approve_pending_opt_out_clear(
         if let Some((live_claim_ref, matched)) = &live_claim {
             let close_at = ruled_at.max(matched.valid_from.unwrap_or(ruled_at));
             vault.retract_claim_in_txn(wtxn, live_claim_ref, close_at)?;
+            // Claims moved; the cache follows in the SAME transaction
+            // (ONE-1752), exactly as the STOP projector does on the way in. A
+            // cleared head that left type-132 saying opted-out would make the
+            // gate keep escalating on cache state the claims no longer carry —
+            // cache as authority, the inversion the claims-first rule forbids.
+            // The sweep is class-scoped like the head it just retracted, so it
+            // re-derives every row that head could have suppressed and no
+            // other; whether a REMAINING head still suppresses each of those
+            // rows stays the fold's decision.
+            if let Some(party_key) = active_comm_party_key_in_txn(vault, &*wtxn, party_ref)? {
+                crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
+                    vault,
+                    wtxn,
+                    &party_key,
+                    Some(channel_class),
+                    ruled_at,
+                )?;
+            }
         }
         let consumed = CommRecord::Gate {
             party_ref,
@@ -1451,7 +1739,7 @@ fn apply_projector_rule_in_txn(
                 let latest_transition = latest_claim_transition_boundary(&history);
                 let value = CommClaimValue::OptOut {
                     party_ref,
-                    channel_class: channel.to_owned(),
+                    channel_class: Some(channel.to_owned()),
                     reason: OPT_OUT_REASON_STOP.to_owned(),
                     occurred_at,
                 };
@@ -1468,6 +1756,13 @@ fn apply_projector_rule_in_txn(
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
+                rematerialize_party_channel_contact_cache_in_txn(
+                    vault,
+                    wtxn,
+                    party_ref,
+                    channel,
+                    occurred_at,
+                )?;
                 Ok(ProjectorIndexDelta::default())
             } else {
                 // The pass index only NARROWS the candidates for this slot; the
@@ -1653,12 +1948,20 @@ fn projected_comm_conflict_key(value: &CommClaimValue) -> Vec<u8> {
         key.extend_from_slice(bytes);
     };
     match value {
+        // An elided channel is its OWN slot, not a wildcard over the others:
+        // the party-wide head and a channel-scoped head are different standing
+        // facts and must never collide. No channel class can be empty
+        // (`validate_channel_class` refuses blanks), so the empty component is
+        // unambiguously "every channel".
         CommClaimValue::OptOut {
             party_ref,
             channel_class,
             ..
+        } => {
+            push(party_ref.as_bytes());
+            push(channel_class.as_deref().unwrap_or_default().as_bytes());
         }
-        | CommClaimValue::LastTouch {
+        CommClaimValue::LastTouch {
             party_ref,
             channel_class,
             ..
@@ -1678,6 +1981,21 @@ fn projected_comm_conflict_key(value: &CommClaimValue) -> Vec<u8> {
         } => {
             push(party_ref.as_bytes());
             push(thread_ref.as_bytes());
+        }
+        // No projector rule mints an override — it is a human-ruled verb — so
+        // this arm exists for totality. The key still names the whole binding,
+        // so it could never merge two distinct owner decisions.
+        CommClaimValue::SendOverride {
+            party_ref,
+            channel_class,
+            scope,
+            send_ref,
+            ..
+        } => {
+            push(party_ref.as_bytes());
+            push(channel_class.as_deref().unwrap_or_default().as_bytes());
+            push(scope.as_str().as_bytes());
+            push(send_ref.as_deref().unwrap_or_default().as_bytes());
         }
     }
     key
@@ -1762,6 +2080,35 @@ fn put_comm_claim_with_id_in_txn(
     value: &CommClaimValue,
     occurred_at: u64,
 ) -> CommResult<EntityId> {
+    put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, false)
+}
+
+/// [`put_comm_claim_with_id_in_txn`] on the ENGINE-OWNED setting, for the
+/// projection a contact writer authors on the party's behalf (ONE-1752).
+///
+/// The contact door already validated and authorized that write; re-asking the
+/// public criticality ladder here would turn one recorded counterparty fact
+/// into an owner review inside somebody else's transaction, and a refusal would
+/// roll back the contact write that the ladder never meant to question. Body
+/// validation and the source-trust check are unchanged.
+fn put_engine_owned_comm_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    value: &CommClaimValue,
+    occurred_at: u64,
+) -> CommResult<EntityId> {
+    put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, true)
+}
+
+fn put_comm_claim_with_id_in_txn_inner(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    value: &CommClaimValue,
+    occurred_at: u64,
+    engine_owned: bool,
+) -> CommResult<EntityId> {
     let body = value.claim_body();
     let data = encode_claim_body(&body)?;
     let subject = value.party_ref();
@@ -1795,7 +2142,7 @@ fn put_comm_claim_with_id_in_txn(
                 learned_at: crate::unix_seconds_now(),
                 data,
                 allow_maintenance: false,
-                allow_reserved_predicate: false,
+                allow_reserved_predicate: engine_owned,
                 hub_sync_imported: false,
             },
             BatchOp::Edge {
@@ -1861,11 +2208,20 @@ fn matching_claims_in_txn(
             continue;
         }
         let key_matches = match &claim.value {
+            // SLOT lookup, not fold matching: a party-wide head answers a
+            // `None` query and never a channel-scoped one, so the two heads
+            // stay separately addressable for supersession. Whether a
+            // party-wide head APPLIES to a channel is the fold's question, and
+            // `StandingOptOutHead::matches_channel` answers it.
             CommClaimValue::OptOut {
                 channel_class: candidate,
                 ..
             }
-            | CommClaimValue::LastTouch {
+            | CommClaimValue::SendOverride {
+                channel_class: candidate,
+                ..
+            } => channel_class == candidate.as_deref(),
+            CommClaimValue::LastTouch {
                 channel_class: candidate,
                 ..
             }
@@ -1939,7 +2295,10 @@ fn build_contact_view_in_txn(
             CommClaimValue::ThreadMember { thread_ref, .. } => {
                 threads.insert(thread_ref);
             }
-            CommClaimValue::ReachableVia { .. } => {}
+            // Reachability carries no view entry, and an override is an owner
+            // DECISION about sending rather than contact state — the lens
+            // reports what the counterparty said, not what the owner ruled.
+            CommClaimValue::ReachableVia { .. } | CommClaimValue::SendOverride { .. } => {}
         }
     }
     last_touch.sort();
@@ -1976,14 +2335,19 @@ fn build_contact_view_in_txn(
                 opt_out
                     .iter()
                     .map(|(channel, occurred_at)| {
-                        Value::Map(vec![
-                            (
+                        // The lens mirrors the head: a party-wide head has no
+                        // channel, so the entry carries none either rather than
+                        // inventing a class the head never named.
+                        let mut entry = Vec::new();
+                        if let Some(channel) = channel {
+                            entry.push((
                                 Value::from(KEY_CHANNEL_CLASS),
                                 Value::from(channel.as_str()),
-                            ),
-                            (Value::from(KEY_OPTED_OUT), Value::Boolean(true)),
-                            (Value::from(KEY_OCCURRED_AT), Value::from(*occurred_at)),
-                        ])
+                            ));
+                        }
+                        entry.push((Value::from(KEY_OPTED_OUT), Value::Boolean(true)));
+                        entry.push((Value::from(KEY_OCCURRED_AT), Value::from(*occurred_at)));
+                        Value::Map(entry)
                     })
                     .collect(),
             ),
@@ -2213,6 +2577,418 @@ fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<EntityId>> {
         }
         PartyLookup::Absent => Ok(None),
     }
+}
+
+/// Transaction-composable READ-ONLY party resolution: the same synced-truth
+/// answer [`resolve_party`] gives, without the shortcut repair (a repair needs
+/// a write, and this composes into transactions that must not take one, or
+/// already hold one).
+pub(crate) fn resolve_party_ref_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party: &str,
+) -> CommResult<Option<EntityId>> {
+    validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+    Ok(match lookup_party_in_txn(vault, rtxn, party)? {
+        PartyLookup::Fresh(id) | PartyLookup::Repairable(id) => Some(id),
+        PartyLookup::Absent => None,
+    })
+}
+
+/// Party resolution for a reader that holds a `Store` and no `Vault` — the
+/// external-effect gate door.
+///
+/// It answers from the node-local shortcut and then RE-VALIDATES the hit
+/// against synced truth (the row must still be a PERSON carrying exactly this
+/// `party_key`), so a stale shortcut resolves to NOTHING rather than to the
+/// wrong person. Deliberately the same interim shape CA's `comm.do_not_contact`
+/// leg uses at the same hydration point, and deliberately fail-closed for this
+/// caller: an unresolvable party means no override was found, which HOLDS the
+/// send rather than releasing it.
+pub(crate) fn resolve_party_ref_from_store_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party: &str,
+) -> CommResult<Option<EntityId>> {
+    let party_key = party.trim();
+    if party_key.is_empty() {
+        return Ok(None);
+    }
+    let Some(raw_id) = store.vault_meta.get(txn, &party_index_key(party_key))? else {
+        return Ok(None);
+    };
+    let id = decode_entity_id(&raw_id)?;
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_PERSON {
+        return Ok(None);
+    }
+    let mut cursor = Cursor::new(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(None);
+    };
+    let Ok(entries) = value_map(&value) else {
+        return Ok(None);
+    };
+    Ok((required_string(entries, KEY_PARTY_KEY).ok() == Some(party_key)).then_some(id))
+}
+
+/// One standing `comm.opt_out` head, as the restrictive folds read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StandingOptOutHead {
+    /// `None` covers every channel class.
+    pub(crate) channel_class: Option<String>,
+    /// Receipt-vocabulary reason token.
+    pub(crate) reason: String,
+    /// Event time the opt-out became valid.
+    pub(crate) occurred_at: u64,
+}
+
+impl StandingOptOutHead {
+    /// Whether this head suppresses `channel_class`. An elided channel matches
+    /// EVERY class; a named one matches only itself.
+    ///
+    /// Stated once, here, as the definition of what an absent class MEANS, and
+    /// asked by the one reader that needs it: the type-132 rebuild folds a head
+    /// into a contact only when this says the head covers that contact's class
+    /// (`counterparty_contact::rematerialize_contact_cache_in_txn`). Any future
+    /// channel-scoped reader must use this rather than re-derive the rule.
+    #[must_use]
+    pub(crate) fn matches_channel(&self, channel_class: &str) -> bool {
+        self.channel_class
+            .as_deref()
+            .is_none_or(|stored| stored == normalize_channel_class(channel_class))
+    }
+}
+
+/// Every standing `comm.opt_out` head for one party, on the caller's
+/// transaction. Channel-less and channel-scoped alike: the caller decides which
+/// apply, and no caller may be handed a filtered set that already dropped one.
+pub(crate) fn standing_opt_out_heads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_ref: EntityId,
+) -> CommResult<Vec<StandingOptOutHead>> {
+    let mut heads = Vec::new();
+    for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_COMM_OPT_OUT {
+            continue;
+        }
+        let claim = CommClaim::from_claim_body(&body)?;
+        if !claim.is_standing() {
+            continue;
+        }
+        if let CommClaimValue::OptOut {
+            channel_class,
+            reason,
+            occurred_at,
+            ..
+        } = claim.value
+        {
+            heads.push(StandingOptOutHead {
+                channel_class,
+                reason,
+                occurred_at,
+            });
+        }
+    }
+    Ok(heads)
+}
+
+/// Records the owner's decision to send to an opted-out party.
+///
+/// HUMAN-RULED: the actor is authorized inside the write transaction and must
+/// be [`EdgeActorClass::Human`], exactly like `approve_pending_opt_out_clear`.
+/// This is the verb the descriptor row describes; the generic claim doors
+/// validate the body's shape but do not yet enforce the write class, which is
+/// the named descriptor-registry follow-on.
+///
+/// It writes ONE claim and nothing else. No opt-out head is retracted, no
+/// contact record is touched: an override authorizes a send THROUGH standing
+/// suppression, it does not clear it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mint args mirror the send-override claim-body keys one-to-one (party, channel_class, scope, send_ref, issued_at, valid_to) plus vault and the human actor; the named descriptor-registry follow-on owns any reshaping"
+)]
+pub fn mint_send_override(
+    vault: &Vault,
+    party: &str,
+    channel_class: Option<&str>,
+    scope: SendOverrideScope,
+    send_ref: Option<&str>,
+    actor: WriteActor,
+    issued_at: u64,
+    valid_to: Option<u64>,
+) -> CommResult<EntityId> {
+    let actor_ref = actor.entity_ref();
+    let channel_class = channel_class.map(normalize_channel_class);
+    vault.try_with_write_txn(|wtxn| {
+        // Authorize from the write transaction's own view, so a concurrent
+        // delete/recreate cannot leave an override minted under a stale
+        // authorization decision.
+        let actor_entity_type = vault
+            .store
+            .entities
+            .get(&*wtxn, actor_ref.as_bytes())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+            .ok_or(CommError::Engine(Error::EntityNotFound))?;
+        validate_actor_class(actor_entity_type, actor.actor_class())?;
+        if actor.actor_class() != EdgeActorClass::Human {
+            return Err(CommError::HumanApprovalRequired);
+        }
+        let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;
+        let value = CommClaimValue::SendOverride {
+            party_ref,
+            channel_class: channel_class.clone(),
+            scope,
+            send_ref: send_ref.map(str::to_owned),
+            issued_at,
+            valid_to,
+        };
+        // Validate BEFORE the write so a malformed ruling is refused as a
+        // typed comm failure rather than as an opaque body rejection deep in
+        // the claim door.
+        validate_comm_claim_structure(&value.claim_body()).map_err(|_| CommError::InvalidRecord)?;
+        put_comm_claim_with_id_in_txn(vault, wtxn, EntityId::now(), &value, issued_at)
+    })
+}
+
+/// The override covering one send, if any. Thin transaction-opening wrapper
+/// over [`send_override_for_send_in_txn`].
+pub fn send_override_for_send(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    send_ref: Option<&str>,
+    now: u64,
+) -> CommResult<Option<SendOverrideMatch>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(party_ref) = resolve_party_ref_in_txn(vault, &rtxn, party)? else {
+        return Ok(None);
+    };
+    send_override_for_send_in_txn(
+        &vault.store,
+        &rtxn,
+        &party_ref,
+        &normalize_channel_class(channel_class),
+        send_ref,
+        now,
+    )
+}
+
+/// The override covering one send, on the caller's transaction.
+///
+/// `channel_class` must already be normalized — every caller shares
+/// [`normalize_channel_class`], so a stored class and a queried class can never
+/// disagree over case or padding.
+///
+/// Three rules, and nothing else:
+///
+/// * a head outside its lifetime window never matches, whatever its scope:
+///   neither before the owner's ruling starts (`issued_at > now`) nor after it
+///   expires (`valid_to < now`). Those are the bounds
+///   [`CommClaim::is_effective_at`] already carries, because a send override's
+///   `issued_at` IS its claim `valid_from`;
+/// * a one-shot matches only when its minted `send_ref` BYTE-equals this
+///   send's, so an absent or different ref is simply no match;
+/// * standing wins on overlap, because it is the wider decision the owner made.
+///
+/// There is NO consumption write, structurally: this reads on a read
+/// transaction. Replay of the same send ref inside a one-shot's validity window
+/// matches by design (Q-025.3) — mint-time binding plus mandatory expiry is the
+/// lifetime bound at this interim door.
+pub(crate) fn send_override_for_send_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &EntityId,
+    channel_class: &str,
+    send_ref: Option<&str>,
+    now: u64,
+) -> CommResult<Option<SendOverrideMatch>> {
+    let mut matched = None;
+    for claim_id in subject_claim_ids_in_txn(store, txn, party_ref)? {
+        let Some(body) = claim_body_in_txn(store, txn, &claim_id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_COMM_SEND_OVERRIDE {
+            continue;
+        }
+        let claim = CommClaim::from_claim_body(&body)?;
+        if !claim.is_standing() {
+            continue;
+        }
+        let CommClaimValue::SendOverride {
+            channel_class: head_channel,
+            scope,
+            send_ref: head_send_ref,
+            issued_at,
+            valid_to,
+            ..
+        } = claim.value
+        else {
+            continue;
+        };
+        if head_channel
+            .as_deref()
+            .is_some_and(|stored| stored != channel_class)
+        {
+            continue;
+        }
+        // A ruling dated ahead of the clock has not started: `is_standing`
+        // carries no time bounds, so the lower bound is enforced here or
+        // nowhere, and a future-dated override would release a held send early.
+        if issued_at > now {
+            continue;
+        }
+        if valid_to.is_some_and(|valid_to| valid_to < now) {
+            continue;
+        }
+        match scope {
+            SendOverrideScope::Standing => return Ok(Some(SendOverrideMatch::Standing)),
+            SendOverrideScope::OneShot => {
+                if head_send_ref.is_some() && head_send_ref.as_deref() == send_ref {
+                    matched = Some(SendOverrideMatch::OneShot);
+                }
+            }
+        }
+    }
+    Ok(matched)
+}
+
+/// CLAIM ids attached to `subject` through inbound `claim_of` edges, read with
+/// a `Store` alone.
+fn subject_claim_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> CommResult<Vec<EntityId>> {
+    let prefix = crate::vault::edge_kind_prefix(subject, EdgeKind::ClaimOf);
+    let mut ids = Vec::new();
+    for entry in store.edges_in.prefix_iter(txn, &prefix)? {
+        let (key, value) = entry?;
+        ids.push(crate::vault::parse_edge_record(&key, &value)?.target);
+    }
+    Ok(ids)
+}
+
+/// The CLAIM body stored at `id`, or `None` when the row is absent or is not a
+/// type-0 CLAIM.
+fn claim_body_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> CommResult<Option<ClaimBody>> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(CommError::InvalidRecord);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    Ok(Some(crate::claim::decode_claim_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    )?))
+}
+
+/// Moves the party-wide `comm.opt_out` head for `party` to `reason`, inside the
+/// caller's write transaction (ONE-1752).
+///
+/// The head carries NO channel class, so it covers every channel: a contact who
+/// opted out said it to the owner, not to one mailbox. It is party-wide state
+/// derived from a contact event, which is why the contact writer authors it —
+/// and why it goes through the engine-owned door rather than the public ladder.
+///
+/// Restrictive and monotonic: an existing head is superseded only by a NEWER
+/// opt-out, and nothing here ever retracts one. Clearing stays the separate,
+/// human-ruled `request_opt_out_clear` / `approve_pending_opt_out_clear` path.
+pub(crate) fn supersede_party_opt_out_head_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party: &str,
+    reason: CounterpartyOptOutReason,
+    occurred_at: u64,
+) -> CommResult<()> {
+    let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;
+    let active = matching_claims_in_txn(
+        vault,
+        &*wtxn,
+        party_ref,
+        PREDICATE_COMM_OPT_OUT,
+        None,
+        None,
+        true,
+    )?;
+    require_at_most_one(&active)?;
+    let head = active.into_iter().next();
+    if let Some((_, claim)) = &head
+        && let CommClaimValue::OptOut {
+            reason: head_reason,
+            occurred_at: head_at,
+            ..
+        } = &claim.value
+        && (*head_at > occurred_at
+            || (*head_at == occurred_at && head_reason == reason.receipt_reason()))
+    {
+        return Ok(());
+    }
+    let value = CommClaimValue::OptOut {
+        party_ref,
+        channel_class: None,
+        reason: reason.receipt_reason().to_owned(),
+        occurred_at,
+    };
+    let new_id =
+        put_engine_owned_comm_claim_in_txn(vault, wtxn, EntityId::now(), &value, occurred_at)?;
+    if let Some((old_id, _)) = head {
+        crate::counterparty_contact::supersede_family_owned_claim_in_txn(
+            vault,
+            wtxn,
+            &new_id,
+            &old_id,
+            occurred_at,
+        )?;
+    }
+    Ok(())
+}
+
+/// Re-derives the type-132 cache for every contact this party reaches on
+/// `channel_class`, inside the projector's own write transaction.
+///
+/// Claims moved; the cache follows in the SAME transaction, so the gate's
+/// type-132-fed fold can never observe the old suppression state. The
+/// party-channel index (ONE-1868) names the contacts, which keeps an
+/// email-scoped STOP from re-deriving a telegram contact: channel scope is
+/// decided by which contacts are enumerated here.
+fn rematerialize_party_channel_contact_cache_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_ref: EntityId,
+    channel_class: &str,
+    now: u64,
+) -> CommResult<()> {
+    let Some(party_key) = active_comm_party_key_in_txn(vault, &*wtxn, party_ref)? else {
+        return Ok(());
+    };
+    let contacts = crate::counterparty_contact::counterparty_contacts_by_party_channel(
+        &vault.store,
+        &*wtxn,
+        &party_key,
+        &normalize_channel_class(channel_class),
+    )?;
+    for (contact_id, _) in contacts {
+        rematerialize_contact_cache_in_txn(vault, wtxn, &contact_id, now)?;
+    }
+    Ok(())
 }
 
 fn party_index_key(party: &str) -> Vec<u8> {
@@ -2557,6 +3333,43 @@ fn optional_string(entries: &[(Value, Value)], key: &str) -> Result<Option<Strin
     }
 }
 
+/// A key that may be ELIDED entirely — absence IS the value, and `nil` is not
+/// an accepted spelling of it. Duplicates are refused exactly like
+/// [`required_value`], so an absent-or-once contract cannot be forged by
+/// writing the key twice.
+fn elided_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
+    let mut matches = entries
+        .iter()
+        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
+    let Some(value) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(invalid_claim("comm value has duplicate key"));
+    }
+    Ok(Some(value))
+}
+
+fn elided_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a str>> {
+    elided_value(entries, key)?
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| invalid_claim("comm value string invalid"))
+        })
+        .transpose()
+}
+
+fn elided_u64(entries: &[(Value, Value)], key: &str) -> Result<Option<u64>> {
+    elided_value(entries, key)?
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| invalid_claim("comm value integer invalid"))
+        })
+        .transpose()
+}
+
 fn required_u64(entries: &[(Value, Value)], key: &str) -> Result<u64> {
     required_value(entries, key)?
         .as_u64()
@@ -2591,9 +3404,43 @@ fn validate_keys(entries: &[(Value, Value)], expected: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// [`validate_keys`] with a set of keys that may be elided. Every required key
+/// must appear exactly once, every optional key at most once, and nothing else
+/// may appear at all — unknown keys are never ignored.
+fn validate_keys_with_optional(
+    entries: &[(Value, Value)],
+    required: &[&str],
+    optional: &[&str],
+) -> Result<()> {
+    for required_key in required {
+        required_value(entries, required_key)?;
+    }
+    for optional_key in optional {
+        elided_value(entries, optional_key)?;
+    }
+    if entries.iter().any(|(key, _)| {
+        key.as_str()
+            .is_none_or(|key| !required.contains(&key) && !optional.contains(&key))
+    }) {
+        return Err(invalid_claim("comm value key set invalid"));
+    }
+    Ok(())
+}
+
 fn validate_key_string(value: &str) -> Result<()> {
     if value.trim() != value || value.is_empty() || value.len() > MAX_KEY_BYTES {
         return Err(invalid_claim("comm key string invalid"));
+    }
+    Ok(())
+}
+
+/// One-shot binding token: nonblank, at most 256 bytes, no NUL. It is compared
+/// to `ExternalEffectGateInput.send_ref` by BYTE equality, so it is stored
+/// exactly as minted — no trimming, no case folding.
+fn validate_send_ref(value: &str) -> Result<()> {
+    if value.trim().is_empty() || value.len() > MAX_SEND_REF_BYTES || value.as_bytes().contains(&0)
+    {
+        return Err(invalid_claim("comm.send_override send_ref is invalid"));
     }
     Ok(())
 }
