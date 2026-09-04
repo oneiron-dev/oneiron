@@ -99,6 +99,15 @@ const LEDGER_RETRY_DELAY: Duration = Duration::from_millis(200);
 /// it asks for is a window of that width, not a point. Waking anywhere inside
 /// it does the same work.
 const LEASE_WAKE_WINDOW_SECS: u64 = 60;
+/// How long a sync session that upgraded but has not spoken yet is assumed to
+/// still be there.
+///
+/// Such a session holds nothing this module can count: it subscribes to the
+/// broadcast fan-out only after its protocol hello, and the handler's own
+/// hello deadline is what closes it if the hello never comes. This is that
+/// deadline with margin, because a freeze would rather delay a reap by a few
+/// seconds than report quiescence over a writer it cannot see.
+const SYNC_UPGRADE_SETTLE_SECS: u64 = 15;
 /// Stable ids for the exported wake entries. The supervisor keys on these.
 const WAKE_ID_JOB_READY: &str = "job_ready";
 const WAKE_ID_SYNC_DEADLINE: &str = "sync_deadline";
@@ -220,6 +229,12 @@ impl ManagedArgs {
 
     /// Serve configuration for managed mode, built from argv alone.
     ///
+    /// The fields read here are exactly the [`ArgvUse::Read`] rows of
+    /// [`MANAGED_ARGV`] that are not part of the managed group — dimensions,
+    /// map size, dictionary roots and log level. Everything else on
+    /// `ServeArgs` is refused before this runs, so nothing reaches here to be
+    /// quietly dropped.
+    ///
     /// `auth_secret` stays `None` and unauthenticated requests are allowed:
     /// bearer auth terminates at the supervisor, which owns the listening
     /// socket inside an owner-only directory. Consulting
@@ -260,29 +275,286 @@ fn require_fd(value: Option<i32>, flag: &'static str) -> Result<RawFd, ManagedEr
 const NO_HOST_PORT_REASON: &str =
     "managed mode serves the supervisor's socket, never a host:port bind";
 const NO_CONFIG_LAYER_REASON: &str = "managed mode reads its whole configuration from argv; config files, ONEIRON_* environment and XDG layers are never consulted";
+const NO_AUTH_LAYER_REASON: &str = "bearer auth terminates at the supervisor, which owns the listening socket inside an owner-only directory; a managed child holds no second opinion about who may talk to it";
+const NO_TUNING_LAYER_REASON: &str = "managed mode builds its whole ServeConfig from the vault, dimension, dictionary and log-level flags; this one would be parsed and then dropped";
 
-/// Managed mode takes its whole configuration from argv. Silently ignoring a
-/// `--host`, `--port` or `--config` the operator meant would leave the engine
-/// listening somewhere nobody asked for, so each one is a loud refusal that
-/// names the conflict.
+/// What managed mode does with one `ServeArgs` field.
+#[derive(Debug, Clone, Copy)]
+enum ArgvUse {
+    /// Read: either part of the managed group itself or one of the four
+    /// fields [`ManagedArgs::serve_config`] consults.
+    Read,
+    /// Belongs to a layer managed mode never consults, and is refused with
+    /// this reason rather than accepted and dropped.
+    Refused(&'static str),
+}
+
+/// The whole `ServeArgs` surface in one table: the flag as the operator types
+/// it, the probe that says whether they typed it, and what managed mode does
+/// with it.
+///
+/// One allowlist drives both halves of the rule. The [`ArgvUse::Read`] rows
+/// are exactly what the managed group and [`ManagedArgs::serve_config`] read;
+/// [`reject_unmanaged_layers`] refuses every other row that was set. Before
+/// this table the two halves were written separately, and the gap between them
+/// was silent: clap accepted `--auth-secret` and `serve_config` dropped it, so
+/// an operator who typed it got neither the setting nor an error.
+const MANAGED_ARGV: &[(&str, fn(&ServeArgs) -> bool, ArgvUse)] = &[
+    // The managed group: argv is the whole configuration.
+    (
+        "config",
+        |args| args.config.is_some(),
+        ArgvUse::Refused(NO_CONFIG_LAYER_REASON),
+    ),
+    (
+        "vault-path",
+        |args| args.vault_path.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "managed-by-hypnos",
+        |args| args.managed_by_hypnos,
+        ArgvUse::Read,
+    ),
+    (
+        "contract-version",
+        |args| args.contract_version.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "vault-name",
+        |args| args.vault_name.is_some(),
+        ArgvUse::Read,
+    ),
+    ("data-dir", |args| args.data_dir.is_some(), ArgvUse::Read),
+    (
+        "http-socket",
+        |args| args.http_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "ctl-socket",
+        |args| args.ctl_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "hypnos-socket",
+        |args| args.hypnos_socket.is_some(),
+        ArgvUse::Read,
+    ),
+    ("ready-fd", |args| args.ready_fd.is_some(), ArgvUse::Read),
+    (
+        "credentials-fd",
+        |args| args.credentials_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    // The bind: the supervisor's socket, never a host:port.
+    (
+        "host",
+        |args| args.host.is_some(),
+        ArgvUse::Refused(NO_HOST_PORT_REASON),
+    ),
+    (
+        "port",
+        |args| args.port.is_some(),
+        ArgvUse::Refused(NO_HOST_PORT_REASON),
+    ),
+    // The auth layer: the supervisor's, not this child's.
+    (
+        "auth-secret",
+        |args| args.auth_secret.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
+        "oauth-issuer",
+        |args| args.oauth_issuer.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
+        "oauth-jwks-uri",
+        |args| args.oauth_jwks_uri.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
+        "oauth-resource-indicator",
+        |args| args.oauth_resource_indicator.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
+        "insecure-allow-unauthenticated",
+        |args| args.insecure_allow_unauthenticated.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
+        "allowed-origins",
+        |args| args.allowed_origins.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    // The tuning layer: defaults, except the four fields below.
+    (
+        "lease-vault-id",
+        |args| args.lease_vault_id.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "dimensions",
+        |args| args.dimensions.is_some(),
+        ArgvUse::Read,
+    ),
+    ("map-size", |args| args.map_size.is_some(), ArgvUse::Read),
+    ("log-level", |args| args.log_level.is_some(), ArgvUse::Read),
+    (
+        "dict-search-paths",
+        |args| args.dict_search_paths.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "default-window-count",
+        |args| args.default_window_count.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "compaction-threshold-bytes",
+        |args| args.compaction_threshold_bytes.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "compaction-throttle-secs",
+        |args| args.compaction_throttle_secs.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "bulk-chunk-size",
+        |args| args.bulk_chunk_size.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-frame-size",
+        |args| args.max_frame_size.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-update-payload",
+        |args| args.max_update_payload.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-windows-per-connection",
+        |args| args.max_windows_per_connection.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-federation-windows-per-connection",
+        |args| args.max_federation_windows_per_connection.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "federation-flood-pause-secs",
+        |args| args.federation_flood_pause_secs.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-messages-per-sec",
+        |args| args.max_messages_per_sec.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "ephemeral-timeout-ms",
+        |args| args.ephemeral_timeout_ms.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-ephemeral-payload-bytes",
+        |args| args.max_ephemeral_payload_bytes.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-ephemeral-snapshot-bytes",
+        |args| args.max_ephemeral_snapshot_bytes.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-entity-blob",
+        |args| args.max_entity_blob.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "max-bulk-decompressed",
+        |args| args.max_bulk_decompressed.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    // The runtime routing layer: a managed child routes nothing on its own.
+    (
+        "runtime-mode",
+        |args| args.runtime_mode.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-byo-key-env",
+        |args| args.runtime_byo_key_env.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-orchestrator-mode",
+        |args| args.runtime_orchestrator_mode.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-orchestrator-provider-kind",
+        |args| args.runtime_orchestrator_provider_kind.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-orchestrator-model",
+        |args| args.runtime_orchestrator_model.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-subagent-mode",
+        |args| args.runtime_subagent_mode.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-subagent-provider-kind",
+        |args| args.runtime_subagent_provider_kind.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-subagent-model",
+        |args| args.runtime_subagent_model.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-summarizer-mode",
+        |args| args.runtime_summarizer_mode.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-summarizer-provider-kind",
+        |args| args.runtime_summarizer_provider_kind.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "runtime-summarizer-model",
+        |args| args.runtime_summarizer_model.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+];
+
+/// Managed mode takes its whole configuration from argv, and reads only part
+/// of it. A flag it does not read is not harmless: `--host` would move a bind
+/// that the supervisor owns, `--config` would open a layer this mode never
+/// consults, and `--auth-secret` would look like a second answer to "who may
+/// talk to this vault" while changing nothing. So every field outside the
+/// [`MANAGED_ARGV`] allowlist is a loud refusal that names the conflict rather
+/// than a flag clap accepts and nothing honours.
 fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
-    if args.host.is_some() {
-        return Err(ManagedError::ConflictingFlag {
-            flag: "host",
-            reason: NO_HOST_PORT_REASON,
-        });
-    }
-    if args.port.is_some() {
-        return Err(ManagedError::ConflictingFlag {
-            flag: "port",
-            reason: NO_HOST_PORT_REASON,
-        });
-    }
-    if args.config.is_some() {
-        return Err(ManagedError::ConflictingFlag {
-            flag: "config",
-            reason: NO_CONFIG_LAYER_REASON,
-        });
+    for &(flag, is_set, use_of) in MANAGED_ARGV {
+        if let ArgvUse::Refused(reason) = use_of
+            && is_set(args)
+        {
+            return Err(ManagedError::ConflictingFlag { flag, reason });
+        }
     }
     Ok(())
 }
@@ -920,6 +1192,10 @@ pub struct ManagedState {
     vault_name: String,
     server: Arc<SyncServer>,
     frozen: AtomicBool,
+    /// Unix seconds of the most recent sync upgrade the freeze gate admitted,
+    /// or 0 if none. The handshake is the last thing that gate ever sees of a
+    /// sync session, so this stamp is the only record that one exists.
+    last_sync_upgrade: AtomicU64,
     alarms: Mutex<Vec<ObservedAlarm>>,
     ledger: WakeLedger,
 }
@@ -940,6 +1216,7 @@ impl ManagedState {
             vault_name,
             server,
             frozen: AtomicBool::new(false),
+            last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
         }
@@ -976,6 +1253,39 @@ impl ManagedState {
             return Err(ManagedError::WritesFrozen);
         }
         Ok(())
+    }
+
+    /// Records a sync upgrade the freeze gate let through.
+    ///
+    /// Called on the handshake and nowhere else, because the handshake is the
+    /// last moment a per-request gate can see this session at all: what
+    /// follows is frames on a socket, and no middleware runs over those.
+    pub fn admit_sync_upgrade(&self) {
+        self.last_sync_upgrade.store(now_ts(), Ordering::SeqCst);
+    }
+
+    /// Whether a sync session that upgraded before the freeze could still
+    /// commit a durable write.
+    ///
+    /// Two ways one can be live, and quiescence has to answer for both. A
+    /// session past its protocol hello holds a broadcast receiver for as long
+    /// as it runs, and it subscribes before it can import a single update, so
+    /// the receiver count covers every session that is able to write. A
+    /// session that upgraded and has not spoken yet holds nothing to count, so
+    /// [`SYNC_UPGRADE_SETTLE_SECS`] covers that blind window instead.
+    ///
+    /// Fail-closed on both halves: an upgrade that was refused after this gate
+    /// (401, no such route) still counts for the settle window, and a clock
+    /// that steps backwards reads as live rather than as settled.
+    pub fn live_sync_writer(&self) -> bool {
+        // Crate-internal on purpose: the receiver count is the only liveness
+        // signal a session leaves outside its own task, and adding a second
+        // registry to `SyncServer` would put the same fact in two places.
+        if self.server.broadcast_tx.receiver_count() > 0 {
+            return true;
+        }
+        let admitted = self.last_sync_upgrade.load(Ordering::SeqCst);
+        admitted != 0 && now_ts().saturating_sub(admitted) < SYNC_UPGRADE_SETTLE_SECS
     }
 
     /// The reconciler hook `alarm_due` reaches.
@@ -1027,6 +1337,13 @@ impl ManagedState {
     /// The freeze goes first so nothing new enters the lease table while it is
     /// being drained, and the export runs last so the entries the supervisor
     /// gets describe the quiesced state rather than the one before it.
+    ///
+    /// `quiescent` needs a third answer beyond "frozen" and "drained": the
+    /// freeze refuses new requests and new upgrades, but a sync session
+    /// upgraded before it rides past every per-request gate and can still
+    /// commit. `PrepareReap` is not shutdown and closes nothing, so while one
+    /// of those may be live this reports `false` and the supervisor reaps
+    /// later rather than over a live writer.
     async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
         self.freeze();
         let drained = self.drain_lease_table().await;
@@ -1037,7 +1354,7 @@ impl ManagedState {
             reason: error.to_string(),
         })?;
         Ok(CtlResponse::PrepareReap {
-            quiescent: drained && self.is_frozen(),
+            quiescent: drained && self.is_frozen() && !self.live_sync_writer(),
             ledger_rev,
             next_wake,
         })
@@ -1086,7 +1403,9 @@ pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> R
 /// What it cannot see from here is a request that was already past this point
 /// when the flag flipped, and a sync session upgraded before it. The first is
 /// what graceful shutdown drains; the second is why an upgrade is itself
-/// treated as a write below.
+/// treated as a write below, and why an upgrade this gate *admits* is recorded
+/// on the way through: refusing new sessions says nothing about the one that
+/// was already open, whose frames no middleware will ever see.
 async fn refuse_frozen_writes(
     State(state): State<Arc<ManagedState>>,
     request: Request,
@@ -1096,6 +1415,12 @@ async fn refuse_frozen_writes(
         && let Err(error) = state.guard_write()
     {
         return writes_frozen_response(&error);
+    }
+    if request.headers().contains_key(UPGRADE) {
+        // Admitted, and out of sight from here on. A freeze with one of these
+        // behind it is not quiescent, and `prepare_reap` is where that is
+        // answered for — this gate cannot refuse a frame it never sees.
+        state.admit_sync_upgrade();
     }
     next.run(request).await
 }
@@ -1382,15 +1707,26 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
 /// The last thing the supervisor hears from this process.
 ///
+/// Rev-ordered, through the same push-on-change path a running engine uses,
+/// and that is the whole point of not hand-rolling it here. [`LedgerUpdate`]
+/// is a full replacement ordered by `rev`: a shutdown snapshot carrying
+/// entries that moved since the last accepted push — a job that became ready,
+/// a lease that changed — has to advance the revision, or a supervisor that
+/// drops `rev <= last_acked` drops precisely the snapshot this exit exists to
+/// deliver. Unchanged entries send nothing, because the supervisor already
+/// holds that snapshot at that revision.
+///
 /// Failure is logged and stepped over. A supervisor that has already died must
 /// not be able to hold this exit open.
-async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
+pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
     let ledger = state.ledger();
-    match ledger.export(server) {
-        Ok(entries) => {
-            let rev = ledger.rev();
-            let accepted = ledger.push_with_retry(rev, &entries).await;
-            tracing::info!(rev, accepted, "final wake ledger push complete");
+    match ledger.push_if_changed(server).await {
+        Ok(accepted) => {
+            tracing::info!(
+                rev = ledger.rev(),
+                accepted,
+                "final wake ledger push complete"
+            );
         }
         Err(error) => tracing::warn!(%error, "final wake ledger export failed"),
     }

@@ -6,11 +6,12 @@
 //!
 //! - **argv surface** — `each_missing_required_flag_fails_loudly`,
 //!   `an_unknown_contract_version_is_refused_before_any_io`,
-//!   `managed_mode_refuses_the_unmanaged_configuration_layers`. Managed mode
-//!   takes its whole configuration from argv, so a flag that goes missing has
-//!   to be an error rather than a default, and a flag that belongs to the
-//!   layers managed mode does not read has to be a refusal rather than a
-//!   silent no-op.
+//!   `managed_mode_refuses_the_unmanaged_configuration_layers`,
+//!   `a_flag_managed_mode_never_reads_is_refused_by_name`. Managed mode takes
+//!   its whole configuration from argv, so a flag that goes missing has to be
+//!   an error rather than a default, and a flag that belongs to the layers
+//!   managed mode does not read has to be a refusal rather than a silent
+//!   no-op — including the ones clap accepts and `serve_config` would drop.
 //! - **inherited fd** — `a_dupd_inherited_listener_serves_http_and_its_path_survives`
 //!   drives a real dup'd, bound unix listener through axum and then checks the
 //!   socket's inode: an engine that unlinked and rebound would pass an
@@ -28,13 +29,18 @@
 //!   fixture shows the gate refuses without showing that anything on the
 //!   serving path asks it to, so those rows stay green against a freeze
 //!   nothing enforces. This one cannot.
+//!   `a_sync_session_upgraded_before_the_freeze_denies_quiescence` covers what
+//!   that gate cannot see: a session opened before the freeze, whose frames no
+//!   middleware runs over.
 //! - **wake ledger** — `exported_wake_times_ride_the_wire_as_unix_seconds`
 //!   pins the serde shape against the contract types (a millisecond stamp
 //!   would sail past any "is it a number" assertion),
 //!   `ledger_rev_persists_across_a_restart` pins the durability.
 //! - **shutdown** — `a_failing_push_is_retried_exactly_once_after_200ms` and
 //!   `a_supervisor_that_never_acks_does_not_hold_the_exit_open` are the retry
-//!   discipline; `managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone`
+//!   discipline; `the_final_push_advances_the_rev_when_the_entries_moved` is
+//!   the ordering the contract delivers it under;
+//!   `managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone`
 //!   is the socket-ownership half.
 //! - **spawn order** — `ready_byte_lands_only_after_sockets_credentials_and_gates`
 //!   and `a_canary_vault_boots_managed_and_signals_ready` run the real
@@ -52,8 +58,8 @@ use oneiron_server::config::{ServeArgs, SyncServerConfig};
 use oneiron_server::managed::{
     CANARY_MARKER_KEY, CANARY_MARKER_VALUE, DEK_MAC_KEY, HYPNOS_LISTEN_FD, LEDGER_REV_KEY,
     ManagedArgs, ManagedCtl, ManagedError, ManagedShutdown, ManagedState, ServeListener,
-    WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, read_managed_credentials,
-    serve_managed, signal_ready, spawn_sigterm_shutdown,
+    WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
+    read_managed_credentials, serve_managed, signal_ready, spawn_sigterm_shutdown,
 };
 use oneiron_server::server::SyncServer;
 use oneiron_vault_contract::{
@@ -450,6 +456,40 @@ fn managed_mode_refuses_the_unmanaged_configuration_layers() {
         // guessing which of eleven flags is the problem.
         assert!(error.to_string().contains(named), "{error}");
     }
+}
+
+/// The flags managed mode does not read are refused, not dropped.
+///
+/// `serve_config` forces `auth_secret: None` and takes its defaults, so every
+/// serve flag outside its four inputs used to be accepted by clap and thrown
+/// away — an operator who typed `--auth-secret` got neither the setting nor an
+/// error. Silence there is the worst of both: the engine is not configured the
+/// way the command line says it is, and nothing says so.
+#[test]
+fn a_flag_managed_mode_never_reads_is_refused_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut argv = managed_argv(dir.path());
+    argv.push("--auth-secret".to_owned());
+    argv.push("hunter2".to_owned());
+
+    let error = ManagedArgs::from_serve_args(&parse_serve(&argv)).unwrap_err();
+    assert!(
+        matches!(&error, ManagedError::ConflictingFlag { flag, .. } if *flag == "auth-secret"),
+        "--auth-secret must conflict in managed mode, got: {error}"
+    );
+    assert!(error.to_string().contains("auth-secret"), "{error}");
+    // A refusal that quotes the value would put the secret in whatever read
+    // the exit status.
+    assert!(!error.to_string().contains("hunter2"), "{error}");
+
+    // The allowlisted flags still ride argv: refusing all of them would be a
+    // different bug wearing the same green.
+    let mut allowed = managed_argv(dir.path());
+    allowed.push("--dimensions".to_owned());
+    allowed.push("512".to_owned());
+    let args = parse_serve(&allowed);
+    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
+    assert_eq!(managed.serve_config(&args).dimensions, 512);
 }
 
 #[test]
@@ -1034,6 +1074,63 @@ async fn a_supervisor_that_never_acks_does_not_hold_the_exit_open() {
     );
 }
 
+/// The shutdown snapshot has to be rev-ordered, or it is not delivered.
+///
+/// `LedgerUpdate` is a rev-ordered full replacement, so a supervisor that
+/// ignores `rev <= last_acked` — the ordering the contract asks it to keep —
+/// drops a final push that reuses the revision it already acked. Boot seals
+/// the entries at rev 1; a job that becomes ready with no mid-run push behind
+/// it is exactly the case where the last thing this process says is also the
+/// only thing that carries the new state.
+#[tokio::test]
+async fn the_final_push_advances_the_rev_when_the_entries_moved() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(&dir.path().join("data"));
+    let server = sync_server(Arc::clone(&vault));
+    let creds = credentials(0x11, 0x22);
+    let sup = dir.path().join("sup.sock");
+
+    let listener = tokio::net::UnixListener::bind(&sup).unwrap();
+    let supervisor = spawn_mock_supervisor(listener, 0, 2);
+
+    let ledger = wake_ledger(&vault, &sup, &creds);
+    let state = Arc::new(ManagedState::new(
+        VAULT_NAME.to_owned(),
+        Arc::clone(&server),
+        ledger,
+    ));
+
+    // Boot's push: the supervisor acks it and now holds rev 1.
+    assert!(
+        state.ledger().push_if_changed(&server).await.unwrap(),
+        "the opening export is a change"
+    );
+
+    // Work arrives and nothing pushes it — the run is over.
+    oneiron::sync::SyncQueue::new(Arc::clone(&vault))
+        .unwrap()
+        .push("2026-01", b"synthetic-update")
+        .unwrap();
+
+    final_ledger_push(&state, &server).await;
+
+    let lines = supervisor.await.unwrap();
+    assert_eq!(lines.len(), 2, "the final push must reach the supervisor");
+    let boot: LedgerUpdate = serde_json::from_str(&lines[0]).unwrap();
+    let shutdown: LedgerUpdate = serde_json::from_str(&lines[1]).unwrap();
+    assert_ne!(
+        shutdown.entries, boot.entries,
+        "this row is only meaningful while the shutdown entries differ"
+    );
+    assert!(
+        shutdown.rev > boot.rev,
+        "the shutdown snapshot rode rev {} against an acked rev {}, so a \
+         rev-ordered supervisor drops it",
+        shutdown.rev,
+        boot.rev
+    );
+}
+
 #[tokio::test]
 async fn managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -1276,6 +1373,62 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     assert!(accepted.starts_with("HTTP/1.1 200 OK"), "{accepted}");
     let read_back = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
     assert!(read_back.starts_with("HTTP/1.1 200 OK"), "{read_back}");
+
+    boot.abort();
+}
+
+/// A session upgraded before the freeze is a writer the freeze cannot reach.
+///
+/// The per-request gate refuses new POSTs and new handshakes, and neither
+/// touches a sync session that was already open: its frames arrive on a socket
+/// no middleware runs over, and `prepare_reap` is not shutdown — it closes
+/// nothing. So `quiescent: true` with one of those still live is the same
+/// broken promise the freeze exists to prevent, just one connection earlier.
+/// This row opens the session first, then asks.
+#[tokio::test]
+async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = sockets_dir(dir.path());
+    {
+        let vault = open_vault(&run.join("data"));
+        vault
+            .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
+            .unwrap();
+    }
+
+    let (args, ready_path) = managed_boot_args(&run);
+    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
+    let boot = tokio::spawn(async move { serve_managed(&args, managed).await });
+    wait_for_ready(&ready_path).await;
+
+    let http = run.join("http.sock");
+    let ctl = run.join("ctl.sock");
+
+    // Unfrozen, the handshake is accepted: the session exists before there is
+    // any freeze to refuse it. A refusal here would make the assertion below
+    // pass for the wrong reason.
+    let upgrade = http_over_unix(&http, WS_UPGRADE_REQUEST).await;
+    assert!(
+        upgrade.starts_with("HTTP/1.1 101"),
+        "the pre-freeze handshake must be admitted: {upgrade}"
+    );
+
+    match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
+        CtlResponse::PrepareReap {
+            quiescent,
+            ledger_rev,
+            ..
+        } => {
+            assert!(
+                !quiescent,
+                "a sync session upgraded before the freeze can still commit, so this is not quiescent"
+            );
+            // The freeze still happened and the ledger still exported: this is
+            // a narrower claim, not a failed verb.
+            assert!(ledger_rev >= 1, "the freeze still exports a revision");
+        }
+        other => panic!("expected a prepare_reap reply, got {other:?}"),
+    }
 
     boot.abort();
 }
