@@ -162,6 +162,185 @@ fn mcp_discovery_advertisement_matches_committed_pack() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ONE-1705 — the choose-your-own-lane onramp.
+//
+// The lanes are packaging, not semantics: one API, one credential, one error
+// envelope, four carriers. These rows pin the routing surface an agent reads
+// FIRST, because a lane heading that drifted, doubled, or lost its link would
+// route an agent into a carrier it cannot run.
+// ─────────────────────────────────────────────────────────────────────────
+
+const LANE_HEADINGS: [&str; 4] = [
+    "## Lane: code-mode-repl",
+    "## Lane: thin-client",
+    "## Lane: curl-cli",
+    "## Lane: tool-first-mcp",
+];
+
+/// The onramp's own budget. It is the first screen: an agent must be able to
+/// choose a carrier without ingesting the endpoint catalog first, so this
+/// section stays small enough to read whole.
+const ONRAMP_BYTE_BUDGET: usize = 6_144;
+
+#[test]
+fn onramp_offers_exactly_four_lanes_each_named_once() {
+    assert_eq!(
+        PACK.matches("\n## Lane: ").count(),
+        LANE_HEADINGS.len(),
+        "the pack must carry exactly the four pinned lane headings"
+    );
+
+    for heading in LANE_HEADINGS {
+        assert_eq!(
+            PACK.matches(heading).count(),
+            1,
+            "lane heading {heading} must appear exactly once"
+        );
+    }
+}
+
+#[test]
+fn onramp_decision_tree_links_every_lane() {
+    let tree = section_between(PACK, "## Agent Onramp", LANE_HEADINGS[0]);
+
+    for anchor in [
+        "#lane-code-mode-repl",
+        "#lane-thin-client",
+        "#lane-curl-cli",
+        "#lane-tool-first-mcp",
+    ] {
+        assert!(
+            tree.contains(anchor),
+            "the decision tree must link {anchor} so an agent can jump to its lane"
+        );
+    }
+}
+
+/// The first screen comes before the catalog and stays bounded. Progressive
+/// disclosure is the contract: the detailed route reference stays in the pack,
+/// below the choice it informs.
+#[test]
+fn onramp_precedes_the_endpoint_catalog_and_stays_bounded() {
+    let onramp = PACK
+        .find("## Agent Onramp")
+        .expect("missing onramp section");
+    let auth = PACK
+        .find("## Authentication")
+        .expect("missing shared authentication section");
+    let tier1 = PACK.find("## Tier-1").expect("missing Tier-1 heading");
+
+    assert!(
+        onramp < auth,
+        "the onramp must open before shared reference"
+    );
+    assert!(
+        auth < tier1,
+        "shared reference precedes the endpoint catalog"
+    );
+    for heading in LANE_HEADINGS {
+        let lane = PACK.find(heading).expect("missing lane heading");
+        assert!(lane < tier1, "{heading} must precede the endpoint catalog");
+    }
+
+    assert!(
+        auth - onramp <= ONRAMP_BYTE_BUDGET,
+        "the onramp is {} bytes, over its {ONRAMP_BYTE_BUDGET}-byte first-screen budget",
+        auth - onramp
+    );
+}
+
+/// Lane 1 is the host dispatcher, not an HTTP import. Code mode shares the
+/// wire with the other lanes; it does not share the HTTP client artifact.
+#[test]
+fn code_mode_lane_routes_to_the_host_dispatcher() {
+    let lane = section_between(PACK, LANE_HEADINGS[0], LANE_HEADINGS[1]);
+
+    assert!(
+        lane.contains("setup_oneiron"),
+        "the code-mode lane must open with the setup call"
+    );
+    assert!(
+        lane.contains("host dispatcher") && lane.contains("self.oneiron"),
+        "the code-mode lane must name the host dispatcher surface"
+    );
+    assert!(
+        lane.contains("execute_code"),
+        "the code-mode lane must say what drives the verb grammar"
+    );
+    assert!(
+        !lane.contains("@oneiron/client"),
+        "code mode must not be told to install the HTTP client"
+    );
+}
+
+/// Lane 2 installs one package; lane 3 is bash-only. Each carries its own
+/// first call and neither restates the catalog.
+#[test]
+fn thin_client_and_curl_lanes_each_carry_one_first_call() {
+    let thin_client = section_between(PACK, LANE_HEADINGS[1], LANE_HEADINGS[2]);
+    assert!(
+        thin_client.contains("npm install @oneiron/client"),
+        "the thin-client lane must show the one install"
+    );
+    assert!(
+        thin_client.contains("HttpBaseClient") && thin_client.contains("Response"),
+        "the thin-client lane must show the raw-response client"
+    );
+
+    let curl_cli = section_between(PACK, LANE_HEADINGS[2], LANE_HEADINGS[3]);
+    assert!(
+        curl_cli.contains("oneiron api discover") && curl_cli.contains("curl"),
+        "the curl lane must show both the binary and the plain curl form"
+    );
+    assert!(
+        curl_cli.contains("ONEIRON_SECRET"),
+        "the curl lane must read the credential from the environment"
+    );
+
+    for lane in [thin_client, curl_cli] {
+        assert!(
+            !lane.contains("- when-to-use:"),
+            "a lane must link the shared catalog, never repeat an endpoint block"
+        );
+    }
+}
+
+/// Lane 4 is a HOST registration choice. The skill must tell the agent to ask
+/// its operator for the distinct tool-first endpoint, never to select or
+/// switch a connector mode by itself.
+#[test]
+fn tool_first_lane_is_an_operator_registration_not_a_self_switch() {
+    let lane = section_between(PACK, LANE_HEADINGS[3], "## Authentication");
+
+    assert!(
+        lane.contains("operator") || lane.contains("OPERATOR"),
+        "lane 4 must address the operator"
+    );
+    assert!(
+        lane.contains("register or provide"),
+        "lane 4 must ask the operator to register or provide the endpoint"
+    );
+    assert!(
+        lane.contains("/mcp/tool-first"),
+        "lane 4 must name the distinct tool-first endpoint"
+    );
+    assert!(
+        lane.contains("never self-selects") && lane.contains("never switches"),
+        "lane 4 must forbid the agent selecting or switching its own connector mode"
+    );
+}
+
+/// `openapi.rs` and `discover.rs` publish this identifier; the onramp edit
+/// must not have moved it.
+#[test]
+fn frontmatter_name_stays_the_published_identifier() {
+    assert!(
+        PACK.starts_with("---\nname: oneiron-http-memory-api\n"),
+        "the pack must keep its published skill identifier"
+    );
+}
+
 fn frontmatter(markdown: &str) -> &str {
     let rest = markdown
         .strip_prefix("---\n")

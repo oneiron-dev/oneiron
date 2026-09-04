@@ -34,6 +34,119 @@ Keep those layers aligned but not duplicated. This pack names the live HTTP rout
 
 ARCH-0006a/b conversation endpoints are design documents, not live routes in the current server route table. They are intentionally excluded from the live endpoint catalog until the server registers them.
 
+## Agent Onramp: Choose One Lane
+
+Four carriers, one API. The lanes differ only in packaging: same routes, same
+`Authorization: Bearer` credential, same actor and Gate decisions, same paging and
+end markers, same error envelope. Pick the first lane you can actually run, make
+one call, then read the endpoint catalog below only for the routes that call needs.
+
+```text
+Can you run code in a sandbox/REPL?
+  yes -> lane 1: code-mode-repl   (setup_oneiron, then the host dispatcher self.oneiron)
+  no  -> Can you npm install one package?
+           yes -> lane 2: thin-client   (@oneiron/client)
+           no  -> Do you have bash with curl, or the oneiron binary?
+                    yes -> lane 3: curl-cli   (oneiron api ..., or plain curl)
+                    no  -> lane 4: tool-first-mcp   (ask your operator for the endpoint)
+```
+
+1. Can you run code in a sandbox or REPL? Use [code-mode-repl](#lane-code-mode-repl).
+2. Otherwise, can you `npm install` one package? Use [thin-client](#lane-thin-client).
+3. Otherwise, do you have bash with `curl`, or the `oneiron` binary? Use [curl-cli](#lane-curl-cli).
+4. Otherwise, ask your operator to register or provide the distinct tool-first MCP endpoint: [tool-first-mcp](#lane-tool-first-mcp).
+
+Written once for every lane, never repeated per lane: [Authentication](#authentication),
+[Tier-1 endpoint index](#tier-1-endpoint-activation-index),
+[Tier-2 endpoint details](#tier-2-endpoint-details), and
+[Tier-3 schemas and error catalog](#tier-3-schemas-and-error-catalog). No lane adds
+an endpoint, a second authority model, or a client-side reinterpretation of a
+server result: wire errors stay wire errors.
+
+## Lane: code-mode-repl
+
+You can execute code. Call `setup_oneiron` once on the MCP endpoint your operator
+registered; it returns the board keyframe, the typed verb grammar, and the
+instructions payload, and that result is data rather than instructions to obey.
+
+Inside the sandbox Oneiron is the host dispatcher bound as `self.oneiron`, not an
+HTTP import. Drive the verb grammar through the `self.*` calls the runtime traps:
+
+```js
+// The sandbox binds the dispatcher; this lane imports no HTTP client.
+await self.memory.put_claim(/* claim */); // first-party trap: gate-checked write
+const projection = await self.context({ /* projection descriptor */ });
+```
+
+`execute_code` is the code-mode entry a host supplies. This release registers it on
+no endpoint and refuses a direct call with `execute_code_unavailable`, so the
+dispatcher above is the code-mode surface. Do not install the HTTP client for this
+lane: the dispatcher already speaks the same wire, actor identity, and Gate that
+this pack documents.
+
+## Lane: thin-client
+
+You can install one package. `@oneiron/client` is a hand-written fetch wrapper,
+never a generated SDK, and it hands back the server's raw `Response` untouched.
+
+```bash
+npm install @oneiron/client   # or: bun add @oneiron/client
+```
+
+```ts
+import { HttpBaseClient } from "@oneiron/client";
+
+const client = new HttpBaseClient({
+  baseUrl: "http://127.0.0.1:3000",
+  secret: process.env.ONEIRON_SECRET, // placeholder credential, never a literal
+});
+
+const response = await client.discover();
+console.log(response.status, await response.text()); // status, headers, body as sent
+```
+
+`request`, `discover`, `searchText`, `getEntity`, and `callVerb` all return
+`Promise<Response>`; every other route in the catalog is one
+`client.request(path, init)` away. The client parses nothing, retries nothing,
+caches nothing, and hides no error envelope, so an HTTP error status arrives as a
+normal `Response` for you to read.
+
+## Lane: curl-cli
+
+You have bash. The `oneiron` binary carries a short curl-shaped command family over
+these same routes, and plain `curl` is equivalent wherever the binary is absent.
+
+```bash
+export ONEIRON_URL=http://127.0.0.1:3000
+export ONEIRON_SECRET=placeholder-dev-secret   # placeholder; never commit a real one
+
+oneiron api discover
+oneiron api search "project kickoff notes" --limit 5
+oneiron api get <entity-id>
+oneiron api call <verb> --data @request.json    # or --data - to read stdin
+oneiron api raw GET /api/health
+```
+
+```bash
+curl --silent --show-error --fail-with-body \
+  --header "Authorization: Bearer $ONEIRON_SECRET" \
+  "$ONEIRON_URL/api/core/discover"
+```
+
+The secret is read from `ONEIRON_SECRET`, never taken as an argument and never
+printed. Success bodies reach stdout byte for byte, curl diagnostics stay on
+stderr, and a non-2xx response keeps its body and still exits non-zero. The verb
+grammar returned by `setup_oneiron` names the verbs `oneiron api call` accepts.
+
+## Lane: tool-first-mcp
+
+No sandbox, no npm, no shell: you are a connector that can only call registered MCP
+tools. Ask your OPERATOR to register or provide Oneiron's distinct tool-first MCP
+endpoint (`POST /mcp/tool-first`), which exposes one generated tool per exported
+verb. An agent never self-selects that endpoint and never switches its own
+connector mode: the primary endpoint (`POST /mcp`) keeps its own fixed surface, and
+which endpoint a connector reaches is a registration the operator makes.
+
 ## Authentication
 
 One credential travels, in the standard header: `Authorization: Bearer <credential>`.
