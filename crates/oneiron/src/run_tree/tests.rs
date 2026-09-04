@@ -12,8 +12,9 @@ use crate::dreamer_runner::{
 use crate::{Error, Result, Vault, VaultConfig};
 
 use super::{
-    GATE_CONSENT_BUNDLE_FALLBACK_LABEL, RunTreeAdapter, RunTreeEventKind, RunTreeRepair,
-    RunTreeStatus, render_run_tree, run_tree_events,
+    GATE_CONSENT_BUNDLE_FALLBACK_LABEL, RunTreeAdapter, RunTreeEventKind, RunTreeNodeMarker,
+    RunTreeNodeMarkerKind, RunTreeRepair, RunTreeStatus, mark_run_tree_failure, render_run_tree,
+    run_tree_events,
 };
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -883,6 +884,121 @@ fn consent_bundle_label_does_not_mutate_run_state() -> Result<()> {
     assert_eq!(
         RunTreeAdapter::new(&vault).read_run("run-bundle-readonly")?,
         tree_before
+    );
+    Ok(())
+}
+
+// ── ONE-1887 failure-diagram overlay ────────────────────────────────────────
+
+/// A rendered run with one completed root and one failed child.
+fn failed_child_tree(vault: &Vault) -> Result<(crate::AttemptId, super::RunTree)> {
+    let runner = DreamerRunnerStore::new(vault);
+    let root = enqueue(&runner, "orchestrator", None, 10, "run-mark")?;
+    let child = enqueue(
+        &runner,
+        "leaf-worker",
+        Some(root.attempt.id),
+        20,
+        "run-mark",
+    )?;
+    complete_next(vault, root.attempt.id, 30)?;
+    fail_next(vault, child.attempt.id, 40, "child failed")?;
+    let tree = RunTreeAdapter::new(vault).read_run("run-mark")?;
+    Ok((child.attempt.id, tree))
+}
+
+#[test]
+fn failure_diagram_marks_exact_failed_node() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (failing, tree) = failed_child_tree(&vault)?;
+
+    let diagram = mark_run_tree_failure(tree.clone(), failing)?;
+
+    assert_eq!(
+        diagram.marker,
+        RunTreeNodeMarker {
+            attempt_id: hex(failing),
+            kind: RunTreeNodeMarkerKind::Failing,
+        },
+        "the marker uses the same lowercase-hex spelling the node carries"
+    );
+    // Pure overlay: the tree rides through byte-identical.
+    assert_eq!(diagram.tree, tree);
+    Ok(())
+}
+
+#[test]
+fn failure_diagram_rejects_missing_attempt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_failing, tree) = failed_child_tree(&vault)?;
+
+    let error = mark_run_tree_failure(tree, fixed_attempt_id(0x7e))
+        .expect_err("a marker for a node the tree does not render is refused");
+    assert_eq!(error.kind(), crate::ErrorKind::InvalidConfig);
+    Ok(())
+}
+
+#[test]
+fn failure_diagram_preserves_scheduled_child_projection() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let queued = enqueue(&runner, "retrying-subagent", None, 10, "run-mark-retry")?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "retry-worker".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    let RetryOutcome::Retried(retried) = queue.retry(RetryAttempt {
+        id: claimed.id,
+        lease_owner: "retry-worker".to_owned(),
+        attempt_count: claimed.attempt_count,
+        backoff_until: 40,
+        last_error: Some("transient".to_owned()),
+        now: 30,
+    })?;
+
+    let tree = RunTreeAdapter::new(&vault).read_run("run-mark-retry")?;
+    let diagram = mark_run_tree_failure(tree, queued.attempt.id)?;
+
+    let root = &diagram.tree.roots[0];
+    assert_eq!(root.status, RunTreeStatus::Failed);
+    assert_eq!(root.children.len(), 1);
+    let child = &root.children[0];
+    assert_eq!(child.attempt_id, hex(retried.id));
+    // ONE-1795 owns the Scheduled → Paused arm. ONE-1887 only asserts it and
+    // adds no lifecycle status or readiness field of its own.
+    assert_eq!(child.status, RunTreeStatus::Paused);
+    assert_eq!(event_kinds(child), vec![RunTreeEventKind::Created]);
+    Ok(())
+}
+
+#[test]
+fn failure_marker_does_not_change_status_or_events() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (failing, tree) = failed_child_tree(&vault)?;
+    let before = serde_json::to_string(&tree).expect("tree serializes");
+
+    let diagram = mark_run_tree_failure(tree.clone(), failing)?;
+
+    assert_eq!(
+        serde_json::to_string(&diagram.tree).expect("tree serializes"),
+        before,
+        "no status, event, timestamp, or failure field may move"
+    );
+    for (marked, original) in diagram.tree.roots.iter().zip(tree.roots.iter()) {
+        assert_eq!(marked.status, original.status);
+        assert_eq!(marked.events, original.events);
+        assert_eq!(marked.timestamps, original.timestamps);
+        assert_eq!(marked.failure, original.failure);
+        assert_eq!(marked.children, original.children);
+    }
+    // The marker is the ONLY thing added: the status vocabulary is untouched.
+    assert_eq!(
+        serde_json::to_string(&RunTreeStatus::Paused).expect("status serializes"),
+        "\"paused\""
     );
     Ok(())
 }

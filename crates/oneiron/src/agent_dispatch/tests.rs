@@ -2488,3 +2488,269 @@ fn spawn_context_can_only_narrow_and_rides_the_payload_unresolved() -> Result<()
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
     Ok(())
 }
+
+// ── ONE-1887 healer slot ────────────────────────────────────────────────────
+//
+// Three of these six are CONTINGENT on the landed reference-context seam
+// (ONE-1887 §5). This base exposes none — `context_spec` is a projection
+// DESCRIPTOR and `context_from` admits only settled sibling TASK results — so
+// the `AgentDef` arm refuses instead of smuggling case material through
+// `dedupe_key`, `run_id`, a briefing string, or a parallel payload. Each
+// contingent test therefore pins the refusal AND the absence of any leak.
+
+/// This module's healer-slot source, read for the force-cancel proof.
+const AGENT_DISPATCH_HEALER_SOURCE: &str = include_str!("../agent_dispatch.rs");
+
+fn healer_case_fixture(failing: AttemptId, agent: EntityId) -> HealerCase {
+    HealerCase {
+        case_ref: crate::failure_ladder::failure_case_ref(failing),
+        scope: crate::failure_ladder::FailureScope {
+            agent_ref: agent.to_hex(),
+            skill_ref: None,
+        },
+        failure_class: crate::failure_ladder::FailureClass::Permanent,
+        failing_attempt_id: failing,
+        task_ref: None,
+        evidence_ref: test_id(0x53).to_hex(),
+        blocked_reports: Vec::new(),
+        pre_fail_checkpoint_ref: test_id(0x51).to_hex(),
+        qa_thread_ref: test_id(0x52).to_hex(),
+        consecutive_transients: 0,
+    }
+}
+
+/// A dispatched failing attempt plus the case minted from it.
+fn failing_case(vault: &Vault) -> Result<(EntityId, AttemptId, HealerCase)> {
+    let agent = put_row(vault, 0x37, "oneiron.agent.failing", AgentCeiling::Proposed)?;
+    let failing = dispatched(AgentDispatcher::new(vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-heal".to_owned()),
+        now: 10,
+    })?)
+    .attempt
+    .id;
+    Ok((agent, failing, healer_case_fixture(failing, agent)))
+}
+
+fn heal(slot: HealerSlot, case: HealerCase, now: u64) -> DispatchHealer {
+    DispatchHealer {
+        slot,
+        case,
+        run_id: Some("run-heal".to_owned()),
+        now,
+    }
+}
+
+#[test]
+fn reserved_healer_slot_does_not_enqueue() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, _failing, case) = failing_case(&vault)?;
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+
+    let outcome = AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
+        HealerSlot::Reserved,
+        case.clone(),
+        20,
+    ))?;
+
+    assert_eq!(outcome, HealerSlotOutcome::Reserved { case });
+    assert_eq!(
+        queue.list()?,
+        before,
+        "a reserved slot mutates no queue state at all"
+    );
+    Ok(())
+}
+
+#[test]
+fn configured_healer_is_child_of_failing_attempt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+
+    // CONTINGENT: with the seam absent the arm refuses, so the only honest
+    // assertion is that NO row was minted under the failing attempt at all.
+    let error = AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case,
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+
+    assert_eq!(queue.list()?, before);
+    for row in queue.list()? {
+        let parent = decode_dreamer_attempt_payload(&row.payload)
+            .ok()
+            .and_then(|payload| payload.parent_attempt);
+        assert_ne!(parent, Some(failing), "no healer child was enqueued");
+    }
+    Ok(())
+}
+
+#[test]
+fn configured_healer_dedupe_is_case_scoped() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+
+    // The dedupe a configured spawn would use is the deterministic case key,
+    // re-derivable from the failing attempt and distinct from the card key.
+    assert_eq!(
+        case.case_ref,
+        crate::failure_ladder::failure_case_ref(failing)
+    );
+    assert_ne!(
+        case.case_ref,
+        crate::failure_ladder::failure_card_ref(failing)
+    );
+
+    AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case.clone(),
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+
+    // CONTINGENT: until the seam lands, the case key must appear NOWHERE — not
+    // as a dedupe key, not as a run id, not inside any payload.
+    for row in AttemptQueue::new(&vault).list()? {
+        assert_ne!(row.dedupe_key.as_deref(), Some(case.case_ref.as_str()));
+        assert_ne!(row.run_id.as_deref(), Some(case.case_ref.as_str()));
+        assert!(!String::from_utf8_lossy(&row.payload).contains(case.case_ref.as_str()));
+    }
+    Ok(())
+}
+
+#[test]
+fn healer_context_is_reference_only() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, _failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+
+    // Every carried value is a lowercase-hex ref or a typed scalar. There is no
+    // inline prompt, transcript, repair patch, or operator note to smuggle.
+    for value in [
+        &case.case_ref,
+        &case.evidence_ref,
+        &case.pre_fail_checkpoint_ref,
+        &case.qa_thread_ref,
+        &case.scope.agent_ref,
+    ] {
+        assert_eq!(value.len(), 32, "{value} is not a 16-byte hex ref");
+        assert!(
+            value
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "{value} is not lowercase hex"
+        );
+    }
+
+    // CONTINGENT: and none of it reaches a queue row, because the arm refuses.
+    let payloads_before: Vec<Vec<u8>> = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .map(|row| row.payload)
+        .collect();
+    AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case,
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+    let payloads_after: Vec<Vec<u8>> = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .map(|row| row.payload)
+        .collect();
+    assert_eq!(payloads_before, payloads_after);
+    Ok(())
+}
+
+#[test]
+fn healer_spawn_cannot_force_cancel_attempt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, failing, case) = failing_case(&vault)?;
+    let queue = AttemptQueue::new(&vault);
+    let crate::attempt_queue::ClaimOutcome::Claimed(claimed) =
+        queue.claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "healer-fixture-worker".to_owned(),
+            now: 15,
+        })?
+    else {
+        panic!("expected a claim");
+    };
+    assert_eq!(claimed.id, failing);
+
+    AgentDispatcher::new(&vault).dispatch_healer_slot(heal(HealerSlot::Reserved, case, 20))?;
+
+    // The still-running failing attempt keeps its lease and its whole
+    // graceful-cancel lifecycle: a healer asking it to land must go through
+    // ONE-1896's public soft request API, separately.
+    let row = queue.get(failing)?.expect("failing row");
+    assert_eq!(row.state, AttemptState::Leased);
+    assert_eq!(row.cancellation(), None);
+    assert!(row.cancel_receipts().is_empty());
+    assert_eq!(row.cancel_pressure().requests, 0);
+    for banned in ["force_cancel", "ForceAttemptCancel", "ForceCancel"] {
+        assert!(
+            !AGENT_DISPATCH_HEALER_SOURCE.contains(banned),
+            "no healer path may reach {banned}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn configured_healer_above_propose_only_is_rejected() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, _failing, case) = failing_case(&vault)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    // The live stored ceiling binds, never the frozen payload snapshot.
+    let auto_healer = put_row(
+        &vault,
+        0x38,
+        "oneiron.agent.healer.auto",
+        AgentCeiling::Auto,
+    )?;
+    let error = dispatcher
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: auto_healer.to_hex(),
+            },
+            case.clone(),
+            20,
+        ))
+        .expect_err("an above-propose-only healer is refused");
+    assert_eq!(error.kind(), ErrorKind::AgentNotDispatchable);
+
+    // A propose-only healer clears the ceiling gate and stops only at the
+    // deferred reference-context seam.
+    let propose_healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let error = dispatcher
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: propose_healer.to_hex(),
+            },
+            case,
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+    Ok(())
+}
