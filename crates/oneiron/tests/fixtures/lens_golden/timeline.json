@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "case_id": "timeline-window",
+  "entities": [
+    { "id": "entity-1", "label": "first subject" }
+  ],
+  "claims": [
+    { "id": "claim-1", "subject": "entity-1", "predicate": "opened", "value": "first step" },
+    { "id": "claim-2", "subject": "entity-1", "predicate": "closed", "value": "second step" }
+  ],
+  "timeline": ["claim-1", "claim-2"]
+}
