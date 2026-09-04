@@ -23,6 +23,14 @@ use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_conf
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
+/// `oneiron api …`: the bash-native lane. It is curl-backed rather than a
+/// second HTTP stack, and its whole surface is routes this server already
+/// serves — no endpoint, no authority model, and no response interpretation is
+/// added here.
+mod api;
+
+pub use self::api::api;
+
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 const MAX_MSGPACK_JSON_DEPTH: usize = 32;
 /// Below this the auth secret is weak MAC key material; warn, do not refuse.

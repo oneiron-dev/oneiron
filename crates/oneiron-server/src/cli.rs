@@ -40,6 +40,8 @@ pub enum Command {
     /// Mint bearer tokens against the configured auth secret.
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Make short curl-shaped calls against the existing HTTP API.
+    Api(ApiArgs),
 }
 
 #[derive(Subcommand)]
@@ -78,6 +80,80 @@ pub struct TokenRevokeArgs {
 
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// `oneiron api …` is a curl-shaped façade over the routes this server already
+/// serves. It registers no endpoint, carries no second authority model, and
+/// interprets no response: the same bearer credential, the same request/error
+/// envelope, and the same body bytes the server sent.
+#[derive(Args, Clone, Debug)]
+pub struct ApiArgs {
+    /// Existing Oneiron server root.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    pub base_url: String,
+
+    /// Environment variable holding the bearer credential. The secret is never
+    /// a positional argument, never printed, and never reaches curl's argv.
+    /// When the variable is unset the request carries no `Authorization`
+    /// header at all, which is what a public route and an
+    /// `allow_unauthenticated` server answer.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    #[command(subcommand)]
+    pub command: ApiCommand,
+}
+
+/// Four short commands over existing routes plus one escape hatch. `raw` is
+/// what keeps this family from growing into a second hand-maintained route
+/// catalog: anything not shaped below is still one `raw METHOD PATH` away.
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
+pub enum ApiCommand {
+    /// GET the vault capability discovery document.
+    Discover,
+    /// GET the BM25 text-search route.
+    Search {
+        /// Query text; percent-encoded into the query string.
+        query: String,
+
+        /// Maximum hits to return; the server's own default applies when
+        /// omitted.
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+    /// GET one entity by id.
+    Get {
+        /// Entity id; percent-encoded into the path.
+        entity_id: String,
+    },
+    /// POST one core memory verb.
+    Call {
+        /// Verb name; percent-encoded into the path.
+        verb: String,
+
+        /// Request body: `@FILE` reads a file, `-` reads stdin, anything else
+        /// is sent verbatim. No form is ever evaluated as shell text.
+        #[arg(long, value_name = "@FILE|-|JSON")]
+        data: String,
+    },
+    /// Send METHOD PATH against the same origin, unshaped.
+    Raw {
+        /// HTTP method, e.g. `GET` or `POST`.
+        method: String,
+
+        /// Absolute request path on the configured origin, e.g. `/api/health`.
+        path: String,
+
+        /// Request body: `@FILE`, `-` for stdin, or verbatim bytes.
+        #[arg(long, value_name = "@FILE|-|JSON")]
+        data: Option<String>,
+
+        /// Media type for the body. A body defaults to `application/json`;
+        /// naming a type replaces that default, which is how an unshaped wire
+        /// protocol (`application/x-git-upload-pack-request`, say) is sent.
+        #[arg(long, value_name = "MIME")]
+        content_type: Option<String>,
+    },
 }
 
 #[derive(Args, Clone, Debug)]
@@ -186,6 +262,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Mint(args)) => commands::token_mint(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
+        Command::Api(args) => commands::api(args).await,
     }
 }
 
@@ -456,6 +533,124 @@ mod tests {
         };
 
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    /// Every short `api` command parses to its own typed variant. The rows are
+    /// per command because the family's whole point is that four shaped calls
+    /// plus one escape hatch cover the ladder; a variant that silently parsed
+    /// as another would send the wrong request to a real vault.
+    #[test]
+    fn api_subcommands_parse_to_their_typed_variants() {
+        let rows: Vec<(Vec<&str>, ApiCommand)> = vec![
+            (vec!["api", "discover"], ApiCommand::Discover),
+            (
+                vec!["api", "search", "kickoff notes"],
+                ApiCommand::Search {
+                    query: "kickoff notes".to_owned(),
+                    limit: None,
+                },
+            ),
+            (
+                vec!["api", "search", "kickoff notes", "--limit", "5"],
+                ApiCommand::Search {
+                    query: "kickoff notes".to_owned(),
+                    limit: Some(5),
+                },
+            ),
+            (
+                vec!["api", "get", "entity-42"],
+                ApiCommand::Get {
+                    entity_id: "entity-42".to_owned(),
+                },
+            ),
+            (
+                vec!["api", "call", "board.append", "--data", "@request.json"],
+                ApiCommand::Call {
+                    verb: "board.append".to_owned(),
+                    data: "@request.json".to_owned(),
+                },
+            ),
+            (
+                vec!["api", "raw", "GET", "/api/health"],
+                ApiCommand::Raw {
+                    method: "GET".to_owned(),
+                    path: "/api/health".to_owned(),
+                    data: None,
+                    content_type: None,
+                },
+            ),
+            (
+                vec!["api", "raw", "POST", "/api/lease/revoke", "--data", "-"],
+                ApiCommand::Raw {
+                    method: "POST".to_owned(),
+                    path: "/api/lease/revoke".to_owned(),
+                    data: Some("-".to_owned()),
+                    content_type: None,
+                },
+            ),
+            // The media type is OPTIONAL and additive: omitting it leaves the
+            // JSON default in force, naming it carries a wire protocol the
+            // shaped commands have no room for.
+            (
+                vec![
+                    "api",
+                    "raw",
+                    "POST",
+                    "/git/info/refs",
+                    "--data",
+                    "-",
+                    "--content-type",
+                    "application/x-git-upload-pack-request",
+                ],
+                ApiCommand::Raw {
+                    method: "POST".to_owned(),
+                    path: "/git/info/refs".to_owned(),
+                    data: Some("-".to_owned()),
+                    content_type: Some("application/x-git-upload-pack-request".to_owned()),
+                },
+            ),
+        ];
+
+        for (argv, expected) in rows {
+            let cli = Cli::try_parse_from(std::iter::once("oneiron").chain(argv.iter().copied()))
+                .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
+
+            match cli.into_command() {
+                Command::Api(args) => assert_eq!(args.command, expected, "{argv:?}"),
+                _ => panic!("expected api command for {argv:?}"),
+            }
+        }
+    }
+
+    /// The base URL defaults to a localhost server and the credential is named
+    /// by ENVIRONMENT VARIABLE, never taken as a value on the command line.
+    #[test]
+    fn api_defaults_to_localhost_and_an_env_named_secret() {
+        let cli = Cli::try_parse_from(["oneiron", "api", "discover"]).unwrap();
+
+        match cli.into_command() {
+            Command::Api(args) => {
+                assert_eq!(args.base_url, "http://127.0.0.1:3000");
+                assert_eq!(args.secret_env, "ONEIRON_SECRET");
+            }
+            _ => panic!("expected api command"),
+        }
+    }
+
+    /// `api` is a family, not a call: bare `oneiron api` must not fall through
+    /// to the default `serve` arm and start a daemon.
+    #[test]
+    fn api_without_a_subcommand_is_a_parse_error() {
+        let err = match Cli::try_parse_from(["oneiron", "api"]) {
+            Ok(_) => panic!("expected `api` to require a subcommand"),
+            Err(err) => err,
+        };
+
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::MissingSubcommand,
+            "bare `api` must not resolve to another command"
+        );
     }
 
     /// Mirrors the server-side grammar rule: an owner-grade token is never
