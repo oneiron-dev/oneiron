@@ -6,16 +6,28 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 
 use super::record::{
-    CalendarPeriod, CompiledConnectorPolicy, ConnectorCharterBlock, ConnectorKeyRecord,
-    ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
-    EffectorBudgetReservePolicy, EffectorBudgetWindow, PendingConnectorCharter, invalid_body,
+    CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
+    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
+    EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
+    EffectorBudgetWindow, PendingConnectorCharter, invalid_body,
 };
 
 /// Current ConnectorKeyRecord body schema version.
-pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 2;
+///
+/// v3 (ONE-1886) appends `secret_ref` / `key_generation` / `catalog` as
+/// OPTIONAL keys. The append is purely additive: positions 0-10 below never
+/// move, decode still accepts every prior version, and a stored v1/v2 body
+/// reads back as `secret_ref = None`, `key_generation = 0`, `catalog = None`
+/// — re-encoding to v3 only on the row's next natural write, never as a bulk
+/// migration.
+pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
 
 /// Pinned on-disk MessagePack key set for ConnectorKeyRecord bodies.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
+///
+/// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
+/// index must never move, or every stored body silently re-reads as a
+/// different field.
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 14] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -27,6 +39,9 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 11] = [
     "charter",
     "pending_charter",
     "suggested_budgets",
+    "secret_ref",
+    "key_generation",
+    "catalog",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -40,7 +55,24 @@ const KEY_SUSPENDED_REASON: &str = CONNECTOR_KEY_BODY_KEYS[7];
 const KEY_CHARTER: &str = CONNECTOR_KEY_BODY_KEYS[8];
 const KEY_PENDING_CHARTER: &str = CONNECTOR_KEY_BODY_KEYS[9];
 const KEY_SUGGESTED_BUDGETS: &str = CONNECTOR_KEY_BODY_KEYS[10];
-const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 1] = [KEY_SUGGESTED_BUDGETS];
+const KEY_SECRET_REF: &str = CONNECTOR_KEY_BODY_KEYS[11];
+const KEY_KEY_GENERATION: &str = CONNECTOR_KEY_BODY_KEYS[12];
+const KEY_CATALOG: &str = CONNECTOR_KEY_BODY_KEYS[13];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 4] = [
+    KEY_SUGGESTED_BUDGETS,
+    KEY_SECRET_REF,
+    KEY_KEY_GENERATION,
+    KEY_CATALOG,
+];
+
+const CATALOG_ENTRY_KEYS: [&str; 6] = [
+    "name",
+    "connector",
+    "summary",
+    "verbs",
+    "call_class",
+    "registered_at",
+];
 
 const BUDGET_KEYS: [&str; 7] = [
     "dimension",
@@ -135,6 +167,21 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
                     .map(encode_budget_row)
                     .collect(),
             ),
+        ),
+        (
+            Value::from(KEY_SECRET_REF),
+            option_string_value(record.secret_ref.as_deref()),
+        ),
+        (
+            Value::from(KEY_KEY_GENERATION),
+            Value::from(u64::from(record.key_generation)),
+        ),
+        (
+            Value::from(KEY_CATALOG),
+            record
+                .catalog
+                .as_ref()
+                .map_or(Value::Nil, encode_catalog_entry),
         ),
     ]);
 
@@ -260,6 +307,41 @@ fn encode_charter_block(charter: &ConnectorCharterBlock) -> Value {
     ])
 }
 
+fn encode_catalog_entry(entry: &ConnectorCatalogEntry) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(CATALOG_ENTRY_KEYS[0]),
+            Value::from(entry.name.clone()),
+        ),
+        (
+            Value::from(CATALOG_ENTRY_KEYS[1]),
+            Value::from(entry.connector.clone()),
+        ),
+        (
+            Value::from(CATALOG_ENTRY_KEYS[2]),
+            Value::from(entry.summary.clone()),
+        ),
+        (
+            Value::from(CATALOG_ENTRY_KEYS[3]),
+            Value::Array(
+                entry
+                    .verbs
+                    .iter()
+                    .map(|verb| Value::from(verb.clone()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(CATALOG_ENTRY_KEYS[4]),
+            Value::from(entry.call_class.as_str()),
+        ),
+        (
+            Value::from(CATALOG_ENTRY_KEYS[5]),
+            Value::from(entry.registered_at),
+        ),
+    ])
+}
+
 fn encode_pending_charter(pending: &PendingConnectorCharter) -> Value {
     Value::Map(vec![
         (
@@ -335,9 +417,52 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
         )?)?,
         suggested_budgets: optional_value(entries, KEY_SUGGESTED_BUDGETS)
             .map_or_else(|| Ok(Vec::new()), decode_budget_rows)?,
+        // The v3 (ONE-1886) trio: absent on every stored v1/v2 body, which
+        // therefore reads back unreferenced, at generation 0, and
+        // unclassified — the pre-live-transport defaults.
+        secret_ref: optional_value(entries, KEY_SECRET_REF)
+            .map_or_else(|| Ok(None), decode_optional_string)?,
+        key_generation: optional_value(entries, KEY_KEY_GENERATION)
+            .map_or_else(|| Ok(0), decode_key_generation)?,
+        catalog: optional_value(entries, KEY_CATALOG)
+            .map_or_else(|| Ok(None), decode_optional_catalog_entry)?,
     };
     record.validate()?;
     Ok(record)
+}
+
+fn decode_key_generation(value: &Value) -> Result<u32> {
+    let generation = value.as_u64().ok_or_else(malformed)?;
+    u32::try_from(generation).map_err(|_| malformed())
+}
+
+fn decode_optional_catalog_entry(value: &Value) -> Result<Option<ConnectorCatalogEntry>> {
+    if matches!(value, Value::Nil) {
+        return Ok(None);
+    }
+    let Value::Map(entries) = value else {
+        return Err(malformed());
+    };
+    validate_keys(entries, &CATALOG_ENTRY_KEYS)?;
+    let Value::Array(verbs) = required_value(entries, CATALOG_ENTRY_KEYS[3])? else {
+        return Err(malformed());
+    };
+    Ok(Some(ConnectorCatalogEntry {
+        name: decode_non_empty_string(required_value(entries, CATALOG_ENTRY_KEYS[0])?)?,
+        connector: decode_non_empty_string(required_value(entries, CATALOG_ENTRY_KEYS[1])?)?,
+        summary: decode_non_empty_string(required_value(entries, CATALOG_ENTRY_KEYS[2])?)?,
+        verbs: verbs
+            .iter()
+            .map(decode_non_empty_string)
+            .collect::<Result<Vec<_>>>()?,
+        call_class: required_value(entries, CATALOG_ENTRY_KEYS[4])?
+            .as_str()
+            .and_then(ConnectorCallClass::parse)
+            .ok_or_else(malformed)?,
+        registered_at: required_value(entries, CATALOG_ENTRY_KEYS[5])?
+            .as_u64()
+            .ok_or_else(malformed)?,
+    }))
 }
 
 fn decode_budget_rows(value: &Value) -> Result<Vec<EffectorBudget>> {
