@@ -201,6 +201,20 @@ pub(crate) enum GateReasonCode {
     /// bucket that needs authority beyond a bound actor is `system`, whose rows
     /// carry no `AuthoredBy` edge and so speak in the engine's own voice.
     DenyWitnessMessageAuthorNotAuthorized,
+    /// GATE-13: a Dreamer-authored write landed on a persona-core predicate.
+    /// The ceiling is forced to Proposed — never Auto — and the row rides
+    /// beside [`Self::PendingCriticalityFloor`] so every inbox dial surfaces
+    /// it.
+    PendingPersonaIsolation,
+    /// GATE-13: a Dreamer-authored write landed on a mirroring-prone
+    /// predicate. Same forced Proposed ceiling and same criticality marker,
+    /// with no multi-cycle evidence floor of its own.
+    PendingMirroringIsolation,
+    /// GATE-13: a persona-core Dreamer write cited evidence spanning fewer
+    /// than two distinct SESSION entities. A persona head may only move on
+    /// deliberate transformation, so one cycle is refused outright rather
+    /// than parked for review.
+    DenyPersonaSingleCycle,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -240,6 +254,9 @@ impl GateReasonCode {
             Self::DenyWitnessMessageAuthorNotAuthorized => {
                 "gate.deny.witness_message.author_not_authorized"
             }
+            Self::PendingPersonaIsolation => "gate.pending.persona_isolation",
+            Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
+            Self::DenyPersonaSingleCycle => "gate.deny.dreamer_precommit.persona_single_cycle",
         }
     }
 
@@ -278,6 +295,14 @@ impl GateReasonCode {
             | Self::DenyWitnessMessageAuthorNotAuthorized => {
                 GateMetricReasonClass::WitnessMessageCeiling
             }
+            // GATE-13 isolation rides the classes it already belongs to: the
+            // two pends carry the existing criticality marker, and the
+            // persona single-cycle refusal is a Dreamer pre-commit denial. No
+            // new metric class, so the counter width is unchanged.
+            Self::PendingPersonaIsolation | Self::PendingMirroringIsolation => {
+                GateMetricReasonClass::CriticalityFloor
+            }
+            Self::DenyPersonaSingleCycle => GateMetricReasonClass::DreamerPrecommit,
         }
     }
 }
