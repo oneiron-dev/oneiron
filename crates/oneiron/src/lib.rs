@@ -373,7 +373,9 @@ pub use crate::wave_orchestration::{
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
     blocked_by_edge_write,
 };
-pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+pub use crate::write_envelope::{
+    ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     #[cfg(test)]

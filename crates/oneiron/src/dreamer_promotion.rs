@@ -51,7 +51,7 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
 // PromotionCandidate is DEFINED by its producer (dreamer_consolidation,
 // ONE-1289 — orchestrator ruling); this module is its designed home for
@@ -170,7 +170,20 @@ fn promote_one(
     // keeps exactly the shape dreamer_run_id_from_provenance parses and
     // gains the typed lineage only when there is one, so a candidate with no
     // external chain writes byte-identical provenance to before.
-    let envelope = WriteEnvelope::new(
+    // ONE-1314: the consolidation writer KNOWS its own history — a Dreamer run
+    // generated this claim, and the computed meet says what the evidence under
+    // it was tainted by. A tainted meet therefore rides as lineage alongside
+    // the generative hop, so the auto lane sees the whole history rather than
+    // the single folded label. An untainted candidate's meet is `Generated`
+    // (the consolidation lattice only ever meets DOWN from it), so its lineage
+    // is trivial and its evidence is byte-identical to before.
+    let lineage = match source {
+        ClaimSource::ToolOutput | ClaimSource::Imported => {
+            SourceLineage::of(ClaimSource::Generated).with(source)
+        }
+        _ => SourceLineage::of(ClaimSource::Generated),
+    };
+    let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
         WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))
@@ -178,6 +191,7 @@ fn promote_one(
         // Auto for every candidate (ARCH-0067 §7). The gate may still
         // refuse; it may never turn this into an owner-review row.
         ClaimApprovalStatus::Auto,
+        lineage,
     );
 
     // Surviving evidence + the typed chain + the computed meet ride the

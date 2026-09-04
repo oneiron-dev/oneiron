@@ -399,6 +399,25 @@ impl PolicyManifestResolution {
 
     #[must_use]
     pub(crate) fn evaluate_gate(&self, input: &GateEvaluatorInput) -> GateDecision {
+        self.evaluate_gate_with_lineage(input, false)
+    }
+
+    /// The ONE-1314 envelope-bearing entry: the same evaluation, plus the
+    /// write's observed source lineage as a second auto-permit axis.
+    ///
+    /// The flag is a DERIVED fact about the write in hand
+    /// ([`crate::WriteEnvelope::effective_requires_explicit_auto_permit`]), so
+    /// it rides the call rather than the input record: an input a door has no
+    /// envelope for cannot accidentally carry a stale or forged axis, and the
+    /// recorded gate input keeps its exact prior shape. Every non-envelope
+    /// door keeps entering through [`Self::evaluate_gate`], which is this call
+    /// with the axis off.
+    #[must_use]
+    pub(crate) fn evaluate_gate_with_lineage(
+        &self,
+        input: &GateEvaluatorInput,
+        lineage_requires_auto_permit: bool,
+    ) -> GateDecision {
         let actor_class = input.actor.actor_class.trim();
         if actor_class.is_empty() {
             return GateDecision::deny(GateReasonCode::DenyMissingActorClass);
@@ -469,10 +488,11 @@ impl PolicyManifestResolution {
             pending.push(GateReasonCode::PendingPolicyManifestAuthority);
         }
 
-        if !self.source_trust_allows_auto(
+        if !self.source_trust_allows_auto_with_lineage(
             input.source,
             input.sensitivity_band,
             input.actor.actor_ref.as_deref(),
+            lineage_requires_auto_permit,
         ) {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
@@ -523,14 +543,33 @@ impl PolicyManifestResolution {
 
     /// `actor_ref` selects which source-trust rows answer this write; see
     /// [`check_source_trust`], whose row selection this mirrors exactly.
+    // The declared-only form's one production caller is the federated
+    // admission path, which exists only under `sync`.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn source_trust_allows_auto(
         &self,
         source: Option<ClaimSource>,
         sensitivity: Option<u8>,
         actor_ref: Option<&str>,
     ) -> bool {
+        self.source_trust_allows_auto_with_lineage(source, sensitivity, actor_ref, false)
+    }
+
+    /// The ONE-1314 two-axis form: the declared label OR the write's observed
+    /// lineage. Only a caller holding a [`crate::WriteEnvelope`] can answer the
+    /// second axis, so the declared-only form above stays the entry for every
+    /// door with no envelope in scope (federated admission, external effects).
+    pub(super) fn source_trust_allows_auto_with_lineage(
+        &self,
+        source: Option<ClaimSource>,
+        sensitivity: Option<u8>,
+        actor_ref: Option<&str>,
+        lineage_requires_auto_permit: bool,
+    ) -> bool {
         let Some(source) = source else {
-            return true;
+            // No declared source to judge. Fail-closed on the lineage axis:
+            // an unstated label cannot vouch for an observed history.
+            return !lineage_requires_auto_permit;
         };
 
         if self.source_trust.malformed_manifest_seen {
@@ -545,7 +584,7 @@ impl PolicyManifestResolution {
         // reads as carrying no row at all and keeps its default posture.
         let row = match self.source_trust.row(source) {
             Some(row) if row.binds_actor(actor_ref) => row,
-            _ => return !source.requires_explicit_auto_permit(),
+            _ => return !(source.requires_explicit_auto_permit() || lineage_requires_auto_permit),
         };
 
         let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
@@ -553,7 +592,8 @@ impl PolicyManifestResolution {
         };
 
         sensitivity <= max_auto_sensitivity
-            && (!source.requires_explicit_auto_permit() || (row.receipted && row.warned))
+            && (!(source.requires_explicit_auto_permit() || lineage_requires_auto_permit)
+                || (row.receipted && row.warned))
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
@@ -1088,10 +1128,15 @@ impl Vault {
 /// `actor_ref` is the hex entity ref of the actor presenting this write, or
 /// `None` for an unattributed one. Actor-bound source-trust rows answer only
 /// the actor they name, so an unattributed write never rides one.
+///
+/// ONE-1314: `lineage_requires_auto_permit` comes from the write's envelope
+/// (`effective_requires_explicit_auto_permit`) where one exists; a door with
+/// no envelope in scope passes `false` and keeps its exact prior verdict.
 pub(super) fn check_claim_source_trust(
     body: &ClaimBody,
     actor_ref: Option<&str>,
     policy: &PolicyManifestResolution,
+    lineage_requires_auto_permit: bool,
 ) -> Result<()> {
     check_source_trust(
         body.source,
@@ -1099,6 +1144,7 @@ pub(super) fn check_claim_source_trust(
         claim_sensitivity_band(body),
         actor_ref,
         &policy.source_trust,
+        lineage_requires_auto_permit,
     )
 }
 

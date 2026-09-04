@@ -2593,7 +2593,7 @@ fn gate_source_trust_unstamped_claim_hits_floor_band() -> Result<()> {
         body.scope = scope;
         // The manifest's row carries no `actor_ref`, so it is class-wide and
         // answers an unattributed write exactly as it answers an attributed one.
-        let allowed = check_claim_source_trust(&body, None, &policy).is_ok();
+        let allowed = check_claim_source_trust(&body, None, &policy, false).is_ok();
         assert_eq!(allowed, expect_auto, "{label}");
     }
     Ok(())
