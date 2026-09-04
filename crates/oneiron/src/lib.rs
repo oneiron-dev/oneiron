@@ -78,6 +78,7 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod fanout_auto;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
