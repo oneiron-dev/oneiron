@@ -18,7 +18,7 @@
 //! detector evidence substrate. This lane ships and composition-tests the
 //! policy and its helpers; it deliberately adds no evidence-less caller.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
@@ -291,7 +291,7 @@ fn retry_lineage_walk(
     current: &AttemptRecord,
     limit: NonZeroU16,
 ) -> Result<RetryOrdinal> {
-    let mut seen = BTreeSet::new();
+    let mut seen = HashSet::new();
     let mut cursor = current.clone();
     let mut ordinal = 1_u16;
     seen.insert(cursor.id);
@@ -409,6 +409,7 @@ pub struct SurfacedFailure {
 /// `surface.healer_slot = Some(slot)`; a later healer-authored diagnosis
 /// update rides the healer's own propose lane and is outside this ticket.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum FailureLadderOutcome {
     Retried {
         source_attempt_id: AttemptId,

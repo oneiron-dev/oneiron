@@ -594,7 +594,11 @@ fn missing_retry_parent_is_pathology_not_fresh_chain() -> Result<()> {
 fn retry_cycle_is_pathology_and_walk_is_bounded() -> Result<()> {
     let (_dir, vault) = open_vault();
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
-    let policy = auto_policy(agent_ref);
+    // The chain is BUILT with headroom (N=4) purely so three retries land and
+    // leave a four-row lineage; under the default N=3 the third consecutive
+    // transient terminalizes instead of retrying. The bound under test is the
+    // limit passed to each `retry_lineage_walk` call below, not this one.
+    let policy = policy_with(agent_ref, 4, FailureEscalationMode::Auto);
     let rows = transient_chain(&vault, agent_ref, &policy, 3)?;
     let queue = AttemptQueue::new(&vault);
     let current = queue.get(rows[3].id)?.expect("newest row");
@@ -854,9 +858,7 @@ fn unverifiable_blocked_report_is_dropped_with_typed_note() -> Result<()> {
         verified,
         vec![
             BlockedReportVerification::Verified(reports[0].clone()),
-            BlockedReportVerification::Dropped {
-                receipt_ref: ghost.clone()
-            },
+            BlockedReportVerification::Dropped { receipt_ref: ghost },
             BlockedReportVerification::Dropped {
                 receipt_ref: "not-hex".to_owned()
             },
