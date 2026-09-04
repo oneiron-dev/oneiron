@@ -346,6 +346,7 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
+    InvalidLfsObject,
     InvalidNoteBody,
     InvalidWitnessMessageBody,
     InvalidAnchor,
@@ -1101,6 +1102,15 @@ pub enum Error {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// A Git-LFS object did not match what the client declared about it: a
+    /// malformed object id, or a body whose SHA-256 or length disagrees with
+    /// the declared oid/size. Nothing was written.
+    ///
+    /// Corruption of an ALREADY STORED body is deliberately NOT this variant —
+    /// that is [`Error::CorruptedIndex`], because "you sent the wrong bytes"
+    /// and "this vault is holding the wrong bytes" are different facts.
+    #[error("invalid LFS object: {0}")]
+    InvalidLfsObject(&'static str),
     /// A NOTE entity body failed the pinned three-key ABI validation
     /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
     #[error("invalid NOTE body: {0}")]
@@ -2416,6 +2426,7 @@ impl Error {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
             Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
