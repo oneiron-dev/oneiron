@@ -50,6 +50,7 @@
 #![cfg_attr(test, allow(dead_code))]
 
 use std::collections::BTreeMap;
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -100,6 +101,10 @@ const ENTITY_BODY: &[u8] = b"one-331 materializer mutex bench body";
 const CALIBRATION_TOLERANCE: f64 = 0.15;
 
 /// Environment overrides (all optional; defaults are the blueprint matrix).
+///
+/// The two dimensions that feed the entity id space (`ENV_WORKERS`,
+/// `ENV_UPDATES`) are range-checked at parse time against
+/// `1..=MAX_WORKLOAD_DIMENSION`; see `resolve_workload_plan`.
 const ENV_WORKERS: &str = "ONEIRON_MATERIALIZER_MUTEX_WORKERS";
 const ENV_UPDATES: &str = "ONEIRON_MATERIALIZER_MUTEX_UPDATES";
 const ENV_WARMUP: &str = "ONEIRON_MATERIALIZER_MUTEX_WARMUP";
@@ -201,14 +206,18 @@ struct MaterializerCase {
 }
 
 impl MaterializerCase {
-    /// Blueprint defaults, with optional environment overrides so the matrix
-    /// can be shortened for a smoke run without editing this file.
-    fn new(workers: usize) -> Self {
+    /// Blueprint defaults, with the ALREADY VALIDATED environment overrides so
+    /// the matrix can be shortened for a smoke run without editing this file.
+    ///
+    /// Taking the dimensions as an argument is what makes the bound
+    /// unconditional: they are resolved once, before any fleet exists, so no
+    /// case can be built from an override this file never checked.
+    fn new(workers: usize, dimensions: WorkloadDimensions) -> Self {
         Self {
             workers,
-            updates_per_burst: env_usize(ENV_UPDATES, DEFAULT_UPDATES_PER_BURST),
-            warmup_bursts: env_usize(ENV_WARMUP, DEFAULT_WARMUP_BURSTS),
-            measured_bursts: env_usize(ENV_MEASURED, DEFAULT_MEASURED_BURSTS),
+            updates_per_burst: dimensions.updates_per_burst,
+            warmup_bursts: dimensions.warmup_bursts,
+            measured_bursts: dimensions.measured_bursts,
         }
     }
 }
@@ -361,8 +370,14 @@ fn bench_entity_id(worker: usize, slot: usize, update: usize) -> EntityId {
     EntityId::from_bytes(bytes).expect("bench entity id is never a reserved sentinel")
 }
 
+/// Narrows one index of the id space above.
+///
+/// Unreachable from a worker: every dimension that reaches this is checked
+/// against `MAX_WORKLOAD_DIMENSION` in `resolve_workload_plan`, before any
+/// thread or barrier exists. That ordering is load-bearing — a panic here used
+/// to strand the whole fleet on a barrier the dead worker never reached again.
 fn narrow_u16(value: usize) -> u16 {
-    u16::try_from(value).expect("bench workload dimensions stay below u16::MAX")
+    u16::try_from(value).expect("workload dimensions are bounded before any worker starts")
 }
 
 // ---------------------------------------------------------------------------
@@ -870,20 +885,94 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn worker_matrix() -> Vec<usize> {
-    let Ok(raw) = std::env::var(ENV_WORKERS) else {
-        return DEFAULT_WORKER_MATRIX.to_vec();
+/// Inclusive bound every id-space dimension must satisfy.
+///
+/// `bench_entity_id` packs the worker and update indices into `u16` fields, so
+/// a count of `N` is usable exactly while its widest index (`N - 1`) still fits
+/// a `u16`. Anything larger used to reach `narrow_u16` INSIDE a worker thread,
+/// where the panic stranded the rest of the fleet on a barrier forever, so the
+/// bound is enforced at parse time instead of discovered mid-phase.
+const MAX_WORKLOAD_DIMENSION: usize = u16::MAX as usize + 1;
+
+/// The operator-facing refusal: which variable, which value, which range.
+///
+/// Every dimension rejection is built here so the sites cannot drift apart.
+fn dimension_error(name: &str, value: &str, problem: &str) -> String {
+    format!("{name}={value} {problem}; allowed range is 1..={MAX_WORKLOAD_DIMENSION}")
+}
+
+/// Parses one id-space dimension and enforces `1..=MAX_WORKLOAD_DIMENSION`.
+///
+/// Pure on purpose: the whole bound is testable without touching the process
+/// environment.
+fn parse_dimension(name: &str, raw: &str) -> Result<usize, String> {
+    let Ok(value) = raw.parse::<usize>() else {
+        return Err(dimension_error(name, &format!("{raw:?}"), "is not a whole number"));
     };
-    let parsed: Vec<usize> = raw
-        .split(',')
-        .filter_map(|part| part.trim().parse::<usize>().ok())
-        .filter(|workers| *workers > 0)
-        .collect();
-    if parsed.is_empty() {
-        DEFAULT_WORKER_MATRIX.to_vec()
-    } else {
-        parsed
+    if !(1..=MAX_WORKLOAD_DIMENSION).contains(&value) {
+        return Err(dimension_error(name, &value.to_string(), "is out of range"));
     }
+    Ok(value)
+}
+
+/// The blueprint contention points, or a validated `ENV_WORKERS` override.
+///
+/// An unset variable keeps the default matrix. A variable that IS set has to
+/// name usable worker counts: an unparseable, zero, oversized or empty list is
+/// a named error, never a silent fallback to the matrix the operator overrode.
+fn resolve_worker_matrix() -> Result<Vec<usize>, String> {
+    let Ok(raw) = std::env::var(ENV_WORKERS) else {
+        return Ok(DEFAULT_WORKER_MATRIX.to_vec());
+    };
+    let mut parsed = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        parsed.push(parse_dimension(ENV_WORKERS, part)?);
+    }
+    if parsed.is_empty() {
+        return Err(dimension_error(ENV_WORKERS, &format!("{raw:?}"), "lists no worker count"));
+    }
+    Ok(parsed)
+}
+
+/// The per-burst shape every case in one run shares.
+#[derive(Debug, Clone, Copy)]
+struct WorkloadDimensions {
+    updates_per_burst: usize,
+    warmup_bursts: usize,
+    measured_bursts: usize,
+}
+
+/// The contention points to run plus the dimensions each of them uses.
+struct WorkloadPlan {
+    worker_matrix: Vec<usize>,
+    dimensions: WorkloadDimensions,
+}
+
+/// Resolves every environment override ONCE, before any vault, worker thread
+/// or barrier exists, so an unusable dimension fails the process instead of
+/// stranding a fleet mid-phase.
+///
+/// Only the two dimensions that feed the `bench_entity_id` u16 id space carry
+/// the `1..=MAX_WORKLOAD_DIMENSION` bound. Burst COUNTS (`ENV_WARMUP`,
+/// `ENV_MEASURED`) only make a run longer, never unencodable, so they keep the
+/// lenient parsing they already had.
+fn resolve_workload_plan() -> Result<WorkloadPlan, String> {
+    let updates_per_burst = match std::env::var(ENV_UPDATES) {
+        Ok(raw) => parse_dimension(ENV_UPDATES, raw.trim())?,
+        Err(_) => DEFAULT_UPDATES_PER_BURST,
+    };
+    Ok(WorkloadPlan {
+        worker_matrix: resolve_worker_matrix()?,
+        dimensions: WorkloadDimensions {
+            updates_per_burst,
+            warmup_bursts: env_usize(ENV_WARMUP, DEFAULT_WARMUP_BURSTS),
+            measured_bursts: env_usize(ENV_MEASURED, DEFAULT_MEASURED_BURSTS),
+        },
+    })
 }
 
 /// Where the deterministic p50/p99 JSON lands, next to Criterion's output.
@@ -898,32 +987,33 @@ fn report_path() -> std::path::PathBuf {
         .join("materializer_mutex_report.json")
 }
 
-fn write_report(run: &MaterializerBenchRun) {
+/// Writes the deterministic p50/p99 JSON report.
+///
+/// Fail-closed: every directory, serialization and write failure comes back as
+/// an `Err` message for `main` to print before it exits non-zero. This report
+/// is the authoritative record of the run, so one that never reached disk must
+/// never leave a successful process behind.
+fn write_report(run: &MaterializerBenchRun) -> Result<(), String> {
     let path = report_path();
     if let Some(parent) = path.parent()
         && let Err(error) = std::fs::create_dir_all(parent)
     {
-        eprintln!("one-331: could not create report directory: {error}");
-        return;
+        return Err(format!("could not create report directory: {error}"));
     }
-    match serde_json::to_vec_pretty(run) {
-        Ok(bytes) => {
-            if let Err(error) = std::fs::write(&path, bytes) {
-                eprintln!("one-331: could not write report: {error}");
-            } else {
-                let written = path.display();
-                eprintln!("one-331: materializer mutex report written to {written}");
-            }
-        }
-        Err(error) => eprintln!("one-331: could not serialize report: {error}"),
-    }
+    let bytes = serde_json::to_vec_pretty(run)
+        .map_err(|error| format!("could not serialize report: {error}"))?;
+    std::fs::write(&path, bytes)
+        .map_err(|error| format!("could not write report: {error}"))?;
+    let written = path.display();
+    eprintln!("one-331: materializer mutex report written to {written}");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Criterion driver
 // ---------------------------------------------------------------------------
 
-fn run_matrix(criterion: &mut Criterion) -> MaterializerBenchRun {
+fn run_matrix(criterion: &mut Criterion, plan: &WorkloadPlan) -> MaterializerBenchRun {
     let implementations = [
         Implementation::RealStd,
         Implementation::ShadowStd,
@@ -939,8 +1029,8 @@ fn run_matrix(criterion: &mut Criterion) -> MaterializerBenchRun {
     group.sample_size(10);
 
     let mut first_case: Option<MaterializerCase> = None;
-    for workers in worker_matrix() {
-        let case = MaterializerCase::new(workers);
+    for &workers in &plan.worker_matrix {
+        let case = MaterializerCase::new(workers, plan.dimensions);
         if first_case.is_none() {
             first_case = Some(case);
         }
@@ -974,7 +1064,7 @@ fn run_matrix(criterion: &mut Criterion) -> MaterializerBenchRun {
     }
     group.finish();
 
-    let shape = first_case.unwrap_or_else(|| MaterializerCase::new(1));
+    let shape = first_case.unwrap_or_else(|| MaterializerCase::new(1, plan.dimensions));
     MaterializerBenchRun {
         ticket: "ONE-331",
         os: std::env::consts::OS,
@@ -988,11 +1078,29 @@ fn run_matrix(criterion: &mut Criterion) -> MaterializerBenchRun {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
+    // Dimensions are resolved and range-checked FIRST: an unusable override has
+    // to fail the process before any vault, worker thread or barrier exists.
+    let plan = match resolve_workload_plan() {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("one-331: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut criterion = Criterion::default().configure_from_args();
-    let run = run_matrix(&mut criterion);
-    write_report(&run);
+    let run = run_matrix(&mut criterion, &plan);
+    if let Err(error) = write_report(&run) {
+        eprintln!("one-331: {error}");
+        // Fail-closed: the deterministic report IS the deliverable, so a run
+        // that lost it does not get to print Criterion's completion summary on
+        // top of the failure. Criterion's own per-benchmark data is already
+        // persisted by `bench_function`; only the console banner is skipped.
+        eprintln!("one-331: no report was written; this run is not usable");
+        return ExitCode::FAILURE;
+    }
     criterion.final_summary();
+    ExitCode::SUCCESS
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,5 +1324,43 @@ mod tests {
             delta <= CALIBRATION_TOLERANCE,
             "the recorded verdict must be the calibration rule applied to the measured p99s"
         );
+    }
+
+    /// The parse-time dimension gate.
+    ///
+    /// The blueprint defaults and the exact `u16` boundary are accepted; a
+    /// count the entity id space cannot encode, and a zero-sized workload, are
+    /// refused with a message naming the variable, the value and the range.
+    /// Refusing here is what keeps the old failure mode — `narrow_u16`
+    /// panicking inside a worker and parking the fleet on a barrier forever —
+    /// unreachable.
+    #[test]
+    fn materializer_mutex_dimension_bounds_are_enforced() {
+        for workers in DEFAULT_WORKER_MATRIX {
+            let raw = workers.to_string();
+            assert_eq!(parse_dimension(ENV_WORKERS, &raw), Ok(workers));
+        }
+        let updates = DEFAULT_UPDATES_PER_BURST.to_string();
+        let default_updates = parse_dimension(ENV_UPDATES, &updates);
+        assert_eq!(default_updates, Ok(DEFAULT_UPDATES_PER_BURST));
+        assert_eq!(
+            parse_dimension(ENV_UPDATES, "65536"),
+            Ok(MAX_WORKLOAD_DIMENSION),
+            "the widest index of a 65536-count dimension is still a u16"
+        );
+
+        // Every refusal has to name the variable, the value and the range.
+        let over = parse_dimension(ENV_UPDATES, "65537").expect_err("65537 is refused");
+        for expected in [ENV_UPDATES, "65537", "1..=65536"] {
+            assert!(over.contains(expected), "{over} must name {expected}");
+        }
+        let zero = parse_dimension(ENV_WORKERS, "0").expect_err("0 is refused");
+        for expected in [ENV_WORKERS, "=0 ", "1..=65536"] {
+            assert!(zero.contains(expected), "{zero} must name {expected}");
+        }
+
+        // A set-but-unparseable override is a named error too, never a silent
+        // fallback to the default it was meant to replace.
+        assert!(parse_dimension(ENV_WORKERS, "four").is_err());
     }
 }
