@@ -596,9 +596,15 @@ pub(super) fn cancel_target_state(
             let task_hex = task_ref.to_hex();
             let owned = if task_verb_body(vault, task_ref)?.is_some() {
                 // The typed body is mutable storage and its `owner_ref` is not
-                // authority. Only the owner record stamped atomically by the
-                // verified `tasks.create` path proves direct-cancel ownership;
-                // typed bodies from any other write door fail closed.
+                // authority. Only the Owner authority fact minted atomically by
+                // the verified `tasks.create` path proves direct-cancel
+                // ownership; typed bodies from any other write door fail
+                // closed, and a task with no Owner fact proves nothing at all.
+                //
+                // The proof REPLICATES, so this is the same answer on the
+                // machine that created the task and on every peer that
+                // materialized it: the owner cancels their own task directly
+                // instead of falling to the foreign, proposal-only ladder.
                 task_create_owner(vault, task_ref)? == Some(actor)
             } else if let Some(task) = vault.connector_send_task(&task_ref)? {
                 task.actor_ref == actor
