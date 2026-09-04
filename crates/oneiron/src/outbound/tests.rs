@@ -6481,8 +6481,7 @@ fn same_node_pending_retries_leave_the_connector_task_byte_identical() -> crate:
     )?;
     let projected = vault.get_raw(&task_ref)?.expect("task row exists");
     assert_ne!(
-        projected,
-        after_first_claim,
+        projected, after_first_claim,
         "the terminal outcome is a real write"
     );
     super::connector_task::project_connector_send_task_outcome(
