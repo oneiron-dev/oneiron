@@ -951,6 +951,51 @@ pub(super) fn stage_entity_index_rows(
     Ok(())
 }
 
+/// Removes exactly the rows [`stage_entity_index_rows`] stages, for a caller
+/// holding that write's own `occurred`/`learned_at` stamps.
+///
+/// PAIRED with the staging writer and reading the same stamps back, so the two
+/// cannot drift: every conditional key a put can own — the occurred-end and
+/// long-interval siblings — is decided here by the same predicate over the same
+/// range. A caller that removed an entity row and left these behind would leave
+/// every time-range walk answering with a dead id, and a rebuild under a new
+/// stamp would ADD a key rather than move one, letting repeated drop/rebuild
+/// cycles crowd a candidate buffer with one id's stale timestamps.
+pub(crate) fn delete_entity_index_rows(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    let type_key = Store::encode_type_key(entity_type, id);
+    store.type_index().delete(wtxn, &type_key)?;
+
+    let occurred_start_key = Store::encode_temporal_key(occurred.start, id);
+    store
+        .temporal_occurred_start()
+        .delete(wtxn, &occurred_start_key)?;
+
+    if occurred.start != occurred.end {
+        let occurred_end_key = Store::encode_temporal_key(occurred.end, id);
+        store
+            .temporal_occurred_end()
+            .delete(wtxn, &occurred_end_key)?;
+    }
+
+    let learned_key = Store::encode_temporal_key(learned_at, id);
+    store.temporal_learned().delete(wtxn, &learned_key)?;
+
+    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
+        store
+            .temporal_long_intervals()
+            .delete(wtxn, &long_interval_key)?;
+    }
+    Ok(())
+}
+
 /// Stages one edge's paired `edges_out`/`edges_in` rows (ONE-1728 K11).
 ///
 /// PAIRED-WRITE INVARIANT: both directions carry byte-identical value bytes.

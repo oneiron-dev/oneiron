@@ -171,6 +171,96 @@ fn type_132_is_cache_not_truth() -> Result<()> {
     Ok(())
 }
 
+/// Every temporal index key that names `id`, across all four temporal indexes,
+/// as `(index, stamp)` pairs.
+fn temporal_keys_for(vault: &Vault, id: &EntityId) -> Result<Vec<(&'static str, u64)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut found = Vec::new();
+    for (index, db) in [
+        ("learned", &vault.store.temporal_learned),
+        ("long_intervals", &vault.store.temporal_long_intervals),
+        ("occurred_end", &vault.store.temporal_occurred_end),
+        ("occurred_start", &vault.store.temporal_occurred_start),
+    ] {
+        for entry in db.iter(&rtxn)? {
+            let (key, _) = entry?;
+            if key.ends_with(id.as_bytes()) {
+                let stamp = u64::from_be_bytes(key[..8].try_into().expect("temporal key stamp"));
+                found.push((index, stamp));
+            }
+        }
+    }
+    found.sort_unstable();
+    Ok(found)
+}
+
+/// Dropping the cache row takes the engine index rows the PUT wrote with it.
+///
+/// The row is written through the normal put path, which indexes it by type and
+/// by its write stamps. A drop that removed only the row and the family's own
+/// lookup legs would leave every time-range reader answering with an id that no
+/// longer resolves — and because each rebuild stamps the row afresh, the dead
+/// keys would ACCUMULATE, one per cycle, all naming the same contact.
+#[test]
+fn dropping_the_cache_row_leaves_no_stale_temporal_keys() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x64);
+    let contact_id = entity(0x65);
+    vault.create_counterparty_contact(
+        &contact_id,
+        &CounterpartyContactRecord::user_introduction(identity, "rin@example.com", 10)?,
+    )?;
+    let type_key =
+        crate::store::Store::encode_type_key(ENTITY_TYPE_COUNTERPARTY_CONTACT, &contact_id);
+    assert_eq!(
+        temporal_keys_for(&vault, &contact_id)?,
+        vec![("learned", 10), ("occurred_start", 10)],
+        "the put path indexed the row under its own write stamp"
+    );
+
+    drop_contact_cache_row(&vault, &contact_id)?;
+    assert!(
+        temporal_keys_for(&vault, &contact_id)?.is_empty(),
+        "a dropped row is named by no temporal index"
+    );
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_none());
+    }
+
+    // Rebuilding stamps the row afresh, and the rebuilt row is indexed at that
+    // stamp ALONE — the pre-drop stamp is not still there beside it.
+    let mut wtxn = vault.store.env.write_txn()?;
+    rematerialize_contact_cache_in_txn(&vault, &mut wtxn, &contact_id, 200)?;
+    wtxn.commit()?;
+    assert_eq!(
+        temporal_keys_for(&vault, &contact_id)?,
+        vec![("learned", 200), ("occurred_start", 200)]
+    );
+
+    // Repeating the cycle cannot pile up candidates: one live row, one stamp,
+    // however many times the cache is dropped and rebuilt.
+    for stamp in [300_u64, 400] {
+        drop_contact_cache_row(&vault, &contact_id)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        rematerialize_contact_cache_in_txn(&vault, &mut wtxn, &contact_id, stamp)?;
+        wtxn.commit()?;
+    }
+    assert_eq!(
+        temporal_keys_for(&vault, &contact_id)?,
+        vec![("learned", 400), ("occurred_start", 400)]
+    );
+    // The claims were never touched, so the row is still the same row.
+    assert_eq!(
+        vault
+            .get_counterparty_contact(&contact_id)?
+            .expect("cache row")
+            .counterparty,
+        "rin@example.com"
+    );
+    Ok(())
+}
+
 /// Disclosure and interlocutor consumers keep their stable type-132 read
 /// surface: an explicit drop-and-rebuild leaves both reading identically.
 ///
@@ -299,6 +389,69 @@ fn party_wide_opt_out_reaches_every_contact_and_named_stop_stays_scoped() -> Res
         !rematerialize_contact_cache(&vault, &stopped_telegram)?.is_opted_out(),
         "a named STOP head never bleeds onto another class, whoever re-derives"
     );
+    Ok(())
+}
+
+/// When EVERY covering head predates the contact, the newest head still wins.
+///
+/// CID-7 makes a stored `recorded_at` at least the contact's `created_at`, so a
+/// head older than the contact lands on the row as `created_at`. Ranking the
+/// next candidate against that stored stamp would rank it against `created_at`
+/// instead of against the head that actually won: every remaining head predates
+/// the contact too, so all of them lose, and the reason and receipt the row
+/// carries become an artifact of claim iteration order. Here the party-wide
+/// unsubscribe is the older head and the channel STOP is the newer one, and the
+/// row must say STOP.
+#[test]
+fn newest_covering_head_wins_when_every_head_predates_the_contact() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let first_identity = entity(0x81);
+    let second_identity = entity(0x82);
+    put_identity(&vault, first_identity, "email", "owner@example.com")?;
+    put_identity(&vault, second_identity, "email", "ops@example.com")?;
+
+    // Older head: a party-wide unsubscribe at 20.
+    let early_contact = entity(0x83);
+    vault.create_counterparty_contact(
+        &early_contact,
+        &CounterpartyContactRecord::user_introduction(first_identity, "kenji@example.com", 5)?,
+    )?;
+    vault.opt_out_counterparty_contact(
+        &early_contact,
+        CounterpartyOptOutReason::Unsubscribe,
+        20,
+    )?;
+
+    // Newer head: a channel STOP for the same party at 30, in its own slot, so
+    // both heads stand and both cover an email contact.
+    crate::comm::record_comm_inbound_stop(&vault, "kenji@example.com", "email", 30)
+        .map_err(comm_fold_error)?;
+    crate::comm::run_comm_projector(&vault).map_err(comm_fold_error)?;
+
+    // A contact created after BOTH heads: covered by both, newer than both.
+    let late_contact = entity(0x84);
+    vault.create_counterparty_contact(
+        &late_contact,
+        &CounterpartyContactRecord::user_introduction(second_identity, "kenji@example.com", 100)?,
+    )?;
+
+    let cached = vault
+        .get_counterparty_contact(&late_contact)?
+        .expect("cache row");
+    let opt_out = cached.opt_out.expect("both heads cover this row");
+    assert_eq!(
+        opt_out.reason,
+        CounterpartyOptOutReason::Stop,
+        "the newest head by its OWN occurrence owns the reason"
+    );
+    assert_eq!(opt_out.receipt_reason(), "counterparty_opt_out_stop");
+    // The clamp still applies, exactly once, to the head that won: the stored
+    // stamp stays inside the record's window.
+    assert_eq!(opt_out.recorded_at, cached.created_at);
+    cached.validate()?;
+    // And the choice is a property of the heads, not of one write: re-deriving
+    // the row reaches the same one.
+    assert_eq!(rematerialize_contact_cache(&vault, &late_contact)?, cached);
     Ok(())
 }
 

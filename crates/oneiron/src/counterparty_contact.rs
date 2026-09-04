@@ -1008,6 +1008,11 @@ fn counterparty_contact_body_key(predicate: &str) -> &'static str {
 /// head's reason; when NEITHER source decodes, the fold fails closed rather
 /// than dropping opt-out truth on the floor.
 ///
+/// Reason and stamp come from the newest covering head by that head's OWN
+/// `occurred_at` — the whole candidate set is ranked before anything is
+/// written, so which receipt the row carries is a fact about when the party
+/// spoke, never about the order claims came back in.
+///
 /// Channel scope is the head's, applied once here (ONE-1752): a party-wide head
 /// covers every contact — the party said it to the owner, not to one mailbox —
 /// and a channel-scoped STOP head covers only contacts on its own class, so an
@@ -1028,6 +1033,18 @@ fn fold_party_opt_out_heads_in_txn(
     // Resolved ONCE: the class comes from the record's sending identity, which
     // no head in this loop can move.
     let contact_class = counterparty_contact_channel_class(&vault.store, rtxn, record)?;
+    // Newest standing source wins, ranked on each head's OWN occurrence. The
+    // contact's own head is the incumbent and keeps a tie, being the more
+    // specific statement about this exact contact.
+    //
+    // The stamp compared here is never the clamped one: the clamp below is a
+    // storage invariant, not a statement about when the party spoke. Ranking
+    // against an already-clamped stamp would let the FIRST covering head that
+    // predates `created_at` shadow every later one — they all lose to the
+    // inflated `created_at` — and the surviving reason/receipt would fall out
+    // of claim iteration order rather than out of when the party spoke.
+    let mut newest = record.opt_out.map(|opt_out| opt_out.recorded_at);
+    let mut winner = None;
     for head in crate::comm::standing_opt_out_heads_in_txn(vault, rtxn, party_ref)
         .map_err(comm_fold_error)?
     {
@@ -1036,32 +1053,32 @@ fn fold_party_opt_out_heads_in_txn(
         {
             continue;
         }
-        // Newest standing source wins; the contact head keeps a tie, being the
-        // more specific statement about this exact contact.
-        if record
-            .opt_out
-            .is_some_and(|opt_out| head.occurred_at <= opt_out.recorded_at)
-        {
+        if newest.is_some_and(|newest| head.occurred_at <= newest) {
             continue;
         }
-        let reason = match CounterpartyOptOutReason::from_receipt_reason(&head.reason) {
-            Some(reason) => reason,
-            None => match record.opt_out {
-                Some(opt_out) => opt_out.reason,
-                None => {
-                    return Err(Error::InvalidCounterpartyContactBody(
-                        "comm.opt_out reason is outside the receipt vocabulary",
-                    ));
-                }
-            },
-        };
-        // Clamped into the record's own window: the head is the SOURCE of the
-        // opt-out, and the record's invariants are what a stored body must
-        // satisfy.
-        let recorded_at = head.occurred_at.max(record.created_at);
-        record.opt_out = Some(CounterpartyOptOut::new(reason, recorded_at));
-        record.updated_at = record.updated_at.max(recorded_at);
+        newest = Some(head.occurred_at);
+        winner = Some(head);
     }
+    let Some(head) = winner else {
+        return Ok(());
+    };
+    let reason = match CounterpartyOptOutReason::from_receipt_reason(&head.reason) {
+        Some(reason) => reason,
+        None => match record.opt_out {
+            Some(opt_out) => opt_out.reason,
+            None => {
+                return Err(Error::InvalidCounterpartyContactBody(
+                    "comm.opt_out reason is outside the receipt vocabulary",
+                ));
+            }
+        },
+    };
+    // Clamped ONCE, on the winner only, into the record's own window: the head
+    // is the SOURCE of the opt-out, and the record's invariants are what a
+    // stored body must satisfy (CID-7: `recorded_at >= created_at`).
+    let recorded_at = head.occurred_at.max(record.created_at);
+    record.opt_out = Some(CounterpartyOptOut::new(reason, recorded_at));
+    record.updated_at = record.updated_at.max(recorded_at);
     Ok(())
 }
 
@@ -1101,10 +1118,25 @@ pub fn rematerialize_contact_cache(
 /// Both index legs go with the row: leaving either pointing at a row that no
 /// longer exists would make the send-time aggregate REFUSE rather than answer,
 /// and the rematerializer writes both back.
+///
+/// So do the engine's own type and temporal index rows, removed through the
+/// same primitive the delete path uses and keyed off the stamps this row was
+/// PUT with. Dropping is a cache operation, and a cache operation that left
+/// time-range readers pointing at a vanished row — or that let each rebuild
+/// leave one more dead timestamp behind for the same contact — would make the
+/// row's absence observable, which is exactly what type-132-is-cache denies.
 pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     let Some(record) = read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)? else {
         return Ok(());
+    };
+    let header = {
+        let raw = vault
+            .store
+            .entities
+            .get(&wtxn, contact_id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("counterparty contact entity row"))?;
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?
     };
     let index_key = counterparty_contact_index_key_for_record(&record)?;
     vault.store.vault_meta.delete(&mut wtxn, &index_key)?;
@@ -1117,13 +1149,21 @@ pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()
             *contact_id,
         )?;
     }
+    crate::batch::delete_entity_index_rows(
+        &vault.store,
+        &mut wtxn,
+        contact_id,
+        header.entity_type,
+        TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        },
+        header.learned_at,
+    )?;
     vault
         .store
         .entities
         .delete(&mut wtxn, contact_id.as_bytes())?;
-    let type_key =
-        crate::store::Store::encode_type_key(ENTITY_TYPE_COUNTERPARTY_CONTACT, contact_id);
-    vault.store.type_index.delete(&mut wtxn, &type_key)?;
     wtxn.commit()?;
     Ok(())
 }
