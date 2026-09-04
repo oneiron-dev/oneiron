@@ -224,6 +224,10 @@ pub use crate::commitment_wake::{
     approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
 };
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
+};
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
     CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,

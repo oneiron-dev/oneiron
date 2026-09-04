@@ -5,6 +5,10 @@ use crate::claim::{
 };
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
+use crate::gate::{
+    ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
+    GateReasonCode, check_external_effect_policy, resolve_policy_manifest,
+};
 use crate::identity_topology::{
     EntityLifecycleState, IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp,
     SurvivorshipPlan,
@@ -16,7 +20,7 @@ use crate::registry::{
 };
 use crate::temporal::TimeRange;
 
-use crate::test_util::entity;
+use crate::test_util::{entity, put_policy_manifest_bytes};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let mut config = VaultConfig::device();
@@ -132,7 +136,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     let well_formed = [
         CommClaimValue::OptOut {
             party_ref: party,
-            channel_class: "email".to_owned(),
+            channel_class: Some("email".to_owned()),
             reason: OPT_OUT_REASON_STOP.to_owned(),
             occurred_at: 10,
         },
@@ -159,13 +163,33 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         .collect::<Result<Vec<_>>>()?;
     assert_eq!(accepted.len(), 4);
 
+    // ONE-1752: an ELIDED `channel_class` on `comm.opt_out` is the party-wide
+    // head — every channel — and validates. It is the same body the contact
+    // writer projects, and `well_formed[0]` above proves the channel-scoped
+    // shape still validates unchanged beside it.
     let mut missing_channel = well_formed[0].claim_body();
     let Value::Map(entries) = &mut missing_channel.value else {
         unreachable!("fixture value is a map")
     };
     entries.retain(|(key, _)| key.as_str() != Some(KEY_CHANNEL_CLASS));
-    let missing_error =
-        validate_through_chokepoint(&missing_channel).expect_err("missing channel_class rejected");
+    let party_wide = validate_through_chokepoint(&missing_channel)?;
+    assert_eq!(
+        CommClaim::from_claim_body(&party_wide)?.value,
+        CommClaimValue::OptOut {
+            party_ref: party,
+            channel_class: None,
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: 10,
+        }
+    );
+    // Every OTHER family member still requires its channel class.
+    let mut missing_required_channel = well_formed[1].claim_body();
+    let Value::Map(entries) = &mut missing_required_channel.value else {
+        unreachable!("fixture value is a map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some(KEY_CHANNEL_CLASS));
+    let missing_error = validate_through_chokepoint(&missing_required_channel)
+        .expect_err("missing channel_class rejected");
     assert_eq!(missing_error.kind(), ErrorKind::InvalidClaimBody);
 
     let mut wrong_shape = well_formed[1].claim_body();
@@ -484,7 +508,7 @@ fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
     vault.try_with_write_txn(|wtxn| -> CommResult<()> {
         let replacement = CommClaimValue::OptOut {
             party_ref,
-            channel_class: "email".to_owned(),
+            channel_class: Some("email".to_owned()),
             reason: OPT_OUT_REASON_STOP.to_owned(),
             occurred_at: 12,
         };
@@ -1412,7 +1436,7 @@ fn projected_claim_ids_are_derived_from_the_source_event_not_minted() -> CommRes
         event,
         &CommClaimValue::OptOut {
             party_ref: party,
-            channel_class: "email".to_owned(),
+            channel_class: Some("email".to_owned()),
             reason: OPT_OUT_REASON_STOP.to_owned(),
             occurred_at: 10,
         },
@@ -2223,7 +2247,7 @@ fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
     let party = entity(0x52);
     let accepted = [CommClaimValue::OptOut {
         party_ref: party,
-        channel_class: "email".to_owned(),
+        channel_class: Some("email".to_owned()),
         reason: OPT_OUT_REASON_STOP.to_owned(),
         occurred_at: 10,
     }]
@@ -2235,7 +2259,7 @@ fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
 
     let invalid = CommClaimValue::OptOut {
         party_ref: party,
-        channel_class: "email".to_owned(),
+        channel_class: Some("email".to_owned()),
         reason: "please stop".to_owned(),
         occurred_at: 11,
     }
@@ -2831,4 +2855,593 @@ fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() 
     run_comm_projector(&vault)?;
     assert_eq!(members(&vault)?, 0);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1752 — send override, party-wide opt-out, and the type-132 cache trigger.
+// ---------------------------------------------------------------------------
+
+/// A bound human, the only actor class that may rule on a send override.
+fn owner_actor(vault: &Vault, seed: u8) -> Result<WriteActor> {
+    let owner = entity(seed);
+    vault.put_entity(
+        &owner,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    Ok(WriteActor::new(owner, EdgeActorClass::Human))
+}
+
+/// Standing covers the party; one-shot covers exactly the send it was minted
+/// against. Both are human-ruled, both are validated at mint, and neither
+/// touches a single opt-out head.
+#[test]
+fn send_override_standing_vs_one_shot() -> CommResult<()> {
+    let (_tmp, vault) = open_vault();
+    let owner = owner_actor(&vault, 0x71).map_err(CommError::Engine)?;
+
+    // The suppression this override will be read against, and the bytes that
+    // must survive it untouched.
+    record_comm_inbound_stop(&vault, "party-override", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let party_ref = resolve_party(&vault, "party-override")?.ok_or(CommError::InvalidRecord)?;
+    let opt_out_before = standing_opt_out_bytes(&vault, party_ref)?;
+
+    // Non-human mint is refused outright. The actor is a bound PERSON acting
+    // as an AGENT, so the refusal is the human-approval rule and not an
+    // actor-binding failure standing in for it.
+    let agent = WriteActor::new(party_ref, EdgeActorClass::Agent);
+    assert!(matches!(
+        mint_send_override(
+            &vault,
+            "party-override",
+            Some("email"),
+            SendOverrideScope::Standing,
+            None,
+            agent,
+            20,
+            None,
+        ),
+        Err(CommError::HumanApprovalRequired)
+    ));
+
+    // Scope-dependent validation, all refused before any write.
+    for (scope, send_ref, valid_to) in [
+        (SendOverrideScope::OneShot, None, Some(30)),
+        (SendOverrideScope::OneShot, Some("   "), Some(30)),
+        (SendOverrideScope::OneShot, Some("a\0b"), Some(30)),
+        (SendOverrideScope::OneShot, Some("intent:x"), None),
+        (SendOverrideScope::Standing, Some("intent:x"), None),
+    ] {
+        assert!(
+            matches!(
+                mint_send_override(
+                    &vault,
+                    "party-override",
+                    Some("email"),
+                    scope,
+                    send_ref,
+                    owner,
+                    20,
+                    valid_to,
+                ),
+                Err(CommError::InvalidRecord)
+            ),
+            "{scope:?}/{send_ref:?}/{valid_to:?} must fail validation"
+        );
+    }
+    let too_long = "i".repeat(257);
+    assert!(matches!(
+        mint_send_override(
+            &vault,
+            "party-override",
+            Some("email"),
+            SendOverrideScope::OneShot,
+            Some(&too_long),
+            owner,
+            20,
+            Some(30),
+        ),
+        Err(CommError::InvalidRecord)
+    ));
+    // `valid_to` may not precede `issued_at`.
+    assert!(matches!(
+        mint_send_override(
+            &vault,
+            "party-override",
+            Some("email"),
+            SendOverrideScope::OneShot,
+            Some("intent:x"),
+            owner,
+            20,
+            Some(19),
+        ),
+        Err(CommError::InvalidRecord)
+    ));
+
+    // A one-shot bound to one send ref, minted through a padded mixed-case
+    // channel: mint and hydration share the normalizer.
+    mint_send_override(
+        &vault,
+        "party-override",
+        Some(" EMAIL "),
+        SendOverrideScope::OneShot,
+        Some("intent:one"),
+        owner,
+        20,
+        Some(100),
+    )?;
+    assert_eq!(
+        send_override_for_send(&vault, "party-override", "email", Some("intent:one"), 50)?,
+        Some(SendOverrideMatch::OneShot)
+    );
+    // Only that exact ref, and never an absent one.
+    assert_eq!(
+        send_override_for_send(&vault, "party-override", "email", Some("intent:two"), 50)?,
+        None
+    );
+    assert_eq!(
+        send_override_for_send(&vault, "party-override", "email", None, 50)?,
+        None
+    );
+    // Nor another channel class, nor after expiry.
+    assert_eq!(
+        send_override_for_send(&vault, "party-override", "sms", Some("intent:one"), 50)?,
+        None
+    );
+    assert_eq!(
+        send_override_for_send(&vault, "party-override", "email", Some("intent:one"), 101)?,
+        None
+    );
+
+    // A standing head covers subsequent sends whatever their ref, and wins on
+    // overlap with the one-shot.
+    mint_send_override(
+        &vault,
+        "party-override",
+        Some("email"),
+        SendOverrideScope::Standing,
+        None,
+        owner,
+        21,
+        None,
+    )?;
+    for send_ref in [Some("intent:one"), Some("intent:later"), None] {
+        assert_eq!(
+            send_override_for_send(&vault, "party-override", "email", send_ref, 50)?,
+            Some(SendOverrideMatch::Standing)
+        );
+    }
+
+    // Not one opt-out byte moved.
+    assert_eq!(standing_opt_out_bytes(&vault, party_ref)?, opt_out_before);
+    Ok(())
+}
+
+/// The encoded bytes of every standing `comm.opt_out` head for one party.
+fn standing_opt_out_bytes(vault: &Vault, party_ref: EntityId) -> CommResult<Vec<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut bodies = Vec::new();
+    for claim_id in vault.claims_for_subject_in_txn(&rtxn, &party_ref)? {
+        let Some(body) = vault.get_claim_in_txn(&rtxn, &claim_id)? else {
+            continue;
+        };
+        if body.predicate == PREDICATE_COMM_OPT_OUT {
+            bodies.push(encode_claim_body(&body)?);
+        }
+    }
+    bodies.sort();
+    Ok(bodies)
+}
+
+/// A contact-level opt-out projects ONE party-wide head, and party-wide means
+/// every channel. A channel-scoped head keeps matching only its own class.
+#[test]
+fn comm_opt_out_absent_channel_matches_all() -> CommResult<()> {
+    let (_tmp, vault) = open_vault();
+    let contact = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        entity(0x81),
+        "kenji@example.com",
+        10,
+    )?;
+    vault.create_counterparty_contact(&entity(0x82), &contact)?;
+    vault.opt_out_counterparty_contact(
+        &entity(0x82),
+        crate::counterparty_contact::CounterpartyOptOutReason::Unsubscribe,
+        20,
+    )?;
+
+    let party_ref = resolve_party(&vault, "kenji@example.com")?.ok_or(CommError::InvalidRecord)?;
+    let heads = {
+        let rtxn = vault.store.env.read_txn()?;
+        standing_opt_out_heads_in_txn(&vault, &rtxn, party_ref)?
+    };
+    assert_eq!(heads.len(), 1, "exactly one projected head: {heads:?}");
+    assert_eq!(heads[0].channel_class, None);
+    assert_eq!(heads[0].reason, "counterparty_opt_out_unsubscribe");
+    // Party-wide matches every derived class, including ones nobody named.
+    assert!(heads[0].matches_channel("email"));
+    assert!(heads[0].matches_channel("telegram"));
+    assert!(heads[0].matches_channel(" EMAIL "));
+
+    // A channel-scoped head from the STOP projector stays channel-scoped.
+    record_comm_inbound_stop(&vault, "party-scoped", "email", 10)?;
+    run_comm_projector(&vault)?;
+    let scoped_party = resolve_party(&vault, "party-scoped")?.ok_or(CommError::InvalidRecord)?;
+    let scoped = {
+        let rtxn = vault.store.env.read_txn()?;
+        standing_opt_out_heads_in_txn(&vault, &rtxn, scoped_party)?
+    };
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].channel_class.as_deref(), Some("email"));
+    assert!(scoped[0].matches_channel("email"));
+    assert!(!scoped[0].matches_channel("telegram"));
+    Ok(())
+}
+
+/// `comm.opt_out` reasons are the RECEIPT vocabulary, and the mapping is an
+/// exact round trip. The `as_str()` vocabulary is not a substitute for it.
+#[test]
+fn opt_out_reason_tokens_use_receipt_vocabulary() -> CommResult<()> {
+    use crate::counterparty_contact::CounterpartyOptOutReason;
+
+    let (_tmp, vault) = open_vault();
+    let party_ref = resolve_or_create_comm_party(&vault, "party-vocabulary")?;
+
+    for (index, reason) in [
+        CounterpartyOptOutReason::Stop,
+        CounterpartyOptOutReason::Unsubscribe,
+        CounterpartyOptOutReason::BlockOrFriendRemoval,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let token = reason.receipt_reason();
+        assert!(OPT_OUT_REASONS.contains(&token), "{token} is accepted");
+        assert_eq!(
+            CounterpartyOptOutReason::from_receipt_reason(token),
+            Some(reason),
+            "{token} round-trips"
+        );
+        // The `as_str()` spelling is a DIFFERENT vocabulary and is refused.
+        assert_ne!(token, reason.as_str());
+        assert!(!OPT_OUT_REASONS.contains(&reason.as_str()));
+        let rejected = CommClaimValue::OptOut {
+            party_ref,
+            channel_class: Some("email".to_owned()),
+            reason: reason.as_str().to_owned(),
+            occurred_at: 10 + index as u64,
+        };
+        assert!(matches!(
+            validate_comm_claim_structure(&rejected.claim_body()),
+            Err(Error::InvalidClaimBody("comm.opt_out reason is invalid"))
+        ));
+        // And the receipt token validates, channel-scoped or party-wide.
+        for channel_class in [Some("email".to_owned()), None] {
+            let accepted = CommClaimValue::OptOut {
+                party_ref,
+                channel_class,
+                reason: token.to_owned(),
+                occurred_at: 10 + index as u64,
+            };
+            validate_comm_claim_structure(&accepted.claim_body())?;
+        }
+    }
+    assert_eq!(CounterpartyOptOutReason::from_receipt_reason("stop"), None);
+    assert_eq!(CounterpartyOptOutReason::from_receipt_reason(""), None);
+    Ok(())
+}
+
+/// An inbound STOP moves claim truth AND the type-132 cache derived from it, in
+/// one transaction — and so does every other writer of opt-out truth.
+///
+/// The whole standing-source ladder, in one place: a channel-scoped STOP head
+/// and a contact-level head coexist, CLEARING the contact-level one leaves the
+/// STOP standing, and only when the LAST source is cleared does the row come
+/// clean. The gate's `counterparty_opted_out` bit is asserted at both ends, on
+/// the production hydration path, because a cache the gate reads is the only
+/// thing this rule exists to keep honest.
+#[test]
+fn inbound_stop_rematerializes_contact_cache() -> CommResult<()> {
+    let (_tmp, vault) = open_vault();
+    // The gate cannot answer without a resolvable manifest, and `open_vault`
+    // clears the default one (its criticality floor would pend this fixture's
+    // ordinary claim writes). This one grants exactly the send under test, so
+    // the opt-out leg is proven by flipping a genuine decision rather than by
+    // decorating one that was refused for another reason.
+    put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+    let identity = entity(0x91);
+    let contact_id = entity(0x92);
+    // A ChannelIdentity row so the contact lands in ONE-1868's party-channel
+    // index, which is what the projector enumerates.
+    put_email_identity(&vault, identity, "owner@example.com")?;
+    let contact = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        identity,
+        "mika@example.com",
+        10,
+    )?;
+    vault.create_counterparty_contact(&contact_id, &contact)?;
+    assert!(
+        !vault
+            .get_counterparty_contact(&contact_id)
+            .map_err(CommError::Engine)?
+            .expect("contact row")
+            .is_opted_out()
+    );
+
+    record_comm_inbound_stop(&vault, "mika@example.com", "email", 30)?;
+    run_comm_projector(&vault)?;
+
+    let cached = vault
+        .get_counterparty_contact(&contact_id)
+        .map_err(CommError::Engine)?
+        .expect("contact row");
+    assert!(
+        cached.is_opted_out(),
+        "the cache follows the claim in the projector's own transaction"
+    );
+    let opt_out = cached.opt_out.expect("opt-out");
+    assert_eq!(
+        opt_out.reason,
+        crate::counterparty_contact::CounterpartyOptOutReason::Stop
+    );
+    assert_eq!(opt_out.recorded_at, 30);
+
+    assert!(
+        gate_holds_for_counterparty_opt_out(&vault, "mika@example.com")?,
+        "the gate reads the rebuilt row and holds the send"
+    );
+
+    // A CONTACT-level head is asserted beside the channel-scoped STOP head.
+    // Two standing sources now describe the same row.
+    let contact_opted_out = contact
+        .opted_out(
+            crate::counterparty_contact::CounterpartyOptOutReason::Unsubscribe,
+            40,
+        )
+        .map_err(CommError::Engine)?;
+    move_contact_family_heads(&vault, contact_id, &contact_opted_out, 40)?;
+    assert!(contact_cache_opted_out(&vault, contact_id)?);
+
+    // Coexistence: CLEARING the contact-level head leaves the channel-scoped
+    // STOP standing, so the rebuilt cache is still opted out — one cleared
+    // source is not a cleared party.
+    let contact_cleared = crate::counterparty_contact::CounterpartyContactRecord {
+        opt_out: None,
+        updated_at: 50,
+        ..contact_opted_out
+    };
+    move_contact_family_heads(&vault, contact_id, &contact_cleared, 50)?;
+    let still_held = vault
+        .get_counterparty_contact(&contact_id)
+        .map_err(CommError::Engine)?
+        .expect("contact row");
+    assert!(
+        still_held.is_opted_out(),
+        "the STOP head still stands, so the row still says opted out"
+    );
+    assert_eq!(
+        still_held.opt_out.expect("opt-out").reason,
+        crate::counterparty_contact::CounterpartyOptOutReason::Stop,
+        "the surviving source is the STOP, not the head just cleared"
+    );
+    assert!(gate_holds_for_counterparty_opt_out(
+        &vault,
+        "mika@example.com"
+    )?);
+
+    // The LAST standing source goes: the owner rules on a clear for the
+    // STOPped channel. NOTHING here rematerializes by hand — the approval
+    // re-derives the row in its own transaction, or claims and cache part ways.
+    request_opt_out_clear(&vault, "mika@example.com", "email", 60)?;
+    let party_ref = resolve_party(&vault, "mika@example.com")?.ok_or(CommError::InvalidRecord)?;
+    let human = WriteActor::new(party_ref, EdgeActorClass::Human);
+    approve_pending_opt_out_clear(&vault, "mika@example.com", "email", human, 61)?;
+    assert!(
+        !contact_cache_opted_out(&vault, contact_id)?,
+        "only after EVERY standing source is cleared does the cache come clean"
+    );
+    assert!(
+        !gate_holds_for_counterparty_opt_out(&vault, "mika@example.com")?,
+        "the gate bit follows claim truth in BOTH directions"
+    );
+
+    // The row is a function of the heads, so re-deriving it changes nothing.
+    crate::counterparty_contact::rematerialize_contact_cache(&vault, &contact_id)
+        .map_err(CommError::Engine)?;
+    assert!(!contact_cache_opted_out(&vault, contact_id)?);
+    Ok(())
+}
+
+/// Whether the type-132 cache row for `contact_id` says opted out.
+fn contact_cache_opted_out(vault: &Vault, contact_id: EntityId) -> CommResult<bool> {
+    Ok(vault
+        .get_counterparty_contact(&contact_id)
+        .map_err(CommError::Engine)?
+        .expect("contact row")
+        .is_opted_out())
+}
+
+/// Moves this contact's OWN `counterparty_contact.*` heads to `projection`,
+/// through the family door the shipping contact writers use, and re-derives the
+/// cache in the same transaction exactly as they do.
+///
+/// The heads are SUPERSEDED, never retracted: a predicate with no live head is
+/// a corrupted projection, so clearing an opt-out is a new head that says
+/// "none", not the absence of one.
+fn move_contact_family_heads(
+    vault: &Vault,
+    contact_id: EntityId,
+    projection: &crate::counterparty_contact::CounterpartyContactRecord,
+    at: u64,
+) -> CommResult<()> {
+    vault.with_write_txn(|wtxn| {
+        vault.supersede_counterparty_contact_claim_heads_for_test(
+            wtxn,
+            &contact_id,
+            projection,
+            at,
+        )?;
+        crate::counterparty_contact::rematerialize_contact_cache_in_txn(
+            vault,
+            wtxn,
+            &contact_id,
+            at,
+        )
+    })?;
+    Ok(())
+}
+
+/// A manifest granting exactly the `sender`/`send`/email effect the opt-out
+/// assertions evaluate, with the ordinary axes left normal so the fixture's own
+/// claim writes stay auto.
+fn allow_email_send_manifest() -> Vec<u8> {
+    let manifest = Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(crate::gate::POLICY_SCHEMA_VERSION),
+        ),
+        (
+            Value::from("pack_id"),
+            Value::from("comm-opt-out-cache-test"),
+        ),
+        (Value::from("pack_version"), Value::from("v1")),
+        (
+            Value::from("min_engine_version"),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            Value::from("defaults"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+        (Value::from("rules"), Value::Array(Vec::new())),
+        (
+            Value::from("actor_ceilings"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("actor_class"), Value::from("first_party")),
+                (Value::from("ceiling"), Value::from("auto")),
+            ])]),
+        ),
+        (
+            Value::from("scoped_grants"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("actor_ref"), Value::from("sender")),
+                (Value::from("effector"), Value::from("send")),
+                (
+                    Value::from("scope"),
+                    Value::Map(vec![(Value::from("channel"), Value::from("email"))]),
+                ),
+            ])]),
+        ),
+    ]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &manifest).expect("manifest encode");
+    out
+}
+
+/// Whether the production gate HOLDS an email send to `counterparty` on the
+/// ONE-1752 opt-out leg — i.e. whether hydration folded the cache row into
+/// `counterparty_opted_out`.
+fn gate_holds_for_counterparty_opt_out(vault: &Vault, counterparty: &str) -> CommResult<bool> {
+    let policy = {
+        let rtxn = vault.store.env.read_txn()?;
+        resolve_policy_manifest(&vault.store, &rtxn)?
+    };
+    let effect = ExternalEffectGateInput {
+        actor: GateActor {
+            actor_class: "first_party".to_owned(),
+            actor_ref: Some("sender".to_owned()),
+            delegation_grant_ref: None,
+        },
+        provenance: GateProvenanceHandles {
+            actor_entity_ref: Some(entity(0x9E)),
+            ..GateProvenanceHandles::default()
+        },
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        channel_identity_ref: None,
+        counterparty: Some(counterparty.to_owned()),
+        brief_ref: None,
+        send_ref: None,
+        standing_grant_ref: None,
+        scoped_mcp_call: None,
+        counterparty_first_touch: None,
+        counterparty_opted_out: false,
+        counterparty_opt_out_receipt_reason: None,
+        has_opted_in: true,
+        has_permission: true,
+        policy_risk: ExternalEffectPolicyRisk::Normal,
+    };
+    let (_decision_id, decision, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
+    })?;
+    Ok(decision
+        .reason_codes()
+        .contains(&GateReasonCode::PendingCounterpartyOptOut))
+}
+
+/// Seeds one email ChannelIdentity so a contact resolves to a channel class.
+fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<()> {
+    let identity = crate::channel_identity::ChannelIdentity {
+        channel: "email".to_owned(),
+        address_or_handle: address.to_owned(),
+        shape: crate::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        binding: crate::channel_identity::ChannelIdentityBinding::agent(entity(0x9F)),
+        state: crate::channel_identity::ChannelIdentityState::Active,
+        pending_fulfillment: None,
+        state_changed_at: 1,
+        quarantine_until: None,
+        reputation_ref: None,
+        manifest_ref: None,
+        grant: None,
+    };
+    vault
+        .create_channel_identity(&id, &identity)
+        .map_err(CommError::Engine)
+}
+
+/// The descriptor table is exactly six pinned rows of PURE DATA.
+#[test]
+fn descriptor_rows_are_complete_and_pinned() {
+    let rows = claim_class_descriptors();
+    assert_eq!(rows.len(), 6);
+    let predicates: BTreeSet<&str> = rows.iter().map(|row| row.predicate).collect();
+    assert_eq!(
+        predicates.len(),
+        rows.len(),
+        "no predicate is described twice"
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| (
+                row.predicate,
+                row.write_class,
+                row.enforcement,
+                row.restrictive,
+                row.projector_only
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("comm.opt_out", "recorded", true, true, true),
+            ("comm.last_touch", "recorded", false, false, true),
+            ("comm.thread_member", "recorded", false, false, true),
+            ("comm.reachable_via", "ordinary", false, false, false),
+            ("comm.send_override", "human_ruled", true, false, false),
+            ("comm.do_not_contact", "human_ruled", true, true, false),
+        ]
+    );
+    // Every write class is one of the three ARCH-0057 §4 names.
+    for row in &rows {
+        assert!(matches!(
+            row.write_class,
+            "recorded" | "human_ruled" | "ordinary"
+        ));
+    }
+    // Pure data: calling it twice is the same answer and touches no vault.
+    assert_eq!(claim_class_descriptors(), rows);
 }

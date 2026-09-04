@@ -226,6 +226,21 @@ impl CounterpartyOptOutReason {
             _ => None,
         }
     }
+
+    /// Exact inverse of [`Self::receipt_reason`] — the RECEIPT vocabulary, not
+    /// the [`Self::as_str`] one. `comm.opt_out` heads store receipt tokens, so
+    /// this is how a head's reason comes back as a typed reason when the
+    /// type-132 cache is re-derived. An unknown token is `None`, never a
+    /// guess.
+    #[must_use]
+    pub(crate) fn from_receipt_reason(token: &str) -> Option<Self> {
+        match token {
+            "counterparty_opt_out_stop" => Some(Self::Stop),
+            "counterparty_opt_out_unsubscribe" => Some(Self::Unsubscribe),
+            "counterparty_opt_out_block_or_friend_removal" => Some(Self::BlockOrFriendRemoval),
+            _ => None,
+        }
+    }
 }
 
 /// Recorded counterparty opt-out state.
@@ -756,6 +771,387 @@ pub(crate) fn validate_counterparty_contact_body_bytes(bytes: &[u8]) -> Result<(
     decode_counterparty_contact_body(bytes).map(|_| ())
 }
 
+/// Closes `old_id` in favour of `new_id` for one claim whose FAMILY DOOR owns
+/// the transition, inside the caller's write transaction.
+///
+/// The transition itself is the ordinary ARCH-0003 one — the old body is closed
+/// `superseded` with `valid_to = now`, its envelope end is refreshed, and the
+/// `supersedes` edge is written from the replacement — on the engine-owned
+/// setting, for the same reason the family's head writer uses it: the door
+/// already decided and validated this write, and a criticality ladder that
+/// could REFUSE the close would leave the family with two live heads for one
+/// predicate, which is the one state its readers must never see. The general
+/// public door (`Vault::supersede_claim_in_txn`) remains the door for claims
+/// nobody's family owns, and the reserved door stays scoped to the engine's own
+/// `skill.*`/`actor.*` namespaces.
+pub(crate) fn supersede_family_owned_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    new_id: &EntityId,
+    old_id: &EntityId,
+    now: u64,
+) -> Result<()> {
+    if new_id == old_id {
+        return Err(Error::ClaimSelfSupersession);
+    }
+    let raw = vault
+        .store
+        .entities
+        .get(&*wtxn, old_id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    let mut body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(Error::InvalidClaimBody(
+            "family-owned supersession target is not active",
+        ));
+    }
+    body.lifecycle = ClaimLifecycleStatus::Superseded;
+    body.valid_to = Some(now);
+    let data = crate::claim::encode_claim_body(&body)?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![
+            BatchOp::Put {
+                id: *old_id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: now.max(header.occurred_start),
+                },
+                learned_at: header.learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+            },
+            BatchOp::EdgeWithCreatedAt {
+                src: *new_id,
+                kind: crate::edge::EdgeKind::Supersedes,
+                tgt: *old_id,
+                weight: crate::vault::SUPERSEDES_DEFAULT_WEIGHT,
+                created_at: now,
+                vad: crate::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        ],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )
+}
+
+/// Re-derives the type-132 cache row for `contact_id` from claims, inside the
+/// caller's write transaction (ONE-1752).
+///
+/// This is the SOLE rebuild engine for the type-132 row, and the only
+/// production caller of `apply_counterparty_contact_body`. Every writer of
+/// contact or opt-out truth supersedes claim heads and then calls this in the
+/// SAME transaction, so the direction of truth is always claims → cache and a
+/// reader can never observe the two disagreeing.
+///
+/// The rebuilt opt-out is a RESTRICTIVE OR-fold over two sources: this
+/// contact's own `counterparty_contact.opt_out` head, and every live
+/// `comm.opt_out` head for the resolved party that COVERS this contact's
+/// channel class — party-wide heads cover all of them, a channel-scoped STOP
+/// head covers only its own class, and a contact with no resolvable class is
+/// covered by every head. If any covering source stands, the rebuilt record is
+/// opted out. Reason and timestamp come from the newest standing source by
+/// `issued_at`; on a tie the contact-family head wins as the more specific one.
+///
+/// Because the scope decision lives in the fold rather than in each caller's
+/// choice of which contacts to re-derive, ANY writer may re-derive ANY row of
+/// the party without a foreign-channel head bleeding into it.
+///
+/// The row is rebuilt DETERMINISTICALLY from heads — `now` stamps the envelope,
+/// never the body — so re-running this on unchanged claims reproduces
+/// byte-identical `encode_counterparty_contact_body` output.
+pub(crate) fn rematerialize_contact_cache_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    contact_id: &EntityId,
+    now: u64,
+) -> Result<()> {
+    let mut record = counterparty_contact_record_from_claims_in_txn(vault, &*wtxn, contact_id)?;
+    fold_party_opt_out_heads_in_txn(vault, &*wtxn, &mut record)?;
+    let data = encode_counterparty_contact_body(&record)?;
+    vault.apply_counterparty_contact_body(wtxn, contact_id, now, data)
+}
+
+/// Re-derives the type-132 cache for EVERY contact of `party_ref` a head on
+/// `channel_class` can reach, inside the caller's write transaction (ONE-1752).
+///
+/// `None` is the party-wide key: every contact of the party, whatever channel
+/// it sends on. A named class re-derives the contacts that class covers —
+/// including any whose identity resolves to no class, because unknown is
+/// covered by every head and its row must therefore follow every head.
+///
+/// A writer that moved PARTY-scoped opt-out truth must use this rather than
+/// re-deriving the one contact it was handed: a party-wide head that left a
+/// sibling contact's row not-opted-out would leave the gate reading a stale
+/// "no" for a party that said stop (fail-open). The enumeration is the same
+/// mandatory full scan the send-time aggregate uses — the party-channel index
+/// cannot prove its own completeness at HEAD, and a bounded lookup that missed
+/// one row would reintroduce exactly that hole. Which heads then apply to each
+/// row stays the fold's decision, so re-deriving a row is never a suppression
+/// source of its own.
+pub(crate) fn rematerialize_party_contact_cache_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_ref: &str,
+    channel_class: Option<&str>,
+    now: u64,
+) -> Result<()> {
+    let mut targets = Vec::new();
+    for (contact_id, record) in
+        counterparty_contacts_by_party_full_scan(&vault.store, &*wtxn, party_ref)?
+    {
+        if let Some(channel_class) = channel_class
+            && !counterparty_contact_matches_channel_class(
+                &vault.store,
+                &*wtxn,
+                &record,
+                channel_class,
+            )?
+        {
+            continue;
+        }
+        targets.push(contact_id);
+    }
+    for contact_id in targets {
+        rematerialize_contact_cache_in_txn(vault, wtxn, &contact_id, now)?;
+    }
+    Ok(())
+}
+
+/// Rebuilds the record a contact's `counterparty_contact.*` heads describe.
+///
+/// Every predicate in the family must have exactly one head that is ACTIVE and
+/// not stale — approval rung is deliberately not filtered on, because a head
+/// the write gate downgraded to `proposed` is still the truth the owner's
+/// writer recorded, and dropping it would silently lose opt-out state. A
+/// missing or doubled head is a corrupted projection and fails closed.
+fn counterparty_contact_record_from_claims_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<CounterpartyContactRecord> {
+    let mut heads: Vec<Option<Value>> = vec![None; COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len()];
+    for claim_id in vault.claims_for_subject_in_txn(rtxn, contact_id)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+            continue;
+        };
+        let Some(index) = COUNTERPARTY_CONTACT_CLAIM_PREDICATES
+            .iter()
+            .position(|predicate| *predicate == body.predicate)
+        else {
+            continue;
+        };
+        if body.lifecycle != ClaimLifecycleStatus::Active || body.stale {
+            continue;
+        }
+        if heads[index].is_some() {
+            return Err(Error::InvalidCounterpartyContactBody(
+                "counterparty contact claim family has two live heads for one predicate",
+            ));
+        }
+        heads[index] = Some(body.value);
+    }
+
+    let mut entries = vec![(
+        Value::from(KEY_SCHEMA_VERSION),
+        Value::from(COUNTERPARTY_CONTACT_SCHEMA_VERSION),
+    )];
+    for (index, predicate) in COUNTERPARTY_CONTACT_CLAIM_PREDICATES.iter().enumerate() {
+        let value = heads[index]
+            .take()
+            .ok_or(Error::InvalidCounterpartyContactBody(
+                "counterparty contact claim family is missing a live head",
+            ))?;
+        entries.push((Value::from(counterparty_contact_body_key(predicate)), value));
+    }
+    // Straight back through the canonical decoder, so the rebuilt record clears
+    // exactly the validation a stored body clears.
+    decode_counterparty_contact_value(&Value::Map(entries))
+}
+
+/// The body field one `counterparty_contact.*` predicate projects.
+fn counterparty_contact_body_key(predicate: &str) -> &'static str {
+    match predicate {
+        PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF => KEY_IDENTITY_REF,
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY => KEY_COUNTERPARTY,
+        PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH => KEY_FIRST_TOUCH,
+        PREDICATE_COUNTERPARTY_CONTACT_STATUS => KEY_STATUS,
+        PREDICATE_COUNTERPARTY_CONTACT_CREATED_AT => KEY_CREATED_AT,
+        PREDICATE_COUNTERPARTY_CONTACT_UPDATED_AT => KEY_UPDATED_AT,
+        PREDICATE_COUNTERPARTY_CONTACT_REVOKED_AT => KEY_REVOKED_AT,
+        PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT => KEY_OPT_OUT,
+        PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT => KEY_PROMO_CONSENT,
+        PREDICATE_COUNTERPARTY_CONTACT_NOTES => KEY_NOTES,
+        _ => unreachable!("predicate drawn from the counterparty contact family"),
+    }
+}
+
+/// OR-folds every live `comm.opt_out` head for this record's party that COVERS
+/// this record's channel class into it.
+///
+/// Monotonic: this can only ADD suppression, never clear what the contact's own
+/// head established. An unknown comm reason token falls back to the contact
+/// head's reason; when NEITHER source decodes, the fold fails closed rather
+/// than dropping opt-out truth on the floor.
+///
+/// Channel scope is the head's, applied once here (ONE-1752): a party-wide head
+/// covers every contact — the party said it to the owner, not to one mailbox —
+/// and a channel-scoped STOP head covers only contacts on its own class, so an
+/// email STOP can never suppress a telegram contact no matter which writer
+/// re-derives the row. A contact whose identity resolves to no class is UNKNOWN,
+/// and unknown matches EVERY head: the same CA-01 uncertainty rule
+/// [`counterparty_contact_matches_channel_class`] states, resolved restrictively.
+fn fold_party_opt_out_heads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    record: &mut CounterpartyContactRecord,
+) -> Result<()> {
+    let Some(party_ref) = crate::comm::resolve_party_ref_in_txn(vault, rtxn, &record.counterparty)
+        .map_err(comm_fold_error)?
+    else {
+        return Ok(());
+    };
+    // Resolved ONCE: the class comes from the record's sending identity, which
+    // no head in this loop can move.
+    let contact_class = counterparty_contact_channel_class(&vault.store, rtxn, record)?;
+    for head in crate::comm::standing_opt_out_heads_in_txn(vault, rtxn, party_ref)
+        .map_err(comm_fold_error)?
+    {
+        if let Some(contact_class) = contact_class.as_deref()
+            && !head.matches_channel(contact_class)
+        {
+            continue;
+        }
+        // Newest standing source wins; the contact head keeps a tie, being the
+        // more specific statement about this exact contact.
+        if record
+            .opt_out
+            .is_some_and(|opt_out| head.occurred_at <= opt_out.recorded_at)
+        {
+            continue;
+        }
+        let reason = match CounterpartyOptOutReason::from_receipt_reason(&head.reason) {
+            Some(reason) => reason,
+            None => match record.opt_out {
+                Some(opt_out) => opt_out.reason,
+                None => {
+                    return Err(Error::InvalidCounterpartyContactBody(
+                        "comm.opt_out reason is outside the receipt vocabulary",
+                    ));
+                }
+            },
+        };
+        // Clamped into the record's own window: the head is the SOURCE of the
+        // opt-out, and the record's invariants are what a stored body must
+        // satisfy.
+        let recorded_at = head.occurred_at.max(record.created_at);
+        record.opt_out = Some(CounterpartyOptOut::new(reason, recorded_at));
+        record.updated_at = record.updated_at.max(recorded_at);
+    }
+    Ok(())
+}
+
+/// Lowers a comm-family read failure into the contact error type. An engine
+/// error travels unchanged; a comm-shaped one becomes the contact family's own
+/// fail-closed class.
+fn comm_fold_error(error: crate::comm::CommError) -> Error {
+    match error {
+        crate::comm::CommError::Engine(error) => error,
+        _ => Error::InvalidCounterpartyContactBody("comm opt-out head failed to decode"),
+    }
+}
+
+/// Re-derives the type-132 cache row for `contact_id` from claims, in its own
+/// write transaction, and returns the rebuilt record. The ops path, and the
+/// proof that the cache is reproducible from claims alone.
+pub fn rematerialize_contact_cache(
+    vault: &Vault,
+    contact_id: &EntityId,
+) -> Result<CounterpartyContactRecord> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let now = crate::unix_seconds_now();
+    rematerialize_contact_cache_in_txn(vault, &mut wtxn, contact_id, now)?;
+    let record = read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)?
+        .ok_or(Error::EntityNotFound)?;
+    wtxn.commit()?;
+    Ok(record)
+}
+
+/// Drops the type-132 CACHE row for `contact_id` and its lookup index entries.
+///
+/// It touches NO claim: the contact's `counterparty_contact.*` heads and the
+/// party's `comm.opt_out` heads are the truth, and they are exactly what
+/// [`rematerialize_contact_cache`] rebuilds the row from afterwards. This is
+/// what makes type-132 a dial rather than a wall — dropping it loses nothing.
+///
+/// Both index legs go with the row: leaving either pointing at a row that no
+/// longer exists would make the send-time aggregate REFUSE rather than answer,
+/// and the rematerializer writes both back.
+pub fn drop_contact_cache_row(vault: &Vault, contact_id: &EntityId) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let Some(record) = read_counterparty_contact_in_txn(&vault.store, &wtxn, contact_id)? else {
+        return Ok(());
+    };
+    let index_key = counterparty_contact_index_key_for_record(&record)?;
+    vault.store.vault_meta.delete(&mut wtxn, &index_key)?;
+    if let Some(channel_class) = counterparty_contact_channel_class(&vault.store, &wtxn, &record)? {
+        remove_counterparty_contact_party_channel_index(
+            &vault.store,
+            &mut wtxn,
+            &record.counterparty,
+            &channel_class,
+            *contact_id,
+        )?;
+    }
+    vault
+        .store
+        .entities
+        .delete(&mut wtxn, contact_id.as_bytes())?;
+    let type_key =
+        crate::store::Store::encode_type_key(ENTITY_TYPE_COUNTERPARTY_CONTACT, contact_id);
+    vault.store.type_index.delete(&mut wtxn, &type_key)?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Removes `contact_ref` from the canonical de-duplicated set for this pair,
+/// deleting the entry entirely when nothing is left in it.
+fn remove_counterparty_contact_party_channel_index(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+    contact_ref: EntityId,
+) -> Result<()> {
+    let key = counterparty_contact_party_channel_index_key(party_ref, channel_class)?;
+    let Some(raw) = store.vault_meta.get(&*wtxn, &key)? else {
+        return Ok(());
+    };
+    let mut refs = decode_party_channel_index_value(&raw)?;
+    refs.retain(|id| *id != contact_ref);
+    if refs.is_empty() {
+        store.vault_meta.delete(wtxn, &key)?;
+    } else {
+        let value = encode_party_channel_index_value(&refs);
+        store.vault_meta.put(wtxn, &key, &value)?;
+    }
+    Ok(())
+}
+
 /// Returns whether `predicate` belongs to the CounterpartyContact claim family.
 #[must_use]
 pub fn is_counterparty_contact_claim_predicate(predicate: &str) -> bool {
@@ -1084,19 +1480,35 @@ impl Vault {
         id: &EntityId,
         record: &CounterpartyContactRecord,
     ) -> Result<()> {
-        let data = encode_counterparty_contact_body(record)?;
+        // Validate the record before anything is written, exactly as the
+        // encode-first shape did.
+        encode_counterparty_contact_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
             || self.counterparty_contact_assignment_conflict_in_txn(&wtxn, id, record)?
         {
             return Err(Error::CounterpartyContactAlreadyExists);
         }
-        self.apply_counterparty_contact_body(&mut wtxn, id, record.updated_at, data)?;
+        // Claims first, cache second, one transaction (ONE-1752): the heads are
+        // the truth and the row is derived from them. The claim_of edges point
+        // at a row this same transaction is about to write.
+        self.supersede_counterparty_contact_claim_heads_in_txn(
+            &mut wtxn,
+            id,
+            record,
+            record.updated_at,
+        )?;
+        rematerialize_contact_cache_in_txn(self, &mut wtxn, id, record.updated_at)?;
         wtxn.commit()?;
         Ok(())
     }
 
     /// Records a legal/platform opt-out event on a counterparty contact.
+    ///
+    /// Contact-level and party-level truth move TOGETHER: the same transaction
+    /// supersedes this contact's `counterparty_contact.*` heads and one
+    /// party-scoped `comm.opt_out` head with no channel class — the party said
+    /// it to the owner, not to one mailbox — and then re-derives the cache.
     pub fn opt_out_counterparty_contact(
         &self,
         id: &EntityId,
@@ -1104,22 +1516,40 @@ impl Vault {
         recorded_at: u64,
     ) -> Result<CounterpartyContactRecord> {
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .entities
-            .get(&wtxn, id.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        let current = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let current = self.counterparty_contact_for_update_in_txn(&wtxn, id)?;
         let opted_out = current.opted_out(reason, recorded_at)?;
-        let data = encode_counterparty_contact_body(&opted_out)?;
-        self.apply_counterparty_contact_body(&mut wtxn, id, recorded_at, data)?;
+        self.supersede_counterparty_contact_claim_heads_in_txn(
+            &mut wtxn,
+            id,
+            &opted_out,
+            recorded_at,
+        )?;
+        crate::comm::supersede_party_opt_out_head_in_txn(
+            self,
+            &mut wtxn,
+            &opted_out.counterparty,
+            reason,
+            recorded_at,
+        )
+        .map_err(comm_fold_error)?;
+        rematerialize_contact_cache_in_txn(self, &mut wtxn, id, recorded_at)?;
+        // The head just written carries NO channel class, so it covers every
+        // contact this party has — and every one of their cache rows has to say
+        // so in this same transaction. Re-deriving only `id` would leave a
+        // sibling contact on another channel identity reading not-opted-out,
+        // and the gate, which folds type-132 rows rather than `comm.opt_out`
+        // heads, would allow a send the party's own opt-out forbids.
+        rematerialize_party_contact_cache_in_txn(
+            self,
+            &mut wtxn,
+            &opted_out.counterparty,
+            None,
+            recorded_at,
+        )?;
+        let record = read_counterparty_contact_in_txn(&self.store, &wtxn, id)?
+            .ok_or(Error::EntityNotFound)?;
         wtxn.commit()?;
-        Ok(opted_out)
+        Ok(record)
     }
 
     /// Revokes owner visibility/reachability for a counterparty contact.
@@ -1129,22 +1559,168 @@ impl Vault {
         revoked_at: u64,
     ) -> Result<CounterpartyContactRecord> {
         let mut wtxn = self.store.env.write_txn()?;
+        let current = self.counterparty_contact_for_update_in_txn(&wtxn, id)?;
+        let revoked = current.revoked(revoked_at)?;
+        self.supersede_counterparty_contact_claim_heads_in_txn(
+            &mut wtxn, id, &revoked, revoked_at,
+        )?;
+        rematerialize_contact_cache_in_txn(self, &mut wtxn, id, revoked_at)?;
+        let record = read_counterparty_contact_in_txn(&self.store, &wtxn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
+    /// The current record a contact writer is about to move forward.
+    ///
+    /// The snapshot is rebuilt from this contact's OWN `counterparty_contact.*`
+    /// heads, never from the type-132 row, even though the writer holds the row
+    /// already: the row is a cache the party's `comm.opt_out` heads have been
+    /// folded into, and superseding contact heads from it would write that
+    /// party-scoped suppression back out as contact-family truth — cache →
+    /// claims, the one direction ONE-1752 forbids. A revoke that followed an
+    /// inbound STOP would otherwise mint a `counterparty_contact.opt_out` head
+    /// the contact family never asserted, and the family-owned CLEAR would then
+    /// have a channel-scoped STOP to undo that no CLEAR is scoped to reach.
+    ///
+    /// The row is still READ first, so a missing subject and a wrong entity
+    /// type fail exactly as they did when the body came from it.
+    fn counterparty_contact_for_update_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<CounterpartyContactRecord> {
         let raw = self
             .store
             .entities
-            .get(&wtxn, id.as_bytes())?
+            .get(wtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        let current = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        let revoked = current.revoked(revoked_at)?;
-        let data = encode_counterparty_contact_body(&revoked)?;
-        self.apply_counterparty_contact_body(&mut wtxn, id, revoked_at, data)?;
-        wtxn.commit()?;
-        Ok(revoked)
+        counterparty_contact_record_from_claims_in_txn(self, wtxn, id)
+    }
+
+    /// Moves this contact's `counterparty_contact.*` heads to `record`.
+    ///
+    /// One head per predicate. A head whose value is already exactly what the
+    /// record projects is LEFT ALONE — a supersession that changes nothing is
+    /// churn, not history — and every other predicate gets a new head that
+    /// supersedes the old one inside this transaction, so the family never has
+    /// two live heads for one predicate.
+    fn supersede_counterparty_contact_claim_heads_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        contact_id: &EntityId,
+        record: &CounterpartyContactRecord,
+        now: u64,
+    ) -> Result<()> {
+        let mut live: Vec<(EntityId, ClaimBody)> = Vec::new();
+        for claim_id in self.claims_for_subject_in_txn(&*wtxn, contact_id)? {
+            let Some(body) = self.get_claim_in_txn(&*wtxn, &claim_id)? else {
+                continue;
+            };
+            if is_counterparty_contact_claim_predicate(&body.predicate)
+                && body.lifecycle == ClaimLifecycleStatus::Active
+                && !body.stale
+            {
+                live.push((claim_id, body));
+            }
+        }
+
+        for body in record.claim_bodies(*contact_id) {
+            let existing = live
+                .iter()
+                .find(|(_, live_body)| live_body.predicate == body.predicate);
+            if existing.is_some_and(|(_, live_body)| live_body.value == body.value) {
+                continue;
+            }
+            let new_id = EntityId::now();
+            self.put_counterparty_contact_claim_in_txn(wtxn, &new_id, &body, now)?;
+            if let Some((old_id, _)) = existing {
+                supersede_family_owned_claim_in_txn(self, wtxn, &new_id, old_id, now)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Crate-visible test door onto the family head writer above.
+    ///
+    /// The contact family has no public CLEAR verb yet, and a test that moved
+    /// the heads itself would be asserting against its own copy of the door's
+    /// rules rather than the door. This changes nothing about the door: it is
+    /// the same call the shipping writers make, reachable from the sibling
+    /// module that pins the opt-out coexistence ladder.
+    #[cfg(test)]
+    pub(crate) fn supersede_counterparty_contact_claim_heads_for_test(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        contact_id: &EntityId,
+        record: &CounterpartyContactRecord,
+        now: u64,
+    ) -> Result<()> {
+        self.supersede_counterparty_contact_claim_heads_in_txn(wtxn, contact_id, record, now)
+    }
+
+    /// The family-owned door for one `counterparty_contact.*` head.
+    ///
+    /// It writes through the same `apply_ops` chokepoint (and the same
+    /// structural validation) as every other claim, on the ENGINE-OWNED
+    /// setting: this family door already decided the write when it validated
+    /// the record, exactly like `put_reserved_claim_in_txn`'s callers, so the
+    /// public criticality ladder must not re-ask the question and turn a
+    /// recorded contact fact into an owner review.
+    ///
+    /// It deliberately does NOT pre-check that the subject row exists: on
+    /// create, the type-132 row is written by this SAME transaction's
+    /// rematerialization, immediately after the heads it is derived from.
+    fn put_counterparty_contact_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+        now: u64,
+    ) -> Result<()> {
+        let ClaimSubject::Entity(subject) = body.subject else {
+            return Err(Error::InvalidClaimBody(
+                "counterparty_contact claim subject must be an entity",
+            ));
+        };
+        let data = crate::claim::encode_claim_body(body)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![
+                BatchOp::Put {
+                    id: *id,
+                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    learned_at: now,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: true,
+                    hub_sync_imported: false,
+                },
+                BatchOp::Edge {
+                    src: *id,
+                    kind: crate::edge::EdgeKind::ClaimOf,
+                    tgt: subject,
+                    weight: crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+                    vad: crate::affect::Vad::NEUTRAL,
+                },
+            ],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
     }
 
     /// Reads and decodes a CounterpartyContact record.
