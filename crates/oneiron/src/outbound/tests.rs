@@ -664,7 +664,9 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
         .expect("fresh retry row");
     assert_eq!(retry.state, AttemptState::Scheduled);
     assert_eq!(retry.retry_of, Some(first_attempt));
-    assert_eq!(retry.scheduled_at, Some(261));
+    // ONE-1879: this hold is the GATE's, so the seconds-scale re-arm curve
+    // authors the instant — a first try at 201 re-arms one second later.
+    assert_eq!(retry.scheduled_at, Some(202));
     assert_eq!(retry.attempt_count, 0);
     assert_eq!(retry.payload, source.payload);
     assert_eq!(retry.task_ref, source.task_ref);
@@ -679,7 +681,7 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
     );
     assert_eq!(executor.calls.len(), 0);
 
-    // At the scheduled instant the fresh row runs against the now-granting
+    // Once its instant has passed the fresh row runs against the now-granting
     // manifest, and the ONE logical send is charged exactly once.
     put_policy_manifest_bytes(
         &vault,
@@ -6299,6 +6301,281 @@ fn b2_human_explicit_instant_observes_quiet_policy_but_executes() -> crate::Resu
             .get("window_match")
             .map(String::as_str),
         Some("none")
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1879 — a hold the GATE parked re-arms on its own curve.
+//
+// A window hold waits on the clock, so minutes are the right grain. A
+// Gate-Pending hold waits on a PERSON: the window already admits the send, and
+// it goes the moment authority lands, so the executor polls it on seconds and
+// saturates at five minutes. Both curves read the `retry_of` lineage and never
+// `attempt_count`, which every fresh retry row resets to zero.
+// ---------------------------------------------------------------------------
+
+/// A vault whose actor may schedule but whose standing policy grants nothing
+/// on the channel it sends over, so every execute-time gate check parks the
+/// send Pending on human authority.
+///
+/// The manifest is REAL and grants a different channel — a missing manifest
+/// would fail closed for its own unrelated reason. No delivery-window claim is
+/// seeded, so the window admits and the Gate is the only thing holding the
+/// send.
+fn gate_pending_fixture(seed: u8) -> crate::Result<(tempfile::TempDir, Vault, EntityId)> {
+    let (tmp, vault) = temp_vault();
+    let actor = entity(seed);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(seed.wrapping_add(1)),
+        &policy_manifest(&actor.to_hex(), "slack", &["send"]),
+    )?;
+    Ok((tmp, vault, actor))
+}
+
+/// One executor round that must park the send rather than deliver it.
+fn run_parked_round(vault: &Vault, sink: &mut RecordingExecutor, now: u64, round: usize) {
+    assert_eq!(
+        vault.run_connector_task_executor(sink, now).unwrap(),
+        0,
+        "round {round}: a parked send delivers nothing"
+    );
+}
+
+/// Schedules one hostless email send that the Gate will park at execute time.
+fn schedule_gate_pending_send(
+    vault: &Vault,
+    actor: EntityId,
+    key: &str,
+) -> crate::Result<EntityId> {
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("email", "send", key))
+        .expect("an ungranted send still schedules — it parks, it is not lost");
+    assert_eq!(receipt.gate_outcome.as_deref(), Some("pending"));
+    assert_eq!(receipt.outcome, "held");
+    Ok(vault.connector_send_tasks()?.remove(0).task_ref)
+}
+
+#[test]
+fn gate_pending_hold_re_arms_on_the_bounded_seconds_curve() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault, actor) = gate_pending_fixture(0x14)?;
+    let task_ref = schedule_gate_pending_send(&vault, actor, "gate-pending-curve")?;
+
+    let mut executor = RecordingExecutor::default();
+    let mut now = ONE_1768_EXECUTE_AT;
+    let mut observed_delays = Vec::new();
+    for round in 0..11 {
+        run_parked_round(&vault, &mut executor, now, round);
+        assert!(
+            executor.calls.is_empty(),
+            "round {round}: a send parked on human authority never reaches the sink"
+        );
+
+        let receipt = one_1768_receipts(&vault)?
+            .pop()
+            .expect("every hold is surfaced as a receipt");
+        assert_eq!(
+            receipt_field(&receipt, "gate_outcome"),
+            Some("pending"),
+            "round {round}: the hold is the GATE's, not the window's"
+        );
+        assert_eq!(
+            receipt_field(&receipt, "window_action"),
+            Some("deliver_now"),
+            "round {round}: the window itself admits this send"
+        );
+        // The re-arm edge is SURFACED on the receipt, not merely queued.
+        let surfaced: u64 = receipt_field(&receipt, "retry_at")
+            .unwrap_or_else(|| panic!("round {round}: every executor hold stamps retry_at"))
+            .parse()
+            .expect("retry_at is an instant");
+        observed_delays.push(surfaced - now);
+
+        // The queue re-arms at exactly the instant the receipt surfaced.
+        let attempts = one_1768_bridge_attempts(&vault)?;
+        let armed = attempts
+            .iter()
+            .find(|attempt| attempt.state == AttemptState::Scheduled)
+            .expect("a fresh retry row is armed");
+        assert_eq!(
+            armed.scheduled_at,
+            Some(surfaced),
+            "round {round}: backoff_until must equal the receipted retry_at"
+        );
+        // Fresh rows reset attempt_count, so it can never be the exponent.
+        assert_eq!(armed.attempt_count, 0, "round {round}");
+        assert!(
+            armed.retry_of.is_some(),
+            "round {round}: the retry lineage is explicit"
+        );
+        // A parked send is never silently failed.
+        assert_eq!(
+            vault
+                .connector_send_task(&task_ref)?
+                .expect("task stays alive")
+                .outcome,
+            None,
+            "round {round}"
+        );
+        now = surfaced;
+    }
+
+    assert_eq!(
+        observed_delays,
+        vec![1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300],
+        "the gate-pending delay doubles from 1s by chain depth and saturates at the 300s cap"
+    );
+    Ok(())
+}
+
+#[test]
+fn same_node_pending_retries_leave_the_connector_task_byte_identical() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault, actor) = gate_pending_fixture(0x18)?;
+    let task_ref = schedule_gate_pending_send(&vault, actor, "gate-pending-bytes")?;
+
+    let mut executor = RecordingExecutor::default();
+    let mut now = ONE_1768_EXECUTE_AT;
+    // The first claim legitimately writes: it stamps the node that took it.
+    run_parked_round(&vault, &mut executor, now, 0);
+    let after_first_claim = vault.get_raw(&task_ref)?.expect("task row exists");
+
+    for round in 1..6 {
+        let receipt = one_1768_receipts(&vault)?.pop().expect("hold receipt");
+        now = receipt_field(&receipt, "retry_at")
+            .expect("retry_at")
+            .parse()
+            .expect("retry_at is an instant");
+        run_parked_round(&vault, &mut executor, now, round);
+        // The row is compared WHOLE — the 25-byte metadata header carries the
+        // learned time, so an identical body written again would still differ
+        // here. Re-marking the same node on the same still-parked TASK is a
+        // no-op, and a no-op writes nothing at all.
+        assert_eq!(
+            vault.get_raw(&task_ref)?.expect("task row exists"),
+            after_first_claim,
+            "round {round}: a same-node pending retry must not rewrite the TASK"
+        );
+        // The retry lane itself is still live: this is idempotence, not a stall.
+        assert!(
+            one_1768_bridge_attempts(&vault)?
+                .iter()
+                .any(|attempt| attempt.state == AttemptState::Scheduled),
+            "round {round}: the send is still armed"
+        );
+    }
+
+    // A terminal projection IS a state change: it writes exactly once, and
+    // repeating the same projection writes nothing further.
+    super::connector_task::project_connector_send_task_outcome(
+        &vault,
+        task_ref,
+        ConnectorSendTaskOutcome::Delivered,
+        now + 1,
+    )?;
+    let projected = vault.get_raw(&task_ref)?.expect("task row exists");
+    assert_ne!(
+        projected,
+        after_first_claim,
+        "the terminal outcome is a real write"
+    );
+    super::connector_task::project_connector_send_task_outcome(
+        &vault,
+        task_ref,
+        ConnectorSendTaskOutcome::Delivered,
+        now + 2,
+    )?;
+    assert_eq!(
+        vault.get_raw(&task_ref)?.expect("task row exists"),
+        projected,
+        "the same terminal projection twice writes exactly once"
+    );
+    Ok(())
+}
+
+#[test]
+fn provider_retry_after_is_the_exact_re_arm_authority() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    // A rate-limited provider that states its own cool-down. The adapter
+    // reports what the provider said; it invents nothing.
+    let rate_limited = || RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_rate_limited")
+            .with_receipt_field("retry_after", "900"),
+        ..RecordingExecutor::default()
+    };
+
+    // The dispatch path CAPTURES it: normalized beside the gate stamps, with
+    // the connector's own raw text still on the receipt next to it.
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x1C);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x1D),
+        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
+    )?;
+    let mut sink = rate_limited();
+    let result = vault
+        .dispatch_outbound_intent(
+            OutboundDispatchRequest::new(
+                "outbound:intent:one-1879-retry-after",
+                "intent:one-1879-retry-after",
+                OutboundIntent::from_trigger(
+                    OutboundIntentDraft::new(actor.to_hex(), "react", "slack", "channel:ops"),
+                    OutboundIntentTrigger::agent_immediate("session:one-1879"),
+                ),
+                OutboundDispatchActor::agent(actor),
+                OutboundDispatchGate::allow_when_policy_grants(),
+                ONE_1768_EXECUTE_AT,
+                OutboundDeliveryWindowDecision::DeliverNow,
+            ),
+            &mut sink,
+        )
+        .expect("dispatch");
+    assert_eq!(sink.calls.len(), 1, "the provider was actually called");
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(
+        receipt_field(&result.receipt, "provider_retry_after"),
+        Some("900"),
+        "the cool-down is stamped as a machine-readable re-arm authority"
+    );
+    assert_eq!(
+        receipt_field(&result.receipt, "retry_after"),
+        Some("900"),
+        "and the connector's own text survives verbatim beside it"
+    );
+    assert_eq!(
+        receipt_field(&result.receipt, "gate_outcome"),
+        Some("allow"),
+        "capturing it disturbs no gate stamp"
+    );
+    assert!(result.receipt.fields.contains_key("gate_decision_ref"));
+
+    // The executor OBEYS it: the re-arm is the provider's exact instant, not
+    // the generic transport curve's first rung (which would be now + 60s).
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("slack", "react", "one-1879-retry-after"))
+        .expect("schedule");
+    let mut executor = rate_limited();
+    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
+    assert_eq!(executor.calls.len(), 1);
+    let attempts = one_1768_bridge_attempts(&vault)?;
+    let armed = attempts
+        .iter()
+        .find(|attempt| attempt.state == AttemptState::Scheduled)
+        .expect("a rate-limited send re-arms rather than failing terminally");
+    assert_eq!(
+        armed.scheduled_at,
+        Some(ONE_1768_EXECUTE_AT + 900),
+        "the provider's stated cool-down is the exact re-arm instant"
     );
     Ok(())
 }

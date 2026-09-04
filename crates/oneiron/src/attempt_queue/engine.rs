@@ -52,6 +52,14 @@ const ERR_DEDUPE_ACTOR_MISMATCH: &str = "dedupe index points at a different acto
 pub(super) const RETRY_REASON_UNSPECIFIED: &str = "retry";
 const CLAIM_KIND_WRITE_RETRY_LIMIT: usize = 3;
 const DREAMER_RUN_ROOT_CLIMB_LIMIT: usize = 64;
+/// Point reads one [`AttemptQueue::retry_chain_depth`] walk may spend. A
+/// lineage this long is already past every backoff ceiling that reads it, so
+/// the depth saturates here instead of letting a walk grow with the row set.
+pub(super) const RETRY_CHAIN_DEPTH_LIMIT: u32 = 1_024;
+/// A `retry_of` link naming a row this queue does not hold.
+pub(super) const ERR_RETRY_CHAIN_MISSING_ROW: &str = "retry chain names a missing attempt";
+/// A `retry_of` link returning to a row already on the walk.
+pub(super) const ERR_RETRY_CHAIN_CYCLE: &str = "retry chain cycles";
 
 #[derive(Debug, Default)]
 struct ClaimKindReadScan {
@@ -1133,6 +1141,51 @@ impl<'a> AttemptQueue<'a> {
             return Ok(None);
         };
         decode_record(&raw, id).map(Some)
+    }
+
+    /// Counts the retries that precede `id` by walking its `retry_of` lineage.
+    ///
+    /// A first try is depth 0 and every `retry_of` hop adds one. [`Self::retry`]
+    /// mints a NEW row whose `attempt_count` restarts at zero, so the lineage
+    /// is the only honest logical retry counter: a caller spacing retries must
+    /// read the depth here rather than infer one from a per-row lease counter.
+    ///
+    /// Corruption fails CLOSED. A link naming a row this queue does not hold,
+    /// or one returning to a row already on the walk, is an
+    /// [`Error::InvalidAttemptQueueRecord`] — never a silently short depth,
+    /// which would collapse a long backoff back onto its first rung. The walk
+    /// spends at most `RETRY_CHAIN_DEPTH_LIMIT` (1,024) point reads and
+    /// saturates there, so a legitimately vast lineage is bounded work rather
+    /// than an error. All hops read one snapshot, so a concurrent retry cannot
+    /// make the walk observe half of two different chains.
+    pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut visited = HashSet::from([id]);
+        let mut cursor = self.retry_parent_in_txn(&rtxn, id)?;
+        let mut depth = 0_u32;
+        while let Some(parent) = cursor {
+            if !visited.insert(parent) {
+                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE));
+            }
+            depth = depth.saturating_add(1);
+            if depth >= RETRY_CHAIN_DEPTH_LIMIT {
+                return Ok(RETRY_CHAIN_DEPTH_LIMIT);
+            }
+            cursor = self.retry_parent_in_txn(&rtxn, parent)?;
+        }
+        Ok(depth)
+    }
+
+    /// One hop of the lineage walk: the row must exist, or the chain is broken.
+    fn retry_parent_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<AttemptId>> {
+        let Some(raw) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW));
+        };
+        Ok(decode_record(&raw, id)?.retry_of)
     }
 
     /// Reads an attempt by id inside a caller-owned write transaction.

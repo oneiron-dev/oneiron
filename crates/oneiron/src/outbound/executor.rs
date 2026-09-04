@@ -4,9 +4,10 @@ use super::connector_task::{
     mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
     send_receipt_exists_for_task,
 };
+use super::dispatch_pipeline::{GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD};
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
-    OutboundDispatchRequest, OutboundExecutionSink,
+    OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
 use super::window_door::local_minute_of_day_at;
@@ -20,6 +21,10 @@ use crate::error::Error;
 use crate::receipt::{SendReceiptOutcome, persist_send_receipt};
 
 const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
+/// First re-arm delay for a send the Gate parked on a human decision.
+const PENDING_GATE_BACKOFF_BASE_SECS: u64 = 1;
+/// Ceiling for that curve: a granted approval waits at most five minutes.
+const PENDING_GATE_BACKOFF_CAP_SECS: u64 = 300;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectorTaskExecutorError {
@@ -242,7 +247,12 @@ impl Vault {
                         .fields
                         .get("retry_at")
                         .and_then(|value| value.parse().ok());
-                    let retry_at = connector_task_retry_at(&queue, &attempt, now, window_edge)?;
+                    let arm = ConnectorRetryArm {
+                        window_edge,
+                        provider_retry_after_secs: receipt_provider_retry_after(&result.receipt),
+                        curve: connector_retry_curve(&result),
+                    };
+                    let retry_at = connector_task_retry_at(&queue, &attempt, now, &arm)?;
                     result
                         .receipt
                         .fields
@@ -305,12 +315,15 @@ impl Vault {
                     if intent_pending
                         && (delivery_may_have_occurred || provider_retry_is_idempotent)
                     {
+                        // A provider that stated its own cool-down (a rate-limit
+                        // `retry_after`) is obeyed exactly; without one the
+                        // generic transport curve still applies.
                         retry_connector_task_attempt(
                             &queue,
                             &attempt,
                             now,
                             "transport_failed_pending",
-                            None,
+                            receipt_provider_retry_after(&result.receipt),
                         )?;
                     } else {
                         persist_send_receipt(
@@ -385,14 +398,71 @@ fn fail_connector_task_attempt(
     Ok(())
 }
 
+/// Which curve authors the next re-arm instant for a parked send.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectorRetryCurve {
+    /// The generic transport curve: 60s doubling to a 3,600s ceiling.
+    Transport,
+    /// The Gate parked this send on a human decision, so it re-arms on the
+    /// seconds-scale curve instead of sleeping through the approval.
+    GatePending,
+}
+
+/// Everything that may author one re-arm instant, in precedence order.
+struct ConnectorRetryArm {
+    /// The delivery window's own edge. A window is a legality boundary, so it
+    /// keeps the authority it already had: nothing below may pull a send
+    /// forward past it.
+    window_edge: Option<u64>,
+    /// What the connector's provider asked for, in seconds from now. The
+    /// provider is the only party that knows its own cool-down, so when it
+    /// states one it is the exact re-arm instant rather than a guess from a
+    /// computed curve.
+    provider_retry_after_secs: Option<u64>,
+    curve: ConnectorRetryCurve,
+}
+
+/// A hold the GATE parked is waiting on a PERSON, not on a transport window:
+/// it re-arms on the seconds-scale curve so a granted approval is picked up
+/// while it still means something. Every other hold keeps the minute curve.
+fn connector_retry_curve(result: &OutboundDispatchResult) -> ConnectorRetryCurve {
+    let gate_parked_it = result.gate_outcome == GATE_OUTCOME_PENDING;
+    if result.outcome == OutboundDispatchOutcome::Held && gate_parked_it {
+        ConnectorRetryCurve::GatePending
+    } else {
+        ConnectorRetryCurve::Transport
+    }
+}
+
+/// Reads the provider's stated cool-down off a dispatch receipt.
+fn receipt_provider_retry_after(receipt: &crate::receipt::ReceiptRecord) -> Option<u64> {
+    receipt
+        .fields
+        .get(PROVIDER_RETRY_AFTER_FIELD)
+        .and_then(|value| value.parse().ok())
+}
+
 fn connector_task_retry_at(
     queue: &AttemptQueue<'_>,
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
-    window_edge: Option<u64>,
+    arm: &ConnectorRetryArm,
 ) -> Result<u64, Error> {
-    if let Some(edge) = window_edge {
+    if let Some(edge) = arm.window_edge {
         return Ok(edge.max(now.saturating_add(1)));
+    }
+    if let Some(secs) = arm.provider_retry_after_secs {
+        return Ok(now.saturating_add(secs).max(now.saturating_add(1)));
+    }
+    if arm.curve == ConnectorRetryCurve::GatePending {
+        // Fresh retry rows reset attempt_count, so the retry_of lineage is the
+        // only honest exponent — and a corrupt lineage fails CLOSED here rather
+        // than silently restarting the curve at its first rung.
+        let retry_index = queue.retry_chain_depth(attempt.id)?;
+        let delay = PENDING_GATE_BACKOFF_BASE_SECS
+            .saturating_mul(1_u64.checked_shl(retry_index).unwrap_or(u64::MAX))
+            .min(PENDING_GATE_BACKOFF_CAP_SECS);
+        return Ok(now.saturating_add(delay));
     }
     let mut depth = 0_u32;
     let mut cursor = attempt.retry_of;
@@ -415,9 +485,14 @@ fn retry_connector_task_attempt(
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
     reason: &str,
-    window_edge: Option<u64>,
+    provider_retry_after_secs: Option<u64>,
 ) -> Result<(), Error> {
-    let backoff_until = connector_task_retry_at(queue, attempt, now, window_edge)?;
+    let arm = ConnectorRetryArm {
+        window_edge: None,
+        provider_retry_after_secs,
+        curve: ConnectorRetryCurve::Transport,
+    };
+    let backoff_until = connector_task_retry_at(queue, attempt, now, &arm)?;
     retry_connector_task_attempt_at(queue, attempt, now, reason, backoff_until)
 }
 
