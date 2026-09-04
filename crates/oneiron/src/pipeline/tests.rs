@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::*;
 use crate::codebase::CODEBASE_SCOPE_KEY_LEN;
+use crate::corpus::{CorpusId, CorpusScope, scope_with_corpus_id};
 use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
 use crate::test_util::embedding_test_config;
@@ -6672,4 +6673,341 @@ mod relationship_scope_filter {
         assert_eq!(results[0].id, matching_claim);
         Ok(())
     }
+}
+
+// ── ONE-1914 · corpus scope filter ──────────────────────────────────────
+
+fn corpus(byte: u8) -> CorpusId {
+    CorpusId::from_entity_id(entity_id(byte))
+}
+
+/// A live CLAIM body carrying an optional corpus scope (`None` =
+/// unscoped/core). Built through the pinned claim encoder so the nested
+/// `corpus_id` entry is the real 16-byte binary the read side decodes.
+fn corpus_claim_body(corpus_scope: Option<CorpusId>) -> Result<Vec<u8>> {
+    let mut body = ClaimBody::new(
+        "facet.scope_test",
+        ClaimSubject::Entity(entity_id(0x7C)),
+        rmpv::Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    if let Some(corpus_scope) = corpus_scope {
+        body.scope = Some(scope_with_corpus_id(None, corpus_scope)?);
+    }
+    Ok(crate::claim::encode_claim_body(&body).expect("encode claim body"))
+}
+
+/// A vector-ranked corpus-scoped CLAIM.
+fn put_claim_with_vector_corpus(
+    vault: &Vault,
+    id: EntityId,
+    vector: [f32; 4],
+    corpus_scope: Option<CorpusId>,
+) -> Result<()> {
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &corpus_claim_body(corpus_scope)?,
+        )
+        .vector(&id, &vector)
+        .commit()
+}
+
+/// A text-indexed corpus-scoped CLAIM — the BM25 analog of
+/// [`put_claim_with_vector_corpus`], for the prefix-expansion pin below.
+fn put_claim_text_corpus(
+    vault: &Vault,
+    id: EntityId,
+    text: &str,
+    corpus_scope: Option<CorpusId>,
+) -> Result<()> {
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &corpus_claim_body(corpus_scope)?,
+        )
+        .text(&id, &[("body", text)])
+        .commit()
+}
+
+struct CorpusFixture {
+    corpus_a: CorpusId,
+    corpus_b: CorpusId,
+    claim_core: EntityId,
+    claim_a: EntityId,
+    claim_b: EntityId,
+    event: EntityId,
+}
+
+/// Three claims — unscoped, corpus A, corpus B — plus one non-CLAIM row, all
+/// reachable from [`FACET_QUERY`].
+fn setup_corpus_fixture(vault: &Vault) -> Result<CorpusFixture> {
+    let fixture = CorpusFixture {
+        corpus_a: corpus(0x95),
+        corpus_b: corpus(0x96),
+        claim_core: entity_id(0x31),
+        claim_a: entity_id(0x32),
+        claim_b: entity_id(0x33),
+        event: entity_id(0x34),
+    };
+
+    put_claim_with_vector_corpus(vault, fixture.claim_core, [1.0, 0.0, 0.0, 0.0], None)?;
+    put_claim_with_vector_corpus(
+        vault,
+        fixture.claim_a,
+        [0.8, 0.6, 0.0, 0.0],
+        Some(fixture.corpus_a),
+    )?;
+    put_claim_with_vector_corpus(
+        vault,
+        fixture.claim_b,
+        [0.6, 0.8, 0.0, 0.0],
+        Some(fixture.corpus_b),
+    )?;
+    vault
+        .batch()
+        .put(
+            &fixture.event,
+            ENTITY_TYPE_EVENT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"payload",
+        )
+        .vector(&fixture.event, &[0.0, 1.0, 0.0, 0.0])
+        .commit()?;
+
+    Ok(fixture)
+}
+
+/// The selection contract: unscoped claims are universal inside a selected
+/// corpus, another corpus's claims are removed, and non-CLAIM rows never
+/// participate.
+#[test]
+fn corpus_scope_selects_audience_and_keeps_unscoped_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fixture = setup_corpus_fixture(&vault)?;
+    let ids = |scope: Option<CorpusScope>| -> Result<HashSet<EntityId>> {
+        let mut query = vault.query().search_vector(&FACET_QUERY, 10);
+        if let Some(scope) = scope {
+            query = query.corpus(scope);
+        }
+        Ok(query.run()?.iter().map(|entry| entry.id).collect())
+    };
+
+    // Default (no `.corpus()` call) and the explicit All scope both span
+    // every corpus.
+    for scope in [None, Some(CorpusScope::All)] {
+        let all = ids(scope)?;
+        assert_eq!(
+            all,
+            HashSet::from([
+                fixture.claim_core,
+                fixture.claim_a,
+                fixture.claim_b,
+                fixture.event
+            ]),
+            "All must span every corpus"
+        );
+    }
+
+    // Corpus(A): A's claims + unscoped core + the non-claim row; B is gone.
+    let in_a = ids(Some(CorpusScope::Corpus(fixture.corpus_a)))?;
+    assert_eq!(
+        in_a,
+        HashSet::from([fixture.claim_core, fixture.claim_a, fixture.event]),
+        "Corpus(A) keeps A + unscoped + non-claims, drops B"
+    );
+
+    // Unscoped: core only — every corpus-scoped claim is removed.
+    let unscoped = ids(Some(CorpusScope::Unscoped))?;
+    assert_eq!(
+        unscoped,
+        HashSet::from([fixture.claim_core, fixture.event]),
+        "Unscoped keeps core knowledge and drops every corpus-scoped claim"
+    );
+
+    // AnyOf spans the named corpora, still alongside unscoped core.
+    let any_of = ids(Some(CorpusScope::AnyOf(vec![
+        fixture.corpus_a,
+        fixture.corpus_b,
+    ])))?;
+    assert_eq!(
+        any_of,
+        HashSet::from([
+            fixture.claim_core,
+            fixture.claim_a,
+            fixture.claim_b,
+            fixture.event
+        ]),
+        "AnyOf(A, B) keeps both corpora plus unscoped"
+    );
+    Ok(())
+}
+
+/// The filter runs before the `result_limit` truncation, so a higher-ranked
+/// wrong-corpus claim never consumes the only result slot.
+#[test]
+fn wrong_corpus_claim_does_not_consume_a_result_slot() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let corpus_a = corpus(0x95);
+    let corpus_b = corpus(0x96);
+    let top_ranked_b = entity_id(0x41);
+    let lower_ranked_a = entity_id(0x43);
+
+    put_claim_with_vector_corpus(&vault, top_ranked_b, [1.0, 0.0, 0.0, 0.0], Some(corpus_b))?;
+    put_claim_with_vector_corpus(&vault, lower_ranked_a, [0.8, 0.6, 0.0, 0.0], Some(corpus_a))?;
+
+    let unfiltered = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .limit(1)
+        .run()?;
+    assert_eq!(
+        unfiltered.first().map(|entry| entry.id),
+        Some(top_ranked_b),
+        "the B claim outranks the A claim without a corpus scope"
+    );
+
+    let results = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .limit(1)
+        .corpus(CorpusScope::Corpus(corpus_a))
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![lower_ranked_a],
+        "the excluded top-ranked claim must free its slot"
+    );
+    Ok(())
+}
+
+/// Regression pin: the default scope changes nothing — same ids, same scores,
+/// same order as a query that never mentions a corpus.
+#[test]
+fn corpus_scope_all_is_a_no_op() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    setup_corpus_fixture(&vault)?;
+
+    let baseline = vault.query().search_vector(&FACET_QUERY, 10).run()?;
+    let with_all = vault
+        .query()
+        .search_vector(&FACET_QUERY, 10)
+        .corpus(CorpusScope::All)
+        .run()?;
+
+    assert_eq!(ordered_results(&with_all), ordered_results(&baseline));
+    Ok(())
+}
+
+/// The candidate-scan twin decides exactly what the post-fusion filter does.
+#[test]
+fn corpus_candidate_twin_agrees_with_the_post_fusion_filter() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fixture = setup_corpus_fixture(&vault)?;
+    let candidates = [
+        fixture.claim_core,
+        fixture.claim_a,
+        fixture.claim_b,
+        fixture.event,
+    ];
+    let rtxn = vault.store.env.read_txn()?;
+
+    for scope in [
+        CorpusScope::All,
+        CorpusScope::Unscoped,
+        CorpusScope::Corpus(fixture.corpus_a),
+        CorpusScope::AnyOf(vec![fixture.corpus_a, fixture.corpus_b]),
+    ] {
+        let mut scores: Vec<ScoredEntity> = candidates
+            .iter()
+            .map(|id| ScoredEntity {
+                id: *id,
+                score: 1.0,
+            })
+            .collect();
+        super::filters::apply_corpus_filter(&mut scores, &vault.store, &rtxn, &scope)?;
+        let filtered: Vec<EntityId> = scores.iter().map(|entry| entry.id).collect();
+
+        let mut twin = Vec::new();
+        for id in &candidates {
+            if super::filters::pipeline_candidate_matches_corpus_filter(
+                &vault.store,
+                &rtxn,
+                id,
+                &scope,
+            )? {
+                twin.push(*id);
+            }
+        }
+
+        assert_eq!(filtered, twin, "{scope:?} must decide identically");
+    }
+    Ok(())
+}
+
+/// An exact text hit belonging to ANOTHER corpus must not consume the only
+/// result slot. The corpus conjunct on the candidate scan marks that posting
+/// out of scope, so BM25 prefix expansion still reaches the in-corpus claim —
+/// the corpus analog of
+/// [`exact_other_world_text_hit_does_not_suppress_world_prefix`].
+#[test]
+fn exact_other_corpus_text_hit_does_not_suppress_corpus_prefix() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let corpus_active = corpus(0x95);
+    let corpus_other = corpus(0x96);
+    let other_corpus_exact = entity_id(0x61);
+    let active_corpus_prefix = entity_id(0x22);
+
+    put_claim_text_corpus(
+        &vault,
+        other_corpus_exact,
+        "corpusprefix",
+        Some(corpus_other),
+    )?;
+    put_claim_text_corpus(
+        &vault,
+        active_corpus_prefix,
+        "corpusprefixalpha",
+        Some(corpus_active),
+    )?;
+
+    let results = vault
+        .query()
+        .search_text("corpusprefix", 1)
+        .corpus(CorpusScope::Corpus(corpus_active))
+        .run()?;
+
+    assert!(results.iter().any(|entry| entry.id == active_corpus_prefix));
+    assert!(!results.iter().any(|entry| entry.id == other_corpus_exact));
+    Ok(())
+}
+
+/// Naming zero corpora fails the run closed instead of silently behaving
+/// like [`CorpusScope::Unscoped`].
+#[test]
+fn empty_corpus_any_of_fails_the_run_closed() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    setup_corpus_fixture(&vault)?;
+
+    assert_matches!(
+        vault
+            .query()
+            .search_vector(&FACET_QUERY, 10)
+            .corpus(CorpusScope::AnyOf(Vec::new()))
+            .run(),
+        Err(Error::InvalidConfig(_))
+    );
+    Ok(())
 }

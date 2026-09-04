@@ -55,6 +55,7 @@ pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
+pub mod corpus;
 pub mod counterparty_contact;
 pub(crate) mod credential_door;
 pub mod critic;
@@ -239,6 +240,9 @@ pub use crate::config::{HnswConfig, VaultConfig};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
+};
+pub use crate::corpus::{
+    CLAIM_SCOPE_CORPUS_ID_KEY, CorpusId, CorpusScope, corpus_id_from_scope, scope_with_corpus_id,
 };
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
