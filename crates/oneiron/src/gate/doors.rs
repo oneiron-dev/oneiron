@@ -1,15 +1,21 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, claim_sensitivity_band};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass, claim_sensitivity_band,
+    dreamer_isolation_class,
+};
+use crate::compaction::turn_session_membership_in_txn;
+use crate::dreamer_consolidation::decode_consolidation_evidence;
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
+use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::vault::live_entity_row_in_txn;
-use crate::write_envelope::{WriteActor, WriteEnvelope};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope};
 
 use super::ceiling::PolicyApprovalCeiling;
 use super::confirm::{
@@ -175,7 +181,8 @@ fn check_claim_policy_for_write_with_record_inner(
     // unchanged — and every persisted Dreamer claim candidate, on every
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
-    let precommit_denial = if dreamer_run_id.is_some() && !operation_effect_body {
+    let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
+    let precommit_denial = if dreamer_candidate {
         dreamer_precommit_denial(store, &*wtxn, body)
     } else {
         None
@@ -233,6 +240,27 @@ fn check_claim_policy_for_write_with_record_inner(
             Some(reason_code) => GateDecision::deny(reason_code),
             None => policy.evaluate_gate(&input),
         };
+        // GATE-13: persona-core and mirroring-prone predicates are isolated
+        // for the DREAMER path only, and only AFTER the validity pass above.
+        // Authorship reuses the one detection computed at the top of this
+        // door, so there is no second notion of "is this a Dreamer write";
+        // owner/human writes never enter, and replicated replay never reaches
+        // this module at all.
+        //
+        // The guard is deny-first in both directions. A denial already
+        // returned — a GATE-12 validity refusal or a fail-closed policy
+        // verdict — is stricter than anything isolation would say, so it
+        // stands; isolation may only refuse or park a write that would
+        // otherwise have been allowed. It also runs BEFORE the
+        // critical-confirm attachment below, whose exact single-code match on
+        // `[PendingCriticalityFloor]` an isolation pend can therefore never
+        // satisfy: a persona-core write has no confirm-attached Auto path.
+        if dreamer_candidate
+            && decision.outcome() != GateOutcome::Deny
+            && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
+        {
+            decision = dreamer_isolation_decision(store, &*wtxn, body, isolation_class);
+        }
         let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(
                 &input,
@@ -505,6 +533,122 @@ fn dreamer_precommit_denial(
         &resolves,
     )
     .err()
+}
+
+/// How many distinct SESSION entities a persona-core Dreamer write must cite
+/// before it may be parked for owner review (GATE-13).
+///
+/// Two is the smallest number that cannot be one conversation. A persona head
+/// moves on DELIBERATE transformation — something the owner returned to across
+/// sittings — so a single cycle, however emphatic inside itself, is refused
+/// rather than queued.
+const PERSONA_CORE_MIN_DISTINCT_SESSIONS: usize = 2;
+
+/// The isolation verdict for one Dreamer-authored candidate whose predicate
+/// carries an isolation class.
+///
+/// Both classes force the ceiling to Proposed and both carry the EXISTING
+/// criticality marker beside their own code, so the inbox projection keeps
+/// classifying them `ManifestCritical` through the equality it already has —
+/// no new inbox variant, and no dial that can waive the row.
+fn dreamer_isolation_decision(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+    isolation_class: DreamerIsolationClass,
+) -> GateDecision {
+    match isolation_class {
+        DreamerIsolationClass::PersonaCore => {
+            let sessions = distinct_evidence_session_count(store, txn, body);
+            if sessions < PERSONA_CORE_MIN_DISTINCT_SESSIONS {
+                GateDecision::deny(GateReasonCode::DenyPersonaSingleCycle)
+            } else {
+                GateDecision::pending(vec![
+                    GateReasonCode::PendingPersonaIsolation,
+                    GateReasonCode::PendingCriticalityFloor,
+                ])
+            }
+        }
+        DreamerIsolationClass::MirroringProne => GateDecision::pending(vec![
+            GateReasonCode::PendingMirroringIsolation,
+            GateReasonCode::PendingCriticalityFloor,
+        ]),
+    }
+}
+
+/// Counts the DISTINCT sittings the candidate's own evidence reaches.
+///
+/// Read from the candidate's `candidate_evidence` payload through the same
+/// codec the GATE-12 floor uses, and resolved through the CALLER's
+/// transaction so a turn written earlier in this write transaction still
+/// answers. Every unreadable state is non-evidence rather than an abort: a
+/// legacy payload shape, a structurally broken envelope, a ref that does not
+/// resolve, a ref that resolves to something other than a TURN, a turn with
+/// no recorded sitting, and a recorded sitting that does not resolve to a
+/// live SESSION all fail closed and simply do not count.
+fn distinct_evidence_session_count(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> usize {
+    let Some(Value::Map(entries)) = body.evidence.as_ref() else {
+        return 0;
+    };
+    let Some(candidate_evidence) = entries.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)).then_some(value)
+    }) else {
+        return 0;
+    };
+    let Ok(Some(evidence)) = decode_consolidation_evidence(candidate_evidence) else {
+        return 0;
+    };
+
+    let mut sessions: Vec<EntityId> = Vec::new();
+    for entity_ref in &evidence.refs {
+        let Some(session) = evidence_ref_session(store, txn, entity_ref) else {
+            continue;
+        };
+        if !sessions.contains(&session) {
+            sessions.push(session);
+        }
+    }
+    sessions.len()
+}
+
+/// The sitting one evidence ref speaks from: the ref must resolve to a live
+/// TURN, that turn must carry a RECORDED session membership, and the
+/// membership must itself resolve to a live SESSION.
+///
+/// Membership is the engine-written fact recorded beside the turn at witness
+/// time, never a caller-authored field on the turn body — a body a writer
+/// controls could otherwise name any sitting it liked and manufacture the
+/// second cycle this floor exists to require.
+fn evidence_ref_session(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_ref: &EntityId,
+) -> Option<EntityId> {
+    if !live_entity_row_has_type(store, txn, entity_ref, ENTITY_TYPE_TURN) {
+        return None;
+    }
+    let session = turn_session_membership_in_txn(store, txn, entity_ref)
+        .ok()
+        .flatten()?;
+    live_entity_row_has_type(store, txn, &session, ENTITY_TYPE_SESSION).then_some(session)
+}
+
+/// Whether `id` reads back as a LIVE row of exactly `entity_type`. A read
+/// error, an absent row and an erased shell are all `false`.
+fn live_entity_row_has_type(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> bool {
+    matches!(
+        live_entity_row_in_txn(store, txn, id),
+        Ok(LiveEntityRow::Live { entity_type: found, .. }) if found == entity_type
+    )
 }
 
 /// The Dreamer run this write is authored by, if any.
