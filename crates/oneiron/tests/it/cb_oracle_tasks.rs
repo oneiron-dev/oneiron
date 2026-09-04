@@ -482,7 +482,9 @@ mod cb_t {
     struct TasksVerbSurface {
         /// Full agent-visible tasks verb family, sorted.
         verbs: Vec<String>,
-        /// TASK entities minted by the one `tasks.create(spec)` call.
+        /// TASK entities minted by the one `tasks.create(spec)` call: the
+        /// primary TASK plus its Owner authority fact, which shares the TASK
+        /// type byte because the proof of who owns a task replicates with it.
         create_minted_task_entities: usize,
         /// Agent-visible verbs that touch the JobQueue directly.
         agent_visible_jobqueue_verbs: usize,
@@ -566,7 +568,7 @@ mod cb_t {
                 "tasks.expand"
             ]
         );
-        assert_eq!(surface.create_minted_task_entities, 1);
+        assert_eq!(surface.create_minted_task_entities, 2);
         assert_eq!(surface.agent_visible_jobqueue_verbs, 0);
     }
 
@@ -1215,7 +1217,8 @@ mod consult_fixture {
 mod cb_a {
     /// Shape of one consult addressed to one peer.
     struct ConsultShape {
-        /// TASK entities minted for the consult.
+        /// TASK entities minted for the consult: the consult TASK plus its
+        /// Owner authority fact, which shares the TASK type byte.
         consult_task_entities: usize,
         /// Of those, entities present in the sync export (must reach the
         /// peer's board wherever it connects).
@@ -1333,7 +1336,7 @@ mod cb_a {
     #[test]
     fn consult_is_synced_assignee_addressed_task_entity() {
         let consult = arm_consult_shape();
-        assert_eq!(consult.consult_task_entities, 1);
+        assert_eq!(consult.consult_task_entities, 2);
         assert_eq!(consult.synced_consult_entities, 1);
         assert_eq!(consult.consult_job_realizations, 0);
         assert_eq!(consult.assignee, "cc-second");

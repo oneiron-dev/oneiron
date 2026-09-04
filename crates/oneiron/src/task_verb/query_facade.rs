@@ -98,8 +98,13 @@ impl Memory<'_> {
                 acked: intent.acked,
             });
         }
+        // The acknowledgement is a FACT about a real failed row, stamped with
+        // who acknowledged it and when, and it commits inside the verified
+        // actor's write transaction like every other engine-authored fact.
+        let now = unix_seconds_now();
         self.with_verified_actor_write_txn(|wtxn| {
-            ack_task_in_txn(self.vault(), wtxn, task_ref).map_err(MemoryError::from)
+            ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
+                .map_err(MemoryError::from)
         })?;
         Ok(TaskAckReceipt {
             task_ref,
@@ -238,8 +243,11 @@ impl Memory<'_> {
                         forced_count += 1;
                     }
                 }
+                // Only a force that really stopped something records one: the
+                // Cancelled fact is a cancellation that happened, never an
+                // attempt to cancel.
                 if forced_count > 0 {
-                    cancel_task_in_txn(self.vault(), wtxn, task_ref)?;
+                    cancel_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)?;
                 }
                 Ok((decision_ref, decision.outcome(), forced_count))
             })?;
@@ -514,10 +522,14 @@ impl Memory<'_> {
                 let preserved_terminal_status = terminal_status.filter(|status| {
                     matches!(status, RunTreeStatus::Completed | RunTreeStatus::Failed)
                 });
+                // The Cancelled fact rides the SAME transaction as the
+                // interventions that made it true, and is reached only after
+                // `cancelled_count > 0`: the fact records a cancellation that
+                // really happened, never an intent to cancel.
                 if preserved_terminal_status.is_none()
                     && let Some(task_ref) = state.task_ref
                 {
-                    cancel_task_in_txn(self.vault(), wtxn, task_ref)?;
+                    cancel_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)?;
                 }
                 Ok((
                     decision_ref,

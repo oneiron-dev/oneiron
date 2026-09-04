@@ -145,6 +145,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod task_authority;
 pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
@@ -324,6 +325,10 @@ pub use crate::surface_event::{
     InboundSurfaceRouteReceipt, SurfaceCounterpartyStamp, SurfaceEventAck, SurfaceEventAction,
     SurfaceEventAdmission, SurfaceEventHandoffState, SurfaceEventHandoffStatus, SurfaceEventSource,
     SurfaceInteractionKind, SurfaceSourceApp,
+};
+pub use crate::task_authority::{
+    TASK_AUTHORITY_FACT_SCHEMA_VERSION, TASK_AUTHORITY_FACT_SUBKIND, TaskAuthorityFact,
+    TaskAuthorityFactKind, TaskAuthorityState,
 };
 pub use crate::temporal::TimeRange;
 pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack_tokens};
