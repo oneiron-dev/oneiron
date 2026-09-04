@@ -16,6 +16,13 @@
 //!   drives a real dup'd, bound unix listener through axum and then checks the
 //!   socket's inode: an engine that unlinked and rebound would pass an
 //!   `exists()` check and still have stranded every queued connection.
+//!   `aliased_descriptors_are_refused_before_any_of_them_is_adopted` is the
+//!   other half of the same ownership claim, on the inputs rather than the
+//!   path: every adoption path here assumes it alone owns its descriptor.
+//! - **socket paths** —
+//!   `a_socket_bind_replaces_a_stale_socket_and_refuses_a_regular_file`. The
+//!   path is argv, and the bind replaces what is at it, so the row that matters
+//!   is the one where "what is at it" is a file nobody can get back.
 //! - **open gates** — `a_markerless_vault_is_refused_as_a_real_tenant`,
 //!   `a_canary_vault_seals_its_dek_and_refuses_a_different_one`. Fail-closed
 //!   means the refusal names what is missing; a bare "denied" would leave the
@@ -38,7 +45,11 @@
 //!   `ledger_rev_persists_across_a_restart` pins the durability.
 //! - **shutdown** — `a_failing_push_is_retried_exactly_once_after_200ms` and
 //!   `a_supervisor_that_never_acks_does_not_hold_the_exit_open` are the retry
-//!   discipline; `the_final_push_advances_the_rev_when_the_entries_moved` is
+//!   discipline, and
+//!   `a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline` is
+//!   what makes that discipline bound anything: a supervisor that closes gives
+//!   an EOF to fail on, one that stays connected and silent gives nothing.
+//!   `the_final_push_advances_the_rev_when_the_entries_moved` is
 //!   the ordering the contract delivers it under;
 //!   `managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone`
 //!   is the socket-ownership half.
@@ -503,6 +514,51 @@ fn a_vault_name_that_is_not_a_dns_label_is_refused() {
     );
 }
 
+/// Non-negative is not the whole precondition: each delivered descriptor is
+/// adopted with unique ownership, so two inputs naming one number is a bug that
+/// closes a live descriptor or writes the ready byte into a frame somebody is
+/// still reading. All three inputs are checked pairwise, before any adoption.
+#[test]
+fn aliased_descriptors_are_refused_before_any_of_them_is_adopted() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // `--ready-fd` and `--credentials-fd` on the same number.
+    let argv = with_flag_value(&managed_argv(dir.path()), "--credentials-fd", "7");
+    let error = ManagedArgs::from_serve_args(&parse_serve(&argv)).unwrap_err();
+    assert!(
+        matches!(&error, ManagedError::AliasedFd { fd: 7, .. }),
+        "unexpected: {error}"
+    );
+    // A refusal that does not name both sides leaves the operator guessing
+    // which of the three inputs collided.
+    assert!(error.to_string().contains("--ready-fd"), "{error}");
+    assert!(error.to_string().contains("--credentials-fd"), "{error}");
+
+    // The inherited listener is the third owner of the same numbering. Checked
+    // through the refusal `ServeListener::for_managed` calls rather than by
+    // setting HYPNOS_LISTEN_FD: this harness runs its rows on parallel threads,
+    // and a process-wide environment write here would race the row that pins
+    // the unset case into failing for a reason that is not about it.
+    let managed = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
+        .unwrap()
+        .unwrap();
+    for aliased in [managed.ready_fd, managed.credentials_fd] {
+        let error = managed.refuse_listen_fd_alias(aliased).unwrap_err();
+        assert!(
+            matches!(&error, ManagedError::AliasedFd { .. }),
+            "listen fd {aliased} aliases an argv fd, got: {error}"
+        );
+        assert!(error.to_string().contains(HYPNOS_LISTEN_FD), "{error}");
+    }
+
+    // A descriptor of its own is what the supervisor actually passes, and it
+    // still goes through: refusing every inherited listener would be a
+    // different bug wearing the same green.
+    managed
+        .refuse_listen_fd_alias(managed.ready_fd + managed.credentials_fd + 1)
+        .unwrap();
+}
+
 #[test]
 fn a_negative_descriptor_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -627,6 +683,50 @@ async fn an_absent_listen_fd_self_binds_on_the_http_socket() {
     assert_eq!(bound.owned_path(), Some(run.join("http.sock").as_path()));
     assert_eq!(mode_of(&run.join("http.sock")), 0o600);
     assert_eq!(mode_of(&run), 0o700);
+}
+
+/// Binding replaces a stale socket and refuses everything else.
+///
+/// The path is argv, and binding used to unlink whatever was at it. That makes
+/// `--ctl-socket` one character off from a config or vault file an irreversible
+/// delete of that file, with the engine then serving happily over its corpse.
+/// Both halves are pinned here: a stale socket is still replaced (a refusal
+/// that swallowed the restart case would be a worse bug), and a regular file is
+/// refused with its bytes intact.
+#[tokio::test]
+async fn a_socket_bind_replaces_a_stale_socket_and_refuses_a_regular_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = sockets_dir(dir.path());
+
+    // A socket left behind by a previous run: ours to replace.
+    let stale = run.join("ctl.sock");
+    let previous = std::os::unix::net::UnixListener::bind(&stale).unwrap();
+    let stale_inode = std::fs::metadata(&stale).unwrap().ino();
+    drop(previous);
+    let _ctl = ManagedCtl::bind(&stale).unwrap();
+    assert_ne!(
+        std::fs::metadata(&stale).unwrap().ino(),
+        stale_inode,
+        "a stale socket must be replaced by this process's own"
+    );
+
+    // A mistyped path landing on real data: not ours, and not recoverable if
+    // this gets it wrong.
+    let occupied = run.join("vault.conf");
+    std::fs::write(&occupied, b"secret-config").unwrap();
+    let Err(error) = ManagedCtl::bind(&occupied) else {
+        panic!("binding over a regular file must be refused");
+    };
+    assert!(
+        matches!(&error, ManagedError::SocketPathOccupied { .. }),
+        "unexpected: {error}"
+    );
+    assert!(error.to_string().contains("regular file"), "{error}");
+    assert_eq!(
+        std::fs::read(&occupied).unwrap(),
+        b"secret-config",
+        "a refused bind must leave the file it refused to unlink exactly as it was"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,6 +1172,58 @@ async fn a_supervisor_that_never_acks_does_not_hold_the_exit_open() {
         2,
         "two attempts, then proceed"
     );
+}
+
+/// How long a row waits on a push that must not hang. Far past the engine's own
+/// push deadline, so this bound only fails a push that never comes back at all
+/// rather than one that is merely slower than the row expected.
+const NO_HANG_BOUND: Duration = Duration::from_secs(30);
+
+/// A connected, silent supervisor is the one that used to park this forever.
+///
+/// The row above covers a supervisor that closes without acking: that is an
+/// EOF, and EOF is an answer. This one accepts the connection and then says
+/// nothing at all, holding the socket open — so connect, write and the ack read
+/// all succeed-or-block rather than fail, and every one of them was unbounded.
+/// The opening push sits between the ready byte and the HTTP serve and the
+/// final push is the last thing before exit, so parking here is a boot that
+/// never serves or an exit that never happens.
+#[tokio::test]
+async fn a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(&dir.path().join("data"));
+    let creds = credentials(0x11, 0x22);
+    let sup = dir.path().join("sup.sock");
+
+    let listener = tokio::net::UnixListener::bind(&sup).unwrap();
+    // Accepted and held: never read, never acked, never closed.
+    let supervisor = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+
+    let ledger = wake_ledger(&vault, &sup, &creds);
+    let outcome = tokio::time::timeout(NO_HANG_BOUND, ledger.push_once(11, &[]))
+        .await
+        .expect("a silent supervisor must not hold the push open");
+    let Err(error) = outcome else {
+        panic!("an unacked push is not a successful one");
+    };
+    assert!(
+        matches!(error, ManagedError::LedgerAckTimeout { .. }),
+        "unexpected: {error}"
+    );
+
+    // And the retry policy still ends: one retry over the same silence, then
+    // proceed without the supervisor.
+    let proceeded = tokio::time::timeout(NO_HANG_BOUND, ledger.push_with_retry(11, &[]))
+        .await
+        .expect("the retry policy must not hold the exit open either");
+    assert!(!proceeded, "a push nobody acked is not accepted");
+
+    supervisor.abort();
 }
 
 /// The shutdown snapshot has to be rev-ordered, or it is not delivered.

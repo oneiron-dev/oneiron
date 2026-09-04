@@ -31,7 +31,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::os::fd::{FromRawFd, RawFd};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -95,6 +95,16 @@ const SOCKET_FILE_MODE: u32 = 0o600;
 /// A failing ledger push is retried exactly once, after this delay, and then
 /// left behind. Exit must never block on a dead supervisor.
 const LEDGER_RETRY_DELAY: Duration = Duration::from_millis(200);
+/// How long one whole push attempt — connect, write, and the supervisor's ack —
+/// may take before it is abandoned.
+///
+/// "Exactly one retry, then proceed" bounds nothing unless an attempt is itself
+/// bounded, and none of those three steps is bounded on its own. A supervisor
+/// that accepted the connection and then went quiet is indistinguishable from a
+/// live one that is about to answer, so this is the width of that doubt: long
+/// enough that a loaded-but-live supervisor still gets its ack in, short enough
+/// that two attempts and one backoff stay well inside a shutdown grace.
+const LEDGER_PUSH_TIMEOUT: Duration = Duration::from_secs(2);
 /// Lease expiry is swept on a cadence rather than at an instant, so the wake
 /// it asks for is a window of that width, not a point. Waking anywhere inside
 /// it does the same work.
@@ -139,6 +149,23 @@ pub enum ManagedError {
 
     #[error("{env} must be a non-negative file descriptor, got {value:?}")]
     InvalidListenFd { env: &'static str, value: String },
+
+    #[error(
+        "{first} and {second} both name file descriptor {fd}: managed mode adopts each delivered descriptor with unique ownership, so an alias would close one owner's descriptor under the other or write the ready byte into a reused number"
+    )]
+    AliasedFd {
+        first: &'static str,
+        second: &'static str,
+        fd: RawFd,
+    },
+
+    #[error(
+        "refusing to bind a unix socket at {path:?}: that path already exists and is {kind}, not a socket. Binding replaces what is there, and this process does not own that inode."
+    )]
+    SocketPathOccupied { path: PathBuf, kind: &'static str },
+
+    #[error("the supervisor did not acknowledge the wake ledger push within {after:?}")]
+    LedgerAckTimeout { after: Duration },
 
     #[error("credentials fd rejected: {reason}")]
     CredentialsRejected { reason: String },
@@ -212,7 +239,7 @@ impl ManagedArgs {
             return Err(ManagedError::InvalidVaultName { name: vault_name });
         }
 
-        Ok(Some(Self {
+        let managed = Self {
             vault_name,
             // `--vault-path` stays the alias for the same directory.
             data_dir: require(
@@ -224,7 +251,35 @@ impl ManagedArgs {
             hypnos_socket: require(args.hypnos_socket.clone(), "hypnos-socket")?,
             ready_fd: require_fd(args.ready_fd, "ready-fd")?,
             credentials_fd: require_fd(args.credentials_fd, "credentials-fd")?,
-        }))
+        };
+        // Non-negative is not enough. Both descriptors are adopted by owners
+        // that close what they hold — `read_managed_credentials` and
+        // `signal_ready` each take theirs over with `from_raw_fd` — so one
+        // number on both flags is not a harmless duplicate: the credential
+        // frame's descriptor is closed under the ready write, or the ready byte
+        // lands in the number the supervisor is still reading credentials from.
+        // Refused here, before either is consumed.
+        refuse_fd_alias(
+            ("--ready-fd", managed.ready_fd),
+            ("--credentials-fd", managed.credentials_fd),
+        )?;
+        Ok(Some(managed))
+    }
+
+    /// Refuses an inherited listening descriptor that aliases either argv fd.
+    ///
+    /// Three inputs, three distinct owners: a `UnixListener` over the inherited
+    /// socket, a `File` over the credential frame, a `File` over the ready
+    /// pipe. Each closes what it holds on drop, so a listener that is also
+    /// `--credentials-fd` is read as a credential frame and closed under the
+    /// listener, and one that is also `--ready-fd` has the ready byte written
+    /// into it. Called before adoption, so neither becomes reachable.
+    pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {
+        refuse_fd_alias((HYPNOS_LISTEN_FD, listen_fd), ("--ready-fd", self.ready_fd))?;
+        refuse_fd_alias(
+            (HYPNOS_LISTEN_FD, listen_fd),
+            ("--credentials-fd", self.credentials_fd),
+        )
     }
 
     /// Serve configuration for managed mode, built from argv alone.
@@ -270,6 +325,23 @@ fn require_fd(value: Option<i32>, flag: &'static str) -> Result<RawFd, ManagedEr
         return Err(ManagedError::InvalidFd { flag, value: raw });
     }
     Ok(raw)
+}
+
+/// Refuses two descriptor inputs that name the same number.
+///
+/// Managed mode's descriptors arrive as bare integers and every adoption path
+/// assumes it is the only owner of the one it was given. Uniqueness is
+/// therefore a precondition of the spawn contract rather than a preference, and
+/// this is where it is enforced — pairwise, on the inputs, before any of them
+/// is opened, read or written.
+fn refuse_fd_alias(
+    (first, fd): (&'static str, RawFd),
+    (second, other): (&'static str, RawFd),
+) -> Result<(), ManagedError> {
+    if fd == other {
+        return Err(ManagedError::AliasedFd { first, second, fd });
+    }
+    Ok(())
 }
 
 const NO_HOST_PORT_REASON: &str =
@@ -597,6 +669,11 @@ impl ServeListener {
                         value: raw,
                     });
                 }
+                // Resolution, not adoption: this is the last point before the
+                // descriptor becomes a `ServeListener` that `bind` will take
+                // ownership of, so an alias of either argv fd is refused while
+                // refusing still costs nothing.
+                args.refuse_listen_fd_alias(fd)?;
                 Ok(Self::InheritedFd(fd))
             }
             Err(std::env::VarError::NotPresent) => Ok(Self::UnixPath(args.http_socket.clone())),
@@ -682,20 +759,57 @@ impl BoundServeListener {
 }
 
 /// Binds a unix socket this process owns: owner-only directory, owner-rw
-/// socket file. Only ever called for paths we created.
+/// socket file.
+///
+/// Binding replaces whatever is already at the path, and the path comes from
+/// argv. A socket left behind by a previous run is exactly what that
+/// replacement is for; anything else at that path is somebody's data, and
+/// `--ctl-socket` one character off from a config or vault file would delete it
+/// with no way back. So the gate below is the whole difference between reusing
+/// a stale socket and destroying a file, and it runs before this function
+/// creates or tightens a directory, so a mistyped path changes nothing at all.
 fn bind_unix_socket(path: &Path) -> Result<UnixListener, ManagedError> {
+    // `symlink_metadata`, not `metadata`: a symlink is refused as itself rather
+    // than judged by what it points at, so a link aimed at a live socket cannot
+    // talk this into unlinking a path it never inspected.
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_socket() => std::fs::remove_file(path)?,
+        Ok(metadata) => {
+            return Err(ManagedError::SocketPathOccupied {
+                path: path.to_path_buf(),
+                kind: node_kind(&metadata.file_type()),
+            });
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(SOCKET_DIR_MODE))?;
     }
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
     let listener = UnixListener::bind(path)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(SOCKET_FILE_MODE))?;
     Ok(listener)
+}
+
+/// Names what is at a path, so the refusal tells an operator what they hit
+/// rather than only that they hit something.
+fn node_kind(file_type: &std::fs::FileType) -> &'static str {
+    if file_type.is_file() {
+        "a regular file"
+    } else if file_type.is_dir() {
+        "a directory"
+    } else if file_type.is_symlink() {
+        "a symlink"
+    } else if file_type.is_fifo() {
+        "a fifo"
+    } else if file_type.is_block_device() {
+        "a block device"
+    } else if file_type.is_char_device() {
+        "a character device"
+    } else {
+        "another kind of node"
+    }
 }
 
 /// Adopts a listening unix socket the supervisor already bound.
@@ -1052,8 +1166,30 @@ impl WakeLedger {
         Ok(accepted)
     }
 
-    /// One push attempt: validate, frame, send, await the ack.
+    /// One push attempt: validate, frame, send, await the ack — the whole
+    /// attempt under a deadline.
+    ///
+    /// The deadline covers the attempt rather than the ack alone because all
+    /// three of connect, write and read are unbounded against a supervisor that
+    /// is connected and silent, and any one of them parking is the same
+    /// outcome: this process never comes back. Both callers are on paths that
+    /// must not stall — the opening push happens after the ready byte and
+    /// before the HTTP serve, and the final one is the last thing before exit —
+    /// and `push_with_retry`'s "one retry, then proceed" only bounds them if an
+    /// attempt is itself bounded. Timing out is a typed refusal like any other
+    /// push failure, so the retry policy above is unchanged by it.
     pub async fn push_once(&self, rev: u64, entries: &[WakeEntry]) -> Result<(), ManagedError> {
+        match tokio::time::timeout(LEDGER_PUSH_TIMEOUT, self.push_attempt(rev, entries)).await {
+            Ok(result) => result,
+            Err(_elapsed) => Err(ManagedError::LedgerAckTimeout {
+                after: LEDGER_PUSH_TIMEOUT,
+            }),
+        }
+    }
+
+    /// The attempt itself, with no deadline of its own: [`Self::push_once`] is
+    /// the only caller and it is what bounds this.
+    async fn push_attempt(&self, rev: u64, entries: &[WakeEntry]) -> Result<(), ManagedError> {
         let update = LedgerUpdate {
             op: "ledger_update".to_owned(),
             vault: self.vault_name.clone(),
