@@ -12,8 +12,8 @@ use crate::dreamer_runner::{
 use crate::{Error, Result, Vault, VaultConfig};
 
 use super::{
-    RunTreeAdapter, RunTreeEventKind, RunTreeRepair, RunTreeStatus, render_run_tree,
-    run_tree_events,
+    GATE_CONSENT_BUNDLE_FALLBACK_LABEL, RunTreeAdapter, RunTreeEventKind, RunTreeRepair,
+    RunTreeStatus, render_run_tree, run_tree_events,
 };
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -722,6 +722,165 @@ fn run_tree_renders_agent_branch() -> Result<()> {
     assert_eq!(
         malformed_node.agent_id, None,
         "a malformed inner input is a tolerant None, not an error"
+    );
+    Ok(())
+}
+
+// ONE-1452: the run-tree seam that names one run's consent bundle. The label
+// is presentation metadata over an identity the bundle digest already fixed,
+// so naming reads durable rows and writes nothing.
+
+/// Registers one agent definition and dispatches it into `run_id`.
+fn dispatch_agent(
+    vault: &Vault,
+    agent_id: &str,
+    def_seed: u8,
+    run_id: &str,
+    parent_attempt: Option<crate::AttemptId>,
+) -> Result<()> {
+    let def_id = crate::EntityId::from_bytes([def_seed; 16]).expect("non-reserved test id");
+    let def = crate::agent_def::AgentDefinition::new(
+        agent_id,
+        "Consent-bundle naming fixture",
+        "1.0.0",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        crate::agent_def::AgentScope::All,
+        crate::agent_def::AgentCeiling::Proposed,
+        None,
+        crate::ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+        crate::ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Value::Map(vec![(Value::from("definedVia"), Value::from("test"))]),
+        None,
+        true,
+        None,
+    );
+    vault.put_agent_definition(&def_id, &def, crate::TimeRange { start: 1, end: 1 }, 1)?;
+
+    let dispatcher = crate::agent_dispatch::AgentDispatcher::new(vault);
+    let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(_) =
+        dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+            target: crate::agent_dispatch::AgentDispatchTarget::Custom(def_id),
+            parent_attempt,
+            dedupe_key: None,
+            run_id: Some(run_id.to_owned()),
+            now: 20,
+        })?
+    else {
+        panic!("expected fresh dispatch");
+    };
+    Ok(())
+}
+
+#[test]
+fn consent_bundle_label_selects_the_first_root_agent_deterministically() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    dispatch_agent(
+        &vault,
+        "oneiron.agent.bundle",
+        0x33,
+        "run-bundle-label",
+        None,
+    )?;
+
+    let adapter = RunTreeAdapter::new(&vault);
+    let bundle_id = [0xAB; 32];
+    let (name, agent_label) = adapter.consent_bundle_label("run-bundle-label", &bundle_id)?;
+
+    assert_eq!(agent_label.as_deref(), Some("oneiron.agent.bundle"));
+    assert_eq!(name, "oneiron.agent.bundle · abababab");
+    assert_eq!(
+        adapter.consent_bundle_label("run-bundle-label", &bundle_id)?,
+        (name, agent_label),
+        "the same rows and the same bundle id name the same unit"
+    );
+
+    // The name carries the bundle id, so two bundles over one run never share
+    // a display name.
+    let (other_name, _) = adapter.consent_bundle_label("run-bundle-label", &[0x01; 32])?;
+    assert_eq!(other_name, "oneiron.agent.bundle · 01010101");
+    Ok(())
+}
+
+#[test]
+fn consent_bundle_label_falls_back_when_no_root_agent_is_named() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let root = enqueue(&runner, "orchestrator", None, 10, "run-bundle-plain")?;
+    // A dispatched agent BELOW the root does not name the run: the label is a
+    // ROOT-level fact, so a nested agent leaves the fallback in place.
+    dispatch_agent(
+        &vault,
+        "oneiron.agent.nested",
+        0x34,
+        "run-bundle-plain",
+        Some(root.attempt.id),
+    )?;
+
+    let adapter = RunTreeAdapter::new(&vault);
+    let bundle_id = [0x01; 32];
+    let (name, agent_label) = adapter.consent_bundle_label("run-bundle-plain", &bundle_id)?;
+    assert_eq!(agent_label, None);
+    assert_eq!(name, "agent run · 01010101");
+    assert_eq!(
+        name,
+        format!("{GATE_CONSENT_BUNDLE_FALLBACK_LABEL} · 01010101")
+    );
+
+    // A run with no attempt rows at all takes the same fallback.
+    assert_eq!(
+        adapter.consent_bundle_label("run-bundle-absent", &bundle_id)?,
+        (name.clone(), None)
+    );
+    // So does a run id the attempt queue refuses to name: naming a bundle can
+    // fail without making the bundle unreviewable.
+    assert_eq!(adapter.consent_bundle_label("", &bundle_id)?, (name, None));
+    Ok(())
+}
+
+#[test]
+fn consent_bundle_label_does_not_mutate_run_state() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let root = enqueue(&runner, "orchestrator", None, 10, "run-bundle-readonly")?;
+    let child = enqueue(
+        &runner,
+        "worker",
+        Some(root.attempt.id),
+        20,
+        "run-bundle-readonly",
+    )?;
+
+    let queue = crate::AttemptQueue::new(&vault);
+    let rows_before = queue.list_run("run-bundle-readonly")?;
+    let tree_before = RunTreeAdapter::new(&vault).read_run("run-bundle-readonly")?;
+    assert_eq!(tree_before.roots.len(), 1);
+    assert_eq!(tree_before.roots[0].attempt_id, hex(root.attempt.id));
+    assert_eq!(
+        tree_before.roots[0].children[0].attempt_id,
+        hex(child.attempt.id)
+    );
+
+    let adapter = RunTreeAdapter::new(&vault);
+    for seed in 0u8..3 {
+        adapter.consent_bundle_label("run-bundle-readonly", &[seed; 32])?;
+    }
+
+    assert_eq!(
+        queue.list_run("run-bundle-readonly")?,
+        rows_before,
+        "naming leaves every attempt row byte-identical"
+    );
+    assert_eq!(
+        RunTreeAdapter::new(&vault).read_run("run-bundle-readonly")?,
+        tree_before
     );
     Ok(())
 }
