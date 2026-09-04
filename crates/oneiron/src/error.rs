@@ -501,6 +501,7 @@ pub enum ErrorKind {
     GitHttpServeFailed,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    VaultRead,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -2239,6 +2240,11 @@ pub enum Error {
         /// The publication rejection class.
         reason: String,
     },
+    /// A deployment-independent vault-read operation failed (ONE-1433). The
+    /// typed taxonomy lives in `code_run::vault_read` and deliberately does not
+    /// embed this type, which would make both errors recursive.
+    #[error(transparent)]
+    VaultRead(#[from] crate::code_run::vault_read::VaultReadError),
 }
 
 impl From<CompactionPacketError> for Error {
@@ -2590,6 +2596,7 @@ impl Error {
             Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
+            Self::VaultRead(_) => ErrorKind::VaultRead,
         }
     }
 
