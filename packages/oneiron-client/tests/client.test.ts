@@ -35,6 +35,36 @@ function recordingFetch(response: Response | (() => never)): {
   return { fetch, calls };
 }
 
+/**
+ * A fetch that answers a STAGED sequence, so a test can drive a redirect chain
+ * hop by hop and see exactly how many requests were made and to whom.
+ */
+function sequencedFetch(responses: Response[]): {
+  fetch: typeof globalThis.fetch;
+  calls: Call[];
+} {
+  const calls: Call[] = [];
+  const queue = [...responses];
+  const fetch = ((input: URL | RequestInfo, init?: RequestInit) => {
+    calls.push({
+      input: String(input),
+      init,
+      headers: new Headers(init?.headers ?? {}),
+    });
+    const next = queue.shift();
+    if (next === undefined) {
+      return Promise.reject(new TypeError("fetch was called more often than the test staged"));
+    }
+    return Promise.resolve(next);
+  }) as typeof globalThis.fetch;
+
+  return { fetch, calls };
+}
+
+function redirectResponse(status: number, location: string): Response {
+  return new Response(null, { status, headers: { location } });
+}
+
 function makeClient(response: Response): {
   instance: HttpBaseClient;
   calls: Call[];
@@ -145,6 +175,96 @@ describe("url construction stays on the configured origin", () => {
     const { instance, calls } = makeClient(new Response("{}"));
     expect(() => instance.request("https://evil.example/api/health")).toThrow(TypeError);
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * The origin check on the FIRST url is not the whole story: a runtime that
+ * follows redirects on its own would carry the configured `Authorization`
+ * header to whatever host a `Location` named, without this client ever seeing
+ * that hop. So redirects are taken by hand, and every hop is re-checked.
+ */
+describe("redirects are followed by hand and never leave the origin", () => {
+  test("a same-origin redirect is followed with the credential intact", async () => {
+    const terminal = new Response('{"ok":true}', { status: 200 });
+    const { fetch, calls } = sequencedFetch([
+      redirectResponse(308, "/api/entity/moved"),
+      terminal,
+    ]);
+    const instance = new HttpBaseClient({
+      baseUrl: BASE_URL,
+      secret: PLACEHOLDER_SECRET,
+      fetch,
+    });
+
+    const received = await instance.request("/api/entity/old", {
+      method: "POST",
+      body: "{}",
+    });
+
+    // The TERMINAL response is the caller's, unread and uncloned.
+    expect(received).toBe(terminal);
+    expect(received.bodyUsed).toBe(false);
+    expect(calls.map((call) => call.input)).toEqual([
+      "http://127.0.0.1:3000/api/entity/old",
+      "http://127.0.0.1:3000/api/entity/moved",
+    ]);
+    expect(calls[0]?.init?.redirect).toBe("manual");
+    expect(calls[1]?.headers.get("authorization")).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
+    // 308 preserves the method and the body it described.
+    expect(calls[1]?.init?.method).toBe("POST");
+    expect(calls[1]?.init?.body).toBe("{}");
+  });
+
+  test("a 303 becomes a bodyless GET, the way fetch itself would", async () => {
+    const { fetch, calls } = sequencedFetch([
+      redirectResponse(303, "/api/entity/entity-42"),
+      new Response("{}", { status: 200 }),
+    ]);
+    const instance = new HttpBaseClient({
+      baseUrl: BASE_URL,
+      secret: PLACEHOLDER_SECRET,
+      fetch,
+    });
+
+    await instance.callVerb({ verb: "board.append", body: { text: "placeholder" } });
+
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(calls[1]?.init?.method).toBe("GET");
+    expect(calls[1]?.init?.body).toBeUndefined();
+    expect(calls[1]?.headers.get("content-type")).toBeNull();
+    expect(calls[1]?.headers.get("authorization")).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
+  });
+
+  test("a cross-origin redirect is refused, not forwarded", async () => {
+    const { fetch, calls } = sequencedFetch([
+      redirectResponse(302, "https://evil.example/api/health"),
+    ]);
+    const instance = new HttpBaseClient({
+      baseUrl: BASE_URL,
+      secret: PLACEHOLDER_SECRET,
+      fetch,
+    });
+
+    await expect(instance.request("/api/health")).rejects.toBeInstanceOf(TypeError);
+
+    expect(calls).toHaveLength(1);
+    expect(calls.every((call) => call.input.startsWith(BASE_URL))).toBe(true);
+  });
+
+  test("a redirect loop is capped instead of chased", async () => {
+    const { fetch, calls } = sequencedFetch(
+      Array.from({ length: 10 }, () => redirectResponse(307, "/api/health")),
+    );
+    const instance = new HttpBaseClient({
+      baseUrl: BASE_URL,
+      secret: PLACEHOLDER_SECRET,
+      fetch,
+    });
+
+    await expect(instance.request("/api/health")).rejects.toThrow(/more than 5 redirects/);
+    // The first request plus the five hops the cap allows, and no more.
+    expect(calls).toHaveLength(6);
   });
 });
 

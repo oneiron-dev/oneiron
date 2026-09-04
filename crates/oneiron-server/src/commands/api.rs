@@ -1,10 +1,11 @@
 //! `oneiron api …` — the bash/curl lane of the packaging ladder.
 //!
 //! This module is a façade, deliberately: it maps five short commands onto
-//! routes the server already serves, hands the request to the host's `curl`,
-//! and gets out of the way. It adds no endpoint, no authority model, no
-//! response parsing, no retry, and no cache, so what a caller reads on stdout
-//! is what the server sent — a wire error stays a wire error.
+//! routes the server already serves, hands the request to the host's `curl`
+//! (7.76 or newer, the release that added `--fail-with-body`), and gets out of
+//! the way. It adds no endpoint, no authority model, no response parsing, no
+//! retry, and no cache, so what a caller reads on stdout is what the server
+//! sent — a wire error stays a wire error.
 //!
 //! Two properties are load-bearing and are pinned by tests rather than left to
 //! reviewer memory:
@@ -12,8 +13,10 @@
 //! * The credential travels through curl's config channel on the child's
 //!   stdin. It is never an argument, so it cannot leak through `ps`, a shell
 //!   history, or a process-listing log line, and it is never written to disk.
-//!   A request BODY may be large or binary, so it goes the other way — into a
-//!   0600 temporary file that is removed when the call ends.
+//!   A request BODY goes the other way — into a 0600 temporary file that is
+//!   removed when the call ends. This process reads that body into memory
+//!   first, so a body is bounded by the memory this process has; the RESPONSE
+//!   is what streams, and it never passes through this process at all.
 //! * Nothing here is evaluated as shell text. `@FILE` is opened by this
 //!   process, `-` is this process reading stdin, and any other `--data` value
 //!   is sent verbatim. No shell is spawned at any point.
@@ -28,10 +31,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::cli::{ApiArgs, ApiCommand};
 
 /// `--silent` drops the progress meter, `--show-error` keeps the diagnostic,
-/// and `--fail-with-body` is the pair that makes a non-2xx both VISIBLE and
+/// and `--fail-with-body` is what makes a 4xx or 5xx both VISIBLE and
 /// non-zero: the server's error body still reaches stdout, and the process
-/// still fails.
+/// still fails. It says nothing about a 3xx — no `--location` is passed here,
+/// so a redirect arrives as its own response and exits zero — and it needs
+/// curl 7.76 or newer, the release that added the flag.
 pub(crate) const CURL_FLAGS: [&str; 3] = ["--silent", "--show-error", "--fail-with-body"];
+
+/// curl reads the host's own config (`$CURL_HOME/.curlrc`, the XDG location,
+/// or `~/.curlrc`) BEFORE the flags above, and it reads it EVEN WHEN
+/// `--config` is given. A line in that file can add a second transfer, to any
+/// host, which would then be handed the credential this process puts on the
+/// config channel. `-q` refuses that file, and curl honours it only as the
+/// FIRST argument — which is why it is a separate constant applied before
+/// [`CURL_FLAGS`] rather than a fourth entry inside it.
+pub(crate) const CURL_DISABLE_HOST_CONFIG: &str = "-q";
 
 /// The host's curl. There is no HTTP client dependency in this crate's CLI on
 /// purpose: a second HTTP stack would be a second set of defaults to explain.
@@ -40,24 +54,35 @@ const CURL_PROGRAM: &str = "curl";
 const JSON_CONTENT_TYPE: &str = "application/json";
 
 /// One resolved request. `method`/`url` are already validated against the
-/// configured origin; `body` is already read from wherever the caller named.
+/// configured origin; `body` is already read from wherever the caller named;
+/// `content_type` is either this module's own JSON default or a media type the
+/// caller named and this module validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CurlRequest {
     pub(crate) method: String,
     pub(crate) url: String,
     pub(crate) body: Option<Vec<u8>>,
-    pub(crate) content_type: Option<&'static str>,
+    pub(crate) content_type: Option<String>,
 }
 
 pub async fn api(args: ApiArgs) -> anyhow::Result<()> {
-    let secret_env = args.secret_env;
-    let secret = std::env::var(&secret_env).map_err(|_| {
-        anyhow::anyhow!(
-            "{secret_env} is not set: `oneiron api` reads the bearer credential from the environment, never from an argument"
-        )
-    })?;
+    let secret_env = &args.secret_env;
+    // An ABSENT credential is a request without one, not an error: the server
+    // serves public routes (`/api/health`) and can be configured to allow
+    // unauthenticated access, and a placeholder bearer would be an auth
+    // ATTEMPT the server refuses rather than the anonymous call that works.
+    let secret = match std::env::var(secret_env) {
+        Ok(secret) => Some(secret),
+        Err(std::env::VarError::NotPresent) => None,
+        // A set-but-unreadable credential is a misconfiguration, not an
+        // anonymous request. The error's own Display would quote the value, so
+        // this names the variable instead.
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("{secret_env} is not valid UTF-8; nothing was sent")
+        }
+    };
     let request = request_for_command(&args.base_url, args.command)?;
-    run_curl(&request, &secret)
+    run_curl(&request, secret.as_deref())
 }
 
 /// Map a short command onto an EXISTING route. Every URL is built from the
@@ -95,23 +120,37 @@ pub(crate) fn request_for_command(
             body: None,
             content_type: None,
         }),
+        // A shaped verb call is JSON by definition: the route it names accepts
+        // nothing else, so the media type is this module's, not the caller's.
         ApiCommand::Call { verb, data } => Ok(CurlRequest {
             method: "POST".to_owned(),
             url: format!("{base}/v1/core/memory/verbs/{}", percent_encoded(&verb)),
             body: Some(read_body(&data)?),
-            content_type: Some(JSON_CONTENT_TYPE),
+            content_type: Some(JSON_CONTENT_TYPE.to_owned()),
         }),
         // The escape hatch. It exists so this family never becomes a second,
         // hand-maintained copy of the route catalog: an unshaped route is one
         // `raw METHOD PATH` away, still on the same origin and credential.
-        ApiCommand::Raw { method, path, data } => {
+        ApiCommand::Raw {
+            method,
+            path,
+            data,
+            content_type,
+        } => {
             let method = validated_method(&method)?;
             let path = validated_path(&path)?;
             let body = match data.as_deref() {
                 Some(data) => Some(read_body(data)?),
                 None => None,
             };
-            let content_type = body.is_some().then_some(JSON_CONTENT_TYPE);
+            // The DEFAULT is unchanged — a body with no declared type is JSON,
+            // which is what every route this server registers reads. Naming a
+            // type REPLACES that default, so an unshaped wire protocol (Git
+            // smart-HTTP, say) is expressible without a second command.
+            let content_type = match content_type.as_deref() {
+                Some(declared) => Some(validated_content_type(declared)?),
+                None => body.is_some().then(|| JSON_CONTENT_TYPE.to_owned()),
+            };
             Ok(CurlRequest {
                 method,
                 url: format!("{base}{path}"),
@@ -124,7 +163,7 @@ pub(crate) fn request_for_command(
 
 /// Run one request through the host's curl, streaming the response body to
 /// this process's own stdout untouched.
-pub(crate) fn run_curl(request: &CurlRequest, secret: &str) -> anyhow::Result<()> {
+pub(crate) fn run_curl(request: &CurlRequest, secret: Option<&str>) -> anyhow::Result<()> {
     let output = run_curl_output(
         OsStr::new(CURL_PROGRAM),
         request,
@@ -141,23 +180,33 @@ pub(crate) fn run_curl(request: &CurlRequest, secret: &str) -> anyhow::Result<()
 /// the bytes never pass through this process at all, so there is nothing here
 /// that could re-encode, buffer, or truncate them. Tests capture instead, to
 /// read exactly what a fake curl was handed.
+///
+/// `secret` is `None` when the environment names no credential. That sends the
+/// request WITHOUT an `Authorization` header — no config channel, no empty
+/// header, no placeholder — because a public route answers an anonymous call
+/// and refuses a bogus one.
 pub(crate) fn run_curl_output(
     program: &OsStr,
     request: &CurlRequest,
-    secret: &str,
+    secret: Option<&str>,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
-    let config = curl_config(secret)?;
+    let config = match secret {
+        Some(secret) => Some(curl_config(secret)?),
+        None => None,
+    };
     let body = match request.body.as_deref() {
         Some(bytes) => Some(TempBody::create(bytes)?),
         None => None,
     };
 
     let mut command = Command::new(program);
+    // FIRST, before anything else: curl only honours the refusal there.
+    command.arg(CURL_DISABLE_HOST_CONFIG);
     command.args(CURL_FLAGS);
     command.arg("--request").arg(&request.method);
-    if let Some(content_type) = request.content_type {
+    if let Some(content_type) = request.content_type.as_deref() {
         command
             .arg("--header")
             .arg(format!("Content-Type: {content_type}"));
@@ -165,15 +214,25 @@ pub(crate) fn run_curl_output(
     if let Some(body) = &body {
         command.arg("--data-binary").arg(body.curl_value());
     }
-    // The credential rides this channel and only this channel.
-    command.arg("--config").arg("-");
+    // The credential rides this channel and only this channel, and the channel
+    // exists only when there is a credential to carry.
+    if config.is_some() {
+        command.arg("--config").arg("-");
+    }
     command.arg("--url").arg(&request.url);
-    command.stdin(Stdio::piped()).stdout(stdout).stderr(stderr);
+    command
+        .stdin(if config.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(stdout)
+        .stderr(stderr);
 
     let mut child = command
         .spawn()
         .map_err(|error| anyhow::anyhow!("run {}: {error}", program.to_string_lossy()))?;
-    {
+    if let Some(config) = &config {
         let mut child_stdin = child
             .stdin
             .take()
@@ -236,9 +295,14 @@ fn percent_encoded(value: &str) -> String {
     encoded
 }
 
-/// The configured origin, trailing slash removed. A base carrying a query or
-/// fragment is refused because `{base}{path}` would then mean something other
-/// than "this path on that origin".
+/// The configured origin, trailing slash removed. A base carrying a query, a
+/// fragment, or a PATH is refused because `{base}/api/…` would then mean
+/// something other than "this path on that origin": a base of
+/// `http://host/prefix` would silently send every shaped command to
+/// `/prefix/api/…`, a route this server does not serve. The refusal is the
+/// answer rather than stripping the prefix, because a caller who typed one
+/// meant something, and quietly sending the request somewhere else is the
+/// failure mode this whole module exists to avoid.
 fn normalized_base(base_url: &str) -> anyhow::Result<String> {
     let base = base_url.trim_end_matches('/');
     anyhow::ensure!(
@@ -249,13 +313,13 @@ fn normalized_base(base_url: &str) -> anyhow::Result<String> {
         !base.contains(['?', '#', '\\']) && !base.chars().any(char::is_whitespace),
         "base URL must be a plain origin without a query, fragment, or whitespace: {base_url:?}"
     );
-    let authority = base
-        .split_once("://")
-        .map_or("", |(_, authority)| authority)
-        .split('/')
-        .next()
-        .unwrap_or_default();
+    let after_scheme = base.split_once("://").map_or("", |(_, rest)| rest);
+    let authority = after_scheme.split('/').next().unwrap_or_default();
     anyhow::ensure!(!authority.is_empty(), "base URL has no host: {base_url:?}");
+    anyhow::ensure!(
+        authority.len() == after_scheme.len(),
+        "base URL must be a plain origin without a path: {base_url:?}"
+    );
 
     Ok(base.to_owned())
 }
@@ -289,6 +353,29 @@ fn validated_path(path: &str) -> anyhow::Result<&str> {
     );
 
     Ok(path)
+}
+
+/// A caller-named media type becomes a header VALUE on curl's command line, so
+/// it is checked the way every other caller string here is: one printable
+/// ASCII `type/subtype` token, with no whitespace or control character to end
+/// the line early and no `;` to hang a second directive off the end.
+fn validated_content_type(content_type: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !content_type.is_empty(),
+        "content type must not be empty: {content_type:?}"
+    );
+    anyhow::ensure!(
+        content_type.chars().all(|c| c.is_ascii_graphic()) && !content_type.contains(';'),
+        "content type must be one printable ASCII token without whitespace, control characters, or `;` parameters: {content_type:?}"
+    );
+    anyhow::ensure!(
+        content_type.matches('/').count() == 1
+            && !content_type.starts_with('/')
+            && !content_type.ends_with('/'),
+        "content type must be spelled type/subtype: {content_type:?}"
+    );
+
+    Ok(content_type.to_owned())
 }
 
 /// An alphabetic method cannot be read by curl as an option, however the
@@ -326,7 +413,7 @@ fn read_body(data: &str) -> anyhow::Result<Vec<u8>> {
 /// A request body reaches curl through a private temporary file rather than
 /// the config channel, because the config channel is the credential's and a
 /// body may be arbitrary bytes. The file is owner-only and removed on drop.
-struct TempBody {
+pub(crate) struct TempBody {
     path: PathBuf,
 }
 
@@ -354,10 +441,25 @@ impl TempBody {
         let mut file = options
             .open(&path)
             .map_err(|error| anyhow::anyhow!("stage the request body: {error}"))?;
-        file.write_all(bytes)
+
+        Self::write_staged(path, &mut file, bytes)
+    }
+
+    /// The file EXISTS from the moment it is opened, so ownership of the path
+    /// moves into `Self` before the first byte is written: a write that fails
+    /// part-way then unlinks the partial body through `Drop` instead of
+    /// leaving request bytes behind in the temp directory. Writing through a
+    /// generic sink is what lets a test take the failing branch on any host.
+    pub(crate) fn write_staged<W: Write>(
+        path: PathBuf,
+        sink: &mut W,
+        bytes: &[u8],
+    ) -> anyhow::Result<Self> {
+        let staged = Self { path };
+        sink.write_all(bytes)
             .map_err(|error| anyhow::anyhow!("stage the request body: {error}"))?;
 
-        Ok(Self { path })
+        Ok(staged)
     }
 
     fn curl_value(&self) -> OsString {

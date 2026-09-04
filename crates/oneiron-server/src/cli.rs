@@ -94,6 +94,9 @@ pub struct ApiArgs {
 
     /// Environment variable holding the bearer credential. The secret is never
     /// a positional argument, never printed, and never reaches curl's argv.
+    /// When the variable is unset the request carries no `Authorization`
+    /// header at all, which is what a public route and an
+    /// `allow_unauthenticated` server answer.
     #[arg(long, default_value = "ONEIRON_SECRET")]
     pub secret_env: String,
 
@@ -144,6 +147,12 @@ pub enum ApiCommand {
         /// Request body: `@FILE`, `-` for stdin, or verbatim bytes.
         #[arg(long, value_name = "@FILE|-|JSON")]
         data: Option<String>,
+
+        /// Media type for the body. A body defaults to `application/json`;
+        /// naming a type replaces that default, which is how an unshaped wire
+        /// protocol (`application/x-git-upload-pack-request`, say) is sent.
+        #[arg(long, value_name = "MIME")]
+        content_type: Option<String>,
     },
 }
 
@@ -567,6 +576,7 @@ mod tests {
                     method: "GET".to_owned(),
                     path: "/api/health".to_owned(),
                     data: None,
+                    content_type: None,
                 },
             ),
             (
@@ -575,6 +585,28 @@ mod tests {
                     method: "POST".to_owned(),
                     path: "/api/lease/revoke".to_owned(),
                     data: Some("-".to_owned()),
+                    content_type: None,
+                },
+            ),
+            // The media type is OPTIONAL and additive: omitting it leaves the
+            // JSON default in force, naming it carries a wire protocol the
+            // shaped commands have no room for.
+            (
+                vec![
+                    "api",
+                    "raw",
+                    "POST",
+                    "/git/info/refs",
+                    "--data",
+                    "-",
+                    "--content-type",
+                    "application/x-git-upload-pack-request",
+                ],
+                ApiCommand::Raw {
+                    method: "POST".to_owned(),
+                    path: "/git/info/refs".to_owned(),
+                    data: Some("-".to_owned()),
+                    content_type: Some("application/x-git-upload-pack-request".to_owned()),
                 },
             ),
         ];

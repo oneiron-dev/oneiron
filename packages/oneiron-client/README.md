@@ -18,6 +18,16 @@ Source-direct and dependency-free: `main`, `types`, and the `exports` map all
 resolve to `./src/index.ts`. There is no build step, no generated directory, and
 no code generator anywhere in this package.
 
+That shape has a requirement attached, and `engines` declares it: the consuming
+runtime must load TypeScript itself. **Bun 1.3 or newer is the supported
+runtime**, and it is the one the tests run on. Plain `node` is NOT supported:
+without a TypeScript loader, importing `@oneiron/client` fails at resolution,
+and this package publishes no compiled JavaScript entry point to fall back to.
+A bundler or a Node with its own TS loader may work, but it is your
+arrangement rather than a contract this package keeps. An agent or app that
+cannot run TypeScript should take the curl lane (`oneiron api …` or plain
+`curl`) against the same routes instead.
+
 ## Use
 
 ```ts
@@ -51,6 +61,10 @@ if (!response.ok) {
   `Authorization` header for a different credential is refused loudly.
 * It never logs the credential. The secret becomes one default header and is
   stored nowhere else.
+* It does not let the runtime chase redirects. Each hop is taken by hand and
+  re-checked against the configured origin, so a `Location` pointing at another
+  host throws instead of being followed with your credential attached;
+  same-origin hops follow fetch's own method rules and stop after five.
 
 ## Consumers
 

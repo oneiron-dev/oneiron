@@ -663,7 +663,7 @@ fn api_short_commands_resolve_to_existing_routes() {
         "http://127.0.0.1:3000/v1/core/memory/verbs/board.append"
     );
     assert_eq!(call.body.as_deref(), Some(b"{\"ok\":true}".as_slice()));
-    assert_eq!(call.content_type, Some("application/json"));
+    assert_eq!(call.content_type.as_deref(), Some("application/json"));
 
     let raw = api::request_for_command(
         base,
@@ -671,6 +671,7 @@ fn api_short_commands_resolve_to_existing_routes() {
             method: "get".to_owned(),
             path: "/api/health".to_owned(),
             data: None,
+            content_type: None,
         },
     )
     .unwrap();
@@ -752,6 +753,7 @@ fn api_raw_refuses_requests_that_leave_the_configured_origin() {
                 method: "GET".to_owned(),
                 path: path.to_owned(),
                 data: None,
+                content_type: None,
             },
         )
         .unwrap_err();
@@ -769,6 +771,7 @@ fn api_raw_refuses_requests_that_leave_the_configured_origin() {
                     method: method.to_owned(),
                     path: "/api/health".to_owned(),
                     data: None,
+                    content_type: None,
                 },
             )
             .is_err(),
@@ -785,6 +788,98 @@ fn api_raw_refuses_requests_that_leave_the_configured_origin() {
         assert!(
             api::request_for_command(base, ApiCommand::Discover).is_err(),
             "base URL {base:?} must be refused"
+        );
+    }
+}
+
+/// A base URL carrying a PATH is refused rather than quietly honoured. Every
+/// shaped command appends a literal route to the configured origin, so a base
+/// of `http://host/prefix` would send `GET /prefix/api/core/discover` — a
+/// route this server does not serve — and the caller would read a 404 about a
+/// request they never wrote. Rejecting is the only reading that cannot be
+/// wrong: stripping the prefix would discard something the caller typed on
+/// purpose, and honouring it would send the request somewhere else.
+#[test]
+fn api_refuses_a_base_url_that_carries_a_path() {
+    for base in [
+        "http://127.0.0.1:3000/prefix",
+        "https://vault.example/a/b/",
+        "http://vault.example/api",
+    ] {
+        let error = api::request_for_command(base, ApiCommand::Discover)
+            .expect_err(&format!("base URL {base:?} must be refused"))
+            .to_string();
+        assert!(
+            error.contains("plain origin without a path"),
+            "the refusal must name the reason: {error}"
+        );
+    }
+
+    // The origins that always worked still do, trailing slash and all.
+    for (base, expected) in [
+        ("http://127.0.0.1:3000", "http://127.0.0.1:3000"),
+        ("http://127.0.0.1:3000/", "http://127.0.0.1:3000"),
+        ("https://vault.example", "https://vault.example"),
+        ("https://vault.example///", "https://vault.example"),
+    ] {
+        let request = api::request_for_command(base, ApiCommand::Discover)
+            .unwrap_or_else(|error| panic!("base URL {base:?} must be accepted: {error}"));
+        assert_eq!(request.url, format!("{expected}/api/core/discover"));
+    }
+}
+
+/// `raw` is the only command whose body is not this server's own JSON, so the
+/// media type is a caller decision there and nowhere else. The DEFAULT does
+/// not move — a body with no declared type is still `application/json`, which
+/// is what every registered route reads — and a declared type replaces it, so
+/// a wire protocol like Git smart-HTTP is expressible without a second
+/// command or a second authority model.
+#[test]
+fn api_raw_content_type_defaults_to_json_and_only_a_valid_type_replaces_it() {
+    let base = "http://127.0.0.1:3000";
+    let raw = |data: Option<&str>, content_type: Option<&str>| {
+        api::request_for_command(
+            base,
+            ApiCommand::Raw {
+                method: "POST".to_owned(),
+                path: "/api/health".to_owned(),
+                data: data.map(str::to_owned),
+                content_type: content_type.map(str::to_owned),
+            },
+        )
+    };
+
+    assert_eq!(
+        raw(Some("{}"), None).unwrap().content_type.as_deref(),
+        Some("application/json"),
+        "a body with no declared type keeps the pinned default"
+    );
+    assert_eq!(
+        raw(None, None).unwrap().content_type,
+        None,
+        "a request with no body declares no media type"
+    );
+
+    let git = raw(Some("0000"), Some("application/x-git-upload-pack-request")).unwrap();
+    assert_eq!(
+        git.content_type.as_deref(),
+        Some("application/x-git-upload-pack-request"),
+        "a declared type passes through verbatim, in place of JSON"
+    );
+    assert_eq!(git.body.as_deref(), Some(b"0000".as_slice()));
+
+    for rejected in [
+        "",
+        "application/json; charset=utf-8",
+        "application/json\nheader = \"x: y\"",
+        "application/ json",
+        "application/js\u{00f8}n",
+        "applicationjson",
+        "application/x/y",
+    ] {
+        assert!(
+            raw(Some("{}"), Some(rejected)).is_err(),
+            "content type {rejected:?} must be refused before it can become a header"
         );
     }
 }
@@ -859,7 +954,7 @@ fn api_credential_reaches_curl_only_through_the_config_channel() {
     let output = api::run_curl_output(
         program.as_os_str(),
         &request,
-        PLACEHOLDER_SECRET,
+        Some(PLACEHOLDER_SECRET),
         std::process::Stdio::piped(),
         std::process::Stdio::piped(),
     )
@@ -924,7 +1019,7 @@ fn api_success_body_passes_through_byte_for_byte() {
     let output = api::run_curl_output(
         program.as_os_str(),
         &request,
-        PLACEHOLDER_SECRET,
+        Some(PLACEHOLDER_SECRET),
         std::process::Stdio::piped(),
         std::process::Stdio::piped(),
     )
@@ -951,7 +1046,7 @@ fn api_failure_keeps_the_body_and_exits_non_zero() {
     let output = api::run_curl_output(
         program.as_os_str(),
         &request,
-        PLACEHOLDER_SECRET,
+        Some(PLACEHOLDER_SECRET),
         std::process::Stdio::piped(),
         std::process::Stdio::piped(),
     )
@@ -983,4 +1078,269 @@ fn api_config_channel_refuses_a_credential_it_cannot_carry_safely() {
     );
     assert!(api::curl_config("").is_err());
     assert!(api::curl_config("line\nheader = \"x: y\"").is_err());
+}
+
+/// curl reads the HOST's own config file before any flag on its command line,
+/// and it reads it EVEN when `--config` is given. A line there that added a
+/// transfer would be handed the credential this process puts on the config
+/// channel — a leak to a host nobody named. `-q` refuses that file, and curl
+/// honours it only as the FIRST argument, which is what this row pins.
+#[test]
+#[cfg(unix)]
+fn api_refuses_the_hosts_curl_config_before_any_other_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("response.bin"), b"{}").unwrap();
+    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 0));
+
+    let request = api::request_for_command("http://127.0.0.1:3000", ApiCommand::Discover).unwrap();
+    api::run_curl_output(
+        program.as_os_str(),
+        &request,
+        Some(PLACEHOLDER_SECRET),
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    assert_eq!(
+        argv.lines().next(),
+        Some(api::CURL_DISABLE_HOST_CONFIG),
+        "the host-config refusal must be curl's first argument, or curl ignores it: {argv}"
+    );
+    for flag in api::CURL_FLAGS {
+        assert!(
+            argv.contains(flag),
+            "curl must still be invoked with {flag}"
+        );
+    }
+}
+
+/// The property above is curl's own, so this row proves it with the REAL
+/// binary: a populated `CURL_HOME/.curlrc` that sends the transfer's body to a
+/// file of its own choosing. Loaded, that config captures the body; through
+/// this module it is refused and the bytes arrive here instead. A host with no
+/// curl, or with a curl that cannot read the `file://` fixture, has nothing to
+/// demonstrate and this row stands down rather than failing on the host.
+#[test]
+#[cfg(unix)]
+fn api_keeps_a_host_curlrc_from_capturing_the_transfer() {
+    const PAYLOAD: &[u8] = b"served-bytes";
+
+    let dir = tempfile::tempdir().unwrap();
+    let payload = dir.path().join("payload.bin");
+    std::fs::write(&payload, PAYLOAD).unwrap();
+    let url = format!("file://{}", payload.display());
+
+    let Ok(probe) = std::process::Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--fail-with-body",
+            "--url",
+            &url,
+        ])
+        .output()
+    else {
+        return;
+    };
+    if !probe.status.success() || probe.stdout != PAYLOAD {
+        return;
+    }
+
+    let captured = dir.path().join("captured-by-curlrc.bin");
+    std::fs::write(
+        dir.path().join(".curlrc"),
+        format!("output = \"{}\"\n", captured.display()),
+    )
+    .unwrap();
+
+    // The fixture is real: with the host config loaded, the body goes where
+    // that file said instead of to the caller.
+    let control = std::process::Command::new("curl")
+        .env("CURL_HOME", dir.path())
+        .args([
+            "--silent",
+            "--show-error",
+            "--fail-with-body",
+            "--url",
+            &url,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        control.status.success() && control.stdout.is_empty() && captured.is_file(),
+        "fixture check: a loaded curlrc must capture the body"
+    );
+    std::fs::remove_file(&captured).unwrap();
+
+    // The same curlrc, in force for this module's own invocation.
+    let program = write_fake_curl(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\nCURL_HOME=\"{}\" exec curl \"$@\"\n",
+            dir.path().display()
+        ),
+    );
+    let request = api::CurlRequest {
+        method: "GET".to_owned(),
+        url: url.clone(),
+        body: None,
+        content_type: None,
+    };
+    let output = api::run_curl_output(
+        program.as_os_str(),
+        &request,
+        Some(PLACEHOLDER_SECRET),
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        output.stdout,
+        PAYLOAD,
+        "the body must reach this process, not the curlrc's file: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !captured.exists(),
+        "the host curlrc must not be loaded at all"
+    );
+}
+
+/// The server serves public routes and can be configured to allow
+/// unauthenticated access, so an ABSENT credential is a request without one
+/// rather than an error. Nothing stands in for it: no config channel, no empty
+/// header, no placeholder bearer — a bogus credential is an authentication
+/// ATTEMPT the server refuses, which is not the anonymous call that works.
+#[test]
+#[cfg(unix)]
+fn api_without_a_configured_secret_sends_no_authorization_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let served = b"{\"status\":\"ok\"}";
+    std::fs::write(dir.path().join("response.bin"), served).unwrap();
+    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 0));
+
+    let request = api::request_for_command(
+        "http://127.0.0.1:3000",
+        ApiCommand::Raw {
+            method: "GET".to_owned(),
+            path: "/api/health".to_owned(),
+            data: None,
+            content_type: None,
+        },
+    )
+    .unwrap();
+
+    let anonymous = api::run_curl_output(
+        program.as_os_str(),
+        &request,
+        None,
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    let stdin = std::fs::read(dir.path().join("stdin.bin")).unwrap();
+
+    assert_eq!(anonymous.stdout, served, "a public route still answers");
+    assert!(
+        !argv.contains("--config"),
+        "no credential means no config channel at all: {argv}"
+    );
+    assert!(
+        !argv.to_ascii_lowercase().contains("authorization"),
+        "no credential means no Authorization header: {argv}"
+    );
+    assert!(
+        stdin.is_empty(),
+        "nothing is handed to curl's stdin when there is nothing to carry"
+    );
+    assert_eq!(
+        argv.lines().next(),
+        Some(api::CURL_DISABLE_HOST_CONFIG),
+        "the host-config refusal stays first on the anonymous path too"
+    );
+
+    // The credentialled path is unchanged: the header still rides stdin only.
+    api::run_curl_output(
+        program.as_os_str(),
+        &request,
+        Some(PLACEHOLDER_SECRET),
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    let config = std::fs::read_to_string(dir.path().join("stdin.bin")).unwrap();
+    assert!(argv.contains("--config\n-\n"), "{argv}");
+    assert!(!argv.contains(PLACEHOLDER_SECRET));
+    assert_eq!(
+        config,
+        format!("header = \"Authorization: Bearer {PLACEHOLDER_SECRET}\"\n")
+    );
+
+    // A credential that IS configured is still checked: an empty one is a
+    // misconfiguration, not an anonymous request.
+    assert!(
+        api::run_curl_output(
+            program.as_os_str(),
+            &request,
+            Some(""),
+            std::process::Stdio::piped(),
+            std::process::Stdio::piped(),
+        )
+        .is_err(),
+        "an empty configured credential must be refused rather than sent"
+    );
+}
+
+/// Staging a body that fails PART-WAY through must leave nothing on disk. The
+/// file exists from the moment it is opened, so the guard that removes it has
+/// to own the path BEFORE the first write: otherwise a write error returns
+/// past the guard's construction and the partial body — request bytes, maybe
+/// private ones — stays in the temp directory for the rest of the boot.
+#[test]
+fn api_a_failed_body_staging_leaves_nothing_behind() {
+    struct RefusingSink;
+
+    impl std::io::Write for RefusingSink {
+        fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("no space left on device"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let failed = dir.path().join("failed.body");
+    std::fs::write(&failed, b"partial").unwrap();
+
+    let error = api::TempBody::write_staged(
+        failed.clone(),
+        &mut RefusingSink,
+        b"{\"claim\":\"placeholder\"}",
+    )
+    .expect_err("a sink that refuses every write must fail the staging");
+    assert!(error.to_string().contains("stage the request body"));
+    assert!(
+        !failed.exists(),
+        "a failed staging must not leave request bytes in the temp directory"
+    );
+
+    // The success path is unchanged: a live file for the length of the call,
+    // and no longer.
+    let staged_path = dir.path().join("staged.body");
+    let mut file = std::fs::File::create(&staged_path).unwrap();
+    let staged = api::TempBody::write_staged(staged_path.clone(), &mut file, b"body").unwrap();
+    assert!(staged_path.is_file());
+    drop(staged);
+    assert!(
+        !staged_path.exists(),
+        "a staged body must not outlive the call"
+    );
 }

@@ -42,18 +42,23 @@ end markers, same error envelope. Pick the first lane you can actually run, make
 one call, then read the endpoint catalog below only for the routes that call needs.
 
 ```text
-Can you run code in a sandbox/REPL?
-  yes -> lane 1: code-mode-repl   (setup_oneiron, then the host dispatcher self.oneiron)
-  no  -> Can you npm install one package?
+Does your sandbox bind the host dispatcher self.oneiron?
+  yes -> lane 1: code-mode-repl   (setup_oneiron, then self.oneiron)
+  no  -> Can you npm install one package AND run TypeScript (Bun)?
            yes -> lane 2: thin-client   (@oneiron/client)
-           no  -> Do you have bash with curl, or the oneiron binary?
+           no  -> Do you have bash with curl (>= 7.76)?
                     yes -> lane 3: curl-cli   (oneiron api ..., or plain curl)
                     no  -> lane 4: tool-first-mcp   (ask your operator for the endpoint)
 ```
 
-1. Can you run code in a sandbox or REPL? Use [code-mode-repl](#lane-code-mode-repl).
-2. Otherwise, can you `npm install` one package? Use [thin-client](#lane-thin-client).
-3. Otherwise, do you have bash with `curl`, or the `oneiron` binary? Use [curl-cli](#lane-curl-cli).
+1. Does your sandbox bind Oneiron as the host dispatcher `self.oneiron`? Use
+   [code-mode-repl](#lane-code-mode-repl). A generic REPL is not enough: this release
+   registers `execute_code` nowhere.
+2. Otherwise, can you `npm install` one package AND run TypeScript? Use
+   [thin-client](#lane-thin-client). The package ships TypeScript source, so the
+   runtime must load it: Bun 1.3+, not plain `node`.
+3. Otherwise, do you have bash with `curl` 7.76 or newer (for `--fail-with-body`)?
+   Use [curl-cli](#lane-curl-cli). `oneiron api` spawns that same curl.
 4. Otherwise, ask your operator to register or provide the distinct tool-first MCP endpoint: [tool-first-mcp](#lane-tool-first-mcp).
 
 Written once for every lane, never repeated per lane: [Authentication](#authentication),
@@ -93,6 +98,9 @@ never a generated SDK, and it hands back the server's raw `Response` untouched.
 npm install @oneiron/client   # or: bun add @oneiron/client
 ```
 
+It ships TypeScript source with no build step, so the runtime must load TypeScript:
+Bun 1.3+; plain `node` without a TS loader cannot import it.
+
 ```ts
 import { HttpBaseClient } from "@oneiron/client";
 
@@ -113,8 +121,10 @@ normal `Response` for you to read.
 
 ## Lane: curl-cli
 
-You have bash. The `oneiron` binary carries a short curl-shaped command family over
-these same routes, and plain `curl` is equivalent wherever the binary is absent.
+You have bash with `curl` 7.76 or newer (for `--fail-with-body`). The `oneiron`
+binary carries a short curl-shaped command family over these same routes — it SPAWNS
+the host's curl rather than carrying an HTTP stack, so curl is required either way —
+and plain `curl` is equivalent wherever the binary is absent.
 
 ```bash
 export ONEIRON_URL=http://127.0.0.1:3000
@@ -128,14 +138,22 @@ oneiron api raw GET /api/health
 ```
 
 ```bash
-curl --silent --show-error --fail-with-body \
-  --header "Authorization: Bearer $ONEIRON_SECRET" \
-  "$ONEIRON_URL/api/core/discover"
+curl --disable --config - "$ONEIRON_URL/api/core/discover" <<CONFIG_EOF
+silent
+show-error
+fail-with-body
+header = "Authorization: Bearer $ONEIRON_SECRET"
+CONFIG_EOF
 ```
+
+The credential rides curl's config channel on stdin — the heredoc is unquoted so the
+shell expands `$ONEIRON_SECRET` into it — rather than a `--header` argument, so it
+stays out of argv and out of `ps`. `--disable` comes first and keeps a host
+`~/.curlrc` from adding a transfer that would be handed that same credential.
 
 The secret is read from `ONEIRON_SECRET`, never taken as an argument and never
 printed. Success bodies reach stdout byte for byte, curl diagnostics stay on
-stderr, and a non-2xx response keeps its body and still exits non-zero. The verb
+stderr, and a 4xx or 5xx keeps its body and still exits non-zero. The verb
 grammar returned by `setup_oneiron` names the verbs `oneiron api call` accepts.
 
 ## Lane: tool-first-mcp
