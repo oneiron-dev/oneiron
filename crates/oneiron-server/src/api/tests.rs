@@ -10002,6 +10002,10 @@ async fn text_search_response_shape_still_deserializes() {
             limit: 1,
             view: Some(View::Summary),
             count_mode: CountMode::Estimate,
+            // ONE-207: the omission defaults, spelled out because this row
+            // constructs the params struct directly and so bypasses serde.
+            depth: minimal_effort(),
+            query_text: None,
         })),
     )
     .await
@@ -14442,5 +14446,541 @@ async fn served_skills_pack_carries_the_four_lane_onramp_before_the_catalog() {
     assert!(
         last_lane < catalog,
         "the onramp must arrive before the endpoint catalog it routes into"
+    );
+}
+
+// ── ONE-207 · depth-dialed retrieval and the reasoning route ────────────
+
+/// A host reasoning backend with scripted spend.
+///
+/// It proposes no follow-up queries, so the deep round loop ends after one
+/// `decompose`; what the rows here are actually about is the ACCOUNTING —
+/// `tokensUsed` must be the sum of what this stub reports, never the
+/// `tokenBudget` the request carried.
+struct StubReasonBackend {
+    answer: String,
+    sources: Option<Vec<String>>,
+    decompose_tokens: u64,
+    rerank_tokens: u64,
+    compose_tokens: u64,
+    declined: bool,
+}
+
+impl StubReasonBackend {
+    fn answering(answer: &str) -> Self {
+        Self {
+            answer: answer.to_owned(),
+            sources: None,
+            decompose_tokens: 3,
+            rerank_tokens: 5,
+            compose_tokens: 9,
+            declined: false,
+        }
+    }
+}
+
+impl oneiron::retrieval_depth::DeepSearchBackend for StubReasonBackend {
+    fn decompose(
+        &self,
+        _query: &str,
+        _already_run: &[String],
+        _max_queries: usize,
+    ) -> oneiron::Result<oneiron::retrieval_depth::BackendSpend<Vec<String>>> {
+        Ok(oneiron::retrieval_depth::BackendSpend {
+            value: Vec::new(),
+            tokens_used: self.decompose_tokens,
+        })
+    }
+
+    fn rerank(
+        &self,
+        _query: &str,
+        candidates: &[oneiron::rerank::RerankCandidate<'_>],
+    ) -> oneiron::Result<oneiron::retrieval_depth::BackendSpend<Vec<f32>>> {
+        Ok(oneiron::retrieval_depth::BackendSpend {
+            value: vec![0.0; candidates.len()],
+            tokens_used: self.rerank_tokens,
+        })
+    }
+}
+
+impl MemoryReasonBackend for StubReasonBackend {
+    fn compose(
+        &self,
+        request: &MemoryReasonComposeRequest<'_>,
+        _lease: &oneiron::llm::BudgetLease,
+    ) -> oneiron::Result<oneiron::retrieval_depth::BackendSpend<MemoryReasonComposition>> {
+        let source_short_ids = self.sources.clone().unwrap_or_else(|| {
+            request
+                .evidence
+                .iter()
+                .map(|row| row.short_id.clone())
+                .collect()
+        });
+        Ok(oneiron::retrieval_depth::BackendSpend {
+            value: MemoryReasonComposition {
+                answer: self.answer.clone(),
+                source_short_ids,
+                confidence: 0.9,
+                gaps: Vec::new(),
+                declined: self.declined,
+            },
+            tokens_used: self.compose_tokens,
+        })
+    }
+}
+
+fn memory_reason_server(
+    backend: Option<Arc<dyn MemoryReasonBackend>>,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let turn = seeded_test_entity_id(0x0207_0001);
+    let body = rmp_serde::to_vec_named(&json!({
+        "txt": "the launch date moved to March",
+        "spkr": "user",
+        "at": 700_u64
+    }))
+    .expect("encode turn body");
+    vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 700,
+                end: 700,
+            },
+            700,
+            &body,
+        )
+        .text(&turn, &[("body", "the launch date moved to March")])
+        .commit()
+        .expect("seed reasoning evidence");
+
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            allow_unauthenticated: true,
+            ..Default::default()
+        },
+    )
+    .expect("sync server");
+    let server = match backend {
+        Some(backend) => server.with_deep_retrieval_host(Arc::new(DeepRetrievalHost::new(
+            backend,
+            oneiron::llm::BudgetGuard::new(
+                "one-207-server-tests",
+                10_000,
+                oneiron::llm::BudgetExhaustionPolicy::Suspend,
+            ),
+        ))),
+        None => server,
+    };
+    (dir, Arc::new(server))
+}
+
+/// The response shape is a CONTRACT, so this row spells out the whole key set
+/// rather than probing the fields it happens to care about. A field renamed,
+/// added, or silently dropped fails here.
+#[tokio::test]
+async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
+    let (_dir, server) = memory_reason_server(None);
+
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/companion/memory/reason",
+            json!({ "query": "launch date", "format": "markdown" }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let keys: BTreeSet<&str> = body
+        .as_object()
+        .expect("reason response object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        BTreeSet::from([
+            "answer",
+            "sources",
+            "confidence",
+            "gaps",
+            "reasoning",
+            "tokensUsed"
+        ]),
+        "exact camelCase response contract: {body:?}"
+    );
+    assert!(
+        body["answer"]
+            .as_str()
+            .is_some_and(|answer| !answer.is_empty()),
+        "{body:?}"
+    );
+    assert!(
+        body["sources"]
+            .as_array()
+            .is_some_and(|sources| !sources.is_empty()),
+        "an extractive answer cites the evidence it shows: {body:?}"
+    );
+    assert_eq!(
+        body["tokensUsed"],
+        Value::from(0),
+        "the omitted-depth default is model-free and spends nothing"
+    );
+
+    // Omitted `depth` means standard, which is the tier that expands.
+    let trace_keys: BTreeSet<&str> = body["reasoning"]
+        .as_object()
+        .expect("standard reports a trace")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        trace_keys,
+        BTreeSet::from(["queriesRun", "signalsUsed", "candidatesScanned"])
+    );
+    let signals: Vec<&str> = body["reasoning"]["signalsUsed"]
+        .as_array()
+        .expect("signals array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        signals.contains(&"ppr"),
+        "standard expands the graph: {signals:?}"
+    );
+    let queries: Vec<&str> = body["reasoning"]["queriesRun"]
+        .as_array()
+        .expect("queries array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        queries.first(),
+        Some(&"launch date"),
+        "the trace opens with the caller's own question: {queries:?}"
+    );
+}
+
+#[tokio::test]
+async fn memory_reason_minimal_reports_no_reasoning_trace() {
+    let (_dir, server) = memory_reason_server(None);
+
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/companion/memory/reason",
+            json!({ "query": "launch date", "depth": "minimal" }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(
+        body.get("reasoning").is_none(),
+        "a single direct pass has no reasoning to report: {body:?}"
+    );
+    assert_eq!(body["tokensUsed"], Value::from(0));
+}
+
+#[tokio::test]
+async fn memory_reason_refuses_malformed_requests_field_by_field() {
+    let (_dir, server) = memory_reason_server(None);
+
+    for (payload, field) in [
+        (json!({ "query": "   " }), Some("query")),
+        (json!({ "query": "launch", "limit": 0 }), Some("limit")),
+        (
+            json!({ "query": "launch", "tokenBudget": 0 }),
+            Some("tokenBudget"),
+        ),
+        (
+            json!({ "query": "launch", "tokenBudget": 65_537 }),
+            Some("tokenBudget"),
+        ),
+        (json!({ "query": "launch", "depth": "high" }), None),
+        (json!({ "query": "launch", "curiosity": 3 }), None),
+    ] {
+        let (status, body) = route_json(
+            server.clone(),
+            json_request("POST", "/v1/companion/memory/reason", payload.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{payload:?} -> {body:?}");
+        assert_error_envelope(&body, "BAD_REQUEST");
+        if let Some(field) = field {
+            assert_eq!(
+                error_envelope(&body)["details"]["field"],
+                Value::from(field),
+                "{payload:?}"
+            );
+        }
+    }
+
+    // The budget bounds are inclusive at both ends.
+    for token_budget in [1, 65_536] {
+        let (status, body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/companion/memory/reason",
+                json!({ "query": "launch", "tokenBudget": token_budget }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{token_budget} -> {body:?}");
+    }
+}
+
+#[tokio::test]
+async fn memory_reason_deep_without_a_backend_is_service_unavailable() {
+    let (_dir, server) = memory_reason_server(None);
+
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/companion/memory/reason",
+            json!({ "query": "launch date", "depth": "deep" }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_error_envelope(&body, "DEEP_RETRIEVAL_UNAVAILABLE");
+}
+
+#[tokio::test]
+async fn memory_reason_deep_reports_decompose_rerank_and_compose_spend() {
+    let backend = Arc::new(StubReasonBackend::answering("the launch moved to March"));
+    let (_dir, server) = memory_reason_server(Some(backend));
+
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/companion/memory/reason",
+            json!({ "query": "launch date", "depth": "deep", "tokenBudget": 4096 }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        body["answer"],
+        Value::from("the launch moved to March"),
+        "{body:?}"
+    );
+    assert_eq!(
+        body["tokensUsed"],
+        Value::from(3 + 5 + 9),
+        "tokensUsed is the summed backend spend, never the requested budget: {body:?}"
+    );
+    assert_ne!(
+        body["tokensUsed"],
+        Value::from(4096),
+        "the request budget must never be reported as spend"
+    );
+}
+
+/// A composer citing something the retrieval never returned does not get to
+/// speak: the read falls back to the evidence and says so.
+#[tokio::test]
+async fn memory_reason_refuses_an_answer_citing_evidence_it_never_retrieved() {
+    let mut stub = StubReasonBackend::answering("invented recollection");
+    stub.sources = Some(vec!["not-a-retrieved-short-id".to_owned()]);
+    let (_dir, server) = memory_reason_server(Some(Arc::new(stub)));
+
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/companion/memory/reason",
+            json!({ "query": "launch date", "depth": "deep" }),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_ne!(
+        body["answer"],
+        Value::from("invented recollection"),
+        "an unsourced answer must not reach the wire: {body:?}"
+    );
+    let gaps: Vec<&str> = body["gaps"]
+        .as_array()
+        .expect("gaps array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        gaps.iter().any(|gap| gap.contains("not usable")),
+        "the refusal is reported, not hidden: {gaps:?}"
+    );
+    assert_eq!(
+        body["tokensUsed"],
+        Value::from(3 + 5 + 9),
+        "the tokens were spent whether or not the answer was usable"
+    );
+}
+
+#[tokio::test]
+async fn raw_search_depth_defaults_to_minimal_and_refuses_unknown_tiers() {
+    let (_dir, server) = memory_reason_server(None);
+
+    for uri in [
+        "/api/search/text?query=launch",
+        "/api/search/text?query=launch&depth=minimal",
+        "/api/search/text?query=launch&depth=standard",
+    ] {
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{uri} -> {body:?}");
+    }
+
+    for uri in [
+        "/api/search/text?query=launch&depth=high",
+        "/api/search/text?query=launch&depth=med",
+        "/api/search/vector?query=0.1,0.2&depth=low",
+    ] {
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "the chat verb's low/med/high aliases are not this wire: {uri} -> {body:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn raw_search_deep_needs_query_text_and_a_backend() {
+    let (_dir, server) = memory_reason_server(None);
+
+    let (status, body) = route_json(
+        server.clone(),
+        Request::builder()
+            .method("GET")
+            .uri("/api/search/vector?query=0.1,0.2&depth=deep")
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body:?}");
+    assert_eq!(body["code"], Value::from("BAD_REQUEST"));
+    assert_eq!(
+        body["details"]["field"],
+        Value::from("queryText"),
+        "the refusal names the missing field: {body:?}"
+    );
+
+    // A vector read WITHOUT text is fine at the tiers that never read it.
+    // Full width, because this row is about the depth gate and must not trip
+    // over the vault's own dimension check on the way to it.
+    let probe = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
+    for depth in ["minimal", "standard"] {
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/search/vector?query={probe}&depth={depth}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{depth} -> {body:?}");
+    }
+
+    // Grounded, but this server has no deep host.
+    let (status, body) = route_json(
+        server,
+        Request::builder()
+            .method("GET")
+            .uri("/api/search/text?query=launch&depth=deep")
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_eq!(body["code"], Value::from("DEEP_RETRIEVAL_UNAVAILABLE"));
+}
+
+/// ONE vocabulary for depth on the whole wire.
+///
+/// The engine's `Effort` is the only depth type the server publishes: no
+/// `SearchDepth`, and no `low | med | high` (those are the chat verb's own
+/// input aliases and stay there). This row reads the generated document
+/// because that is what a client actually sees.
+#[test]
+fn generated_openapi_publishes_exactly_one_retrieval_depth_vocabulary() {
+    let spec = generated_spec();
+    let expected = Value::from(vec!["minimal", "standard", "deep"]);
+
+    assert_eq!(
+        spec["components"]["schemas"]["RetrievalEffort"]["enum"],
+        expected
+    );
+    assert_eq!(
+        spec["components"]["schemas"]["MemoryReasonRequest"]["properties"]["depth"]["enum"],
+        expected,
+        "the reason request speaks the engine's tiers"
+    );
+
+    for path in ["/api/search/vector", "/api/search/text"] {
+        let depth = spec["paths"][path]["get"]["parameters"]
+            .as_array()
+            .expect("query parameters")
+            .iter()
+            .find(|parameter| parameter["name"] == "depth")
+            .unwrap_or_else(|| panic!("{path} must document a depth parameter"));
+        assert_eq!(depth["schema"]["enum"], expected, "{path}");
+    }
+
+    let schemas = spec["components"]["schemas"]
+        .as_object()
+        .expect("schemas object");
+    assert!(
+        !schemas.contains_key("SearchDepth"),
+        "a second depth type must not exist"
+    );
+    for name in [
+        "MemoryReasonRequest",
+        "MemoryReasonResponse",
+        "RetrievalEffort",
+    ] {
+        assert!(schemas.contains_key(name), "missing schema {name}");
+    }
+    assert!(
+        spec["paths"]
+            .as_object()
+            .expect("paths object")
+            .contains_key("/v1/companion/memory/reason"),
+        "the reasoning route must be documented"
+    );
+    assert_eq!(
+        spec["paths"]["/v1/companion/memory/reason"]["post"]["security"],
+        json!([{ "CoreBearer": [] }]),
+        "the reasoning route must require bearer auth as the single scheme"
     );
 }

@@ -1,5 +1,9 @@
 use super::check_api_auth;
 use super::default_limit;
+use super::memory_reason::DeepAdmission;
+use super::memory_reason::admit_deep_retrieval;
+use super::memory_reason::depth_search_error;
+use super::memory_reason::minimal_effort;
 use super::query_params;
 use super::scoped_read_for_legacy_api;
 use crate::error::ApiError;
@@ -14,6 +18,9 @@ use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
+use oneiron::Effort;
+use oneiron::claim::ScopedRead;
+use oneiron::retrieval_depth::{DepthSearchRequest, SearchProbe};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -49,6 +56,20 @@ pub(crate) struct VectorSearchQuery {
     #[schema(example = "estimate")]
     #[param(example = "estimate")]
     pub(crate) count_mode: CountMode,
+    /// Retrieval effort: `minimal`, `standard`, or `deep`. Omitted means
+    /// `minimal` — one direct vector channel, exactly what this endpoint did
+    /// before the dial existed.
+    #[serde(default = "minimal_effort")]
+    #[schema(value_type = String, default = "minimal", example = "standard")]
+    #[param(value_type = String, default = "minimal", example = "standard")]
+    pub(crate) depth: Effort,
+    /// The text this embedding was produced from. Optional at `minimal` and
+    /// `standard`, which never read it, and REQUIRED at `deep`, whose
+    /// decomposition and cross-encoder scoring operate on language.
+    #[serde(default, rename = "queryText")]
+    #[schema(example = "project kickoff notes")]
+    #[param(example = "project kickoff notes")]
+    pub(crate) query_text: Option<String>,
 }
 
 /// Search hit returned by vector and text search endpoints.
@@ -109,6 +130,12 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
             description = "Vector search or projection failed.",
             body = ApiError,
             content_type = "application/json"
+        ),
+        (
+            status = 503,
+            description = "depth=deep was requested and this server has no deep retrieval backend attached.",
+            body = ApiError,
+            content_type = "application/json"
         )
     )
 )]
@@ -136,13 +163,29 @@ pub(crate) async fn search_vector(
         )
     })?;
 
+    // The one refusal this endpoint owns rather than delegates: an embedding
+    // carries no question, so a deep read over it would have to invent the
+    // text it decomposes. Field-specific, and raised before the vault is
+    // touched.
+    if params.depth == Effort::Deep && probe_text(params.query_text.as_deref()).is_none() {
+        return Err(ApiError::bad_request(
+            "queryText is required when depth=deep on vector search",
+            Some("queryText"),
+        ));
+    }
+    let admission = admit_deep_retrieval(&server, params.depth)?;
+
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let results = scoped_read
-        .search_vector(&query, fetch_limit)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "vector search failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("vector search failed"))?;
+    let results = run_depth_search(
+        &scoped_read,
+        SearchProbe::Vector {
+            embedding: query,
+            query_text: probe_text(params.query_text.as_deref()).map(str::to_owned),
+        },
+        params.depth,
+        fetch_limit,
+        admission.as_ref(),
+    )?;
 
     let total = results.len();
     let response = search_response(&scoped_read, results, view, params.limit)?;
@@ -178,6 +221,20 @@ pub(crate) struct TextSearchQuery {
     #[schema(example = "estimate")]
     #[param(example = "estimate")]
     pub(crate) count_mode: CountMode,
+    /// Retrieval effort: `minimal`, `standard`, or `deep`. Omitted means
+    /// `minimal` — one direct BM25 channel, exactly what this endpoint did
+    /// before the dial existed.
+    #[serde(default = "minimal_effort")]
+    #[schema(value_type = String, default = "minimal", example = "standard")]
+    #[param(value_type = String, default = "minimal", example = "standard")]
+    pub(crate) depth: Effort,
+    /// Overrides the text handed to deep decomposition. Omitted means `query`,
+    /// which is already this endpoint's probe text; the parameter exists so the
+    /// two search endpoints take the same depth arguments.
+    #[serde(default, rename = "queryText")]
+    #[schema(example = "project kickoff notes")]
+    #[param(example = "project kickoff notes")]
+    pub(crate) query_text: Option<String>,
 }
 
 /// BM25 text search.
@@ -221,6 +278,12 @@ pub(crate) struct TextSearchQuery {
             description = "Text search or projection failed.",
             body = ApiError,
             content_type = "application/json"
+        ),
+        (
+            status = 503,
+            description = "depth=deep was requested and this server has no deep retrieval backend attached.",
+            body = ApiError,
+            content_type = "application/json"
         )
     )
 )]
@@ -235,19 +298,69 @@ pub(crate) async fn search_text(
 
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
+    let admission = admit_deep_retrieval(&server, params.depth)?;
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
-    let results = scoped_read
-        .search_text(&params.query, fetch_limit)
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "text search failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("text search failed"))?;
+    let results = run_depth_search(
+        &scoped_read,
+        SearchProbe::Text {
+            query: probe_text(params.query_text.as_deref())
+                .unwrap_or(params.query.as_str())
+                .to_owned(),
+        },
+        params.depth,
+        fetch_limit,
+        admission.as_ref(),
+    )?;
 
     let total = results.len();
     let response = search_response(&scoped_read, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
+}
+
+/// A blank `queryText` is an ABSENT one.
+///
+/// `?queryText=` on a URL is what an unset form field serializes to, and
+/// treating that empty string as "the caller supplied text" would let a deep
+/// vector read past the grounding check with nothing to decompose.
+fn probe_text(query_text: Option<&str>) -> Option<&str> {
+    query_text.map(str::trim).filter(|text| !text.is_empty())
+}
+
+/// The one place both raw search endpoints enter the effort dial.
+///
+/// Shared so the two cannot drift into different tier semantics for the same
+/// `depth` value, and so a hit's own accounting stays where it belongs: these
+/// endpoints return a paginated hit list with no place to report backend
+/// spend, so a deep read here settles its lease against what it actually
+/// spent and reports nothing further.
+fn run_depth_search(
+    scoped_read: &ScopedRead<'_>,
+    probe: SearchProbe,
+    effort: Effort,
+    limit: usize,
+    admission: Option<&DeepAdmission>,
+) -> Result<Vec<oneiron::ScoredEntity>, ApiError> {
+    // A zero-limit page was an empty 200 on this endpoint before the dial
+    // existed, and the dial is not the place to turn it into a refusal.
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let request = DepthSearchRequest {
+        probe,
+        effort,
+        limit,
+        lease: admission.map(DeepAdmission::lease),
+        backend: admission.map(DeepAdmission::search_backend),
+    };
+    let result = scoped_read
+        .search_with_effort(&request)
+        .map_err(depth_search_error)?;
+    if let Some(admission) = admission {
+        admission.settle(result.tokens_used);
+    }
+    Ok(result.hits)
 }
 
 pub(crate) fn search_fetch_limit(count_mode: CountMode, page_limit: usize) -> usize {

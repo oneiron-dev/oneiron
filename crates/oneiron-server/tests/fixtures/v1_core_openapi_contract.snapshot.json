@@ -22,6 +22,7 @@
               "NOT_ACCEPTABLE",
               "INVALID_HEADER",
               "UNSUPPORTED_CAPABILITY",
+              "DEEP_RETRIEVAL_UNAVAILABLE",
               "4001",
               "4002",
               "4003",
@@ -352,6 +353,18 @@
                   "supportedConnectors",
                   "supportedVerbs",
                   "recovery_suggestions"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "const": "DEEP_RETRIEVAL_UNAVAILABLE"
+                  }
+                },
+                "required": [
+                  "code"
                 ],
                 "type": "object"
               },
@@ -831,6 +844,20 @@
             "properties": {
               "code": {
                 "enum": [
+                  "DEEP_RETRIEVAL_UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "enum": [
                   "4001"
                 ],
                 "type": "string"
@@ -956,6 +983,7 @@
                   "NOT_ACCEPTABLE",
                   "INVALID_HEADER",
                   "UNSUPPORTED_CAPABILITY",
+                  "DEEP_RETRIEVAL_UNAVAILABLE",
                   "4001",
                   "4002",
                   "4003",
@@ -1286,6 +1314,18 @@
                       "supportedConnectors",
                       "supportedVerbs",
                       "recovery_suggestions"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "const": "DEEP_RETRIEVAL_UNAVAILABLE"
+                      }
+                    },
+                    "required": [
+                      "code"
                     ],
                     "type": "object"
                   },
@@ -3664,6 +3704,7 @@
           "NOT_ACCEPTABLE",
           "INVALID_HEADER",
           "UNSUPPORTED_CAPABILITY",
+          "DEEP_RETRIEVAL_UNAVAILABLE",
           "4001",
           "4002",
           "4003",
