@@ -207,6 +207,10 @@ impl fmt::Debug for SyncServerConfig {
 
 /// Serve command flags. All fields are optional so the config merger can keep
 /// the required precedence: file, then environment, then CLI flags.
+///
+/// The `--managed-by-hypnos` group is the exception: it selects managed serve
+/// mode, where the merger is skipped entirely and the whole configuration
+/// arrives on argv. See [`crate::managed`].
 #[derive(Args, Clone, Default)]
 pub struct ServeArgs {
     /// Path to a TOML config file. Defaults to the XDG oneiron config path
@@ -217,6 +221,54 @@ pub struct ServeArgs {
     /// Path to the LMDB vault directory.
     #[arg(long)]
     pub vault_path: Option<PathBuf>,
+
+    /// Run as a supervised child process of the node supervisor.
+    ///
+    /// The single switch that selects managed serve mode. Absent, this binary
+    /// behaves exactly as it always has.
+    #[arg(long = "managed-by-hypnos")]
+    pub managed_by_hypnos: bool,
+
+    /// Supervisor⇄vault wire contract version this child was spawned against.
+    /// Required in managed mode; an unknown version exits non-zero before any
+    /// IO happens.
+    #[arg(long = "contract-version")]
+    pub contract_version: Option<u32>,
+
+    /// Name of the vault this child serves, as a DNS label. Required in
+    /// managed mode; it is what the supervisor addresses on the wire.
+    #[arg(long = "vault-name")]
+    pub vault_name: Option<String>,
+
+    /// Vault data directory. Managed mode's spelling of `--vault-path`, which
+    /// stays available as the alias; unmanaged serve keeps using either.
+    #[arg(long = "data-dir")]
+    pub data_dir: Option<PathBuf>,
+
+    /// Path of the HTTP unix socket. In managed mode the supervisor normally
+    /// binds it and passes the fd in `HYPNOS_LISTEN_FD`; this path is the
+    /// self-bind fallback for when it does not.
+    #[arg(long = "http-socket")]
+    pub http_socket: Option<PathBuf>,
+
+    /// Path of the control unix socket this child binds and owns.
+    #[arg(long = "ctl-socket")]
+    pub ctl_socket: Option<PathBuf>,
+
+    /// Path of the supervisor's socket, where wake-ledger updates are pushed.
+    #[arg(long = "hypnos-socket")]
+    pub hypnos_socket: Option<PathBuf>,
+
+    /// Inherited file descriptor the ready byte is written to once both
+    /// sockets are bound, credentials are consumed and the vault open gates
+    /// have passed. Rides argv, never a hardcoded constant.
+    #[arg(long = "ready-fd")]
+    pub ready_fd: Option<i32>,
+
+    /// Inherited file descriptor carrying the 64-byte DEK ‖ spawn-token
+    /// credential frame. Rides argv, never a hardcoded constant.
+    #[arg(long = "credentials-fd")]
+    pub credentials_fd: Option<i32>,
 
     /// Host address to bind to.
     #[arg(long)]
@@ -386,6 +438,15 @@ impl fmt::Debug for ServeArgs {
         f.debug_struct("ServeArgs")
             .field("config", &self.config)
             .field("vault_path", &self.vault_path)
+            .field("managed_by_hypnos", &self.managed_by_hypnos)
+            .field("contract_version", &self.contract_version)
+            .field("vault_name", &self.vault_name)
+            .field("data_dir", &self.data_dir)
+            .field("http_socket", &self.http_socket)
+            .field("ctl_socket", &self.ctl_socket)
+            .field("hypnos_socket", &self.hypnos_socket)
+            .field("ready_fd", &self.ready_fd)
+            .field("credentials_fd", &self.credentials_fd)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
@@ -983,7 +1044,12 @@ impl PartialServeConfig {
 impl From<&ServeArgs> for PartialServeConfig {
     fn from(value: &ServeArgs) -> Self {
         Self {
-            vault_path: value.vault_path.clone(),
+            // `--data-dir` is the managed spelling of the same directory, so
+            // the unmanaged merger honours it too rather than accepting it and
+            // silently ignoring it. Strictly lower precedence than
+            // `--vault-path`, so an argv without `--data-dir` resolves exactly
+            // as it did before the flag existed.
+            vault_path: value.vault_path.clone().or_else(|| value.data_dir.clone()),
             host: value.host.clone(),
             port: value.port,
             auth_secret: value.auth_secret.clone(),

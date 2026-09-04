@@ -5565,6 +5565,7 @@ dependencies = [
  "jsonwebtoken",
  "loro",
  "oneiron",
+ "oneiron-vault-contract",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
