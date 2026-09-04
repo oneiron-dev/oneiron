@@ -4314,8 +4314,10 @@ fn lineage_stays_trivial_without_an_external_effect() {
     let (_dir, vault) = open_test_vault();
     let subject = seed_person(&vault, 0xD5);
     let claim = entity(0xD6);
+    // 0xD7 is the production-pinned default policy manifest id, so the run id
+    // skips it and continues at 0xD8 (outside `PINNED_ID_BYTES`).
     let config = executor_config(
-        entity(0xD7),
+        entity(0xD8),
         EngineExecutorLimits {
             soft_steps: 1,
             hard_steps: 3,
