@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
+    SelfHeldShape,
 };
 use crate::channel_identity_lifecycle::{
     ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor, ChannelIdentityLifecycleVerb,
@@ -477,7 +478,7 @@ impl DevEmailIdentityAdapter {
         ChannelIdentity::requested(
             EMAIL_CHANNEL,
             self.address_for_identity(identity_id),
-            ChannelIdentityShape::DedicatedAddress,
+            SelfHeldShape::DedicatedAddress,
             ChannelIdentityBinding::agent(agent_ref),
             requested_at,
         )
@@ -924,7 +925,7 @@ impl SlackSharedPresenceAdapter {
         Ok(ChannelIdentity::requested(
             SLACK_CHANNEL,
             address_or_handle,
-            ChannelIdentityShape::SharedPresence,
+            SelfHeldShape::SharedPresence,
             ChannelIdentityBinding::agent(agent_ref),
             requested_at,
         ))
@@ -1462,7 +1463,7 @@ impl LineOfficialAccountAdapter {
         Ok(ChannelIdentity::requested(
             LINE_CHANNEL,
             address_or_handle,
-            ChannelIdentityShape::SharedPresence,
+            SelfHeldShape::SharedPresence,
             ChannelIdentityBinding::agent(agent_ref),
             requested_at,
         ))
@@ -1858,6 +1859,8 @@ fn validate_max_bytes(value: &str, max: usize, reason: &'static str) -> Result<(
     }
     Ok(())
 }
+
+pub mod gmail;
 
 #[cfg(test)]
 mod tests;

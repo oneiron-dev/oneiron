@@ -1589,7 +1589,7 @@ mod calendar_invite_fixture {
         let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
             "email",
             "me@primary.test",
-            oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+            oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
             oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
             100,
         );

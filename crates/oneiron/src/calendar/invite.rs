@@ -46,6 +46,8 @@ use super::passport::{
     encode_passport_value, event_ref_for_indexed_uid, live_passport_for, resolve_event_by_uid,
 };
 use crate::Vault;
+#[cfg(test)]
+use crate::channel_identity::SelfHeldShape;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityShape, ChannelIdentityState};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
@@ -925,7 +927,7 @@ mod tests {
         let mut identity = ChannelIdentity::requested(
             channel,
             address,
-            ChannelIdentityShape::DedicatedAddress,
+            SelfHeldShape::DedicatedAddress,
             ChannelIdentityBinding::agent(actor),
             NOW,
         );
@@ -1551,7 +1553,7 @@ mod tests {
             "text/calendar; method=REQUEST; charset=utf-8"
         );
         assert_eq!(part.filename, CALENDAR_INVITE_PART_FILENAME);
-        let text = String::from_utf8(part.ics.clone()).expect("utf-8");
+        let text = String::from_utf8(part.ics).expect("utf-8");
         assert!(text.starts_with("BEGIN:VCALENDAR\r\n"));
         assert!(text.contains("METHOD:REQUEST\r\n"));
         assert!(text.contains(&format!("UID:{UID}\r\n")));
