@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use proptest::prelude::*;
 use serde_json::json;
@@ -1100,6 +1100,7 @@ fn generated_ui_flat_tree_enforces_depth_and_aggregate_budget() {
 fn generated_lens_requires_fallback_text_per_node() {
     let missing = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "atom": {
@@ -1117,6 +1118,7 @@ fn generated_lens_requires_fallback_text_per_node() {
 
     let blank = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": " ",
@@ -1156,13 +1158,15 @@ fn fallback_text_requirement_bumps_atom_kit_version() {
             }
         }
     });
+    // The legacy `{ kit_version, root }` shape now fails on the mandatory
+    // apps-contract field, which the post-map check order selects before the
+    // root-precedence rule. There is no legacy acceptance branch: the field has no
+    // serde default and is never inferred from the running constants.
     let error = serde_json::from_value::<GeneratedLens>(legacy_v1_without_fallback)
         .expect_err("legacy v1 wire shape must not decode as v2");
     assert!(
-        error
-            .to_string()
-            .contains("unsupported generated lens atom kit version 1"),
-        "legacy incompatible node shape must fail by version, not share v2 semantics: {error}"
+        error.to_string().contains("apps_contract_version"),
+        "an unstamped legacy body is rejected for the missing version field: {error}"
     );
 }
 
@@ -1309,6 +1313,7 @@ fn generated_ui_rejects_unknown_segment_and_raw_media_url_shapes() {
 
     let raw_url_prop = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": "pixel",
@@ -1338,6 +1343,7 @@ proptest! {
         let url = format!("{scheme}://{host}.example/{path}");
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "remote media",
@@ -1369,6 +1375,7 @@ fn unsafe_raw_atom_variants_are_rejected() {
     ] {
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "unsafe atom",
@@ -1395,6 +1402,7 @@ fn raw_script_network_storage_eval_props_are_rejected() {
     ] {
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "refresh",
@@ -1420,6 +1428,7 @@ fn raw_script_network_storage_eval_props_are_rejected() {
 
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "refresh",
@@ -1445,6 +1454,7 @@ fn raw_script_network_storage_eval_props_are_rejected() {
 
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "refresh",
@@ -1497,6 +1507,7 @@ fn self_ui_action_ids_reject_reserved_capability_names() {
     ] {
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "refresh",
@@ -1525,6 +1536,7 @@ fn self_ui_action_ids_reject_reserved_capability_names() {
 fn non_capability_tokens_allow_reserved_domain_values() {
     let attempted = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "fetch",
             "fallbackText": "Backend",
@@ -1557,6 +1569,7 @@ fn non_capability_tokens_allow_reserved_domain_values() {
 fn self_ui_rejects_selected_values_outside_options() {
     let attempted = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": "Status",
@@ -1623,6 +1636,7 @@ fn quick_filter_rejects_duplicate_selected_values() {
 
     let attempted = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": "Status",
@@ -1726,6 +1740,7 @@ fn self_ui_rejects_non_finite_numbers_and_invalid_sliders() {
     ] {
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": {
                 "id": "root",
                 "fallbackText": "Slider",
@@ -1764,12 +1779,13 @@ fn generated_lens_rejects_root_before_version_and_oversized_trees() {
                     "props": { "label": "loading" }
                 }
             },
-            "kit_version": 1
+            "kit_version": 1,
+            "apps_contract_version": 1
         }"#;
 
     assert!(
         serde_json::from_str::<GeneratedLens>(root_first).is_err(),
-        "root before kit_version should be rejected before tree allocation"
+        "root before the version pair should be rejected before tree allocation"
     );
 
     let mut root = LensNode::new(
@@ -1919,6 +1935,7 @@ fn generated_lens_rejects_oversized_collections_during_deserialization() {
         .collect::<Vec<_>>();
     let attempted = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": "too-wide",
@@ -2023,9 +2040,10 @@ fn standalone_self_ui_actions_reject_oversized_args() {
 }
 
 #[test]
-fn generated_lens_deserialize_rejects_unsupported_versions_and_oversized_text() {
+fn generated_lens_deserialize_accepts_stale_versions_and_rejects_oversized_text() {
     let attempted = json!({
         "kit_version": LENS_ATOM_KIT_VERSION + 1,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": "loading",
@@ -2038,13 +2056,22 @@ fn generated_lens_deserialize_rejects_unsupported_versions_and_oversized_text() 
         }
     });
 
+    // A pair that differs from the running constants is stale state, not a decode
+    // error: the body still loads so it can stay mounted as last-good while
+    // regeneration is queued.
+    let decoded =
+        serde_json::from_value::<GeneratedLens>(attempted).expect("a stale pair still decodes");
     assert!(
-        serde_json::from_value::<GeneratedLens>(attempted).is_err(),
-        "unsupported kit version should be rejected"
+        matches!(
+            lens_load_action(decoded.version_stamp(), LensVersionStamp::current()),
+            LensLoadAction::MountLastGoodAndQueueRegeneration { .. }
+        ),
+        "the version decision moves to load time"
     );
 
     let attempted = json!({
         "kit_version": LENS_ATOM_KIT_VERSION,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": {
             "id": "root",
             "fallbackText": "loading",
@@ -2656,11 +2683,15 @@ fn local_state_bind_round_trip() -> Result<()> {
         "protocolVersion": GENERATED_UI_WIRE_VERSION,
         "catalog": "lens_atom_kit",
         "cardId": "card-1",
-        "tree": { "kit_version": LENS_ATOM_KIT_VERSION, "root": {
-            "id": "root",
-            "atom": { "kind": "throbber", "props": { "label": "loading" } },
-            "fallbackText": "loading"
-        }}
+        "tree": {
+            "kit_version": LENS_ATOM_KIT_VERSION,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+            "root": {
+                "id": "root",
+                "atom": { "kind": "throbber", "props": { "label": "loading" } },
+                "fallbackText": "loading"
+            }
+        }
     });
     assert!(
         serde_json::from_value::<GeneratedUiCard>(bare.clone()).is_ok(),
@@ -4182,6 +4213,7 @@ fn v2_tree_remains_v2_after_result_set_kit_bump() -> Result<()> {
     // And a v2-declared envelope cannot smuggle a v3 atom past negotiation.
     let smuggled = json!({
         "kit_version": 2,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": serde_json::to_value(standalone_result_set_root()).expect("node encodes"),
     });
     assert!(
@@ -4202,7 +4234,11 @@ fn lens_envelope_accepts_supported_versions_and_rejects_underdeclaration() -> Re
         (3, &v2_node, "a v2 tree may over-declare up to the constant"),
         (3, &v3_node, "a v3 tree decodes at its own version"),
     ] {
-        let envelope = json!({ "kit_version": version, "root": root });
+        let envelope = json!({
+            "kit_version": version,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+            "root": root,
+        });
         let lens: GeneratedLens =
             serde_json::from_value(envelope).unwrap_or_else(|error| panic!("{reason}: {error}"));
         assert_eq!(lens.kit_version(), version, "{reason}");
@@ -4211,6 +4247,7 @@ fn lens_envelope_accepts_supported_versions_and_rejects_underdeclaration() -> Re
     // Under-declaration is caught after decode, against the atoms actually present.
     let error = serde_json::from_value::<GeneratedLens>(json!({
         "kit_version": 2,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
         "root": &v3_node,
     }))
     .expect_err("an under-declared envelope must not decode");
@@ -4219,22 +4256,42 @@ fn lens_envelope_accepts_supported_versions_and_rejects_underdeclaration() -> Re
         "under-declaration is rejected by contained atoms, not by the constant: {error}"
     );
 
-    // Outside the supported window the rejection message is unchanged.
-    for version in [0u16, 1, LENS_ATOM_KIT_VERSION + 1, u16::MAX] {
+    // Below the contained minimum the tree validator still refuses: version
+    // negotiation is decided against the atoms actually present, not the constant.
+    for version in [0u16, 1] {
         let error = serde_json::from_value::<GeneratedLens>(json!({
             "kit_version": version,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
             "root": &v2_node,
         }))
-        .expect_err("out-of-window versions must not decode");
+        .expect_err("an under-declared envelope must not decode");
         assert!(
-            error.to_string().contains(&format!(
-                "unsupported generated lens atom kit version {version}"
-            )),
-            "the landed rejection message is preserved: {error}"
+            error.to_string().contains("must be at least 2"),
+            "the contained-atom floor is what rejects it: {error}"
         );
     }
 
-    // The positional (msgpack seq) deserializer negotiates the same window.
+    // Above the running constant the body is *not* rejected any more. ONE-1431 moved
+    // that call from decode time to load time: a future-stamped body decodes, stays
+    // mountable as last-good, and queues regeneration against the live pair.
+    for version in [LENS_ATOM_KIT_VERSION + 1, u16::MAX] {
+        let decoded = serde_json::from_value::<GeneratedLens>(json!({
+            "kit_version": version,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+            "root": &v2_node,
+        }))
+        .unwrap_or_else(|error| panic!("a future-stamped body still decodes: {error}"));
+        assert_eq!(decoded.kit_version(), version);
+        assert!(
+            matches!(
+                lens_load_action(decoded.version_stamp(), LensVersionStamp::current()),
+                LensLoadAction::MountLastGoodAndQueueRegeneration { .. }
+            ),
+            "a body outside the running window queues regeneration instead of failing"
+        );
+    }
+
+    // The positional (msgpack seq) deserializer carries the same pair.
     let lens = GeneratedLens::new(standalone_result_set_root())?;
     let positional = rmp_serde::to_vec(&lens).expect("positional encode");
     assert_eq!(
@@ -5202,4 +5259,439 @@ proptest! {
             "an atom selection carries three names and nothing else"
         );
     }
+}
+
+// ── ONE-1431 version pair, behavior fingerprint, and structured diff ─────────
+
+fn throbber_node(name: &str) -> LensNode {
+    LensNode::with_fallback_text(
+        id(name),
+        LensAtom::Throbber(ThrobberAtom { label: text(name) }),
+        text(name),
+    )
+}
+
+fn stamped_envelope(kit_version: u16, apps_contract_version: u16) -> Result<GeneratedLens> {
+    serde_json::from_value::<GeneratedLens>(json!({
+        "kit_version": kit_version,
+        "apps_contract_version": apps_contract_version,
+        "root": serde_json::to_value(v2_only_root()).expect("node encodes"),
+    }))
+    .map_err(|error| Error::InvalidConfig(error.to_string()))
+}
+
+#[test]
+fn generated_lens_stamps_version_pair() -> Result<()> {
+    assert_eq!(
+        LensVersionStamp::current(),
+        LensVersionStamp::new(LENS_ATOM_KIT_VERSION, LENS_APPS_CONTRACT_VERSION),
+        "the live pair is the two running constants"
+    );
+
+    let v2 = GeneratedLens::new(v2_only_root())?;
+    assert_eq!(
+        v2.apps_contract_version(),
+        LENS_APPS_CONTRACT_VERSION,
+        "the apps-contract component records the shell contracts, so it is always live"
+    );
+    assert_eq!(
+        v2.kit_version(),
+        2,
+        "the atom-kit component stays the contained minimum of this exact tree"
+    );
+    assert_eq!(
+        v2.version_stamp(),
+        LensVersionStamp::new(2, LENS_APPS_CONTRACT_VERSION)
+    );
+
+    let v3 = GeneratedLens::new(standalone_result_set_root())?;
+    assert_eq!(v3.kit_version(), LENS_ATOM_KIT_VERSION);
+    assert_eq!(
+        v3.version_stamp(),
+        LensVersionStamp::current(),
+        "a tree that needs the live kit stamps the live pair"
+    );
+
+    // Both stamp fields are body data, serialized in order before the tree.
+    let encoded = serde_json::to_string(&v2).expect("lens serializes");
+    let kit = encoded
+        .find("\"kit_version\"")
+        .expect("kit_version is on the wire");
+    let apps = encoded
+        .find("\"apps_contract_version\"")
+        .expect("apps_contract_version is on the wire");
+    let root = encoded.find("\"root\"").expect("root is on the wire");
+    assert!(
+        kit < apps && apps < root,
+        "the wire order is kit_version, apps_contract_version, root: {encoded}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn generated_lens_requires_both_version_fields_before_root() {
+    let node = serde_json::to_value(v2_only_root()).expect("node encodes");
+
+    // Either stamp field may come first as long as both precede the root.
+    for envelope in [
+        json!({
+            "kit_version": 2,
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+            "root": &node,
+        }),
+        json!({
+            "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+            "kit_version": 2,
+            "root": &node,
+        }),
+    ] {
+        assert!(
+            serde_json::from_value::<GeneratedLens>(envelope).is_ok(),
+            "either stamp order decodes when both precede root"
+        );
+    }
+
+    // Missing either field is invalid; neither is defaulted or inferred.
+    let missing_kit = serde_json::from_value::<GeneratedLens>(json!({
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+        "root": &node,
+    }))
+    .expect_err("kit_version is mandatory");
+    assert!(
+        missing_kit.to_string().contains("kit_version"),
+        "{missing_kit}"
+    );
+
+    // Post-map check (b) — the missing apps field — is selected before check (c), the
+    // root-precedence rule, even though this body also puts root before the pair.
+    let missing_apps = serde_json::from_value::<GeneratedLens>(json!({
+        "kit_version": 2,
+        "root": &node,
+    }))
+    .expect_err("apps_contract_version is mandatory");
+    assert!(
+        missing_apps.to_string().contains("apps_contract_version"),
+        "the missing-field error wins over the precedence error: {missing_apps}"
+    );
+
+    // Both fields present but the root arrives before the pair completes: the body is
+    // consumed as IgnoredAny, so the tree is never allocated.
+    let root_in_the_middle = serde_json::from_value::<GeneratedLens>(json!({
+        "kit_version": 2,
+        "root": &node,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+    }))
+    .expect_err("root must not precede the complete pair");
+    assert!(
+        root_in_the_middle
+            .to_string()
+            .contains("generated lens version fields must precede root"),
+        "{root_in_the_middle}"
+    );
+
+    let missing_root = serde_json::from_value::<GeneratedLens>(json!({
+        "kit_version": 2,
+        "apps_contract_version": LENS_APPS_CONTRACT_VERSION,
+    }))
+    .expect_err("root is mandatory");
+    assert!(missing_root.to_string().contains("root"), "{missing_root}");
+}
+
+#[test]
+fn stale_but_decodable_lens_queues_regeneration() -> Result<()> {
+    // Older on the apps-contract side, and newer than the running atom-kit constant:
+    // "differs" is symmetric and both directions stay decodable.
+    for stored in [
+        LensVersionStamp::new(2, 0),
+        LensVersionStamp::new(LENS_ATOM_KIT_VERSION + 1, LENS_APPS_CONTRACT_VERSION),
+    ] {
+        let decoded = stamped_envelope(stored.kit_version(), stored.apps_contract_version())?;
+        assert_eq!(
+            decoded.version_stamp(),
+            stored,
+            "the pair survives decoding"
+        );
+        assert_eq!(
+            lens_load_action(decoded.version_stamp(), LensVersionStamp::current()),
+            LensLoadAction::MountLastGoodAndQueueRegeneration {
+                stored,
+                live: LensVersionStamp::current(),
+            },
+            "a decodable stale body mounts as last-good and queues regeneration"
+        );
+
+        // A card wrapping that body reports the same decision to a shell loader.
+        let card = GeneratedUiCard::new(render_id("card-1"), decoded)?;
+        assert_eq!(
+            card.load_action(),
+            LensLoadAction::MountLastGoodAndQueueRegeneration {
+                stored,
+                live: LensVersionStamp::current(),
+            },
+            "a stale card cannot render without surfacing the regeneration decision"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn matched_version_pair_mounts_current() -> Result<()> {
+    let live = LensVersionStamp::current();
+    assert_eq!(lens_load_action(live, live), LensLoadAction::MountCurrent);
+
+    let body = stamped_envelope(LENS_ATOM_KIT_VERSION, LENS_APPS_CONTRACT_VERSION)?;
+    assert_eq!(body.version_stamp(), live);
+    let card = GeneratedUiCard::new(render_id("card-1"), body)?;
+    assert_eq!(card.load_action(), LensLoadAction::MountCurrent);
+
+    Ok(())
+}
+
+#[test]
+fn fingerprint_is_canonical_across_input_and_binding_order() -> Result<()> {
+    let mut first = card_root(vec![
+        throbber_node("one"),
+        LensNode::with_fallback_text(
+            id("two"),
+            LensAtom::MetaLine(MetaLineAtom {
+                label: text("two"),
+                value: text("two"),
+            }),
+            text("two"),
+        ),
+    ]);
+    first.bindings = vec![
+        binding("claims", LensHandleRole::ClaimSet),
+        binding("people", LensHandleRole::EntitySet),
+    ];
+
+    // The same pairs, reversed and repeated: authority is a set, not a list.
+    let mut second = first.clone();
+    second.bindings = vec![
+        binding("people", LensHandleRole::EntitySet),
+        binding("claims", LensHandleRole::ClaimSet),
+        binding("people", LensHandleRole::EntitySet),
+    ];
+
+    let first_lens = GeneratedLens::new(first.clone())?;
+    let second_lens = GeneratedLens::new(second)?;
+
+    let one = LensBehaviorFingerprint::from_golden_renders([
+        ("alpha", &first_lens),
+        ("beta", &second_lens),
+    ])?;
+    let two = LensBehaviorFingerprint::from_golden_renders([
+        ("beta", &second_lens),
+        ("alpha", &first_lens),
+    ])?;
+    assert_eq!(one, two, "input iteration order is not behavior");
+    assert!(LensBehaviorDiff::between(&one, &two)?.is_identical());
+
+    // Child order, however, is behavior: the ordered atom-kind shape changes.
+    let mut reordered = first;
+    reordered.children.reverse();
+    let reordered_lens = GeneratedLens::new(reordered)?;
+    let three = LensBehaviorFingerprint::from_golden_renders([
+        ("alpha", &reordered_lens),
+        ("beta", &second_lens),
+    ])?;
+    let diff = LensBehaviorDiff::between(&one, &three)?;
+    assert_eq!(
+        diff.structural_cases()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["alpha"],
+        "only the reordered case is structural"
+    );
+    assert!(
+        diff.inventory_changes().is_empty(),
+        "reordering moves no atom counts"
+    );
+    assert!(
+        !diff.has_data_read_change(),
+        "reordering changes no bound data read"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fingerprint_includes_answer_sheet_citation_bindings() -> Result<()> {
+    let sheet = |role| {
+        card_root(vec![LensNode::with_fallback_text(
+            id("answer"),
+            LensAtom::AnswerSheet(AnswerSheetAtom {
+                question: text("who"),
+                answer: text("them"),
+                citations: vec![binding("cited", role)],
+            }),
+            text("answer"),
+        )])
+    };
+
+    let before_lens = GeneratedLens::new(sheet(LensHandleRole::ClaimSet))?;
+    let after_lens = GeneratedLens::new(sheet(LensHandleRole::QueryResult))?;
+    let before = LensBehaviorFingerprint::from_golden_renders([("case", &before_lens)])?;
+    let after = LensBehaviorFingerprint::from_golden_renders([("case", &after_lens)])?;
+
+    let diff = LensBehaviorDiff::between(&before, &after)?;
+    assert!(
+        diff.has_data_read_change(),
+        "a citation is a bound data read, not decoration"
+    );
+    assert!(
+        diff.structural_cases().is_empty() && diff.inventory_changes().is_empty(),
+        "the tree shape and inventory are untouched"
+    );
+    assert_eq!(diff.role_changes().len(), 1);
+    let change = &diff.role_changes()[0];
+    assert_eq!(change.name().as_str(), "cited");
+    assert_eq!(change.before(), &BTreeSet::from([LensHandleRole::ClaimSet]));
+    assert_eq!(
+        change.after(),
+        &BTreeSet::from([LensHandleRole::QueryResult])
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fingerprint_rejects_empty_duplicate_or_mismatched_corpora() -> Result<()> {
+    let lens = GeneratedLens::new(v2_only_root())?;
+
+    let empty =
+        LensBehaviorFingerprint::from_golden_renders(std::iter::empty::<(&str, &GeneratedLens)>())
+            .expect_err("an empty corpus is not a fingerprint");
+    assert!(
+        empty.to_string().contains("at least one fixture"),
+        "{empty}"
+    );
+
+    let duplicate =
+        LensBehaviorFingerprint::from_golden_renders([("case", &lens), ("case", &lens)])
+            .expect_err("fixture ids identify cases, so they must be unique");
+    assert!(
+        duplicate.to_string().contains("duplicate fixture id case"),
+        "{duplicate}"
+    );
+
+    let bad_token = LensBehaviorFingerprint::from_golden_renders([("not a token", &lens)])
+        .expect_err("fixture ids are lens tokens");
+    assert!(
+        bad_token.to_string().contains("lens golden fixture id"),
+        "{bad_token}"
+    );
+
+    let left = LensBehaviorFingerprint::from_golden_renders([("alpha", &lens)])?;
+    let right = LensBehaviorFingerprint::from_golden_renders([("beta", &lens)])?;
+    let mismatch = LensBehaviorDiff::between(&left, &right)
+        .expect_err("unequal case-id sets are refused, never intersected");
+    assert!(
+        mismatch
+            .to_string()
+            .contains("cover different golden fixtures"),
+        "{mismatch}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn diff_reports_structure_inventory_and_role_changes_separately() -> Result<()> {
+    let mut before_root = card_root(vec![throbber_node("one")]);
+    before_root.bindings = vec![
+        binding("people", LensHandleRole::EntitySet),
+        binding("claims", LensHandleRole::ClaimSet),
+    ];
+    let before_lens = GeneratedLens::new(before_root)?;
+
+    let mut after_root = card_root(vec![throbber_node("one"), throbber_node("two")]);
+    after_root.bindings = vec![
+        binding("people", LensHandleRole::QueryResult),
+        binding("claims", LensHandleRole::Timeline),
+    ];
+    let after_lens = GeneratedLens::new(after_root)?;
+
+    let before = LensBehaviorFingerprint::from_golden_renders([("case", &before_lens)])?;
+    let after = LensBehaviorFingerprint::from_golden_renders([("case", &after_lens)])?;
+
+    // A fingerprint diffed against itself is empty in every dimension.
+    let identical = LensBehaviorDiff::between(&before, &before)?;
+    assert!(identical.is_identical());
+    assert!(
+        identical.inventory_changes().is_empty(),
+        "equal counts never produce change entries"
+    );
+    assert!(!identical.has_data_read_change());
+
+    let diff = LensBehaviorDiff::between(&before, &after)?;
+    assert_eq!(
+        diff.structural_cases()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["case"]
+    );
+
+    let inventory = diff.inventory_changes().iter().collect::<Vec<_>>();
+    assert_eq!(
+        inventory.len(),
+        1,
+        "the unchanged sheet count is not reported: {inventory:?}"
+    );
+    assert_eq!(inventory[0].fixture_id(), "case");
+    assert_eq!(inventory[0].primitive(), GeneratedUiPrimitive::Throbber);
+    assert_eq!(inventory[0].before(), 1);
+    assert_eq!(inventory[0].after(), 2);
+
+    let removed = diff
+        .removed_handles()
+        .iter()
+        .map(|entry| (entry.fixture_id(), entry.name().as_str(), entry.role()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        removed,
+        vec![
+            ("case", "claims", LensHandleRole::ClaimSet),
+            ("case", "people", LensHandleRole::EntitySet),
+        ],
+        "removed pairs are canonically ordered"
+    );
+    let added = diff
+        .added_handles()
+        .iter()
+        .map(|entry| (entry.fixture_id(), entry.name().as_str(), entry.role()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        added,
+        vec![
+            ("case", "claims", LensHandleRole::Timeline),
+            ("case", "people", LensHandleRole::QueryResult),
+        ],
+        "added pairs are canonically ordered"
+    );
+
+    assert_eq!(
+        diff.role_changes()
+            .iter()
+            .map(|change| (change.fixture_id(), change.name().as_str()))
+            .collect::<Vec<_>>(),
+        vec![("case", "claims"), ("case", "people")],
+        "role changes are sorted by fixture id then handle name"
+    );
+    assert_eq!(
+        diff.role_changes()[0].before(),
+        &BTreeSet::from([LensHandleRole::ClaimSet])
+    );
+    assert_eq!(
+        diff.role_changes()[0].after(),
+        &BTreeSet::from([LensHandleRole::Timeline])
+    );
+    assert!(diff.has_data_read_change(), "role changes are data reads");
+    assert!(!diff.is_identical());
+
+    Ok(())
 }
