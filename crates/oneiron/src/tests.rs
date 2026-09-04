@@ -584,7 +584,7 @@ impl ContractEdgeLayout {
     }
 }
 
-const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 22] = [
+const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 24] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -609,6 +609,9 @@ const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 22] = [
     (EdgeKind::BlockedBy, ContractEdgeLayout::Structural),
     // ONE-1608: u8 24 `blocks`, structural 12 B (contracts.ts edgeKinds).
     (EdgeKind::Blocks, ContractEdgeLayout::Structural),
+    // ONE-1541: u8 25/26 `fulfills` / `discharged_by`, structural 12 B.
+    (EdgeKind::Fulfills, ContractEdgeLayout::Structural),
+    (EdgeKind::DischargedBy, ContractEdgeLayout::Structural),
 ];
 
 fn assert_f32_exact(actual: f32, expected: f32) {
@@ -7001,7 +7004,7 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 23] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 25] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -7031,6 +7034,11 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 23] = [
     // ONE-1608: minted at byte 24, appended last. Byte 23 stays ONE-1924's
     // TASK-plane `blocked_by`; this is the ARCH-0050 L2 readiness edge.
     (24, EdgeKind::Blocks),
+    // ONE-1541 (CMT-4): the brief-fulfillment pair, appended above every
+    // landed byte. `discharged_by` is the inverse traversal edge, not a
+    // creation-causation claim.
+    (25, EdgeKind::Fulfills),
+    (26, EdgeKind::DischargedBy),
 ];
 
 #[test]
@@ -7047,8 +7055,45 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 25 and up stay unallocated (ONE-1608 took 24).
-    assert!(EdgeKind::try_from_u8(25).is_none());
+    // The frontier: 27 and up stay unallocated (ONE-1541 took 25/26).
+    assert!(EdgeKind::try_from_u8(27).is_none());
+}
+
+/// ONE-1541 done-means: appending `fulfills`/`discharged_by` must leave every
+/// frozen landed byte 0–22 exactly where it was — including the byte-20
+/// `same_as` slot — while minting 25/26. Bytes 23/24 are deliberately not
+/// asserted here: this lane neither mints them nor depends on their state.
+#[test]
+fn edge_kind_append_preserves_legacy_bytes() {
+    for (disc, expected) in PINNED_EDGE_KIND_DISCRIMINANTS {
+        if disc > 22 {
+            continue;
+        }
+        assert_eq!(
+            EdgeKind::try_from_u8(disc),
+            Some(expected),
+            "legacy edge byte {disc} drifted"
+        );
+    }
+    assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
+
+    assert_eq!(EdgeKind::try_from_u8(25), Some(EdgeKind::Fulfills));
+    assert_eq!(EdgeKind::try_from_u8(26), Some(EdgeKind::DischargedBy));
+    assert_eq!(EdgeKind::Fulfills as u8, 25);
+    assert_eq!(EdgeKind::DischargedBy as u8, 26);
+
+    for kind in [EdgeKind::Fulfills, EdgeKind::DischargedBy] {
+        assert_eq!(kind.default_weight(), None, "{kind:?} carries no prior");
+        assert_eq!(
+            ppr::lambda_for_kind(kind),
+            None,
+            "{kind:?} is not traversed"
+        );
+        assert_eq!(
+            edge::edge_value_layout_for_kind(kind, false),
+            EdgeValueLayout::Structural
+        );
+    }
 }
 
 /// ONE-1924 — minting `blocked_by` at u8 23 must leave the edge byte frontier

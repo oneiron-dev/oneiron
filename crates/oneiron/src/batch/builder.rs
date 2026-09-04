@@ -133,6 +133,19 @@ pub(crate) enum BatchOp {
         kind: EdgeKind,
         tgt: EntityId,
     },
+    /// CMT-4 (ONE-1541): the gap-decay lapse of a SET of overdue commitment
+    /// instances, as one all-or-nothing local CLAIM write.
+    ///
+    /// Crate-private and constructed only by
+    /// [`BatchBuilder::commitment_gap_decay`]. It is an op rather than a loop
+    /// of status verbs because a sweep that lapsed half its selection would
+    /// leave the other half owed with its due row already consumed; the
+    /// caller-owned transaction is what makes the set atomic.
+    CommitmentGapDecay {
+        ids: Vec<EntityId>,
+        envelope: WriteEnvelope,
+        learned_at: u64,
+    },
 }
 
 /// Builds the sync-replay put op — the SINGLE place where the replicated
@@ -600,11 +613,16 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
-    // Only ppr/tests.rs still composes an edge through the owned-batch form;
-    // the sync forward-remat healing write moved to the TxnBatchBuilder twin
-    // below to share its mandate-check txn (ARCH-0055), leaving this dead in
-    // non-test builds.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Internal edge upsert carrying every value field.
+    ///
+    /// Pushes the INTERNAL [`BatchOp::EdgeWithCreatedAt`] — no reserved-kind
+    /// gate — so a crate-private door that has already proven what a raw
+    /// builder cannot may write a reserved kind. Its callers are
+    /// `commitment_lifecycle::link_brief_fulfillment` (CMT-4, ONE-1541: both
+    /// ruled `fulfills`/`discharged_by` directions in one transaction, after
+    /// proving both endpoint classes) and `ppr/tests.rs`; the sync
+    /// forward-remat healing write uses the `TxnBatchBuilder` twin below to
+    /// share its mandate-check txn (ARCH-0055).
     pub(crate) fn edge_with_value_fields(
         mut self,
         src: &EntityId,
@@ -717,6 +735,34 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    /// Queues the all-or-nothing Open→Lapsed transition of `ids` (CMT-4,
+    /// ONE-1541).
+    ///
+    /// Crate-private: the ONLY caller is
+    /// `commitment_lifecycle::lapse_overdue_commitments`, which has already
+    /// classified the status-unfiltered overdue candidates and is passing the
+    /// Open ones. `learned_at` is the sweep instant, which is the ONE place a
+    /// lifecycle time comes from the sweep rather than from a terminal claim
+    /// header: this write IS the transition.
+    ///
+    /// Duplicate ids are collapsed in input order so the gate preflight and
+    /// the apply arm agree on exactly one decision per instance.
+    pub(crate) fn commitment_gap_decay(
+        mut self,
+        ids: &[EntityId],
+        envelope: &WriteEnvelope,
+        learned_at: u64,
+    ) -> Self {
+        let mut seen = std::collections::HashSet::with_capacity(ids.len());
+        let ids: Vec<EntityId> = ids.iter().copied().filter(|id| seen.insert(*id)).collect();
+        self.ops.push(BatchOp::CommitmentGapDecay {
+            ids,
+            envelope: envelope.clone(),
+            learned_at,
+        });
+        self
+    }
+
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
         self.capture_reserved_edge_kind(kind);
@@ -813,17 +859,76 @@ pub(super) fn preflight_gate_decisions_in_txn(
     // Run the entity write door's verdict in that SAME transaction before any
     // gate receipt is appended, so a write `apply_put` will reject cannot leave
     // a decision behind for a turn that never materializes.
+    // CMT-4 (ONE-1541): the lapse op's post-transition bodies are derived HERE,
+    // before any gate receipt is appended, for the same reason the overlay door
+    // below runs first — a set the apply arm will refuse outright must not
+    // leave a decision behind for a transition that never materializes. One
+    // queue entry per op, consumed in order by the gating loop.
+    let mut gap_decay_lapses = VecDeque::new();
     for op in ops {
-        let id = match op {
-            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
+        match op {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
+                // Gate preflight is an ordinary-write path; a promotion replay
+                // carries no claim put and never reaches it.
+                reject_overlay_member_base_write(store, id, BaseWriteOrigin::Ordinary)?;
+            }
+            BatchOp::CommitmentGapDecay { ids, .. } => {
+                for id in ids {
+                    reject_overlay_member_base_write(store, id, BaseWriteOrigin::Ordinary)?;
+                }
+                gap_decay_lapses.push_back(crate::commitment::pending_commitment_lapses_in_txn(
+                    store, &*wtxn, ids,
+                )?);
+            }
             _ => continue,
-        };
-        // Gate preflight is an ordinary-write path; a promotion replay carries
-        // no claim put and never reaches it.
-        reject_overlay_member_base_write(store, id, BaseWriteOrigin::Ordinary)?;
+        }
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
+        // The gap-decay op gates ONE decision per selected instance rather
+        // than one per op, so it runs its own loop and never collapses the
+        // selected set into a single receipt.
+        if let BatchOp::CommitmentGapDecay { envelope, .. } = op {
+            let lapses = gap_decay_lapses
+                .pop_front()
+                .ok_or(Error::InvariantViolation(
+                    "commitment gap decay preflight lost its derived bodies",
+                ))?;
+            for lapse in lapses {
+                let mut recorded_decision = None;
+                let lapse_id = lapse.id;
+                let body = lapse.candidate.into_claim_body(envelope);
+                let result = crate::gate::check_claim_policy_for_write_with_record(
+                    store,
+                    wtxn,
+                    &lapse_id,
+                    crate::gate::ClaimGateWrite {
+                        body: &body,
+                        envelope: Some(envelope),
+                        defer_metrics_until_commit: true,
+                    },
+                    &policy,
+                    crate::gate::GateWriteMode {
+                        record_decision: true,
+                        persist_pending_consent: false,
+                        resolve_pending: false,
+                        can_resolve_pending_consent: true,
+                        include_source_in_gate_input: false,
+                    },
+                    &mut recorded_decision,
+                );
+                stage_preflight_decision(
+                    store,
+                    wtxn,
+                    &lapse_id,
+                    recorded_decision,
+                    result,
+                    staged_decisions,
+                    preflight_gate_decision_ids,
+                )?;
+            }
+            continue;
+        }
         let mut recorded_decision = None;
         let eligible = match op {
             BatchOp::Put {
@@ -893,34 +998,64 @@ pub(super) fn preflight_gate_decisions_in_txn(
         let Some((eligible_id, result)) = eligible else {
             continue;
         };
-
-        let decision_id = recorded_decision
-            .as_ref()
-            .map(crate::gate::RecordedClaimGateDecision::decision_id);
-        if let Some(decision) = recorded_decision {
-            staged_decisions.push(decision);
-        }
-        // Keep one FIFO slot for every preflight-eligible operation. A None
-        // slot prevents an earlier non-receipt claim sharing this id from
-        // consuming a later claim's receipt identity.
-        preflight_gate_decision_ids
-            .entry(*eligible_id)
-            .or_default()
-            .push_back(decision_id);
-        if let Err(err) = result {
-            let preserved_denial_id = staged_decisions
-                .last()
-                .filter(|decision| decision.outcome() != "allow")
-                .map(crate::gate::RecordedClaimGateDecision::decision_id);
-            for decision in staged_decisions.iter() {
-                if Some(decision.decision_id()) != preserved_denial_id {
-                    store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
-                }
-            }
-            staged_decisions.retain(|decision| Some(decision.decision_id()) == preserved_denial_id);
-            return Err(err);
-        }
+        stage_preflight_decision(
+            store,
+            wtxn,
+            eligible_id,
+            recorded_decision,
+            result,
+            staged_decisions,
+            preflight_gate_decision_ids,
+        )?;
     }
 
+    Ok(())
+}
+
+/// Books ONE preflight-eligible write's gate decision and, on a refusal,
+/// preserves exactly its denial receipt while discarding the transaction's
+/// earlier allow receipts.
+///
+/// Shared by both preflight shapes — one decision per Put/ClaimCandidate op,
+/// and one per instance inside a `CommitmentGapDecay` op — so a lapse denial
+/// survives rollback through the same path every other local CLAIM write uses.
+fn stage_preflight_decision(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    eligible_id: &EntityId,
+    recorded_decision: Option<crate::gate::RecordedClaimGateDecision>,
+    result: Result<()>,
+    staged_decisions: &mut Vec<crate::gate::RecordedClaimGateDecision>,
+    preflight_gate_decision_ids: &mut HashMap<
+        EntityId,
+        VecDeque<Option<crate::store::GateDecisionId>>,
+    >,
+) -> Result<()> {
+    let decision_id = recorded_decision
+        .as_ref()
+        .map(crate::gate::RecordedClaimGateDecision::decision_id);
+    if let Some(decision) = recorded_decision {
+        staged_decisions.push(decision);
+    }
+    // Keep one FIFO slot for every preflight-eligible operation. A None
+    // slot prevents an earlier non-receipt claim sharing this id from
+    // consuming a later claim's receipt identity.
+    preflight_gate_decision_ids
+        .entry(*eligible_id)
+        .or_default()
+        .push_back(decision_id);
+    if let Err(err) = result {
+        let preserved_denial_id = staged_decisions
+            .last()
+            .filter(|decision| decision.outcome() != "allow")
+            .map(crate::gate::RecordedClaimGateDecision::decision_id);
+        for decision in staged_decisions.iter() {
+            if Some(decision.decision_id()) != preserved_denial_id {
+                store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
+            }
+        }
+        staged_decisions.retain(|decision| Some(decision.decision_id()) == preserved_denial_id);
+        return Err(err);
+    }
     Ok(())
 }
