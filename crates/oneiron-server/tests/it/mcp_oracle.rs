@@ -214,15 +214,192 @@ mod cb_x {
     /// ONE-1705 fixture: inspect the shipped packaging artifacts — skill
     /// routing tree, thin CLI, thin typed client manifest + its consumer
     /// import table.
+    ///
+    /// The observation is of ARTIFACTS, so it reads them: the skill an agent
+    /// fetches, the CLI module the `oneiron` binary carries, the package a
+    /// consumer installs, and — through the linked crate — the MCP surfaces
+    /// two of the lanes actually terminate in.
+    ///
+    /// `consumers_importing_same_artifact` counts the three consumers bound to
+    /// the ONE client's contract, and the two-hat rule is why that is not
+    /// three imports: code mode keeps the host dispatcher and shares the WIRE,
+    /// while the native worker and the npm-capable agent share the ARTIFACT.
+    /// The non-import half is pinned here as an absence in the shipped client
+    /// source, and independently in `packages/oneiron-client/tests`.
     fn arm_packaging_ladder() -> PackagingLadder {
-        unimplemented!("armed by ONE-1705: skill + thin CLI + ONE thin typed client")
+        fn repo_path(relative: &str) -> std::path::PathBuf {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join(relative)
+        }
+
+        fn shipped(relative: &str) -> String {
+            std::fs::read_to_string(repo_path(relative)).unwrap_or_else(|error| {
+                panic!("shipped artifact {relative} must be readable: {error}")
+            })
+        }
+
+        fn section<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
+            let from = text
+                .find(start)
+                .unwrap_or_else(|| panic!("shipped artifact is missing section {start}"));
+            let to = text[from..]
+                .find(end)
+                .map_or(text.len(), |offset| from + offset);
+            &text[from..to]
+        }
+
+        fn manifest_name(manifest: &str) -> &str {
+            manifest
+                .split_once("\"name\":")
+                .and_then(|(_, rest)| rest.trim_start().strip_prefix('"')?.split('"').next())
+                .unwrap_or_default()
+        }
+
+        const LANES: [&str; 4] = [
+            "## Lane: code-mode-repl",
+            "## Lane: thin-client",
+            "## Lane: curl-cli",
+            "## Lane: tool-first-mcp",
+        ];
+
+        let skill = shipped("crates/oneiron-server/oneiron.skills.md");
+        let cli = shipped("crates/oneiron-server/src/cli.rs");
+        let cli_api = shipped("crates/oneiron-server/src/commands/api.rs");
+        let manifest = shipped("packages/oneiron-client/package.json");
+        let client = shipped("packages/oneiron-client/src/index.ts");
+        let consumers = shipped("packages/oneiron-client/tests/consumers.test.ts");
+
+        // Each lane is a heading AND the carrier it names: a routing tree that
+        // pointed at a lane this release does not ship would be a false map.
+        let skill_lanes = skill.matches("\n## Lane: ").count();
+        let declared = LANES.map(|lane| skill.matches(lane).count() == 1);
+        let code_mode_lane = section(&skill, LANES[0], LANES[1]);
+        let thin_client_lane = section(&skill, LANES[1], LANES[2]);
+        let curl_lane = section(&skill, LANES[2], LANES[3]);
+        let tool_first_lane = section(&skill, LANES[3], "## Authentication");
+
+        let primary_surface =
+            oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::Primary);
+        let tool_first_surface =
+            oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::ToolFirst);
+
+        let lane_code_mode_repl = declared[0]
+            && code_mode_lane.contains(oneiron_server::mcp::MCP_SETUP_TOOL)
+            && primary_surface
+                .tool_names()
+                .contains(&oneiron_server::mcp::MCP_SETUP_TOOL);
+        let lane_thin_client = declared[1]
+            && thin_client_lane.contains("npm install @oneiron/client")
+            && manifest_name(&manifest) == "@oneiron/client";
+        let lane_curl_cli = declared[2]
+            && curl_lane.contains("oneiron api discover")
+            && cli.contains("Api(ApiArgs)")
+            && cli_api.contains("pub async fn api(");
+        let lane_tool_first_mcp = declared[3]
+            && tool_first_lane.contains("/mcp/tool-first")
+            && tool_first_lane.contains("register or provide")
+            && !tool_first_surface.tool_names().is_empty();
+
+        // One package root, and no generated tree beside it.
+        let mut package_manifests = Vec::new();
+        for entry in std::fs::read_dir(repo_path("packages")).expect("packages/ must be readable") {
+            let manifest_path = entry.expect("packages/ entry").path().join("package.json");
+            if manifest_path.is_file() {
+                package_manifests
+                    .push(std::fs::read_to_string(manifest_path).expect("package manifest"));
+            }
+        }
+        let distinct_thin_client_artifacts = package_manifests
+            .iter()
+            .filter(|manifest| manifest_name(manifest.as_str()).contains("client"))
+            .count();
+
+        let generator_markers = [
+            "openapi-generator",
+            "swagger-codegen",
+            "openapi-typescript-codegen",
+            "@hey-api/openapi-ts",
+            "orval",
+            "autorest",
+        ];
+        let fat_autogen_sdk_shipped = package_manifests
+            .iter()
+            .any(|manifest| generator_markers.iter().any(|m| manifest.contains(m)))
+            || repo_path("packages/oneiron-client/generated").exists()
+            || repo_path("packages/oneiron-client/src/generated").exists();
+        let thin_client_autogenerated = ["@generated", "AUTOGENERATED", "DO NOT EDIT"]
+            .iter()
+            .any(|marker| client.contains(marker))
+            || generator_markers
+                .iter()
+                .any(|marker| manifest.contains(marker));
+
+        // Passthrough is structural: every public method hands back a raw
+        // `Response`, nothing consumes a body, and there is exactly ONE
+        // dispatch point — no place for a re-send, a cache, or a
+        // status-driven throw to hide.
+        let public_methods = [
+            "request(",
+            "discover(",
+            "searchText(",
+            "getEntity(",
+            "callVerb(",
+        ];
+        let body_consuming = [
+            ".json()",
+            ".clone()",
+            ".arrayBuffer()",
+            ".blob()",
+            ".formData()",
+            ".text()",
+        ];
+        let thin_client_raw_response_passthrough =
+            public_methods.iter().all(|method| client.contains(method))
+                && client.matches("Promise<Response>").count() == public_methods.len()
+                && !body_consuming.iter().any(|marker| client.contains(marker))
+                && client.matches("this.fetch(").count() == 1;
+
+        // Consumer ①: the sandbox keeps the host dispatcher and reaches the
+        // same wire WITHOUT importing this package — the two-hat rule, read
+        // as an absence in the shipped client source.
+        let code_mode_on_the_same_wire = code_mode_lane.contains("self.oneiron")
+            && !client.contains("self.oneiron")
+            && !client.contains("injectOneironClient");
+        let single_public_entry = manifest.matches("\"./src/index.ts\"").count() == 3;
+        // Consumers ② and ③: both resolve that one published root.
+        let native_worker_imports_root =
+            single_public_entry && consumers.contains("\"native-worker\"");
+        let byoa_imports_root =
+            single_public_entry && manifest.contains("\"files\"") && consumers.contains("\"byoa\"");
+        let consumers_importing_same_artifact = [
+            code_mode_on_the_same_wire,
+            native_worker_imports_root,
+            byoa_imports_root,
+        ]
+        .into_iter()
+        .filter(|reached| *reached)
+        .count();
+
+        PackagingLadder {
+            skill_lanes,
+            lane_code_mode_repl,
+            lane_thin_client,
+            lane_curl_cli,
+            lane_tool_first_mcp,
+            fat_autogen_sdk_shipped,
+            distinct_thin_client_artifacts,
+            consumers_importing_same_artifact,
+            thin_client_raw_response_passthrough,
+            thin_client_autogenerated,
+        }
     }
 
     /// ONE-1705 · 08b §6 (r3v2): choose-your-own-adventure skill with four
     /// lanes; ONE hand-rolled thin client (raw-response passthrough) — the
     /// SAME artifact imported by three consumers; fat SDK never.
     #[test]
-    #[ignore = "armed by ONE-1705"]
     fn packaging_ladder_four_lanes_one_thin_client_no_fat_sdk() {
         let ladder = arm_packaging_ladder();
         assert_eq!(ladder.skill_lanes, 4);
