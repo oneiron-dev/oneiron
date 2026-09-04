@@ -16,6 +16,7 @@ pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod attempt_queue;
 pub mod authority;
+pub mod autoreason_campaign;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
@@ -176,6 +177,17 @@ pub use crate::artifact_hosting::{
 };
 pub use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, InterveneAttempt,
+};
+pub use crate::autoreason_campaign::{
+    AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
+    CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
+    CampaignComparisonReport, CampaignConfig, CampaignCorpusFilter, CampaignCost,
+    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
+    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
+    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment,
+    CampaignTournamentConfig, CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD,
+    EXPERIMENT_VERDICT_KEEP, ExperimentVerdict, build_campaign_held_out_decision,
+    build_campaign_split_report, compare_campaign, merge_campaign_arm_report,
 };
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
