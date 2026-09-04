@@ -78,6 +78,7 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod failure_ladder;
 pub mod fanout_auto;
 pub mod federation;
 pub(crate) mod fusion;
@@ -170,6 +171,7 @@ pub mod write_envelope;
 // module tree.
 pub use crate::access_grant::AccessGrant;
 pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use crate::agent_dispatch::{DispatchHealer, HealerSlot, HealerSlotOutcome};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
@@ -275,6 +277,11 @@ pub use crate::entity_id::{EntityId, parse_presentation_id};
 pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
+pub use crate::failure_ladder::{
+    DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, FailureClass, FailureEscalationMode, FailureLadder,
+    FailureLadderOutcome, FailureScope, FailureScopePolicy, HealerCase, HealerRepairRoute,
+    RetryLineagePathology, SurfacedFailure,
+};
 pub use crate::federation::FederationGrantScope;
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
@@ -282,6 +289,10 @@ pub use crate::gate::{
     GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
     GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+};
+pub use crate::genui::{
+    FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
+    SurfacedFailureCard,
 };
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
