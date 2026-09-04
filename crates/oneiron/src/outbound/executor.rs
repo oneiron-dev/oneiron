@@ -317,13 +317,46 @@ impl Vault {
                     {
                         // A provider that stated its own cool-down (a rate-limit
                         // `retry_after`) is obeyed exactly; without one the
-                        // generic transport curve still applies.
-                        retry_connector_task_attempt(
+                        // generic transport curve still applies. The instant is
+                        // computed HERE, before the receipt is persisted, so the
+                        // audited retry edge and the queue's `backoff_until`
+                        // cannot diverge.
+                        let provider_retry_after_secs =
+                            receipt_provider_retry_after(&result.receipt);
+                        let arm = ConnectorRetryArm {
+                            window_edge: None,
+                            provider_retry_after_secs,
+                            curve: ConnectorRetryCurve::Transport,
+                        };
+                        let retry_at = connector_task_retry_at(&queue, &attempt, now, &arm)?;
+                        result
+                            .receipt
+                            .fields
+                            .insert("retry_at".to_owned(), retry_at.to_string());
+                        // A retried transport failure is still an auditable outcome.
+                        // Stored as the audit-only (non-idempotency) row a hold takes,
+                        // so the provider's stated cool-down, the failure evidence and
+                        // the instant this re-arms at survive the retry instead of
+                        // living only inside the queue row that replaces it.
+                        result.receipt.fields.insert(
+                            "dispatch_outcome".to_owned(),
+                            result.outcome.as_str().to_owned(),
+                        );
+                        persist_send_receipt(
+                            self,
+                            task_ref,
+                            result.receipt,
+                            SendReceiptOutcome::Failed,
+                            false,
+                            None,
+                        )?;
+                        // The queue re-arms at the SAME instant the receipt surfaced.
+                        retry_connector_task_attempt_at(
                             &queue,
                             &attempt,
                             now,
                             "transport_failed_pending",
-                            receipt_provider_retry_after(&result.receipt),
+                            retry_at,
                         )?;
                     } else {
                         persist_send_receipt(

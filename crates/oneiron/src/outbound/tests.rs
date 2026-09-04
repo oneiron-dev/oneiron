@@ -6579,3 +6579,96 @@ fn provider_retry_after_is_the_exact_re_arm_authority() -> crate::Result<()> {
     );
     Ok(())
 }
+
+/// A retried transport failure is an AUDITABLE outcome, exactly as a hold is:
+/// re-arming the queue is not a substitute for the record. Without the durable
+/// row, what the provider said, the evidence it failed on, and the instant the
+/// send actually re-arms at exist only inside a queue row the next attempt
+/// overwrites.
+#[test]
+fn transport_failed_pending_retry_persists_an_audit_receipt() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x1E);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x1F),
+        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
+    )?;
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("slack", "react", "one-1879-retry-audit"))
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_rate_limited")
+            .with_receipt_field("retry_after", "900"),
+        ..RecordingExecutor::default()
+    };
+    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
+    assert_eq!(executor.calls.len(), 1, "the provider was actually called");
+
+    let receipt = one_1768_receipts(&vault)?
+        .pop()
+        .expect("a retried transport failure is still surfaced as a receipt");
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(
+        receipt_field(&receipt, "dispatch_outcome"),
+        Some("failed"),
+        "the row names the outcome it actually parked on"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "retry_state"),
+        Some("provider_rate_limited"),
+        "the failure evidence survives the retry, not just the delay"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "provider_retry_after"),
+        Some("900"),
+        "the normalized cool-down is durable"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "retry_after"),
+        Some("900"),
+        "and the connector's own text survives verbatim beside it"
+    );
+    let surfaced: u64 = receipt_field(&receipt, "retry_at")
+        .expect("every executor re-arm stamps retry_at")
+        .parse()
+        .expect("retry_at is an instant");
+    assert_eq!(
+        surfaced,
+        ONE_1768_EXECUTE_AT + 900,
+        "the audited retry edge is the provider's own instant"
+    );
+
+    // The queue re-arms at exactly the instant the receipt surfaced.
+    let attempts = one_1768_bridge_attempts(&vault)?;
+    let armed = attempts
+        .iter()
+        .find(|attempt| attempt.state == AttemptState::Scheduled)
+        .expect("a rate-limited send re-arms rather than failing terminally");
+    assert_eq!(
+        armed.scheduled_at,
+        Some(surfaced),
+        "backoff_until must equal the receipted retry_at"
+    );
+
+    // Audit-only: the row is no idempotency token and closes nothing, so the
+    // send is still owed and the next attempt still dispatches.
+    assert_eq!(
+        usize::from(send_receipt_exists_for_task(&vault, task_ref)?),
+        0
+    );
+    assert_eq!(
+        vault
+            .connector_send_task(&task_ref)?
+            .expect("task stays alive")
+            .outcome,
+        None
+    );
+    Ok(())
+}
