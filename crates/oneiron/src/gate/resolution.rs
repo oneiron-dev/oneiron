@@ -52,6 +52,42 @@ impl PolicyManifestDiagnostics {
     }
 }
 
+/// DEC-0005 posture for a send to an opted-out counterparty that carries no
+/// matching `comm.send_override` (ARCH-0057 §3.1).
+///
+/// `Escalate` is the DEFAULT and the restrictive pole: an absent key anywhere,
+/// and any single matching pack that names it, resolve here. It is the posture
+/// that asks the owner rather than deciding for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum CommOptOutPosture {
+    /// Hold the send as a pending owner decision.
+    #[default]
+    Escalate,
+    /// Send immediately, keeping the opt-out receipt trail.
+    AllowWithReceipt,
+}
+
+impl CommOptOutPosture {
+    /// Restrictive composition: any `Escalate` wins.
+    #[must_use]
+    pub(crate) fn restrict(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::AllowWithReceipt, Self::AllowWithReceipt) => Self::AllowWithReceipt,
+            _ => Self::Escalate,
+        }
+    }
+
+    /// Manifest token for this posture. The parse direction is
+    /// `decode::parse_comm_opt_out_posture`; the two stay exact inverses.
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Escalate => "escalate",
+            Self::AllowWithReceipt => "allow_with_receipt",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(super) diagnostics: PolicyManifestDiagnostics,
@@ -69,6 +105,7 @@ pub(crate) struct PolicyManifestResolution {
     owner_policy_patterns_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    comm_opt_out_posture: Option<CommOptOutPosture>,
     budget_policy: BudgetPolicyTable,
 }
 
@@ -94,6 +131,13 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn on_budget_exhausted(&self) -> BudgetExhaustionPolicy {
         self.on_budget_exhausted.unwrap_or_default()
+    }
+
+    /// The resolved opt-out posture. No pack carrying the key resolves to the
+    /// restrictive default, `Escalate`.
+    #[must_use]
+    pub(crate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
+        self.comm_opt_out_posture.unwrap_or_default()
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
@@ -433,11 +477,34 @@ impl PolicyManifestResolution {
         } else {
             None
         };
+        // ONE-1752 (ARCH-0057 §3.1). The folded opt-out bit is unchanged — CA
+        // owns how it is computed — and only its CONSEQUENCE moved. A
+        // counterparty's suppression is a fact about the counterparty; refusing
+        // the owner outright made their own instrument answer for it. So:
+        //
+        // * a matching `comm.send_override` falls through to ordinary
+        //   evaluation, and `external_effect_receipt_reasons` pins WHICH
+        //   override decided it;
+        // * `allow_with_receipt` falls through immediately, keeping the opt-out
+        //   receipt trail;
+        // * `escalate` (the default) holds the send as a PENDING owner
+        //   decision, carrying the same receipt reasons the deny carried.
+        //
+        // The override never deletes `comm.opt_out`, `comm.do_not_contact`, or a
+        // contact-level opt-out claim; CLEAR remains its own op.
         if let Some(effect) = external_effect
             && effect.counterparty_opted_out
         {
-            return GateDecision::deny(GateReasonCode::DenyCounterpartyOptOut)
-                .with_receipt_reasons(external_effect_receipt_reasons(effect));
+            match (
+                effect.counterparty_send_override,
+                self.comm_opt_out_posture(),
+            ) {
+                (Some(_), _) | (None, CommOptOutPosture::AllowWithReceipt) => {}
+                (None, CommOptOutPosture::Escalate) => {
+                    return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
+                        .with_receipt_reasons(external_effect_receipt_reasons(effect));
+                }
+            }
         }
         if self.is_fail_closed() {
             if input.content_kind == GateContentKind::ExternalEffect {
@@ -654,6 +721,10 @@ fn hash_policy_frontier_v0(
     hash_diagnostics(hasher, resolution.diagnostics);
     hash_source_trust(hasher, &resolution.source_trust);
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
+    // The RESOLVED posture, beside its budget sibling: it decides whether an
+    // opted-out send holds or ships, so flipping it must move the frontier and
+    // invalidate every standing grant bound to the old one.
+    hash_str(hasher, resolution.comm_opt_out_posture().as_str());
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
@@ -1014,6 +1085,18 @@ pub(crate) fn resolve_policy_manifest(
                         Some(existing) if existing == on_budget_exhausted => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
+                }
+                // Unlike `on_budget_exhausted`, disagreement here is NOT
+                // malformed: the posture has a restrictive pole, so two packs
+                // that disagree have a deterministic, safe answer — hold the
+                // send. Marking that malformed would fail the whole vault
+                // closed over a question the axis can answer itself.
+                if let Some(posture) = decoded.comm_opt_out_posture {
+                    resolution.comm_opt_out_posture = Some(
+                        resolution
+                            .comm_opt_out_posture
+                            .map_or(posture, |existing| existing.restrict(posture)),
+                    );
                 }
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in

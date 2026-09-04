@@ -1,4 +1,5 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::comm::SendOverrideMatch;
 use crate::connector_key::{
     self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
     EffectorBudgetOnExhaust,
@@ -215,7 +216,8 @@ pub(crate) fn evaluate_external_effect_policy(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
 ) -> Result<ExternalEffectGovernance> {
-    let mut hydrated_effect = hydrate_external_effect_contact(store, &*wtxn, effect)?;
+    let (mut hydrated_effect, counterparty_send_override) =
+        hydrate_external_effect_contact(store, &*wtxn, effect)?;
     hydrated_effect.standing_grant_ref = None;
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
@@ -303,6 +305,10 @@ pub(crate) fn evaluate_external_effect_policy(
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
+        // ONE-1752: the same post-conversion seam. Hydration cannot reach a
+        // context that does not exist until `gate_input()` builds it, so the
+        // override it resolved is written on here, once, before evaluation.
+        effect.counterparty_send_override = counterparty_send_override;
     }
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
@@ -813,14 +819,21 @@ fn touch_standing_outbound_grant_in_txn(
 /// Every restrictive source is OR-folded: COUNTERPARTY_CONTACT records AND CA-01's
 /// `comm.do_not_contact` heads. No leg may clear suppression another leg
 /// established.
+///
+/// ONE-1752 adds ONE read and no new suppression source: once the fold has
+/// decided the counterparty is opted out, the owner's `comm.send_override`
+/// heads are read on THIS transaction and returned BESIDE the input.
+/// [`ExternalEffectGateInput`] stays byte-unchanged — an override is never
+/// something a caller may assert — so the match travels back as its own value
+/// and the single caller writes it onto the gate-internal context.
 fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
-) -> Result<ExternalEffectGateInput> {
+) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>)> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
-        return Ok(hydrated);
+        return Ok((hydrated, None));
     };
 
     let channel_class = normalize_channel_class(&effect.channel);
@@ -848,7 +861,61 @@ fn hydrate_external_effect_contact(
     }
 
     fold_matching_comm_do_not_contact_heads(store, txn, party_ref, &channel_class, &mut hydrated)?;
-    Ok(hydrated)
+    let send_override = if hydrated.counterparty_opted_out {
+        counterparty_send_override_in_txn(
+            store,
+            txn,
+            party_ref,
+            &channel_class,
+            hydrated.send_ref.as_deref(),
+        )?
+    } else {
+        // Nothing to override. The token names the DECISION SOURCE of an
+        // opt-out fall-through, so an unsuppressed send must not carry one.
+        None
+    };
+    Ok((hydrated, send_override))
+}
+
+/// The owner's `comm.send_override` head for this send, read on the caller's
+/// transaction.
+///
+/// Expiry is measured on the engine's trusted clock, never a caller timestamp:
+/// a one-shot override is expiry-bound at mint, and letting the requester
+/// supply "now" would hand them the lifetime too. A comm-side failure is
+/// propagated, never swallowed — an unreadable override head means the send
+/// holds, exactly like no override at all, and never becomes a silent allow.
+fn counterparty_send_override_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    party_ref: &str,
+    channel_class: &str,
+    send_ref: Option<&str>,
+) -> Result<Option<SendOverrideMatch>> {
+    let Some(party) = comm_result(crate::comm::resolve_party_ref_from_store_in_txn(
+        store, txn, party_ref,
+    ))?
+    else {
+        return Ok(None);
+    };
+    comm_result(crate::comm::send_override_for_send_in_txn(
+        store,
+        txn,
+        &party,
+        channel_class,
+        send_ref,
+        crate::unix_seconds_now(),
+    ))
+}
+
+/// Lowers a comm-family read failure into the gate's error type. An engine
+/// error travels unchanged; a comm-shaped one (an undecodable head) becomes a
+/// corrupted-index refusal rather than an answer.
+fn comm_result<T>(result: crate::comm::CommResult<T>) -> Result<T> {
+    result.map_err(|error| match error {
+        crate::comm::CommError::Engine(error) => error,
+        _ => Error::CorruptedIndex("comm send override head"),
+    })
 }
 
 /// Every contact record that participates in this send's restrictive aggregate.

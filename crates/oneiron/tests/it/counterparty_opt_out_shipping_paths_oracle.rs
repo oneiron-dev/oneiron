@@ -52,7 +52,7 @@ const CHANNEL: &str = "email";
 /// A second channel class, used to prove the party-channel scope does not bleed.
 const OTHER_CHANNEL: &str = "telegram";
 const VERB: &str = "send";
-const DENY_OPT_OUT: &str = "gate.deny.counterparty_opt_out";
+const PENDING_OPT_OUT: &str = "gate.pending.counterparty_opt_out";
 const PENDING_AUTHORITY: &str = "gate.pending.external_effect_authority";
 
 const ACTOR_SEED: u8 = 0x51;
@@ -286,42 +286,47 @@ fn schedule(
         .unwrap()
 }
 
-fn denies(reason_codes: &[String]) -> bool {
-    reason_codes.iter().any(|code| code == DENY_OPT_OUT)
+/// Whether the opt-out consequence fired. ONE-1752 moved that consequence from
+/// an owner-facing deny to a held owner decision; WHICH paths raise it, and
+/// which must not, is unchanged.
+fn holds(reason_codes: &[String]) -> bool {
+    reason_codes.iter().any(|code| code == PENDING_OPT_OUT)
 }
 
 // --- Shipping path 1: the facade bridge ---------------------------------------
 
 #[test]
-fn facade_bridge_recorded_opt_out_denies_send() {
+fn facade_bridge_recorded_opt_out_holds_send() {
     let (_dir, vault, actor) = oracle_vault();
 
     // Control: the bridge admits an unsuppressed schedule to the durable queue.
     let control = schedule(&vault, actor, "control");
     assert_eq!(control.outcome, "held");
-    assert!(!denies(&control.gate_reason_codes));
+    assert!(!holds(&control.gate_reason_codes));
     assert_eq!(vault.connector_send_tasks().unwrap().len(), 1);
 
     recorded_opt_out(&vault, actor);
 
     let denied = schedule(&vault, actor, "suppressed");
-    assert_eq!(denied.outcome, "suppressed");
-    assert_eq!(denied.gate_outcome.as_deref(), Some("deny"));
+    assert_eq!(denied.outcome, "held");
+    assert_eq!(denied.gate_outcome.as_deref(), Some("pending"));
     assert!(
-        denies(&denied.gate_reason_codes),
-        "the bridge must raise the opt-out deny: {:?}",
+        holds(&denied.gate_reason_codes),
+        "the bridge must raise the opt-out hold: {:?}",
         denied.gate_reason_codes
     );
-    // The suppressed schedule never became executable work.
+    // ONE-1752: the held schedule IS durable work — that is what a pending
+    // owner decision means — and the executor's own gate check is what keeps it
+    // off the transport until the owner rules.
     assert_eq!(
         vault.connector_send_tasks().unwrap().len(),
-        1,
-        "a denied schedule must not enqueue a send task"
+        2,
+        "a held schedule stays queued for the owner's decision"
     );
 }
 
 #[test]
-fn facade_bridge_do_not_contact_denies_send() -> Result<()> {
+fn facade_bridge_do_not_contact_holds_send() -> Result<()> {
     let (_dir, vault, actor) = oracle_vault();
     write_do_not_contact(
         &vault,
@@ -333,40 +338,40 @@ fn facade_bridge_do_not_contact_denies_send() -> Result<()> {
     )?;
 
     let denied = schedule(&vault, actor, "dnc");
-    assert_eq!(denied.outcome, "suppressed");
-    assert!(denies(&denied.gate_reason_codes));
-    assert!(vault.connector_send_tasks().unwrap().is_empty());
+    assert_eq!(denied.outcome, "held");
+    assert!(holds(&denied.gate_reason_codes));
+    assert_eq!(vault.connector_send_tasks().unwrap().len(), 1);
     Ok(())
 }
 
 // --- Shipping path 2: the direct dispatch pipeline -----------------------------
 
 #[test]
-fn dispatch_pipeline_recorded_opt_out_denies_send() {
+fn dispatch_pipeline_recorded_opt_out_holds_send() {
     let (_dir, vault, actor) = oracle_vault();
     let mut sink = RecordingSink::default();
 
     let control = dispatch(&vault, actor, CHANNEL, "intent:control", &mut sink);
-    assert!(!denies(&control.gate_reason_codes));
+    assert!(!holds(&control.gate_reason_codes));
 
     recorded_opt_out(&vault, actor);
 
     let denied = dispatch(&vault, actor, CHANNEL, "intent:suppressed", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert_eq!(denied.gate_reason_codes, vec![DENY_OPT_OUT.to_owned()]);
+    assert_eq!(denied.gate_outcome, "pending");
+    assert_eq!(denied.gate_reason_codes, vec![PENDING_OPT_OUT.to_owned()]);
     assert!(
         denied
             .receipt
             .policy_trace
-            .contains(&DENY_OPT_OUT.to_owned()),
-        "the denial must reach the receipt: {:?}",
+            .contains(&PENDING_OPT_OUT.to_owned()),
+        "the hold must reach the receipt: {:?}",
         denied.receipt.policy_trace
     );
-    assert_eq!(sink.calls, 0, "no suppressed send may reach the transport");
+    assert_eq!(sink.calls, 0, "no held send may reach the transport");
 }
 
 #[test]
-fn dispatch_pipeline_do_not_contact_denies_send() -> Result<()> {
+fn dispatch_pipeline_do_not_contact_holds_send() -> Result<()> {
     let (_dir, vault, actor) = oracle_vault();
     let mut sink = RecordingSink::default();
     write_do_not_contact(
@@ -379,15 +384,15 @@ fn dispatch_pipeline_do_not_contact_denies_send() -> Result<()> {
     )?;
 
     let denied = dispatch(&vault, actor, CHANNEL, "intent:dnc", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert!(denies(&denied.gate_reason_codes));
+    assert_eq!(denied.gate_outcome, "pending");
+    assert!(holds(&denied.gate_reason_codes));
     // A do-not-contact-only deny is explainable in the receipt.
     assert!(
         denied
             .receipt
             .policy_trace
             .contains(&"counterparty_opt_out_do_not_contact".to_owned()),
-        "the do-not-contact deny needs a receipt reason: {:?}",
+        "the do-not-contact hold needs a receipt reason: {:?}",
         denied.receipt.policy_trace
     );
     assert_eq!(sink.calls, 0);
@@ -411,7 +416,7 @@ fn connector_task_executor_control_reaches_the_connector() {
 }
 
 #[test]
-fn connector_task_executor_recorded_opt_out_denies_send() {
+fn connector_task_executor_recorded_opt_out_holds_send() {
     let (_dir, vault, actor) = sending_vault();
     let mut sink = RecordingSink::default();
 
@@ -431,7 +436,7 @@ fn connector_task_executor_recorded_opt_out_denies_send() {
 }
 
 #[test]
-fn connector_task_executor_do_not_contact_denies_send() -> Result<()> {
+fn connector_task_executor_do_not_contact_holds_send() -> Result<()> {
     let (_dir, vault, actor) = sending_vault();
     let mut sink = RecordingSink::default();
 
@@ -477,8 +482,8 @@ fn all_matching_type132_records_are_restrictively_folded() {
     record_opt_out(&vault, SECOND_CONTACT_SEED, 2);
 
     let denied = dispatch(&vault, actor, CHANNEL, "intent:aggregate", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert!(denies(&denied.gate_reason_codes));
+    assert_eq!(denied.gate_outcome, "pending");
+    assert!(holds(&denied.gate_reason_codes));
     assert_eq!(sink.calls, 0);
 }
 
@@ -498,15 +503,15 @@ fn proposed_and_stale_do_not_contact_heads_remain_restrictive() -> Result<()> {
         1,
     )?;
     let proposed = dispatch(&vault, actor, CHANNEL, "intent:proposed", &mut sink);
-    assert_eq!(proposed.gate_outcome, "deny");
-    assert!(denies(&proposed.gate_reason_codes));
+    assert_eq!(proposed.gate_outcome, "pending");
+    assert!(holds(&proposed.gate_reason_codes));
 
     // And it keeps suppressing long after it was written: a suppression that
     // expires on its own is a suppression that leaks. Only an authorized clear
     // stamp (CA-01's retract/supersede surface) may remove it.
     let stale = dispatch(&vault, actor, CHANNEL, "intent:stale", &mut sink);
-    assert_eq!(stale.gate_outcome, "deny");
-    assert!(denies(&stale.gate_reason_codes));
+    assert_eq!(stale.gate_outcome, "pending");
+    assert!(holds(&stale.gate_reason_codes));
     assert_eq!(sink.calls, 0);
     Ok(())
 }
@@ -527,10 +532,10 @@ fn incomplete_party_channel_index_full_scans_before_no() {
 
     let denied = dispatch(&vault, actor, CHANNEL, "intent:unindexed", &mut sink);
     assert_eq!(
-        denied.gate_outcome, "deny",
+        denied.gate_outcome, "pending",
         "an unindexed opted-out row must never fall through to a false no"
     );
-    assert!(denies(&denied.gate_reason_codes));
+    assert!(holds(&denied.gate_reason_codes));
     assert_eq!(sink.calls, 0);
 }
 
@@ -548,8 +553,8 @@ fn legacy_type132_row_is_visible_without_migration_gate() {
     put_channel_identity(&vault, IDENTITY_SEED, CHANNEL, "owner@example.com", actor);
 
     let denied = dispatch(&vault, actor, CHANNEL, "intent:legacy", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert!(denies(&denied.gate_reason_codes));
+    assert_eq!(denied.gate_outcome, "pending");
+    assert!(holds(&denied.gate_reason_codes));
     assert_eq!(sink.calls, 0);
 }
 
@@ -563,13 +568,13 @@ fn party_channel_scope_does_not_bleed() {
     recorded_opt_out(&vault, actor);
 
     let same_channel = dispatch(&vault, actor, CHANNEL, "intent:email", &mut sink);
-    assert!(denies(&same_channel.gate_reason_codes));
+    assert!(holds(&same_channel.gate_reason_codes));
 
     // The opt-out was recorded through an EMAIL identity; a telegram send to the
     // same party is a different channel class and is not falsely suppressed.
     let other_channel = dispatch(&vault, actor, OTHER_CHANNEL, "intent:telegram", &mut sink);
     assert!(
-        !denies(&other_channel.gate_reason_codes),
+        !holds(&other_channel.gate_reason_codes),
         "an email opt-out must not suppress another channel class: {:?}",
         other_channel.gate_reason_codes
     );
@@ -606,7 +611,7 @@ fn explicit_cross_channel_identity_never_changes_the_verdict() {
     );
 
     assert!(
-        !denies(&pinned.gate_reason_codes),
+        !holds(&pinned.gate_reason_codes),
         "an email opt-out must not suppress telegram merely because an email \
          identity rode along: {:?}",
         pinned.gate_reason_codes
@@ -697,7 +702,7 @@ fn resolved_identity_never_becomes_the_deny_source_of_truth() {
     record_opt_out(&vault, CONTACT_SEED, 2);
 
     let denied = dispatch(&vault, actor, CHANNEL, "intent:cross-identity", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert!(denies(&denied.gate_reason_codes));
+    assert_eq!(denied.gate_outcome, "pending");
+    assert!(holds(&denied.gate_reason_codes));
     assert_eq!(sink.calls, 0);
 }
