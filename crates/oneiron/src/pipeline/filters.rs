@@ -1,8 +1,9 @@
 use heed::RoTxn;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::claim_surfaceable;
+use crate::claim::{claim_corpus_id, claim_surfaceable};
 use crate::codebase::codebase_candidate_matches_scope_key;
+use crate::corpus::{CorpusId, CorpusScope};
 use crate::edge::{EDGE_KEY_LEN, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -408,6 +409,91 @@ fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
     Ok(body.world)
 }
 
+/// ONE-1914 corpus filter: the post-fusion CLAIM audience filter, run in the
+/// same stage as the world filter and immediately after it. A pure removal
+/// filter — scores are never rewritten.
+///
+/// * [`CorpusScope::All`] — returns immediately without reading a single
+///   body, so the default scope costs nothing and cannot reorder results.
+/// * [`CorpusScope::Unscoped`] — only unscoped/core claims survive.
+/// * [`CorpusScope::Corpus`] / [`CorpusScope::AnyOf`] — the named corpora's
+///   claims survive ALONGSIDE unscoped/core claims: an unstamped claim
+///   belongs to every audience, so corpus selection narrows what is added,
+///   never what is shared.
+///
+/// Non-claim entities have no corpus and pass every scope untouched. Removal
+/// happens before the `result_limit` truncation, so excluded claims free
+/// their slots.
+///
+/// The scope is canonicalized once per run (not once per candidate), when the
+/// run's filter config is built — that single point is where an empty
+/// [`CorpusScope::AnyOf`] fails the run closed with [`Error::InvalidConfig`],
+/// for the candidate scan and this stage alike. Re-canonicalizing here is
+/// idempotent and keeps the stage fail-closed on its own terms.
+pub(super) fn apply_corpus_filter(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    scope: &CorpusScope,
+) -> Result<()> {
+    if matches!(scope, CorpusScope::All) {
+        return Ok(());
+    }
+    let scope = scope.clone().canonicalize()?;
+
+    let mut kept = Vec::with_capacity(scores.len());
+    for scored in scores.iter().copied() {
+        if pipeline_candidate_matches_corpus_filter(store, rtxn, &scored.id, &scope)? {
+            kept.push(scored);
+        }
+    }
+
+    *scores = kept;
+    Ok(())
+}
+
+/// Reads a candidate's corpus for the post-fusion corpus filter. Returns
+/// `None` for "no corpus" — a non-claim entity, an entity with no parseable
+/// envelope, or a claim carrying no corpus entry in its `scope` map — and
+/// `Some(corpus)` for a corpus-scoped claim. The claim body is decoded once
+/// through the pinned claim validator, exactly like [`claim_world`], so a
+/// malformed corpus entry is a typed error rather than a silent pass.
+fn claim_corpus_id_for_candidate(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<CorpusId>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    claim_corpus_id(&body)
+}
+
+/// The candidate-scan twin of [`apply_corpus_filter`] — the same decision for
+/// one candidate, and the corpus conjunct of
+/// [`pipeline_candidate_matches_filters_and_gate`]. Callers pass an
+/// already-canonicalized scope (see [`CorpusScope::canonicalize`]); this is a
+/// pure predicate and validates nothing, so an empty [`CorpusScope::AnyOf`]
+/// can never reach it — the run is already rejected by then.
+pub(super) fn pipeline_candidate_matches_corpus_filter(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    scope: &CorpusScope,
+) -> Result<bool> {
+    if matches!(scope, CorpusScope::All) {
+        return Ok(true);
+    }
+    Ok(scope.matches(claim_corpus_id_for_candidate(store, rtxn, id)?))
+}
+
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
@@ -525,6 +611,14 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
 
     if !pipeline_candidate_matches_world_filter(store, rtxn, id, filters.world_scope)? {
+        return Ok(false);
+    }
+
+    // The audience scope, immediately after the epistemic one — the same
+    // order the post-fusion stages run in. It sits AFTER the claim status
+    // gate above, so an undecodable claim body is already suppressed and
+    // never reaches this decode.
+    if !pipeline_candidate_matches_corpus_filter(store, rtxn, id, filters.corpus_scope)? {
         return Ok(false);
     }
 

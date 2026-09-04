@@ -5,6 +5,7 @@ use heed::RoTxn;
 use crate::claim::ClaimBody;
 use crate::codebase::{CodebaseScopeKey, RepoRef};
 use crate::context_pack::EmptyReason;
+use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 // Referenced only by an intra-doc link below; `cfg(doc)` keeps it out of
@@ -165,6 +166,15 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
     pub(super) world_scope: WorldScope,
+    /// The query's audience scope (ONE-1914); [`CorpusScope::All`] is the
+    /// default and a no-op, exactly like [`WorldScope::All`].
+    ///
+    /// Borrowed, not owned, so this config stays `Copy`
+    /// ([`CorpusScope::AnyOf`] carries a `Vec`). The referent is
+    /// canonicalized ONCE per run before this config is built, so an empty
+    /// `AnyOf` fails the run closed before the first candidate is scanned and
+    /// the candidate-scan twin stays a pure predicate.
+    pub(super) corpus_scope: &'a CorpusScope,
 }
 
 #[derive(Default)]

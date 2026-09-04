@@ -6,6 +6,7 @@ use heed::RoTxn;
 use crate::bm25::Bm25Config;
 use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
+use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fusion;
@@ -32,9 +33,9 @@ use super::channels::{
     scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    apply_claim_status_gate, apply_facet_filter, apply_filters, apply_relationship_filter,
-    apply_world_filter, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
-    pipeline_candidate_matches_filters_and_gate,
+    apply_claim_status_gate, apply_corpus_filter, apply_facet_filter, apply_filters,
+    apply_relationship_filter, apply_world_filter, claim_status_gate_allows,
+    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
 };
 use super::support::normalize_range;
 use super::trace::{
@@ -118,6 +119,11 @@ impl PipelineBuilder<'_> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            // ONE-1914: canonicalize the audience scope ONCE per run, before
+            // the first candidate is scanned, so the candidate-scan conjunct
+            // stays a pure predicate and an empty `AnyOf` fails the run closed
+            // on that path exactly as it does post-fusion.
+            let corpus_scope = self.corpus_scope.clone().canonicalize()?;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -128,6 +134,7 @@ impl PipelineBuilder<'_> {
                 facet_filter: self.facet_filter,
                 relationship_filter: self.relationship_filter,
                 world_scope: self.world_scope,
+                corpus_scope: &corpus_scope,
             };
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
@@ -943,6 +950,15 @@ impl PipelineBuilder<'_> {
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
+
+            // ONE-1914 corpus filter: the audience scope, immediately after
+            // the epistemic one and still before truncate, same read txn. A
+            // no-op under the default `CorpusScope::All`.
+            let before_corpus = scores.len();
+            apply_corpus_filter(&mut scores, &self.vault.store, &rtxn, &corpus_scope)?;
+            if before_corpus > 0 && scores.is_empty() {
+                empty_reason = Some(EmptyReason::FilterMatchedNone);
+            }
             if let Some((relationship, RelMode::Filter)) = self.relationship_filter {
                 let before_relationship = scores.len();
                 apply_relationship_filter(
@@ -1636,6 +1652,13 @@ impl PipelineBuilder<'_> {
             || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
             || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
             || self.world_scope != WorldScope::All
+            // ONE-1914: a narrowing audience scope removes text candidates
+            // exactly like a narrowing world scope, so it must widen the text
+            // channel too. Without this, an out-of-scope exact hit still
+            // consumes the only slot at `limit = 1` and the scoped truncate
+            // step never runs. `CorpusScope::All` spans every corpus and
+            // narrows nothing, so it stays as permissive as `WorldScope::All`.
+            || self.corpus_scope != CorpusScope::All
     }
 
     fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {
