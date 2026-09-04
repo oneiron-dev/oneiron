@@ -21,12 +21,18 @@ use types::{
 };
 
 const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
-const MAX_NAPI_SEARCH_LIMIT: u32 = 1_000;
-const MAX_NAPI_QUERY_BYTES: usize = 8 * 1024;
-const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = 64 * 1024;
-const MAX_NAPI_BATCH_ENTITIES: usize = 10_000;
-const MAX_NAPI_CODEBASE_FILES: usize = 100_000;
-const MAX_NAPI_DIMENSIONS: usize = 16_384;
+// ONE-1441 WIRE-P1: the `MAX_NAPI_*` names are now ALIASES of the shared
+// boundary contract in `oneiron-remote`, which owns the values for both
+// bindings and both transports. The names are kept exactly as they were so
+// ONE-479 still finds the established seam; only the source of the numbers
+// moved, so the N-API boundary and the remote boundary cannot drift into two
+// sets of limits that agree only by coincidence.
+const MAX_NAPI_SEARCH_LIMIT: u32 = oneiron_remote::MAX_SEARCH_LIMIT as u32;
+const MAX_NAPI_QUERY_BYTES: usize = oneiron_remote::MAX_QUERY_BYTES;
+const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
+const MAX_NAPI_BATCH_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
+const MAX_NAPI_CODEBASE_FILES: usize = oneiron_remote::MAX_CODEBASE_FILES;
+const MAX_NAPI_DIMENSIONS: usize = oneiron_remote::MAX_DIMENSIONS;
 
 type BoundaryResult<T> = std::result::Result<T, String>;
 

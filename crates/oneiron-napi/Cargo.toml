@@ -13,6 +13,9 @@ doctest = false
 
 [dependencies]
 oneiron = { path = "../oneiron" }
+# ONE-1441 WIRE-P1: the shared SDK backend. This crate reaches an embedded or
+# remote vault THROUGH it and never depends on an HTTP client directly.
+oneiron-remote = { path = "../oneiron-remote" }
 napi = { version = "3", default-features = false, features = ["napi8", "serde-json"] }
 napi-derive = "3"
 base64 = "0.22"
