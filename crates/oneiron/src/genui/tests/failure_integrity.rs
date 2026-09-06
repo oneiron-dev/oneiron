@@ -386,6 +386,8 @@ fn surfaced_failure_card_diagnosis_requires_a_stored_agent_dispatch() -> Result<
 
 #[test]
 fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()> {
+    use crate::store::Store;
+
     let (_dir, vault) = card_vault();
     let (failing, tree) = failed_run(&vault)?;
     let conversation = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
@@ -416,7 +418,27 @@ fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()
     ] {
         assert!(card_for(turn).is_ok());
         assert!(card_for(conversation).is_ok());
-        vault.put_edge(&source, kind, &extra, 1.0)?;
+        if kind == EdgeKind::ChildOf {
+            // The public writer rejects a second parent. Seed explicit corruption
+            // through the raw store so the card reader still faces both bindings.
+            assert!(matches!(
+                vault.put_edge(&source, kind, &extra, 1.0),
+                Err(Error::ChildOfCardinality)
+            ));
+            assert_eq!(vault.targets(&source, kind, None)?, vec![conversation]);
+            let key_out = Store::encode_edge_key(&source, kind, &extra);
+            let key_in = Store::encode_edge_key(&extra, kind, &source);
+            let value =
+                crate::edge::encode_edge_value(kind, 1.0, 100, crate::affect::Vad::NEUTRAL, None)?;
+            vault.with_write_txn(|wtxn| {
+                vault.store.edges_out.put(wtxn, &key_out, &value)?;
+                vault.store.edges_in.put(wtxn, &key_in, &value)?;
+                Ok(())
+            })?;
+        } else {
+            vault.put_edge(&source, kind, &extra, 1.0)?;
+        }
+        assert!(vault.edge_exists(&source, kind, &extra)?);
         for requested in [turn, conversation, foreign_turn, foreign] {
             assert!(
                 matches!(card_for(requested), Err(Error::InvalidConfig(_))),
