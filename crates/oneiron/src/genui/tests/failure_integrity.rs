@@ -383,3 +383,189 @@ fn surfaced_failure_card_diagnosis_requires_a_stored_agent_dispatch() -> Result<
     assert_eq!(crate::AttemptQueue::new(&vault).list()?, before);
     Ok(())
 }
+
+#[test]
+fn surfaced_failure_card_rejects_extra_canonical_membership_edges() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let conversation = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let turn = put_container(&vault, 0x65, crate::registry::ENTITY_TYPE_TURN)?;
+    let foreign = put_container(&vault, 0x6a, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let foreign_turn = put_container(&vault, 0x6b, crate::registry::ENTITY_TYPE_TURN)?;
+    let actor = put_actor(&vault, 0x66)?;
+    let message = put_qa_message(&vault, 0x67, turn, Some(actor), 100, 0)?;
+    vault.put_edge(&message, EdgeKind::BelongsTo, &conversation, 1.0)?;
+    vault.put_edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)?;
+    let card_for = |thread: EntityId| {
+        surfaced_failure_card(
+            &vault,
+            card_input(
+                failing,
+                tree.clone(),
+                HealerQaFeed {
+                    thread_ref: thread.to_hex(),
+                    entries: vec![qa_entry(message, actor, 100)],
+                },
+            ),
+        )
+    };
+    for (source, kind, extra) in [
+        (message, EdgeKind::PartOf, foreign_turn),
+        (message, EdgeKind::BelongsTo, foreign),
+        (turn, EdgeKind::ChildOf, foreign),
+    ] {
+        assert!(card_for(turn).is_ok());
+        assert!(card_for(conversation).is_ok());
+        vault.put_edge(&source, kind, &extra, 1.0)?;
+        for requested in [turn, conversation, foreign_turn, foreign] {
+            assert!(
+                matches!(card_for(requested), Err(Error::InvalidConfig(_))),
+                "a matching thread must not mask an extra {kind:?} edge"
+            );
+        }
+        assert!(vault.delete_edge(&source, kind, &extra)?);
+    }
+
+    // Uniqueness alone is not enough: the two sole conversation bindings disagree.
+    for (source, kind) in [(message, EdgeKind::BelongsTo), (turn, EdgeKind::ChildOf)] {
+        assert!(vault.delete_edge(&source, kind, &conversation)?);
+        vault.put_edge(&source, kind, &foreign, 1.0)?;
+        for requested in [turn, conversation, foreign] {
+            assert!(matches!(card_for(requested), Err(Error::InvalidConfig(_))));
+        }
+        assert!(vault.delete_edge(&source, kind, &foreign)?);
+        vault.put_edge(&source, kind, &conversation, 1.0)?;
+    }
+    assert!(card_for(turn).is_ok());
+    assert!(card_for(conversation).is_ok());
+
+    // A direct PartOf conversation cannot conflict with a sole BelongsTo edge.
+    assert!(vault.delete_edge(&message, EdgeKind::PartOf, &turn)?);
+    vault.put_edge(&message, EdgeKind::PartOf, &conversation, 1.0)?;
+    assert!(card_for(conversation).is_ok());
+    assert!(vault.delete_edge(&message, EdgeKind::BelongsTo, &conversation)?);
+    vault.put_edge(&message, EdgeKind::BelongsTo, &foreign, 1.0)?;
+    for requested in [conversation, foreign] {
+        assert!(matches!(card_for(requested), Err(Error::InvalidConfig(_))));
+    }
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_requires_canonical_hex_in_every_repair_field() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let agent = put_repair_agent(&vault, 0xab, "oneiron.agent.failure-card")?;
+    let (failing, tree) = failed_agent_run(&vault, agent)?;
+    let checkpoint = crate::test_util::entity(0xac);
+    let feed = HealerQaFeed {
+        thread_ref: crate::test_util::entity(0x64).to_hex(),
+        entries: Vec::new(),
+    };
+    let before = crate::AttemptQueue::new(&vault).list()?;
+    for route in repair_routes(&agent.to_hex()) {
+        let mut wire = serde_json::to_value(route).expect("route serializes");
+        let fields = wire.as_object_mut().expect("tagged route object");
+        for (name, value) in fields
+            .iter_mut()
+            .filter(|(name, _)| name.as_str() != "route")
+        {
+            // Give every field a valid spelling containing a-f, including both bindings.
+            *value = serde_json::Value::String(match name.as_str() {
+                "agent_ref" => agent.to_hex(),
+                "checkpoint_ref" => checkpoint.to_hex(),
+                _ => crate::test_util::entity(0xad).to_hex(),
+            });
+        }
+        let mut input = card_input(failing, tree.clone(), feed.clone());
+        input.pre_fail_checkpoint_ref = checkpoint;
+        input.diagnosis = FailureDiagnosisState::Diagnosed(
+            serde_json::from_value(wire.clone()).expect("typed valid route"),
+        );
+        let card = surfaced_failure_card(&vault, input.clone())?;
+        assert_eq!(card.diagnosis, input.diagnosis);
+        for (field, valid) in wire.as_object().expect("route object") {
+            if field == "route" {
+                continue;
+            }
+            let valid = valid.as_str().expect("reference string");
+            let uppercase = valid.to_uppercase();
+            assert_ne!(
+                uppercase, valid,
+                "uppercase fixture must differ for {field}"
+            );
+            for invalid in [
+                String::new(),
+                "not-an-entity-id".to_owned(),
+                "g".repeat(32),
+                valid[..31].to_owned(),
+                format!("{valid}0"),
+                uppercase,
+            ] {
+                let mut forged = wire.clone();
+                forged[field] = serde_json::Value::String(invalid);
+                let mut bad_input = input.clone();
+                bad_input.diagnosis = FailureDiagnosisState::Diagnosed(
+                    serde_json::from_value(forged).expect("strings remain a typed route"),
+                );
+                assert!(
+                    matches!(
+                        surfaced_failure_card(&vault, bad_input),
+                        Err(Error::InvalidConfig(_))
+                    ),
+                    "{} must validate {field}",
+                    wire["route"]
+                );
+            }
+        }
+    }
+    assert_eq!(crate::AttemptQueue::new(&vault).list()?, before);
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_fork_requires_expected_nonterminal_checkpoint() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let agent = put_repair_agent(&vault, 0x31, "oneiron.agent.failure-card")?;
+    let (failing, tree) = failed_agent_run(&vault, agent)?;
+    let feed = HealerQaFeed {
+        thread_ref: crate::test_util::entity(0x64).to_hex(),
+        entries: Vec::new(),
+    };
+    let base = card_input(failing, tree, feed);
+    let terminal = EntityId::from_hex(&failing_hex(failing))?;
+    let before = crate::AttemptQueue::new(&vault).list()?;
+    for (expected, checkpoint_ref, accepted) in [
+        (base.pre_fail_checkpoint_ref, "not-hex".to_owned(), false),
+        (
+            base.pre_fail_checkpoint_ref,
+            crate::test_util::entity(0x76).to_hex(),
+            false,
+        ),
+        (base.pre_fail_checkpoint_ref, terminal.to_hex(), false),
+        // Even caller context cannot make the failing attempt a pre-fail checkpoint.
+        (terminal, terminal.to_hex(), false),
+        (
+            base.pre_fail_checkpoint_ref,
+            base.pre_fail_checkpoint_ref.to_hex(),
+            true,
+        ),
+    ] {
+        let mut input = base.clone();
+        input.pre_fail_checkpoint_ref = expected;
+        let route = HealerRepairRoute::PromptInjectAndForkResume {
+            agent_ref: agent.to_hex(),
+            prompt_ref: crate::test_util::entity(0x74).to_hex(),
+            checkpoint_ref,
+            diagnosis_ref: crate::test_util::entity(0x73).to_hex(),
+        };
+        input.diagnosis = FailureDiagnosisState::Diagnosed(route.clone());
+        let result = surfaced_failure_card(&vault, input);
+        if accepted {
+            assert_eq!(result?.diagnosis, FailureDiagnosisState::Diagnosed(route));
+        } else {
+            assert!(matches!(result, Err(Error::InvalidConfig(_))));
+        }
+    }
+    assert_eq!(crate::AttemptQueue::new(&vault).list()?, before);
+    Ok(())
+}
