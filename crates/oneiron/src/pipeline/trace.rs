@@ -20,10 +20,11 @@ use crate::temporal::TemporalAnchorMode;
 use super::builder::PipelineBuilder;
 use super::filters::pipeline_candidate_matches_filters_and_gate;
 use super::types::{
-    ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, COSINE_GHOST_VECTOR_THRESHOLD, ClaimStatusGateCache,
-    DEFAULT_RECENCY_HALF_LIFE_DAYS, EntityMetadataCache, FacetMode, PPR_DAMPING,
-    PipelineFilterConfig, RECENCY_DECAY_TAU_SECS, RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
-    RETRIEVAL_TRACE_RRF_K, RelMode, ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig, WorldScope,
+    ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ActiveWorldSelection, COSINE_GHOST_VECTOR_THRESHOLD,
+    ClaimStatusGateCache, DEFAULT_RECENCY_HALF_LIFE_DAYS, EntityMetadataCache, FacetMode,
+    PPR_DAMPING, PipelineFilterConfig, RECENCY_DECAY_TAU_SECS,
+    RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE, RETRIEVAL_TRACE_RRF_K, RelMode, ScoredEntity,
+    TEMPORAL_FLOOR, TemporalSearchConfig, WorldScope,
 };
 
 pub(super) fn add_signal_score_components(
@@ -213,7 +214,11 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_opt_str(&mut hasher, builder.project_id_filter.as_deref());
     fork_hash_facet_filter(&mut hasher, builder.facet_filter);
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
-    fork_hash_world_scope(&mut hasher, builder.world_scope);
+    fork_hash_world_scope(
+        &mut hasher,
+        builder.world_scope,
+        builder.active_world_selection.as_ref(),
+    );
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
@@ -446,7 +451,20 @@ fn fork_hash_relationship_filter(hasher: &mut Sha256, filter: Option<(EntityId, 
     );
 }
 
-fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
+/// ONE-1420 ActiveSet segment: the per-turn SELECTION is part of the fork key,
+/// not just the scope tag.
+///
+/// Two turns by the same agent that select different worlds produce different
+/// result sets from identical query inputs, so they must never share a replay
+/// key. The selection is canonicalized the way the set itself is — agent id,
+/// the base flag, then the member count and the ascending `BTreeSet` id bytes —
+/// and "use my stored default" hashes distinctly from any explicit selection,
+/// because the default is resolved from claims the hash cannot see.
+fn fork_hash_world_scope(
+    hasher: &mut Sha256,
+    scope: WorldScope,
+    selection: Option<&ActiveWorldSelection>,
+) {
     match scope {
         WorldScope::All => fork_hash_str(hasher, "all"),
         WorldScope::Base => fork_hash_str(hasher, "base"),
@@ -457,6 +475,25 @@ fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
         WorldScope::WorldSet(scope_key) => {
             fork_hash_str(hasher, "world_set");
             fork_hash_raw_bytes(hasher, &scope_key);
+        }
+        WorldScope::ActiveSet => {
+            fork_hash_str(hasher, "active_set");
+            let Some(selection) = selection else {
+                fork_hash_bool(hasher, false);
+                return;
+            };
+            fork_hash_bool(hasher, true);
+            fork_hash_raw_bytes(hasher, selection.agent_ref.as_bytes());
+            let Some(selected) = selection.selected.as_ref() else {
+                fork_hash_bool(hasher, false);
+                return;
+            };
+            fork_hash_bool(hasher, true);
+            fork_hash_bool(hasher, selected.include_base);
+            fork_hash_len(hasher, selected.worlds.len());
+            for world in &selected.worlds {
+                fork_hash_raw_bytes(hasher, world.as_bytes());
+            }
         }
     }
 }

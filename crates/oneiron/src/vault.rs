@@ -1294,8 +1294,24 @@ impl Vault {
     }
 
     /// Creates a query pipeline builder for multi-signal retrieval.
+    ///
+    /// This unbound builder carries no executing principal. ActiveSet reads
+    /// require [`Vault::query_for_execution`] and otherwise fail closed.
     pub fn query(&self) -> PipelineBuilder<'_> {
         PipelineBuilder::new(self)
+    }
+
+    /// Creates a pipeline bound to an existing host-owned execution capability.
+    ///
+    /// The host passes its dispatcher, not an actor id supplied by a guest.
+    /// ActiveSet selections must name that dispatcher's actor. A foreign-vault
+    /// or session-bound dispatcher is refused: this door reads the canonical
+    /// vault only, not a session's composed view.
+    pub fn query_for_execution(
+        &self,
+        execution: &crate::code_run::HostSelfDispatcher<'_>,
+    ) -> Result<PipelineBuilder<'_>> {
+        PipelineBuilder::for_execution(self, execution)
     }
 
     /// Creates a context pack builder for retrieval + hydration + serialization.

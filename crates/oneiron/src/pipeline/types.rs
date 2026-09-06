@@ -1,16 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use heed::RoTxn;
+use rmpv::Value;
 
-use crate::claim::ClaimBody;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::codebase::{CodebaseScopeKey, RepoRef};
 use crate::context_pack::EmptyReason;
-use crate::entity_id::EntityId;
-use crate::error::Result;
-// Referenced only by an intra-doc link below; `cfg(doc)` keeps it out of
-// ordinary builds, where it would be an unused import.
-#[cfg(doc)]
-use crate::error::Error;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -165,6 +164,10 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
     pub(super) world_scope: WorldScope,
+    /// The turn's resolved [`WorldScope::ActiveSet`] membership, resolved ONCE
+    /// per run under the run's read transaction and borrowed by every
+    /// per-candidate check. `None` for every other scope.
+    pub(super) world_active_set: Option<&'a WorldAuthoritySet>,
 }
 
 #[derive(Default)]
@@ -298,6 +301,351 @@ pub enum WorldScope {
     /// repository-backed world-set clamp and does not include base reality by
     /// default.
     WorldSet(CodebaseScopeKey),
+    /// The claim-backed per-turn ActiveSet (ONE-1420): reads are restricted to
+    /// the base/world members the turn selected, and the selection itself must
+    /// sit inside the owner-granted ALLOWED-SET.
+    ///
+    /// The selection is NOT carried by the variant — it lives on the builder
+    /// sidecar written by [`PipelineBuilder::active_worlds`] /
+    /// [`PipelineBuilder::default_active_worlds`], because it is per-turn state
+    /// that is never stored. Selecting this variant through
+    /// [`PipelineBuilder::world`] alone leaves no selection behind and fails
+    /// the run closed with [`Error::InvalidConfig`]; it never degrades to
+    /// [`WorldScope::All`].
+    ActiveSet,
+}
+
+/// Pinned schema version of both world-access authority claim values
+/// (ONE-1420). A stored row carrying any other version fails closed instead of
+/// being read under an assumed shape.
+pub const WORLD_ACCESS_SCHEMA_VERSION: u64 = 1;
+
+/// Predicate of the OWNER-granted ALLOWED-SET rows — the outer bound on what
+/// an agent may ever read.
+///
+/// Every ACTIVE, APPROVED, USER-STATED row folds by INTERSECTION, so writing
+/// another row can only NARROW the grant, and no row at all resolves to the
+/// EMPTY authority (never to [`WorldScope::All`]). Ordinary bitemporal CLAIM
+/// rows: `valid_from` / `valid_to`, lifecycle, source, approval and
+/// supersession all apply, and no new entity type or table is introduced.
+pub const PREDICATE_WORLD_ACCESS_ALLOWED_SET: &str = "core.world_access.allowed_set";
+
+/// Predicate of the DEFAULT-SUBSET rows — the selection a turn inherits when
+/// it supplies none of its own.
+///
+/// The active default may be written by the agent itself, which is why the
+/// resolver REJECTS a default that exceeds the owner's ALLOWED-SET rather than
+/// clamping it: an agent must never reach a wider read through its own
+/// default. Consumed only when the turn supplies no explicit selection.
+pub const PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET: &str = "core.world_access.default_subset";
+
+/// Hard cap on the world members ONE authority row (or one per-turn selection)
+/// may carry. A longer list fails closed rather than being truncated.
+pub const MAX_WORLD_ACCESS_MEMBERS: usize = 256;
+
+const WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION: &str = "schema_version";
+const WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE: &str = "include_base";
+const WORLD_ACCESS_VALUE_KEY_WORLDS: &str = "worlds";
+
+/// One world-access authority value: base reality plus a sorted, unique set of
+/// world ids.
+///
+/// The same shape carries all three tiers — the owner's ALLOWED-SET, the
+/// stored DEFAULT-SUBSET, and the per-turn ActiveSet — so subset checking is
+/// one predicate ([`WorldAuthoritySet::is_subset_of`]) rather than three.
+/// [`Default`] is the EMPTY authority (`include_base == false`, no worlds):
+/// the fail-closed value an absent grant resolves to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorldAuthoritySet {
+    /// Whether base reality — claims with no `world` key, and every non-claim
+    /// entity — is readable under this set.
+    pub include_base: bool,
+    /// The readable world ids. Sorted and unique by construction.
+    pub worlds: BTreeSet<EntityId>,
+}
+
+impl WorldAuthoritySet {
+    /// Builds an authority set from any world-id iterator, normalizing it to
+    /// sorted-unique order.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the deduplicated membership exceeds
+    /// [`MAX_WORLD_ACCESS_MEMBERS`].
+    pub fn new(include_base: bool, worlds: impl IntoIterator<Item = EntityId>) -> Result<Self> {
+        let worlds: BTreeSet<EntityId> = worlds.into_iter().collect();
+        if worlds.len() > MAX_WORLD_ACCESS_MEMBERS {
+            return Err(Error::InvalidConfig(format!(
+                "world-access set carries {} worlds, above the {MAX_WORLD_ACCESS_MEMBERS} cap",
+                worlds.len()
+            )));
+        }
+        Ok(Self {
+            include_base,
+            worlds,
+        })
+    }
+
+    /// Whether every member of `self` is also a member of `allowed`.
+    ///
+    /// Base reality is a MEMBER of this containment, not a side channel:
+    /// asking for base without an owner grant for base is a widening and is
+    /// refused like any world id would be.
+    #[must_use]
+    pub fn is_subset_of(&self, allowed: &Self) -> bool {
+        (!self.include_base || allowed.include_base) && self.worlds.is_subset(&allowed.worlds)
+    }
+
+    /// Whether this authority admits nothing at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        !self.include_base && self.worlds.is_empty()
+    }
+
+    /// The narrowing fold of two owner grants: base survives only if BOTH
+    /// rows grant it, and a world survives only if BOTH rows list it.
+    pub(super) fn intersect(&self, other: &Self) -> Self {
+        Self {
+            include_base: self.include_base && other.include_base,
+            worlds: self.worlds.intersection(&other.worlds).copied().collect(),
+        }
+    }
+}
+
+/// The per-turn world selection carried on [`PipelineBuilder`] — in memory for
+/// exactly one query, never written to the vault.
+///
+/// `agent_ref` names the CLAIM subject whose stored authority rows the
+/// resolver reads; it is not itself a grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveWorldSelection {
+    /// The agent entity the ALLOWED-SET / DEFAULT-SUBSET rows are about.
+    pub agent_ref: EntityId,
+    /// `None` means use the resolved DEFAULT-SUBSET.
+    pub selected: Option<WorldAuthoritySet>,
+}
+
+/// The outcome of one authority resolution: the three tiers plus the claim
+/// provenance each tier came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorldAuthority {
+    /// The owner grant: the intersection of every qualifying ALLOWED-SET row.
+    pub allowed_set: WorldAuthoritySet,
+    /// The stored default, already checked against `allowed_set`.
+    pub default_subset: WorldAuthoritySet,
+    /// What this turn actually reads: the explicit selection, else the default.
+    pub active_set: WorldAuthoritySet,
+    /// The ALLOWED-SET claim rows folded into `allowed_set`, in scan order.
+    pub allowed_claim_ids: Vec<EntityId>,
+    /// The DEFAULT-SUBSET claim row `default_subset` was read from.
+    pub default_claim_id: Option<EntityId>,
+}
+
+/// Builds the CLAIM body for one world-access authority row.
+///
+/// The row is an ORDINARY bitemporal claim: subject = the agent entity, value
+/// = the pinned strict map, lifecycle = active, and the caller's `source` /
+/// `approval` / `valid_from` / `valid_to` verbatim. Writing it goes through the
+/// ordinary claim door, so supersession, retraction and the write gate behave
+/// exactly as they do for every other claim.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] when `predicate` is not one of the two pinned
+/// world-access predicates, when the value exceeds
+/// [`MAX_WORLD_ACCESS_MEMBERS`], or when the validity window is empty
+/// (`valid_to <= valid_from`), which would mint a row that is never in force.
+pub fn world_access_claim_body(
+    predicate: &'static str,
+    agent_ref: EntityId,
+    value: &WorldAuthoritySet,
+    source: ClaimSource,
+    approval: ClaimApprovalStatus,
+    valid_from: Option<u64>,
+    valid_to: Option<u64>,
+) -> Result<ClaimBody> {
+    if predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
+        && predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+    {
+        return Err(Error::InvalidConfig(format!(
+            "{predicate} is not a world-access authority predicate"
+        )));
+    }
+    if value.worlds.len() > MAX_WORLD_ACCESS_MEMBERS {
+        return Err(Error::InvalidConfig(format!(
+            "world-access set carries {} worlds, above the {MAX_WORLD_ACCESS_MEMBERS} cap",
+            value.worlds.len()
+        )));
+    }
+    if let (Some(from), Some(to)) = (valid_from, valid_to)
+        && to <= from
+    {
+        return Err(Error::InvalidConfig(format!(
+            "world-access validity window is empty: valid_to {to} does not follow valid_from {from}"
+        )));
+    }
+
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(agent_ref),
+        encode_world_access_claim_value(value),
+        1.0,
+        approval,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(source);
+    body.valid_from = valid_from;
+    body.valid_to = valid_to;
+    Ok(body)
+}
+
+/// Encodes an authority set as the pinned strict claim value.
+///
+/// `worlds` is emitted from the `BTreeSet`, so the array is sorted and unique
+/// on the wire by construction — the exact shape
+/// [`decode_world_access_claim_value`] admits.
+fn encode_world_access_claim_value(value: &WorldAuthoritySet) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION),
+            Value::from(WORLD_ACCESS_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE),
+            Value::Boolean(value.include_base),
+        ),
+        (
+            Value::from(WORLD_ACCESS_VALUE_KEY_WORLDS),
+            Value::Array(
+                value
+                    .worlds
+                    .iter()
+                    .map(|world| Value::Binary(world.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+/// Decodes the strict world-access claim value:
+///
+/// ```text
+/// { "schema_version": 1, "include_base": <bool>, "worlds": [<16-byte binary>, ...] }
+/// ```
+///
+/// Every deviation fails CLOSED with [`Error::InvalidConfig`]: a non-map value,
+/// a non-string key, an unknown or duplicated key, a missing key, an
+/// unsupported `schema_version`, a non-boolean `include_base`, a non-array
+/// `worlds`, an element that is not exactly 16 bytes of MessagePack binary, an
+/// out-of-order or duplicated world id, and a list above
+/// [`MAX_WORLD_ACCESS_MEMBERS`]. A malformed authority row can therefore never
+/// be read as a WIDER authority than it encodes — the read that consulted it
+/// refuses instead.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] for every shape listed above.
+pub fn decode_world_access_claim_value(body: &ClaimBody) -> Result<WorldAuthoritySet> {
+    let Value::Map(entries) = &body.value else {
+        return Err(invalid_world_access_value("must be a MessagePack map"));
+    };
+
+    let mut schema_version: Option<u64> = None;
+    let mut include_base: Option<bool> = None;
+    let mut worlds: Option<BTreeSet<EntityId>> = None;
+
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(invalid_world_access_value("keys must be strings"));
+        };
+        match key {
+            WORLD_ACCESS_VALUE_KEY_SCHEMA_VERSION => {
+                if schema_version.is_some() {
+                    return Err(invalid_world_access_value("repeats schema_version"));
+                }
+                let version = value.as_u64().ok_or_else(|| {
+                    invalid_world_access_value("schema_version must be an unsigned integer")
+                })?;
+                schema_version = Some(version);
+            }
+            WORLD_ACCESS_VALUE_KEY_INCLUDE_BASE => {
+                if include_base.is_some() {
+                    return Err(invalid_world_access_value("repeats include_base"));
+                }
+                let Value::Boolean(flag) = value else {
+                    return Err(invalid_world_access_value("include_base must be a boolean"));
+                };
+                include_base = Some(*flag);
+            }
+            WORLD_ACCESS_VALUE_KEY_WORLDS => {
+                if worlds.is_some() {
+                    return Err(invalid_world_access_value("repeats worlds"));
+                }
+                worlds = Some(decode_world_access_members(value)?);
+            }
+            _ => {
+                return Err(invalid_world_access_value(
+                    "carries a key outside schema_version/include_base/worlds",
+                ));
+            }
+        }
+    }
+
+    let schema_version =
+        schema_version.ok_or_else(|| invalid_world_access_value("is missing schema_version"))?;
+    if schema_version != WORLD_ACCESS_SCHEMA_VERSION {
+        return Err(Error::InvalidConfig(format!(
+            "world-access claim value schema_version {schema_version} is not the supported \
+             {WORLD_ACCESS_SCHEMA_VERSION}"
+        )));
+    }
+    let include_base =
+        include_base.ok_or_else(|| invalid_world_access_value("is missing include_base"))?;
+    let worlds = worlds.ok_or_else(|| invalid_world_access_value("is missing worlds"))?;
+
+    WorldAuthoritySet::new(include_base, worlds)
+}
+
+/// Decodes the `worlds` array: strictly ascending 16-byte binary ids, at most
+/// [`MAX_WORLD_ACCESS_MEMBERS`] of them.
+fn decode_world_access_members(value: &Value) -> Result<BTreeSet<EntityId>> {
+    let Value::Array(items) = value else {
+        return Err(invalid_world_access_value("worlds must be an array"));
+    };
+    if items.len() > MAX_WORLD_ACCESS_MEMBERS {
+        return Err(Error::InvalidConfig(format!(
+            "world-access value lists {} worlds, above the {MAX_WORLD_ACCESS_MEMBERS} cap",
+            items.len()
+        )));
+    }
+
+    let mut members = BTreeSet::new();
+    let mut previous: Option<EntityId> = None;
+    for item in items {
+        let Value::Binary(bytes) = item else {
+            return Err(invalid_world_access_value(
+                "world ids must be MessagePack binary",
+            ));
+        };
+        let raw: [u8; ENTITY_ID_LEN] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid_world_access_value("world ids must be exactly 16 binary bytes"))?;
+        let world = EntityId::from_bytes(raw)
+            .map_err(|_| invalid_world_access_value("carries a reserved world id"))?;
+        if previous.is_some_and(|previous| previous >= world) {
+            return Err(invalid_world_access_value(
+                "worlds must be sorted ascending and unique",
+            ));
+        }
+        previous = Some(world);
+        members.insert(world);
+    }
+    Ok(members)
+}
+
+fn invalid_world_access_value(reason: &str) -> Error {
+    Error::InvalidConfig(format!("world-access claim value {reason}"))
 }
 
 /// Opaque Dreamer working-set cursor.

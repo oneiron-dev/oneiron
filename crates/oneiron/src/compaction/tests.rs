@@ -47,7 +47,14 @@ fn mint_session(vault: &Vault, now: u64) -> EntityId {
 /// Witnesses one turn under whatever session is currently open, returning
 /// the TURN id. Rides the PRODUCTION witness door, so the membership edge
 /// under test is the one production writes.
-fn witness_turn(vault: &Vault, actor: EntityId, conversation: u8, turn: u8, at: u64) -> EntityId {
+fn witness_turn(
+    vault: &Vault,
+    actor: EntityId,
+    conversation: u8,
+    turn: u8,
+    at: u64,
+    order: u32,
+) -> EntityId {
     let turn_id = entity(turn);
     vault
         .memory(actor, EdgeActorClass::Human)
@@ -61,7 +68,7 @@ fn witness_turn(vault: &Vault, actor: EntityId, conversation: u8, turn: u8, at: 
                 content: "compaction fixture content".to_owned(),
                 metadata: None,
                 is_visible: true,
-                order: 0,
+                order,
             }],
             occurred_at: at,
         })
@@ -149,7 +156,7 @@ fn admitted_fixture(
     let (dir, vault) = open_vault();
     let actor = put_actor(&vault, actor_seed);
     let session = mint_session(&vault, 400);
-    let turn = witness_turn(&vault, actor, conversation_seed, turn_seed, 500);
+    let turn = witness_turn(&vault, actor, conversation_seed, turn_seed, 500, 0);
     (dir, vault, session, turn)
 }
 
@@ -527,7 +534,7 @@ fn a_turn_witnessed_outside_any_session_records_no_membership() {
 
     // ARCH-0002 open-endedness: a sessionless turn stays valid, and the
     // membership write is a no-op rather than an invented sitting.
-    let turn = witness_turn(&vault, actor, 0x56, 0x57, 600);
+    let turn = witness_turn(&vault, actor, 0x56, 0x57, 600, 0);
 
     assert_eq!(membership_of(&vault, &turn), None);
 }
@@ -537,12 +544,12 @@ fn appending_to_a_turn_never_rewrites_its_membership() {
     let (_dir, vault) = open_vault();
     let actor = put_actor(&vault, 0x58);
     let session = mint_session(&vault, 400);
-    let turn = witness_turn(&vault, actor, 0x59, 0x5A, 500);
+    let turn = witness_turn(&vault, actor, 0x59, 0x5A, 500, 0);
     assert_eq!(membership_of(&vault, &turn), Some(session));
 
-    // The same TURN is appended to. Membership is first-write-wins, so the
-    // append rewrites nothing and the turn keeps one sitting.
-    let appended = witness_turn(&vault, actor, 0x59, 0x5A, 900);
+    // Append a new message at a distinct position in the same TURN.
+    // Membership is first-write-wins, so the turn keeps one sitting.
+    let appended = witness_turn(&vault, actor, 0x59, 0x5A, 900, 1);
     assert_eq!(appended, turn);
     assert_eq!(
         membership_of(&vault, &turn),

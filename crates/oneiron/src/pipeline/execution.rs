@@ -47,6 +47,7 @@ use super::types::{
     PendingVectorEmbedding, PipelineFilterConfig, PipelineOutput, RelMode, ScoredEntity,
     WorldScope,
 };
+use super::world_authority::resolve_active_world_authority;
 
 /// Detailed pipeline output for the context-pack path.
 ///
@@ -118,6 +119,21 @@ impl PipelineBuilder<'_> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            // ONE-1420: under `WorldScope::ActiveSet` the turn's world
+            // authority resolves ONCE here — inside this run's read
+            // transaction, at this run's clock — and every per-candidate scope
+            // check below borrows the result. Resolving before any channel
+            // runs also makes the fail-closed refusals (no selection, a
+            // selection outside the owner grant, a malformed authority row)
+            // land before the query does any scoring work.
+            let world_authority = resolve_active_world_authority(
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                self.active_world_selection.as_ref(),
+                self.execution_actor,
+                temporal_now,
+            )?;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -128,6 +144,9 @@ impl PipelineBuilder<'_> {
                 facet_filter: self.facet_filter,
                 relationship_filter: self.relationship_filter,
                 world_scope: self.world_scope,
+                world_active_set: world_authority
+                    .as_ref()
+                    .map(|resolved| &resolved.active_set),
             };
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
@@ -937,9 +956,16 @@ impl PipelineBuilder<'_> {
 
             // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
             // facet filter, before truncate, same read txn. A no-op under the
-            // default `WorldScope::All`.
+            // default `WorldScope::All`. ActiveSet reuses the authority already
+            // resolved for the per-candidate filters in this transaction.
             let before_world = scores.len();
-            apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+            apply_world_filter(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                filter_config.world_active_set,
+            )?;
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
