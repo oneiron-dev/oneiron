@@ -1184,7 +1184,7 @@ fn api_keeps_a_host_curlrc_from_capturing_the_transfer() {
     );
     let request = api::CurlRequest {
         method: "GET".to_owned(),
-        url: url.clone(),
+        url,
         body: None,
         content_type: None,
     };
@@ -1325,7 +1325,8 @@ fn api_a_failed_body_staging_leaves_nothing_behind() {
         &mut RefusingSink,
         b"{\"claim\":\"placeholder\"}",
     )
-    .expect_err("a sink that refuses every write must fail the staging");
+    .err()
+    .expect("a sink that refuses every write must fail the staging");
     assert!(error.to_string().contains("stage the request body"));
     assert!(
         !failed.exists(),

@@ -135,9 +135,7 @@ impl LfsOid {
     /// path, because a mis-parsed object id would address the wrong bytes.
     pub fn parse_hex(value: &str) -> Result<Self> {
         if value.len() != VAULT_LFS_OID_HEX_LEN {
-            return Err(Error::InvalidLfsObject(
-                "lfs oid must be 64 hex characters",
-            ));
+            return Err(Error::InvalidLfsObject("lfs oid must be 64 hex characters"));
         }
         let mut bytes = [0_u8; VAULT_LFS_OID_LEN];
         for (slot, pair) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {

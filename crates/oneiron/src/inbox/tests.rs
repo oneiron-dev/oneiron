@@ -72,12 +72,20 @@ fn write_dreamer_proposal(
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, time(1), 1, b"dreamer actor")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
     let envelope = dreamer_envelope(actor, run_id);
+    let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     let candidate = crate::write_envelope::ClaimCandidate::new(
         predicate,
         ClaimSubject::Entity(subject),
         Value::from(value),
         0.9,
-    );
+    )
+    .with_evidence(evidence);
     vault
         .batch()
         .claim_candidate(
