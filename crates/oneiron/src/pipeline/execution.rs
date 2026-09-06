@@ -755,8 +755,9 @@ impl PipelineBuilder<'_> {
                         } else {
                             // ID sorting for the base cache must not replace the fused
                             // evidence order. Explicit-only seeds get zero evidence.
-                            let ordered_seeds = crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
-                                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+                            let ordered_seeds =
+                                crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
+                                    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
                             let empty_usage = HashMap::new();
                             let context = crate::ppr_community::CommunityBoostContext {
                                 ordered_seeds: &ordered_seeds,
@@ -779,7 +780,8 @@ impl PipelineBuilder<'_> {
                             community_diversity = diversity;
                             if capture_retrieval_trace {
                                 community_trace_identity = Some(self.community_trace_identity(
-                                    &ordered_seeds, crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
+                                    &ordered_seeds,
+                                    crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
                                 ));
                             }
                             (results, write)
@@ -1170,7 +1172,11 @@ impl PipelineBuilder<'_> {
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
             if let Some(diversity) = community_diversity {
-                diversity.apply(&mut scores, self.result_limit, &self.vault.config.ppr_community)?;
+                diversity.apply(
+                    &mut scores,
+                    self.result_limit,
+                    &self.vault.config.ppr_community,
+                )?;
             }
             scores.truncate(self.result_limit);
             if before_limit > 0 && scores.is_empty() {

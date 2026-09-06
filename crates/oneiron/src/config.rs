@@ -6,7 +6,9 @@ pub use crate::ppr_community::PprCommunityConfig;
 
 /// Validates the opt-in community prior without relaxing its safety bounds.
 pub fn validate_ppr_community(config: &PprCommunityConfig) -> crate::error::Result<()> {
-    config.validate().map_err(|error| crate::Error::InvalidConfig(error.to_string()))
+    config
+        .validate()
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))
 }
 
 /// Production remains default-off, regardless of benchmark results.

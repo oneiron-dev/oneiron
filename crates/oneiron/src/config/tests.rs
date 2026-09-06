@@ -48,7 +48,11 @@ fn ppr_vad_alpha_rejects_every_invalid_class() {
 
 #[test]
 fn ppr_community_presets_are_default_off_and_participate_in_equality() {
-    for config in [VaultConfig::default(), VaultConfig::device(), VaultConfig::server()] {
+    for config in [
+        VaultConfig::default(),
+        VaultConfig::device(),
+        VaultConfig::server(),
+    ] {
         assert_eq!(config.ppr_community, PprCommunityConfig::default());
         assert_eq!(config.ppr_community.beta.to_bits(), 0.0_f32.to_bits());
         assert_eq!(config.ppr_vad_alpha.to_bits(), 0.0_f32.to_bits());
@@ -72,14 +76,29 @@ fn ppr_community_validation_rejects_nonfinite_and_relaxed_safety_bounds() {
                 3 => config.max_graph_fraction = invalid,
                 _ => config.max_top_k_fraction = invalid,
             }
-            assert!(matches!(validate_ppr_community(&config), Err(crate::Error::InvalidConfig(_))));
+            assert!(matches!(
+                validate_ppr_community(&config),
+                Err(crate::Error::InvalidConfig(_))
+            ));
         }
     }
     for config in [
-        PprCommunityConfig { gamma: 0.9, ..Default::default() },
-        PprCommunityConfig { multiplier_cap: 1.51, ..Default::default() },
-        PprCommunityConfig { max_graph_fraction: 0.101, ..Default::default() },
-        PprCommunityConfig { max_top_k_fraction: 0.701, ..Default::default() },
+        PprCommunityConfig {
+            gamma: 0.9,
+            ..Default::default()
+        },
+        PprCommunityConfig {
+            multiplier_cap: 1.51,
+            ..Default::default()
+        },
+        PprCommunityConfig {
+            max_graph_fraction: 0.101,
+            ..Default::default()
+        },
+        PprCommunityConfig {
+            max_top_k_fraction: 0.701,
+            ..Default::default()
+        },
     ] {
         assert!(validate_ppr_community(&config).is_err());
     }

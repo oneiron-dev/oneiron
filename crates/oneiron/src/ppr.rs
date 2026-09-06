@@ -823,7 +823,11 @@ pub(crate) fn ppr_query_in_txn_with_community_deferred_cache(
     store: &Store,
     txn: &RoTxn<'_>,
     request: CommunityPprRequest<'_>,
-) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>, crate::ppr_community::CommunityBoostReport)> {
+) -> Result<(
+    Vec<ScoredEntity>,
+    Option<DeferredPprCacheWrite>,
+    crate::ppr_community::CommunityBoostReport,
+)> {
     let output = ppr_community_query_in_txn(store, txn, request, false)?;
     Ok((output.scores, output.write, output.report))
 }
@@ -842,10 +846,19 @@ impl CommunityPprDiversity {
         limit: usize,
         config: &crate::config::PprCommunityConfig,
     ) -> Result<()> {
-        let cache = crate::ppr_community::PprCommunityCache::new(&self.snapshot, self.snapshot.meta.graph_version)
-            .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
-        crate::ppr_community::apply_community_diversity(scores, &cache, &self.boosted, limit, config)
-            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        let cache = crate::ppr_community::PprCommunityCache::new(
+            &self.snapshot,
+            self.snapshot.meta.graph_version,
+        )
+        .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
+        crate::ppr_community::apply_community_diversity(
+            scores,
+            &cache,
+            &self.boosted,
+            limit,
+            config,
+        )
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
         Ok(())
     }
 }
@@ -855,7 +868,11 @@ pub(crate) fn ppr_expand_in_txn_with_community_deferred_cache(
     store: &Store,
     txn: &RoTxn<'_>,
     mut request: CommunityPprRequest<'_>,
-) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>, Option<CommunityPprDiversity>)> {
+) -> Result<(
+    Vec<ScoredEntity>,
+    Option<DeferredPprCacheWrite>,
+    Option<CommunityPprDiversity>,
+)> {
     request.weighting = SeedWeighting::Uniform;
     let output = ppr_community_query_in_txn(store, txn, request, true)?;
     Ok((output.scores, output.write, output.diversity))
@@ -881,39 +898,83 @@ fn ppr_community_query_in_txn(
     let config = &request.config.ppr_community;
     if request.weighting != SeedWeighting::Uniform || config.beta == 0.0 {
         let (scores, write) = ppr_query_in_txn_with_vad_deferred_cache(
-            store, txn, request.seeds, request.depth, request.teleport_alpha,
-            request.config.ppr_vad_alpha, request.weighting,
+            store,
+            txn,
+            request.seeds,
+            request.depth,
+            request.teleport_alpha,
+            request.config.ppr_vad_alpha,
+            request.weighting,
         )?;
-        return Ok(CommunityPprOutput { scores, write, report: CommunityBoostReport::default(), diversity: None });
+        return Ok(CommunityPprOutput {
+            scores,
+            write,
+            report: CommunityBoostReport::default(),
+            diversity: None,
+        });
     }
     crate::config::validate_ppr_community(config)?;
     validate_ppr_request(request.seeds, request.depth)?;
     validate_ppr_vad_alpha(request.config.ppr_vad_alpha)?;
-    let evidence_ids: HashSet<_> = request.context.ordered_seeds.iter().map(|seed| seed.id).collect();
+    let evidence_ids: HashSet<_> = request
+        .context
+        .ordered_seeds
+        .iter()
+        .map(|seed| seed.id)
+        .collect();
     if evidence_ids.len() != request.context.ordered_seeds.len()
         || evidence_ids != request.seeds.iter().copied().collect::<HashSet<EntityId>>()
-        || request.context.ordered_seeds.iter().any(|seed| !seed.score.is_finite() || seed.score < 0.0)
-        || request.context.ordered_seeds.windows(2).any(|pair| pair[0].score < pair[1].score)
+        || request
+            .context
+            .ordered_seeds
+            .iter()
+            .any(|seed| !seed.score.is_finite() || seed.score < 0.0)
+        || request
+            .context
+            .ordered_seeds
+            .windows(2)
+            .any(|pair| pair[0].score < pair[1].score)
     {
-        return Err(Error::InvalidConfig("community seed evidence must match the PPR seed set".to_owned()));
+        return Err(Error::InvalidConfig(
+            "community seed evidence must match the PPR seed set".to_owned(),
+        ));
     }
     let version = read_graph_version(store, txn)?;
     let previous = store.ppr_community_snapshot_in_txn(txn)?;
-    let needs_refresh = previous.as_ref().is_none_or(|snapshot| snapshot.meta.graph_version != version);
+    let needs_refresh = previous
+        .as_ref()
+        .is_none_or(|snapshot| snapshot.meta.graph_version != version);
     let snapshot = if needs_refresh {
         // No complete changed frontier is available on the query path. Unknown
         // churn must use the full fallback rather than guessing from seeds.
-        store.compute_ppr_communities_in_txn(txn, previous.as_ref(), &[],
-            crate::unix_seconds_now(), config)?.0
+        store
+            .compute_ppr_communities_in_txn(
+                txn,
+                previous.as_ref(),
+                &[],
+                crate::unix_seconds_now(),
+                config,
+            )?
+            .0
     } else {
         previous.ok_or(Error::CorruptedIndex("ppr community cache"))?
     };
     let identity = community_cache_identity(config.beta, snapshot.meta.graph_version)
         .map_err(|error| Error::InvalidConfig(error.to_string()))?;
     let (mut scores, mut write) = ppr_query_in_txn_with_identity(
-        store, txn, request.seeds, request.depth,
-        PprAlphas { teleport_alpha: request.teleport_alpha, ppr_vad_alpha: request.config.ppr_vad_alpha },
-        request.weighting, PprCachePolicy { defer_writes: true, community_identity: identity },
+        store,
+        txn,
+        request.seeds,
+        request.depth,
+        PprAlphas {
+            teleport_alpha: request.teleport_alpha,
+            ppr_vad_alpha: request.config.ppr_vad_alpha,
+        },
+        request.weighting,
+        PprCachePolicy {
+            defer_writes: true,
+            community_identity: identity,
+        },
     )?;
     let cache = PprCommunityCache::new(&snapshot, version)
         .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
@@ -922,11 +983,20 @@ fn ppr_community_query_in_txn(
     } else {
         apply_community_prior(&mut scores, &cache, request.context, config)
             .map(|report| (report, std::collections::BTreeSet::new()))
-    }.map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    }
+    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
     if needs_refresh {
         let pending = write.get_or_insert_with(|| DeferredPprCacheWrite {
-            seed_hash: hash_community_seeds(hash_seeds(request.seeds, request.depth,
-                request.teleport_alpha, request.config.ppr_vad_alpha, request.weighting), identity),
+            seed_hash: hash_community_seeds(
+                hash_seeds(
+                    request.seeds,
+                    request.depth,
+                    request.teleport_alpha,
+                    request.config.ppr_vad_alpha,
+                    request.weighting,
+                ),
+                identity,
+            ),
             computed_at: crate::unix_seconds_now(),
             graph_version: version,
             state: None,
@@ -934,10 +1004,14 @@ fn ppr_community_query_in_txn(
         });
         pending.community_snapshot = Some(snapshot.clone());
     }
-    let diversity = (defer_diversity && report.activated_communities > 0).then_some(CommunityPprDiversity {
-        snapshot, boosted,
-    });
-    Ok(CommunityPprOutput { scores, write, report, diversity })
+    let diversity = (defer_diversity && report.activated_communities > 0)
+        .then_some(CommunityPprDiversity { snapshot, boosted });
+    Ok(CommunityPprOutput {
+        scores,
+        write,
+        report,
+        diversity,
+    })
 }
 
 /// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
@@ -1016,14 +1090,25 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
             }
             store.replace_ppr_community_cache_in_txn(&mut txn, snapshot)?;
             if let Some(state) = &write.state {
-                store_cache_entry(store, &mut txn, &write.seed_hash,
-                    write.computed_at, write.graph_version, state)?;
+                store_cache_entry(
+                    store,
+                    &mut txn,
+                    &write.seed_hash,
+                    write.computed_at,
+                    write.graph_version,
+                    state,
+                )?;
             }
             txn.commit()?;
         } else if let Some(state) = &write.state {
             // Literal legacy write path for beta zero and Specificity.
-            write_ppr_cache(store, &write.seed_hash, write.computed_at,
-                write.graph_version, state)?;
+            write_ppr_cache(
+                store,
+                &write.seed_hash,
+                write.computed_at,
+                write.graph_version,
+                state,
+            )?;
         }
     }
     Ok(())
@@ -1038,8 +1123,18 @@ fn ppr_query_in_txn_impl(
     weighting: SeedWeighting,
     defer_cache_writes: bool,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
-    ppr_query_in_txn_with_identity(store, txn, seeds, depth, alphas, weighting,
-        PprCachePolicy { defer_writes: defer_cache_writes, community_identity: None })
+    ppr_query_in_txn_with_identity(
+        store,
+        txn,
+        seeds,
+        depth,
+        alphas,
+        weighting,
+        PprCachePolicy {
+            defer_writes: defer_cache_writes,
+            community_identity: None,
+        },
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -1065,13 +1160,16 @@ fn ppr_query_in_txn_with_identity(
         return Ok((Vec::new(), None));
     }
 
-    let seed_hash = hash_community_seeds(hash_seeds(
-        seeds,
-        depth,
-        alphas.teleport_alpha,
-        alphas.ppr_vad_alpha,
-        weighting,
-    ), policy.community_identity);
+    let seed_hash = hash_community_seeds(
+        hash_seeds(
+            seeds,
+            depth,
+            alphas.teleport_alpha,
+            alphas.ppr_vad_alpha,
+            weighting,
+        ),
+        policy.community_identity,
+    );
     let now = crate::unix_seconds_now();
     let current_graph_version = read_graph_version(store, txn)?;
     let cache_context = PprCacheReadContext {
@@ -1118,13 +1216,16 @@ fn read_deepest_resume_state(
     target_depth: u32,
 ) -> Result<Option<PprCacheState>> {
     for completed_depth in (0..target_depth).rev() {
-        let seed_hash = hash_community_seeds(hash_seeds(
-            context.seeds,
-            completed_depth,
-            context.teleport_alpha,
-            context.ppr_vad_alpha,
-            context.weighting,
-        ), context.community_identity);
+        let seed_hash = hash_community_seeds(
+            hash_seeds(
+                context.seeds,
+                completed_depth,
+                context.teleport_alpha,
+                context.ppr_vad_alpha,
+                context.weighting,
+            ),
+            context.community_identity,
+        );
         let Some(row) = read_resume_cache_row(context, &seed_hash, completed_depth)? else {
             continue;
         };
@@ -1667,7 +1768,9 @@ fn hash_community_seeds(
     baseline: [u8; SEED_HASH_LEN],
     identity: Option<[u8; 12]>,
 ) -> [u8; SEED_HASH_LEN] {
-    let Some(identity) = identity else { return baseline; };
+    let Some(identity) = identity else {
+        return baseline;
+    };
     let mut bytes = b"oneiron:ppr:community:v0\0".to_vec();
     bytes.extend_from_slice(&baseline);
     bytes.extend_from_slice(&identity);

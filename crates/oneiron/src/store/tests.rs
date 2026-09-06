@@ -4693,17 +4693,27 @@ fn community_store_fixture(vault: &Vault) -> Result<()> {
     for n in 1..=100 {
         vault.put_entity(&entity_id(n), 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
     }
-    vault.put_edge(&entity_id(1), crate::EdgeKind::BelongsTo, &entity_id(2), 1.0)?;
+    vault.put_edge(
+        &entity_id(1),
+        crate::EdgeKind::BelongsTo,
+        &entity_id(2),
+        1.0,
+    )?;
     vault.put_edge(&entity_id(1), crate::EdgeKind::Supports, &entity_id(3), 1.0)?;
     Ok(())
 }
 
 fn community_store_fixture_entity_ids(vault: &Vault) -> Result<BTreeSet<EntityId>> {
     let txn = vault.store.env.read_txn()?;
-    vault.store.entities.iter(&txn)?.map(|entry| {
-        let (key, _) = entry?;
-        EntityId::from_bytes(key.as_ref().try_into().expect("entity id key"))
-    }).collect()
+    vault
+        .store
+        .entities
+        .iter(&txn)?
+        .map(|entry| {
+            let (key, _) = entry?;
+            EntityId::from_bytes(key.as_ref().try_into().expect("entity id key"))
+        })
+        .collect()
 }
 
 #[test]
@@ -4717,25 +4727,62 @@ fn ppr_community_store_refresh_uses_vault_meta_and_only_live_outgoing_projection
     vault.put_edge(&entity_id(250), crate::EdgeKind::About, &entity_id(1), 1.0)?;
     {
         let mut txn = vault.store.env.write_txn()?;
-        vault.store.vault_meta.put(&mut txn, b"unrelated:sentinel", b"keep")?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut txn, b"unrelated:sentinel", b"keep")?;
         txn.commit()?;
     }
     let report = vault.refresh_ppr_communities(&[], 42)?;
     assert!(report.full_recompute);
     assert_eq!(report.recomputed_entities, expected_nodes.len());
     let txn = vault.store.env.read_txn()?;
-    let snapshot = vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot");
+    let snapshot = vault
+        .store
+        .ppr_community_snapshot_in_txn(&txn)?
+        .expect("snapshot");
     assert_eq!(snapshot.nodes.len(), expected_nodes.len());
-    assert_eq!(snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(), expected_nodes);
+    assert_eq!(
+        snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(),
+        expected_nodes
+    );
     assert!(!snapshot.nodes.contains_key(&entity_id(250)));
-    assert_eq!(snapshot.nodes[&entity_id(1)].fine, snapshot.nodes[&entity_id(2)].fine);
-    assert_ne!(snapshot.nodes[&entity_id(1)].fine, snapshot.nodes[&entity_id(3)].fine);
-    assert_ne!(snapshot.nodes[&entity_id(3)].fine, snapshot.nodes[&entity_id(4)].fine);
-    assert_eq!(snapshot.meta.graph_version, crate::ppr::read_graph_version(&vault.store, &txn)?);
+    assert_eq!(
+        snapshot.nodes[&entity_id(1)].fine,
+        snapshot.nodes[&entity_id(2)].fine
+    );
+    assert_ne!(
+        snapshot.nodes[&entity_id(1)].fine,
+        snapshot.nodes[&entity_id(3)].fine
+    );
+    assert_ne!(
+        snapshot.nodes[&entity_id(3)].fine,
+        snapshot.nodes[&entity_id(4)].fine
+    );
+    assert_eq!(
+        snapshot.meta.graph_version,
+        crate::ppr::read_graph_version(&vault.store, &txn)?
+    );
     assert_eq!(snapshot.meta.generated_at, 42);
-    assert_eq!(vault.store.vault_meta.get(&txn, b"unrelated:sentinel")?.expect("sentinel").as_ref(), b"keep");
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&txn, b"unrelated:sentinel")?
+            .expect("sentinel")
+            .as_ref(),
+        b"keep"
+    );
     for (key, value) in snapshot.encode_rows().expect("encode") {
-        assert_eq!(vault.store.vault_meta.get(&txn, &key)?.expect("row").as_ref(), value.as_slice());
+        assert_eq!(
+            vault
+                .store
+                .vault_meta
+                .get(&txn, &key)?
+                .expect("row")
+                .as_ref(),
+            value.as_slice()
+        );
     }
     Ok(())
 }
@@ -4747,34 +4794,70 @@ fn ppr_community_store_incremental_refresh_invalidates_versions_and_is_atomic() 
     vault.refresh_ppr_communities(&[], 42)?;
     let old = {
         let txn = vault.store.env.read_txn()?;
-        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("old")
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("old")
     };
-    vault.put_edge(&entity_id(1), crate::EdgeKind::BelongsTo, &entity_id(2), 0.0)?;
+    vault.put_edge(
+        &entity_id(1),
+        crate::EdgeKind::BelongsTo,
+        &entity_id(2),
+        0.0,
+    )?;
     assert!(vault.ppr_community_membership(&entity_id(1))?.is_none());
     let report = vault.refresh_ppr_communities(&[entity_id(1), entity_id(2)], 43)?;
     assert!(!report.full_recompute);
     let read = vault.store.env.read_txn()?;
-    let current = vault.store.ppr_community_snapshot_in_txn(&read)?.expect("current");
+    let current = vault
+        .store
+        .ppr_community_snapshot_in_txn(&read)?
+        .expect("current");
     assert_ne!(current.meta.graph_version, old.meta.graph_version);
-    assert_ne!(current.nodes[&entity_id(1)].fine, current.nodes[&entity_id(2)].fine);
+    assert_ne!(
+        current.nodes[&entity_id(1)].fine,
+        current.nodes[&entity_id(2)].fine
+    );
     assert_eq!(current.nodes[&entity_id(100)], old.nodes[&entity_id(100)]);
     let mut replacement = current.clone();
     replacement.meta.generated_at = 44;
     {
         let mut write = vault.store.env.write_txn()?;
-        vault.store.replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
         // No commit: an aborted replacement must not expose any new rows.
     }
-    assert_eq!(vault.store.ppr_community_snapshot_in_txn(&read)?.expect("old read"), current);
+    assert_eq!(
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&read)?
+            .expect("old read"),
+        current
+    );
     {
         let mut write = vault.store.env.write_txn()?;
-        vault.store.replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
         write.commit()?;
     }
-    assert_eq!(vault.store.ppr_community_snapshot_in_txn(&read)?.expect("snapshot isolation"), current);
+    assert_eq!(
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&read)?
+            .expect("snapshot isolation"),
+        current
+    );
     drop(read);
     let read = vault.store.env.read_txn()?;
-    assert_eq!(vault.store.ppr_community_snapshot_in_txn(&read)?.expect("published"), replacement);
+    assert_eq!(
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&read)?
+            .expect("published"),
+        replacement
+    );
     Ok(())
 }
 
@@ -4785,7 +4868,10 @@ fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Res
     vault.refresh_ppr_communities(&[], 42)?;
     let original = {
         let txn = vault.store.env.read_txn()?;
-        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot")
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("snapshot")
     };
     for remove_member in [true, false] {
         let mut invalid = original.clone();
@@ -4795,26 +4881,49 @@ fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Res
             invalid.nodes.pop_first();
         }
         let mut txn = vault.store.env.write_txn()?;
-        assert!(vault.store.replace_ppr_community_cache_in_txn(&mut txn, &invalid).is_err());
-        assert_eq!(vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("unchanged"), original);
+        assert!(
+            vault
+                .store
+                .replace_ppr_community_cache_in_txn(&mut txn, &invalid)
+                .is_err()
+        );
+        assert_eq!(
+            vault
+                .store
+                .ppr_community_snapshot_in_txn(&txn)?
+                .expect("unchanged"),
+            original
+        );
     }
     let mut stale = original;
     stale.meta.graph_version += 1;
     {
         let mut txn = vault.store.env.write_txn()?;
-        assert!(vault.store.replace_ppr_community_cache_in_txn(&mut txn, &stale).is_err());
+        assert!(
+            vault
+                .store
+                .replace_ppr_community_cache_in_txn(&mut txn, &stale)
+                .is_err()
+        );
     }
     let key = format!("ppr_community_cache:v0:node:{}", entity_id(1).to_hex());
     let mut txn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(&mut txn, key.as_bytes(), &[0; 31])?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, key.as_bytes(), &[0; 31])?;
     txn.commit()?;
     let txn = vault.store.env.read_txn()?;
-    assert!(matches!(vault.store.ppr_community_snapshot_in_txn(&txn), Err(Error::CorruptedIndex(_))));
+    assert!(matches!(
+        vault.store.ppr_community_snapshot_in_txn(&txn),
+        Err(Error::CorruptedIndex(_))
+    ));
     Ok(())
 }
 
 #[test]
-fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transaction() -> Result<()> {
+fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transaction() -> Result<()>
+{
     let (_dir, vault) = open_test_vault();
     community_store_fixture(&vault)?;
     // Only the two deleted fixture rows leave the live projection; all seven
@@ -4824,14 +4933,25 @@ fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transac
     assert!(expected_nodes.remove(&entity_id(1)));
     assert!(expected_nodes.remove(&entity_id(2)));
     let mut txn = vault.store.env.write_txn()?;
-    vault.store.sync_state.put(&mut txn, &crate::deletion::local_hard_delete_key(&entity_id(1)), b"deleted")?;
+    vault.store.sync_state.put(
+        &mut txn,
+        &crate::deletion::local_hard_delete_key(&entity_id(1)),
+        b"deleted",
+    )?;
     let pending = crate::deletion::pending_tombstone_key("1970-01", &entity_id(2));
     vault.store.sync_state.put(&mut txn, &pending, b"deleted")?;
     let (snapshot, _) = vault.store.compute_ppr_communities_in_txn(
-        &txn, None, &[], 42, &crate::PprCommunityConfig::default(),
+        &txn,
+        None,
+        &[],
+        42,
+        &crate::PprCommunityConfig::default(),
     )?;
     assert_eq!(snapshot.nodes.len(), 100 + 7 - 2);
-    assert_eq!(snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(), expected_nodes);
+    assert_eq!(
+        snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(),
+        expected_nodes
+    );
     assert!(!snapshot.nodes.contains_key(&entity_id(1)));
     assert!(!snapshot.nodes.contains_key(&entity_id(2)));
     Ok(())

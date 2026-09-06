@@ -353,14 +353,23 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
-    pub(super) fn community_trace_identity(&self, seeds: &[ScoredEntity], version: u64) -> [u8; 32] {
+    pub(super) fn community_trace_identity(
+        &self,
+        seeds: &[ScoredEntity],
+        version: u64,
+    ) -> [u8; 32] {
         use sha2::{Digest, Sha256};
         let mut hash = Sha256::new();
         hash.update(b"oneiron.retrieval_trace.community.v0");
         hash.update(version.to_le_bytes());
         let config = &self.vault.config.ppr_community;
-        for value in [config.beta, config.gamma, config.multiplier_cap,
-            config.max_graph_fraction, config.max_top_k_fraction] {
+        for value in [
+            config.beta,
+            config.gamma,
+            config.multiplier_cap,
+            config.max_graph_fraction,
+            config.max_top_k_fraction,
+        ] {
             hash.update(value.to_bits().to_le_bytes());
         }
         hash.update((seeds.len() as u64).to_le_bytes());
@@ -368,7 +377,11 @@ impl<'a> PipelineBuilder<'a> {
             hash.update(seed.id.as_bytes());
             hash.update(seed.score.to_bits().to_le_bytes());
         }
-        let mut usage: Vec<_> = self.community_session_usage.into_iter().flat_map(|map| map.iter()).collect();
+        let mut usage: Vec<_> = self
+            .community_session_usage
+            .into_iter()
+            .flat_map(|map| map.iter())
+            .collect();
         usage.sort_unstable_by_key(|(id, _)| **id);
         hash.update((usage.len() as u64).to_le_bytes());
         for (id, count) in usage {
