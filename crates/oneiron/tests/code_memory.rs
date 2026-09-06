@@ -1002,7 +1002,9 @@ fn blocks_discriminant_is_24() {
     assert_eq!(EdgeKind::Blocks.default_weight(), Some(1.0));
     assert_eq!(EdgeKind::try_from_u8(23), Some(EdgeKind::BlockedBy));
     assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
-    assert!(EdgeKind::try_from_u8(25).is_none());
+    assert_eq!(EdgeKind::Fulfills as u8, 25);
+    assert_eq!(EdgeKind::try_from_u8(25), Some(EdgeKind::Fulfills));
+    assert!(EdgeKind::try_from_u8(27).is_none());
 }
 
 /// `discovered-from` reuses the EXISTING `derived_from` kind. No alias is

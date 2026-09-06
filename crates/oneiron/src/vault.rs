@@ -278,6 +278,110 @@ impl Vault {
         Self::open_seeded(path, config, DefaultPolicySeedMode::TestUnseeded)
     }
 
+    /// Adds one actor-bound Imported source permit to a stock default manifest.
+    /// TEST-SUPPORT ONLY: the cap is the unstamped sensitivity floor, with the
+    /// required receipt/warning flags. Every other policy field stays unchanged.
+    /// Claims still use the normal write gate; this grants no review approval,
+    /// actor ceiling, source relabeling, or raw storage access.
+    ///
+    /// Refuses a missing or already customized default manifest rather than
+    /// replacing caller policy. Other installed manifests remain in the fold.
+    /// `Vault::open` never calls this, even when `test-support` is enabled.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_imported_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
+        use crate::batch::{BatchOp, apply_ops};
+        use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
+        use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use rmpv::Value;
+
+        let id = crate::gate::default_policy_manifest_id()?;
+        let default = crate::gate::default_policy_manifest();
+        let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
+            .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
+        let Value::Map(entries) = &mut manifest else {
+            return Err(Error::InvariantViolation(
+                "default test policy is not a map",
+            ));
+        };
+        let Some(Value::Map(rows)) = entries
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("source_trust")).then_some(value))
+        else {
+            return Err(Error::InvariantViolation(
+                "default test policy has no source trust",
+            ));
+        };
+        if rows
+            .iter()
+            .any(|(key, _)| key.as_str() == Some(ClaimSource::Imported.as_str()))
+        {
+            return Err(Error::InvariantViolation(
+                "default test policy already covers Imported",
+            ));
+        }
+        rows.push((
+            Value::from(ClaimSource::Imported.as_str()),
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                (
+                    Value::from("max_auto_sensitivity"),
+                    Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (Value::from("receipted"), Value::Boolean(true)),
+                (Value::from("warned"), Value::Boolean(true)),
+            ]),
+        ));
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &manifest)
+            .map_err(|_| Error::InvariantViolation("encode Imported test policy"))?;
+
+        self.with_write_txn(|wtxn| {
+            let raw =
+                self.store
+                    .entities
+                    .get(wtxn, id.as_bytes())?
+                    .ok_or(Error::InvariantViolation(
+                        "test permit requires a seeded default policy",
+                    ))?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("test policy header"))?;
+            if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+                || raw[ENTITY_METADATA_HEADER_LEN..] != default
+            {
+                return Err(Error::InvariantViolation(
+                    "test permit requires an unchanged default policy",
+                ));
+            }
+            // The test-only capability is confined to this fixed manifest Put.
+            // Use the existing maintenance install path, not raw database writes
+            // or replicated replay. Index maintenance and structural checks run.
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                vec![BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    learned_at: header.learned_at,
+                    data,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                true,
+                true,
+            )
+        })
+    }
+
     fn open_seeded(
         path: impl AsRef<Path>,
         config: VaultConfig,

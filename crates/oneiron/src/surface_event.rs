@@ -350,8 +350,24 @@ pub struct SurfaceEvent {
     pub workspace_ref: Option<String>,
     /// ChannelIdentity entity addressed by this inbound payload.
     pub receiving_identity_ref: String,
-    /// Agent resolved from the receiving ChannelIdentity binding.
-    pub agent_ref: String,
+    /// Actor resolved from the receiving ChannelIdentity binding.
+    ///
+    /// Reads rows written before INB-06, where this field was spelled
+    /// `agent_ref`: the rename did not change the value — an agent bound to an
+    /// identity always WAS the actor speaking on it.
+    #[serde(alias = "agent_ref")]
+    pub actor_ref: String,
+    /// Facet mask the actor wears on this channel, when one is bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facet_ref: Option<String>,
+    /// PERSON or ORG standing behind the actor, resolved at routing time.
+    ///
+    /// `None` is the PLUMBING answer and is NOT a failure: an actor with no
+    /// subject anchor is a relay or bot with no someone behind it, and it
+    /// routes exactly like an anchored one. Already canonicalized through the
+    /// redirect projection, so a merged subject stamps its survivor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_ref: Option<String>,
     pub counterparty: SurfaceCounterpartyStamp,
     /// Closed source app plus the provider-native sending user.
     pub source: SurfaceEventSource,
@@ -671,7 +687,7 @@ impl Vault {
         let disposition = dispatcher.dispatch(SurfaceEventDispatchRequest {
             event: &payload.event,
             route: payload.route,
-            agent_ref: &payload.event.agent_ref,
+            agent_ref: &payload.event.actor_ref,
             correlation_id: &payload.event.correlation_id,
             idempotency_key: &payload.dispatch_idempotency_key,
         });
@@ -904,8 +920,16 @@ fn route_inbound_surface_event(
         ));
     };
 
-    let agent_ref = match identity.binding {
-        ChannelIdentityBinding::Agent { agent_ref } => agent_ref,
+    // A vault-bound identity names no actor, so there is nobody for the event
+    // to be delivered TO. The reason keeps its pre-INB-06 variant name and
+    // wire string `non_agent_bound_identity`: adapters branch on it and the
+    // `/v1/core` schema enumerates it, so it is receipt-stable and is NOT
+    // renamed to follow the actor vocabulary.
+    let (actor_ref, facet_ref) = match identity.binding {
+        ChannelIdentityBinding::Actor {
+            actor_ref,
+            facet_ref,
+        } => (actor_ref, facet_ref),
         ChannelIdentityBinding::Vault { .. } => {
             return Ok(rejected_receipt(
                 input,
@@ -922,21 +946,21 @@ fn route_inbound_surface_event(
         ChannelIdentityState::Active | ChannelIdentityState::Rotating => routed_receipt(
             input,
             identity_ref,
-            agent_ref,
+            ActorStamps::resolve(vault, actor_ref, facet_ref)?,
             false,
             claims_not_instructions,
         ),
         ChannelIdentityState::Released | ChannelIdentityState::Quarantine => routed_receipt(
             input,
             identity_ref,
-            agent_ref,
+            ActorStamps::resolve(vault, actor_ref, facet_ref)?,
             true,
             claims_not_instructions,
         ),
         ChannelIdentityState::Tombstone => Ok(rejected_receipt(
             input,
             Some(identity_ref),
-            Some(agent_ref),
+            Some(actor_ref),
             false,
             claims_not_instructions,
             InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
@@ -945,12 +969,45 @@ fn route_inbound_surface_event(
             Ok(rejected_receipt(
                 input,
                 Some(identity_ref),
-                Some(agent_ref),
+                Some(actor_ref),
                 false,
                 claims_not_instructions,
                 InboundSurfaceRejectionReason::InactiveReceivingIdentity,
             ))
         }
+    }
+}
+
+/// Everything the binding + subject model say about who is speaking here.
+///
+/// Bundled so the routed arms cannot drift on which of the three stamps they
+/// carry: an event that names an actor but forgets its resolved subject would
+/// read downstream as plumbing, which is a different claim about the world.
+struct ActorStamps {
+    actor_ref: EntityId,
+    facet_ref: Option<EntityId>,
+    subject_ref: Option<EntityId>,
+}
+
+impl ActorStamps {
+    fn resolve(vault: &Vault, actor_ref: EntityId, facet_ref: Option<EntityId>) -> Result<Self> {
+        let rtxn = vault.store.env.read_txn()?;
+        if let Some(facet) = facet_ref
+            && vault.get_entity_type_in_txn(&rtxn, &facet)?
+                != Some(crate::registry::ENTITY_TYPE_FACET)
+        {
+            return Err(Error::InvalidChannelIdentityBody(
+                "channel identity binding facet_ref must name a FACET",
+            ));
+        }
+        let subject_ref =
+            crate::subject_model::actor_subject_anchor_in_txn(vault, &rtxn, &actor_ref)?
+                .map(|anchor| anchor.subject_ref);
+        Ok(Self {
+            actor_ref,
+            facet_ref,
+            subject_ref,
+        })
     }
 }
 
@@ -968,7 +1025,7 @@ fn route_inbound_surface_event(
 fn routed_receipt(
     input: InboundSurfaceEventInput,
     identity_ref: EntityId,
-    agent_ref: EntityId,
+    stamps: ActorStamps,
     identity_retiring: bool,
     claims_not_instructions: bool,
 ) -> Result<InboundSurfaceRouteReceipt> {
@@ -986,7 +1043,9 @@ fn routed_receipt(
         receiving_address_or_handle: input.receiving_address_or_handle.clone(),
         workspace_ref: input.workspace_ref.clone(),
         receiving_identity_ref: identity_ref.to_hex(),
-        agent_ref: agent_ref.to_hex(),
+        actor_ref: stamps.actor_ref.to_hex(),
+        facet_ref: stamps.facet_ref.map(|id| id.to_hex()),
+        subject_ref: stamps.subject_ref.map(|id| id.to_hex()),
         counterparty: input.counterparty.clone(),
         source: input.source.clone(),
         action: input.action.clone(),
@@ -1007,7 +1066,10 @@ fn routed_receipt(
         receiving_address_or_handle: input.receiving_address_or_handle,
         workspace_ref: input.workspace_ref,
         receiving_identity_ref: Some(identity_ref.to_hex()),
-        agent_ref: Some(agent_ref.to_hex()),
+        // The receipt field keeps its `agent_ref` spelling: it is projected
+        // into the `/v1/core` OpenAPI contract, so renaming it would break a
+        // published wire schema for a vocabulary change.
+        agent_ref: Some(stamps.actor_ref.to_hex()),
         counterparty: input.counterparty,
         foreign_inbound: input.foreign_inbound,
         claims_not_instructions,

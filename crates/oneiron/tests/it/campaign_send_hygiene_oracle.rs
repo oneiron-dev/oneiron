@@ -11,8 +11,8 @@
 //! opposite conditions:
 //!
 //! * [`oracle_vault`] is unseeded, so the claim write door is open and
-//!   suppression writes land. Its dispatches never reach a connector, which is
-//!   exactly what the suppression tests want to measure.
+//!   suppression writes land. Matching opt-outs must raise the specific pending
+//!   owner-decision reason, not merely avoid reaching a connector (ONE-1752).
 //! * [`sending_vault`] is seeded and granted, so an admitted send is observed
 //!   ARRIVING at the connector with its frozen headers. The header tests need
 //!   that: on a fail-closed vault an empty header map would be vacuously true.
@@ -41,7 +41,8 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result,
     TimeRange, Vault, VaultConfig, genui::GrantMintIntent, genui::GrantMintIntentScope,
     outbound::OutboundDeliveryWindowDecision, outbound::OutboundDispatchActor,
-    outbound::OutboundDispatchGate, outbound::OutboundDispatchRequest,
+    outbound::OutboundDispatchGate, outbound::OutboundDispatchOutcome,
+    outbound::OutboundDispatchRequest, outbound::OutboundDispatchResult,
     outbound::OutboundExecutionOutcome, outbound::OutboundExecutionRequest,
     outbound::OutboundExecutionSink, outbound::OutboundIntent, outbound::OutboundIntentDraft,
     outbound::OutboundIntentTrigger,
@@ -51,7 +52,7 @@ const CHANNEL: &str = "email";
 const OTHER_CHANNEL: &str = "telegram";
 const VERB: &str = "send";
 const COUNTERPARTY: &str = "mika@example.com";
-const DENY_OPT_OUT: &str = "gate.deny.counterparty_opt_out";
+const PENDING_OPT_OUT: &str = "gate.pending.counterparty_opt_out";
 
 const HTTPS_TARGET: &str = "https://example.com/u/opaque-123";
 const MAILTO_TARGET: &str = "mailto:unsubscribe@example.com?subject=unsub";
@@ -270,8 +271,35 @@ fn dispatch(
     vault.dispatch_outbound_intent(request, sink).unwrap()
 }
 
-fn denies(reason_codes: &[String]) -> bool {
-    reason_codes.iter().any(|code| code == DENY_OPT_OUT)
+fn holds(reason_codes: &[String]) -> bool {
+    reason_codes.iter().any(|code| code == PENDING_OPT_OUT)
+}
+
+fn assert_opt_out_hold(result: &OutboundDispatchResult) {
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(result.gate_outcome, "pending");
+    assert_eq!(result.gate_reason_codes, vec![PENDING_OPT_OUT.to_owned()]);
+    assert_eq!(result.receipt.outcome, "held");
+    for reason in [PENDING_OPT_OUT, "counterparty_opt_out_do_not_contact"] {
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .iter()
+                .any(|code| code == reason),
+            "the opt-out hold retains its receipt reason: {reason}"
+        );
+    }
+    assert_eq!(
+        result.receipt.fields.get("hold_reason").map(String::as_str),
+        Some(PENDING_OPT_OUT)
+    );
+    assert!(!result.receipt.fields.contains_key("suppression"));
+    assert!(!result.receipt.fields.contains_key("suppression_reason"));
+    assert!(
+        !result.receipt.fields.contains_key("intent_state"),
+        "the gate hold stops before dispatch ledger admission"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -424,9 +452,14 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
     let actor = test_id(PERSON_SEED);
     let mut sink = HeaderSink::default();
 
-    // Control: this send is not denied for opt-out before the unsubscribe.
+    // Control: no opt-out hold before the unsubscribe, only missing authority.
     let control = dispatch(&vault, actor, CHANNEL, "intent:control", None, &mut sink);
-    assert!(!denies(&control.gate_reason_codes));
+    assert!(!holds(&control.gate_reason_codes));
+    assert_eq!(control.gate_outcome, "pending");
+    assert_eq!(
+        control.gate_reason_codes,
+        vec!["gate.pending.external_effect_authority".to_owned()]
+    );
 
     // The PERSON the gate resolves the counterparty to.
     let counterparty = oneiron::comm::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
@@ -450,7 +483,7 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
     assert!(
         receipt.member_claim_ref.is_none(),
         "an inbound signal naming no campaign supersedes no membership; the \
-         campaign-independent suppression is what refuses the send"
+         campaign-independent suppression is what holds the send"
     );
     // The enforcement claim cites the inbound evidence it derives from, so the
     // suppression and its reason landed together rather than the claim landing
@@ -460,14 +493,14 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
     assert_eq!(head.lifecycle, ClaimLifecycleStatus::Active);
 
     // No projector ran, no timer fired, no queue was drained between the call
-    // above and the send below. The very next attempt is refused.
-    let denied = dispatch(&vault, actor, CHANNEL, "intent:unsub", None, &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert!(denies(&denied.gate_reason_codes));
+    // above and the send below. The next dispatch is held for an owner decision
+    // at the gate, without admitting a transport attempt.
+    let held = dispatch(&vault, actor, CHANNEL, "intent:unsub", None, &mut sink);
+    assert_opt_out_hold(&held);
     assert!(sink.calls.is_empty());
 
     // Staleness never un-suppresses: a head whose validity window closed long
-    // ago, and a head that was never approved, both still refuse the send.
+    // ago, and a head that was never approved, both still hold the send.
     clear_do_not_contact(&vault, counterparty, 70);
     write_raw_do_not_contact(
         &vault,
@@ -477,7 +510,7 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
         Some(5),
     )?;
     let stale = dispatch(&vault, actor, CHANNEL, "intent:stale", None, &mut sink);
-    assert!(denies(&stale.gate_reason_codes));
+    assert_opt_out_hold(&stale);
 
     clear_do_not_contact(&vault, counterparty, 71);
     write_raw_do_not_contact(
@@ -488,13 +521,19 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
         None,
     )?;
     let proposed = dispatch(&vault, actor, CHANNEL, "intent:proposed", None, &mut sink);
-    assert!(denies(&proposed.gate_reason_codes));
+    assert_opt_out_hold(&proposed);
 
     // Only an authorized lifecycle stamp clears it. Nothing else in this test
     // touched the head, and nothing else could have.
     clear_do_not_contact(&vault, counterparty, 80);
     let cleared = dispatch(&vault, actor, CHANNEL, "intent:cleared", None, &mut sink);
-    assert!(!denies(&cleared.gate_reason_codes));
+    assert!(!holds(&cleared.gate_reason_codes));
+    assert_eq!(cleared.gate_outcome, control.gate_outcome);
+    assert_eq!(cleared.gate_reason_codes, control.gate_reason_codes);
+    assert!(
+        sink.calls.is_empty(),
+        "opt-out holds never reach the transport; the cleared control is still fail-closed"
+    );
     Ok(())
 }
 
