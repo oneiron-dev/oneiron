@@ -1152,18 +1152,22 @@ impl<'a> AttemptQueue<'a> {
     /// is the only honest logical retry counter: a caller spacing retries must
     /// read the depth here rather than infer one from a per-row lease counter.
     ///
-    /// Corruption fails CLOSED. A link naming a row this queue does not hold,
-    /// one returning to a row already on the walk, or one whose parent exists
-    /// but is NOT a try of this same attempt, is an
-    /// [`Error::InvalidAttemptQueueRecord`] — never a silently short depth,
-    /// which would collapse a long backoff back onto its first rung. Identity
-    /// is re-checked at EVERY hop, not just the first: a structurally valid
-    /// row pointing at an unrelated chain would otherwise be counted, and the
-    /// depth a caller spaces its backoff by would be some foreign lineage's.
-    /// The walk spends at most `RETRY_CHAIN_DEPTH_LIMIT` (1,024) point reads
-    /// and saturates there, so a legitimately vast lineage is bounded work
-    /// rather than an error. All hops read one snapshot, so a concurrent retry
-    /// cannot make the walk observe half of two different chains.
+    /// Missing rows, cycles, and content-inconsistent hops encountered during
+    /// the bounded walk fail CLOSED with [`Error::InvalidAttemptQueueRecord`],
+    /// never a silently short depth that would collapse a long backoff onto
+    /// its first rung. Every visited hop compares six fields: `kind`, `payload`,
+    /// `task_ref`, `run_id`, `dedupe_key`, and `dedupe_actor_ref`. This checks
+    /// content consistency, not general chain uniqueness: unrelated rows with
+    /// identical values for all six fields are indistinguishable. To distinguish
+    /// independent roots, they must differ on at least one of these fields.
+    /// The durable connector satisfies this prerequisite with a unique
+    /// `task_ref` per independent root.
+    ///
+    /// The walk reads the initial row plus at most `RETRY_CHAIN_DEPTH_LIMIT`
+    /// (1,024) parent rows. Hop depth saturates at 1,024, so a legitimately vast
+    /// lineage is bounded work rather than an error. All rows read one snapshot,
+    /// so a concurrent retry cannot make the walk observe half of two different
+    /// chains.
     pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
         let rtxn = self.store.env.read_txn()?;
         let mut visited = HashSet::from([id]);
