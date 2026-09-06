@@ -318,6 +318,7 @@ pub enum ErrorKind {
     ConnectorCharterApprovalMismatch,
     ConnectorCharterMissing,
     InvalidChannelIdentityBody,
+    WorkspaceMailboxAutonomyNotReady,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
     InvalidDiagnosticBody,
@@ -1239,6 +1240,15 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid channel identity body: {0}")]
     InvalidChannelIdentityBody(&'static str),
+    /// Custody is bound, but the ONE-1829 starting-mode door is not available.
+    /// The workspace onboarding journal remains resumable and incomplete.
+    #[error(
+        "workspace mailbox autonomy is not ready for {identity_ref:?} (requested {requested_mode})"
+    )]
+    WorkspaceMailboxAutonomyNotReady {
+        identity_ref: EntityId,
+        requested_mode: String,
+    },
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -2443,6 +2453,9 @@ impl Error {
             Self::ConnectorCharterApprovalMismatch => ErrorKind::ConnectorCharterApprovalMismatch,
             Self::ConnectorCharterMissing => ErrorKind::ConnectorCharterMissing,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
+            Self::WorkspaceMailboxAutonomyNotReady { .. } => {
+                ErrorKind::WorkspaceMailboxAutonomyNotReady
+            }
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,
