@@ -23,7 +23,7 @@ fn two_retryable_transport_failures_retain_both_audit_rows() -> crate::Result<()
     put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
     put_policy_manifest_bytes(
         &vault,
-        entity(0xE1),
+        entity(0xEC),
         &policy_manifest(&actor.to_hex(), "slack", &["react"]),
     )?;
     let draft = one_1768_draft("slack", "react", "retry-audit-history");
