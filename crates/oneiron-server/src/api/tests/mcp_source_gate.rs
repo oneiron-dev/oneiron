@@ -117,6 +117,9 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
         end: 200,
     };
     let raw_claim_id = oneiron::EntityId::now();
+    let above_cap_claim_id = oneiron::EntityId::now();
+    // Proposed raw puts cannot carry a source stamp. Keep a valid source-less
+    // raw claim in the mixed batch and write the sourced proposal via its envelope.
     let raw_body = rmpv::Value::Map(vec![
         (
             rmpv::Value::from("pred"),
@@ -128,10 +131,9 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
         ),
         (
             rmpv::Value::from("val"),
-            rmpv::Value::from("above-cap proposal"),
+            rmpv::Value::from("source-less raw proposal"),
         ),
         (rmpv::Value::from("conf"), rmpv::Value::F32(0.8)),
-        (rmpv::Value::from("src"), rmpv::Value::from("tool_output")),
         (rmpv::Value::from("appr"), rmpv::Value::from("proposed")),
         (rmpv::Value::from("life"), rmpv::Value::from("active")),
         (
@@ -159,15 +161,34 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
         );
         let mut batch = server.vault.batch();
         if include_source {
-            // The apply mode covers raw claim puts too. Their preflight must
-            // see the same source input in a mixed batch.
-            batch = batch.with_source_in_gate_input().put(
-                &raw_claim_id,
-                oneiron::registry::ENTITY_TYPE_CLAIM,
-                occurred,
-                200,
-                &raw_data,
+            // Mix a valid raw put with public and above-cap envelope writes.
+            // Each preflight receipt must agree with its applied claim.
+            let above_cap_candidate = oneiron::ClaimCandidate::new(
+                "profile.batch_source_gate",
+                oneiron::ClaimSubject::Entity(actor_ref),
+                rmpv::Value::from("above-cap proposal"),
+                0.8,
+            )
+            .with_scope(
+                oneiron::companion_value_from_json(&json!({ "sensitivity": 1 }))
+                    .expect("above-cap scope"),
             );
+            batch = batch
+                .with_source_in_gate_input()
+                .put(
+                    &raw_claim_id,
+                    oneiron::registry::ENTITY_TYPE_CLAIM,
+                    occurred,
+                    200,
+                    &raw_data,
+                )
+                .claim_candidate(
+                    &above_cap_claim_id,
+                    above_cap_candidate,
+                    &envelope,
+                    occurred,
+                    200,
+                );
         }
         batch
             .claim_candidate(&claim_id, candidate, &envelope, occurred, 200)
@@ -175,7 +196,31 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
             .expect("store public proposal");
         assert_tool_output_proposal_gate(&server.vault, claim_id, !include_source);
         if include_source {
-            assert_tool_output_proposal_gate(&server.vault, raw_claim_id, true);
+            assert_tool_output_proposal_gate(&server.vault, above_cap_claim_id, true);
+            let stored = server
+                .vault
+                .get_claim(&raw_claim_id)
+                .expect("read raw proposal")
+                .expect("raw proposal must be stored");
+            assert_eq!(stored.source, None);
+            assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
+            let decisions = server.vault.gate_decisions(20).expect("read gate decisions");
+            let decisions: Vec<_> = decisions
+                .iter()
+                .filter(|decision| decision.claim_id == Some(*raw_claim_id.as_bytes()))
+                .collect();
+            assert_eq!(decisions.len(), 1, "one preflight receipt for the raw claim");
+            assert_eq!(decisions[0].outcome, "allow");
+            assert_eq!(decisions[0].reason_codes, vec!["gate.allow"]);
+            assert!(
+                server
+                    .vault
+                    .pending_gate_consents(20)
+                    .expect("read pending consent")
+                    .iter()
+                    .all(|pending| pending.claim_id != *raw_claim_id.as_bytes()),
+                "raw apply must agree with preflight allow"
+            );
         }
     }
 }
