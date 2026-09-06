@@ -589,13 +589,12 @@ impl<'a> ContextPackBuilder<'a> {
     /// deliberate: a later explicit [`Self::token_budget`] or
     /// [`Self::token_allocation`] overrides these profile defaults, so a
     /// per-request override always wins over the stored profile.
-    #[must_use]
     pub fn memory_profile(mut self, profile: Option<&MemoryProfile>) -> Self {
         let Some(profile) = profile else {
             return self;
         };
-        self.token_budget = usize::try_from(profile.window_token_budget)
-            .unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET);
+        self.token_budget =
+            usize::try_from(profile.window_token_budget).unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET);
         if let Some(split) = profile.budget_split {
             self.token_allocation = TokenAllocation {
                 claims: split.claims,

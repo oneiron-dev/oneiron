@@ -48,6 +48,17 @@ fn mint_session(vault: &Vault, now: u64) -> EntityId {
 /// the TURN id. Rides the PRODUCTION witness door, so the membership edge
 /// under test is the one production writes.
 fn witness_turn(vault: &Vault, actor: EntityId, conversation: u8, turn: u8, at: u64) -> EntityId {
+    witness_turn_with_message_order(vault, actor, conversation, turn, at, 0)
+}
+
+fn witness_turn_with_message_order(
+    vault: &Vault,
+    actor: EntityId,
+    conversation: u8,
+    turn: u8,
+    at: u64,
+    order: u32,
+) -> EntityId {
     let turn_id = entity(turn);
     vault
         .memory(actor, EdgeActorClass::Human)
@@ -61,7 +72,7 @@ fn witness_turn(vault: &Vault, actor: EntityId, conversation: u8, turn: u8, at: 
                 content: "compaction fixture content".to_owned(),
                 metadata: None,
                 is_visible: true,
-                order: 0,
+                order,
             }],
             occurred_at: at,
         })
@@ -549,10 +560,20 @@ fn appending_to_a_turn_never_rewrites_its_membership() {
     let turn = witness_turn(&vault, actor, 0x59, 0x5A, 500);
     assert_eq!(membership_of(&vault, &turn), Some(session));
 
-    // The same TURN is appended to. Membership is first-write-wins, so the
-    // append rewrites nothing and the turn keeps one sitting.
-    let appended = witness_turn(&vault, actor, 0x59, 0x5A, 900);
+    // Append a fresh MESSAGE at the next position in the same TURN.
+    // Membership is first-write-wins, so the turn keeps its original sitting.
+    let appended = witness_turn_with_message_order(&vault, actor, 0x59, 0x5A, 900, 1);
     assert_eq!(appended, turn);
+    assert_eq!(
+        vault
+            .edges_in(&turn)
+            .expect("turn messages")
+            .into_iter()
+            .filter(|edge| edge.kind == EdgeKind::PartOf)
+            .count(),
+        2,
+        "the append adds a distinct message to the existing turn"
+    );
     assert_eq!(
         membership_of(&vault, &turn),
         Some(session),
@@ -669,17 +690,16 @@ fn cheap_registry() -> CompactionBackendRegistry {
 }
 
 fn profile(budget: u64, ownership: CompactionOwnership) -> MemoryProfile {
-    MemoryProfile::new(
-        budget,
-        ModelTierRef(CHEAP_BACKEND.to_owned()),
-        ownership,
-    )
+    MemoryProfile::new(budget, ModelTierRef(CHEAP_BACKEND.to_owned()), ownership)
 }
 
 fn engine_driver(budget: u64) -> CompactionDriver {
-    CompactionDriver::for_profile(&profile(budget, CompactionOwnership::Engine), &cheap_registry())
-        .expect("engine profile resolves")
-        .expect("an engine profile produces a driver")
+    CompactionDriver::for_profile(
+        &profile(budget, CompactionOwnership::Engine),
+        &cheap_registry(),
+    )
+    .expect("engine profile resolves")
+    .expect("an engine profile produces a driver")
 }
 
 fn put_turn(vault: &Vault, seed: u8, at: u64) -> EntityId {
@@ -740,12 +760,72 @@ fn compact_once(
     driver.integrate(vault, &session, actor, &request, product, &[])
 }
 
+/// Drives one crossing → request → integrate cycle with a HOST-supplied
+/// product, so a test can hand the mint a product no backend would return.
+fn integrate_product(
+    vault: &Vault,
+    driver: &mut CompactionDriver,
+    session: EntityId,
+    actor: WriteActor,
+    window: Vec<CompactionWindowMessage>,
+    summary_text: &str,
+) -> Result<SwapPlan> {
+    let directive = driver.evaluate_now(vault, u64::MAX)?;
+    assert!(matches!(directive, CompactionDirective::Begin { .. }));
+    let request = driver.request_for(vault, &session, window)?;
+    driver.integrate(
+        vault,
+        &session,
+        actor,
+        &request,
+        CompactionProduct {
+            summary_text: summary_text.to_owned(),
+            latency: Duration::from_millis(500),
+        },
+        &[],
+    )
+}
+
 fn stored_summary_body(vault: &Vault, id: &EntityId) -> EpochSummaryBody {
     let raw = vault
         .get(id)
         .expect("read summary")
         .expect("summary exists");
     decode_epoch_summary_body(&raw).expect("stored body decodes as an epoch summary")
+}
+
+/// Every SUMMARY row in the vault, counted off the entity table's own type
+/// byte rather than off anything the driver returned.
+fn summary_row_count(vault: &Vault) -> usize {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut rows = 0_usize;
+    for row in vault.store.entities.iter(&rtxn).expect("entity iter") {
+        let (_, raw) = row.expect("entity row");
+        let header = EntityMetadataHeader::parse(&raw).expect("entity header parses");
+        if header.entity_type == ENTITY_TYPE_SUMMARY {
+            rows += 1;
+        }
+    }
+    drop(rtxn);
+    rows
+}
+
+/// Pending-embedding markers, read through the same `pe:` prefix the
+/// embedder's own sweep walks.
+fn pending_embedding_marker_count(vault: &Vault) -> usize {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let mut markers = 0_usize;
+    for row in vault
+        .store
+        .sync_state
+        .prefix_iter(&rtxn, "pe:")
+        .expect("marker prefix iter")
+    {
+        row.expect("marker row");
+        markers += 1;
+    }
+    drop(rtxn);
+    markers
 }
 
 // ── backend registry and the frontier ban ───────────────────────────────
@@ -969,7 +1049,11 @@ fn request_for_carries_the_host_window_and_the_profile_summary_budget() -> Resul
 
     assert_eq!(request.session_ref, session);
     assert_eq!(
-        request.window.iter().map(|row| row.turn_id).collect::<Vec<_>>(),
+        request
+            .window
+            .iter()
+            .map(|row| row.turn_id)
+            .collect::<Vec<_>>(),
         turn_ids,
         "the host's rows ride through verbatim, TURN ids included"
     );
@@ -978,13 +1062,16 @@ fn request_for_carries_the_host_window_and_the_profile_summary_budget() -> Resul
         request.summary_token_budget, 250,
         "no split: the named default summary fraction of the window budget"
     );
-    assert_eq!(request.turn_start, 1, "the first epoch starts at the window");
+    assert_eq!(
+        request.turn_start, 1,
+        "the first epoch starts at the window"
+    );
 
     // The split, when present, is the authority instead.
     let split_profile = profile(1_000, CompactionOwnership::Engine)
         .with_budget_split(ContextBudgetSplit::new(0.25, 0.25, 0.4, 0.1));
-    let mut split_driver = CompactionDriver::for_profile(&split_profile, &cheap_registry())?
-        .expect("engine driver");
+    let mut split_driver =
+        CompactionDriver::for_profile(&split_profile, &cheap_registry())?.expect("engine driver");
     split_driver.evaluate_now(&vault, u64::MAX)?;
     let split_request =
         split_driver.request_for(&vault, &session, host_window(&vault, 0xA0, 1, 1))?;
@@ -1076,7 +1163,10 @@ fn starvation_check_covers_the_whole_predicate_table() -> Result<()> {
     // The session is still message-accepting throughout: emitting a signal is
     // the whole response, and the driver stays in flight.
     assert!(both.is_compacting());
-    assert_eq!(both.evaluate_now(&vault, u64::MAX)?, CompactionDirective::Quiet);
+    assert_eq!(
+        both.evaluate_now(&vault, u64::MAX)?,
+        CompactionDirective::Quiet
+    );
     Ok(())
 }
 
@@ -1237,6 +1327,120 @@ fn the_swap_plan_replays_the_accumulated_tail_without_duplicating_a_message() ->
     Ok(())
 }
 
+// ── the mint refuses an empty product ───────────────────────────────────
+
+/// An empty product is a FAILED compaction wearing a success's clothes.
+/// Minting it would swap a real message-log prefix out for a keyframe holding
+/// none of it, and the row is byte-stable with no update path — so the loss
+/// would be permanent. The refusal lands before the write transaction opens.
+#[test]
+fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x6D);
+    let mut driver = engine_driver(1_000);
+    let window = host_window(&vault, 0x43, 1, 3);
+    let latency_before = driver.margin().measured_latency_ms();
+
+    let refused = integrate_product(&vault, &mut driver, session, actor, window, "")
+        .expect_err("an empty product is not a compaction result");
+    assert_eq!(
+        invariant(refused),
+        "compaction product summary_text is empty"
+    );
+
+    assert_eq!(
+        summary_row_count(&vault),
+        0,
+        "a refused mint writes no SUMMARY row"
+    );
+    assert_eq!(
+        pending_embedding_marker_count(&vault),
+        0,
+        "and no pending-embedding marker leaks for a row that never existed"
+    );
+
+    // `integrate` returned before any state mutation: the compaction is still
+    // in flight, and the margin law never swallowed the failed run's latency.
+    assert!(
+        driver.is_compacting(),
+        "the refusal precedes the state transition, so the driver stays Compacting"
+    );
+    assert_eq!(driver.margin().measured_latency_ms(), latency_before);
+
+    // The host takes the documented backend-failure exit, and the next
+    // threshold crossing re-arms Begin — nothing was minted to block it.
+    driver.abandon();
+    assert!(!driver.is_compacting(), "abandon returns to Idle");
+    assert!(matches!(
+        driver.evaluate_now(&vault, 900)?,
+        CompactionDirective::Begin { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x6E);
+    let mut driver = engine_driver(1_000);
+    let window = host_window(&vault, 0x48, 1, 2);
+
+    let refused = integrate_product(&vault, &mut driver, session, actor, window, " \t\r\n ")
+        .expect_err("whitespace is not a summary");
+    assert_eq!(
+        invariant(refused),
+        "compaction product summary_text is empty",
+        "blank prose is refused on the same axis as no prose at all"
+    );
+    assert_eq!(summary_row_count(&vault), 0);
+    assert_eq!(pending_embedding_marker_count(&vault), 0);
+    assert!(driver.is_compacting());
+    Ok(())
+}
+
+#[test]
+fn a_real_product_still_mints_after_an_empty_one_was_refused() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x6F);
+    let mut driver = engine_driver(1_000);
+
+    let refused = integrate_product(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        host_window(&vault, 0x43, 1, 2),
+        "",
+    )
+    .expect_err("the empty product is refused");
+    assert_eq!(
+        invariant(refused),
+        "compaction product summary_text is empty"
+    );
+    driver.abandon();
+
+    // The refusal consumed no epoch: the retry mints epoch 1, because the
+    // durable summaries ARE the counter and none of them exists yet.
+    let plan = compact_once(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        host_window(&vault, 0x58, 1, 2),
+    )?;
+    assert_eq!(plan.epoch, 1, "the refused attempt burned no epoch number");
+    assert_eq!(summary_row_count(&vault), 1);
+    let minted_text = stored_summary_body(&vault, &plan.summary_id).text;
+    assert!(
+        !minted_text.is_empty(),
+        "the mint that landed carries prose"
+    );
+    Ok(())
+}
+
 // ── the epoch-summary codec ─────────────────────────────────────────────
 
 fn sample_body() -> EpochSummaryBody {
@@ -1276,7 +1480,10 @@ fn epoch_summary_body_round_trips_byte_identically() -> Result<()> {
     let body = sample_body();
     let bytes = encode_epoch_summary_body(&body)?;
     assert_eq!(decode_epoch_summary_body(&bytes)?, body);
-    assert_eq!(encode_epoch_summary_body(&decode_epoch_summary_body(&bytes)?)?, bytes);
+    assert_eq!(
+        encode_epoch_summary_body(&decode_epoch_summary_body(&bytes)?)?,
+        bytes
+    );
     Ok(())
 }
 
@@ -1347,6 +1554,88 @@ fn epoch_summary_strict_decode_rejection_matrix() -> Result<()> {
     )
     .expect("encode map");
     invalid(&missing);
+    Ok(())
+}
+
+/// Hand-encodes a body WITHOUT the encoder's validation, so a test can hand
+/// the strict decoder exactly the bytes the encoder refused to produce.
+fn unvalidated_encode(body: &EpochSummaryBody) -> Vec<u8> {
+    let entries = vec![
+        (rmpv::Value::from("v"), rmpv::Value::from(body.v)),
+        (
+            rmpv::Value::from("session"),
+            rmpv::Value::from(body.session.as_str()),
+        ),
+        (rmpv::Value::from("epoch"), rmpv::Value::from(body.epoch)),
+        (
+            rmpv::Value::from("turn_start"),
+            rmpv::Value::from(body.turn_start),
+        ),
+        (
+            rmpv::Value::from("turn_end"),
+            rmpv::Value::from(body.turn_end),
+        ),
+        (rmpv::Value::from("level"), rmpv::Value::from(body.level)),
+        (
+            rmpv::Value::from("text"),
+            rmpv::Value::from(body.text.as_str()),
+        ),
+        (
+            rmpv::Value::from("actor"),
+            rmpv::Value::from(body.actor.as_str()),
+        ),
+    ];
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &rmpv::Value::Map(entries)).expect("encode map");
+    out
+}
+
+/// The encoder is the decoder's MIRROR: every axis the strict decoder refuses
+/// is refused at encode time too, with the same detail. A body the codec
+/// cannot read back is a body it must never write — otherwise a keyframe
+/// could reach storage that its own consumers refuse at render time.
+#[test]
+fn epoch_summary_encode_refuses_every_axis_the_decoder_refuses() -> Result<()> {
+    let axes: [(&str, fn(&mut EpochSummaryBody)); 5] = [
+        ("unsupported epoch summary codec version", |body| {
+            body.v = EPOCH_SUMMARY_BODY_VERSION + 1;
+        }),
+        ("turn_end precedes turn_start", |body| {
+            body.turn_end = body.turn_start - 1;
+        }),
+        ("entity refs must be 32-hex strings", |body| {
+            body.session = "not-a-hex-ref".to_owned();
+        }),
+        ("entity refs must be 32-hex strings", |body| {
+            body.actor = "zz".repeat(16);
+        }),
+        ("epoch summary text is empty", |body| {
+            body.text = String::new();
+        }),
+    ];
+
+    for (detail, mutate) in axes {
+        let mut body = sample_body();
+        mutate(&mut body);
+
+        let refused_encode =
+            encode_epoch_summary_body(&body).expect_err("the encoder refuses the axis");
+        assert_eq!(invariant(refused_encode), detail);
+
+        let refused_decode = decode_epoch_summary_body(&unvalidated_encode(&body))
+            .expect_err("the decoder refuses the very same bytes");
+        assert_eq!(
+            invariant(refused_decode),
+            detail,
+            "encode and decode must refuse this axis alike"
+        );
+    }
+
+    // The well-formed sample is untouched by the new guards: it still encodes,
+    // still decodes, and still round-trips byte-identically.
+    let bytes = encode_epoch_summary_body(&sample_body())?;
+    assert_eq!(decode_epoch_summary_body(&bytes)?, sample_body());
+    assert_eq!(unvalidated_encode(&sample_body()), bytes);
     Ok(())
 }
 

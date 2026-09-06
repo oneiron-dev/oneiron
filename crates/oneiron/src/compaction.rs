@@ -953,11 +953,7 @@ impl CompactionDriver {
 
     /// Explicit driver-callable evaluation (host sweep, turn boundary, test
     /// driver). Same threshold, same watermark read, same state machine.
-    pub fn evaluate_now(
-        &mut self,
-        vault: &Vault,
-        used_tokens: u64,
-    ) -> Result<CompactionDirective> {
+    pub fn evaluate_now(&mut self, vault: &Vault, used_tokens: u64) -> Result<CompactionDirective> {
         self.directive(vault, used_tokens)
     }
 
@@ -1119,7 +1115,8 @@ impl CompactionDriver {
                 "integrate is legal only while compacting",
             ));
         }
-        let (epoch, summary_id) = mint_epoch_summary(vault, session_ref, byline, request, &product)?;
+        let (epoch, summary_id) =
+            mint_epoch_summary(vault, session_ref, byline, request, &product)?;
         self.margin.observe_latency(product.latency);
         self.state = CompactionState::Idle;
         Ok(SwapPlan {
@@ -1223,7 +1220,29 @@ pub struct EpochSummaryBody {
 }
 
 /// Encodes an epoch-summary body into its pinned-key MessagePack form.
+///
+/// The encoder enforces the SAME axes [`decode_epoch_summary_body`] refuses,
+/// so this module cannot emit bytes it would itself reject on the way back
+/// in: an unsupported codec version, an inverted turn range, a `session` or
+/// `actor` that is not a 32-hex entity ref, or empty text is a refusal here —
+/// at the moment the value is still in hand — rather than a durable row whose
+/// consumers discover the problem at render time.
 pub fn encode_epoch_summary_body(body: &EpochSummaryBody) -> Result<Vec<u8>> {
+    if body.v != EPOCH_SUMMARY_BODY_VERSION {
+        return Err(Error::InvariantViolation(
+            "unsupported epoch summary codec version",
+        ));
+    }
+    if body.turn_end < body.turn_start {
+        return Err(Error::InvariantViolation("turn_end precedes turn_start"));
+    }
+    for hex in [body.session.as_str(), body.actor.as_str()] {
+        EntityId::from_hex(hex)
+            .map_err(|_| Error::InvariantViolation("entity refs must be 32-hex strings"))?;
+    }
+    if body.text.is_empty() {
+        return Err(Error::InvariantViolation("epoch summary text is empty"));
+    }
     let value = Value::Map(vec![
         (Value::from(KEY_EPOCH_V), Value::from(body.v)),
         (
@@ -1325,6 +1344,13 @@ pub fn decode_epoch_summary_body(bytes: &[u8]) -> Result<EpochSummaryBody> {
     if body.turn_end < body.turn_start {
         return Err(Error::InvariantViolation("turn_end precedes turn_start"));
     }
+    // Symmetric with the encoder: a keyframe whose whole point is prose the
+    // render and the embedder consume cannot carry no prose at all, so the
+    // codec refuses in both directions rather than round-tripping a body its
+    // consumers would have to special-case.
+    if body.text.is_empty() {
+        return Err(Error::InvariantViolation("epoch summary text is empty"));
+    }
     Ok(body)
 }
 
@@ -1363,7 +1389,8 @@ fn prior_epoch_in_txn(
     let mut best: Option<PriorEpoch> = None;
     for row in store.entities.iter(rtxn)? {
         let (_, raw) = row?;
-        let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_SUMMARY || raw.len() <= ENTITY_METADATA_HEADER_LEN {
             continue;
         }
@@ -1392,6 +1419,10 @@ fn prior_epoch_in_txn(
 /// on any axis rolls the whole transaction back, so a half-minted keyframe
 /// cannot exist.
 ///
+/// The shape checks that need no transaction — the session match, a non-empty
+/// window, a non-empty product — run BEFORE one opens, so a refused mint never
+/// touches storage at all.
+///
 /// The row is BYTE-STABLE from this moment: this module exposes no update
 /// path, which is what lets CB-A cache the rendered prefix.
 fn mint_epoch_summary(
@@ -1412,6 +1443,20 @@ fn mint_epoch_summary(
         ));
     };
     let turn_start = request.turn_start.min(turn_end);
+
+    // An empty or whitespace-only product is a FAILED compaction wearing a
+    // success's clothes: minting it would swap a real message-log prefix out
+    // for a keyframe that carries none of it, and the row is byte-stable with
+    // no update path, so the loss would be permanent. Refusing BEFORE the
+    // write transaction opens means `integrate` returns `Err` before it
+    // mutates state: the driver stays `Compacting`, and the host takes the
+    // documented backend-failure exit (`CompactionDriver::abandon`), whose
+    // next threshold crossing emits `Begin` again.
+    if product.summary_text.trim().is_empty() {
+        return Err(Error::InvariantViolation(
+            "compaction product summary_text is empty",
+        ));
+    }
 
     // `DerivedFrom` targets come from the REQUEST's window, deduplicated in
     // first-seen order and hard-capped. The body's turn range stays truth.
@@ -1492,7 +1537,10 @@ fn refuse_overlay_derived_mint(store: &Store, window: &[CompactionWindowMessage]
         return Ok(());
     }
     for message in window {
-        if store.off_record_sessions.contains_entity(&message.turn_id)? {
+        if store
+            .off_record_sessions
+            .contains_entity(&message.turn_id)?
+        {
             return Err(Error::OffRecordTaintedBaseWrite {
                 entity_ref: message.turn_id.to_hex(),
             });
