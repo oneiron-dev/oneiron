@@ -1703,36 +1703,60 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             max_neighbors,
         );
 
+        // UNFINALIZED on purpose (ONE-1433 X1): the assembly registers only a
+        // PROVISIONAL retrieval-run row here and publishes nothing until every
+        // filter below has run. Finalizing first — what `run()` does — would
+        // commit the PRE-filter result ids, score components and trace
+        // candidacy of entities this actor may not see into the durable
+        // telemetry ledger, where `Vault::retrieval_runs` publishes them. This
+        // mirrors the accepted route's `run_context_pack_builder`.
         let mut pack = builder
-            .run()
+            .run_unfinalized_with_telemetry()
             .map_err(|error| engine_failure(METHOD, &error))?;
         // Re-clamp immediately: the builder was entered through the accepted
-        // door, and nothing leaves this method unfiltered.
+        // door, and nothing leaves this method unfiltered. A failed filter
+        // discards the provisional row before the error returns, so a refused
+        // read leaves no residue behind it.
         self.scoped_read
-            .filter_context_pack(&mut pack)
-            .map_err(|error| engine_failure(METHOD, &error))?;
+            .filter_context_pack(&mut pack.value)
+            .map_err(|error| {
+                pack.discard_telemetry();
+                engine_failure(METHOD, &error)
+            })?;
         // The widened budget only ever fed retrieval, so the answered pack is
         // bound by the UNWIDENED response budget after filtering, exactly like
         // the accepted route's `apply_context_pack_response_limits`.
-        apply_context_pack_response_retrieval_budget(&mut pack, response_budget);
-        pack.results.truncate(request.limit);
-        pack.neighbors.truncate(max_neighbors);
-        scrub_context_pack_visible_stats(&mut pack);
-        Ok(CoreContextPackResponse(project_context_pack(&pack)))
+        apply_context_pack_response_retrieval_budget(&mut pack.value, response_budget);
+        pack.value.results.truncate(request.limit);
+        pack.value.neighbors.truncate(max_neighbors);
+        scrub_context_pack_visible_stats(&mut pack.value);
+        // Publish LAST, off the post-filter, post-truncate pack: the durable
+        // run row then carries exactly the ids this actor received, so a
+        // denied entity is as absent from telemetry as it is from the
+        // response. Finalize failure still fails the read, as it did through
+        // `run()`.
+        let pack = pack
+            .finish_post_filter()
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        Ok(CoreContextPackResponse(project_context_pack(&pack.value)))
     }
 
+    /// Hydrates ONE short ref for `method` — the CALLING method, which is the
+    /// identity every error this helper mints must carry. A batch item is
+    /// served by the same code as a single hydrate, but an error that aborts
+    /// the batch is an error of `HydrateMany`, so the identity is a parameter
+    /// rather than a constant pinned to the single-ref method.
     fn hydrate_ref(
         &self,
+        method: VaultReadMethod,
         short_id: String,
         content_hash: u8,
         view: View,
     ) -> VaultReadResult<CoreHydrateResponse> {
-        const METHOD: VaultReadMethod = VaultReadMethod::Hydrate;
-
         let hydrated = self
             .scoped_read
             .hydrate_short_id(&short_id, content_hash)
-            .map_err(|error| engine_failure(METHOD, &error))?;
+            .map_err(|error| engine_failure(method, &error))?;
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
         let Some(HydratedShortId {
@@ -1743,7 +1767,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             body,
         }) = hydrated
         else {
-            return Err(engine_absent(METHOD, "short_id"));
+            return Err(engine_absent(method, "short_id"));
         };
         let content_hash = format!("{content_hash:02x}");
         let Some(body) = body else {
@@ -1758,7 +1782,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             });
         };
         let item =
-            entity_record_from_parts(METHOD, &id, entity_type, learned_at, None, &body, view)?;
+            entity_record_from_parts(method, &id, entity_type, learned_at, None, &body, view)?;
         Ok(CoreHydrateResponse {
             status: CoreHydrateStatus::Live,
             short_id,
@@ -1772,7 +1796,12 @@ impl<'v> InProcessVaultReadAdapter<'v> {
 
     fn hydrate_op(&self, request: &CoreHydrateRequest) -> VaultReadResult<CoreHydrateResponse> {
         let (short_id, content_hash) = parse_short_ref_request(request)?;
-        self.hydrate_ref(short_id, content_hash, request.view.unwrap_or(View::Full))
+        self.hydrate_ref(
+            VaultReadMethod::Hydrate,
+            short_id,
+            content_hash,
+            request.view.unwrap_or(View::Full),
+        )
     }
 
     fn hydrate_batch_item(
@@ -1780,8 +1809,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         reference: &str,
         view: View,
     ) -> VaultReadResult<CoreBatchShortIdHydrateItem> {
-        let Ok((short_id, content_hash)) = parse_short_ref(VaultReadMethod::Hydrate, reference)
-        else {
+        const METHOD: VaultReadMethod = VaultReadMethod::HydrateMany;
+
+        let Ok((short_id, content_hash)) = parse_short_ref(METHOD, reference) else {
             return Ok(CoreBatchShortIdHydrateItem {
                 reference: reference.to_owned(),
                 outcome: CoreShortIdHydrateOutcome::MalformedShortId,
@@ -1790,7 +1820,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         };
         batch_item_from_result(
             reference.to_owned(),
-            self.hydrate_ref(short_id, content_hash, view),
+            self.hydrate_ref(METHOD, short_id, content_hash, view),
         )
     }
 
@@ -2103,6 +2133,7 @@ mod tests {
     use crate::claim::ClaimSubject;
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
     use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::store::{RetrievalAction, RetrievalRunRecord};
     use crate::temporal::TimeRange;
     use crate::test_util::{
         embedding_test_config, entity, open_test_vault_with, put_policy_manifest_bytes,
@@ -2999,7 +3030,9 @@ mod tests {
 
     // ── Scoped-grant denial reads as absence ────────────────────────────────
 
-    fn scoped_grant_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
+    /// `world_ref` is the grant's world scope spelling: a world id hex, or the
+    /// literal `"base"` for base reality.
+    fn scoped_grant_manifest(actor_ref: &str, world_ref: &str) -> Vec<u8> {
         let grant = MsgpackValue::Map(vec![
             (
                 MsgpackValue::from("actor_ref"),
@@ -3013,7 +3046,7 @@ mod tests {
                 MsgpackValue::from("scope"),
                 MsgpackValue::Map(vec![(
                     MsgpackValue::from("world_ref"),
-                    MsgpackValue::from(world.to_hex()),
+                    MsgpackValue::from(world_ref),
                 )]),
             ),
             (
@@ -3116,7 +3149,7 @@ mod tests {
         put_policy_manifest_bytes(
             vault,
             entity(0x58),
-            &scoped_grant_manifest("reader", admitted_world),
+            &scoped_grant_manifest("reader", &admitted_world.to_hex()),
         )
         .expect("policy manifest");
         (denied_id, refs.0, refs.1)
@@ -3298,5 +3331,309 @@ mod tests {
         );
         assert_eq!(budgeted.0.stats.entities_hydrated, results);
         assert_eq!(budgeted.0.stats.neighbors_hydrated, neighbors);
+    }
+
+    // ── Durable pack telemetry carries only actor-visible ids ───────────────
+
+    /// Seeds one BASE-reality claim the `core:read` grant admits and one
+    /// world-scoped claim it denies, both vector-searchable, so a context-pack
+    /// assembly surfaces BOTH before the scoped filter runs. Returns
+    /// `(admitted_id, denied_id)`.
+    fn seed_scoped_pack_vault(vault: &Vault) -> (EntityId, EntityId) {
+        let subject = entity(0x60);
+        let denied_world = entity(0x61);
+        let admitted_id = entity(0x62);
+        let denied_id = entity(0x63);
+        let occurred = TimeRange {
+            start: 1_780_000_000,
+            end: 1_780_000_000,
+        };
+        vault
+            .put_entity(&subject, ENTITY_TYPE_PERSON, occurred, occurred.start, b"x")
+            .expect("subject entity");
+
+        let claim = |predicate: &str, world: Option<EntityId>, text: &str| {
+            let mut body = ClaimBody::new(
+                predicate,
+                ClaimSubject::Entity(subject),
+                MsgpackValue::from(text),
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            );
+            body.world = world;
+            body.source = Some(ClaimSource::UserStated);
+            body
+        };
+        let seeds = [
+            (
+                admitted_id,
+                claim("profile.note_admitted", None, "admitted note"),
+                [1.0_f32, 0.0, 0.0, 0.0],
+            ),
+            (
+                denied_id,
+                claim(
+                    "profile.note_denied",
+                    Some(denied_world),
+                    "denied world pack note",
+                ),
+                [0.95, 0.05, 0.0, 0.0],
+            ),
+        ];
+        for (id, body, vector) in seeds {
+            vault
+                .put_claim(&id, &body, occurred, occurred.start)
+                .expect("seeded claim");
+            vault
+                .batch()
+                .vector(&id, &vector)
+                .commit()
+                .expect("claim vector");
+        }
+
+        // The grant names BASE reality: the base claim is readable by `reader`
+        // and the world-scoped one is not.
+        let manifest = scoped_grant_manifest("reader", "base");
+        put_policy_manifest_bytes(vault, entity(0x64), &manifest).expect("policy manifest");
+        (admitted_id, denied_id)
+    }
+
+    fn vector_pack_request() -> CoreContextPackRequest {
+        CoreContextPackRequest {
+            query: None,
+            query_vector: Some(vec![1.0, 0.0, 0.0, 0.0]),
+            limit: 10,
+            depth: None,
+            edge_hop: None,
+            max_neighbors: None,
+            budget: None,
+        }
+    }
+
+    fn published_context_pack_run(vault: &Vault) -> RetrievalRunRecord {
+        let runs = vault.retrieval_runs(64).expect("published retrieval runs");
+        let mut published: Vec<RetrievalRunRecord> = runs
+            .into_iter()
+            .filter(|record| record.action == RetrievalAction::ContextPack)
+            .collect();
+        assert_eq!(
+            published.len(),
+            1,
+            "one assembly publishes exactly one context-pack run row"
+        );
+        published.remove(0)
+    }
+
+    /// The DURABLE retrieval-run row a context pack publishes carries EXACTLY
+    /// the ids this actor received. The scoped filter runs before the
+    /// finalize, so an entity the actor may not see is as absent from the
+    /// telemetry ledger as it is from the response — denied-equals-absent
+    /// across the operation's effects, not only its answer.
+    #[test]
+    fn context_pack_run_row_publishes_only_actor_visible_ids() {
+        // Same seed, no actor clamp: the naked builder this method enters
+        // surfaces BOTH claims, so a finalize taken before the filter would
+        // publish the denied id. That is the leak this ordering closes.
+        let (_leak_dir, leak_vault) = open_test_vault_with(embedding_test_config());
+        let (_, leaked_id) = seed_scoped_pack_vault(&leak_vault);
+        let unfiltered = leak_vault
+            .context_pack()
+            .limit(10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run()
+            .expect("unfiltered pack");
+        let leaked = unfiltered
+            .results
+            .iter()
+            .any(|entity| entity.id == leaked_id);
+        assert!(
+            leaked,
+            "the fixture is leak-prone: retrieval surfaces the denied claim pre-filter"
+        );
+
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
+        let adapter = InProcessVaultReadAdapter::new(
+            &vault,
+            ScopedReadActorKey::new("reader").expect("actor key"),
+        );
+
+        let request = vector_pack_request();
+        let response = adapter.context_pack(request).expect("context pack");
+        let results = &response.0.results;
+        let returned: Vec<String> = results.iter().map(|record| record.id.clone()).collect();
+        assert_eq!(
+            returned,
+            vec![admitted_id.to_hex()],
+            "only the admitted claim is answered"
+        );
+        assert!(
+            response.0.stats.claims_suppressed >= 1,
+            "the scoped filter removed the denied claim from the assembled pack"
+        );
+
+        let denied_bytes = *denied_id.as_bytes();
+        let run = published_context_pack_run(&vault);
+        let published_row = vault.retrieval_run(run.run_id).expect("run row read");
+        assert!(
+            published_row.is_some(),
+            "the row is PUBLISHED, not left provisional"
+        );
+        assert!(
+            !run.result_ids.contains(&denied_bytes),
+            "a denied id never reaches the durable result ids"
+        );
+        assert!(
+            run.score_breakdown
+                .iter()
+                .all(|entry| entry.result_id != denied_bytes),
+            "a denied id never reaches the durable score breakdown"
+        );
+        // The engine path never enables trace capture, so no trace is expected
+        // here; if one is ever captured the same absence rule binds it and the
+        // fork index that republishes it.
+        if let Some(trace) = run.trace.as_ref() {
+            assert!(
+                trace
+                    .final_stage
+                    .candidates
+                    .iter()
+                    .all(|entry| entry.result_id != denied_bytes),
+                "a denied id never reaches the durable trace candidates"
+            );
+            if let Some(forked) = vault
+                .retrieval_trace_by_fork_hash(trace.fork_hash)
+                .expect("trace fork lookup")
+            {
+                assert!(
+                    forked
+                        .final_stage
+                        .candidates
+                        .iter()
+                        .all(|entry| entry.result_id != denied_bytes),
+                    "the trace fork index answers no denied id either"
+                );
+            }
+        }
+
+        let row_ids: Vec<String> = run
+            .result_ids
+            .iter()
+            .map(|bytes| EntityId::from_bytes(*bytes).expect("run id").to_hex())
+            .collect();
+        assert_eq!(
+            row_ids, returned,
+            "the published ids are exactly the post-filter, post-truncate results"
+        );
+    }
+
+    /// When the filter removes EVERYTHING the row still publishes — with no
+    /// ids and the answered pack's empty reason — and the caller-visible empty
+    /// context is byte-for-byte what it was before the finalize moved.
+    #[test]
+    fn fully_filtered_context_pack_publishes_an_empty_run_row() {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
+        // No grant names this actor, so a `core:read` grant exists that never
+        // admits it: EVERY claim is denied.
+        let adapter = InProcessVaultReadAdapter::new(
+            &vault,
+            ScopedReadActorKey::new("outsider").expect("actor key"),
+        );
+
+        let request = vector_pack_request();
+        let response = adapter.context_pack(request).expect("context pack");
+        assert!(response.0.results.is_empty());
+        assert!(response.0.neighbors.is_empty());
+        let empty = response
+            .0
+            .empty
+            .expect("an all-filtered pack reports an empty context");
+        // The caller-visible empty context is the scoped filter's own, exactly
+        // as it was before the finalize moved behind it.
+        let reason = CoreContextPackEmptyReason::FilterMatchedNone;
+        let hint = "scoped_read returned no actor-readable entities";
+        assert_eq!(empty.reason, reason);
+        assert_eq!(empty.total_in_scope, 0);
+        assert_eq!(empty.hint, hint);
+        assert_eq!(response.0.stats.candidates_considered, 0);
+        assert_eq!(response.0.stats.entities_hydrated, 0);
+        assert_eq!(response.0.stats.neighbors_hydrated, 0);
+
+        let run = published_context_pack_run(&vault);
+        assert!(
+            run.result_ids.is_empty(),
+            "no id survived the filter, so none is published"
+        );
+        assert!(run.score_breakdown.is_empty());
+        assert_eq!(
+            run.empty_reason.as_deref(),
+            Some("FilterMatchedNone"),
+            "the published reason is read off the post-filter pack"
+        );
+        for id in [admitted_id, denied_id] {
+            assert!(!run.result_ids.contains(id.as_bytes()));
+        }
+    }
+
+    // ── Batch hydrate errors carry the BATCH method identity ────────────────
+
+    /// A single-item failure that ABORTS the batch is an error of
+    /// `HydrateMany`, not of `Hydrate`: the same helper serves both doors, so
+    /// the identity travels as an argument. The single-ref door is unchanged.
+    #[test]
+    fn batch_aborting_error_carries_the_batch_method() {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let corrupt = entity(0x66);
+        let occurred = TimeRange {
+            start: 1_780_000_000,
+            end: 1_780_000_000,
+        };
+        // A stored body whose first MessagePack value does not consume the
+        // whole payload: projection rejects it as corruption, which is a
+        // non-NOT_FOUND engine error and therefore batch-aborting.
+        vault
+            .put_entity(
+                &corrupt,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                occurred.start,
+                b"corrupt body",
+            )
+            .expect("entity with an undecodable body");
+        let reference = short_ref(&vault, &corrupt);
+        let adapter = InProcessVaultReadAdapter::new(
+            &vault,
+            ScopedReadActorKey::new("reader").expect("actor key"),
+        );
+
+        let single = adapter
+            .hydrate(hydrate_request(&reference))
+            .expect_err("single hydrate reports corruption");
+        assert!(
+            matches!(
+                &single,
+                VaultReadError::Engine { method, engine_code, .. }
+                    if *method == VaultReadMethod::Hydrate && engine_code == INTERNAL_ENGINE_CODE
+            ),
+            "the single-ref door still answers with Hydrate identity: {single:?}"
+        );
+
+        let batch = adapter
+            .hydrate_many(CoreBatchShortIdHydrateRequest {
+                refs: vec![reference],
+                view: None,
+            })
+            .expect_err("a non-NOT_FOUND item error aborts the batch");
+        assert!(
+            matches!(
+                &batch,
+                VaultReadError::Engine { method, engine_code, .. }
+                    if *method == VaultReadMethod::HydrateMany
+                        && engine_code == INTERNAL_ENGINE_CODE
+            ),
+            "the aborting error carries the BATCH method identity: {batch:?}"
+        );
     }
 }
