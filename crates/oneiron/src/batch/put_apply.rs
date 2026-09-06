@@ -12,9 +12,9 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::habit::TaskRole;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -392,6 +392,8 @@ pub(super) fn apply_put(
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMM_RECORD {
         crate::comm::validate_comm_record_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_DIAGNOSTIC {
+        crate::self_heal::validate_diagnostic_event_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
