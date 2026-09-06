@@ -1,5 +1,7 @@
 use super::*;
 
+mod failure_integrity;
+
 fn receipt() -> ReceiptRecord {
     ReceiptRecord {
         receipt_id: "gate:abc".to_owned(),

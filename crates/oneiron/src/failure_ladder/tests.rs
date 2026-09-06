@@ -17,6 +17,8 @@ use crate::dreamer_runner::{
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 
+mod failure_integrity;
+
 /// This module's own source, read for the mechanical negative-scope proofs.
 const FAILURE_LADDER_SOURCE: &str = include_str!("../failure_ladder.rs");
 /// The healer-slot wrapper's source, read for the same proofs.

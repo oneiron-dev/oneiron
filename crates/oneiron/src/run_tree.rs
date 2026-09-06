@@ -158,10 +158,10 @@ pub fn mark_run_tree_failure(
     failing_attempt_id: AttemptId,
 ) -> Result<RunTreeFailureDiagram> {
     let attempt_id = bytes_to_hex_lower(failing_attempt_id.as_bytes());
-    let matched = count_marked_nodes(&tree.roots, &attempt_id);
-    if matched != 1 {
+    let (matched, failed) = count_marked_nodes(&tree.roots, &attempt_id);
+    if matched != 1 || !failed {
         return Err(Error::InvalidConfig(format!(
-            "a run-tree failure marker must name exactly one rendered node, found {matched}"
+            "a run-tree failure marker must name exactly one rendered Failed node, found {matched}"
         )));
     }
     Ok(RunTreeFailureDiagram {
@@ -173,14 +173,15 @@ pub fn mark_run_tree_failure(
     })
 }
 
-fn count_marked_nodes(nodes: &[RunTreeNode], attempt_id: &str) -> usize {
-    nodes
-        .iter()
-        .map(|node| {
-            usize::from(node.attempt_id == attempt_id)
-                + count_marked_nodes(&node.children, attempt_id)
-        })
-        .sum()
+fn count_marked_nodes(nodes: &[RunTreeNode], attempt_id: &str) -> (usize, bool) {
+    nodes.iter().fold((0, false), |(count, failed), node| {
+        let (children, failed_child) = count_marked_nodes(&node.children, attempt_id);
+        let matches = node.attempt_id == attempt_id;
+        (
+            count + usize::from(matches) + children,
+            failed || failed_child || (matches && node.status == RunTreeStatus::Failed),
+        )
+    })
 }
 
 /// Read adapter over the runtime attempt queue.

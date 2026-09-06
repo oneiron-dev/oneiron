@@ -1640,6 +1640,8 @@ pub fn surfaced_failure_card(
 ) -> Result<SurfacedFailureCard> {
     let diagram = mark_run_tree_failure(input.tree, input.failing_attempt_id)?;
     let qa = validated_qa_feed(vault, input.qa)?;
+    let blocked_reports =
+        crate::failure_ladder::verified_blocked_reports(vault, &input.blocked_reports)?;
     Ok(SurfacedFailureCard {
         schema_version: SURFACED_FAILURE_CARD_SCHEMA_VERSION,
         card_ref: failure_card_ref(input.failing_attempt_id),
@@ -1649,7 +1651,7 @@ pub fn surfaced_failure_card(
         pathology: input.pathology,
         diagram,
         diagnosis: input.diagnosis,
-        blocked_reports: input.blocked_reports,
+        blocked_reports,
         qa,
     })
 }
@@ -1753,19 +1755,21 @@ fn require_witnessed_author(
     message_ref: EntityId,
     actor_ref: EntityId,
 ) -> Result<()> {
-    let authors = vault.neighbor_edges_bounded(
+    let txn = vault.store.env.read_txn()?;
+    let author = crate::memory::sole_edge_target(
+        &vault.store,
+        &txn,
         &message_ref,
-        true,
-        Some(EdgeKind::AuthoredBy),
-        None,
-        HEALER_QA_EDGE_SCAN_LIMIT,
-    )?;
-    if authors.is_empty() {
+        EdgeKind::AuthoredBy,
+        "message",
+    )
+    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    if author.is_none() {
         return Err(Error::InvalidConfig(
             "healer qa message_ref carries no AuthoredBy witness".to_owned(),
         ));
     }
-    if authors.iter().any(|edge| edge.target == actor_ref) {
+    if author == Some(actor_ref) {
         return Ok(());
     }
     Err(Error::InvalidConfig(
