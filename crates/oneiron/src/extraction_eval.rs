@@ -248,6 +248,18 @@ impl Of360Ar3MetricTier {
     /// Raw dataset/run inputs are still required to establish result authenticity.
     pub(crate) fn validate(&self) -> Of360Result<()> {
         validate_metric_definitions(&self.metric_definitions)?;
+        // The landed envelope is a symbolic pin, not a hash computed from JSON.
+        // Bind its payload without imposing a contract on other definition pins.
+        let canonical = of360_metric_definitions()?;
+        if self.metric_definitions.set_id == canonical.set_id
+            && self.metric_definitions.revision == canonical.revision
+            && self.metric_definitions.derivation_envelope == canonical.derivation_envelope
+            && self.metric_definitions != canonical
+        {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "metric definition payload differs from the canonical pin",
+            });
+        }
         if self.interface_version != OF360_AR3_METRIC_TIER_INTERFACE_VERSION {
             return Err(Of360EvalError::InvalidMetricTier {
                 reason: "unsupported metric tier interface version",
@@ -275,6 +287,33 @@ impl Of360Ar3MetricTier {
                 });
             }
             case.metrics.validate()?;
+            // A claim can appear in several diagnostics, but only once in each.
+            for (ids, count) in [
+                (
+                    &case.hallucinated_extraction_ids,
+                    case.metrics.hallucination_rate.numerator,
+                ),
+                (
+                    &case.overreach_extraction_ids,
+                    case.metrics.overreach_rate.numerator,
+                ),
+                (
+                    &case.redundant_extraction_ids,
+                    case.metrics.redundancy_rate.numerator,
+                ),
+            ] {
+                if ids.len() as f64 != count {
+                    return Err(Of360EvalError::InvalidMetricTier {
+                        reason: "extraction diagnostic count differs from the metric numerator",
+                    });
+                }
+                let mut seen_ids = HashSet::new();
+                if ids.iter().any(|id| !seen_ids.insert(id)) {
+                    return Err(Of360EvalError::InvalidMetricTier {
+                        reason: "duplicate extraction diagnostic id",
+                    });
+                }
+            }
             let accumulator = MetricAccumulator::from_case_report(case);
             if case.metrics != accumulator.metrics() {
                 return Err(Of360EvalError::InvalidMetricTier {
