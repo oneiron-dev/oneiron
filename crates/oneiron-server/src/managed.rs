@@ -86,6 +86,9 @@ pub const LEDGER_REV_KEY: &str = "managed:ledger_rev:v1";
 /// different outage and means a different response from the caller.
 pub const WRITES_FROZEN_TAG: &str = "writes_frozen";
 
+// Highest ctl version implemented here. Shed remains explicitly refused.
+const IMPLEMENTED_CTL_CONTRACT_VERSION: u32 = 1;
+
 /// Domain separator for the DEK MAC, so the same DEK over the same bytes in
 /// another role cannot collide with this one.
 const DEK_MAC_CONTEXT: &[u8] = b"oneiron:managed:dek_mac:v1";
@@ -1460,7 +1463,7 @@ impl ManagedState {
                 ok: true,
                 vault: self.vault_name.clone(),
                 pid: std::process::id(),
-                contract_version: CONTRACT_VERSION,
+                contract_version: IMPLEMENTED_CTL_CONTRACT_VERSION,
             }),
             CtlRequest::Shed { .. } => Err(ManagedError::CtlRequestRefused {
                 reason: "shed integration is deferred; managed ctl does not invoke engine shedding"
@@ -1895,7 +1898,7 @@ pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
 #[cfg(test)]
 mod shed_tests {
     use super::*;
-    use oneiron_vault_contract::{ShedCause, TOKEN_LEN};
+    use oneiron_vault_contract::{ShedCause, TOKEN_LEN, supports_slim};
 
     #[tokio::test]
     async fn ctl_shed_refusal_preserves_other_verbs() -> Result<(), Box<dyn std::error::Error>> {
@@ -1949,7 +1952,8 @@ mod shed_tests {
                 contract_version,
             } if vault == "ctl-test"
                 && pid == std::process::id()
-                && contract_version == CONTRACT_VERSION
+                && contract_version == 1
+                && !supports_slim(contract_version)
         ));
         assert!(matches!(
             state.handle_request(CtlRequest::PrepareReap).await?,

@@ -272,8 +272,9 @@ pub enum CtlResponse {
     /// - engine `AlreadySlim` from the no-identity selection-failure path ->
     ///   `slim=true`, `status=already_slim`, both numerics absent, `blocker=None`;
     /// - engine `Refused(blocker)` -> `status=refused`, both numerics absent,
-    ///   `blocker=Some(mapped_blocker)`, and `slim=true` iff the blocker kind is
-    ///   `already_slim_for_different_step`; every other refusal reports `slim=false`.
+    ///   `blocker=Some(mapped_blocker)`. For known kinds, `slim=true` iff the kind
+    ///   is `already_slim_for_different_step`; the other known blockers report
+    ///   `slim=false`. Unknown blocker kinds may report either residency.
     ///
     /// `slim` always reports residency at return, never whether this call entered it.
     Slim {
@@ -323,8 +324,15 @@ impl CtlResponse {
                         reclaimed_bytes.is_none() && dropped_windows.is_none(),
                         "refused SLIM forbids numerics"
                     );
+                    let residency_matches = match blocker.kind.as_str() {
+                        "no_pending_outbound_step"
+                        | "multiple_pending_outbound_steps"
+                        | "sync_window_busy" => !*slim,
+                        "already_slim_for_different_step" => *slim,
+                        _ => true,
+                    };
                     anyhow::ensure!(
-                        *slim == (blocker.kind == "already_slim_for_different_step"),
+                        residency_matches,
                         "refused SLIM residency must correlate with blocker kind"
                     );
                 }
@@ -843,7 +851,6 @@ mod tests {
                                             "no_pending_outbound_step"
                                                 | "multiple_pending_outbound_steps"
                                                 | "sync_window_busy"
-                                                | "future_blocker"
                                         )
                                     )
                                     | (
@@ -853,6 +860,7 @@ mod tests {
                                         None,
                                         Some("already_slim_for_different_step")
                                     )
+                                    | (ShedStatus::Refused, _, None, None, Some("future_blocker"))
                             );
                             assert_eq!(response.validate().is_ok(), valid, "{response:?}");
                             let wire = serde_json::to_string(&response).unwrap();
@@ -967,19 +975,32 @@ mod tests {
 
     #[test]
     fn shed_blocker_wire_preserves_unknown_kinds() {
-        let wire = r#"{"slim":false,"status":"refused","blocker":{"kind":"future_blocker","detail":"wait for \"adapter\""}}"#;
-        let response: CtlResponse = serde_json::from_str(wire).unwrap();
-        response.validate().unwrap();
-        assert_eq!(serde_json::to_string(&response).unwrap(), wire);
-        let CtlResponse::Slim {
-            blocker: Some(blocker),
-            ..
-        } = response
-        else {
-            panic!("unknown blocker must remain displayable");
-        };
-        assert_eq!(blocker.kind, "future_blocker");
-        assert_eq!(blocker.detail, "wait for \"adapter\"");
+        for (slim, wire) in [
+            (
+                false,
+                r#"{"slim":false,"status":"refused","blocker":{"kind":"future_blocker","detail":"wait for \"adapter\""}}"#,
+            ),
+            (
+                true,
+                r#"{"slim":true,"status":"refused","blocker":{"kind":"future_blocker","detail":"wait for \"adapter\""}}"#,
+            ),
+        ] {
+            let response: CtlResponse = serde_json::from_str(wire).unwrap();
+            response.validate().unwrap();
+            assert_eq!(serde_json::to_string(&response).unwrap(), wire);
+            let CtlResponse::Slim {
+                slim: decoded_slim,
+                status: ShedStatus::Refused,
+                blocker: Some(blocker),
+                ..
+            } = response
+            else {
+                panic!("unknown blocker must remain displayable");
+            };
+            assert_eq!(decoded_slim, slim);
+            assert_eq!(blocker.kind, "future_blocker");
+            assert_eq!(blocker.detail, "wait for \"adapter\"");
+        }
     }
 
     #[test]
