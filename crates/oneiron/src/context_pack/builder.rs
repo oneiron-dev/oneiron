@@ -248,11 +248,10 @@ impl UnfinalizedContextPack<'_> {
     ///
     /// # Errors
     ///
-    /// Propagates a failed finalize exactly as the finalizing doors
-    /// ([`ContextPackBuilder::run_with_telemetry`]) do. This door deliberately
-    /// does NOT take [`Self::finish_projected_json`]'s best-effort posture:
-    /// its caller has a `Result` to carry the failure, so the failure
-    /// semantics of the `run()` door it replaces are preserved.
+    /// Propagates a failed finalize after discarding the provisional row.
+    /// This door deliberately does NOT take [`Self::finish_projected_json`]'s
+    /// best-effort posture: its caller has a `Result` to carry the failure,
+    /// so even a base-vault finalize failure must fail this read.
     pub fn finish_post_filter(mut self) -> Result<RetrievalWithTelemetry<ContextPack>> {
         let surfaced_result_ids: Vec<[u8; 16]> = self
             .value
@@ -260,14 +259,19 @@ impl UnfinalizedContextPack<'_> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
-        let telemetry_run_id = finalize_context_pack_telemetry(
-            self.telemetry,
-            self.telemetry_run_id.take(),
-            self.value.stats.query_time_us,
-            self.value.stats.claims_suppressed,
-            &surfaced_result_ids,
-            context_pack_empty_reason(&self.value, &surfaced_result_ids),
-        )?;
+        let telemetry_run_id = self.telemetry_run_id.take();
+        if let Some(run_id) = telemetry_run_id
+            && let Err(error) = self.telemetry.finalize(
+                run_id,
+                self.value.stats.query_time_us,
+                self.value.stats.claims_suppressed,
+                &surfaced_result_ids,
+                context_pack_empty_reason(&self.value, &surfaced_result_ids),
+            )
+        {
+            discard_failed_context_pack_telemetry(self.telemetry, Some(run_id));
+            return Err(error);
+        }
         Ok(RetrievalWithTelemetry {
             value: self.value,
             run_id: telemetry_run_id,
