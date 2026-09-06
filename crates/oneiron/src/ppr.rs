@@ -1,4 +1,6 @@
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use heed::{RoTxn, RwTxn};
 use xxhash_rust::xxh3::xxh3_128;
@@ -79,6 +81,44 @@ pub(crate) fn vad_multiplier(vad: Option<Vad>, alpha: f32) -> f32 {
         1.0
     } else {
         vad.map_or(1.0, |vad| 1.0 + alpha * vad_salience(vad))
+    }
+}
+
+// Opt-in diagnostic scope. Normal retrieval neither bypasses its cache nor
+// exports internal scores. This scope observes the production walk itself,
+// including its seed weights, kind budgets, gates and frontier cutoff.
+thread_local! {
+    static VAD_PROPAGATION_EVIDENCE: RefCell<Option<Rc<Cell<bool>>>> = const { RefCell::new(None) };
+}
+
+struct VadPropagationEvidenceScope {
+    previous: Option<Rc<Cell<bool>>>,
+}
+
+impl Drop for VadPropagationEvidenceScope {
+    fn drop(&mut self) {
+        VAD_PROPAGATION_EVIDENCE.with(|active| {
+            active.replace(self.previous.take());
+        });
+    }
+}
+
+impl crate::PipelineBuilder<'_> {
+    /// Runs retrieval and reports whether stored VAD changed a propagated PPR
+    /// mass at the configured coefficient. This is traversal evidence, NOT a
+    /// final-ranking improvement or a recall measurement.
+    ///
+    /// PPR cache reads and writes are bypassed for this diagnostic run so a
+    /// cached ranking cannot stand in for observed propagation. All other
+    /// query behavior, including the production final rows, is unchanged.
+    #[doc(hidden)]
+    pub fn run_with_ppr_vad_evidence(self) -> Result<(Vec<ScoredEntity>, bool)> {
+        let evidence = Rc::new(Cell::new(false));
+        let previous =
+            VAD_PROPAGATION_EVIDENCE.with(|active| active.replace(Some(evidence.clone())));
+        let _scope = VadPropagationEvidenceScope { previous };
+        let rows = self.run()?;
+        Ok((rows, evidence.get()))
     }
 }
 
@@ -438,6 +478,7 @@ fn run_ppr_rounds(
     dependencies: &mut HashSet<EntityId>,
 ) -> Result<()> {
     let edge_dbs = [context.store.edges_out(), context.store.edges_in()];
+    let vad_evidence = VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().clone());
 
     for _ in 0..rounds {
         if frontier.is_empty() {
@@ -493,6 +534,15 @@ fn run_ppr_rounds(
                             * share
                             * vad_multiplier(edge.vad, context.ppr_vad_alpha)
                             * (1.0 - context.teleport_alpha);
+                        if let Some(evidence) = &vad_evidence {
+                            let neutral = score * share * (1.0 - context.teleport_alpha);
+                            // Observe an actual f32 mass change, not merely a
+                            // nonzero VAD on an edge below SCORE_EPSILON or a
+                            // multiplier that rounds to 1.0 / underflows away.
+                            if propagated > neutral {
+                                evidence.set(true);
+                            }
+                        }
                         *next.entry((edge.neighbor, edge.new_hops)).or_default() += propagated;
                     }
                 }
@@ -900,6 +950,11 @@ fn ppr_query_in_txn_impl(
 
     if seeds.is_empty() {
         return Ok((Vec::new(), None));
+    }
+
+    if VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().is_some()) {
+        let state = ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?;
+        return Ok((state.scores, None));
     }
 
     let seed_hash = hash_seeds(
