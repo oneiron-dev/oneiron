@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-oneiron = { path = "../oneiron" }
+# ONE-331: `benches/materializer_mutex.rs` measures the Observer B
+# materialization path, and `oneiron::sync` is feature-gated
+# (`crates/oneiron/src/lib.rs`), so the harness has to ask for it.
+oneiron = { path = "../oneiron", features = ["sync"] }
 blake3.workspace = true
 rand = "0.8"
 rmp-serde.workspace = true
@@ -23,6 +26,47 @@ serde_json_canonicalizer.workspace = true
 sha2 = "0.10"
 tempfile = "3"
 thiserror.workspace = true
+
+# ONE-331 (benchmark-only). `parking_lot` is the candidate primitive and `loro`
+# is needed to drive real CRDT documents; both stay OUT of `[dependencies]` so
+# no production build of `oneiron` / `oneiron-server` can ever see them. They
+# move into production only if the decision gate passes on both architectures.
+[dev-dependencies]
+# `default-features = false` drops criterion's `rayon` and `plotters` trees;
+# `cargo_bench_support` is the one feature a `harness = false` target needs to
+# run under `cargo bench`.
+criterion = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support",
+] }
+# Same requirement `crates/oneiron/Cargo.toml` states for the `sync` feature,
+# so the bench resolves to exactly the `loro` the engine is built against.
+loro = "1.10"
+parking_lot = "0.12"
+
+[[bench]]
+name = "materializer_mutex"
+path = "benches/materializer_mutex.rs"
+harness = false
+
+# ONE-331's three load-bearing contract tests
+# (`materializer_mutex_workload_equivalence`,
+# `materializer_mutex_report_has_p50_and_p99`,
+# `materializer_shadow_std_tracks_real_observer_b`) live in the bench source,
+# which is the only file this ticket adds. Cargo never builds or runs a
+# `harness = false` bench target under `cargo test`, so the same file is also
+# wired below as a libtest target.
+#
+# Both targets are compiled with `cfg(test)` SET: Cargo only passes `--test` to
+# a harnessed target, and falls back to `--cfg test` for a `harness = false`
+# bench. So nothing the bench binary needs may be gated on `cfg(not(test))` --
+# the Criterion `main`, its `criterion` import and the driver it calls are all
+# unconditional, and `#[cfg(test)] mod tests` is the only gated block. Only the
+# libtest target gets `--test`, so only it collects and runs those cases; in the
+# bench binary they are inert (hence the crate-level `cfg_attr(test,
+# allow(dead_code))` in the source). See H2 commit ec28c95c.
+[[test]]
+name = "materializer_mutex_contracts"
+path = "benches/materializer_mutex.rs"
 
 [lints]
 workspace = true
