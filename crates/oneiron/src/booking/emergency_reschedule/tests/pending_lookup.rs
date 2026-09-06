@@ -217,6 +217,170 @@ fn completed_history_is_not_read_by_pending_event_effect_or_request_lookups() {
 }
 
 #[test]
+fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
+    for (damage, refusal) in [
+        ("missing", "indexed emergency plan is missing"),
+        ("malformed", "indexed emergency plan is malformed"),
+        ("request_binding", "lookup names another instruction"),
+        ("event_binding", "lookup names another event"),
+        ("target_binding", "lookup names another plan key"),
+        ("hash", "content conflicts with the persisted proposal"),
+        (
+            "noncanonical",
+            "content conflicts with the persisted proposal",
+        ),
+        ("revision", "saved emergency plan is superseded"),
+        (
+            "checkpoint_decode",
+            "indexed emergency checkpoint is malformed",
+        ),
+        ("checkpoint_binding", "plan conflicts with its checkpoint"),
+    ] {
+        let (_dir, vault, _, plan) = executable_with_invite(EmergencyActionPolicy::Cancel, false);
+        let event = plan.booking.calendar.event_ref;
+        let saved = book(&vault, PAGE, NOW + 7_200);
+        let before = plan_emergency_reschedule(&vault, &plan.request, &calendars(), NOW).unwrap();
+        assert!(
+            before.refusals.is_empty(),
+            "{damage}: {:?}",
+            before.refusals
+        );
+        let healthy = before
+            .plans
+            .into_iter()
+            .find(|candidate| candidate.booking.calendar.event_ref == saved.calendar.event_ref)
+            .unwrap();
+        // This booking has no index yet. Both it and the healthy saved plan
+        // must survive the damaged row in the same planning call.
+        let fresh = book(&vault, PAGE, NOW + 9_000);
+        let prefix = lookup::request_plan_prefix(&plan.request).unwrap();
+        let mut index_key = prefix.clone();
+        index_key.extend_from_slice(event.as_bytes());
+        let mut healthy_index_key = prefix;
+        healthy_index_key.extend_from_slice(saved.calendar.event_ref.as_bytes());
+        let key = {
+            let txn = vault.store.env.read_txn().unwrap();
+            read_meta_bytes(&vault, &txn, &index_key).unwrap().unwrap()
+        };
+        let checkpoint_key = item_key(&plan.request, event).unwrap();
+        booking_writer(&vault, |txn| {
+            match damage {
+                "missing" => {
+                    assert!(vault.store.vault_meta.delete(txn, &key).unwrap());
+                }
+                "malformed" => put_meta(&vault, txn, &key, b"{not JSON")?,
+                "target_binding" => {
+                    let target = read_meta_bytes(&vault, txn, &healthy_index_key)?.unwrap();
+                    put_meta(&vault, txn, &index_key, &target)?;
+                }
+                "checkpoint_decode" => {
+                    put_meta(&vault, txn, &checkpoint_key, b"{not JSON")?;
+                }
+                "checkpoint_binding" => {
+                    let checkpoint = EmergencyItem {
+                        plan: healthy.clone(),
+                        calendar: plan.booking.calendar.clone(),
+                        basis: EmergencyLocalBasis::PreStartCancellation,
+                        committed_at: NOW,
+                        actions: Vec::new(),
+                        calendar_delivered: true,
+                        apology_delivered: true,
+                        picked: None,
+                    };
+                    put_meta(
+                        &vault,
+                        txn,
+                        &checkpoint_key,
+                        &serde_json::to_vec(&checkpoint).unwrap(),
+                    )?;
+                }
+                _ => {
+                    let mut damaged = plan.clone();
+                    match damage {
+                        "request_binding" => damaged.request.authority.recorded_at += 1,
+                        "event_binding" => {
+                            damaged.booking.calendar.event_ref = saved.calendar.event_ref;
+                        }
+                        "hash" => damaged.content_hash[0] ^= 1,
+                        "noncanonical" => {}
+                        "revision" => damaged.booking.calendar.sequence += 1,
+                        _ => unreachable!(),
+                    }
+                    if damage != "hash" {
+                        damaged.content_hash = damaged.hash().unwrap();
+                    }
+                    let mut bytes = serde_json::to_vec(&damaged).unwrap();
+                    if damage == "noncanonical" {
+                        bytes.push(b' ');
+                    }
+                    put_meta(&vault, txn, &key, &bytes)?;
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        let damaged_rows = {
+            let txn = vault.store.env.read_txn().unwrap();
+            [index_key.clone(), key.clone(), checkpoint_key.clone()]
+                .map(|key| read_meta_bytes(&vault, &txn, &key).unwrap())
+        };
+        let mut first_batch = None;
+        for _ in 0..2 {
+            let batch =
+                plan_emergency_reschedule(&vault, &plan.request, &calendars(), NOW).unwrap();
+            assert_eq!(batch.refusals.len(), 1, "{damage}: {:?}", batch.refusals);
+            assert_eq!(batch.refusals[0].0, event, "{damage}");
+            assert!(
+                batch.refusals[0].1.contains(refusal),
+                "{damage}: {:?}",
+                batch.refusals
+            );
+            assert_eq!(
+                batch
+                    .plans
+                    .iter()
+                    .map(|candidate| candidate.booking.calendar.event_ref)
+                    .collect::<Vec<_>>(),
+                vec![saved.calendar.event_ref, fresh.calendar.event_ref],
+                "{damage}"
+            );
+            assert_eq!(batch.plans[0], healthy, "{damage}");
+            let txn = vault.store.env.read_txn().unwrap();
+            assert_eq!(
+                [index_key.clone(), key.clone(), checkpoint_key.clone()]
+                    .map(|key| read_meta_bytes(&vault, &txn, &key).unwrap()),
+                damaged_rows,
+                "{damage}: planning must not repair or retry the refused booking"
+            );
+            if let Some(first) = &first_batch {
+                assert_eq!(
+                    &batch, first,
+                    "{damage}: retry must preserve the same plans"
+                );
+            } else {
+                first_batch = Some(batch);
+            }
+        }
+        assert!(emergency_records(&vault).is_empty(), "{damage}");
+    }
+}
+
+#[test]
+fn request_plan_event_requires_an_exact_scoped_index_key() {
+    let prefix = lookup::request_plan_prefix(&request()).unwrap();
+    let mut key = prefix.clone();
+    key.extend_from_slice(id(0x61).as_bytes());
+    assert_eq!(lookup::request_plan_event(&prefix, &key).unwrap(), id(0x61));
+    assert!(lookup::request_plan_event(&prefix, &prefix).is_err());
+    assert!(lookup::request_plan_event(b"another request", &key).is_err());
+    key.push(0);
+    assert!(lookup::request_plan_event(&prefix, &key).is_err());
+    let mut sentinel = prefix.clone();
+    sentinel.extend_from_slice(&[0; 16]);
+    assert!(lookup::request_plan_event(&prefix, &sentinel).is_err());
+}
+
+#[test]
 fn checkpoint_indexes_commit_abort_reconnect_and_retry_with_the_item() {
     let (dir, vault, receipt, plan) = executable(EmergencyActionPolicy::RequestUpdate);
     let mut sink = spy(&vault, &plan);

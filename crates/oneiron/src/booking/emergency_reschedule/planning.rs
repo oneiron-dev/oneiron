@@ -106,7 +106,10 @@ pub(crate) fn read_item_in(
     key: &[u8],
 ) -> Result<Option<EmergencyItem>, BookingError> {
     read_meta_bytes(vault, txn, key)?
-        .map(|raw| serde_json::from_slice(&raw).map_err(storage_failure))
+        .map(|raw| {
+            serde_json::from_slice(&raw)
+                .map_err(|_| refused("indexed emergency checkpoint is malformed"))
+        })
         .transpose()
 }
 
@@ -137,8 +140,13 @@ pub(crate) fn verify_plan_in(
         &plan_key(&plan.request, plan.booking.calendar.event_ref)?,
     )?
     .ok_or_else(|| refused("no persisted genuine emergency proposal"))?;
-    if raw != serde_json::to_vec(plan).map_err(storage_failure)?
-        || plan.hash()? != plan.content_hash
+    if raw
+        != serde_json::to_vec(plan)
+            .map_err(|_| refused("emergency plan content cannot be encoded"))?
+        || plan
+            .hash()
+            .map_err(|_| refused("emergency plan content cannot be hashed"))?
+            != plan.content_hash
     {
         return Err(refused(
             "emergency plan content conflicts with the persisted proposal",
@@ -224,40 +232,57 @@ pub fn plan_emergency_reschedule(
             .prefix_iter(&txn, &prefix)
             .map_err(storage_failure)?
         {
-            let (_, key) = row.map_err(storage_failure)?;
-            let raw = read_meta_bytes(vault, &txn, &key)?
-                .ok_or_else(|| refused("indexed emergency plan is missing"))?;
-            let plan: EmergencyPlan = serde_json::from_slice(&raw).map_err(storage_failure)?;
-            if plan.request != *request {
-                return Err(refused("emergency plan lookup names another instruction"));
-            }
-            let event = plan.booking.calendar.event_ref;
+            let (index_key, key) = row.map_err(storage_failure)?;
+            let event = lookup::request_plan_event(&prefix, &index_key)?;
+            // Remember the trusted event before touching the referenced row.
+            // A damaged saved plan must be refused, never silently re-planned.
             saved_events.insert(event);
-            verify_plan_in(vault, &txn, &plan)?;
-            let item = read_item_in(vault, &txn, &item_key(request, event)?)?;
-            if item.as_ref().is_some_and(|item| {
-                item.picked.is_some() || (item.calendar_delivered && item.apology_delivered)
-            }) {
-                continue;
-            }
-            if item.is_none()
-                && (plan.booking.occurrence.start <= now_utc
-                    || plan.proposals.iter().any(|slot| slot.start_utc <= now_utc))
-            {
-                batch.refusals.push((
-                    event,
-                    "saved emergency proposals are no longer future".to_owned(),
-                ));
-                continue;
-            }
-            let expected = item
-                .as_ref()
-                .map_or(&plan.booking.calendar, |item| &item.calendar);
-            match crate::booking::lifecycle::emergency_current_revision_in(vault, &txn, event) {
-                Ok(current) if current == *expected => batch.plans.push(plan),
-                Ok(_) => batch
-                    .refusals
-                    .push((event, "saved emergency plan is superseded".to_owned())),
+            let candidate = (|| {
+                if key.as_ref() != plan_key(request, event)?.as_slice() {
+                    return Err(refused("emergency plan lookup names another plan key"));
+                }
+                let raw = read_meta_bytes(vault, &txn, &key)?
+                    .ok_or_else(|| refused("indexed emergency plan is missing"))?;
+                let plan: EmergencyPlan = serde_json::from_slice(&raw)
+                    .map_err(|_| refused("indexed emergency plan is malformed"))?;
+                if plan.request != *request {
+                    return Err(refused("emergency plan lookup names another instruction"));
+                }
+                if plan.booking.calendar.event_ref != event {
+                    return Err(refused("emergency plan lookup names another event"));
+                }
+                verify_plan_in(vault, &txn, &plan)?;
+                let item = read_item_in(vault, &txn, &item_key(request, event)?)?;
+                if item
+                    .as_ref()
+                    .is_some_and(|item| item.plan != plan || item.calendar.event_ref != event)
+                {
+                    return Err(refused("emergency plan conflicts with its checkpoint"));
+                }
+                if item.as_ref().is_some_and(|item| {
+                    item.picked.is_some() || (item.calendar_delivered && item.apology_delivered)
+                }) {
+                    return Ok(None);
+                }
+                if item.is_none()
+                    && (plan.booking.occurrence.start <= now_utc
+                        || plan.proposals.iter().any(|slot| slot.start_utc <= now_utc))
+                {
+                    return Err(refused("saved emergency proposals are no longer future"));
+                }
+                let expected = item
+                    .as_ref()
+                    .map_or(&plan.booking.calendar, |item| &item.calendar);
+                if crate::booking::lifecycle::emergency_current_revision_in(vault, &txn, event)?
+                    != *expected
+                {
+                    return Err(refused("saved emergency plan is superseded"));
+                }
+                Ok(Some(plan))
+            })();
+            match candidate {
+                Ok(Some(plan)) => batch.plans.push(plan),
+                Ok(None) => {}
                 Err(error @ (BookingError::SlotOracle(_) | BookingError::Boundary(_))) => {
                     return Err(error);
                 }
@@ -265,7 +290,14 @@ pub fn plan_emergency_reschedule(
             }
         }
     }
-    for booking in enumerate_with_refusals(vault, request, now_utc, &mut batch.refusals)? {
+    let mut enumeration_refusals = Vec::new();
+    let bookings = enumerate_with_refusals(vault, request, now_utc, &mut enumeration_refusals)?;
+    batch.refusals.extend(
+        enumeration_refusals
+            .into_iter()
+            .filter(|(event, _)| !saved_events.contains(event)),
+    );
+    for booking in bookings {
         let event = booking.calendar.event_ref;
         if saved_events.contains(&event) {
             continue;

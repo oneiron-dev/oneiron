@@ -7,6 +7,7 @@
 
 mod capability;
 mod connector_task;
+mod dispatch_attempt_id;
 mod dispatch_pipeline;
 mod dispatch_types;
 mod executor;
@@ -31,8 +32,8 @@ pub use self::capability::{
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
 };
+pub(crate) use self::dispatch_attempt_id::outbound_dispatch_attempt_id;
 pub use self::dispatch_pipeline::OutboundDispatchPipeline;
-pub(crate) use self::dispatch_pipeline::outbound_dispatch_attempt_id;
 pub use self::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,

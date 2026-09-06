@@ -28,6 +28,16 @@ pub(super) fn request_plan_prefix(
     Ok(key)
 }
 
+/// The index key identifies a refused event even if its target cannot be read.
+/// An invalid key cannot safely be attributed to any booking.
+pub(super) fn request_plan_event(prefix: &[u8], key: &[u8]) -> Result<EntityId, BookingError> {
+    let bytes: [u8; 16] = key
+        .strip_prefix(prefix)
+        .and_then(|suffix| suffix.try_into().ok())
+        .ok_or_else(|| refused("emergency plan lookup has no valid event key"))?;
+    EntityId::from_bytes(bytes).map_err(|_| refused("emergency plan lookup has no valid event key"))
+}
+
 pub(super) fn index_plan_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
