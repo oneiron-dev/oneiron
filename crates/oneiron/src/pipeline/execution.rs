@@ -34,7 +34,7 @@ use super::channels::{
 use super::filters::{
     apply_claim_status_gate, apply_facet_filter, apply_filters, apply_relationship_filter,
     apply_world_filter, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
-    pipeline_candidate_matches_filters_and_gate,
+    pipeline_candidate_matches_filters_and_gate, resolve_active_world_authority,
 };
 use super::support::normalize_range;
 use super::trace::{
@@ -118,6 +118,20 @@ impl PipelineBuilder<'_> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            // ONE-1420: under `WorldScope::ActiveSet` the turn's world
+            // authority resolves ONCE here — inside this run's read
+            // transaction, at this run's clock — and every per-candidate scope
+            // check below borrows the result. Resolving before any channel
+            // runs also makes the fail-closed refusals (no selection, a
+            // selection outside the owner grant, a malformed authority row)
+            // land before the query does any scoring work.
+            let world_authority = resolve_active_world_authority(
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                self.active_world_selection.as_ref(),
+                temporal_now,
+            )?;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -128,6 +142,9 @@ impl PipelineBuilder<'_> {
                 facet_filter: self.facet_filter,
                 relationship_filter: self.relationship_filter,
                 world_scope: self.world_scope,
+                world_active_set: world_authority
+                    .as_ref()
+                    .map(|resolved| &resolved.active_set),
             };
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
@@ -937,9 +954,17 @@ impl PipelineBuilder<'_> {
 
             // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
             // facet filter, before truncate, same read txn. A no-op under the
-            // default `WorldScope::All`.
+            // default `WorldScope::All`. ONE-1420 threads the per-turn ActiveSet
+            // selection and the run clock through the same seam.
             let before_world = scores.len();
-            apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+            apply_world_filter(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                self.active_world_selection.as_ref(),
+                temporal_now,
+            )?;
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }

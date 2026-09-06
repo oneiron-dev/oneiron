@@ -10,9 +10,13 @@ mod types;
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{
-    DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet, DreamerWorkingSetBudget,
-    DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding,
-    RelMode, RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
+    ActiveWorldSelection, DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet,
+    DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode,
+    MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PendingVectorEmbedding, RelMode, ResolvedWorldAuthority,
+    RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal,
+    WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, WorldScope, decode_world_access_claim_value,
+    world_access_claim_body,
 };
 
 pub(crate) use self::types::DEFAULT_RESULT_LIMIT;

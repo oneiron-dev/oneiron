@@ -541,6 +541,11 @@ fn scan_memory_sections(
             WorldScope::Base => claim.world.is_none(),
             WorldScope::World(world) => claim.world.is_none() || claim.world == Some(world),
             WorldScope::WorldSet(_) => true, // not used by AgentScope mapping
+            // Also outside the AgentScope mapping (ONE-1420): the per-turn
+            // ActiveSet selection lives on the retrieval builder, and this
+            // projection has none to enforce — so it admits nothing rather
+            // than falling through to "everything".
+            WorldScope::ActiveSet => false,
         };
         if !in_world {
             continue;
