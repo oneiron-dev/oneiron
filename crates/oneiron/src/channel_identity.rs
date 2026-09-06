@@ -49,25 +49,45 @@ pub use custody::{
 
 use custody::verify_delegated_custody_in_txn;
 
+/// Pre-INB-06 self-held body schema version. DECODE ONLY.
+///
+/// A stored row at this version carries the twelve legacy keys and a
+/// `binding_scope` of `agent`; it decodes to
+/// [`ChannelIdentityBinding::Actor`] with no facet. Nothing writes it again.
+pub const CHANNEL_IDENTITY_LEGACY_SCHEMA_VERSION: u64 = 1;
+
+/// Pre-INB-06 `delegated_grant` body schema version (INB-00). DECODE ONLY.
+pub const CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION: u64 = 2;
+
 /// Current ChannelIdentity body schema version for the three self-held shapes.
 ///
-/// This stays `1` on purpose. A `delegated_grant` row carries two extra keys
-/// and encodes at [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`]; every
-/// self-held row keeps encoding the exact bytes it always did, so every body
-/// written before the fourth shape existed decodes unchanged.
-pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 1;
+/// INB-06 bumped this off `1`. The binding is now an ACTOR reference that may
+/// wear a facet mask on this channel, so every row carries a thirteenth
+/// `binding_facet_ref` key and spells its scope `actor`. Neither is
+/// expressible in the v1 key set, and a body must never be ambiguous about
+/// which set it holds, so the version moves rather than the key set growing
+/// optional holes.
+///
+/// Back-compat is a DECODE contract, not a byte contract: every v1/v2 row on
+/// disk still decodes (see [`CHANNEL_IDENTITY_LEGACY_SCHEMA_VERSION`]), and a
+/// rewrite re-emits it in this canonical encoding.
+pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 3;
 
 /// ChannelIdentity body schema version for `delegated_grant` rows.
 ///
 /// Only the fourth shape uses it. The version is what selects the pinned key
-/// set at decode, so the two shapes' key sets can never be mixed.
-pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 2;
+/// set at decode, so the shapes' key sets can never be mixed.
+pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 4;
 
 /// Minimum self-hold window for a quarantined released identity (90 days).
 pub const CHANNEL_IDENTITY_MIN_QUARANTINE_SECS: u64 = 90 * 24 * 60 * 60;
 
-/// Pinned on-disk MessagePack key set for ChannelIdentity bodies.
-pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 12] = [
+/// Pinned pre-INB-06 self-held key set. DECODE ONLY.
+///
+/// Spelled as literals, never derived from the live set: this is the shape of
+/// rows already on disk, so it must not follow a future edit to the canonical
+/// key list.
+pub const CHANNEL_IDENTITY_LEGACY_BODY_KEYS: [&str; 12] = [
     "schema_version",
     "channel",
     "address_or_handle",
@@ -82,25 +102,51 @@ pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 12] = [
     "manifest_ref",
 ];
 
-const KEY_SCHEMA_VERSION: &str = CHANNEL_IDENTITY_BODY_KEYS[0];
-const KEY_CHANNEL: &str = CHANNEL_IDENTITY_BODY_KEYS[1];
-const KEY_ADDRESS_OR_HANDLE: &str = CHANNEL_IDENTITY_BODY_KEYS[2];
-const KEY_SHAPE: &str = CHANNEL_IDENTITY_BODY_KEYS[3];
-const KEY_BINDING_SCOPE: &str = CHANNEL_IDENTITY_BODY_KEYS[4];
-const KEY_BINDING_TARGET: &str = CHANNEL_IDENTITY_BODY_KEYS[5];
-const KEY_STATE: &str = CHANNEL_IDENTITY_BODY_KEYS[6];
-const KEY_PENDING_FULFILLMENT: &str = CHANNEL_IDENTITY_BODY_KEYS[7];
-const KEY_STATE_CHANGED_AT: &str = CHANNEL_IDENTITY_BODY_KEYS[8];
-const KEY_QUARANTINE_UNTIL: &str = CHANNEL_IDENTITY_BODY_KEYS[9];
-const KEY_REPUTATION_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[10];
-const KEY_MANIFEST_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[11];
+/// Pinned pre-INB-06 `delegated_grant` key set. DECODE ONLY.
+pub const CHANNEL_IDENTITY_LEGACY_DELEGATED_BODY_KEYS: [&str; 14] = [
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[0],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[1],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[2],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[3],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[4],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[5],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[6],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[7],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[8],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[9],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[10],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[11],
+    "delegated_grant_ref",
+    "grant_scopes",
+];
+
+/// Pinned on-disk MessagePack key set for ChannelIdentity bodies.
+///
+/// The twelve legacy keys in the same order, then `binding_facet_ref` — the
+/// mask this identity wears on this channel, `nil` when the actor speaks
+/// unmasked.
+pub const CHANNEL_IDENTITY_BODY_KEYS: [&str; 13] = [
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[0],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[1],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[2],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[3],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[4],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[5],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[6],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[7],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[8],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[9],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[10],
+    CHANNEL_IDENTITY_LEGACY_BODY_KEYS[11],
+    "binding_facet_ref",
+];
 
 /// Pinned on-disk MessagePack key set for `delegated_grant` bodies.
 ///
-/// The twelve self-held keys in the same order, then the two custody keys.
+/// The thirteen self-held keys in the same order, then the two custody keys.
 /// `delegated_grant_ref` is a custody record NAME; no token bytes are ever
 /// written here.
-pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 14] = [
+pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 15] = [
     CHANNEL_IDENTITY_BODY_KEYS[0],
     CHANNEL_IDENTITY_BODY_KEYS[1],
     CHANNEL_IDENTITY_BODY_KEYS[2],
@@ -113,20 +159,36 @@ pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 14] = [
     CHANNEL_IDENTITY_BODY_KEYS[9],
     CHANNEL_IDENTITY_BODY_KEYS[10],
     CHANNEL_IDENTITY_BODY_KEYS[11],
-    "delegated_grant_ref",
-    "grant_scopes",
+    CHANNEL_IDENTITY_BODY_KEYS[12],
+    CHANNEL_IDENTITY_LEGACY_DELEGATED_BODY_KEYS[12],
+    CHANNEL_IDENTITY_LEGACY_DELEGATED_BODY_KEYS[13],
 ];
 
-const KEY_DELEGATED_GRANT_REF: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[12];
-const KEY_GRANT_SCOPES: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[13];
+const KEY_SCHEMA_VERSION: &str = CHANNEL_IDENTITY_BODY_KEYS[0];
+const KEY_CHANNEL: &str = CHANNEL_IDENTITY_BODY_KEYS[1];
+const KEY_ADDRESS_OR_HANDLE: &str = CHANNEL_IDENTITY_BODY_KEYS[2];
+const KEY_SHAPE: &str = CHANNEL_IDENTITY_BODY_KEYS[3];
+const KEY_BINDING_SCOPE: &str = CHANNEL_IDENTITY_BODY_KEYS[4];
+const KEY_BINDING_TARGET: &str = CHANNEL_IDENTITY_BODY_KEYS[5];
+const KEY_STATE: &str = CHANNEL_IDENTITY_BODY_KEYS[6];
+const KEY_PENDING_FULFILLMENT: &str = CHANNEL_IDENTITY_BODY_KEYS[7];
+const KEY_STATE_CHANGED_AT: &str = CHANNEL_IDENTITY_BODY_KEYS[8];
+const KEY_QUARANTINE_UNTIL: &str = CHANNEL_IDENTITY_BODY_KEYS[9];
+const KEY_REPUTATION_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[10];
+const KEY_MANIFEST_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[11];
+/// Optional channel facet key in the canonical body.
+pub const KEY_BINDING_FACET_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[12];
+const KEY_DELEGATED_GRANT_REF: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[13];
+const KEY_GRANT_SCOPES: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[14];
 
 /// Pinned `channel_identity.*` claim predicates for the CID-1 record fields.
-pub const CHANNEL_IDENTITY_CLAIM_PREDICATES: [&str; 11] = [
+pub const CHANNEL_IDENTITY_CLAIM_PREDICATES: [&str; 12] = [
     PREDICATE_CHANNEL_IDENTITY_CHANNEL,
     PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
     PREDICATE_CHANNEL_IDENTITY_SHAPE,
     PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
     PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
     PREDICATE_CHANNEL_IDENTITY_STATE,
     PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT,
     PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
@@ -140,6 +202,8 @@ pub const PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE: &str = "channel_identity
 pub const PREDICATE_CHANNEL_IDENTITY_SHAPE: &str = "channel_identity.shape";
 pub const PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE: &str = "channel_identity.binding_scope";
 pub const PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET: &str = "channel_identity.binding_target";
+/// Facet mask this identity wears on its channel; `nil` when unmasked.
+pub const PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF: &str = "channel_identity.binding_facet_ref";
 pub const PREDICATE_CHANNEL_IDENTITY_STATE: &str = "channel_identity.state";
 pub const PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT: &str =
     "channel_identity.pending_fulfillment";
@@ -151,12 +215,7 @@ pub const PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF: &str = "channel_identity.mani
 const MAX_CHANNEL_BYTES: usize = 64;
 const MAX_ADDRESS_OR_HANDLE_BYTES: usize = 512;
 
-/// ChannelIdentity addressability shape (OF-347 R1).
-///
-/// This is the WIRE vocabulary. Structurally, [`Self::DelegatedGrant`] is not a
-/// peer of the other three: it is the shape of a row whose account the product
-/// does NOT hold, while the three self-held spellings are exactly
-/// [`SelfHeldShape`].
+/// ChannelIdentity addressability shape (OF-347 R1, ARCH-0063 R2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ChannelIdentityShape {
@@ -167,7 +226,7 @@ pub enum ChannelIdentityShape {
     ///
     /// The product never mints, owns, rotates, or quarantines the underlying
     /// account: it holds a custody record ref and reads. Routing, receipts,
-    /// health claims and manifests never special-case this shape.
+    /// health claims, and manifests never special-case this shape.
     DelegatedGrant,
 }
 
@@ -196,7 +255,7 @@ impl ChannelIdentityShape {
     /// Whether the product itself holds the underlying account.
     ///
     /// False only for [`Self::DelegatedGrant`], where the member's provider
-    /// owns creation, rotation and revocation.
+    /// owns creation, rotation, and revocation.
     #[must_use]
     pub const fn is_self_held(self) -> bool {
         !matches!(self, Self::DelegatedGrant)
@@ -262,18 +321,56 @@ impl<'de> Deserialize<'de> for ChannelIdentityShape {
     }
 }
 
-/// Scope at which an identity is bound (OF-347 R2).
+/// Scope at which an identity is bound (OF-347 R2, ARCH-0063 R7).
+///
+/// [`Self::Actor`] names an AUTHORITY-BEARING ENTITY, not a new entity kind:
+/// a named agent is normally an `AGENT_DEF`, and a connector/plumbing actor
+/// keeps whatever reference it already had. Whether a someone stands behind
+/// that actor is a SEPARATE question answered by an `actor.subject_ref`
+/// anchor (see [`crate::subject_model`]) — never by the binding, and never by
+/// forking the entity kind.
+///
+/// `facet_ref` is owned HERE rather than on the connector key record because
+/// the facet is the mask worn ON THIS CHANNEL: one actor speaks through many
+/// identities and may wear a different face on each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ChannelIdentityBinding {
-    Agent { agent_ref: EntityId },
-    Vault { vault_id: u64 },
+    Actor {
+        actor_ref: EntityId,
+        /// Type-13 FACET mask worn on this channel; `None` speaks unmasked.
+        facet_ref: Option<EntityId>,
+    },
+    Vault {
+        vault_id: u64,
+    },
 }
 
 impl ChannelIdentityBinding {
+    /// Binds an unmasked actor.
+    #[must_use]
+    pub const fn actor(actor_ref: EntityId) -> Self {
+        Self::Actor {
+            actor_ref,
+            facet_ref: None,
+        }
+    }
+
+    /// Binds an actor wearing `facet_ref` on this channel.
+    #[must_use]
+    pub const fn actor_with_facet(actor_ref: EntityId, facet_ref: EntityId) -> Self {
+        Self::Actor {
+            actor_ref,
+            facet_ref: Some(facet_ref),
+        }
+    }
+
+    /// Pre-INB-06 spelling of [`Self::actor`], kept because "the agent bound
+    /// to this identity" is exactly an unmasked actor — the rename did not
+    /// change what any existing caller meant.
     #[must_use]
     pub const fn agent(agent_ref: EntityId) -> Self {
-        Self::Agent { agent_ref }
+        Self::actor(agent_ref)
     }
 
     #[must_use]
@@ -281,17 +378,35 @@ impl ChannelIdentityBinding {
         Self::Vault { vault_id }
     }
 
+    /// Actor this identity speaks for, when it is actor-bound.
+    #[must_use]
+    pub const fn actor_ref(self) -> Option<EntityId> {
+        match self {
+            Self::Actor { actor_ref, .. } => Some(actor_ref),
+            Self::Vault { .. } => None,
+        }
+    }
+
+    /// Facet mask worn on this channel, when one is bound.
+    #[must_use]
+    pub const fn facet_ref(self) -> Option<EntityId> {
+        match self {
+            Self::Actor { facet_ref, .. } => facet_ref,
+            Self::Vault { .. } => None,
+        }
+    }
+
     #[must_use]
     pub const fn scope_str(self) -> &'static str {
         match self {
-            Self::Agent { .. } => "agent",
+            Self::Actor { .. } => "actor",
             Self::Vault { .. } => "vault",
         }
     }
 
     fn validate(self) -> Result<()> {
         match self {
-            Self::Agent { .. } => Ok(()),
+            Self::Actor { .. } => Ok(()),
             Self::Vault { vault_id: 0 } => Err(invalid_identity()),
             Self::Vault { .. } => Ok(()),
         }
@@ -434,15 +549,11 @@ pub struct ChannelIdentity {
     pub quarantine_until: Option<u64>,
     pub reputation_ref: Option<EntityId>,
     pub manifest_ref: Option<EntityId>,
-    /// The custody handle a [`ChannelIdentityShape::DelegatedGrant`] row
-    /// carries, and nothing else carries. Names only: a custody record ref and
-    /// the read scopes it covers. No token bytes reach this field, the encoded
-    /// body, or any claim derived from either.
+    /// Present exactly when `shape` is [`ChannelIdentityShape::DelegatedGrant`].
     ///
-    /// Its presence and the shape are tied by [`Self::validate`], and a row
-    /// carrying one is only WRITABLE through the doors that re-prove custody in
-    /// the storing transaction — see
-    /// [`Vault::provision_delegated_identity`].
+    /// The one-to-one tie is enforced by [`ChannelIdentity::validate`], so a
+    /// delegated row without custody, or a self-held row carrying custody,
+    /// cannot be built, encoded, or decoded.
     pub grant: Option<DelegatedGrant>,
 }
 
@@ -704,10 +815,6 @@ impl ChannelIdentity {
     }
 
     /// Returns a copy with a checked lifecycle transition applied.
-    ///
-    /// The edge table is chosen by CUSTODY, not shared: a delegated row walks
-    /// [`ChannelIdentityState::can_transition_to_delegated`], which has no
-    /// rotation and no quarantine to step into.
     pub fn transition(
         &self,
         next: ChannelIdentityState,
@@ -765,6 +872,9 @@ impl ChannelIdentity {
             PREDICATE_CHANNEL_IDENTITY_SHAPE => Some(Value::from(self.shape.as_str())),
             PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE => Some(Value::from(self.binding.scope_str())),
             PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET => Some(encode_binding_target(self.binding)),
+            PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF => {
+                Some(encode_optional_entity_ref(self.binding.facet_ref()))
+            }
             PREDICATE_CHANNEL_IDENTITY_STATE => Some(Value::from(self.state.as_str())),
             PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT => Some(
                 self.pending_fulfillment
@@ -787,21 +897,21 @@ impl ChannelIdentity {
 
 /// Encodes a ChannelIdentity body in canonical MessagePack field order.
 ///
-/// A self-held row encodes at [`CHANNEL_IDENTITY_SCHEMA_VERSION`] under the
-/// twelve pinned keys — byte-for-byte what CID-1 always wrote. A
-/// `delegated_grant` row encodes at
-/// [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`] under those twelve keys
-/// followed by the two custody keys, so the two key sets can never be mixed and
-/// no older body changes shape.
+/// A self-held row encodes the thirteen pinned keys at
+/// [`CHANNEL_IDENTITY_SCHEMA_VERSION`]. Only a `delegated_grant` row appends
+/// the two custody keys and stamps
+/// [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`].
+///
+/// There is exactly ONE canonical encoding: a row decoded from a legacy v1/v2
+/// body re-emits here at the current version, which is what "rewrite
+/// canonicalizes" means. Reading never rewrites.
 pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8>> {
     identity.validate()?;
-    let schema_version = if identity.is_delegated() {
-        CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION
-    } else {
-        CHANNEL_IDENTITY_SCHEMA_VERSION
-    };
-    let mut value = Value::Map(vec![
-        (Value::from(KEY_SCHEMA_VERSION), Value::from(schema_version)),
+    let mut entries = vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(body_schema_version(identity)),
+        ),
         (
             Value::from(KEY_CHANNEL),
             Value::from(identity.channel.as_str()),
@@ -842,12 +952,13 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
             Value::from(KEY_MANIFEST_REF),
             encode_optional_entity_ref(identity.manifest_ref),
         ),
-    ]);
+        (
+            Value::from(KEY_BINDING_FACET_REF),
+            encode_optional_entity_ref(identity.binding.facet_ref()),
+        ),
+    ];
 
     if let Some(grant) = &identity.grant {
-        let Value::Map(entries) = &mut value else {
-            unreachable!("body value is built as a map");
-        };
         entries.push((
             Value::from(KEY_DELEGATED_GRANT_REF),
             Value::from(grant.custody_record_ref.as_str()),
@@ -864,7 +975,18 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
         ));
     }
 
-    encode_msgpack_value(&value, "channel identity body MessagePack encode failed")
+    encode_msgpack_value(
+        &Value::Map(entries),
+        "channel identity body MessagePack encode failed",
+    )
+}
+
+const fn body_schema_version(identity: &ChannelIdentity) -> u64 {
+    if identity.grant.is_some() {
+        CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION
+    } else {
+        CHANNEL_IDENTITY_SCHEMA_VERSION
+    }
 }
 
 /// Decodes and validates a ChannelIdentity body.
@@ -925,10 +1047,12 @@ pub(crate) fn validate_channel_identity_claim_structure(body: &ClaimBody) -> Res
             .ok_or(Error::InvalidClaimBody(
                 "channel_identity.shape value must be a pinned shape",
             )),
+        // `agent` stays readable because rows written before INB-06 spelled the
+        // actor scope that way; only `actor` is ever emitted now.
         PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE => match body.value.as_str() {
-            Some("agent" | "vault") => Ok(()),
+            Some("actor" | "agent" | "vault") => Ok(()),
             _ => Err(Error::InvalidClaimBody(
-                "channel_identity.binding_scope value must be agent|vault",
+                "channel_identity.binding_scope value must be actor|vault",
             )),
         },
         PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET => validate_claim_binding_target(&body.value),
@@ -972,7 +1096,9 @@ pub(crate) fn validate_channel_identity_claim_structure(body: &ClaimBody) -> Res
                 ))
             }
         }
-        PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF | PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF => {
+        PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF
+        | PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF
+        | PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF => {
             if matches!(body.value, Value::Nil) || decode_entity_ref(&body.value).is_ok() {
                 Ok(())
             } else {
@@ -989,30 +1115,46 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
     let Value::Map(entries) = value else {
         return Err(invalid_identity());
     };
-    // The VERSION selects the key set, so a delegated body cannot be read under
-    // the self-held pins (or the reverse) and a self-held body cannot smuggle
-    // in a grant ref by naming a key the twelve-key set does not have.
-    let schema_version = required_value(entries, KEY_SCHEMA_VERSION)?
-        .as_u64()
-        .ok_or_else(invalid_identity)?;
-    let delegated = match schema_version {
-        CHANNEL_IDENTITY_SCHEMA_VERSION => {
-            validate_keys(entries, &CHANNEL_IDENTITY_BODY_KEYS)?;
-            false
-        }
-        CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION => {
-            validate_keys(entries, &CHANNEL_IDENTITY_DELEGATED_BODY_KEYS)?;
-            true
-        }
-        _ => return Err(invalid_identity()),
-    };
+    // The version selects the pinned key set, so no two key sets can ever be
+    // mixed: an unknown version, a self-held body carrying custody keys, and a
+    // delegated body missing them all fail closed before any field is read.
+    // The two legacy versions are decode-only and carry no facet key.
+    let (delegated_grant, carries_facet_key) =
+        match required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() {
+            Some(CHANNEL_IDENTITY_LEGACY_SCHEMA_VERSION) => {
+                validate_keys(entries, &CHANNEL_IDENTITY_LEGACY_BODY_KEYS)?;
+                (None, false)
+            }
+            Some(CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION) => {
+                validate_keys(entries, &CHANNEL_IDENTITY_LEGACY_DELEGATED_BODY_KEYS)?;
+                (Some(decode_delegated_grant(entries)?), false)
+            }
+            Some(CHANNEL_IDENTITY_SCHEMA_VERSION) => {
+                validate_keys(entries, &CHANNEL_IDENTITY_BODY_KEYS)?;
+                (None, true)
+            }
+            Some(CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION) => {
+                validate_keys(entries, &CHANNEL_IDENTITY_DELEGATED_BODY_KEYS)?;
+                (Some(decode_delegated_grant(entries)?), true)
+            }
+            _ => return Err(invalid_identity()),
+        };
 
     let channel = required_string(entries, KEY_CHANNEL)?.to_owned();
     let address_or_handle = required_string(entries, KEY_ADDRESS_OR_HANDLE)?.to_owned();
     let shape = ChannelIdentityShape::parse(required_string(entries, KEY_SHAPE)?)
         .ok_or_else(invalid_identity)?;
     let binding_scope = required_string(entries, KEY_BINDING_SCOPE)?;
-    let binding = decode_binding(binding_scope, required_value(entries, KEY_BINDING_TARGET)?)?;
+    let facet_ref = if carries_facet_key {
+        decode_optional_entity_ref(required_value(entries, KEY_BINDING_FACET_REF)?)?
+    } else {
+        None
+    };
+    let binding = decode_binding(
+        binding_scope,
+        required_value(entries, KEY_BINDING_TARGET)?,
+        facet_ref,
+    )?;
     let state = ChannelIdentityState::parse(required_string(entries, KEY_STATE)?)
         .ok_or_else(invalid_identity)?;
     let pending_fulfillment_value = required_value(entries, KEY_PENDING_FULFILLMENT)?;
@@ -1041,11 +1183,6 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
     };
     let reputation_ref = decode_optional_entity_ref(required_value(entries, KEY_REPUTATION_REF)?)?;
     let manifest_ref = decode_optional_entity_ref(required_value(entries, KEY_MANIFEST_REF)?)?;
-    let grant = if delegated {
-        Some(decode_delegated_grant(entries)?)
-    } else {
-        None
-    };
 
     let identity = ChannelIdentity {
         channel,
@@ -1058,7 +1195,7 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
         quarantine_until,
         reputation_ref,
         manifest_ref,
-        grant,
+        grant: delegated_grant,
     };
     identity.validate()?;
     Ok(identity)
@@ -1066,33 +1203,50 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
 
 fn decode_delegated_grant(entries: &[(Value, Value)]) -> Result<DelegatedGrant> {
     let custody_record_ref = required_string(entries, KEY_DELEGATED_GRANT_REF)?.to_owned();
-    let Value::Array(raw_scopes) = required_value(entries, KEY_GRANT_SCOPES)? else {
+    let Value::Array(scopes) = required_value(entries, KEY_GRANT_SCOPES)? else {
         return Err(invalid_identity());
     };
-    let mut scopes = Vec::with_capacity(raw_scopes.len());
-    for raw in raw_scopes {
-        scopes.push(
-            raw.as_str()
+    let scopes = scopes
+        .iter()
+        .map(|scope| {
+            scope
+                .as_str()
                 .and_then(DelegatedGrantScope::parse)
-                .ok_or_else(invalid_identity)?,
-        );
-    }
-    let grant = DelegatedGrant::new(custody_record_ref, scopes);
+                .ok_or_else(invalid_identity)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let grant = DelegatedGrant {
+        custody_record_ref,
+        scopes,
+    };
     grant.validate()?;
     Ok(grant)
 }
 
 fn encode_binding_target(binding: ChannelIdentityBinding) -> Value {
     match binding {
-        ChannelIdentityBinding::Agent { agent_ref } => Value::from(agent_ref.to_hex()),
+        ChannelIdentityBinding::Actor { actor_ref, .. } => Value::from(actor_ref.to_hex()),
         ChannelIdentityBinding::Vault { vault_id } => Value::from(vault_id),
     }
 }
 
-fn decode_binding(scope: &str, target: &Value) -> Result<ChannelIdentityBinding> {
+/// Decodes a binding, accepting the legacy `agent` scope as an unmasked actor.
+///
+/// `agent` is not a second live spelling: nothing emits it (see
+/// [`ChannelIdentityBinding::scope_str`]), and a legacy body has no facet key
+/// to disagree with, so the two scopes cannot drift apart. A `vault` row
+/// carrying a facet is refused rather than silently dropping the mask.
+fn decode_binding(
+    scope: &str,
+    target: &Value,
+    facet_ref: Option<EntityId>,
+) -> Result<ChannelIdentityBinding> {
     match scope {
-        "agent" => decode_entity_ref(target).map(ChannelIdentityBinding::agent),
-        "vault" => target
+        "actor" | "agent" => Ok(ChannelIdentityBinding::Actor {
+            actor_ref: decode_entity_ref(target)?,
+            facet_ref,
+        }),
+        "vault" if facet_ref.is_none() => target
             .as_u64()
             .map(ChannelIdentityBinding::vault)
             .ok_or_else(invalid_identity),
@@ -1290,6 +1444,17 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
 ) -> Result<()> {
     let next = transition.next();
     next.validate()?;
+    if let Some(facet_ref) = next.binding.facet_ref() {
+        let facet_type = store
+            .entities
+            .get(txn, facet_ref.as_bytes())?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
+        if facet_type != Some(crate::registry::ENTITY_TYPE_FACET) {
+            return Err(Error::InvalidChannelIdentityBody(
+                "channel identity binding facet_ref must name a FACET",
+            ));
+        }
+    }
     match transition {
         IdentityTransition::Birth { next } => {
             if next.is_delegated() && next.state != ChannelIdentityState::Requested {
