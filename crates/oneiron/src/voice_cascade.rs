@@ -59,6 +59,9 @@ mod retrieval;
 mod safeguard;
 mod session;
 
+#[cfg(unix)]
+pub mod uds;
+
 pub use cancellation::{OutputStop, StopReason};
 pub use protocol::*;
 pub use retrieval::{PartialRetrieval, SpeculativeRetrievalBridge, UtteranceHandle};

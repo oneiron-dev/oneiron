@@ -117,7 +117,7 @@ impl SpeculativeRetrievalBridge {
     }
 
     /// Finalization consumes the real engine handle even if retrieval fails.
-    /// Enrichment/validation errors occur BEFORE consumption and may be retried.
+    /// Enricher and revision errors occur BEFORE consumption and may be retried.
     pub fn finalize(
         &mut self,
         handle: &UtteranceHandle,
@@ -203,11 +203,6 @@ fn enrich(text: &str, enricher: &mut impl PartialEnricher) -> Result<PartialEnri
             .collect();
         list.sort();
         list.dedup();
-    }
-    if enrichment.entity_labels.is_empty() && enrichment.salient_terms.is_empty() {
-        return Err(invalid(
-            "host enrichment must contain a nonempty label or salient term",
-        ));
     }
     Ok(enrichment)
 }

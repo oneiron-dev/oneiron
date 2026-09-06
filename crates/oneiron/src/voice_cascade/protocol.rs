@@ -60,7 +60,8 @@ pub struct AsrEvent {
 
 /// Host-owned entity-spot/term-extraction result. An optional vector is also
 /// host-embedded. The bridge trims/deduplicates lists, but the engine alone
-/// derives meaning signatures. At least one nonblank label or term is required.
+/// derives meaning signatures. Empty labels/terms are valid: the real
+/// speculative session skips empty partial signatures and retrieves on final.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PartialEnrichment {
     pub entity_labels: Vec<String>,
@@ -92,9 +93,12 @@ pub enum ToolEvent {
         name: String,
         input: Value,
     },
+    /// Preserves arbitrary JSON and error metadata from
+    /// [`crate::llm::ContentPart::ToolResult`]; neither grants tool authority.
     Result {
         call_id: String,
         output: Value,
+        is_error: bool,
     },
 }
 
