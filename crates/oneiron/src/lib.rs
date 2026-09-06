@@ -307,6 +307,10 @@ pub use crate::gate::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
     GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
+pub use crate::ingest::{
+    EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
+    ScoredEntityResolutionCandidate, evaluate_entity_resolution_waterfall,
+};
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
 };
@@ -343,6 +347,17 @@ pub use crate::outbound::{
     unsupported_outbound_connector,
 };
 pub use crate::pipeline::{PipelineBuilder, ScoredEntity, Signal};
+pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+// The provider-confidence shortcut rows are a DISPOSABLE cache with no
+// production control surface — reads repair them and the prior writer moves
+// them, and that is the whole contract. These three seams exist only so the
+// ES-09 oracle can stage cleared/stale index states without `vault_meta`
+// becoming public, so they are compiled out of the default-feature API.
+#[cfg(feature = "test-support")]
+pub use crate::provider_confidence::{
+    clear_provider_confidence_indexes, provider_confidence_index_presence,
+    set_provider_confidence_index_raw,
+};
 pub use crate::psych_profile::{
     PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
 };

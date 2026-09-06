@@ -1,24 +1,82 @@
 //! Provider confidence priors and read-time confidence composition (ES-09).
+//!
+//! # Index model: two DISPOSABLE shortcuts over one truth
+//!
+//! The provider actor row and the provider prior-head row in `vault_meta` are
+//! CACHES, never authority. Truth is the stored graph: an active PERSON entity
+//! whose MessagePack body carries an exact `provider_key`, plus the
+//! `actor.confidence_prior` CLAIMs subject-ed to it or to matching merged shells
+//! that resolve to it. A prior stranded outside active matching actors is a
+//! typed error, never neutral. Every read validates a
+//! shortcut against that truth before honouring it and falls back to a full
+//! scan on any mismatch, so deleting both rows — or filling them with garbage —
+//! can only cost work, never change an answer. That is what makes an
+//! upgraded vault correct with no migration, no startup pass, and no bulk
+//! rebuild: the first read that misses repairs what it needed and nothing else.
+//!
+//! # Cross-actor staleness bound
+//!
+//! The prior head is stored per PROVIDER, not per actor, and may name a CLAIM
+//! owned by any actor carrying that provider key. While a cached head still
+//! validates, a NEWER prior synced onto a DIFFERENT actor for the same provider
+//! is not observed — the read is authorized to trust its validated shortcut.
+//! That newer head is discovered on the next stale/miss (any invalidation of
+//! the cached head, an index clear, or an upgraded vault's first read), and the
+//! duplicate actors themselves reconcile by merge under ARCH-0035 law rather
+//! than by this module inventing a reconciliation of its own. The bound is
+//! therefore "one stale/miss", and it is a latency bound, not a correctness
+//! one: no state is written from the stale view. A newer prior on a shell other
+//! than the cached head's subject, or a newly stranded shell, is discovered on
+//! the next stale/miss event.
+//!
+//! # Transaction norm: NO NESTING
+//!
+//! `Vault::with_write_txn` / `try_with_write_txn` (vault.rs:1533-1556) take the
+//! LMDB writer mutex before running the closure. Every public entry point here
+//! opens exactly ONE of them and does all of its work through the `_in_txn`
+//! form; the public forms must NEVER be called from inside a held transaction.
+//!
+//! A waterfall scoring pass also keeps an in-memory prior memo for that one
+//! transaction. It reuses successful resolutions, including neutral absence,
+//! while graph truth cannot change. The memo is discarded before commit; it
+//! never writes a negative shortcut or survives into a later evaluation.
+
+mod indexes;
+mod transaction_memo;
 
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
+#[cfg(feature = "test-support")]
+use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     unit_interval_f32,
 };
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+#[cfg(feature = "test-support")]
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
+
+use indexes::{
+    active_provider_prior_in_txn, prior_claims_for_actor_in_txn, provider_prior_head_index_key,
+    resolve_or_create_provider_actor_in_txn, resolve_provider_actor_in_txn,
+};
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use indexes::{
+    clear_provider_confidence_indexes, provider_confidence_index_presence,
+    set_provider_confidence_index_raw,
+};
+pub(crate) use transaction_memo::ProviderPriorMemo;
 
 /// Provider reliability belief, stored as a superseding claim on the provider actor.
 pub const PREDICATE_ACTOR_CONFIDENCE_PRIOR: &str = "actor.confidence_prior";
 
-const PROVIDER_ACTOR_INDEX_PREFIX: &[u8] = b"provider_confidence/actor/v1\0";
-pub(crate) const PREDICATE_PROVIDER_ENRICHMENT: &str = "provider.enrichment";
+/// Provider-attributed enrichment output, the production read the ES-09
+/// composition scores. Attribution lives in the value map's `provider` key.
+pub const PREDICATE_PROVIDER_ENRICHMENT: &str = "provider.enrichment";
 const PROVIDER_VALUE_KEY: &str = "provider";
 const MAX_PROVIDER_KEY_BYTES: usize = 512;
 
@@ -26,6 +84,45 @@ const MAX_PROVIDER_KEY_BYTES: usize = 512;
 #[must_use]
 pub fn is_actor_confidence_prior_claim_predicate(predicate: &str) -> bool {
     predicate == PREDICATE_ACTOR_CONFIDENCE_PRIOR
+}
+
+/// Returns whether `predicate` is the provider-enrichment predicate.
+///
+/// EXACT match, deliberately not a `provider.` prefix: adopting every future
+/// `provider.*` predicate into this validator would decide the shape of
+/// families that do not exist yet, and the write chokepoint still accepts
+/// unknown well-formed predicates on their own terms.
+#[must_use]
+pub fn is_provider_enrichment_claim_predicate(predicate: &str) -> bool {
+    predicate == PREDICATE_PROVIDER_ENRICHMENT
+}
+
+/// Validates a `provider.enrichment` claim body.
+///
+/// The one structural contract every enrichment write must satisfy for the
+/// ES-09 composition to be able to score it: an entity subject and a value MAP
+/// carrying the `provider` key EXACTLY once, whose value is a trimmed,
+/// non-empty, at-most-512-byte string. Sibling payload keys are allowed and
+/// ignored — the map is the provider's own output and this validator claims
+/// only the attribution slot in it, exactly as the `skill.scan_verdict`
+/// precedent does.
+///
+/// Deliberately WEAKER than the prior validator beside it: enrichment claims
+/// are ordinary third-party observations, so `source`/`approval` stay the
+/// caller's business and the local-only trust pin belongs to the prior alone.
+/// The prior validator above is unchanged by this door.
+pub(crate) fn validate_provider_enrichment_claim_structure(body: &ClaimBody) -> Result<()> {
+    if !is_provider_enrichment_claim_predicate(&body.predicate) {
+        return Err(Error::InvalidClaimBody(
+            "unknown provider enrichment predicate",
+        ));
+    }
+    if !matches!(body.subject, ClaimSubject::Entity(_)) {
+        return Err(Error::InvalidClaimBody(
+            "provider enrichment subject must be an entity",
+        ));
+    }
+    provider_from_claim_body(body).map(|_| ())
 }
 
 /// Validates an `actor.confidence_prior` claim body.
@@ -144,6 +241,16 @@ pub fn write_provider_prior(
         for prior_id in active_priors {
             vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, &prior_id, now)?;
         }
+        // The shortcut moves in the SAME transaction that mints the head it
+        // names. A separate write would leave a window in which the row points
+        // at a claim this transaction is about to supersede — survivable (the
+        // read revalidates and falls back) but pointless churn, and a rollback
+        // would strand it pointing at a claim that never landed.
+        vault.store.vault_meta.put(
+            wtxn,
+            &provider_prior_head_index_key(provider),
+            claim_id.as_bytes(),
+        )?;
         Ok(claim_id)
     })
 }
@@ -232,13 +339,44 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
 ///
 /// A provider with no active prior uses the neutral prior `1.0`, so the
 /// effective confidence is identical to the stored confidence.
+///
+/// Opens ONE write transaction because a read may REPAIR a stale shortcut (see
+/// the module docs' index model). NO NESTING: `with_write_txn` takes the LMDB
+/// writer mutex first, so callers already holding a transaction must reach
+/// [`effective_confidence_in_txn`] instead of this door.
 pub fn effective_confidence(vault: &Vault, claim_ref: &EntityId) -> Result<f32> {
-    let body = claim_body(vault, claim_ref)?;
+    vault.with_write_txn(|wtxn| {
+        let mut prior_memo = ProviderPriorMemo::default();
+        effective_confidence_in_txn(vault, wtxn, claim_ref, &mut prior_memo)
+    })
+}
+
+/// Transaction-composable [`effective_confidence`]: the whole composition —
+/// claim read, provider extraction, prior resolution, and any shortcut repair
+/// the resolution needed — inside the caller's transaction.
+///
+/// The product stays closed on `[0,1]` (both factors are), and NOTHING is
+/// materialized: the stored `confidence` column is never rewritten.
+///
+/// The caller owns one memo for this scoring transaction only. Repeated
+/// providers reuse their resolved prior, including neutral absence, while
+/// each claim still supplies its own stored confidence. No actor or prior
+/// truth may change while this memo is in use.
+pub(crate) fn effective_confidence_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_ref: &EntityId,
+    prior_memo: &mut ProviderPriorMemo,
+) -> Result<f32> {
+    let body = vault
+        .get_claim_in_txn(&*wtxn, claim_ref)?
+        .ok_or(Error::EntityNotFound)?;
     let provider = provider_from_claim_body(&body)?;
-    let prior = match resolve_provider_actor(vault, provider)? {
-        Some(actor) => active_provider_prior(vault, &actor)?.unwrap_or(1.0),
-        None => 1.0,
-    };
+    let prior = prior_memo
+        .resolve(provider, || {
+            active_provider_prior_in_txn(vault, wtxn, provider)
+        })?
+        .unwrap_or(1.0);
     Ok(body.confidence * prior)
 }
 
@@ -258,22 +396,30 @@ pub fn count_superseded_prior_claims(vault: &Vault, provider: &str) -> Result<us
 }
 
 /// Counts active provider priors carrying exactly `evidence`.
+///
+/// Same truth-fallback resolver as every other read here, so the count is
+/// already correct on a vault whose shortcut rows were never written (or were
+/// just cleared) — no rebuild read has to run first.
 pub fn count_active_prior_claims_with_evidence(
     vault: &Vault,
     provider: &str,
     evidence: &str,
 ) -> Result<usize> {
     validate_provider_key(provider)?;
-    let Some(actor) = resolve_provider_actor(vault, provider)? else {
-        return Ok(0);
-    };
-    Ok(prior_claim_bodies(vault, &actor)?
-        .into_iter()
-        .filter(|body| {
-            body.lifecycle == ClaimLifecycleStatus::Active
-                && body.evidence.as_ref().and_then(Value::as_str) == Some(evidence)
-        })
-        .count())
+    // One write transaction: resolving may repair the actor shortcut. NO
+    // NESTING — see the module docs.
+    vault.with_write_txn(|wtxn| {
+        let Some(actor) = resolve_provider_actor_in_txn(vault, wtxn, provider)? else {
+            return Ok(0);
+        };
+        Ok(prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
+            .into_iter()
+            .filter(|(_, body)| {
+                body.lifecycle == ClaimLifecycleStatus::Active
+                    && body.evidence.as_ref().and_then(Value::as_str) == Some(evidence)
+            })
+            .count())
+    })
 }
 
 fn count_prior_claims(
@@ -282,56 +428,15 @@ fn count_prior_claims(
     lifecycle: ClaimLifecycleStatus,
 ) -> Result<usize> {
     validate_provider_key(provider)?;
-    let Some(actor) = resolve_provider_actor(vault, provider)? else {
-        return Ok(0);
-    };
-    Ok(prior_claim_bodies(vault, &actor)?
-        .into_iter()
-        .filter(|body| body.lifecycle == lifecycle)
-        .count())
-}
-
-/// The active prior for `actor`, or `None` (neutral) if it has none.
-///
-/// Tolerance vs authorization — two devices can concurrently write a prior for
-/// the same provider; under CRDT replay both land ACTIVE until the next
-/// `write_provider_prior` supersedes. That is a legitimate convergence state,
-/// not corruption, so we pick the newest head deterministically (by
-/// `valid_from`, then claim id) rather than bricking every read with an error.
-///
-/// The authorization boundary that makes "newest head wins" safe is predicate
-/// reservation: `actor.confidence_prior` is trust-bearing, and `actor.*` joined
-/// the reserved-predicate namespace alongside `{edge, skill}` in ONE-1739. A
-/// generic `put_claim` can no longer plant a head here whatever the policy
-/// says — [`write_provider_prior`] is the only local writer, so every head this
-/// read honors came through it.
-fn active_provider_prior(vault: &Vault, actor: &EntityId) -> Result<Option<f32>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut best: Option<(u64, EntityId, f32)> = None;
-    for claim_id in vault.claims_for_subject_in_txn(&rtxn, actor)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &claim_id)? else {
-            continue;
+    vault.with_write_txn(|wtxn| {
+        let Some(actor) = resolve_provider_actor_in_txn(vault, wtxn, provider)? else {
+            return Ok(0);
         };
-        if !is_actor_confidence_prior_claim_predicate(&body.predicate)
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
-            continue;
-        }
-        let value = unit_interval_f32(&body.value).ok_or(Error::InvalidClaimBody(
-            "active provider confidence prior must be in 0..1",
-        ))?;
-        let valid_from = body.valid_from.unwrap_or(0);
-        let newer = match &best {
-            None => true,
-            Some((best_vf, best_id, _)) => {
-                valid_from > *best_vf || (valid_from == *best_vf && claim_id > *best_id)
-            }
-        };
-        if newer {
-            best = Some((valid_from, claim_id, value));
-        }
-    }
-    Ok(best.map(|(_, _, value)| value))
+        Ok(prior_claims_for_actor_in_txn(vault, &*wtxn, &actor)?
+            .into_iter()
+            .filter(|(_, body)| body.lifecycle == lifecycle)
+            .count())
+    })
 }
 
 fn claim_body(vault: &Vault, claim_ref: &EntityId) -> Result<ClaimBody> {
@@ -365,110 +470,6 @@ fn provider_from_claim_body(body: &ClaimBody) -> Result<&str> {
     Ok(provider)
 }
 
-fn prior_claim_bodies(vault: &Vault, actor: &EntityId) -> Result<Vec<ClaimBody>> {
-    vault.claim_bodies_for_subjects_matching(&[*actor], |body, _| {
-        is_actor_confidence_prior_claim_predicate(&body.predicate)
-    })
-}
-
-fn prior_claims_for_actor_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    actor: &EntityId,
-) -> Result<Vec<(EntityId, ClaimBody)>> {
-    let mut priors = Vec::new();
-    for claim_id in vault.claims_for_subject_in_txn(rtxn, actor)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
-            continue;
-        };
-        if is_actor_confidence_prior_claim_predicate(&body.predicate) {
-            priors.push((claim_id, body));
-        }
-    }
-    Ok(priors)
-}
-
-fn resolve_or_create_provider_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    provider: &str,
-) -> Result<EntityId> {
-    validate_provider_key(provider)?;
-    let index_key = provider_actor_index_key(provider);
-    if let Some(raw) = vault.store.vault_meta.get(&*wtxn, &index_key)? {
-        let id = decode_provider_actor_id(&raw)?;
-        let cached_is_person = vault
-            .store
-            .entities
-            .get(&*wtxn, id.as_bytes())?
-            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
-            == Some(ENTITY_TYPE_PERSON);
-        if cached_is_person {
-            return Ok(id);
-        }
-    }
-
-    let id = EntityId::now();
-    let body = encode_value(&Value::Map(vec![(
-        Value::from("provider_key"),
-        Value::from(provider),
-    )]))?;
-    apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        wtxn,
-        vec![BatchOp::Put {
-            id,
-            entity_type: ENTITY_TYPE_PERSON,
-            occurred: TimeRange { start: 0, end: 0 },
-            learned_at: crate::unix_seconds_now(),
-            data: body,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
-        false,
-        true,
-    )?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &index_key, id.as_bytes())?;
-    Ok(id)
-}
-
-fn resolve_provider_actor(vault: &Vault, provider: &str) -> Result<Option<EntityId>> {
-    validate_provider_key(provider)?;
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &provider_actor_index_key(provider))?
-    else {
-        return Ok(None);
-    };
-    let id = decode_provider_actor_id(&raw)?;
-    let is_person = vault
-        .store
-        .entities
-        .get(&rtxn, id.as_bytes())?
-        .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
-        == Some(ENTITY_TYPE_PERSON);
-    Ok(is_person.then_some(id))
-}
-
-fn provider_actor_index_key(provider: &str) -> Vec<u8> {
-    let digest = Sha256::digest(provider.as_bytes());
-    let mut key = Vec::with_capacity(PROVIDER_ACTOR_INDEX_PREFIX.len() + digest.len());
-    key.extend_from_slice(PROVIDER_ACTOR_INDEX_PREFIX);
-    key.extend_from_slice(&digest);
-    key
-}
-
 fn validate_provider_key(provider: &str) -> Result<()> {
     if provider.trim() != provider || provider.is_empty() || provider.len() > MAX_PROVIDER_KEY_BYTES
     {
@@ -477,13 +478,6 @@ fn validate_provider_key(provider: &str) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn decode_provider_actor_id(raw: &[u8]) -> Result<EntityId> {
-    let bytes: [u8; ENTITY_ID_LEN] = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("provider actor reference"))?;
-    EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("provider actor reference"))
 }
 
 fn encode_value(value: &Value) -> Result<Vec<u8>> {
