@@ -247,9 +247,16 @@ fn direct_vault_config_conversion_preserves_valid_privacy_pairs() {
         assert_eq!(vault.privacy_posture(), posture);
         assert_eq!(vault.is_host_readable(), posture == Hosted);
         drop(vault);
-        let reopened = oneiron::Vault::open_existing(&path, direct.vault_config()).unwrap();
-        assert_eq!(reopened.privacy_posture(), posture);
-        assert_eq!(reopened.is_host_readable(), posture == Hosted);
+        // The strict existing-only opener requires Linux's descriptor-bound
+        // root path. Validation and the create-capable positive control above
+        // still run on every platform; do not bypass production preflight.
+        #[cfg(target_os = "linux")]
+        {
+            let reopened = oneiron::Vault::open_existing(&path, direct.vault_config())
+                .expect("valid privacy pair reopens through the Linux existing-only door");
+            assert_eq!(reopened.privacy_posture(), posture);
+            assert_eq!(reopened.is_host_readable(), posture == Hosted);
+        }
     }
 }
 

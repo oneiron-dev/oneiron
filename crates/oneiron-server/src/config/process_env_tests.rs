@@ -94,7 +94,8 @@ fn check_child_environment(case: &str) {
         _ => None,
     };
     if let Some(key) = invalid_key {
-        let error = EnvConfig::from_process().unwrap_err();
+        let error = EnvConfig::from_process()
+            .expect_err("non-Unicode privacy input must fail process environment parsing");
         assert_redacted_unicode_error(error, key);
         // Valid, higher-precedence CLI input must not hide malformed process
         // inputs either. Refusal happens before file lookup or storage opens.
@@ -103,16 +104,20 @@ fn check_child_environment(case: &str) {
             hosted_kms_key_ref: Some("kms://example/cli-ref".to_owned()),
             ..Default::default()
         };
-        assert_redacted_unicode_error(resolve_serve_config(&args).unwrap_err(), key);
+        assert_redacted_unicode_error(
+            resolve_serve_config(&args)
+                .expect_err("valid CLI input must not mask non-Unicode privacy environment input"),
+            key,
+        );
         return;
     }
 
     let resolved = resolve_serve_config_with_sources(
         &ServeArgs::default(),
-        EnvConfig::from_process().unwrap(),
+        EnvConfig::from_process().expect("valid privacy environment must parse"),
         None,
     )
-    .unwrap();
+    .expect("valid privacy environment must resolve with default CLI arguments");
     let expected = match case {
         "hosted" => ServeConfig {
             privacy_posture: HostingPrivacyPosture::Hosted,
@@ -123,7 +128,11 @@ fn check_child_environment(case: &str) {
         _ => panic!("unexpected child case: {case}"),
     };
     assert_eq!(resolved, expected);
-    resolved.vault_config().privacy.validate().unwrap();
+    resolved
+        .vault_config()
+        .privacy
+        .validate()
+        .expect("resolved process privacy configuration must have valid custody");
 }
 
 fn assert_redacted_unicode_error(error: anyhow::Error, key: &str) {
