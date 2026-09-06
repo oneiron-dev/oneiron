@@ -6579,6 +6579,96 @@ fn provider_retry_after_is_the_exact_re_arm_authority() -> crate::Result<()> {
     Ok(())
 }
 
+fn exercise_provider_retry_after_collision(
+    raw_retry_after: Option<&str>,
+    expected_secs: Option<u64>,
+) -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x20);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x21),
+        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
+    )?;
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("slack", "react", "retry-after-collision"))
+        .expect("schedule");
+
+    let mut outcome = OutboundExecutionOutcome::failed("provider_rate_limited")
+        .with_receipt_field("provider_retry_after", "7")
+        .with_receipt_field("provider_error_code", " rate_limited ");
+    if let Some(raw) = raw_retry_after {
+        outcome = outcome.with_receipt_field("retry_after", raw);
+    }
+    let mut executor = RecordingExecutor {
+        outcome,
+        ..RecordingExecutor::default()
+    };
+    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
+    assert_eq!(executor.calls.len(), 1, "the provider was actually called");
+
+    let receipt = one_1768_receipts(&vault)?
+        .pop()
+        .expect("the failed send has a durable audit receipt");
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(receipt_field(&receipt, "dispatch_outcome"), Some("failed"));
+    assert_eq!(receipt_field(&receipt, "gate_outcome"), Some("allow"));
+    let expected_normalized = expected_secs.map(|secs| secs.to_string());
+    assert_eq!(
+        receipt_field(&receipt, "provider_retry_after"),
+        expected_normalized.as_deref(),
+        "only parsed raw retry_after may author the normalized field: {raw_retry_after:?}"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "retry_after"),
+        raw_retry_after.filter(|raw| !raw.trim().is_empty()),
+        "nonblank provider text survives verbatim; blank fields stay omitted"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "provider_error_code"),
+        Some(" rate_limited "),
+        "stripping the reserved key must preserve ordinary provider evidence"
+    );
+    let surfaced: u64 = receipt_field(&receipt, "retry_at")
+        .expect("every executor re-arm stamps retry_at")
+        .parse()
+        .expect("retry_at is an instant");
+    assert_eq!(
+        surfaced,
+        ONE_1768_EXECUTE_AT + expected_secs.unwrap_or(60),
+        "use the parsed provider delay or the exact transport fallback, never the injected 7s"
+    );
+    let attempts = one_1768_bridge_attempts(&vault)?;
+    let armed = attempts
+        .iter()
+        .find(|attempt| attempt.state == AttemptState::Scheduled)
+        .expect("a failed send re-arms rather than failing terminally");
+    assert_eq!(armed.scheduled_at, Some(surfaced));
+    Ok(())
+}
+
+#[test]
+fn missing_retry_after_rejects_injected_provider_retry_after() -> crate::Result<()> {
+    exercise_provider_retry_after_collision(None, None)
+}
+
+#[test]
+fn malformed_retry_after_rejects_injected_provider_retry_after() -> crate::Result<()> {
+    for raw in ["", " \t ", "-1", "1.5", "not-a-number", "18446744073709551616"] {
+        exercise_provider_retry_after_collision(Some(raw), None)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn parsed_retry_after_overrides_injected_provider_retry_after() -> crate::Result<()> {
+    exercise_provider_retry_after_collision(Some(" 900 "), Some(900))
+}
+
 /// A retried transport failure is an AUDITABLE outcome, exactly as a hold is:
 /// re-arming the queue is not a substitute for the record. Without the durable
 /// row, what the provider said, the evidence it failed on, and the instant the

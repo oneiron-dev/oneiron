@@ -785,7 +785,10 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
         };
-        let execution = self.sink.execute(&execution_request);
+        let mut execution = self.sink.execute(&execution_request);
+        // Only the pipeline may author the normalized re-arm authority, even
+        // when the adapter's raw `retry_after` is missing or malformed.
+        execution.receipt_fields.remove(PROVIDER_RETRY_AFTER_FIELD);
         let outcome = match execution.kind {
             OutboundExecutionOutcomeKind::DeliveredToChannel => {
                 crate::outbound_intent_ledger::OutboundSendOutcome::Acked
