@@ -66,6 +66,7 @@ CompanionScopeResolutionSource
 CompanionSubject
 CompanionTaskKind
 ComposedChatAnswer
+ConsentDeniedDetector
 ConsolidationAttemptInput
 ConsolidationExecutor
 ConsolidationSink

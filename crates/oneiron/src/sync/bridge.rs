@@ -2099,6 +2099,16 @@ fn materialize_entity_blob_in_txn(
         return Ok(false);
     }
 
+    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+        return super::diagnostic_ingest::ingest_diagnostic_in_txn(
+            vault,
+            wtxn,
+            &id,
+            blob,
+            lease_vault_id,
+        );
+    }
+
     // ONE-1134 + ONE-1140: REDACTION_AUDIT replay door. Receipts
     // are immutable audit records (contracts.ts `redactionAuditReceipt`;
     // ARCH-0023b audit/guardrail stream class: quarantine divergence, never
@@ -2704,5 +2714,7 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
     format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
 }
 
+#[cfg(test)]
+mod diagnostic_tests;
 #[cfg(test)]
 mod tests;

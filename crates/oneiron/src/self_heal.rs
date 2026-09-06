@@ -49,6 +49,9 @@ use crate::temporal::TimeRange;
 
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
+mod consent_detector;
+pub use consent_detector::ConsentDeniedDetector;
+
 /// Schema version stamped into, and required by, every DIAGNOSTIC body.
 pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
 
@@ -1034,11 +1037,11 @@ fn canonical_invariant_map(
 /// These are the INVISIBLE ones: soft hyphen, the Arabic letter mark, the
 /// Mongolian vowel separator, the zero-width space/joiner family, the line and
 /// paragraph separators, the bidirectional embedding/override/isolate controls,
-/// the deprecated format characters, the byte-order mark, and the interlinear
-/// annotation marks. Each is a way to make one string RENDER as a different
+/// the deprecated format characters, the byte-order mark, the interlinear
+/// annotation marks, and Unicode tag controls. Each is a way to make one string RENDER as a different
 /// string, which is exactly the trick an untrusted detail leaf would be used
 /// for if it were allowed to carry them.
-const FORBIDDEN_TEXT_RANGES: [(char, char); 9] = [
+const FORBIDDEN_TEXT_RANGES: [(char, char); 11] = [
     ('\u{00AD}', '\u{00AD}'),
     ('\u{061C}', '\u{061C}'),
     ('\u{180E}', '\u{180E}'),
@@ -1048,6 +1051,8 @@ const FORBIDDEN_TEXT_RANGES: [(char, char); 9] = [
     ('\u{2060}', '\u{206F}'),
     ('\u{FEFF}', '\u{FEFF}'),
     ('\u{FFF9}', '\u{FFFB}'),
+    ('\u{E0001}', '\u{E0001}'),
+    ('\u{E0020}', '\u{E007F}'),
 ];
 
 /// Whether `scalar` is control or invisible-format data.
@@ -1114,18 +1119,23 @@ fn is_canonical_untrusted_detail(text: &str) -> bool {
     true
 }
 
-/// End offset of the `\u{HEX}` escape starting at `start`, if it is well formed.
+/// End offset only for the writer's exact rendering of a forbidden scalar.
 fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
     if bytes.get(start + 2) != Some(&b'{') {
         return None;
     }
     let mut cursor = start + 3;
-    let mut digits = 0_usize;
     while bytes.get(cursor).is_some_and(u8::is_ascii_hexdigit) {
         cursor += 1;
-        digits += 1;
     }
-    if digits == 0 || digits > 6 || bytes.get(cursor) != Some(&b'}') {
+    let digits = cursor - (start + 3);
+    if !(4..=6).contains(&digits) || bytes.get(cursor) != Some(&b'}') {
+        return None;
+    }
+    let hex = std::str::from_utf8(&bytes[start + 3..cursor]).ok()?;
+    let code = u32::from_str_radix(hex, 16).ok()?;
+    let scalar = char::from_u32(code)?;
+    if !is_forbidden_text_scalar(scalar) || hex != format!("{code:04X}") {
         return None;
     }
     Some(cursor + 1)
@@ -1171,4 +1181,8 @@ fn invalid_diagnostic(reason: &'static str) -> Error {
 }
 
 #[cfg(test)]
+mod production_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod text_tests;
