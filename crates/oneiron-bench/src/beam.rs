@@ -120,6 +120,8 @@ pub(crate) struct BeamFixture {
     description: String,
     records: Vec<FixtureRecord>,
     cases: Vec<FixtureCase>,
+    #[serde(default)]
+    ppr_vad_edges: Vec<PprVadFixtureEdge>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -172,6 +174,8 @@ pub(crate) struct FixtureCase {
     opposing_evidence: Option<OpposingEvidence>,
     #[serde(default)]
     offline_amortized_cost: CostComponentInput,
+    #[serde(default)]
+    ppr_vad_query: Option<PprVadQuery>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -266,6 +270,7 @@ struct RunOutputs {
 pub(crate) enum ArmKind {
     Deterministic,
     VanillaRag,
+    PprVadSweep,
     BackboneSolo,
     Agentic,
     Chat,
@@ -276,6 +281,7 @@ impl ArmKind {
         match self {
             Self::Deterministic => "deterministic",
             Self::VanillaRag => "vanilla_rag",
+            Self::PprVadSweep => "ppr_vad_sweep",
             Self::BackboneSolo => "backbone_solo",
             Self::Agentic => "agentic",
             Self::Chat => "chat",
@@ -616,6 +622,8 @@ pub(crate) struct BeamReport {
     scorer: ScorerReport,
     report_format: String,
     cases: Vec<CaseReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ppr_vad_sweep: Option<PprVadSweepReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -629,6 +637,7 @@ struct DatasetLoadReport {
 }
 
 struct LoadedDataset {
+    ppr_vad_fixture: Option<BeamFixture>,
     report: DatasetLoadReport,
     fixture_id: String,
     fixture_description: String,
@@ -801,6 +810,10 @@ enum ArmOutcome {
     },
     NotReady {
         not_ready: NotReadyState,
+    },
+    RetrievalSweep {
+        subset: PprVadSubset,
+        samples: Vec<PprVadCaseSample>,
     },
 }
 
@@ -1008,6 +1021,8 @@ impl BeamScorer for FixedBeamScorer {
         let abilities = match &arm.outcome {
             ArmOutcome::Completed { context_pack } => completed_ability_scores(case, context_pack),
             ArmOutcome::NotReady { not_ready } => not_ready_ability_scores(competitor, not_ready),
+            // Retrieval-only measurements have their own aggregate gate, not an LLM score.
+            ArmOutcome::RetrievalSweep { .. } => Vec::new(),
         };
         let overall_score = mean_score(&abilities);
 
@@ -1017,6 +1032,398 @@ impl BeamScorer for FixedBeamScorer {
             abilities,
         }
     }
+}
+
+// ONE-215 retrieval-only arm. Query labels and relevance judgments are scorer
+// inputs; only declared seeds and depth enter retrieval. Fixtures carry the
+// existing stored VAD, never a second emotion model.
+const PPR_VAD_RECALL_K: usize = 15;
+const PPR_VAD_LATENCY_REPETITIONS: usize = 20;
+const PPR_VAD_MIN_SALIENT_GAIN_PERCENT: f64 = 2.0;
+const PPR_VAD_MAX_NEUTRAL_REGRESSION_PP: f64 = 0.0;
+const PPR_VAD_MAX_P95_INCREASE_PERCENT: f64 = 5.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PprVadSubset {
+    EmotionallySalient,
+    Neutral,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PprVadQuery {
+    subset: PprVadSubset,
+    seeds: Vec<String>,
+    depth: u32,
+    /// Judged non-seed results; recall uses the production final top-15 rows.
+    relevant_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PprVadFixtureEdge {
+    source: String,
+    target: String,
+    /// Pinned edge-kind storage discriminant.
+    kind: u8,
+    weight: f32,
+    /// Omit for structural edges; semantic edges may supply canonical full VAD.
+    #[serde(default)]
+    vad: Option<oneiron::Vad>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PprVadCaseSample {
+    alpha: f32,
+    recall_at_15: f64,
+    latency_ms: Vec<f64>,
+    result_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PprVadAlphaReport {
+    alpha: f32,
+    salient_recall_at_15: f64,
+    neutral_recall_at_15: f64,
+    p95_latency_ms: f64,
+    salient_gain_percent_vs_zero: Option<f64>,
+    neutral_delta_pp_vs_zero: f64,
+    p95_increase_percent_vs_zero: Option<f64>,
+    gate_passed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PprVadSweepReport {
+    baseline_alpha: f32,
+    production_default_alpha: f32,
+    min_salient_gain_percent: f64,
+    max_neutral_regression_pp: f64,
+    max_p95_increase_percent: f64,
+    latency_protocol: String,
+    salient_queries: usize,
+    neutral_queries: usize,
+    alphas: Vec<PprVadAlphaReport>,
+}
+
+fn ppr_vad_gate(
+    salient_gain: Option<f64>,
+    neutral_delta_pp: f64,
+    p95_increase: Option<f64>,
+) -> bool {
+    salient_gain.is_some_and(|gain| gain.is_finite() && gain >= PPR_VAD_MIN_SALIENT_GAIN_PERCENT)
+        && neutral_delta_pp.is_finite()
+        && neutral_delta_pp >= -PPR_VAD_MAX_NEUTRAL_REGRESSION_PP
+        && p95_increase.is_some_and(|increase| {
+            increase.is_finite() && increase <= PPR_VAD_MAX_P95_INCREASE_PERCENT
+        })
+}
+
+fn ppr_vad_percent_change(value: f64, baseline: f64) -> Option<f64> {
+    if baseline <= 0.0 || !baseline.is_finite() || !value.is_finite() {
+        return None;
+    }
+    let percent = (value - baseline) / baseline * 100.0;
+    percent.is_finite().then_some(percent)
+}
+
+fn ppr_vad_p95(values: &mut [f64]) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[(values.len() * 95).div_ceil(100) - 1]
+}
+
+fn ppr_vad_sweep_report(cases: &[CaseReport]) -> Option<PprVadSweepReport> {
+    let outcomes: Vec<_> = cases
+        .iter()
+        .flat_map(|case| &case.arms)
+        .filter_map(|arm| {
+            if let ArmOutcome::RetrievalSweep { subset, samples } = &arm.outcome {
+                Some((*subset, samples))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if outcomes.is_empty() {
+        return None;
+    }
+    let salient_queries = outcomes
+        .iter()
+        .filter(|(subset, _)| *subset == PprVadSubset::EmotionallySalient)
+        .count();
+    let neutral_queries = outcomes.len() - salient_queries;
+    // Missing subsets never yield a gate claim (manifest validation rejects them).
+    if salient_queries == 0 || neutral_queries == 0 {
+        return None;
+    }
+    let mut alphas = Vec::<PprVadAlphaReport>::new();
+    for (index, &alpha) in oneiron::config::PPR_VAD_ALPHA_SWEEP.iter().enumerate() {
+        let mut salient = 0.0;
+        let mut neutral = 0.0;
+        let mut latencies = Vec::new();
+        for (subset, samples) in &outcomes {
+            let sample = &samples[index];
+            match subset {
+                PprVadSubset::EmotionallySalient => salient += sample.recall_at_15,
+                PprVadSubset::Neutral => neutral += sample.recall_at_15,
+            }
+            latencies.extend_from_slice(&sample.latency_ms);
+        }
+        let salient = salient / salient_queries as f64;
+        let neutral = neutral / neutral_queries as f64;
+        let p95 = ppr_vad_p95(&mut latencies);
+        let baseline = alphas.first();
+        let salient_gain = baseline.map_or(Some(0.0), |base| {
+            ppr_vad_percent_change(salient, base.salient_recall_at_15)
+        });
+        let neutral_delta =
+            baseline.map_or(0.0, |base| (neutral - base.neutral_recall_at_15) * 100.0);
+        let p95_increase = baseline.map_or(Some(0.0), |base| {
+            ppr_vad_percent_change(p95, base.p95_latency_ms)
+        });
+        alphas.push(PprVadAlphaReport {
+            alpha,
+            salient_recall_at_15: salient,
+            neutral_recall_at_15: neutral,
+            p95_latency_ms: p95,
+            salient_gain_percent_vs_zero: salient_gain,
+            neutral_delta_pp_vs_zero: neutral_delta,
+            p95_increase_percent_vs_zero: p95_increase,
+            gate_passed: alpha != 0.0 && ppr_vad_gate(salient_gain, neutral_delta, p95_increase),
+        });
+    }
+    Some(PprVadSweepReport {
+        baseline_alpha: 0.0,
+        production_default_alpha: oneiron::config::PPR_VAD_ALPHA_DEFAULT,
+        min_salient_gain_percent: PPR_VAD_MIN_SALIENT_GAIN_PERCENT,
+        max_neutral_regression_pp: PPR_VAD_MAX_NEUTRAL_REGRESSION_PP,
+        max_p95_increase_percent: PPR_VAD_MAX_P95_INCREASE_PERCENT,
+        latency_protocol: concat!(
+            "20 fresh-vault, empty-PPR-cache queries per case/alpha; ",
+            "production final top-15 rows, without seed filtering or re-ranking; ",
+            "nearest-rank p95 times query execution including deferred cache writes; ",
+            "corpus and graph setup excluded"
+        )
+        .to_owned(),
+        salient_queries,
+        neutral_queries,
+        alphas,
+    })
+}
+
+struct PprVadSweepArm;
+
+impl BeamArmAdapter for PprVadSweepArm {
+    fn kind(&self) -> ArmKind {
+        ArmKind::PprVadSweep
+    }
+
+    fn run(
+        &self,
+        _vault: &Vault,
+        loaded: &LoadedDataset,
+        case: &FixtureCase,
+    ) -> BeamResult<ArmReport> {
+        let fixture = loaded
+            .ppr_vad_fixture
+            .as_ref()
+            .ok_or_else(|| BeamError::InvalidFixture {
+                fixture_id: loaded.fixture_id.clone(),
+                reason: "ppr_vad_sweep requires a stored-VAD fixture".to_owned(),
+            })?;
+        let query = case.ppr_vad_query.as_ref().ok_or_else(|| {
+            invalid_fixture(
+                fixture,
+                "ppr_vad_sweep requires pprVadQuery labels and seeds",
+            )
+        })?;
+        let seeds = query
+            .seeds
+            .iter()
+            .map(|id| EntityId::from_hex(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let relevant = query
+            .relevant_ids
+            .iter()
+            .map(|id| EntityId::from_hex(id))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let mut samples = Vec::new();
+        for &alpha in oneiron::config::PPR_VAD_ALPHA_SWEEP {
+            let mut latency_ms = Vec::with_capacity(PPR_VAD_LATENCY_REPETITIONS);
+            let mut result_ids: Option<Vec<EntityId>> = None;
+            for _ in 0..PPR_VAD_LATENCY_REPETITIONS {
+                let (rows, elapsed_ms) =
+                    ppr_vad_retrieval_sample(fixture, &seeds, query.depth, alpha)?;
+                latency_ms.push(elapsed_ms);
+                let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+                // One recorded ranking must explain recall for every repetition.
+                // Do not hide differing final results behind averaged recall.
+                if result_ids.as_ref().is_some_and(|first| first != &ids) {
+                    return Err(invalid_fixture(
+                        fixture,
+                        "sweep final result ids changed between latency repetitions",
+                    ));
+                }
+                result_ids = Some(ids);
+            }
+            let result_ids = result_ids.unwrap_or_default();
+            let hits = result_ids
+                .iter()
+                .filter(|id| relevant.contains(*id))
+                .count();
+            samples.push(PprVadCaseSample {
+                alpha,
+                recall_at_15: hits as f64 / relevant.len() as f64,
+                latency_ms,
+                result_ids: result_ids.iter().map(EntityId::to_hex).collect(),
+            });
+        }
+        Ok(ArmReport {
+            arm: self.kind(),
+            outcome: ArmOutcome::RetrievalSweep {
+                subset: query.subset,
+                samples,
+            },
+        })
+    }
+}
+
+/// A fresh vault gives every timed query an empty PPR cache. Measure the
+/// production pipeline's final top-15 rows, with no post-filtering or re-ranking.
+/// PPR contributes candidate membership, not its raw scores, to the final blend;
+/// a VAD-sensitive PPR score need not improve final recall. Timing includes query
+/// execution and deferred cache writes, but excludes corpus/graph construction.
+/// Warm-cache hits cannot hide VAD cost. No trace channel feeds the empirical gate.
+fn ppr_vad_retrieval_sample(
+    fixture: &BeamFixture,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+) -> BeamResult<(Vec<oneiron::ScoredEntity>, f64)> {
+    let dir = tempfile::tempdir()?;
+    let mut config = beam_vault_config();
+    config.ppr_vad_alpha = alpha;
+    let vault = Vault::open(dir.path(), config)?;
+    load_fixture_dataset(&vault, fixture)?;
+    for edge in &fixture.ppr_vad_edges {
+        let source = EntityId::from_hex(&edge.source)?;
+        let target = EntityId::from_hex(&edge.target)?;
+        let kind = oneiron::EdgeKind::try_from_u8(edge.kind)
+            .ok_or_else(|| invalid_fixture(fixture, "unknown sweep edge kind"))?;
+        vault.put_edge(&source, kind, &target, edge.weight)?;
+        if let Some(vad) = edge.vad {
+            vault.set_edge_vad(&source, kind, &target, vad)?;
+        }
+    }
+    let start = Instant::now();
+    let rows = vault
+        .query()
+        .search_ppr(seeds, depth)
+        .limit(PPR_VAD_RECALL_K)
+        .run()?;
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    Ok((rows, elapsed_ms))
+}
+
+fn validate_ppr_vad_fixture(manifest: &RunManifest, fixture: &BeamFixture) -> BeamResult<()> {
+    if !manifest.arms.contains(&ArmKind::PprVadSweep) {
+        return Ok(());
+    }
+    let ids = fixture
+        .records
+        .iter()
+        .map(|record| EntityId::from_hex(&record.id))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut salient = false;
+    let mut neutral = false;
+    for case in fixture
+        .cases
+        .iter()
+        .filter(|case| manifest.case_ids.contains(&case.case_id))
+    {
+        let query = case
+            .ppr_vad_query
+            .as_ref()
+            .ok_or_else(|| invalid_fixture(fixture, "selected sweep cases require pprVadQuery"))?;
+        if query.seeds.is_empty()
+            || query.seeds.len() > 256
+            || query.depth == 0
+            || query.depth > 10
+            || query.relevant_ids.is_empty()
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "sweep needs 1..=256 seeds, depth 1..=10 and nonempty relevance judgments",
+            ));
+        }
+        let seeds = query
+            .seeds
+            .iter()
+            .map(|id| EntityId::from_hex(id))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let relevant = query
+            .relevant_ids
+            .iter()
+            .map(|id| EntityId::from_hex(id))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        for (unique, list) in [(&seeds, &query.seeds), (&relevant, &query.relevant_ids)] {
+            if unique.len() != list.len() || !unique.is_subset(&ids) {
+                return Err(invalid_fixture(
+                    fixture,
+                    "sweep ids must be unique and present in the corpus",
+                ));
+            }
+        }
+        if !seeds.is_disjoint(&relevant) {
+            return Err(invalid_fixture(
+                fixture,
+                "sweep relevance judgments must exclude seeds",
+            ));
+        }
+        match query.subset {
+            PprVadSubset::EmotionallySalient => salient = true,
+            PprVadSubset::Neutral => neutral = true,
+        }
+    }
+    if !salient || !neutral {
+        return Err(invalid_fixture(
+            fixture,
+            "sweep requires both emotionally_salient and neutral selected subsets",
+        ));
+    }
+    if fixture.ppr_vad_edges.is_empty() {
+        return Err(invalid_fixture(
+            fixture,
+            "sweep requires stored-VAD graph edges",
+        ));
+    }
+    let mut edges = BTreeSet::new();
+    for edge in &fixture.ppr_vad_edges {
+        let source = EntityId::from_hex(&edge.source)?;
+        let target = EntityId::from_hex(&edge.target)?;
+        if !ids.contains(&source) || !ids.contains(&target) {
+            return Err(invalid_fixture(
+                fixture,
+                "sweep edge endpoints must exist in the corpus",
+            ));
+        }
+        if !edges.insert((source, edge.kind, target))
+            || oneiron::EdgeKind::try_from_u8(edge.kind).is_none()
+            || !(0.0..=1.0).contains(&edge.weight)
+            || edge
+                .vad
+                .is_some_and(|vad| !vad.is_finite() || !vad.is_in_range())
+        {
+            return Err(invalid_fixture(
+                fixture,
+                "sweep edges must be unique with valid kind, weight and VAD",
+            ));
+        }
+    }
+    Ok(())
 }
 
 struct DeterministicContextPackArm;
@@ -1263,7 +1670,10 @@ fn run_manifest(manifest: &RunManifest, fixture: Option<&BeamFixture>) -> BeamRe
 
     let tempdir = tempfile::tempdir()?;
     let vault = Vault::open(tempdir.path(), beam_vault_config())?;
-    let loaded = load_dataset(&vault, manifest, fixture)?;
+    let mut loaded = load_dataset(&vault, manifest, fixture)?;
+    if manifest.arms.contains(&ArmKind::PprVadSweep) {
+        loaded.ppr_vad_fixture = fixture.cloned();
+    }
     let (cases, pack_rows) = run_loaded_cases(&vault, manifest, &loaded)?;
     let scorer = FixedBeamScorer;
     let report_format = report_format_label(manifest.report.format).to_owned();
@@ -1280,6 +1690,7 @@ fn run_manifest(manifest: &RunManifest, fixture: Option<&BeamFixture>) -> BeamRe
         dataset: loaded.report,
         scorer: scorer.metadata(),
         report_format,
+        ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
     })
 }
@@ -1338,6 +1749,7 @@ fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<BeamReport>
         dataset: dataset_report.expect("validated manifest has at least one case"),
         scorer: scorer.metadata(),
         report_format,
+        ppr_vad_sweep: ppr_vad_sweep_report(&cases),
         cases,
     })
 }
@@ -1705,6 +2117,14 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
         ));
     }
     validate_manifest_dataset(manifest)?;
+    if manifest.arms.contains(&ArmKind::PprVadSweep)
+        && !matches!(manifest.dataset, DatasetSource::Fixture { .. })
+    {
+        return Err(invalid_manifest(
+            manifest,
+            "ppr_vad_sweep requires a fixture dataset",
+        ));
+    }
 
     let mut case_ids = BTreeSet::new();
     for case_id in &manifest.case_ids {
@@ -1834,6 +2254,7 @@ fn validate_manifest_fixture_cases(
     manifest: &RunManifest,
     fixture: &BeamFixture,
 ) -> BeamResult<()> {
+    validate_ppr_vad_fixture(manifest, fixture)?;
     let cases_by_id: BTreeMap<&str, &FixtureCase> = fixture
         .cases
         .iter()
@@ -2041,6 +2462,7 @@ fn load_fixture_dataset(vault: &Vault, fixture: &BeamFixture) -> BeamResult<Load
     }
 
     Ok(LoadedDataset {
+        ppr_vad_fixture: None,
         report: DatasetLoadReport {
             dataset_id: fixture.fixture_id.clone(),
             source_kind: "fixture".to_owned(),
@@ -2199,6 +2621,7 @@ fn load_run_jsonl_dataset(
 
         if case_seen.insert(record.question_id.clone()) {
             cases.push(FixtureCase {
+                ppr_vad_query: None,
                 case_id: record.question_id.clone(),
                 query: record.question.clone(),
                 limit,
@@ -2232,6 +2655,7 @@ fn load_run_jsonl_dataset(
     let dataset_id = dataset_id.unwrap_or_else(|| path.display().to_string());
     let dataset_revision = dataset_revision.unwrap_or_else(|| "unknown".to_owned());
     Ok(LoadedDataset {
+        ppr_vad_fixture: None,
         report: DatasetLoadReport {
             dataset_id: dataset_id.clone(),
             source_kind: JSONL_CONTRACT_SOURCE_KIND.to_owned(),
@@ -2536,7 +2960,9 @@ fn contract_output_arm(record: &RunContractRecord, arm: ArmKind) -> ContractArm 
             id: VANILLA_RAG_CONTRACT_ARM_ID.to_owned(),
             kind: VANILLA_RAG_CONTRACT_ARM_KIND.to_owned(),
         },
-        ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => record.arm.clone(),
+        ArmKind::PprVadSweep | ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => {
+            record.arm.clone()
+        }
     }
 }
 
@@ -2554,7 +2980,11 @@ fn contract_pack_config(arm: ArmKind, case: &FixtureCase) -> Option<ContractPack
             token_budget_source: "run_record.budget.limit",
             structure: "flat_l0_no_claims_no_ppr_no_graph",
         }),
-        ArmKind::Deterministic | ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => None,
+        ArmKind::Deterministic
+        | ArmKind::PprVadSweep
+        | ArmKind::BackboneSolo
+        | ArmKind::Agentic
+        | ArmKind::Chat => None,
     }
 }
 
@@ -2648,6 +3078,7 @@ fn adapter_for(kind: ArmKind) -> Box<dyn BeamArmAdapter> {
     match kind {
         ArmKind::Deterministic => Box::new(DeterministicContextPackArm),
         ArmKind::VanillaRag => Box::new(VanillaRagArm),
+        ArmKind::PprVadSweep => Box::new(PprVadSweepArm),
         ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => Box::new(NotReadyArm { kind }),
     }
 }
@@ -2883,10 +3314,14 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
 fn cost_breakdown(case: &FixtureCase, arm: &ArmReport) -> CostBreakdownReport {
     let query = match &arm.outcome {
         ArmOutcome::Completed { context_pack } => context_pack.query_cost.clone(),
-        ArmOutcome::NotReady { .. } => not_applicable_cost(),
+        ArmOutcome::NotReady { .. } | ArmOutcome::RetrievalSweep { .. } => not_applicable_cost(),
     };
     let offline = cost_component_from_input(&case.offline_amortized_cost);
-    let judge = fixed_scorer_judge_cost();
+    let judge = if matches!(arm.outcome, ArmOutcome::RetrievalSweep { .. }) {
+        not_applicable_cost()
+    } else {
+        fixed_scorer_judge_cost()
+    };
     let total_cost_usd = normalized_cost_usd(query.cost_usd + offline.cost_usd + judge.cost_usd);
 
     CostBreakdownReport {
@@ -3768,6 +4203,7 @@ neighbors:
     #[test]
     fn budget_discipline_uses_accounting_not_serialized_byte_count() {
         let case = FixtureCase {
+            ppr_vad_query: None,
             case_id: "budget-accounting-regression".to_owned(),
             query: "budget accounting".to_owned(),
             limit: 1,
@@ -3963,6 +4399,7 @@ neighbors:
     #[test]
     fn query_cost_elapsed_uses_serialized_pass_only() {
         let case = FixtureCase {
+            ppr_vad_query: None,
             case_id: "elapsed_boundary".to_owned(),
             query: "BEAM deterministic context pack".to_owned(),
             limit: 1,
@@ -4991,6 +5428,7 @@ neighbors:
     #[test]
     fn low_confidence_gate_suppresses_score_publication() {
         let case = FixtureCase {
+            ppr_vad_query: None,
             case_id: "eval004-low-confidence".to_owned(),
             query: "unsupported low confidence query".to_owned(),
             limit: 0,
@@ -5068,6 +5506,7 @@ neighbors:
         let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
         let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
         fixture.cases.push(FixtureCase {
+            ppr_vad_query: None,
             case_id: "beam_small_budget_smoke".to_owned(),
             query: "BEAM deterministic context pack".to_owned(),
             limit: 5,
@@ -5546,6 +5985,7 @@ neighbors:
             serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
         let entity_id = "10101010101010101010101010101010";
         let case = FixtureCase {
+            ppr_vad_query: None,
             case_id: record.question_id.clone(),
             query: record.question.clone(),
             limit: 1,
@@ -5560,6 +6000,7 @@ neighbors:
             offline_amortized_cost: CostComponentInput::default(),
         };
         let loaded = LoadedDataset {
+            ppr_vad_fixture: None,
             report: DatasetLoadReport {
                 dataset_id: "dataset".to_owned(),
                 source_kind: JSONL_CONTRACT_SOURCE_KIND.to_owned(),
@@ -5667,6 +6108,326 @@ neighbors:
         assert!(
             matches!(err, BeamError::DatasetNotReady(state) if state.component == "dataset loader")
         );
+    }
+
+    fn ppr_vad_test_fixture_and_manifest() -> (BeamFixture, RunManifest) {
+        let ids: Vec<_> = (1_u8..=20)
+            .map(|byte| format!("{byte:02x}").repeat(16))
+            .collect();
+        let records: Vec<_> = ids
+            .iter()
+            .map(|id| eval004_record_json(id, 1, "sweep corpus"))
+            .collect();
+        let edges: Vec<_> = ids.iter().skip(1).enumerate().map(|(index, id)| serde_json::json!({
+            "source": ids[0], "target": id, "kind": 9, "weight": 1.0,
+            "vad": {"valence": 0.0, "arousal": if index == 18 { 1.0 } else { 0.0 }, "dominance": 0.0}
+        })).collect();
+        let fixture_json = serde_json::json!({
+            "schemaVersion": SCHEMA_VERSION,
+            "fixtureId": "ppr-vad-test", "description": "Synthetic wiring test, not empirical evidence",
+            "records": records, "pprVadEdges": edges,
+            "cases": [
+                {"caseId": "salient", "query": "salient query", "limit": 15, "tokenBudget": 4096,
+                 "expectedMinResults": 0, "pprVadQuery": {"subset": "emotionally_salient",
+                 "seeds": [ids[0]], "depth": 1, "relevantIds": [ids[19]]}},
+                {"caseId": "neutral", "query": "neutral query", "limit": 15, "tokenBudget": 4096,
+                 "expectedMinResults": 0, "pprVadQuery": {"subset": "neutral",
+                 "seeds": [ids[0]], "depth": 1, "relevantIds": [ids[1]]}}
+            ]
+        });
+        let fixture = parse_fixture_json(&fixture_json.to_string()).expect("sweep fixture");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("valid sweep test input");
+        manifest_json["dataset"]["fixtureId"] = serde_json::json!("ppr-vad-test");
+        manifest_json["caseIds"] = serde_json::json!(["salient", "neutral"]);
+        manifest_json["arms"] = serde_json::json!(["ppr_vad_sweep"]);
+        let mut competitor = manifest_json["competitors"][0].clone();
+        competitor["arm"] = serde_json::json!("ppr_vad_sweep");
+        competitor["card"]["comparator"]["baselineCompetitorId"] =
+            competitor["competitorId"].clone();
+        manifest_json["competitors"] = serde_json::json!([competitor]);
+        let manifest = parse_manifest_json(&manifest_json.to_string()).expect("sweep manifest");
+        (fixture, manifest)
+    }
+
+    fn ppr_vad_production_final_rows(
+        fixture: &BeamFixture,
+        seeds: &[EntityId],
+        depth: u32,
+        alpha: f32,
+    ) -> Vec<oneiron::ScoredEntity> {
+        // Independent of the benchmark sampler: populate a separate vault and
+        // invoke the public production endpoint, reading only its final value.
+        let dir = tempfile::tempdir().expect("oracle tempdir");
+        let mut config = beam_vault_config();
+        config.ppr_vad_alpha = alpha;
+        let vault = Vault::open(dir.path(), config).expect("oracle vault");
+        load_fixture_dataset(&vault, fixture).expect("oracle corpus");
+        for edge in &fixture.ppr_vad_edges {
+            let source = EntityId::from_hex(&edge.source).expect("oracle source");
+            let target = EntityId::from_hex(&edge.target).expect("oracle target");
+            let kind = oneiron::EdgeKind::try_from_u8(edge.kind).expect("oracle edge kind");
+            vault
+                .put_edge(&source, kind, &target, edge.weight)
+                .expect("oracle edge");
+            if let Some(vad) = edge.vad {
+                vault
+                    .set_edge_vad(&source, kind, &target, vad)
+                    .expect("oracle stored VAD");
+            }
+        }
+        vault
+            .query()
+            .search_ppr(seeds, depth)
+            .limit(15)
+            .run_with_telemetry()
+            .expect("production final retrieval")
+            .value
+    }
+
+    #[test]
+    fn ppr_vad_sweep_manifest_runs_five_alphas_and_reports_real_measurements() {
+        let (fixture, manifest) = ppr_vad_test_fixture_and_manifest();
+        let report = run_fixture_manifest(&manifest, &fixture).expect("sweep runs");
+        let sweep = report.ppr_vad_sweep.as_ref().expect("aggregate sweep");
+        assert_eq!(sweep.salient_queries, 1);
+        assert_eq!(sweep.neutral_queries, 1);
+        assert_eq!(sweep.production_default_alpha.to_bits(), 0.0_f32.to_bits());
+        assert_eq!(
+            sweep.alphas.iter().map(|row| row.alpha).collect::<Vec<_>>(),
+            oneiron::config::PPR_VAD_ALPHA_SWEEP
+        );
+        for case in &report.cases {
+            let query = fixture
+                .cases
+                .iter()
+                .find(|fixture_case| fixture_case.case_id == case.case_id)
+                .and_then(|fixture_case| fixture_case.ppr_vad_query.as_ref())
+                .expect("declared sweep judgments");
+            let ArmOutcome::RetrievalSweep { samples, .. } = &case.arms[0].outcome else {
+                panic!("sweep arm must run rather than return not_ready");
+            };
+            assert_eq!(
+                samples
+                    .iter()
+                    .map(|sample| sample.alpha)
+                    .collect::<Vec<_>>(),
+                oneiron::config::PPR_VAD_ALPHA_SWEEP
+            );
+            let seeds: Vec<_> = query
+                .seeds
+                .iter()
+                .map(|id| EntityId::from_hex(id).expect("declared seed"))
+                .collect();
+            for sample in samples {
+                let final_rows =
+                    ppr_vad_production_final_rows(&fixture, &seeds, query.depth, sample.alpha);
+                let final_ids: Vec<_> = final_rows.iter().map(|row| row.id.to_hex()).collect();
+                assert_eq!(sample.result_ids, final_ids);
+                // Production fusion uses PPR only for candidate membership.
+                // No boosts and non-claim records give identical final scores:
+                // ID order selects 01..0f, including the seed, at EVERY alpha.
+                // The salient target (14) remains outside the final top 15 even
+                // when its raw PPR score rises. Do not manufacture a PPR win.
+                let expected_ids: Vec<_> = fixture.records[..15]
+                    .iter()
+                    .map(|record| record.id.clone())
+                    .collect();
+                assert_eq!(final_ids, expected_ids);
+                assert!(final_rows.iter().all(|row| row.score == 1.0));
+                assert!(query.seeds.iter().all(|id| sample.result_ids.contains(id)));
+                let hits = query
+                    .relevant_ids
+                    .iter()
+                    .filter(|id| sample.result_ids.contains(id))
+                    .count();
+                assert_eq!(
+                    sample.recall_at_15,
+                    hits as f64 / query.relevant_ids.len() as f64
+                );
+                assert_eq!(sample.result_ids.len(), 15);
+                assert_eq!(sample.latency_ms.len(), PPR_VAD_LATENCY_REPETITIONS);
+                assert!(
+                    sample
+                        .latency_ms
+                        .iter()
+                        .all(|ms| ms.is_finite() && *ms >= 0.0)
+                );
+                assert!((0.0..=1.0).contains(&sample.recall_at_15));
+            }
+            assert_eq!(case.competitors[0].scoring.overall_score, None);
+        }
+        for (index, row) in sweep.alphas.iter().enumerate() {
+            let mut measured_latencies = Vec::new();
+            for case in &report.cases {
+                let ArmOutcome::RetrievalSweep { samples, .. } = &case.arms[0].outcome else {
+                    panic!("expected measured sweep");
+                };
+                measured_latencies.extend_from_slice(&samples[index].latency_ms);
+            }
+            assert_eq!(measured_latencies.len(), 40);
+            measured_latencies.sort_by(f64::total_cmp);
+            // Independently calculate nearest-rank p95 of the 40 real queries.
+            assert_eq!(row.p95_latency_ms, measured_latencies[37]);
+            assert!(row.p95_latency_ms.is_finite());
+            assert_eq!(row.salient_recall_at_15, 0.0);
+            assert_eq!(row.neutral_recall_at_15, 1.0);
+            assert_eq!(row.neutral_delta_pp_vs_zero, 0.0);
+            // A zero salient baseline cannot support a relative gain claim.
+            assert_eq!(
+                row.salient_gain_percent_vs_zero,
+                if row.alpha == 0.0 { Some(0.0) } else { None }
+            );
+            assert!(
+                !row.gate_passed,
+                "the unchanged tie fixture has no final-retrieval win"
+            );
+        }
+        let json = serde_json::to_value(&report).expect("valid sweep test input");
+        assert_eq!(json["pprVadSweep"]["productionDefaultAlpha"], 0.0);
+        assert_eq!(VaultConfig::device().ppr_vad_alpha, 0.0);
+        assert_eq!(VaultConfig::server().ppr_vad_alpha, 0.0);
+    }
+
+    #[test]
+    fn ppr_vad_retrieval_sample_matches_production_final_rows_with_multiple_seeds() {
+        let (fixture, _) = ppr_vad_test_fixture_and_manifest();
+        let seeds = [0, 1]
+            .map(|index| EntityId::from_hex(&fixture.records[index].id).expect("fixture seed"));
+        for alpha in oneiron::config::PPR_VAD_ALPHA_SWEEP {
+            let (rows, _) = ppr_vad_retrieval_sample(&fixture, &seeds, 1, *alpha)
+                .expect("final retrieval sample");
+            let production_rows = ppr_vad_production_final_rows(&fixture, &seeds, 1, *alpha);
+            assert_eq!(rows, production_rows);
+            // Seeds are ordinary final candidates. The benchmark must neither
+            // remove them nor backfill from a larger query or a channel trace.
+            let expected_ids: Vec<_> = fixture.records[..15]
+                .iter()
+                .map(|record| record.id.clone())
+                .collect();
+            assert_eq!(
+                rows.iter().map(|row| row.id.to_hex()).collect::<Vec<_>>(),
+                expected_ids
+            );
+            assert!(
+                seeds
+                    .iter()
+                    .all(|seed| rows.iter().any(|row| row.id == *seed))
+            );
+            assert!(rows.iter().all(|row| row.score == 1.0));
+        }
+    }
+
+    #[test]
+    fn ppr_vad_sweep_rejects_seed_relevance_judgments() {
+        let (mut fixture, manifest) = ppr_vad_test_fixture_and_manifest();
+        let query = fixture.cases[0]
+            .ppr_vad_query
+            .as_mut()
+            .expect("sweep query");
+        query.relevant_ids = query.seeds.clone();
+        assert!(matches!(
+            run_fixture_manifest(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { reason, .. })
+                if reason == "sweep relevance judgments must exclude seeds"
+        ));
+    }
+
+    #[test]
+    fn ppr_vad_sweep_gate_pins_boundaries_and_fails_closed() {
+        assert!(ppr_vad_gate(Some(2.0), 0.0, Some(5.0)));
+        assert!(!ppr_vad_gate(Some(1.999), 0.0, Some(5.0)));
+        assert!(!ppr_vad_gate(Some(2.0), -0.0001, Some(5.0)));
+        assert!(!ppr_vad_gate(Some(2.0), 0.0, Some(5.001)));
+        assert!(!ppr_vad_gate(None, 0.0, Some(0.0)));
+        assert!(!ppr_vad_gate(Some(3.0), 0.0, None));
+        assert!(!ppr_vad_gate(Some(f64::NAN), 0.0, Some(0.0)));
+        assert!(!ppr_vad_gate(Some(3.0), f64::NAN, Some(0.0)));
+        assert!(!ppr_vad_gate(Some(3.0), 0.0, Some(f64::INFINITY)));
+        assert_eq!(ppr_vad_percent_change(1.0, 0.0), None);
+        assert!(
+            (ppr_vad_percent_change(0.51, 0.5).expect("valid sweep test input") - 2.0).abs()
+                < 1e-12
+        );
+        let mut latencies: Vec<_> = (1..=20).rev().map(f64::from).collect();
+        assert_eq!(ppr_vad_p95(&mut latencies), 19.0);
+    }
+
+    #[test]
+    fn ppr_vad_sweep_rejects_missing_subsets_and_invalid_judgments() {
+        let (fixture, mut manifest) = ppr_vad_test_fixture_and_manifest();
+        manifest.case_ids = vec!["salient".to_owned()];
+        assert!(matches!(
+            run_fixture_manifest(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { .. })
+        ));
+        let (mut fixture, manifest) = ppr_vad_test_fixture_and_manifest();
+        fixture.cases[0]
+            .ppr_vad_query
+            .as_mut()
+            .expect("valid sweep test input")
+            .relevant_ids
+            .clear();
+        assert!(matches!(
+            run_fixture_manifest(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { .. })
+        ));
+        let (mut fixture, manifest) = ppr_vad_test_fixture_and_manifest();
+        fixture.ppr_vad_edges.clear();
+        assert!(matches!(
+            run_fixture_manifest(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { .. })
+        ));
+    }
+
+    #[test]
+    fn ppr_vad_sweep_aggregate_uses_zero_baseline_and_both_subsets() {
+        let case = |subset, weighted_recall| CaseReport {
+            case_id: format!("arithmetic-{subset:?}"),
+            query: "unit arithmetic, not empirical evidence".to_owned(),
+            limit: 15,
+            token_budget: 4096,
+            expected_min_results: 0,
+            fixture_class: FixtureClass::EvidenceSupported,
+            offline_amortized_cost: not_applicable_cost(),
+            competitors: Vec::new(),
+            arms: vec![ArmReport {
+                arm: ArmKind::PprVadSweep,
+                outcome: ArmOutcome::RetrievalSweep {
+                    subset,
+                    samples: oneiron::config::PPR_VAD_ALPHA_SWEEP
+                        .iter()
+                        .map(|&alpha| PprVadCaseSample {
+                            alpha,
+                            recall_at_15: if alpha == 0.0 { 0.5 } else { weighted_recall },
+                            latency_ms: vec![if alpha == 0.0 { 100.0 } else { 105.0 }; 20],
+                            result_ids: Vec::new(),
+                        })
+                        .collect(),
+                },
+            }],
+        };
+        let report = ppr_vad_sweep_report(&[
+            case(PprVadSubset::EmotionallySalient, 0.51),
+            case(PprVadSubset::Neutral, 0.5),
+        ])
+        .expect("both subsets");
+        assert!(!report.alphas[0].gate_passed);
+        for row in report.alphas.iter().skip(1) {
+            assert_eq!(row.salient_recall_at_15, 0.51);
+            assert_eq!(row.neutral_recall_at_15, 0.5);
+            assert_eq!(row.neutral_delta_pp_vs_zero, 0.0);
+            assert_eq!(row.p95_increase_percent_vs_zero, Some(5.0));
+            assert!(row.gate_passed);
+        }
+        let regressed = ppr_vad_sweep_report(&[
+            case(PprVadSubset::EmotionallySalient, 0.51),
+            case(PprVadSubset::Neutral, 0.49),
+        ])
+        .expect("both subsets");
+        assert!(regressed.alphas.iter().all(|row| !row.gate_passed));
+        assert_eq!(regressed.production_default_alpha, 0.0);
+        assert!(ppr_vad_sweep_report(&[case(PprVadSubset::Neutral, 0.5)]).is_none());
     }
 
     fn find_arm(report: &BeamReport, kind: ArmKind) -> &ArmReport {
@@ -5830,6 +6591,7 @@ neighbors:
 
     fn gate_case(fixture_class: FixtureClass) -> FixtureCase {
         FixtureCase {
+            ppr_vad_query: None,
             case_id: format!("eval004-{}", fixture_class.gate_label()),
             query: "fixture gate query".to_owned(),
             limit: if fixture_class == FixtureClass::LowConfidence {

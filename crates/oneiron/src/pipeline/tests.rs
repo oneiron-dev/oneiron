@@ -6673,3 +6673,102 @@ mod relationship_scope_filter {
         Ok(())
     }
 }
+
+fn ppr_vad_pipeline_trace(vault: &Vault, expand: bool) -> Result<RetrievalTrace> {
+    let builder = if expand {
+        // Expansion requires a real nonempty base retrieval channel.
+        vault
+            .query()
+            .search_text("vadseed", 1)
+            .expand_ppr(&[entity_id(1)], 1)
+    } else {
+        vault.query().search_ppr(&[entity_id(1)], 1)
+    };
+    captured_retrieval_trace(vault, builder.limit(10))
+}
+
+fn ppr_vad_trace_bits(trace: &RetrievalTrace) -> Vec<([u8; 16], u32)> {
+    trace
+        .per_channel
+        .iter()
+        .find(|channel| channel.signal == RetrievalSignal::Ppr)
+        .expect("PPR channel must execute")
+        .candidates
+        .iter()
+        .map(|row| (row.result_id, row.final_score.to_bits()))
+        .collect()
+}
+
+#[test]
+fn ppr_vad_pipeline_search_and_real_expansion_thread_alpha_and_fork() -> Result<()> {
+    let (_dir, mut vault) = open_test_vault();
+    put_text(&vault, entity_id(1), "vadseed")?;
+    put_text(&vault, entity_id(2), "neutral")?;
+    put_text(&vault, entity_id(3), "salient")?;
+    vault.put_edge(&entity_id(1), EdgeKind::Mentions, &entity_id(2), 0.5)?;
+    vault.put_edge(&entity_id(1), EdgeKind::Mentions, &entity_id(3), 0.5)?;
+    vault.set_edge_vad(
+        &entity_id(1),
+        EdgeKind::Mentions,
+        &entity_id(3),
+        crate::Vad {
+            valence: -1.0,
+            arousal: 0.9,
+            dominance: 0.0,
+        },
+    )?;
+    for expand in [false, true] {
+        vault.config.ppr_vad_alpha = 0.0;
+        let zero = ppr_vad_pipeline_trace(&vault, expand)?;
+        let cached_zero = ppr_vad_pipeline_trace(&vault, expand)?;
+        assert_eq!(ppr_vad_trace_bits(&zero), ppr_vad_trace_bits(&cached_zero));
+        if expand {
+            assert!(zero.per_channel.iter().any(|channel| {
+                channel.signal == RetrievalSignal::Text && !channel.candidates.is_empty()
+            }));
+        }
+        // Pre-change normalized same-kind formula, independent of the new helper.
+        let baseline = 1.0_f32 * (0.6 * 0.5 / 1.0) * (1.0 - PPR_DAMPING);
+        for id in [entity_id(2), entity_id(3)] {
+            assert!(ppr_vad_trace_bits(&zero).contains(&(*id.as_bytes(), baseline.to_bits())));
+        }
+        vault.config.ppr_vad_alpha = 0.4;
+        let weighted = ppr_vad_pipeline_trace(&vault, expand)?;
+        let expected = 1.0_f32 * (0.6 * 0.5 / 1.0) * 1.4 * (1.0 - PPR_DAMPING);
+        assert!(
+            ppr_vad_trace_bits(&weighted).contains(&(*entity_id(3).as_bytes(), expected.to_bits()))
+        );
+        assert_ne!(zero.fork_hash, weighted.fork_hash);
+        vault.config.ppr_vad_alpha = 0.0;
+        let restored = ppr_vad_pipeline_trace(&vault, expand)?;
+        assert_eq!(ppr_vad_trace_bits(&zero), ppr_vad_trace_bits(&restored));
+        assert_eq!(zero.fork_hash, restored.fork_hash);
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_pipeline_invalid_alpha_is_typed_on_both_paths() -> Result<()> {
+    let (_dir, mut vault) = open_test_vault();
+    put_text(&vault, entity_id(1), "vadseed")?;
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        vault.config.ppr_vad_alpha = alpha;
+        for expand in [false, true] {
+            assert!(matches!(
+                ppr_vad_pipeline_trace(&vault, expand),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+        assert!(matches!(
+            vault.query().expand_ppr(&[], 1).run(),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            vault.query().search_ppr(&[], 1).run(),
+            Err(Error::InvalidConfig(_))
+        ));
+        // Unrelated retrieval channels do not consume this knob.
+        assert!(!vault.query().search_text("vadseed", 1).run()?.is_empty());
+    }
+    Ok(())
+}
