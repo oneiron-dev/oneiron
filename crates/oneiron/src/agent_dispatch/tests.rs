@@ -9,7 +9,7 @@ use super::*;
 use crate::VaultConfig;
 use crate::agent_def::{AgentCeiling, AgentScope};
 use crate::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
-use crate::claim::ClaimSubject;
+use crate::claim::{ClaimSubject, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DreamerAdmissionOutcome,
     DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
@@ -92,7 +92,18 @@ fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
 /// Minimal valid policy manifest (mirrors the gate-test fixture shape) with
 /// caller-supplied `actor_ceilings` rows.
 fn put_policy_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Result<()> {
-    let manifest = Value::Map(vec![
+    put_policy_manifest_with_generated_actor(vault, seed, actor_rows, None)
+}
+
+/// Milestone fixtures opt in only their Dreamer writer; other fixtures keep
+/// their original policy without a Generated source-trust grant.
+fn put_policy_manifest_with_generated_actor(
+    vault: &Vault,
+    seed: u8,
+    actor_rows: Vec<Value>,
+    generated_actor: Option<EntityId>,
+) -> Result<()> {
+    let mut entries = vec![
         (Value::from("schema_version"), Value::from("1.1")),
         (Value::from("pack_id"), Value::from("agent-dispatch-test")),
         (Value::from("pack_version"), Value::from("v1")),
@@ -109,7 +120,28 @@ fn put_policy_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Resul
         ),
         (Value::from("rules"), Value::Array(Vec::new())),
         (Value::from("actor_ceilings"), Value::Array(actor_rows)),
-    ]);
+    ];
+    if let Some(actor) = generated_actor {
+        // Generated + Approved bookkeeping needs an explicit auto permit.
+        // These candidates stamp no sensitivity: cap exactly at the unstamped
+        // floor, and bind the permit to this writer rather than every actor.
+        entries.push((
+            Value::from("source_trust"),
+            Value::Map(vec![(
+                Value::from(crate::claim::ClaimSource::Generated.as_str()),
+                Value::Map(vec![
+                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (
+                        Value::from("max_auto_sensitivity"),
+                        Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                    ),
+                    (Value::from("receipted"), Value::Boolean(true)),
+                    (Value::from("warned"), Value::Boolean(true)),
+                ]),
+            )]),
+        ));
+    }
+    let manifest = Value::Map(entries);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
 
@@ -453,9 +485,15 @@ fn snapshot_survives_definition_update() -> Result<()> {
 #[test]
 fn dispatch_survives_checkpoint_resume() -> Result<()> {
     let (dir, vault) = open_vault();
-    // Loaded manifest (the B1 masking-AC callout): system-class writes get an
-    // Auto row so the Dreamer-envelope milestone can land Approved and index.
-    put_policy_manifest(&vault, 0x0D, vec![actor_ceiling_row("system", "auto")])?;
+    // Loaded manifest (the B1 masking-AC callout): grant the system ceiling
+    // and this Dreamer writer's Generated source so milestones land Approved.
+    let dreamer_actor = test_id(0x2A);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x0D,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x67);
     let def = custom_agent("1.0.0");
@@ -473,7 +511,6 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // The system/Dreamer bookkeeping envelope: a MACHINE actor, class System,
     // with the agent attribution carried in the provenance payload (B1 (a)).
-    let dreamer_actor = test_id(0x2A);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     // The milestone subject is the attempt id itself (pinned); anchor an entity at
     // those bytes so the claim door's subject-existence check passes.
@@ -703,7 +740,13 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
 #[test]
 fn milestone_attribution_cannot_be_forged() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x0F, vec![actor_ceiling_row("system", "auto")])?;
+    let dreamer_actor = test_id(0x2B);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x0F,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x4B);
     let def = custom_agent("1.0.0");
@@ -715,7 +758,6 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     };
     let attempt_id = status.attempt.id;
 
-    let dreamer_actor = test_id(0x2B);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(
@@ -916,13 +958,15 @@ fn write_milestone_claim(
 #[test]
 fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(
+    let dreamer_actor = test_id(0x2D);
+    put_policy_manifest_with_generated_actor(
         &vault,
         0x10,
         vec![
             actor_ceiling_row("system", "auto"),
             actor_ceiling_row("agent", "auto"),
         ],
+        Some(dreamer_actor),
     )?;
 
     let def_id = test_id(0x4C);
@@ -936,7 +980,6 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    let dreamer_actor = test_id(0x2D);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
@@ -1093,7 +1136,13 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
 #[test]
 fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x14, vec![actor_ceiling_row("system", "auto")])?;
+    let dreamer_actor = test_id(0x3A);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x14,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x4D);
     vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
@@ -1105,7 +1154,6 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    let dreamer_actor = test_id(0x3A);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
@@ -1150,9 +1198,14 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
 #[test]
 fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x12, vec![actor_ceiling_row("system", "auto")])?;
-
     let dreamer_actor = test_id(0x3B);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x12,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
+
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     // An attempt id that exists on some other device only.
     let foreign_attempt = crate::attempt_queue::AttemptId::now();
@@ -1197,7 +1250,13 @@ fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
 #[test]
 fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x13, vec![actor_ceiling_row("system", "auto")])?;
+    let dreamer_actor = test_id(0x3C);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x13,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x4E);
     vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
@@ -1209,7 +1268,6 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    let dreamer_actor = test_id(0x3C);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
