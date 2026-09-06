@@ -2709,6 +2709,66 @@ fn one1891_waterfall_reuses_one_provider_prior_memo_per_transaction() {
     );
 }
 
+/// STRUCTURAL: the ledger witness belongs to the scoring transaction, not
+/// to either per-candidate canonical-subject check.
+#[test]
+fn one1891_waterfall_reuses_one_zero_head_shell_witness_per_transaction() {
+    let body: String = one1891::waterfall_body()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    let txn_at = body
+        .find("with_write_txn")
+        .expect("the scoring transaction");
+    let witness_at = body
+        .find("letzero_head_shells=")
+        .expect("the transaction-local topology witness");
+    let loop_at = body
+        .find("forcandidateincandidates")
+        .expect("the candidate loop");
+    assert_eq!(body.matches("zero_head_split_shells_in_txn(").count(), 1);
+    assert!(
+        txn_at < witness_at && witness_at < loop_at,
+        "fold the zero-head-shell witness once inside the transaction, before the loop"
+    );
+    // Match both calls' arguments, ignoring whitespace and optional trailing commas.
+    let subject_calls: Vec<_> = body
+        .split_once("fncanonical_waterfall_subject_in_txn(")
+        .expect("the canonical subject helper")
+        .0
+        .split("canonical_waterfall_subject_in_txn(")
+        .skip(1)
+        .map(|call| {
+            call.split_once(')')
+                .expect("the subject call arguments")
+                .0
+                .trim_end_matches(',')
+        })
+        .collect();
+    assert_eq!(
+        subject_calls,
+        [
+            "vault,&*wtxn,&candidate.subject,&zero_head_shells",
+            "vault,&*wtxn,&id,&zero_head_shells",
+        ],
+        "candidate and claim subjects must share the transaction's witness"
+    );
+    let canonical = one1891::source_slice(
+        one1891::INGEST_SOURCE,
+        "fn canonical_waterfall_subject_in_txn(",
+        "\npub type IngestResult",
+    )
+    .chars()
+    .filter(|ch| !ch.is_whitespace())
+    .collect::<String>();
+    assert!(canonical.contains("entity_lifecycle_state_with_zero_head_shells_in_txn("));
+    assert!(canonical.contains("Some(zero_head_shells)"));
+    assert!(
+        !body.contains(".entity_lifecycle_state_in_txn("),
+        "the per-subject lifecycle door would fold the ledger again"
+    );
+}
+
 /// Both a neutral absence and a positive resolution expire with the scoring
 /// transaction. Later prior writes must rerank the next evaluation without
 /// rewriting enrichment CLAIMs or persisting an absence sentinel.
@@ -4031,6 +4091,75 @@ mod one1891_ruling {
                 subject: first,
                 ..candidate
             },
+        );
+    }
+
+    #[test]
+    fn one1891_waterfall_zero_head_witness_preserves_live_and_closed_subject_checks() {
+        let (_dir, vault) = open_vault();
+        let live = f::candidate(&vault, 0x11, 0x41, "provider_zero_head", 0.95);
+        let other = f::candidate(&vault, 0x12, 0x42, "provider_zero_head", 0.80);
+        let retired = f::candidate(&vault, 0x13, 0x43, "provider_zero_head", 0.99);
+        split(&vault, retired.subject, vec![]);
+        assert!(vault.resolve_entity(&retired.subject).unwrap().is_empty());
+        let before = f::counts(&vault);
+
+        for dropped in [false, true] {
+            if dropped {
+                vault.drop_redirect_projection().unwrap();
+                // With no redirect row or shell edge, only the ledger witness
+                // prevents this retired id from looking canonically Active.
+                assert_eq!(
+                    vault.resolve_entity(&retired.subject).unwrap(),
+                    vec![retired.subject]
+                );
+            }
+            let decision = f::decide(&vault, &[other, live], false);
+            assert_eq!(decision.claims_suppressed, 0);
+            assert_eq!(decision.ranked.len(), 2);
+            assert_eq!(decision.ranked[0].candidate, live);
+            assert_eq!(decision.ranked[1].candidate, other);
+            assert_eq!(decision.selected, Some(live.subject));
+            assert_eq!(decision.route, EntityResolutionRoute::HardLink);
+            assert!(f::close(decision.ranked[0].effective_confidence, 0.95));
+            assert!(f::close(decision.ranked[1].effective_confidence, 0.80));
+            assert_eq!(f::counts(&vault), before);
+
+            assert_noncanonical(&vault, retired);
+            // The candidate is Active here; its CLAIM subject must still be
+            // rejected as noncanonical, not merely as a subject mismatch.
+            assert_noncanonical(
+                &vault,
+                EntityResolutionCandidate {
+                    subject: live.subject,
+                    ..retired
+                },
+            );
+        }
+
+        let mut closed = vault
+            .get_claim(&live.confidence_claim_ref)
+            .unwrap()
+            .unwrap();
+        closed.lifecycle = oneiron::ClaimLifecycleStatus::Retracted;
+        vault
+            .put_claim(&live.confidence_claim_ref, &closed, f::at(200), 200)
+            .unwrap();
+        let before_closed_read = f::counts(&vault);
+        assert!(matches!(
+            oneiron::evaluate_entity_resolution_waterfall(&vault, &[other, live], false),
+            Err(Error::InvalidClaimBody(
+                "waterfall confidence claim is not active"
+            ))
+        ));
+        assert_eq!(f::counts(&vault), before_closed_read);
+        assert_eq!(
+            vault
+                .get_claim(&retired.confidence_claim_ref)
+                .unwrap()
+                .unwrap()
+                .subject,
+            ClaimSubject::Entity(retired.subject)
         );
     }
 

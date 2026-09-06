@@ -431,6 +431,9 @@ pub fn evaluate_entity_resolution_waterfall(
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
     let (mut ranked, claims_suppressed) = vault.with_write_txn(|wtxn| {
+        // Topology cannot change during scoring. Fold the zero-head-shell
+        // witness once, not once for each candidate and claim subject.
+        let zero_head_shells = vault.zero_head_split_shells_in_txn(&*wtxn)?;
         // Prior truth cannot change during scoring. Reuse each provider's
         // resolution (including absence) only for this transaction.
         let mut prior_memo = crate::provider_confidence::ProviderPriorMemo::default();
@@ -443,9 +446,16 @@ pub fn evaluate_entity_resolution_waterfall(
             // The candidate and its evidence must be the same assertion.
             // A claim about some OTHER subject scoring this one would let a
             // caller borrow an unrelated provider's confidence.
-            let subject = canonical_waterfall_subject_in_txn(vault, &*wtxn, &candidate.subject)?;
+            let subject = canonical_waterfall_subject_in_txn(
+                vault,
+                &*wtxn,
+                &candidate.subject,
+                &zero_head_shells,
+            )?;
             let claim_subject = match body.subject {
-                ClaimSubject::Entity(id) => canonical_waterfall_subject_in_txn(vault, &*wtxn, &id)?,
+                ClaimSubject::Entity(id) => {
+                    canonical_waterfall_subject_in_txn(vault, &*wtxn, &id, &zero_head_shells)?
+                }
                 _ => {
                     return Err(crate::error::Error::InvalidClaimBody(
                         "waterfall candidate subject does not match confidence claim subject",
@@ -546,12 +556,16 @@ fn canonical_waterfall_subject_in_txn(
     vault: &crate::Vault,
     rtxn: &heed::RoTxn<'_>,
     subject: &EntityId,
+    zero_head_shells: &std::collections::BTreeSet<EntityId>,
 ) -> crate::Result<EntityId> {
     let heads = vault.resolve_entity_in_txn(rtxn, subject)?;
     if let [head] = heads.as_slice()
         && vault.get_entity_type_in_txn(rtxn, head)?.is_some()
-        && vault.entity_lifecycle_state_in_txn(rtxn, head)?
-            == crate::identity_topology::EntityLifecycleState::Active
+        && vault.entity_lifecycle_state_with_zero_head_shells_in_txn(
+            rtxn,
+            head,
+            Some(zero_head_shells),
+        )? == crate::identity_topology::EntityLifecycleState::Active
     {
         return Ok(*head);
     }

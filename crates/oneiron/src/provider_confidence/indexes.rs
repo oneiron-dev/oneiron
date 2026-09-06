@@ -271,7 +271,7 @@ struct ProviderActors {
 /// provider`, sorted and deduplicated.
 ///
 /// Matching shells contribute priors only through an active matching head.
-/// The full-scan truth source, run only on a stale shortcut or a miss.
+/// The full-scan truth source, run on a stale shortcut, a miss, or before a write.
 /// Malformed and unrelated bodies are IGNORED rather than fatal: the PERSON
 /// type index is shared with every other person in the vault, and one
 /// undecodable neighbour must not deny a provider its prior.
@@ -399,6 +399,10 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     provider: &str,
 ) -> Result<EntityId> {
+    // Writes cannot use the read-side staleness bound. Even a valid cached
+    // actor must not hide a stranded prior on another matching shell. Check
+    // provider-wide truth before resolving, repairing indexes, or minting.
+    provider_actors_for_key_in_txn(vault, &*wtxn, provider)?;
     if let Some(actor) = resolve_provider_actor_in_txn(vault, wtxn, provider)? {
         return Ok(actor);
     }
