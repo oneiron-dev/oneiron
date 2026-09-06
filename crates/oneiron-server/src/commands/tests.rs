@@ -1184,7 +1184,7 @@ fn api_keeps_a_host_curlrc_from_capturing_the_transfer() {
     );
     let request = api::CurlRequest {
         method: "GET".to_owned(),
-        url: url.clone(),
+        url,
         body: None,
         content_type: None,
     };

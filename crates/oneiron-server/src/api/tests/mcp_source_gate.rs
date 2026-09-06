@@ -95,7 +95,7 @@ async fn mcp_edit_propose_claim_unstamped_and_above_cap_stay_pending() {
 }
 
 #[tokio::test]
-async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
+async fn public_batch_lineage_source_gate_is_consistent() {
     let (_dir, server) = test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0902);
     register_mcp_actor(
@@ -118,6 +118,7 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
     };
     let raw_claim_id = oneiron::EntityId::now();
     let above_cap_claim_id = oneiron::EntityId::now();
+    let unstamped_claim_id = oneiron::EntityId::now();
     // Proposed raw puts cannot carry a source stamp. Keep a valid source-less
     // raw claim in the mixed batch and write the sourced proposal via its envelope.
     let raw_body = rmpv::Value::Map(vec![
@@ -145,9 +146,9 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
     let mut raw_data = Vec::new();
     rmpv::encode::write_value(&mut raw_data, &raw_body).expect("encode raw claim");
 
-    // The public stamp allows only on the opted-in batch. A later ordinary
-    // batch must still use its default source input and retain the lineage pend.
-    for include_source in [false, true, false] {
+    // Lineage makes every ordinary public batch consult the source permit.
+    // The public stamp stays within its band-0 cap, before and after a mixed batch.
+    for mixed_batch in [false, true, false] {
         let claim_id = oneiron::EntityId::now();
         let candidate = oneiron::ClaimCandidate::new(
             "profile.batch_source_gate",
@@ -160,8 +161,8 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
                 .expect("public scope"),
         );
         let mut batch = server.vault.batch();
-        if include_source {
-            // Mix a valid raw put with public and above-cap envelope writes.
+        if mixed_batch {
+            // Mix a valid raw put with public, above-cap and unstamped envelope writes.
             // Each preflight receipt must agree with its applied claim.
             let above_cap_candidate = oneiron::ClaimCandidate::new(
                 "profile.batch_source_gate",
@@ -173,8 +174,13 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
                 oneiron::companion_value_from_json(&json!({ "sensitivity": 1 }))
                     .expect("above-cap scope"),
             );
+            let unstamped_candidate = oneiron::ClaimCandidate::new(
+                "profile.batch_source_gate",
+                oneiron::ClaimSubject::Entity(actor_ref),
+                rmpv::Value::from("unstamped proposal"),
+                0.8,
+            );
             batch = batch
-                .with_source_in_gate_input()
                 .put(
                     &raw_claim_id,
                     oneiron::registry::ENTITY_TYPE_CLAIM,
@@ -188,15 +194,23 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
                     &envelope,
                     occurred,
                     200,
+                )
+                .claim_candidate(
+                    &unstamped_claim_id,
+                    unstamped_candidate,
+                    &envelope,
+                    occurred,
+                    200,
                 );
         }
         batch
             .claim_candidate(&claim_id, candidate, &envelope, occurred, 200)
             .commit()
             .expect("store public proposal");
-        assert_tool_output_proposal_gate(&server.vault, claim_id, !include_source);
-        if include_source {
+        assert_tool_output_proposal_gate(&server.vault, claim_id, false);
+        if mixed_batch {
             assert_tool_output_proposal_gate(&server.vault, above_cap_claim_id, true);
+            assert_tool_output_proposal_gate(&server.vault, unstamped_claim_id, true);
             let stored = server
                 .vault
                 .get_claim(&raw_claim_id)
@@ -204,12 +218,19 @@ async fn public_batch_source_gate_opt_in_is_local_and_consistent() {
                 .expect("raw proposal must be stored");
             assert_eq!(stored.source, None);
             assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
-            let decisions = server.vault.gate_decisions(20).expect("read gate decisions");
+            let decisions = server
+                .vault
+                .gate_decisions(20)
+                .expect("read gate decisions");
             let decisions: Vec<_> = decisions
                 .iter()
                 .filter(|decision| decision.claim_id == Some(*raw_claim_id.as_bytes()))
                 .collect();
-            assert_eq!(decisions.len(), 1, "one preflight receipt for the raw claim");
+            assert_eq!(
+                decisions.len(),
+                1,
+                "one preflight receipt for the raw claim"
+            );
             assert_eq!(decisions[0].outcome, "allow");
             assert_eq!(decisions[0].reason_codes, vec!["gate.allow"]);
             assert!(

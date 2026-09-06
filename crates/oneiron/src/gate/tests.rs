@@ -2671,6 +2671,121 @@ fn gate_evaluator_generated_source_requires_explicit_auto_permit() -> Result<()>
 }
 
 #[test]
+fn approved_claim_candidate_lineage_consults_actor_bound_source_permit() -> Result<()> {
+    use crate::write_envelope::SourceLineage;
+
+    let actor = test_id(0x20);
+    let cap = crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND;
+    // A clean UserStated envelope is the non-Auto compatibility control.
+    for (source, mixed_lineage) in [
+        (ClaimSource::Generated, false),
+        (ClaimSource::UserStated, true),
+        (ClaimSource::UserStated, false),
+    ] {
+        let requires_permit = source.requires_explicit_auto_permit() || mixed_lineage;
+        for (label, permit_actor, max_band, receipted, warned, permit_allows) in [
+            ("exact actor", Some(actor), cap, true, true, true),
+            ("missing permit", None, cap, true, true, false),
+            ("wrong actor", Some(test_id(0x22)), cap, true, true, false),
+            ("unreceipted", Some(actor), cap, false, true, false),
+            ("unwarned", Some(actor), cap, true, false, false),
+            ("above cap", Some(actor), cap - 1, true, true, false),
+        ] {
+            let (_tmp, vault) = temp_vault();
+            let mut entries = Vec::new();
+            if let Some(bound_actor) = permit_actor {
+                entries.push((
+                    Value::from(POLICY_SOURCE_TRUST_KEY),
+                    Value::Map(vec![(
+                        Value::from(source.as_str()),
+                        Value::Map(vec![
+                            (
+                                Value::from(ACTOR_REF_KEY),
+                                Value::from(bound_actor.to_hex()),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                                Value::from(u64::from(max_band)),
+                            ),
+                            (
+                                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                                Value::from(receipted),
+                            ),
+                            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::from(warned)),
+                        ]),
+                    )]),
+                ));
+            }
+            let mut data = encode_policy_manifest(entries);
+            replace_actor_ceilings(
+                &mut data,
+                vec![actor_ceiling_row_for_ref("system", &actor.to_hex(), "auto")],
+            );
+            put_policy_manifest_bytes(&vault, test_id(0x23), &data)?;
+            vault.put_entity(&actor, ENTITY_TYPE_MACHINE, test_time(1), 1, b"gate actor")?;
+            let mut body = source_trust_claim(source);
+            body.approval = ClaimApprovalStatus::Approved;
+            if let ClaimSubject::Entity(subject) = body.subject {
+                vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"subject")?;
+            }
+            let mut envelope = WriteEnvelope::new(
+                WriteActor::new(actor, EdgeActorClass::System),
+                source,
+                WriteProvenance::new(Value::from("gate-test"))?,
+                ClaimApprovalStatus::Approved,
+            );
+            if mixed_lineage {
+                envelope = WriteEnvelope::with_lineage(
+                    envelope.actor(),
+                    source,
+                    envelope.provenance().clone(),
+                    envelope.approval(),
+                    SourceLineage::of(source).with(ClaimSource::ToolOutput),
+                );
+            }
+
+            // Commit covers preflight and application; batch_in has no preflight.
+            for in_txn in [false, true] {
+                let id = test_id(if in_txn { 0x25 } else { 0x24 });
+                let candidate = claim_candidate_from_body(&body);
+                let result = if in_txn {
+                    vault.with_write_txn(|wtxn| {
+                        vault
+                            .batch_in()
+                            .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+                            .apply(wtxn)
+                    })
+                } else {
+                    vault
+                        .batch()
+                        .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+                        .commit()
+                };
+                let allowed = !requires_permit || permit_allows;
+                assert_eq!(
+                    result.is_ok(),
+                    allowed,
+                    "{source:?}, mixed={mixed_lineage}, {label}, batch_in={in_txn}: {result:?}"
+                );
+                if allowed {
+                    let stored = stored_claim_body(&vault, &id)?;
+                    assert_eq!(stored.source, Some(source));
+                    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+                } else {
+                    assert_gate_rejected(
+                        result.expect_err("lineage must not bypass the explicit permit"),
+                        "pending",
+                        &["gate.pending.source_trust"],
+                    );
+                    assert!(vault.get_raw(&id)?.is_none());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn gate_evaluator_content_kind_reasons_are_stable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![]);

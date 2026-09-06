@@ -231,7 +231,10 @@ fn check_claim_policy_for_write_with_record_inner(
             actor,
             GateContentKind::Claim,
             provenance,
-            mode.include_source_in_gate_input,
+            // Lineage needs the declared source and sensitivity to consult
+            // an explicit permit, even for non-Auto public batch writes.
+            // Keep source omission unchanged when lineage needs no permit.
+            mode.include_source_in_gate_input || lineage_requires_auto_permit,
             agent_definition_ceiling,
             // Claim bodies carry no effect-fact axes the consent evaluator
             // could classify honestly; this door keeps its pre-DEC-0006
