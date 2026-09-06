@@ -891,7 +891,7 @@ fn ppr_community_query_in_txn(
     validate_ppr_vad_alpha(request.config.ppr_vad_alpha)?;
     let evidence_ids: HashSet<_> = request.context.ordered_seeds.iter().map(|seed| seed.id).collect();
     if evidence_ids.len() != request.context.ordered_seeds.len()
-        || evidence_ids != request.seeds.iter().copied().collect()
+        || evidence_ids != request.seeds.iter().copied().collect::<HashSet<EntityId>>()
         || request.context.ordered_seeds.iter().any(|seed| !seed.score.is_finite() || seed.score < 0.0)
         || request.context.ordered_seeds.windows(2).any(|pair| pair[0].score < pair[1].score)
     {
