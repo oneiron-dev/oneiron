@@ -373,6 +373,12 @@ pub(crate) fn peer_key_from_identity_topology_stream(
     peer_key_from_signature_key(b"identity-topology-stream", &lease_vault_id.to_be_bytes())
 }
 
+/// Diagnostics carry no signer. Bound their aggregate ingest by the local
+/// lease-scoped stream, never by peer-controlled body fields or event ids.
+pub(crate) fn peer_key_from_diagnostic_stream(lease_vault_id: u64) -> MaintenanceIngestPeerKey {
+    peer_key_from_signature_key(b"diagnostic-stream", &lease_vault_id.to_be_bytes())
+}
+
 fn peer_key_from_signature_key(suite: &[u8], public_key: &[u8]) -> MaintenanceIngestPeerKey {
     let mut hasher = blake3::Hasher::new();
     hasher.update(MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN);

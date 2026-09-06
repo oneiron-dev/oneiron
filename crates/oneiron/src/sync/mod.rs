@@ -30,6 +30,7 @@ pub mod client;
 pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
+mod diagnostic_ingest;
 pub mod lease;
 pub(crate) mod loro_support;
 pub mod manager;
