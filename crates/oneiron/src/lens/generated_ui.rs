@@ -2657,7 +2657,7 @@ pub enum LensRegenOutcome {
     },
     NeedsHumanStamp {
         last_good: LensEvaluatedRevision,
-        candidate: LensEvaluatedRevision,
+        candidate: Box<LensEvaluatedRevision>,
         diff: LensBehaviorDiff,
     },
     RolledBack {
@@ -2687,9 +2687,9 @@ impl LensRegenOutcome {
     }
 
     #[must_use]
-    pub const fn pending_candidate(&self) -> Option<&LensEvaluatedRevision> {
+    pub fn pending_candidate(&self) -> Option<&LensEvaluatedRevision> {
         match self {
-            Self::NeedsHumanStamp { candidate, .. } => Some(candidate),
+            Self::NeedsHumanStamp { candidate, .. } => Some(candidate.as_ref()),
             Self::AutoAdopt { .. } | Self::RolledBack { .. } => None,
         }
     }
@@ -2750,7 +2750,7 @@ pub fn regenerate_lens<R: LensRegenerator + ?Sized>(
     if diff.has_data_read_change() {
         LensRegenOutcome::NeedsHumanStamp {
             last_good,
-            candidate,
+            candidate: Box::new(candidate),
             diff,
         }
     } else {
