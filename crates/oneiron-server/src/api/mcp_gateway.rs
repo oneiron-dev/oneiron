@@ -1216,6 +1216,7 @@ pub(crate) fn execute_mcp_propose_claim(
     server
         .vault
         .batch()
+        .with_source_in_gate_input()
         .claim_candidate(&id, candidate, &envelope, occurred, learned_at)
         .commit()
         .map_err(|error| mcp_engine_error("mcp propose_claim failed", error))?;

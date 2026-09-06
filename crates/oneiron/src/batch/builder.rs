@@ -25,6 +25,7 @@ pub struct BatchBuilder<'a> {
     vault: &'a Vault,
     ops: Vec<BatchOp>,
     validation_error: Option<Error>,
+    include_source_in_gate_input: bool,
 }
 
 #[derive(Clone)]
@@ -202,7 +203,19 @@ impl<'a> BatchBuilder<'a> {
             vault,
             ops: Vec::new(),
             validation_error: None,
+            include_source_in_gate_input: false,
         }
+    }
+
+    /// Includes source and sensitivity in gate evaluation for queued local claim
+    /// puts and candidates, including those with `Proposed` approval.
+    ///
+    /// This opt-in applies to both preflight and apply. It does not change claim
+    /// stamps or grant approval: policy permits and envelope lineage still apply.
+    /// Without this opt-in, the batch keeps its existing gate input behavior.
+    pub fn with_source_in_gate_input(mut self) -> Self {
+        self.include_source_in_gate_input = true;
+        self
     }
 
     /// Adds an entity put operation to the batch.
@@ -804,6 +817,7 @@ impl<'a> BatchBuilder<'a> {
             &mut wtxn,
             &mut staged_gate_decisions,
             &mut preflight_gate_decision_ids,
+            self.include_source_in_gate_input,
         ) {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
@@ -813,6 +827,12 @@ impl<'a> BatchBuilder<'a> {
                 decision.record_metrics();
             }
             return Err(err);
+        }
+
+        let mut gate_mode = ApplyOpsGateMode::new(false, true)
+            .with_preflight_gate_decision_ids(preflight_gate_decision_ids);
+        if self.include_source_in_gate_input {
+            gate_mode = gate_mode.with_source_in_gate_input();
         }
 
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
@@ -826,8 +846,7 @@ impl<'a> BatchBuilder<'a> {
             &mut wtxn,
             self.ops,
             text_index_trusted,
-            ApplyOpsGateMode::new(false, true)
-                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
+            gate_mode,
         )?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
@@ -849,6 +868,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
         EntityId,
         VecDeque<Option<crate::store::GateDecisionId>>,
     >,
+    include_source_in_gate_input: bool,
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
@@ -957,7 +977,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                 persist_pending_consent: false,
                                 resolve_pending: false,
                                 can_resolve_pending_consent: true,
-                                include_source_in_gate_input: false,
+                                include_source_in_gate_input,
                             },
                             &mut recorded_decision,
                         )
@@ -987,7 +1007,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         persist_pending_consent: false,
                         resolve_pending: false,
                         can_resolve_pending_consent: true,
-                        include_source_in_gate_input: false,
+                        include_source_in_gate_input,
                     },
                     &mut recorded_decision,
                 );
