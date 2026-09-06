@@ -33,19 +33,15 @@ fn fixture() -> LinkedInLeadCorpus {
     }
 }
 
+fn put_fixture_entity(vault: &Vault, id: &EntityId, kind: u8, data: &[u8]) -> crate::Result<()> {
+    vault.put_entity(id, kind, TimeRange { start: 1, end: 1 }, 1, data)
+}
+
 fn setup() -> (tempfile::TempDir, Vault, WriteActor) {
     let temp = tempfile::tempdir().expect("fixture");
     let vault = Vault::open(temp.path(), VaultConfig::default()).expect("fixture");
     let id = EntityId::from_bytes([0x31; 16]).expect("fixture");
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"",
-        )
-        .expect("fixture");
+    put_fixture_entity(&vault, &id, ENTITY_TYPE_PERSON, b"").expect("fixture");
     (temp, vault, WriteActor::new(id, EdgeActorClass::Human))
 }
 
@@ -117,13 +113,15 @@ fn graph(vault: &Vault) -> Graph {
 }
 
 fn field<'a>(value: &'a rmpv::Value, name: &str) -> &'a rmpv::Value {
-    &value
-        .as_map()
-        .expect("fixture")
-        .iter()
-        .find(|(key, _)| key.as_str() == Some(name))
-        .expect("fixture")
-        .1
+    evidence_field(value, name).expect("fixture")
+}
+
+fn display_name_claim_id(person: bool, i: usize) -> EntityId {
+    derived_id(
+        b"oneiron.linkedin.claim.v1",
+        &[&key(person, i).source_ref(), "linkedin.display_name"],
+    )
+    .expect("fixture")
 }
 
 #[test]
@@ -229,13 +227,7 @@ fn linkedin_resolver_reuses_expected_type_and_refuses_wrong_type() -> TestResult
         let (_temp, vault, _) = setup();
         let external = key(true, 1);
         let expected = id(&external);
-        vault.put_entity(
-            &expected,
-            kind,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"synthetic",
-        )?;
+        put_fixture_entity(&vault, &expected, kind, b"synthetic")?;
         let before = snapshot(&vault);
         let resolved = resolve_linkedin_entity(&vault, external);
         if kind == ENTITY_TYPE_PERSON {
@@ -281,10 +273,7 @@ fn linkedin_preload_second_run_creates_nothing() -> TestResult {
         Err(LinkedInLeadPreloadError::Vault(Error::EntityNotFound))
     ));
     assert_eq!(snapshot(&vault), before);
-    let claim_id = derived_id(
-        b"oneiron.linkedin.claim.v1",
-        &[&key(true, 1).source_ref(), "linkedin.display_name"],
-    )?;
+    let claim_id = display_name_claim_id(true, 1);
     vault.retract_claim(&claim_id, unix_seconds_now())?;
     let closed = snapshot(&vault);
     assert_eq!(
@@ -597,18 +586,8 @@ fn linkedin_preload_preserves_provenanced_employment_edges() -> TestResult {
 #[test]
 fn linkedin_preload_gate_failure_and_claim_id_collision_do_not_bypass_admission() -> TestResult {
     let (_temp, vault, actor) = setup();
-    let claim_id = derived_id(
-        b"oneiron.linkedin.claim.v1",
-        &[&key(false, 1).source_ref(), "linkedin.display_name"],
-    )
-    .expect("fixture");
-    vault.put_entity(
-        &claim_id,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"",
-    )?;
+    let claim_id = display_name_claim_id(false, 1);
+    put_fixture_entity(&vault, &claim_id, ENTITY_TYPE_PERSON, b"")?;
     let occupied = vault.get_raw(&claim_id)?;
     assert!(matches!(
         apply_linkedin_lead_corpus(&vault, fixture(), actor),
@@ -665,6 +644,117 @@ fn linkedin_preload_explicit_path_rejects_document_shapes_without_writes() -> Te
         vault.preload_linkedin_lead_corpus(missing, actor),
         Err(LinkedInLeadPreloadError::Vault(Error::Io(_)))
     ));
+    Ok(())
+}
+
+#[test]
+fn linkedin_preload_actor_class_mismatch_rejects_empty_fresh_and_reused_without_writes()
+-> TestResult {
+    for state in ["empty", "fresh", "reused"] {
+        let (_temp, vault, actor) = setup();
+        let mut corpus = fixture();
+        if state == "empty" {
+            corpus.companies.clear();
+            corpus.contacts.clear();
+        } else if state == "reused" {
+            apply_linkedin_lead_corpus(&vault, corpus.clone(), actor)?;
+        }
+        let before = snapshot(&vault);
+        let invalid = WriteActor::new(actor.entity_ref(), EdgeActorClass::System);
+        let error = apply_linkedin_lead_corpus(&vault, corpus, invalid).expect_err("must reject");
+        assert!(
+            matches!(error, LinkedInLeadPreloadError::Vault(Error::ActorClassMismatch {
+            actor_entity_type: ENTITY_TYPE_PERSON, actor_class,
+        }) if actor_class == EdgeActorClass::System as u8)
+        );
+        assert_eq!(snapshot(&vault), before, "{state}");
+    }
+    Ok(())
+}
+
+#[test]
+fn linkedin_preload_rejects_structurally_valid_occupied_claim_identity_mismatches() -> TestResult {
+    for (section, name) in [
+        ("claim", "subject"),
+        ("claim", "predicate"),
+        ("claim", "source"),
+        ("claim", "evidence"),
+        ("provenance", "source_id"),
+        ("provenance", "source_record_id"),
+        ("candidate_evidence", "source_id"),
+        ("candidate_evidence", "source_record_id"),
+        ("provenance", "kind"),
+        ("candidate_evidence", "kind"),
+        ("provenance", "duplicate"),
+        ("claim", "duplicate"),
+    ] {
+        let (_temp, vault, actor) = setup();
+        let external = key(false, 1);
+        let company = resolve_linkedin_entity(&vault, external.clone())?.0;
+        let facts = [("linkedin.display_name", Some("Synthetic Company 1"))];
+        assert_eq!(admit_facts(&vault, &external, company, actor, &facts)?, 1);
+        let claim_id = display_name_claim_id(false, 1);
+        let mut body = vault.get_claim(&claim_id)?.expect("fixture");
+        match (section, name) {
+            ("claim", "subject") => body.subject = ClaimSubject::Entity(actor.entity_ref()),
+            ("claim", "predicate") => body.predicate = "synthetic.unrelated".into(),
+            ("claim", "source") => body.source = Some(ClaimSource::UserStated),
+            ("claim", "evidence") => body.evidence = None,
+            _ => {
+                let rmpv::Value::Map(entries) = body.evidence.as_mut().expect("fixture") else {
+                    panic!("fixture");
+                };
+                if section == "claim" {
+                    entries.push(
+                        entries
+                            .iter()
+                            .find(|(k, _)| k.as_str() == Some("provenance"))
+                            .expect("fixture")
+                            .clone(),
+                    );
+                } else {
+                    let metadata = &mut entries
+                        .iter_mut()
+                        .find(|(k, _)| k.as_str() == Some(section))
+                        .expect("fixture")
+                        .1;
+                    let rmpv::Value::Map(fields) = metadata else {
+                        panic!("fixture");
+                    };
+                    if name == "duplicate" {
+                        fields.push(
+                            fields
+                                .iter()
+                                .find(|(k, _)| k.as_str() == Some("source_id"))
+                                .expect("fixture")
+                                .clone(),
+                        );
+                    } else {
+                        fields
+                            .iter_mut()
+                            .find(|(k, _)| k.as_str() == Some(name))
+                            .expect("fixture")
+                            .1 = rmpv::Value::from("synthetic-unrelated-private");
+                    }
+                }
+            }
+        }
+        vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+        assert_eq!(vault.get_claim(&claim_id)?, Some(body)); // Valid CLAIM, not a type collision.
+        let before = snapshot(&vault);
+        let error = apply_linkedin_lead_corpus(&vault, fixture(), actor).expect_err("must reject");
+        assert!(
+            matches!(
+                error,
+                LinkedInLeadPreloadError::Vault(Error::InvalidClaimBody(
+                    "LinkedIn derived claim identity mismatch"
+                ))
+            ),
+            "{section}.{name}"
+        );
+        assert!(!format!("{error:?} {error}").contains("synthetic"));
+        assert_eq!(snapshot(&vault), before, "{section}.{name}");
+    }
     Ok(())
 }
 

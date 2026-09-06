@@ -1515,14 +1515,103 @@ fn git_wire_never_runs_repository_hooks() {
 #[test]
 fn git_wire_is_the_only_production_git_subprocess_constructor() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    // Literal-text guard only: dynamic constructors, including
+    // ServeCommand::spawn, are not covered by this scan.
     let needle = format!("Command::new({}git{})", '"', '"');
     let allowed = ["codebase/tests.rs", "artifact_hosting/tests.rs"];
     let mut offenders = Vec::new();
     scan_for_needle(&root, &root, &needle, &allowed, &mut offenders);
     assert!(
         offenders.is_empty(),
-        "git subprocesses must be constructed only in git_wire.rs: {offenders:?}"
+        "literal git subprocess constructors must stay in git_wire.rs: {offenders:?}"
     );
+}
+
+fn contains_production_needle(text: &str, needle: &str) -> bool {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .expect("Rust scanner language");
+    let tree = parser.parse(text, None).expect("Rust scanner parse");
+    assert!(
+        !tree.root_node().has_error(),
+        "production scanner requires valid Rust syntax"
+    );
+    let mut test_ranges = Vec::new();
+    collect_test_only_ranges(tree.root_node(), text, &mut test_ranges);
+    text.match_indices(needle)
+        .any(|(offset, _)| !test_ranges.iter().any(|range| range.contains(&offset)))
+}
+
+fn collect_test_only_ranges(
+    node: tree_sitter::Node<'_>,
+    text: &str,
+    ranges: &mut Vec<std::ops::Range<usize>>,
+) {
+    let mut cursor = node.walk();
+    let mut test_only = false;
+    for child in node.named_children(&mut cursor) {
+        match child.kind() {
+            "attribute_item" => {
+                // Only explicit cfg(test) excludes an item. Other cfg predicates
+                // stay visible; each exclusion ends at the parsed item boundary.
+                test_only |= text[child.byte_range()]
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "#[cfg(test)]";
+            }
+            "line_comment" | "block_comment" => {}
+            _ => {
+                if test_only {
+                    ranges.push(child.byte_range());
+                } else {
+                    collect_test_only_ranges(child, text, ranges);
+                }
+                test_only = false;
+            }
+        }
+    }
+}
+
+#[test]
+fn production_git_constructor_scan_excludes_only_test_scopes() {
+    let needle = format!("Command::new({}git{})", '"', '"');
+    let test_scopes = r##"
+        #[cfg(test)]
+        #[allow(dead_code)]
+        // An intervening comment must not detach the test attribute.
+        mod fixtures {
+            fn git() {
+                let braces = r#"} mod fake {"#;
+                /* } */
+                StdGIT_CALL;
+            }
+            mod nested { fn git() { GIT_CALL; } }
+        }
+        mod production {
+            #[cfg ( test )]
+            fn test_helper() { GIT_CALL; }
+        }
+    "##
+    .replace("GIT_CALL", &needle);
+    assert!(!contains_production_needle(&test_scopes, &needle));
+
+    // Production before, after, and inside a surrounding module stays visible.
+    // A module name or a different cfg is not permission to hide a constructor.
+    for source in [
+        format!("fn before() {{ {needle}; }} {test_scopes}"),
+        format!("{test_scopes} fn after() {{ Std{needle}; }}"),
+        format!("mod outer {{ {test_scopes} fn after() {{ {needle}; }} }}"),
+        format!("#[cfg(test)] fn helper() {{ {needle}; }} fn after() {{ {needle}; }}"),
+        format!("#[cfg(not(test))] fn production() {{ {needle}; }}"),
+        format!("#[cfg(any(test, feature = \"sync\"))] fn production() {{ {needle}; }}"),
+        format!("mod tests {{ fn production() {{ {needle}; }} }}"),
+    ] {
+        assert!(
+            contains_production_needle(&source, &needle),
+            "production constructor was hidden: {source}"
+        );
+    }
 }
 
 fn scan_for_needle(
@@ -1557,6 +1646,8 @@ fn scan_for_needle(
         if allowed.contains(&relative.as_str()) {
             continue;
         }
-        offenders.push(relative);
+        if contains_production_needle(&text, needle) {
+            offenders.push(relative);
+        }
     }
 }

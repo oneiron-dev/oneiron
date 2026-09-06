@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::claim::{ClaimBody, ClaimSource, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -19,6 +20,7 @@ use crate::ingest::{
     ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, NormalizedIngestClaim,
     admit_imported_evidence_claim,
 };
+use crate::provenance::validate_actor_class;
 use crate::temporal::TimeRange;
 use crate::{Vault, WriteActor, unix_seconds_now};
 
@@ -292,6 +294,47 @@ impl Vault {
     }
 }
 
+// Evidence is opaque to the CLAIM codec. Missing or duplicate identity fields
+// cannot establish a match, even when the enclosing claim is structurally valid.
+fn evidence_field<'a>(value: &'a rmpv::Value, name: &str) -> Option<&'a rmpv::Value> {
+    let mut values = value
+        .as_map()?
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value);
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
+}
+
+fn matches_imported_fact(
+    stored: &ClaimBody,
+    subject: EntityId,
+    predicate: &str,
+    source_ref: &str,
+) -> bool {
+    stored.subject == ClaimSubject::Entity(subject)
+        && stored.predicate == predicate
+        && stored.source == Some(ClaimSource::Imported)
+        && ["provenance", "candidate_evidence"].iter().all(|name| {
+            let Some(metadata) = stored
+                .evidence
+                .as_ref()
+                .and_then(|e| evidence_field(e, name))
+            else {
+                return false;
+            };
+            [
+                ("kind", "imported_evidence"),
+                ("source_id", "linkedin-lead-corpus"),
+                ("source_record_id", source_ref),
+            ]
+            .iter()
+            .all(|(field, expected)| {
+                evidence_field(metadata, field).and_then(rmpv::Value::as_str) == Some(*expected)
+            })
+        })
+}
+
 fn admit_facts(
     vault: &Vault,
     key: &LinkedInExternalKey,
@@ -305,7 +348,13 @@ fn admit_facts(
         let Some(value) = value else { continue };
         let claim_id = derived_id(b"oneiron.linkedin.claim.v1", &[&source_ref, predicate])?;
         // The typed read also refuses a non-CLAIM squatting at this id.
-        if vault.get_claim(&claim_id)?.is_some() {
+        if let Some(stored) = vault.get_claim(&claim_id)? {
+            if !matches_imported_fact(&stored, subject, predicate, &source_ref) {
+                return Err(
+                    Error::InvalidClaimBody("LinkedIn derived claim identity mismatch").into(),
+                );
+            }
+            // Matching identities retain their value and lifecycle, including retraction.
             continue;
         }
         let learned_at = unix_seconds_now();
@@ -357,10 +406,11 @@ pub(crate) fn apply_linkedin_lead_corpus(
     actor: WriteActor,
 ) -> Result<LinkedInLeadPreloadReport, LinkedInLeadPreloadError> {
     validate_corpus(&mut corpus)?;
-    // Check even empty/reused corpora; missing actors cannot bootstrap themselves.
-    if vault.get_entity_type(&actor.entity_ref())?.is_none() {
-        return Err(Error::EntityNotFound.into());
-    }
+    // Check even empty/reused corpora before any entity, claim, or edge writes.
+    let actor_type = vault
+        .get_entity_type(&actor.entity_ref())?
+        .ok_or(Error::EntityNotFound)?;
+    validate_actor_class(actor_type, actor.actor_class())?;
     let mut report = LinkedInLeadPreloadReport::default();
     let mut companies = BTreeMap::new();
     for row in corpus.companies {
