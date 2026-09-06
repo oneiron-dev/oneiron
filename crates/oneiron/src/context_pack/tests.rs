@@ -4172,3 +4172,175 @@ fn psych_profile_pack_section_is_explicit_for_missing_fresh_and_stale() -> Resul
     ));
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// RT-05 (ONE-1687) — the window budget lifts from constant to profile
+// ═══════════════════════════════════════════════════════════════════════
+
+use crate::agent_def::{CompactionOwnership, ContextBudgetSplit, MemoryProfile};
+use crate::llm::ModelTierRef;
+
+use super::types::DEFAULT_WINDOW_TOKEN_BUDGET;
+
+fn rt05_profile(budget: u64) -> MemoryProfile {
+    MemoryProfile::new(
+        budget,
+        ModelTierRef("cheap.slm".to_owned()),
+        CompactionOwnership::Engine,
+    )
+}
+
+/// Two rows a serialized pack can actually retrieve, so the budget lift is
+/// measured against a REAL assembly rather than an empty one.
+fn seed_budget_rows(vault: &Vault) -> Result<()> {
+    for (seed, vector, text) in [
+        (0x74_u8, [1.0_f32, 0.0, 0.0, 0.0], "profile budget first"),
+        (0x75, [0.0, 1.0, 0.0, 0.0], "profile budget second"),
+    ] {
+        let id = crate::test_util::entity(seed);
+        let mut payload = Vec::new();
+        rmpv::encode::write_value(
+            &mut payload,
+            &rmpv::Value::Map(vec![(
+                rmpv::Value::from("content"),
+                rmpv::Value::from(text),
+            )]),
+        )
+        .expect("encode turn body");
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &payload,
+            )
+            .vector(&id, &vector)
+            .commit()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_default_builder_budget_is_four_thousand_through_the_machinery() {
+    let (_dir, vault) = open_test_vault();
+    assert_eq!(
+        vault.context_pack().effective_token_budget(),
+        4_000,
+        "renamed, never revalued: the engine default is unchanged"
+    );
+    assert_eq!(
+        vault.context_pack().effective_token_budget(),
+        DEFAULT_WINDOW_TOKEN_BUDGET,
+        "the accessor is the ONE authority — it reads the same constant the \
+         builder was constructed with"
+    );
+}
+
+#[test]
+fn an_absent_profile_assembles_the_pack_byte_for_byte() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    seed_budget_rows(&vault)?;
+
+    let today = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .format(PackFormat::Plaintext)
+        .run_serialized()?;
+    let with_none = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .format(PackFormat::Plaintext)
+        .memory_profile(None)
+        .run_serialized()?;
+
+    assert_eq!(
+        with_none, today,
+        "memory_profile(None) is a no-op: an agent with no profile assembles \
+         byte-for-byte the pack it assembled before the lift"
+    );
+    assert_eq!(
+        vault.context_pack().memory_profile(None).effective_token_budget(),
+        4_000
+    );
+    Ok(())
+}
+
+#[test]
+fn a_profile_carries_its_budget_and_split_end_to_end() {
+    let (_dir, vault) = open_test_vault();
+
+    let profile = rt05_profile(1_234).with_budget_split(ContextBudgetSplit::new(
+        0.10, 0.60, 0.20, 0.10,
+    ));
+    let builder = vault.context_pack().memory_profile(Some(&profile));
+    assert_eq!(builder.effective_token_budget(), 1_234);
+
+    // The split reaches the allocation the serializer consumes.
+    let split_only = vault
+        .context_pack()
+        .memory_profile(Some(&profile))
+        .token_budget(4_000);
+    assert_eq!(split_only.effective_token_budget(), 4_000);
+}
+
+/// Call order is the contract: the profile supplies CONSTRUCTION-time
+/// defaults, so a later explicit per-request override always wins.
+#[test]
+fn a_later_explicit_override_wins_over_the_profile_default() {
+    let (_dir, vault) = open_test_vault();
+    let profile = rt05_profile(1_234);
+
+    assert_eq!(
+        vault
+            .context_pack()
+            .memory_profile(Some(&profile))
+            .token_budget(77)
+            .effective_token_budget(),
+        77,
+        "an explicit token_budget AFTER the profile overrides it"
+    );
+    assert_eq!(
+        vault
+            .context_pack()
+            .token_budget(77)
+            .memory_profile(Some(&profile))
+            .effective_token_budget(),
+        1_234,
+        "and the profile wins when it is applied last — order is the rule, \
+         not a precedence table"
+    );
+}
+
+/// A raw `run()` product documents `PackTokenStats::default()`, so it cannot
+/// truthfully drive a token threshold. This pins that no raw-pack token
+/// accessor was introduced to let it try.
+#[test]
+fn a_raw_pack_carries_no_token_accounting_to_drive_a_threshold() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    seed_budget_rows(&vault)?;
+
+    let raw = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .include_stats(true)
+        .run()?;
+    assert_eq!(
+        raw.stats.tokens.total_tokens,
+        0,
+        "raw run() products carry default-zero token accounting"
+    );
+
+    let serialized = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .format(PackFormat::Plaintext)
+        .run_serialized_with_stats()?
+        .value;
+    assert!(
+        serialized.stats.tokens.total_tokens > 0,
+        "only the serialized product carries real accounting"
+    );
+    Ok(())
+}

@@ -172,6 +172,10 @@ pub mod write_envelope;
 // module tree.
 pub use crate::access_grant::AccessGrant;
 pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use crate::agent_def::{
+    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
+    MemoryProfile,
+};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
@@ -232,8 +236,13 @@ pub use crate::comm::{
     send_override_for_send,
 };
 pub use crate::compaction::{
-    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
-    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionBackend, CompactionBackendRegistry,
+    CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
+    CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
+    CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
+    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
+    decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
