@@ -17,19 +17,20 @@ use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     BUDGET_POLICY_ACTOR_KEY, BUDGET_POLICY_CAP_KEY, BUDGET_POLICY_FLOOR_KEY,
     BUDGET_POLICY_PURPOSE_KEY, GRANT_BUDGET_KEY, GRANT_EFFECTOR_KEY, GRANT_RECEIPT_REQUIRED_KEY,
-    GRANT_SCOPE_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_BUDGET_POLICY_KEY, POLICY_DEFAULTS_KEY,
-    POLICY_DELEGATED_GRANTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
-    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
-    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PATTERN_CATEGORY_KEY, POLICY_PATTERN_ID_KEY,
-    POLICY_PATTERN_PATTERN_KEY, POLICY_PATTERN_ROLE_KEY, POLICY_ROW_ACTION_KEY,
-    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
-    POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY,
-    RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
-    SIGNATURE_SIGNATURE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    GRANT_SCOPE_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
+    POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
+    POLICY_PATTERN_CATEGORY_KEY, POLICY_PATTERN_ID_KEY, POLICY_PATTERN_PATTERN_KEY,
+    POLICY_PATTERN_ROLE_KEY, POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY,
+    POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY,
+    SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SIGNATURE_SIGNATURE_KEY,
+    SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY,
+    SOURCE_TRUST_WARNED_KEY,
 };
 use super::grants::PolicyScopedGrant;
 
@@ -48,6 +49,9 @@ pub(super) struct DecodedPolicyManifest {
     pub(super) owner_policy_patterns_dropped: bool,
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    /// The opaque host checker ref (ONE-1296), absent unless the manifest
+    /// names one.
+    pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(super) unsupported_schema: bool,
     pub(super) engine_version_floor: bool,
@@ -88,6 +92,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
+                | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
         ) {
             return None;
@@ -181,6 +186,16 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
     };
+    // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
+    // asks only that it be one non-blank, bounded string. A duplicate row is
+    // the same ambiguity `on_budget_exhausted` refuses, and a blank or
+    // oversized value is a misconfigured knob rather than "no checker" — both
+    // reject the whole manifest, which fails the gate closed.
+    let auto_checker = match single_map_value(&entries, POLICY_AUTO_CHECKER_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(nonblank_bounded_string(value, AUTO_CHECKER_REF_MAX_LEN)?),
+    };
     let budget_policy = match single_map_value(&entries, POLICY_BUDGET_POLICY_KEY) {
         MapValue::Missing => BudgetPolicyTable::default(),
         MapValue::Duplicate => return None,
@@ -211,6 +226,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
+        auto_checker,
         budget_policy,
         unsupported_schema,
         engine_version_floor,
@@ -229,6 +245,12 @@ const OWNER_POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
 /// (`binary`, `category_json`, …) that `policy_model` looks up, so the bound
 /// only has to keep a manifest from carrying a blob where a keyword belongs.
 const OWNER_POLICY_OUTPUT_CONTRACT_MAX_LEN: usize = 64;
+
+/// Longest auto-checker REF a manifest may carry (ONE-1296). Same reasoning
+/// as the output contract above: the value is a selector the host resolves,
+/// so the bound only keeps a manifest from carrying a blob where a name
+/// belongs.
+const AUTO_CHECKER_REF_MAX_LEN: usize = 256;
 
 fn nonblank_bounded_string(value: &Value, max_len: usize) -> Option<String> {
     let value = value.as_str()?;

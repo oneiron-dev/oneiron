@@ -1159,3 +1159,179 @@ fn tool_output_meet_promotion_no_longer_lands_auto_on_an_unsigned_manifest() -> 
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// ONE-1296: promotion through the checker-aware terminal — the ticket's one
+// production injection point. Fixtures stay local to this module.
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
+
+const CHECKER_REF: &str = "host-checker-v1";
+
+struct CountingAutoChecker {
+    outcome: AutoCheckOutcome,
+    calls: AtomicUsize,
+}
+
+impl CountingAutoChecker {
+    fn new(outcome: AutoCheckOutcome) -> Self {
+        Self {
+            outcome,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(AtomicOrdering::Relaxed)
+    }
+}
+
+impl AutoChecker for CountingAutoChecker {
+    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+        let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+        self.outcome.clone()
+    }
+}
+
+/// [`auto_permitting_manifest`] plus the `auto_checker` knob that arms the
+/// consult.
+fn auto_checker_manifest(checker_ref: &str) -> Vec<u8> {
+    let encoded = auto_permitting_manifest();
+    let mut cursor = encoded.as_slice();
+    let mut manifest =
+        rmpv::decode::read_value(&mut cursor).expect("decode the promotion test manifest");
+    let Mp::Map(entries) = &mut manifest else {
+        panic!("the promotion test manifest is a map");
+    };
+    entries.push((Mp::from("auto_checker"), Mp::from(checker_ref)));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &manifest).expect("encode the policy manifest");
+    out
+}
+
+fn open_auto_checker_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_vault();
+    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+    crate::test_util::put_policy_manifest_bytes(&vault, id, &auto_checker_manifest(CHECKER_REF))
+        .expect("seed the auto-permitting manifest with a checker knob");
+    (dir, vault)
+}
+
+#[test]
+fn promotion_consults_the_checker_once_and_lands_auto_on_allow() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = CountingAutoChecker::new(AutoCheckOutcome::Allow);
+
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&checker),
+    )?;
+
+    assert_eq!(outcome.landed, vec![claim_id]);
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(checker.calls(), 1, "exactly one consult per candidate");
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim landed").approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+/// A hold refuses the Auto request. On THIS path that means the whole write
+/// rolls back and the candidate is reported as rejected — ARCH-0067 §7 keeps
+/// standing: consolidation mints no owner-review row behind the Dreamer's
+/// back, whoever narrowed the verdict.
+#[test]
+fn promotion_rejects_a_held_candidate_without_minting_a_review_row() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = CountingAutoChecker::new(AutoCheckOutcome::Hold {
+        reasons: vec!["checker: hedged verdict".to_owned()],
+    });
+
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&checker),
+    )?;
+
+    assert!(outcome.landed.is_empty());
+    assert!(outcome.pended.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert_eq!(outcome.rejected[0].0, claim_id);
+    assert!(
+        outcome.rejected[0].1.contains("gate.pending.checker"),
+        "the refusal names the checker: {}",
+        outcome.rejected[0].1
+    );
+    assert!(
+        !outcome.rejected[0]
+            .1
+            .contains("gate.pending.checker.unavailable"),
+        "a hold is not an unavailable checker: {}",
+        outcome.rejected[0].1
+    );
+    assert_eq!(checker.calls(), 1);
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert!(vault.pending_gate_consents(10)?.is_empty());
+    Ok(())
+}
+
+/// Every way a checker can fail to answer fails closed the same way.
+#[test]
+fn promotion_fails_closed_when_the_checker_cannot_answer() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
+
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&checker),
+    )?;
+
+    assert!(outcome.landed.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert!(
+        outcome.rejected[0]
+            .1
+            .contains("gate.pending.checker.unavailable"),
+        "an unanswerable checker fails closed: {}",
+        outcome.rejected[0].1
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    Ok(())
+}
+
+/// The compat entry point passes no checker: a vault with the knob configured
+/// but no checker injected promotes exactly as it did before this ticket.
+#[test]
+fn promotion_without_an_injected_checker_is_unchanged() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+
+    assert_eq!(outcome.landed, vec![claim_id]);
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim landed").approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}

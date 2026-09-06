@@ -215,6 +215,15 @@ pub(crate) enum GateReasonCode {
     /// deliberate transformation, so one cycle is refused outright rather
     /// than parked for review.
     DenyPersonaSingleCycle,
+    /// ONE-1296: the manifest's auto checker HELD an otherwise-Auto Dreamer
+    /// write. The ceiling falls to Proposed and the checker's own reasons ride
+    /// the receipt beside this code.
+    PendingChecker,
+    /// ONE-1296: the auto checker could not answer — unavailable, panicked,
+    /// past its deadline, out of budget, or malformed. Fail-closed is the same
+    /// answer as a hold, spelled differently so an owner can tell "the checker
+    /// said no" from "nothing checked".
+    PendingCheckerUnavailable,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -257,6 +266,8 @@ impl GateReasonCode {
             Self::PendingPersonaIsolation => "gate.pending.persona_isolation",
             Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
             Self::DenyPersonaSingleCycle => "gate.deny.dreamer_precommit.persona_single_cycle",
+            Self::PendingChecker => "gate.pending.checker",
+            Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
         }
     }
 
@@ -303,6 +314,14 @@ impl GateReasonCode {
                 GateMetricReasonClass::CriticalityFloor
             }
             Self::DenyPersonaSingleCycle => GateMetricReasonClass::DreamerPrecommit,
+            // ONE-1296 meters where it acts: the checker is only ever asked
+            // about a source that `requires_explicit_auto_permit`, so a hold
+            // is the explicit-auto-permit question answered by the host
+            // instead of by a manifest row. No new metric class, so the
+            // counter width is unchanged.
+            Self::PendingChecker | Self::PendingCheckerUnavailable => {
+                GateMetricReasonClass::SourceTrust
+            }
         }
     }
 }

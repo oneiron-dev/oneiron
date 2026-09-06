@@ -4028,6 +4028,46 @@ fn gate_notice_plane_tokens_mirror_the_policy_plane_enum() {
     assert_eq!(GATE_SYSTEM_NOTICE_PLANE_TOKENS.to_vec(), published);
 }
 
+/// ONE-1296: whatever prose a host auto-checker names its hold with, the
+/// receipt reason the gate records is one this ledger accepts.
+///
+/// The vet runs on the append path AND the decode path, so an unrendered host
+/// reason does not merely lose itself — it costs the whole decision row with
+/// `CorruptedIndex("gate decision ledger")`, and the write the checker meant
+/// to park fails instead of parking. This postcondition is what keeps a held
+/// write recordable, so it is pinned here rather than left to the caller.
+#[test]
+fn checker_hold_reasons_render_into_reasons_the_ledger_accepts() {
+    let long = "very long reason ".repeat(64);
+    let prose = [
+        // The exact string that failed before the reasons were rendered.
+        "checker: hedged verdict",
+        "  leading and trailing  ",
+        "MiXeD CaSe / punctuation!!",
+        "unicode ✂ snip",
+        "tabs\tand\nnewlines",
+        long.as_str(),
+    ];
+    for reason in prose {
+        let rendered = checker_hold_receipt_reason(reason).expect("prose names a token");
+        assert!(
+            valid_gate_receipt_reason(&rendered),
+            "{reason:?} rendered to {rendered:?}, which the ledger rejects"
+        );
+    }
+
+    // The WHY stays legible: a reason is rendered, not hashed away.
+    assert_eq!(
+        checker_hold_receipt_reason("hedged: low confidence").as_deref(),
+        Some("checker_hedged_low_confidence")
+    );
+
+    // Text naming no token at all is not a hold reason. The gate falls to the
+    // unavailable verdict there rather than recording an unexplained refusal.
+    assert_eq!(checker_hold_receipt_reason("  ...!!  "), None);
+    assert_eq!(checker_hold_receipt_reason(""), None);
+}
+
 #[test]
 fn gate_notice_accepts_what_the_in_crate_writers_produce() {
     // The owner-plane writer: plane only, no versioned document behind it.

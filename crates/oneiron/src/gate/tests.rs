@@ -13989,3 +13989,523 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
     assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// ONE-1296 `auto_checker` manifest knob: decode/merge/hash, the write door's
+// consult predicate, and the fail-closed mapping.
+//
+// All fixtures and helpers stay inside this module; the GATE-12/GATE-13
+// Dreamer fixtures above are reused, not modified.
+// ---------------------------------------------------------------------------
+mod auto_checker {
+    use super::*;
+
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    use crate::inbox::{InboxExceptionClass, InboxQuery};
+    use crate::llm::{AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker};
+
+    const CHECKER_REF: &str = "host-checker-v1";
+    const OTHER_CHECKER_REF: &str = "host-checker-v2";
+    const CHECKER_RUN_ID: &str = "one1296-checker-run";
+    /// A host names its reasons in PROSE — punctuation, spaces and all. This
+    /// exact string is the one that made the ledger refuse the decision row
+    /// before the reasons were rendered into its token vocabulary.
+    const HOLD_REASON: &str = "checker: hedged verdict";
+
+    /// [`HOLD_REASON`] as the receipt records it. The `checker_` prefix is the
+    /// ENGINE's family marker and is always applied, so the host's own leading
+    /// "checker:" word renders into the slug after it; the WHY stays legible.
+    const HOLD_RECEIPT_REASON: &str = "checker_checker_hedged_verdict";
+
+    /// Counts every consult and records what it was shown.
+    struct RecordingAutoChecker {
+        outcome: AutoCheckOutcome,
+        calls: AtomicUsize,
+        seen: Mutex<Vec<AutoCheckCandidateOwned>>,
+    }
+
+    impl RecordingAutoChecker {
+        fn new(outcome: AutoCheckOutcome) -> Self {
+            Self {
+                outcome,
+                calls: AtomicUsize::new(0),
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn allow() -> Self {
+            Self::new(AutoCheckOutcome::Allow)
+        }
+
+        fn hold() -> Self {
+            Self::new(AutoCheckOutcome::Hold {
+                reasons: vec![HOLD_REASON.to_owned()],
+            })
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(AtomicOrdering::Relaxed)
+        }
+
+        fn seen(&self) -> Vec<AutoCheckCandidateOwned> {
+            self.seen.lock().expect("checker log").clone()
+        }
+    }
+
+    impl AutoChecker for RecordingAutoChecker {
+        fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            self.seen
+                .lock()
+                .expect("checker log")
+                .push(AutoCheckCandidateOwned::from(candidate));
+            self.outcome.clone()
+        }
+    }
+
+    /// A host implementation that unwinds instead of answering.
+    struct PanickingAutoChecker;
+
+    impl AutoChecker for PanickingAutoChecker {
+        fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            panic!("host auto checker panicked");
+        }
+    }
+
+    /// A host implementation that answers long after the gate stopped waiting.
+    struct SlowAutoChecker;
+
+    impl AutoChecker for SlowAutoChecker {
+        fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            std::thread::sleep(Duration::from_millis(
+                crate::llm::AUTO_CHECKER_DEADLINE_MS + 500,
+            ));
+            AutoCheckOutcome::Allow
+        }
+    }
+
+    fn bounded(checker: impl AutoChecker) -> crate::llm::BoundedAutoChecker {
+        crate::llm::BoundedAutoChecker::new(std::sync::Arc::new(checker))
+    }
+
+    fn checker_entry(value: &str) -> (Value, Value) {
+        (
+            Value::from(POLICY_AUTO_CHECKER_KEY),
+            Value::from(value.to_owned()),
+        )
+    }
+
+    /// The precommit vault's manifest — an `agent` actor ceiling of `auto`, an
+    /// explicit auto permit for `generated`, and a signature — plus whatever
+    /// `auto_checker` rows the case under test wants.
+    fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
+        let mut entries = vec![
+            source_trust_entry(ClaimSource::Generated, 0),
+            signatures_entry(),
+        ];
+        entries.extend(extra);
+        let mut data = encode_policy_manifest(entries);
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        );
+        data
+    }
+
+    fn checker_vault(knob: Option<&str>) -> Result<(tempfile::TempDir, crate::Vault)> {
+        let (tmp, vault) = temp_vault();
+        let extra = knob.map(checker_entry).into_iter().collect();
+        put_policy_manifest_bytes(&vault, test_id(0x22), &checker_manifest(extra))?;
+        Ok((tmp, vault))
+    }
+
+    /// A valid Dreamer candidate: non-degenerate value, resolving evidence,
+    /// public sensitivity band, no isolation-classed predicate.
+    fn checker_body(vault: &crate::Vault, approval: ClaimApprovalStatus) -> Result<ClaimBody> {
+        let evidence_ref = test_id(0x36);
+        seed_precommit_evidence_entity(vault, &evidence_ref)?;
+        let mut body = precommit_body(
+            Value::from("Ada Lovelace"),
+            Some(precommit_evidence(vec![evidence_ref])),
+        );
+        body.approval = approval;
+        Ok(body)
+    }
+
+    fn dreamer_parts(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
+        dreamer_claim_candidate_write_parts(
+            vault,
+            body,
+            first_party_eiri_connector_actor_id(),
+            CHECKER_RUN_ID,
+        )
+    }
+
+    /// The ONE production injection: the checker-aware promotion terminal.
+    fn attempt_checked_candidate_write(
+        vault: &crate::Vault,
+        claim_id: &EntityId,
+        body: &ClaimBody,
+        checker: Option<&dyn AutoChecker>,
+    ) -> Result<()> {
+        let (candidate, envelope) = dreamer_parts(vault, body)?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+                .apply_recording_gate_decisions_with_checker(wtxn, checker)
+        })
+    }
+
+    /// The claim write door itself, with the checker under test injected. The
+    /// transaction commits either way, so a parked write leaves its receipt
+    /// and its pending-consent row behind exactly as the write path would.
+    fn gate_claim_write(
+        vault: &crate::Vault,
+        claim_id: &EntityId,
+        body: &ClaimBody,
+        envelope: &WriteEnvelope,
+        checker: Option<&dyn AutoChecker>,
+        persist_pending_consent: bool,
+    ) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let policy = resolve_policy_manifest(&vault.store, &wtxn)?;
+        let mut recorded_decision = None;
+        let result = check_claim_policy_for_write_with_record(
+            &vault.store,
+            &mut wtxn,
+            claim_id,
+            ClaimGateWrite {
+                body,
+                envelope: Some(envelope),
+                auto_checker: checker,
+                defer_metrics_until_commit: false,
+            },
+            &policy,
+            GateWriteMode {
+                record_decision: true,
+                persist_pending_consent,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: true,
+            },
+            &mut recorded_decision,
+        );
+        wtxn.commit()?;
+        result
+    }
+
+    /// Every recorded decision as `(reason_codes, receipt_reasons)`.
+    fn decision_rows(vault: &crate::Vault) -> Result<Vec<(Vec<String>, Vec<String>)>> {
+        Ok(vault
+            .store
+            .gate_decisions(100)?
+            .into_iter()
+            .map(|record| (record.reason_codes, record.receipt_reasons))
+            .collect())
+    }
+
+    /// 1. The knob parses, merges and hashes; and a manifest that never names
+    ///    a checker is untouched by this ticket — same resolution, same
+    ///    frontier hash contribution (none at all), same decisions, even with
+    ///    a holding checker injected.
+    #[test]
+    fn knob_roundtrip_and_unset_is_identity() -> Result<()> {
+        // Parse.
+        let (_tmp, named) = checker_vault(Some(CHECKER_REF))?;
+        assert_eq!(resolve(&named)?.auto_checker(), Some(CHECKER_REF));
+
+        // Unset: nothing resolves, and the default resolution names nobody.
+        let (_tmp, unset) = checker_vault(None)?;
+        assert_eq!(resolve(&unset)?.auto_checker(), None);
+        assert_eq!(PolicyManifestResolution::default().auto_checker(), None);
+
+        // The value is frontier-relevant WHEN PRESENT, and only then.
+        let named_hash = resolve(&named)?.read_frontier_hash()?;
+        let unset_hash = resolve(&unset)?.read_frontier_hash()?;
+        assert_ne!(named_hash, unset_hash);
+        let (_tmp, other) = checker_vault(Some(OTHER_CHECKER_REF))?;
+        assert_ne!(resolve(&other)?.read_frontier_hash()?, named_hash);
+        let (_tmp, unset_again) = checker_vault(None)?;
+        assert_eq!(resolve(&unset_again)?.read_frontier_hash()?, unset_hash);
+
+        // A duplicate row inside ONE manifest is the same ambiguity
+        // `on_budget_exhausted` refuses.
+        let (_tmp, duplicated) = temp_vault();
+        put_policy_manifest_bytes(
+            &duplicated,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF), checker_entry(CHECKER_REF)]),
+        )?;
+        assert!(resolve(&duplicated)?.diagnostics().malformed_manifest_seen);
+
+        // A blank ref is a misconfigured knob, not "no checker".
+        let (_tmp, blank) = temp_vault();
+        put_policy_manifest_bytes(
+            &blank,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry("   ")]),
+        )?;
+        assert!(resolve(&blank)?.diagnostics().malformed_manifest_seen);
+
+        // Across manifests: the first identical value wins, a conflict fails
+        // the whole gate closed.
+        let (_tmp, agreed) = temp_vault();
+        put_policy_manifest_bytes(
+            &agreed,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
+        put_policy_manifest_bytes(
+            &agreed,
+            test_id(0x23),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
+        let agreed_policy = resolve(&agreed)?;
+        assert_eq!(agreed_policy.auto_checker(), Some(CHECKER_REF));
+        assert!(!agreed_policy.diagnostics().malformed_manifest_seen);
+
+        let (_tmp, conflicting) = temp_vault();
+        put_policy_manifest_bytes(
+            &conflicting,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
+        put_policy_manifest_bytes(
+            &conflicting,
+            test_id(0x23),
+            &checker_manifest(vec![checker_entry(OTHER_CHECKER_REF)]),
+        )?;
+        let conflicting_policy = resolve(&conflicting)?;
+        assert!(conflicting_policy.diagnostics().malformed_manifest_seen);
+        assert!(conflicting_policy.is_fail_closed());
+
+        // Decisions half of the identity: with NO knob, an injected checker
+        // that would hold everything changes nothing. The manifest arms the
+        // consult; the injection alone cannot.
+        let claim_id = test_id(0x33);
+        let body = checker_body(&unset, ClaimApprovalStatus::Auto)?;
+        let checker = bounded(RecordingAutoChecker::hold());
+        attempt_checked_candidate_write(&unset, &claim_id, &body, Some(&checker))?;
+        assert_eq!(
+            unset.get_claim(&claim_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto
+        );
+        Ok(())
+    }
+
+    /// Knob plus an injected Allow checker on an otherwise-Auto Dreamer write:
+    /// consulted exactly once, and still Auto.
+    #[test]
+    fn auto_routes_through_checker_allow() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let claim_id = test_id(0x33);
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let checker = RecordingAutoChecker::allow();
+
+        attempt_checked_candidate_write(&vault, &claim_id, &body, Some(&checker))?;
+
+        assert_eq!(
+            vault.get_claim(&claim_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto
+        );
+        assert_eq!(checker.calls(), 1, "exactly one consult per candidate");
+
+        let seen = checker.seen();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].predicate, "profile.name");
+        assert_eq!(seen[0].source, ClaimSource::Generated);
+        assert_eq!(seen[0].actor_class, "agent");
+        assert_eq!(seen[0].value_preview, "Ada Lovelace");
+        assert_eq!(seen[0].sensitivity_band, Some(0));
+        Ok(())
+    }
+
+    /// A hold drops the ceiling to Proposed with `gate.pending.checker`, the
+    /// checker's own reasons ride the receipt, and the EXISTING inbox
+    /// projection classifies the parked row as a checker hedge.
+    #[test]
+    fn checker_hold_falls_to_proposed() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let claim_id = test_id(0x34);
+        let body = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
+        let (candidate, envelope) = dreamer_parts(&vault, &body)?;
+
+        // The proposal lands first, unconsulted: its ordinary verdict is Auto,
+        // so nothing parks it and the claim is simply Proposed.
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+        assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+
+        // Now the same write with the checker injected. The ordinary verdict
+        // is still Auto; the checker is what narrows it.
+        let body = vault.get_claim(&claim_id)?.expect("proposal landed");
+        let checker = RecordingAutoChecker::hold();
+        gate_claim_write(&vault, &claim_id, &body, &envelope, Some(&checker), true)?;
+        assert_eq!(checker.calls(), 1);
+
+        assert_eq!(
+            vault.get_claim(&claim_id)?.expect("claim").approval,
+            ClaimApprovalStatus::Proposed,
+            "a held write stays Proposed; no new approval state exists"
+        );
+
+        let rows = decision_rows(&vault)?;
+        let (reason_codes, receipt_reasons) = rows
+            .iter()
+            .find(|(reason_codes, _)| {
+                reason_codes.as_slice() == [GateReasonCode::PendingChecker.as_str()]
+            })
+            .expect("the hold recorded its own decision");
+        assert_eq!(reason_codes.as_slice(), ["gate.pending.checker"]);
+        assert!(
+            receipt_reasons
+                .iter()
+                .any(|reason| reason == HOLD_RECEIPT_REASON),
+            "the checker's reasons append to the receipt, rendered into the \
+             ledger's token vocabulary: {receipt_reasons:?}"
+        );
+
+        let pending = vault.pending_gate_consents(10)?;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].reason_codes.as_slice(), ["gate.pending.checker"]);
+        assert!(
+            pending[0]
+                .reason_codes
+                .iter()
+                .any(|code| code.starts_with(crate::inbox::INBOX_REASON_CHECKER_PREFIX)),
+            "the reason prefix the inbox already matches"
+        );
+
+        // Zero inbox changes: the existing projection classifies it.
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members.len(), 1);
+        assert!(
+            groups[0].members[0]
+                .exception_classes
+                .contains(&InboxExceptionClass::CheckerHedge)
+        );
+        Ok(())
+    }
+
+    /// Unavailable, a panic, a malformed verdict, a host failure the wrapper
+    /// reports as unavailable, and a checker that blows the deadline all land
+    /// the SAME fail-closed answer — and none of them hangs or unwinds through
+    /// the gate.
+    #[test]
+    fn dead_checker_fail_closed() -> Result<()> {
+        // Unavailable straight from the host: this is how a budget denial or a
+        // fatal model error reaches the gate.
+        let unavailable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Unavailable));
+        // A hold that names no reason is a malformed verdict.
+        let malformed = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
+            reasons: vec!["  ".to_owned()],
+        }));
+        // Prose naming no token the receipt vocabulary can keep is the same
+        // malformed verdict one step later: the hold survives `normalized`
+        // but renders to nothing, and an unexplained refusal must not be
+        // recorded as an explained one.
+        let untokenizable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
+            reasons: vec!["...!!".to_owned()],
+        }));
+        let panicking = bounded(PanickingAutoChecker);
+        let slow = bounded(SlowAutoChecker);
+        let dead: [(&str, &dyn AutoChecker); 5] = [
+            ("unavailable", &unavailable),
+            ("malformed verdict", &malformed),
+            ("untokenizable reasons", &untokenizable),
+            ("panic", &panicking),
+            ("deadline", &slow),
+        ];
+
+        for (label, checker) in dead {
+            let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+            let claim_id = test_id(0x35);
+            let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+
+            let err = attempt_checked_candidate_write(&vault, &claim_id, &body, Some(checker))
+                .expect_err("a checker that cannot answer must refuse the Auto request");
+            let (outcome, reason_codes) = gate_rejection_parts(err);
+            assert_eq!(outcome, "pending", "{label} must not deny, it parks");
+            assert_eq!(
+                reason_codes,
+                vec!["gate.pending.checker.unavailable"],
+                "{label} must fail closed with the unavailable reason"
+            );
+            assert!(
+                vault.get_raw(&claim_id)?.is_none(),
+                "{label} must leave no claim behind"
+            );
+            assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+        }
+        Ok(())
+    }
+
+    /// Owner/user writes never reach a checker, whatever the manifest says.
+    #[test]
+    fn user_writes_never_consult_checker() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let mut data = checker_manifest(vec![checker_entry(CHECKER_REF)]);
+        trust_human_candidate_actor(&mut data);
+        put_policy_manifest_bytes(&vault, test_id(0x24), &data)?;
+
+        let claim_id = test_id(0x37);
+        let body = public_stamped(source_trust_claim(ClaimSource::UserStated));
+        let (_candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+        let checker = RecordingAutoChecker::hold();
+
+        gate_claim_write(&vault, &claim_id, &body, &envelope, Some(&checker), false)?;
+
+        assert_eq!(
+            checker.calls(),
+            0,
+            "a human/user_stated write records zero checker calls"
+        );
+        let rows = decision_rows(&vault)?;
+        assert_eq!(rows.len(), 1, "one decision, and it is the ordinary one");
+        assert_eq!(rows[0].0.as_slice(), ["gate.allow"]);
+        Ok(())
+    }
+
+    /// Every other claim write door threads no checker at all, so a configured
+    /// knob changes nothing on them: the ordinary batch door lands the same
+    /// Dreamer write Auto while a holding checker sits unreachable beside it.
+    #[test]
+    fn non_dreamer_paths_pass_none() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let claim_id = test_id(0x38);
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let (candidate, envelope) = dreamer_parts(&vault, &body)?;
+        let unreachable = RecordingAutoChecker::hold();
+
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+
+        assert_eq!(
+            vault.get_claim(&claim_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto,
+            "the ordinary batch door injects no checker, so the knob is inert there"
+        );
+        assert_eq!(unreachable.calls(), 0);
+
+        // The compat promotion entry point is the same story: it passes None.
+        let plain_id = test_id(0x39);
+        attempt_checked_candidate_write(&vault, &plain_id, &body, None)?;
+        assert_eq!(
+            vault.get_claim(&plain_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto
+        );
+        assert_eq!(unreachable.calls(), 0);
+        Ok(())
+    }
+}

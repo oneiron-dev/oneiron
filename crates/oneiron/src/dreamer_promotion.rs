@@ -50,6 +50,7 @@ use crate::dreamer_consolidation::{
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::llm::AutoChecker;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -95,11 +96,34 @@ pub fn promote_consolidated_claims(
     run: &DreamerRunContext,
     candidates: Vec<PromotionCandidate>,
 ) -> Result<PromotionOutcome> {
+    promote_consolidated_claims_with_checker(vault, run, candidates, None)
+}
+
+/// [`promote_consolidated_claims`] with the host's auto checker consulted
+/// before each candidate's Auto request may land (ONE-1296).
+///
+/// The checker is asked only when the vault's policy manifest names one; a
+/// vault whose manifest carries no `auto_checker` knob behaves exactly as it
+/// did before this door existed, whatever the host passes here. A hold, and
+/// every way a checker can fail to answer, refuses the candidate's Auto
+/// request — which on THIS path means the write rolls back and the candidate
+/// is reported in `rejected` (ARCH-0067 §7: consolidation mints no
+/// owner-review rows behind the Dreamer's back), rather than landing a claim
+/// nothing approved.
+///
+/// This is the ticket's ONE production injection point. Every other claim
+/// write door passes no checker at all.
+pub fn promote_consolidated_claims_with_checker(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    candidates: Vec<PromotionCandidate>,
+    checker: Option<&dyn AutoChecker>,
+) -> Result<PromotionOutcome> {
     let mut outcome = PromotionOutcome::default();
 
     for candidate in candidates {
         let claim_id = candidate.claim_id;
-        match promote_one(vault, run, candidate) {
+        match promote_one(vault, run, candidate, checker) {
             // `promote_one` rolls back anything the gate did not grant Auto,
             // so the non-Auto arm is unreachable defence-in-depth: it stays a
             // REJECTION rather than silently minting the approval queue row
@@ -126,6 +150,7 @@ fn promote_one(
     vault: &Vault,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
+    checker: Option<&dyn AutoChecker>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
     // 1. Evidence admission (GATE-11 write-path consumption): drop refs
     // resolving to evidence-inadmissible CLAIM entities and refs that do
@@ -228,7 +253,7 @@ fn promote_one(
                 candidate.occurred,
                 candidate.learned_at,
             )
-            .apply_recording_gate_decisions(wtxn)?;
+            .apply_recording_gate_decisions_with_checker(wtxn, checker)?;
         if let Some(old_id) = candidate.supersedes.as_ref() {
             vault.supersede_claim_in_txn(wtxn, &candidate.claim_id, old_id, run.now_ms)?;
         }
@@ -394,6 +419,10 @@ pub struct PromotionWriterSink<'a> {
     pub vault: &'a Vault,
     pub run: DreamerRunContext,
     pub outcome: PromotionOutcome,
+    /// The host's auto checker for every candidate this sink promotes
+    /// (ONE-1296). Absent by default: a sink built with [`Self::new`] promotes
+    /// exactly as it did before the knob existed.
+    pub checker: Option<&'a dyn AutoChecker>,
 }
 
 impl<'a> PromotionWriterSink<'a> {
@@ -403,13 +432,26 @@ impl<'a> PromotionWriterSink<'a> {
             vault,
             run,
             outcome: PromotionOutcome::default(),
+            checker: None,
         }
+    }
+
+    /// Binds the host's auto checker to this sink.
+    #[must_use]
+    pub fn with_checker(mut self, checker: &'a dyn AutoChecker) -> Self {
+        self.checker = Some(checker);
+        self
     }
 }
 
 impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_> {
     fn accept(&mut self, candidates: Vec<PromotionCandidate>) -> Result<()> {
-        let outcome = promote_consolidated_claims(self.vault, &self.run, candidates)?;
+        let outcome = promote_consolidated_claims_with_checker(
+            self.vault,
+            &self.run,
+            candidates,
+            self.checker,
+        )?;
         self.outcome.landed.extend(outcome.landed);
         self.outcome.pended.extend(outcome.pended);
         self.outcome.rejected.extend(outcome.rejected);
