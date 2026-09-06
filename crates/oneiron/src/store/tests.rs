@@ -4798,7 +4798,7 @@ fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Res
         assert!(vault.store.replace_ppr_community_cache_in_txn(&mut txn, &invalid).is_err());
         assert_eq!(vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("unchanged"), original);
     }
-    let mut stale = original.clone();
+    let mut stale = original;
     stale.meta.graph_version += 1;
     {
         let mut txn = vault.store.env.write_txn()?;

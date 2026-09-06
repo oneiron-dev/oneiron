@@ -67,8 +67,8 @@ fn constants_and_configuration_are_pinned() {
     for bad in [0.5, f32::NAN, 2.0] {
         assert!(PprCommunityConfig { gamma: bad, ..c.clone() }.validate().is_err());
     }
-    assert!(PprCommunityConfig { multiplier_cap: 1.6, ..c.clone() }.validate().is_err());
-    assert!(PprCommunityConfig { max_graph_fraction: 0.11, ..c.clone() }.validate().is_err());
+    assert!(PprCommunityConfig { multiplier_cap: 1.6, ..c }.validate().is_err());
+    assert!(PprCommunityConfig { max_graph_fraction: 0.11, ..c }.validate().is_err());
     assert!(PprCommunityConfig { max_top_k_fraction: 0.71, ..c }.validate().is_err());
 }
 
