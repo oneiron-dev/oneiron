@@ -137,6 +137,12 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
         remote_rejection_reason(&Error::InvalidTaskBody("missing task role")).as_deref(),
         Some("InvalidTaskBody")
     );
+    // ONE-1394: a malformed replicated DIAGNOSTIC row quarantines and the
+    // window continues, instead of aborting the batch as a LOCAL failure.
+    assert_eq!(
+        remote_rejection_reason(&Error::InvalidDiagnosticBody("unknown body key")).as_deref(),
+        Some("InvalidDiagnosticBody")
+    );
 }
 
 /// Pinned retention decision: 4096 rows, ≤30 days.

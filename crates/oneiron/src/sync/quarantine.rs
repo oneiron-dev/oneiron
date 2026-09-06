@@ -305,7 +305,17 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // on the replay path (a corrupt on-disk row reads as `CorruptedIndex`
         // through `read_secret_custody_in_txn`), so this arm cannot swallow
         // local corruption.
-        | ErrorKind::InvalidSecretCustodyBody => Some(reason_code_for(error)),
+        | ErrorKind::InvalidSecretCustodyBody
+        // ONE-1394 (GATE-14 layer 1): a replicated DIAGNOSTIC (byte 69) row
+        // failing the pinned body grammar — or arriving in a non-canonical
+        // encoding of it — is a rejection of that remote op, not a local
+        // storage failure. One malformed self-heal finding must not abort the
+        // whole window and wedge every unrelated valid change beside it:
+        // quarantine the row (`x:`) and continue. Locally stored diagnostics
+        // never surface this kind on the replay path (a corrupt on-disk row
+        // reads as `CorruptedIndex`), so this arm cannot swallow local
+        // corruption.
+        | ErrorKind::InvalidDiagnosticBody => Some(reason_code_for(error)),
         _ => None,
     }
 }
