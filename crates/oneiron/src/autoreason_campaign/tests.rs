@@ -1058,6 +1058,79 @@ fn campaign_rejects_mutated_of360_metric_definition_payload() {
     }
 }
 
+#[test]
+fn campaign_rejects_coordinated_noncanonical_metric_pins() {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.01,
+    );
+    let base = compare(&fixture);
+    let mutations: [fn(&mut CampaignMetricPin); 7] = [
+        |pin| pin.set_id.push_str("-forged"),
+        |pin| pin.revision.push_str("-forged"),
+        |pin| pin.derivation_envelope.content_hash.push_str("-forged"),
+        |pin| pin.derivation_envelope.model_id.push_str("-forged"),
+        |pin| pin.derivation_envelope.version.push_str("-forged"),
+        |pin| pin.derivation_envelope.params_hash.push_str("-forged"),
+        |pin| {
+            pin.set_id.push_str("-forged");
+            pin.revision.push_str("-forged");
+            pin.derivation_envelope.content_hash.push_str("-forged");
+            pin.derivation_envelope.model_id.push_str("-forged");
+            pin.derivation_envelope.version.push_str("-forged");
+            pin.derivation_envelope.params_hash.push_str("-forged");
+        },
+    ];
+    for mutate in mutations {
+        let mut config = fixture.config.clone();
+        mutate(&mut config.metric_pin);
+        let pin = &config.metric_pin;
+        let mut report = base.clone();
+        report.metric_definition_digest = pin.derivation_envelope.content_hash.clone();
+        for split in [
+            &mut report.single_pass.search,
+            &mut report.single_pass.held_out,
+            &mut report.tournament.search,
+            &mut report.tournament.held_out,
+        ] {
+            let definitions = &mut split.of360.metric_definitions;
+            definitions.set_id = pin.set_id.clone();
+            definitions.revision = pin.revision.clone();
+            definitions.derivation_envelope = pin.derivation_envelope.clone();
+            split.of360.report.metric_set_id = pin.set_id.clone();
+            split.of360.report.metric_definition_envelope = pin.derivation_envelope.clone();
+            split.metric_definition_digest = report.metric_definition_digest.clone();
+            assert!(matches!(
+                split.of360.validate(),
+                Err(Of360EvalError::InvalidMetricTier { .. })
+            ));
+            assert!(matches!(split.validate(), Err(CampaignError::Of360(_))));
+        }
+        // Self-consistent pins are still untrusted, including a content-hash-only change.
+        let encoded = serde_json::to_value((&config, &report)).expect("forgery encodes");
+        let decoded: (CampaignConfig, CampaignComparisonReport) =
+            serde_json::from_value(encoded).expect("forgery decodes");
+        assert_invalid_of360_comparison(report.clone());
+        for (config, report) in [(config, report), decoded] {
+            assert!(matches!(
+                config.validate(),
+                Err(CampaignError::MetricPinMismatch)
+            ));
+            assert!(matches!(
+                compare_campaign(
+                    report.campaign_ref,
+                    &config,
+                    report.single_pass,
+                    report.tournament,
+                    report.decision,
+                ),
+                Err(CampaignError::MetricPinMismatch)
+            ));
+        }
+    }
+}
+
 fn diagnostic_campaign_report() -> CampaignComparisonReport {
     let fixture = held_out_fixture(
         SplitFixture::passed(0.20, 0.60),
@@ -1208,6 +1281,213 @@ fn campaign_accepts_landed_of360_diagnostic_reports() {
     }
 }
 
+fn gold_diagnostic_campaign_report(scores: &[Of360ExtractionScore]) -> CampaignComparisonReport {
+    let mut report = diagnostic_campaign_report();
+    for split in [
+        &mut report.single_pass.search,
+        &mut report.single_pass.held_out,
+        &mut report.tournament.search,
+        &mut report.tournament.held_out,
+    ] {
+        let mut dataset = split_dataset(match split.split {
+            CampaignEvaluationSplit::Search => 1,
+            CampaignEvaluationSplit::HeldOut => 2,
+        });
+        for case in &mut dataset.cases {
+            let template = case.gold_memory_points[0].clone();
+            case.gold_memory_points = scores
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let mut memory = template.clone();
+                    // Gold ids are case-local, and weights do not count gold rows.
+                    memory.memory_id = format!("gold-{index}");
+                    memory.weight = index as f64 + 1.25;
+                    memory
+                })
+                .collect();
+        }
+        let mut run = extraction_run(&dataset, "run-gold-diagnostics");
+        run.cases = dataset
+            .cases
+            .iter()
+            .map(|case| Of360CaseExtractionOutput {
+                case_id: case.case_id.clone(),
+                extracted_claims: case
+                    .gold_memory_points
+                    .iter()
+                    .zip(scores)
+                    .filter(|(_, score)| **score != Of360ExtractionScore::Omitted)
+                    .map(|(memory, score)| Of360ExtractedClaim {
+                        extraction_id: format!("{}-extraction", memory.memory_id),
+                        text: memory.claim.clone(),
+                        matched_gold: vec![Of360GoldMatch {
+                            memory_id: memory.memory_id.clone(),
+                            score: *score,
+                        }],
+                        temporal_correct: Some(true),
+                        overreach: false,
+                        dedup_key: Some(memory.memory_id.clone()),
+                    })
+                    .collect(),
+            })
+            .collect();
+        split.of360 =
+            of360_ar3_metric_tier(&dataset, &run).expect("writer-produced gold diagnostics");
+    }
+    report.validate().expect("valid gold diagnostic fixture");
+    report
+}
+
+#[test]
+fn campaign_rejects_missing_of360_gold_diagnostic_ids() {
+    use Of360ExtractionScore::{Full, Omitted, Partial};
+    let base = gold_diagnostic_campaign_report(&[Omitted, Omitted, Partial, Partial, Full]);
+    for partial in [false, true] {
+        for clear_all in [false, true] {
+            let mut report = base.clone();
+            let split = &mut report.tournament.held_out;
+            let case = &mut split.of360.report.cases[0];
+            let ids = if partial {
+                &mut case.partial_gold_memory_ids
+            } else {
+                &mut case.omitted_gold_memory_ids
+            };
+            assert_eq!(ids.len(), 2);
+            if clear_all {
+                ids.clear();
+            } else {
+                ids.pop();
+            }
+            assert!(matches!(
+                split.validate(),
+                Err(CampaignError::Of360(Of360EvalError::InvalidMetricTier {
+                    reason: "gold diagnostic counts differ from recall",
+                }))
+            ));
+            assert_invalid_of360_comparison(report);
+        }
+    }
+}
+
+#[test]
+fn campaign_rejects_duplicate_and_overlapping_of360_gold_diagnostic_ids() {
+    use Of360ExtractionScore::{Full, Omitted, Partial};
+    let base = gold_diagnostic_campaign_report(&[Omitted, Omitted, Partial, Partial, Full]);
+    let mutations: [fn(&mut Of360CaseEvalReport); 3] = [
+        |case| case.omitted_gold_memory_ids[1] = case.omitted_gold_memory_ids[0].clone(),
+        |case| case.partial_gold_memory_ids[1] = case.partial_gold_memory_ids[0].clone(),
+        |case| case.partial_gold_memory_ids[0] = case.omitted_gold_memory_ids[0].clone(),
+    ];
+    for mutate in mutations {
+        let mut report = base.clone();
+        let split = &mut report.tournament.held_out;
+        // Preserve lengths and recall, so only uniqueness/disjointness can reject this.
+        mutate(&mut split.of360.report.cases[0]);
+        assert!(matches!(
+            split.validate(),
+            Err(CampaignError::Of360(Of360EvalError::InvalidMetricTier {
+                reason: "gold diagnostic ids are not unique and disjoint",
+            }))
+        ));
+        assert_invalid_of360_comparison(report);
+    }
+}
+
+#[test]
+fn campaign_rejects_invalid_of360_gold_diagnostic_cardinality() {
+    use Of360ExtractionScore::{Full, Omitted, Partial};
+
+    use crate::extraction_eval::Of360RateMetric;
+
+    let base = gold_diagnostic_campaign_report(&[Omitted, Omitted, Partial, Partial, Full]);
+    for fractional_count in [false, true] {
+        let mut report = base.clone();
+        let split = &mut report.tournament.held_out;
+        let tier_report = &mut split.of360.report;
+        tier_report.cases.truncate(1);
+        let case = &mut tier_report.cases[0];
+        if fractional_count {
+            case.metrics.halumem_recall = Of360RateMetric::new(2.5, 5.5);
+        } else {
+            case.omitted_gold_memory_ids.clear();
+            case.partial_gold_memory_ids = (0..4).map(|id| format!("partial-{id}")).collect();
+            case.metrics.halumem_recall = Of360RateMetric::new(1.0, 3.0);
+        }
+        let recall = case.metrics.halumem_recall;
+        assert_eq!(
+            case.omitted_gold_memory_ids.len() as f64
+                + 0.5 * case.partial_gold_memory_ids.len() as f64,
+            recall.denominator - recall.numerator,
+        );
+        // Keep F1 and aggregate metrics consistent; only the gold count is impossible.
+        case.metrics.halumem_f1 = Of360RateMetric::f1(case.metrics.target_precision, recall);
+        tier_report.metrics = case.metrics.clone();
+        assert!(matches!(
+            split.validate(),
+            Err(CampaignError::Of360(Of360EvalError::InvalidMetricTier {
+                reason: "gold diagnostic counts differ from recall",
+            }))
+        ));
+        assert_invalid_of360_comparison(report);
+    }
+}
+
+#[test]
+fn campaign_accepts_landed_of360_gold_diagnostic_shapes() {
+    use Of360ExtractionScore::{Full, Omitted, Partial};
+    let shapes: &[&[Of360ExtractionScore]] = &[
+        &[],
+        &[Full, Full],
+        &[Omitted, Omitted],
+        &[Partial, Partial],
+        &[Omitted, Omitted, Partial, Partial, Full],
+    ];
+    for scores in shapes {
+        let original = gold_diagnostic_campaign_report(scores);
+        let encoded = serde_json::to_value(&original).expect("gold diagnostics encode");
+        let decoded: CampaignComparisonReport =
+            serde_json::from_value(encoded).expect("gold diagnostics decode");
+        assert_eq!(original, decoded);
+        for report in [original, decoded] {
+            report
+                .validate()
+                .expect("writer-produced gold diagnostics validate");
+            for split in [
+                &report.single_pass.search,
+                &report.single_pass.held_out,
+                &report.tournament.search,
+                &report.tournament.held_out,
+            ] {
+                let cases = &split.of360.report.cases;
+                let case = &cases[0];
+                assert_eq!(
+                    case.omitted_gold_memory_ids,
+                    cases[1].omitted_gold_memory_ids
+                );
+                assert_eq!(
+                    case.partial_gold_memory_ids,
+                    cases[1].partial_gold_memory_ids
+                );
+                assert_eq!(case.metrics.halumem_recall.denominator, scores.len() as f64);
+                assert_eq!(
+                    case.omitted_gold_memory_ids.len() as f64
+                        + 0.5 * case.partial_gold_memory_ids.len() as f64,
+                    case.metrics.halumem_recall.denominator - case.metrics.halumem_recall.numerator,
+                );
+            }
+            compare_campaign(
+                report.campaign_ref,
+                &test_config(),
+                report.single_pass,
+                report.tournament,
+                report.decision,
+            )
+            .expect("valid gold diagnostics remain comparable");
+        }
+    }
+}
+
 #[test]
 fn merge_campaign_arm_report_rejects_invalid_struct_literal_split() {
     let config = test_config();
@@ -1273,18 +1553,21 @@ fn merge_campaign_arm_report_rejects_different_metric_definition_digests() {
         .clone();
 
     report.search.validate().expect("valid search report");
-    report.held_out.validate().expect("valid held-out report");
+    assert!(matches!(
+        report.held_out.validate(),
+        Err(CampaignError::Of360(
+            Of360EvalError::InvalidMetricTier { .. }
+        ))
+    ));
     assert_ne!(
         report.search.metric_definition_digest,
         report.held_out.metric_definition_digest
     );
     let err = merge_campaign_arm_report(report.search, report.held_out)
-        .expect_err("individually valid reports with different metric digests cannot merge");
+        .expect_err("a noncanonical metric digest cannot merge");
     assert!(matches!(
         err,
-        CampaignError::ReportMismatch {
-            reason: "search and held-out reports have different metric definition digests",
-        }
+        CampaignError::Of360(Of360EvalError::InvalidMetricTier { .. })
     ));
 }
 
@@ -1307,12 +1590,15 @@ fn held_out_decision_rejects_mixed_metric_digests() {
                     .content_hash = split.metric_definition_digest.clone();
                 split.of360.report.metric_definition_envelope =
                     split.of360.metric_definitions.derivation_envelope.clone();
+                assert!(matches!(
+                    split.validate(),
+                    Err(CampaignError::Of360(
+                        Of360EvalError::InvalidMetricTier { .. }
+                    ))
+                ));
+            } else {
+                split.validate().expect("unchanged canonical split");
             }
-            split.validate().expect("internally consistent split");
-        }
-        if change_search {
-            tournament = merge_campaign_arm_report(tournament.search, tournament.held_out)
-                .expect("each arm separately has a consistent metric digest");
         }
         let encoded = serde_json::to_value(&tournament).expect("arm encodes");
         let decoded: CampaignArmReport = serde_json::from_value(encoded).expect("arm decodes");
@@ -1324,13 +1610,10 @@ fn held_out_decision_rejects_mixed_metric_digests() {
                 held_out_anchor(&fixture.config),
             )
             .expect_err("standalone decision must reject mixed metric digests");
-            let expected_reason = if change_search {
-                "arms have different metric definition digests"
-            } else {
-                "search and held-out reports have different metric definition digests"
-            };
-            assert!(matches!(err, CampaignError::ReportMismatch { reason }
-                if reason == expected_reason));
+            assert!(matches!(
+                err,
+                CampaignError::Of360(Of360EvalError::InvalidMetricTier { .. })
+            ));
         }
     }
 }
@@ -1444,8 +1727,15 @@ fn compare_campaign_binds_every_split_to_full_metric_pin() {
                         .derivation_envelope
                         .content_hash
                         .clone();
+                    assert!(matches!(
+                        split.validate(),
+                        Err(CampaignError::Of360(
+                            Of360EvalError::InvalidMetricTier { .. }
+                        ))
+                    ));
+                } else {
+                    split.validate().expect("unchanged canonical split");
                 }
-                split.validate().expect("internally consistent split");
             }
             let encoded = serde_json::to_value((&single_pass, &tournament))
                 .expect("public arm reports encode");
@@ -1460,18 +1750,11 @@ fn compare_campaign_binds_every_split_to_full_metric_pin() {
                     fixture.decision.clone(),
                 )
                 .expect_err("public and decoded reports must match the config metric pin");
-                let expected = if field == "content_hash" && altered_split.is_some() {
+                assert!(
                     matches!(
                         err,
-                        CampaignError::ReportMismatch {
-                            reason: "search and held-out reports have different metric definition digests",
-                        }
-                    )
-                } else {
-                    matches!(err, CampaignError::MetricPinMismatch)
-                };
-                assert!(
-                    expected,
+                        CampaignError::Of360(Of360EvalError::InvalidMetricTier { .. })
+                    ),
                     "{field}, altered split {altered_split:?}: {err:?}"
                 );
             }
