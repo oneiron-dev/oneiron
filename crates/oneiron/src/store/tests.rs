@@ -4698,10 +4698,21 @@ fn community_store_fixture(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+fn community_store_fixture_entity_ids(vault: &Vault) -> Result<BTreeSet<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    vault.store.entities.iter(&txn)?.map(|entry| {
+        let (key, _) = entry?;
+        EntityId::from_bytes(key.as_ref().try_into().expect("entity id key"))
+    }).collect()
+}
+
 #[test]
 fn ppr_community_store_refresh_uses_vault_meta_and_only_live_outgoing_projection() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     community_store_fixture(&vault)?;
+    // Seeded agent definitions are live entities too, even without graph edges.
+    let expected_nodes = community_store_fixture_entity_ids(&vault)?;
+    assert_eq!(expected_nodes.len(), 100 + 7);
     vault.put_edge(&entity_id(3), crate::EdgeKind::Opposes, &entity_id(4), 1.0)?;
     vault.put_edge(&entity_id(250), crate::EdgeKind::About, &entity_id(1), 1.0)?;
     {
@@ -4711,10 +4722,11 @@ fn ppr_community_store_refresh_uses_vault_meta_and_only_live_outgoing_projection
     }
     let report = vault.refresh_ppr_communities(&[], 42)?;
     assert!(report.full_recompute);
-    assert_eq!(report.recomputed_entities, 100);
+    assert_eq!(report.recomputed_entities, expected_nodes.len());
     let txn = vault.store.env.read_txn()?;
     let snapshot = vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot");
-    assert_eq!(snapshot.nodes.len(), 100);
+    assert_eq!(snapshot.nodes.len(), expected_nodes.len());
+    assert_eq!(snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(), expected_nodes);
     assert!(!snapshot.nodes.contains_key(&entity_id(250)));
     assert_eq!(snapshot.nodes[&entity_id(1)].fine, snapshot.nodes[&entity_id(2)].fine);
     assert_ne!(snapshot.nodes[&entity_id(1)].fine, snapshot.nodes[&entity_id(3)].fine);
@@ -4805,6 +4817,12 @@ fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Res
 fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transaction() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     community_store_fixture(&vault)?;
+    // Only the two deleted fixture rows leave the live projection; all seven
+    // seeded agent definitions and the other fixture rows must remain.
+    let mut expected_nodes = community_store_fixture_entity_ids(&vault)?;
+    assert_eq!(expected_nodes.len(), 100 + 7);
+    assert!(expected_nodes.remove(&entity_id(1)));
+    assert!(expected_nodes.remove(&entity_id(2)));
     let mut txn = vault.store.env.write_txn()?;
     vault.store.sync_state.put(&mut txn, &crate::deletion::local_hard_delete_key(&entity_id(1)), b"deleted")?;
     let pending = crate::deletion::pending_tombstone_key("1970-01", &entity_id(2));
@@ -4812,7 +4830,8 @@ fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transac
     let (snapshot, _) = vault.store.compute_ppr_communities_in_txn(
         &txn, None, &[], 42, &crate::PprCommunityConfig::default(),
     )?;
-    assert_eq!(snapshot.nodes.len(), 98);
+    assert_eq!(snapshot.nodes.len(), 100 + 7 - 2);
+    assert_eq!(snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(), expected_nodes);
     assert!(!snapshot.nodes.contains_key(&entity_id(1)));
     assert!(!snapshot.nodes.contains_key(&entity_id(2)));
     Ok(())
