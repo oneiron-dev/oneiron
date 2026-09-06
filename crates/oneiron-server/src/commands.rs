@@ -495,7 +495,11 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let app = build_app(sync_server).layer(cors_layer);
-    let result = axum::serve(listener, app).await;
+    let result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
     result?;

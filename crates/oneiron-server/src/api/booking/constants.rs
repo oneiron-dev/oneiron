@@ -5,11 +5,6 @@ pub(crate) const BOOKING_ROUTE_PREFIX: &str = "/api/booking";
 /// verb. Named for the surface so a queue inspection says which door enqueued.
 pub(super) const BOOKING_LIFECYCLE_LEASE_OWNER: &str = "oneiron-server-booking-agent-api";
 
-/// Domain tag for the page token digest. Domain separation is what stops a
-/// page token from ever colliding with a lifecycle token digest computed over
-/// the same bytes.
-pub(super) const PAGE_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.agent_api.page_token.v1\0";
-
 /// Domain tag for the visitor session key material.
 pub(super) const SESSION_KEY_DOMAIN: &[u8] = b"oneiron.booking.agent_api.session.v1\0";
 

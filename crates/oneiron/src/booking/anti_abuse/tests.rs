@@ -1,3 +1,6 @@
+#[path = "scope_tests.rs"]
+mod scope_tests;
+
 use super::*;
 use crate::booking::config::{
     BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingEventTypeClaimValue,
