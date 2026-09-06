@@ -14,7 +14,9 @@ use std::sync::{Arc, Barrier};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
 use crate::config::VaultConfig;
-use crate::error::{Error, Result, VaultRootProblem};
+#[cfg(target_os = "linux")]
+use crate::error::VaultRootProblem;
+use crate::error::{Error, Result};
 use crate::registry::{TypeByteZone, zone_of};
 use heed::RwTxn;
 use heed::types::Bytes;
