@@ -1632,12 +1632,26 @@ pub struct SurfacedFailureCardInput {
 ///
 /// [`Error::InvalidConfig`] when the marker does not name exactly one rendered
 /// node, when a ref is not hex, when a `message_ref` does not resolve to a live
-/// MESSAGE, when membership or authorship does not hold, or when `occurred_at`
-/// disagrees with the message's `occurred_start`.
+/// MESSAGE, when membership or authorship does not hold, when `occurred_at`
+/// disagrees with the message's `occurred_start`, when a permanent/ambiguous
+/// failure carries a nonzero transient count, or when a diagnosed repair does
+/// not name the failing attempt's dispatched agent.
 pub fn surfaced_failure_card(
     vault: &Vault,
     input: SurfacedFailureCardInput,
 ) -> Result<SurfacedFailureCard> {
+    if matches!(
+        input.failure_class,
+        FailureClass::Permanent | FailureClass::Ambiguous
+    ) && input.consecutive_transients != 0
+    {
+        return Err(Error::InvalidConfig(
+            "permanent/ambiguous failure cards require zero consecutive_transients".to_owned(),
+        ));
+    }
+    if let FailureDiagnosisState::Diagnosed(route) = &input.diagnosis {
+        require_diagnosed_agent(vault, input.failing_attempt_id, route)?;
+    }
     let diagram = mark_run_tree_failure(input.tree, input.failing_attempt_id)?;
     let qa = validated_qa_feed(vault, input.qa)?;
     let blocked_reports =
@@ -1654,6 +1668,33 @@ pub fn surfaced_failure_card(
         blocked_reports,
         qa,
     })
+}
+
+/// A selected repair must target the agent dispatched by the failing row.
+/// Initial cards without a diagnosis do not require this additional read.
+fn require_diagnosed_agent(
+    vault: &Vault,
+    failing_attempt_id: AttemptId,
+    route: &HealerRepairRoute,
+) -> Result<()> {
+    let agent_ref = match route {
+        HealerRepairRoute::SkillEdit { agent_ref, .. }
+        | HealerRepairRoute::PromptInjectAndForkResume { agent_ref, .. }
+        | HealerRepairRoute::Environment { agent_ref, .. }
+        | HealerRepairRoute::EscalateWithDiagnosis { agent_ref, .. } => agent_ref,
+    };
+    let expected = parse_card_ref("healer diagnosis agent_ref", agent_ref)?;
+    let record = crate::AttemptQueue::new(vault)
+        .get(failing_attempt_id)?
+        .ok_or_else(|| {
+            Error::InvalidConfig("healer diagnosis requires a stored failing attempt".to_owned())
+        })?;
+    if crate::failure_ladder::dispatched_target_ref(&record) != Some(expected) {
+        return Err(Error::InvalidConfig(
+            "healer diagnosis agent must match the failing attempt's dispatched agent".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validates every Q&A entry against the vault, then orders the survivors
@@ -1712,9 +1753,9 @@ fn message_occurred_start(vault: &Vault, message_ref: EntityId) -> Result<u64> {
 }
 
 /// Membership is an EDGE fact read through the vault's existing bounded
-/// neighbor surface: the MESSAGE reaches `thread_ref` over `PartOf` in at most
-/// two hops — direct MESSAGE→thread, or MESSAGE→TURN→CONVERSATION — so
-/// `thread_ref` may name either container.
+/// neighbor surface. Direct membership uses `PartOf` or `BelongsTo`; canonical
+/// MESSAGE→TURN→CONVERSATION membership uses `PartOf` then `ChildOf`. The walk
+/// stops at two hops, and `thread_ref` may name either container.
 fn require_thread_membership(
     vault: &Vault,
     message_ref: EntityId,
@@ -1730,11 +1771,21 @@ fn require_thread_membership(
     if containers.iter().any(|edge| edge.target == thread_ref) {
         return Ok(());
     }
+    let conversations = vault.neighbor_edges_bounded(
+        &message_ref,
+        true,
+        Some(EdgeKind::BelongsTo),
+        None,
+        HEALER_QA_EDGE_SCAN_LIMIT,
+    )?;
+    if conversations.iter().any(|edge| edge.target == thread_ref) {
+        return Ok(());
+    }
     for edge in &containers {
         let outer = vault.neighbor_edges_bounded(
             &edge.target,
             true,
-            Some(EdgeKind::PartOf),
+            Some(EdgeKind::ChildOf),
             None,
             HEALER_QA_EDGE_SCAN_LIMIT,
         )?;
