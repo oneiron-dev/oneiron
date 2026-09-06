@@ -1574,6 +1574,7 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result
 
 #[test]
 fn attempt_queue_retry_chain_depth_fails_closed_on_a_cross_chain_link() -> Result<()> {
+    type AttemptMutation = fn(&mut AttemptRecord);
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
 
@@ -1587,7 +1588,6 @@ fn attempt_queue_retry_chain_depth_fails_closed_on_a_cross_chain_link() -> Resul
     // row to the row superseding it. Each parent is otherwise a perfect clone
     // of its child, so the single mutated field is the only thing the walk can
     // be rejecting — a link naming an EXISTING but unrelated attempt.
-    type AttemptMutation = fn(&mut AttemptRecord);
     let cases: [(&str, AttemptMutation); 6] = [
         ("kind", |record| record.kind = "dreamer_runner".to_owned()),
         ("payload", |record| {
