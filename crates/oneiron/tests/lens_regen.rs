@@ -412,10 +412,10 @@ fn lens_body(
             &fixture.claims.len().to_string(),
         ));
     }
-    if flavor.duplicates_a_node_id() {
-        if let Some(duplicate) = root.children.first().cloned() {
-            root.children.push(duplicate);
-        }
+    if flavor.duplicates_a_node_id()
+        && let Some(duplicate) = root.children.first().cloned()
+    {
+        root.children.push(duplicate);
     }
     lens_at(&root, stamp)
 }
@@ -816,7 +816,7 @@ fn added_bound_handle_needs_human_stamp() {
     assert_eq!(last_good, &baseline_revision());
     assert_eq!(
         outcome.pending_candidate(),
-        Some(candidate),
+        Some(candidate.as_ref()),
         "the candidate is offered for approval"
     );
 }
@@ -987,7 +987,7 @@ fn retargeted_result_set_row_needs_human_stamp() {
     assert_eq!(last_good, &baseline_revision());
     assert_eq!(
         outcome.pending_candidate(),
-        Some(candidate),
+        Some(candidate.as_ref()),
         "the candidate is offered for approval"
     );
 }

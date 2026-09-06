@@ -320,6 +320,7 @@ pub enum ErrorKind {
     InvalidChannelIdentityBody,
     InvalidCounterpartyContactBody,
     InvalidCommRecordBody,
+    InvalidDiagnosticBody,
     InvalidDisclosureScope,
     DisclosureClampViolation,
     InvalidConsentBound,
@@ -1229,6 +1230,13 @@ pub enum Error {
     /// written.
     #[error("invalid comm record body: {0}")]
     InvalidCommRecordBody(&'static str),
+    /// A DIAGNOSTIC body failed the pinned closed grammar (GATE-14,
+    /// ONE-1394): an unknown/missing/duplicate `DIAGNOSTIC_BODY_KEYS` key,
+    /// trailing bytes, an invalid enum string, a malformed ref or content
+    /// hash, non-monotonic bitemporal validity, or control data smuggled
+    /// through the untrusted-detail leaf. Nothing was written.
+    #[error("invalid diagnostic body: {0}")]
+    InvalidDiagnosticBody(&'static str),
     /// A DisclosureScope body failed pinned structural validation. Nothing
     /// was written.
     #[error("invalid disclosure scope: {0}")]
@@ -2360,6 +2368,7 @@ impl Error {
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
+            Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
             Self::InvalidConsentBound(_) => ErrorKind::InvalidConsentBound,
             Self::InvalidConsentGrantRow(_) => ErrorKind::InvalidConsentGrantRow,

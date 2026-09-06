@@ -78,7 +78,10 @@ struct CanonMigration {
 /// in conformance as "reserved, engine-pending" instead of quietly vanishing
 /// from the census the moment nobody implements it.
 const CANON_RESERVED_UNREGISTERED: &[(u8, &str)] = &[
-    (69, "DIAGNOSTIC"),
+    // DIAGNOSTIC (69) was here until ONE-1394 built its substrate. Canon still
+    // records that row's state as `ratified/registration-in-flight`; the engine
+    // registering it is what that state was in flight TOWARDS, so the reserve
+    // is dropped rather than the registration being hidden from conformance.
     (72, "SUSPICIOUS_WAKE"),
     (74, "CLAIM_CLASS_DESCRIPTOR"),
     (75, "SKILL_HUB"),

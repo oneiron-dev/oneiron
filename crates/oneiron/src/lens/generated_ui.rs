@@ -2657,7 +2657,7 @@ pub enum LensRegenOutcome {
     },
     NeedsHumanStamp {
         last_good: LensEvaluatedRevision,
-        candidate: LensEvaluatedRevision,
+        candidate: Box<LensEvaluatedRevision>,
         diff: LensBehaviorDiff,
     },
     RolledBack {
@@ -2750,7 +2750,7 @@ pub fn regenerate_lens<R: LensRegenerator + ?Sized>(
     if diff.has_data_read_change() {
         LensRegenOutcome::NeedsHumanStamp {
             last_good,
-            candidate,
+            candidate: Box::new(candidate),
             diff,
         }
     } else {
