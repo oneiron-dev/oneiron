@@ -27,6 +27,8 @@ pub enum Of360EvalError {
     UnsupportedGoldDatasetSchemaVersion { actual: u32 },
     #[error("unsupported OF-360 extraction run schema version `{actual}`")]
     UnsupportedExtractionRunSchemaVersion { actual: u32 },
+    #[error("invalid OF-360 metric tier: {reason}")]
+    InvalidMetricTier { reason: &'static str },
     #[error(
         "OF-360 extraction run dataset mismatch: expected {expected_id}@{expected_revision}, got {actual_id}@{actual_revision}"
     )]
@@ -241,6 +243,114 @@ pub struct Of360Ar3MetricTier {
     pub report: Of360EvalReport,
 }
 
+impl Of360Ar3MetricTier {
+    /// Checks metadata and numeric consistency using the evaluator's metric helpers.
+    /// Raw dataset/run inputs are still required to establish result authenticity.
+    pub(crate) fn validate(&self) -> Of360Result<()> {
+        validate_metric_definitions(&self.metric_definitions)?;
+        // The landed envelope is a symbolic pin, not a hash computed from JSON.
+        // Only the canonical definitions can be emitted by the AR-3 evaluator.
+        if self.metric_definitions != of360_metric_definitions()? {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "metric definition payload differs from the canonical pin",
+            });
+        }
+        if self.interface_version != OF360_AR3_METRIC_TIER_INTERFACE_VERSION {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "unsupported metric tier interface version",
+            });
+        }
+        if self.report.schema_version != OF360_SCHEMA_VERSION {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "unsupported evaluation report schema version",
+            });
+        }
+        if self.report.metric_set_id != self.metric_definitions.set_id
+            || self.report.metric_definition_envelope != self.metric_definitions.derivation_envelope
+        {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "evaluation report metadata differs from the metric definitions",
+            });
+        }
+
+        let mut seen_cases = HashSet::new();
+        let mut aggregate = MetricAccumulator::default();
+        for case in &self.report.cases {
+            if !seen_cases.insert(&case.case_id) {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "duplicate evaluation case id",
+                });
+            }
+            case.metrics.validate()?;
+            // Gold memories are counted once per case at their best score:
+            // omitted = 0, partial = 0.5, full = 1. Weights do not enter recall.
+            let mut seen_gold_ids = HashSet::new();
+            if case
+                .omitted_gold_memory_ids
+                .iter()
+                .chain(&case.partial_gold_memory_ids)
+                .any(|id| !seen_gold_ids.insert(id))
+            {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "gold diagnostic ids are not unique and disjoint",
+                });
+            }
+            let recall = case.metrics.halumem_recall;
+            let omitted = case.omitted_gold_memory_ids.len() as f64;
+            let partial = case.partial_gold_memory_ids.len() as f64;
+            if recall.denominator.fract() != 0.0
+                || omitted + partial > recall.denominator
+                || omitted + 0.5 * partial != recall.denominator - recall.numerator
+            {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "gold diagnostic counts differ from recall",
+                });
+            }
+            // A claim can appear in several diagnostics, but only once in each.
+            for (ids, count) in [
+                (
+                    &case.hallucinated_extraction_ids,
+                    case.metrics.hallucination_rate.numerator,
+                ),
+                (
+                    &case.overreach_extraction_ids,
+                    case.metrics.overreach_rate.numerator,
+                ),
+                (
+                    &case.redundant_extraction_ids,
+                    case.metrics.redundancy_rate.numerator,
+                ),
+            ] {
+                if ids.len() as f64 != count {
+                    return Err(Of360EvalError::InvalidMetricTier {
+                        reason: "extraction diagnostic count differs from the metric numerator",
+                    });
+                }
+                let mut seen_ids = HashSet::new();
+                if ids.iter().any(|id| !seen_ids.insert(id)) {
+                    return Err(Of360EvalError::InvalidMetricTier {
+                        reason: "duplicate extraction diagnostic id",
+                    });
+                }
+            }
+            let accumulator = MetricAccumulator::from_case_report(case);
+            if case.metrics != accumulator.metrics() {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "case metrics differ from the evaluator derivation",
+                });
+            }
+            aggregate.merge(&accumulator);
+        }
+        self.report.metrics.validate()?;
+        if self.report.metrics != aggregate.metrics() {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "aggregate metrics differ from the case reports",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Of360EvalReport {
@@ -280,6 +390,42 @@ pub struct Of360ParsedMetrics {
     pub overreach_rate: Of360RateMetric,
     pub temporal_correctness: Of360RateMetric,
     pub redundancy_rate: Of360RateMetric,
+}
+
+impl Of360ParsedMetrics {
+    fn validate(&self) -> Of360Result<()> {
+        for rate in [
+            self.halumem_recall,
+            self.halumem_weighted_recall,
+            self.target_precision,
+            self.halumem_f1,
+            self.faithfulness_rate,
+            self.hallucination_rate,
+            self.overreach_rate,
+            self.temporal_correctness,
+            self.redundancy_rate,
+        ] {
+            if !rate.numerator.is_finite()
+                || !rate.denominator.is_finite()
+                || rate.numerator < 0.0
+                || rate.denominator < 0.0
+                || rate.numerator > rate.denominator
+                || rate != Of360RateMetric::new(rate.numerator, rate.denominator)
+            {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "rate is not a finite, consistent fraction in [0, 1]",
+                });
+            }
+        }
+        if self.target_precision != self.faithfulness_rate
+            || self.temporal_correctness.denominator > self.target_precision.numerator
+        {
+            return Err(Of360EvalError::InvalidMetricTier {
+                reason: "matched, hallucinated and temporal claim counts are inconsistent",
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
