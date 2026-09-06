@@ -13,6 +13,7 @@ pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod disclosure_rung;
+pub mod emergency_reschedule;
 pub mod invite_grant;
 pub mod lifecycle;
 pub mod solver;
@@ -37,13 +38,19 @@ pub use config::{
     event_type_index_key, is_booking_claim_predicate,
 };
 pub use constraint::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotMask, SlotOracle, SolveRequest,
-    SolveResult,
+    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotHostBinding, SlotMask,
+    SlotOracle, SolveRequest, SolveResult,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,
     RungProjection, SurfaceClass, TitledEventRow, default_disclosure_rung, project_at_rung,
     project_calendar_grant,
+};
+pub use emergency_reschedule::{
+    AffectedBooking, EmergencyActionPolicy, EmergencyBatchPlan, EmergencyItem, EmergencyLocalBasis,
+    EmergencyPick, EmergencyPlan, EmergencyRescheduleRequest, OwnerInstructionRecord,
+    canonical_emergency_request_hash, counterparty_pick, enumerate_affected_bookings,
+    execute_emergency_plan, plan_emergency_reschedule, verify_logged_owner_instruction,
 };
 pub use invite_grant::{
     BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,

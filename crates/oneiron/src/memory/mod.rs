@@ -23,6 +23,9 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
+mod booking;
+pub(crate) use booking::booking_error;
+pub(crate) use outbound::facade_error_from_outbound_dispatch;
 mod campaign;
 mod chat;
 mod claims;
@@ -41,6 +44,7 @@ mod tests;
 #[cfg(test)]
 mod tests_regressions;
 
+pub use booking::EmergencyInstructionInput;
 pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
     ChatScope, ComposedChatAnswer,
@@ -77,4 +81,6 @@ pub use structural::{
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
-pub(crate) use support::{facade_provenance, verify_actor_binding};
+pub(crate) use support::{
+    facade_provenance, verify_actor_binding, verify_deletion_authority_in_txn,
+};

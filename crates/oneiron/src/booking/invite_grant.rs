@@ -303,7 +303,10 @@ fn confirmed_booking_binding(
 
 /// The identity string one recorded booker contact carries, read from the
 /// stored PERSON row and nothing else.
-fn booker_identity(vault: &Vault, contact_ref: &EntityId) -> Result<Option<String>, BookingError> {
+pub(crate) fn booker_identity(
+    vault: &Vault,
+    contact_ref: &EntityId,
+) -> Result<Option<String>, BookingError> {
     let rtxn = vault
         .store
         .env
@@ -628,7 +631,10 @@ pub(crate) fn dispatch_confirm_booking_invite(
             "this page carries no live booking page invite grant",
         ));
     };
-    let Some(organizer) = sending_address(vault, actor)? else {
+    let organizer = crate::booking::lifecycle::booking_invite_identity(vault, &booking_ref)?
+        .map(|(organizer, _)| organizer)
+        .or(sending_address(vault, actor)?);
+    let Some(organizer) = organizer else {
         return Err(refused(
             "no active sending identity carries this booking's invite",
         ));
@@ -772,7 +778,10 @@ fn booking_occurrence(vault: &Vault, booking_ref: &EntityId) -> Result<TimeRange
 /// own identity when one exists, otherwise the ordinary email identity — the
 /// same order CAL-04's hygiene hydration resolves the sender in. An ambiguous
 /// pair on one channel refuses rather than guessing.
-fn sending_address(vault: &Vault, actor: EntityId) -> Result<Option<String>, BookingError> {
+pub(crate) fn sending_address(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<Option<String>, BookingError> {
     for channel_class in [CALENDAR_INVITE_CHANNEL, "email"] {
         if let Some(address) = active_identity_address(vault, actor, channel_class)? {
             return Ok(Some(address));

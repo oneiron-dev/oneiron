@@ -366,6 +366,7 @@ fn booking_constraint_seam_compiles_from_constraint_home() {
     let result = SeamResult {
         slots: vec![ranked.clone()],
         flex_used: false,
+        host_bindings: Vec::new(),
     };
     let mask = SeamMask {
         event_type: SeamKey("intro-call".to_owned()),

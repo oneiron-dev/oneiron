@@ -6,6 +6,7 @@ use super::OutboundDeliveryWindowDecision;
 use super::capability::{
     OutboundRetryClass, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
+use super::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use super::dispatch_types::{
     OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
@@ -781,19 +782,6 @@ fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
             code: None,
         },
     )
-}
-
-fn outbound_dispatch_attempt_id(
-    intent_ref: &str,
-) -> std::result::Result<crate::attempt_queue::AttemptId, OutboundDispatchError> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.outbound.dispatch_attempt.v1");
-    hasher.update(&(intent_ref.len() as u64).to_le_bytes());
-    hasher.update(intent_ref.as_bytes());
-    let bytes: [u8; 16] = hasher.finalize().as_bytes()[..16]
-        .try_into()
-        .expect("BLAKE3 prefix length is fixed");
-    crate::attempt_queue::AttemptId::from_bytes(&bytes).map_err(OutboundDispatchError::Engine)
 }
 
 fn outbound_dispatch_policy_risk(
