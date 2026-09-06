@@ -706,7 +706,19 @@ impl<'a> AttemptQueue<'a> {
     /// source nor an orphan retry.
     pub fn retry(&self, input: RetryAttempt) -> Result<RetryOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let outcome = self.retry_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Retries inside a caller-owned transaction, including both rows and all
+    /// index moves. The caller must abort the transaction on error.
+    pub(crate) fn retry_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+    ) -> Result<RetryOutcome> {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
         let mut source = decode_record(&raw_record, input.id)?;
@@ -773,20 +785,20 @@ impl<'a> AttemptQueue<'a> {
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, source.id.as_bytes(), &encoded_source)?;
+            .put(wtxn, source.id.as_bytes(), &encoded_source)?;
         let encoded_next = encode_record(&next)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, next.id.as_bytes(), &encoded_next)?;
+            .put(wtxn, next.id.as_bytes(), &encoded_next)?;
 
         // The source was leased, so it holds no ready entry to retire; only the
         // new row enters the ready index, at its own scheduled instant.
         let ready_key = ready_key(ready_at(&next), next.id);
         self.store
             .attempt_ready
-            .put(&mut wtxn, &ready_key, next.id.as_bytes())?;
+            .put(wtxn, &ready_key, next.id.as_bytes())?;
         self.store.put_attempt_run_index_in_txn(
-            &mut wtxn,
+            wtxn,
             next.run_id.as_deref(),
             next.id.as_bytes(),
         )?;
@@ -795,16 +807,15 @@ impl<'a> AttemptQueue<'a> {
         // index, so the entry moves off the now-terminal source. The chain
         // stays in ONE key family: an actor-scoped chain keeps its v2 entry, a
         // pre-1876 actorless chain keeps its v1 entry until it drains.
-        self.delete_dedupe_entry_for_record(&mut wtxn, &source)?;
+        self.delete_dedupe_entry_for_record(wtxn, &source)?;
         if let Some(dedupe_key) = next.dedupe_key.as_deref() {
             let keys =
                 DedupeIndexKeys::new(&next.kind, next.dedupe_actor_ref.as_deref(), dedupe_key);
             self.store
                 .attempt_dedupe
-                .put(&mut wtxn, &keys.primary[..], next.id.as_bytes())?;
+                .put(wtxn, &keys.primary[..], next.id.as_bytes())?;
         }
 
-        wtxn.commit()?;
         Ok(RetryOutcome::Retried(next))
     }
 

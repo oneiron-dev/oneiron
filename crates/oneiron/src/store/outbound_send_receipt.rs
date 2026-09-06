@@ -18,7 +18,11 @@ const OUTBOUND_GATE_BINDING_KEY_PREFIX: &[u8] = b"outbound_gate_binding:v0:";
 /// of the ABI-pinned Gate decision ledger and carries its own record version.
 pub(crate) const SEND_RECEIPT_RECORD_VERSION: u8 = 0;
 
+// The TASK summary is a point-read cache, not the receipt-family audit source.
 const SEND_RECEIPT_KEY_PREFIX: &[u8] = b"send_receipt:v0:";
+// All outcomes append here. Compact fixed-width keys contain TASK + receipt-id
+// hash, so caller-supplied receipt ids cannot exceed LMDB's key-size limit.
+const SEND_RECEIPT_AUDIT_KEY_PREFIX: &[u8] = b"send_receipt_attempt:v0:";
 
 /// Additive delivered-send idempotency index. This is intentionally separate
 /// from the attempt queue's lifecycle-scoped dedupe rows and from the
@@ -54,9 +58,27 @@ impl Store {
             .map(|value| value.to_vec()))
     }
 
-    /// Inserts one connector-send receipt keyed by its originating TASK.
-    /// Existing rows are left intact so executor retries cannot duplicate the
-    /// transport record.
+    /// Appends one attempt receipt without allowing its evidence to be replaced.
+    /// An identical write is harmless; reusing an identity for other bytes fails.
+    pub(crate) fn append_send_receipt_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        task_id: &EntityId,
+        receipt_id: &str,
+        value: &[u8],
+    ) -> Result<()> {
+        let key = send_receipt_audit_key(task_id, receipt_id);
+        if let Some(existing) = self.vault_meta.get(wtxn, &key)? {
+            if existing.as_ref() != value {
+                return Err(Error::InvariantViolation("send receipt identity reused"));
+            }
+            return Ok(());
+        }
+        self.vault_meta.put(wtxn, &key, value)?;
+        Ok(())
+    }
+
+    /// Inserts a connector-send TASK summary, leaving an existing row intact.
     pub(crate) fn put_send_receipt_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -136,16 +158,17 @@ impl Store {
             .transpose()
     }
 
-    /// Returns all opaque connector-send receipt rows in TASK-id order.
+    /// Returns all append-only connector-send audit rows in TASK/hash order.
+    /// TASK summaries are never projected again as duplicate family receipts.
     pub(crate) fn send_receipt_rows(&self) -> Result<Vec<([u8; 16], Vec<u8>)>> {
         let rtxn = self.env.read_txn()?;
         let mut rows = Vec::new();
         for row in self
             .vault_meta
-            .prefix_iter(&rtxn, SEND_RECEIPT_KEY_PREFIX)?
+            .prefix_iter(&rtxn, SEND_RECEIPT_AUDIT_KEY_PREFIX)?
         {
             let (key, value) = row?;
-            rows.push((send_receipt_task_id_from_key(&key)?, value.into_owned()));
+            rows.push((send_receipt_audit_task_id_from_key(&key)?, value.into_owned()));
         }
         Ok(rows)
     }
@@ -165,9 +188,21 @@ fn send_receipt_key(task_id: &EntityId) -> Vec<u8> {
     key
 }
 
-fn send_receipt_task_id_from_key(key: &[u8]) -> Result<[u8; 16]> {
-    key.strip_prefix(SEND_RECEIPT_KEY_PREFIX)
-        .ok_or(Error::CorruptedIndex("send receipt ledger"))?
+fn send_receipt_audit_key(task_id: &EntityId, receipt_id: &str) -> Vec<u8> {
+    let hash = blake3::hash(receipt_id.as_bytes());
+    let mut key = Vec::with_capacity(SEND_RECEIPT_AUDIT_KEY_PREFIX.len() + 48);
+    key.extend_from_slice(SEND_RECEIPT_AUDIT_KEY_PREFIX);
+    key.extend_from_slice(task_id.as_bytes());
+    key.extend_from_slice(hash.as_bytes());
+    key
+}
+
+fn send_receipt_audit_task_id_from_key(key: &[u8]) -> Result<[u8; 16]> {
+    let suffix = key
+        .strip_prefix(SEND_RECEIPT_AUDIT_KEY_PREFIX)
+        .filter(|suffix| suffix.len() == 48)
+        .ok_or(Error::CorruptedIndex("send receipt ledger"))?;
+    suffix[..16]
         .try_into()
         .map_err(|_| Error::CorruptedIndex("send receipt ledger"))
 }

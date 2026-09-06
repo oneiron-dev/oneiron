@@ -55,7 +55,7 @@ pub(crate) use self::kernel::{
 pub(crate) use self::ledgers::overwrite_attempt_pack_receipt_for_test;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, delivered_send_receipt_for_task, persist_send_receipt,
-    stamp_attempt_pack_receipt_in_txn,
+    persist_send_receipt_in_txn, stamp_attempt_pack_receipt_in_txn,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 

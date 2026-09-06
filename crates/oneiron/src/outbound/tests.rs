@@ -1,3 +1,5 @@
+mod retry_audit;
+
 use super::*;
 use crate::delivery_window::DeliveryWindowDecision;
 use rmpv::Value;
@@ -570,8 +572,29 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     );
     let delivered_receipts =
         vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
-    assert_eq!(delivered_receipts.len(), 1);
+    assert_eq!(delivered_receipts.len(), 2);
     assert_eq!(delivered_receipts[0].outcome, "delivered_to_channel");
+    assert_eq!(delivered_receipts[1], failed_receipts[0]);
+    assert_ne!(
+        delivered_receipts[0].receipt_id,
+        failed_receipts[0].receipt_id
+    );
+    assert_eq!(
+        crate::receipt::delivered_send_receipt_for_task(&vault, task_ref)?,
+        Some(delivered_receipts[0].clone())
+    );
+    assert!(!crate::receipt::persist_send_receipt(
+        &vault,
+        task_ref,
+        delivered_receipts[0].clone(),
+        SendReceiptOutcome::Delivered,
+        true,
+        Some((actor, "failed-receipt-retry:test")),
+    )?);
+    assert_eq!(
+        vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?,
+        delivered_receipts
+    );
     let attempts = AttemptQueue::new(&vault)
         .list()?
         .into_iter()

@@ -18,7 +18,7 @@ use crate::attempt_queue::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::receipt::{SendReceiptOutcome, persist_send_receipt};
+use crate::receipt::{SendReceiptOutcome, persist_send_receipt, persist_send_receipt_in_txn};
 
 const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 /// First re-arm delay for a send the Gate parked on a human decision.
@@ -132,7 +132,14 @@ impl Vault {
             let idempotency_key = task.intent.idempotency_key.clone();
             let logical_send_intent_ref = connector_logical_send_intent_ref(&task);
             let mut request = OutboundDispatchRequest::new(
-                format!("outbound:task:{}", task_ref.to_hex()),
+                // A reclaimed lease can execute under the same attempt id. Its
+                // audit identity must still differ from the earlier execution.
+                format!(
+                    "outbound:task:{}:attempt:{}:lease:{}",
+                    task_ref.to_hex(),
+                    crate::receipt::hex_lower(attempt.id.as_bytes()),
+                    attempt.attempt_count
+                ),
                 // Sink-facing scheduled ref: sinks key their per-send plan by
                 // `request.intent_ref`, so it must stay the stable task ref the
                 // caller registered the plan under. The charge/replay identity
@@ -253,12 +260,8 @@ impl Vault {
                         curve: connector_retry_curve(&result),
                     };
                     let retry_at = connector_task_retry_at(&queue, &attempt, now, &arm)?;
-                    result
-                        .receipt
-                        .fields
-                        .insert("retry_at".to_owned(), retry_at.to_string());
-                    // A parked attempt is still an auditable outcome. Persist it before
-                    // replacing the queue row so its policy evidence and retry edge survive.
+                    // A parked attempt is still auditable. Its receipt and the
+                    // queue re-arm commit together so neither can outlive the other.
                     append_connector_task_window_receipt(&mut result.receipt, &task);
                     // The current receipt ledger has Delivered/Failed durability states;
                     // retain the actual parked outcome as a field while storing this as an
@@ -268,22 +271,14 @@ impl Vault {
                         result.outcome.as_str().to_owned(),
                     );
                     result.receipt.outcome = "failed".to_owned();
-                    persist_send_receipt(
+                    persist_failed_send_receipt_and_retry(
                         self,
+                        &attempt,
                         task_ref,
                         result.receipt,
-                        SendReceiptOutcome::Failed,
-                        false,
-                        None,
-                    )?;
-                    // The queue re-arms at the SAME instant the receipt surfaced,
-                    // so `backoff_until` and the audited retry edge cannot diverge.
-                    retry_connector_task_attempt_at(
-                        &queue,
-                        &attempt,
-                        now,
                         result.outcome.as_str(),
                         retry_at,
+                        now,
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
@@ -329,10 +324,6 @@ impl Vault {
                             curve: ConnectorRetryCurve::Transport,
                         };
                         let retry_at = connector_task_retry_at(&queue, &attempt, now, &arm)?;
-                        result
-                            .receipt
-                            .fields
-                            .insert("retry_at".to_owned(), retry_at.to_string());
                         // A retried transport failure is still an auditable outcome.
                         // Stored as the audit-only (non-idempotency) row a hold takes,
                         // so the provider's stated cool-down, the failure evidence and
@@ -342,21 +333,14 @@ impl Vault {
                             "dispatch_outcome".to_owned(),
                             result.outcome.as_str().to_owned(),
                         );
-                        persist_send_receipt(
+                        persist_failed_send_receipt_and_retry(
                             self,
+                            &attempt,
                             task_ref,
                             result.receipt,
-                            SendReceiptOutcome::Failed,
-                            false,
-                            None,
-                        )?;
-                        // The queue re-arms at the SAME instant the receipt surfaced.
-                        retry_connector_task_attempt_at(
-                            &queue,
-                            &attempt,
-                            now,
                             "transport_failed_pending",
                             retry_at,
+                            now,
                         )?;
                     } else {
                         persist_send_receipt(
@@ -380,6 +364,49 @@ impl Vault {
         }
         Ok(executed)
     }
+}
+
+/// Commits the audit row, source finalization, successor and indexes together.
+/// No receipt may advertise a retry edge unless that retry also commits. A
+/// delivered TASK is sticky: losing that race must not re-arm it.
+pub(super) fn persist_failed_send_receipt_and_retry(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
+    mut receipt: crate::receipt::ReceiptRecord,
+    reason: &str,
+    retry_at: u64,
+    now: u64,
+) -> Result<bool, Error> {
+    receipt
+        .fields
+        .insert("retry_at".to_owned(), retry_at.to_string());
+    let queue = AttemptQueue::new(vault);
+    vault.with_write_txn(|wtxn| {
+        if !persist_send_receipt_in_txn(
+            &vault.store,
+            wtxn,
+            task_ref,
+            receipt,
+            SendReceiptOutcome::Failed,
+            false,
+            None,
+        )? {
+            return Ok(false);
+        }
+        queue.retry_in_txn(
+            wtxn,
+            RetryAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                backoff_until: retry_at,
+                last_error: Some(reason.to_owned()),
+                now,
+            },
+        )?;
+        Ok(true)
+    })
 }
 
 fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {

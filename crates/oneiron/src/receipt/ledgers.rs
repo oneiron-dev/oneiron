@@ -240,18 +240,51 @@ fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
 }
 
-/// Persists the outbound pipeline receipt as the sole durable record of a
-/// connector send. A delivered row atomically installs the actor-scoped client
-/// idempotency index; a failed row remains audit-only and may be replaced by a
-/// later delivered retry for the same TASK.
+/// Appends one outbound attempt's audit receipt and updates its TASK summary.
+/// Delivered summaries are sticky and atomically install the actor-scoped client
+/// idempotency index. Failed receipts never authorize idempotency and remain in
+/// the history after a later attempt updates the summary.
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
+    task_ref: EntityId,
+    receipt: ReceiptRecord,
+    outcome: SendReceiptOutcome,
+    transport_dispatched: bool,
+    delivered_idempotency: Option<(EntityId, &str)>,
+) -> Result<bool> {
+    vault.with_write_txn(|wtxn| {
+        persist_send_receipt_in_txn(
+            &vault.store,
+            wtxn,
+            task_ref,
+            receipt,
+            outcome,
+            transport_dispatched,
+            delivered_idempotency,
+        )
+    })
+}
+
+/// Transaction-composable persistence. Each dispatch attempt must have its own
+/// `receipt_id`; a repeated identity cannot replace different audit evidence.
+/// The caller owns commit/abort and must abort on error. Returns false only
+/// when the TASK already has a delivered receipt.
+pub(crate) fn persist_send_receipt_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
     mut receipt: ReceiptRecord,
     outcome: SendReceiptOutcome,
     transport_dispatched: bool,
     delivered_idempotency: Option<(EntityId, &str)>,
 ) -> Result<bool> {
+    let existing = store.get_send_receipt_by_task_in_txn(wtxn, &task_ref)?;
+    if let Some(raw) = existing.as_deref() {
+        let existing = decode_durable_send_receipt(task_ref.as_bytes(), raw)?;
+        if existing.outcome == SendReceiptOutcome::Delivered {
+            return Ok(false);
+        }
+    }
     receipt
         .fields
         .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
@@ -268,37 +301,18 @@ pub(crate) fn persist_send_receipt(
     };
     let encoded = rmp_serde::to_vec_named(&durable)
         .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
-    vault.with_write_txn(|wtxn| {
-        let existing = vault
-            .store
-            .get_send_receipt_by_task_in_txn(&*wtxn, &task_ref)?;
-        if let Some(raw) = existing.as_deref() {
-            let existing = decode_durable_send_receipt(task_ref.as_bytes(), raw)?;
-            if existing.outcome == SendReceiptOutcome::Delivered {
-                return Ok(false);
-            }
-        }
-        if existing.is_some() {
-            vault
-                .store
-                .set_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
-        } else {
-            vault
-                .store
-                .put_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
-        }
-        if outcome == SendReceiptOutcome::Delivered
-            && let Some((actor_ref, idempotency_key)) = delivered_idempotency
-        {
-            vault.store.put_delivered_send_idempotency_in_txn(
-                wtxn,
-                &actor_ref,
-                idempotency_key,
-                &task_ref,
-            )?;
-        }
-        Ok(true)
-    })
+    store.append_send_receipt_in_txn(wtxn, &task_ref, &durable.receipt.receipt_id, &encoded)?;
+    if existing.is_some() {
+        store.set_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
+    } else {
+        store.put_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
+    }
+    if outcome == SendReceiptOutcome::Delivered
+        && let Some((actor_ref, idempotency_key)) = delivered_idempotency
+    {
+        store.put_delivered_send_idempotency_in_txn(wtxn, &actor_ref, idempotency_key, &task_ref)?;
+    }
+    Ok(true)
 }
 
 /// Point-reads a delivered receipt for executor and schedule idempotency.
