@@ -3397,9 +3397,11 @@ fn ppr_community_preserves_canonical_vad_keys_and_nonzero_salience() -> Result<(
     use crate::ppr_community::{CommunityBoostContext, community_cache_identity};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     community_ppr_fixture(&vault)?;
+    // Keep the structural community link; carry salience on a semantic relation.
+    vault.put_edge(&entity(1), EdgeKind::Mentions, &entity(2), 1.0)?;
     vault.set_edge_vad(
         &entity(1),
-        EdgeKind::BelongsTo,
+        EdgeKind::Mentions,
         &entity(2),
         Vad {
             valence: -1.0,

@@ -6823,6 +6823,14 @@ fn ppr_community_pipeline_zero_and_specificity_preserve_vad_and_cache_identity()
 
 #[test]
 fn community_pipeline_uses_fused_evidence_not_sorted_ids_and_borrows_session_usage() -> Result<()> {
+    // Preserve fixture order while skipping production-pinned ID bytes.
+    let entity_id = |n: u8| {
+        let seed = (1..=u8::MAX)
+            .filter(|seed| !crate::test_util::PINNED_ID_BYTES.contains(seed))
+            .nth(usize::from(n - 1))
+            .expect("enough unpinned fixture IDs");
+        crate::test_util::entity(seed)
+    };
     let (_dir, mut vault) = open_test_vault();
     for n in 1..=100 {
         if n != 1 && n != 30 { put_entity(&vault, entity_id(n), 1, 1, 1, 1)?; }
@@ -6881,6 +6889,14 @@ fn community_pipeline_uses_fused_evidence_not_sorted_ids_and_borrows_session_usa
 
 #[test]
 fn community_pipeline_diversifies_after_fusion_filters_and_rerank_without_resurfacing_rows() -> Result<()> {
+    // Preserve fixture order while skipping production-pinned ID bytes.
+    let entity_id = |n: u8| {
+        let seed = (1..=u8::MAX)
+            .filter(|seed| !crate::test_util::PINNED_ID_BYTES.contains(seed))
+            .nth(usize::from(n - 1))
+            .expect("enough unpinned fixture IDs");
+        crate::test_util::entity(seed)
+    };
     let (_dir, mut vault) = open_test_vault();
     for n in 1..=100 {
         put_entity(&vault, entity_id(n), 1, 1, 1, if (11..=13).contains(&n) { 1 } else { 2 })?;
