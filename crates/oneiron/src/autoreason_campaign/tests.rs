@@ -25,9 +25,10 @@ use crate::error::Result;
 use crate::extraction_eval::{
     OF360_AR3_METRIC_TIER_INTERFACE_VERSION, OF360_METRIC_DEFINITION_SET_ID,
     OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION, Of360Ar3MetricTier,
-    Of360CaseExtractionOutput, Of360ExtractedClaim, Of360ExtractionRun, Of360ExtractionScore,
-    Of360GoldDataset, Of360GoldMatch, Of360MetricDefinitionSet, Of360SeededSubsetConfig,
-    generate_of360_seeded_gold_subset,
+    Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ExtractedClaim, Of360ExtractionRun,
+    Of360ExtractionScore, Of360GoldDataset, Of360GoldMatch, Of360MetricDefinitionSet,
+    Of360MetricDirection, Of360SeededSubsetConfig, generate_of360_seeded_gold_subset,
+    of360_ar3_metric_tier, of360_metric_definitions,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
@@ -1001,6 +1002,208 @@ fn campaign_rejects_inconsistent_of360_metrics() {
                 }
             }
             assert!(matches!(split.validate(), Err(CampaignError::Of360(_))));
+        }
+    }
+}
+
+#[test]
+fn campaign_rejects_mutated_of360_metric_definition_payload() {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.01,
+    );
+    let base = compare(&fixture);
+    let canonical = of360_metric_definitions().expect("landed metric definitions");
+    let mutations: [fn(&mut Of360MetricDefinitionSet); 11] = [
+        |definitions| definitions.metrics.clear(),
+        |definitions| {
+            definitions.metrics.pop();
+        },
+        |definitions| definitions.metrics.push(definitions.metrics[0].clone()),
+        |definitions| definitions.metrics.swap(0, 1),
+        |definitions| definitions.metrics[0].metric_id.push_str("-other"),
+        |definitions| definitions.metrics[0].label.push_str("-other"),
+        |definitions| definitions.metrics[0].definition.push_str("-other"),
+        |definitions| definitions.metrics[0].formula.push_str("-other"),
+        |definitions| definitions.metrics[0].direction = Of360MetricDirection::LowerIsBetter,
+        |definitions| definitions.metrics[0].primary = !definitions.metrics[0].primary,
+        |definitions| definitions.source_refs.clear(),
+    ];
+    for mutate in mutations {
+        let mut report = base.clone();
+        // All four rows retain the full configured pin and agree with each other.
+        for split in [
+            &mut report.single_pass.search,
+            &mut report.single_pass.held_out,
+            &mut report.tournament.search,
+            &mut report.tournament.held_out,
+        ] {
+            mutate(&mut split.of360.metric_definitions);
+            let definitions = &split.of360.metric_definitions;
+            assert_eq!(definitions.set_id, canonical.set_id);
+            assert_eq!(definitions.revision, canonical.revision);
+            assert_eq!(
+                definitions.derivation_envelope,
+                canonical.derivation_envelope,
+            );
+            assert!(matches!(
+                split.validate(),
+                Err(CampaignError::Of360(Of360EvalError::InvalidMetricTier {
+                    reason: "metric definition payload differs from the canonical pin",
+                }))
+            ));
+        }
+        assert_invalid_of360_comparison(report);
+    }
+}
+
+fn diagnostic_campaign_report() -> CampaignComparisonReport {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.01,
+    );
+    let mut report = compare(&fixture);
+    for split in [
+        &mut report.single_pass.search,
+        &mut report.single_pass.held_out,
+        &mut report.tournament.search,
+        &mut report.tournament.held_out,
+    ] {
+        let dataset = split_dataset(match split.split {
+            CampaignEvaluationSplit::Search => 1,
+            CampaignEvaluationSplit::HeldOut => 2,
+        });
+        let mut run = extraction_run(&dataset, "run-diagnostic-audit");
+        let output = &mut run.cases[0];
+        output.extracted_claims[0].matched_gold[0].score = Of360ExtractionScore::Partial;
+        output.extracted_claims[0].overreach = true;
+        for index in 0..3 {
+            output.extracted_claims.push(Of360ExtractedClaim {
+                extraction_id: format!("diagnostic-{index}"),
+                text: "Unsupported claim".to_owned(),
+                matched_gold: Vec::new(),
+                temporal_correct: None,
+                overreach: index != 1,
+                dedup_key: Some("diagnostic-duplicate".to_owned()),
+            });
+        }
+        // Reusing extraction IDs across cases is legal. Leave the other cases empty.
+        let mut second_output = output.clone();
+        second_output.case_id = dataset.cases[1].case_id.clone();
+        let memory = &dataset.cases[1].gold_memory_points[0];
+        second_output.extracted_claims[0].text = memory.claim.clone();
+        second_output.extracted_claims[0].matched_gold[0].memory_id = memory.memory_id.clone();
+        run.cases.push(second_output);
+        split.of360 = of360_ar3_metric_tier(&dataset, &run).expect("writer-produced diagnostics");
+    }
+    report.validate().expect("valid diagnostic fixture");
+    report
+}
+
+type ExtractionDiagnosticIds = fn(&mut Of360CaseEvalReport) -> &mut Vec<String>;
+const EXTRACTION_DIAGNOSTICS: [ExtractionDiagnosticIds; 3] = [
+    |case| &mut case.hallucinated_extraction_ids,
+    |case| &mut case.overreach_extraction_ids,
+    |case| &mut case.redundant_extraction_ids,
+];
+
+#[test]
+fn campaign_rejects_missing_of360_diagnostic_ids() {
+    let base = diagnostic_campaign_report();
+    for select in EXTRACTION_DIAGNOSTICS {
+        for clear_all in [false, true] {
+            let mut report = base.clone();
+            let split = &mut report.tournament.held_out;
+            let ids = select(&mut split.of360.report.cases[0]);
+            assert!(ids.len() >= 2);
+            if clear_all {
+                ids.clear();
+            } else {
+                ids.pop();
+            }
+            assert!(matches!(
+                split.validate(),
+                Err(CampaignError::Of360(Of360EvalError::InvalidMetricTier {
+                    reason: "extraction diagnostic count differs from the metric numerator",
+                }))
+            ));
+            assert_invalid_of360_comparison(report);
+        }
+    }
+}
+
+#[test]
+fn campaign_rejects_duplicate_of360_diagnostic_ids() {
+    let base = diagnostic_campaign_report();
+    for select in EXTRACTION_DIAGNOSTICS {
+        let mut report = base.clone();
+        let split = &mut report.tournament.held_out;
+        let ids = select(&mut split.of360.report.cases[0]);
+        assert!(ids.len() >= 2);
+        // Keep the correct length, so only the uniqueness check can catch this.
+        ids[1] = ids[0].clone();
+        assert!(matches!(
+            split.validate(),
+            Err(CampaignError::Of360(Of360EvalError::InvalidMetricTier {
+                reason: "duplicate extraction diagnostic id",
+            }))
+        ));
+        assert_invalid_of360_comparison(report);
+    }
+}
+
+#[test]
+fn campaign_accepts_landed_of360_diagnostic_reports() {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.01,
+    );
+    let diagnostic = diagnostic_campaign_report();
+    let cases = &diagnostic.tournament.held_out.of360.report.cases;
+    assert_eq!(cases[0].metrics.hallucination_rate.numerator, 3.0);
+    assert_eq!(cases[0].metrics.overreach_rate.numerator, 3.0);
+    assert_eq!(cases[0].metrics.redundancy_rate.numerator, 2.0);
+    assert!(!cases[0].partial_gold_memory_ids.is_empty());
+    assert!(!cases[0].omitted_gold_memory_ids.is_empty());
+    assert_eq!(cases[2].metrics.target_precision.value, None);
+    assert_eq!(
+        cases[0].hallucinated_extraction_ids,
+        cases[1].hallucinated_extraction_ids,
+    );
+    assert!(cases[0].redundant_extraction_ids.iter().any(|id| {
+        cases[0].hallucinated_extraction_ids.contains(id)
+            && cases[0].overreach_extraction_ids.contains(id)
+    }));
+    for original in [compare(&fixture), diagnostic] {
+        let encoded = serde_json::to_value(&original).expect("report encodes");
+        let decoded: CampaignComparisonReport =
+            serde_json::from_value(encoded).expect("report decodes");
+        assert_eq!(decoded, original);
+        for report in [original, decoded] {
+            report.validate().expect("landed report remains valid");
+            for split in [
+                &report.single_pass.search,
+                &report.single_pass.held_out,
+                &report.tournament.search,
+                &report.tournament.held_out,
+            ] {
+                split.validate().expect("landed split remains valid");
+                assert_eq!(
+                    split.of360.metric_definitions,
+                    of360_metric_definitions().expect("canonical payload"),
+                );
+            }
+            compare_campaign(
+                report.campaign_ref,
+                &fixture.config,
+                report.single_pass,
+                report.tournament,
+                report.decision,
+            )
+            .expect("landed evidence remains comparable");
         }
     }
 }
