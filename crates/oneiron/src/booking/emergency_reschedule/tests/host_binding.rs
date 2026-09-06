@@ -167,7 +167,7 @@ fn confirm_with_real_solver(vault: &Vault) -> (ConfirmReceipt, SolveResult) {
                 synthetic_config: None,
             })
         },
-        &consumer(NOW),
+        &consumer(vault, NOW),
     )
     .unwrap();
     let BookingLifecycleTurn::Executed(BookingVerbReceipt::Confirmed(receipt)) = turn else {
@@ -191,7 +191,7 @@ fn request_as(vault: &Vault, owner: u8) -> EmergencyRescheduleRequest {
     req
 }
 
-fn bind_delivery(vault: &Vault, event: EntityId, owner: u8) {
+fn bind_delivery(vault: &Vault, _event: EntityId, owner: u8) {
     use crate::channel_identity::{
         ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
     };
@@ -204,28 +204,6 @@ fn bind_delivery(vault: &Vault, event: EntityId, owner: u8) {
     );
     identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id(0x79), &identity).unwrap();
-    vault
-        .put_claim(
-            &id(0x78),
-            &ClaimBody::new(
-                crate::calendar::claims::PREDICATE_CALENDAR_ATTENDEE,
-                ClaimSubject::Entity(event),
-                rmpv::Value::Map(vec![
-                    ("who".into(), "booker@example.test".into()),
-                    ("role".into(), "REQ-PARTICIPANT".into()),
-                    ("partstat".into(), "ACCEPTED".into()),
-                ]),
-                1.0,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            ),
-            TimeRange {
-                start: NOW,
-                end: NOW,
-            },
-            NOW,
-        )
-        .unwrap();
 }
 
 #[test]
@@ -309,7 +287,7 @@ fn either_confirmation_persists_the_host_that_actually_offered_the_slot() {
             &non_owner,
             &batch.plans[0],
             &host_calendars(),
-            &consumer(NOW),
+            &consumer(&vault, NOW),
             &mut sink
         )
         .is_err()
@@ -491,7 +469,7 @@ fn confirmation_refuses_missing_or_competing_host_bindings_without_guessing_conf
         let error = run_booking_lifecycle_once(
             &vault,
             |_| Ok(InvalidBindingOracle(duplicate)),
-            &consumer(NOW),
+            &consumer(&vault, NOW),
         )
         .unwrap_err();
         assert!(error.to_string().contains("bind"));
@@ -502,4 +480,119 @@ fn confirmation_refuses_missing_or_competing_host_bindings_without_guessing_conf
                 .is_empty()
         );
     }
+}
+
+#[test]
+fn ordinary_reschedule_rechecks_only_confirmation_bound_hosts() {
+    for routing in [RoutingMode::Either, RoutingMode::Both] {
+        let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+        let mut config = two_host_page(&vault, routing, true);
+        let (receipt, _) = confirm_with_real_solver(&vault);
+        let original = crate::booking::lifecycle::booking_confirmation_context(
+            &vault,
+            &receipt.calendar.event_ref,
+        )
+        .unwrap();
+        config.hosts[0].working_hours[0].end_minute = 30;
+        replace_config(&vault, config);
+        let calendars = host_calendars();
+        let holds = VaultActiveHoldSource::new(&vault);
+        let solver = BookingSolver {
+            vault: &vault,
+            page_ref: id(PAGE),
+            calendars_by_host: &calendars,
+            holds: &holds,
+            now_utc: NOW,
+            synthetic_config: None,
+        };
+        let target = TimeRange {
+            start: NOW + 7_200,
+            end: NOW + 9_000,
+        };
+        assert!(
+            crate::booking::lifecycle::execute_reschedule(
+                &vault,
+                &solver,
+                &crate::booking::RescheduleSpec {
+                    token: receipt.reschedule_token,
+                    new_slot: target,
+                    visitor_tz: "UTC".to_owned(),
+                    constraint: None,
+                    idempotency_key: None
+                },
+                NOW
+            )
+            .is_err()
+        );
+        assert_eq!(
+            crate::booking::lifecycle::booking_confirmation_context(
+                &vault,
+                &receipt.calendar.event_ref
+            )
+            .unwrap(),
+            original
+        );
+    }
+}
+
+#[test]
+fn both_secondary_owner_and_rotated_sender_keep_the_actual_initial_organizer() {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
+    };
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    two_host_page(&vault, RoutingMode::Both, true);
+    let (receipt, _) = confirm_with_real_solver(&vault);
+    bind_delivery(&vault, receipt.calendar.event_ref, OWNER);
+    policy(&vault);
+    crate::booking::mint_publish_page_invite_grant(
+        &vault,
+        &crate::booking::PublishBookingPageGrantRequest {
+            page_ref: id(PAGE),
+            publisher_principal: id(OWNER),
+            issued_at: NOW,
+        },
+    )
+    .unwrap();
+    crate::booking::invite_grant::dispatch_confirm_booking_invite(
+        &vault,
+        id(OWNER),
+        &receipt,
+        &mut Delivered,
+        NOW,
+    )
+    .unwrap();
+    vault
+        .transition_channel_identity(
+            &id(0x79),
+            ChannelIdentityState::Rotating,
+            None,
+            NOW + 1,
+            None,
+        )
+        .unwrap();
+    let mut rotated = ChannelIdentity::requested(
+        "email",
+        "rotated@example.test",
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(id(OWNER)),
+        NOW + 1,
+    );
+    rotated.state = ChannelIdentityState::Active;
+    vault.create_channel_identity(&id(0x7d), &rotated).unwrap();
+    let batch = plan_emergency_reschedule(
+        &vault,
+        &request_as(&vault, OTHER),
+        &host_calendars(),
+        NOW + 1,
+    )
+    .unwrap();
+    assert!(batch.refusals.is_empty(), "{:?}", batch.refusals);
+    let plan = &batch.plans[0];
+    let ics = crate::calendar::read_calendar_invite_ics(&vault, plan.payload().unwrap()).unwrap();
+    assert_eq!(
+        crate::calendar::ics::invite_organizer(&ics).unwrap(),
+        "host@example.test"
+    );
+    assert_eq!(plan.organizer, "host@example.test");
 }

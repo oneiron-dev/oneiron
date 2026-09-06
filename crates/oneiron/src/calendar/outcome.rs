@@ -276,38 +276,12 @@ pub fn record_event_outcome(
     source: ClaimSource,
 ) -> Result<EntityId> {
     require_event_subject(vault, &event_ref)?;
-
-    let mut body = ClaimBody::new(
-        PREDICATE_CALENDAR_EVENT_OUTCOME,
-        ClaimSubject::Entity(event_ref),
-        encode_event_outcome_value(value),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    body.source = Some(source);
-    body.valid_from = Some(value.recorded_at);
-
-    let new_id = EntityId::now();
-    let occurred = TimeRange {
-        start: value.recorded_at,
-        end: value.recorded_at,
-    };
-    vault.with_write_txn(|wtxn| {
-        let prior = live_outcome_heads_in(vault, wtxn, &event_ref)?;
-        vault.put_claim_in_txn(wtxn, &new_id, &body, occurred, value.recorded_at)?;
-        for head in prior {
-            // Evidence can arrive out of order — CAL-08 will supersede an owner
-            // answer with a transcript observed during the meeting. The head it
-            // replaces still stops being current no earlier than it started, so
-            // the closure never writes an inverted validity window.
-            let closed_at = value.recorded_at.max(head.value.recorded_at);
-            vault.supersede_claim_in_txn(wtxn, &new_id, &head.claim_id, closed_at)?;
-        }
-        Ok(())
-    })?;
-    Ok(new_id)
+    vault.with_write_txn(|txn| record_event_outcome_in_txn(vault, txn, event_ref, value, source))
 }
+
+mod conditional;
+use conditional::record_event_outcome_in_txn;
+pub(crate) use conditional::record_lifecycle_outcome_in_txn;
 
 /// Reads the EVENT's live outcome claim.
 ///

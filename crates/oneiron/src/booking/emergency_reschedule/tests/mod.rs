@@ -11,7 +11,7 @@ use crate::calendar::outcome::{EventOutcome, project_event_outcome, read_event_o
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use crate::test_util::{entity as id, open_test_vault_with};
-use crate::{DreamerHomeNodeCandidate, DreamerRunnerStore, VaultConfig};
+use crate::{DreamerRunnerStore, VaultConfig};
 
 const NOW: u64 = 1_772_409_600;
 const OWNER: u8 = 0x51;
@@ -114,16 +114,8 @@ fn run_as(
     host: u8,
 ) -> BookingVerbReceipt {
     enqueue_booking_verb(vault, request, NOW).unwrap();
-    match run_booking_lifecycle_once(
-        vault,
-        |_| Ok(Offered(slot, host)),
-        &BookingLifecycleConsumerInput {
-            local_node_id: 9,
-            lease_owner: "emergency-fixture".to_owned(),
-            now_utc: NOW,
-        },
-    )
-    .unwrap()
+    match run_booking_lifecycle_once(vault, |_| Ok(Offered(slot, host)), &consumer(vault, NOW))
+        .unwrap()
     {
         BookingLifecycleTurn::Executed(receipt) => receipt,
         other => panic!("home node did not execute: {other:?}"),
@@ -180,7 +172,12 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
     DreamerRunnerStore::new(vault)
-        .elect_home_node(&[DreamerHomeNodeCandidate::always_on_local(9)], 1)
+        .elect_home_node(
+            &[DreamerRunnerStore::new(vault)
+                .local_home_node_candidate(true, true, true)
+                .unwrap()],
+            1,
+        )
         .unwrap();
 }
 
@@ -252,9 +249,9 @@ fn policy(vault: &Vault) {
     crate::test_util::put_policy_manifest_bytes(vault, id(0x7a), &bytes).unwrap();
 }
 
-fn consumer(now_utc: u64) -> BookingLifecycleConsumerInput {
+fn consumer(vault: &Vault, now_utc: u64) -> BookingLifecycleConsumerInput {
     BookingLifecycleConsumerInput {
-        local_node_id: 9,
+        local_node_id: crate::identity::load_or_mint_client_id(vault).unwrap(),
         lease_owner: "emergency-test".to_owned(),
         now_utc,
     }
@@ -285,14 +282,29 @@ fn passports(vault: &Vault, event: EntityId) -> Vec<crate::calendar::CalendarPas
 fn executable(
     action_policy: EmergencyActionPolicy,
 ) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
-    use crate::calendar::{CalendarInviteMethod, CalendarInvitePayload};
+    executable_with_invite(action_policy, true)
+}
+
+struct Delivered;
+impl crate::outbound::OutboundExecutionSink for Delivered {
+    fn execute(
+        &mut self,
+        _: &crate::outbound::OutboundExecutionRequest<'_>,
+    ) -> crate::outbound::OutboundExecutionOutcome {
+        crate::outbound::OutboundExecutionOutcome::delivered_to_channel("delivered")
+    }
+}
+
+fn executable_with_invite(
+    action_policy: EmergencyActionPolicy,
+    send_initial: bool,
+) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
     use crate::channel_identity::{
         ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
     };
     let (dir, vault) = open_test_vault_with(VaultConfig::default());
     page(&vault, PAGE, OWNER);
     let receipt = book(&vault, PAGE, NOW + 3_600);
-    let event = receipt.calendar.event_ref;
     let mut identity = ChannelIdentity::requested(
         "email",
         "host@example.test",
@@ -302,28 +314,6 @@ fn executable(
     );
     identity.state = ChannelIdentityState::Active;
     vault.create_channel_identity(&id(0x79), &identity).unwrap();
-    vault
-        .put_claim(
-            &id(0x78),
-            &ClaimBody::new(
-                crate::calendar::claims::PREDICATE_CALENDAR_ATTENDEE,
-                ClaimSubject::Entity(event),
-                rmpv::Value::Map(vec![
-                    ("who".into(), "booker@example.test".into()),
-                    ("role".into(), "REQ-PARTICIPANT".into()),
-                    ("partstat".into(), "ACCEPTED".into()),
-                ]),
-                1.0,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            ),
-            TimeRange {
-                start: NOW,
-                end: NOW,
-            },
-            NOW,
-        )
-        .unwrap();
     policy(&vault);
     crate::booking::mint_publish_page_invite_grant(
         &vault,
@@ -334,55 +324,30 @@ fn executable(
         },
     )
     .unwrap();
-    let ics = crate::calendar::ics::emit_imip_ics(&crate::calendar::ics::ImipEmitRequest {
-        method: CalendarInviteMethod::Request,
-        uid: receipt.calendar.uid.clone(),
-        sequence: 0,
-        organizer: "host@example.test".to_owned(),
-        attendees: vec!["booker@example.test".to_owned()],
-        summary: "intro".to_owned(),
-        starts_at_utc: NOW + 3_600,
-        ends_at_utc: NOW + 5_400,
-        tz_label: "UTC".to_owned(),
-        dtstamp_utc: NOW,
-    })
-    .unwrap();
-    let blob = crate::calendar::ics::persist_imip_blob(
-        &vault,
-        &id(0x7b),
-        "initial",
-        &ics,
-        &crate::blob_artifact::BlobVersionProvenance::UserUpload,
-        crate::write_envelope::WriteActor::new(id(OWNER), crate::edge::EdgeActorClass::Human),
-        NOW,
-    )
-    .unwrap();
-    let payload = CalendarInvitePayload {
-        method: CalendarInviteMethod::Request,
-        uid: receipt.calendar.uid.clone(),
-        sequence: 0,
-        ics_blob_ref: blob,
-        recipient: "booker@example.test".to_owned(),
-    };
-    let admission =
-        crate::calendar::admit_calendar_invite(&vault, id(OWNER), &payload, NOW).unwrap();
-    booking_writer(&vault, |txn| {
-        admission
-            .commit_in_txn(&vault, txn, NOW)
-            .map_err(storage_failure)
-    })
-    .unwrap();
+    if send_initial {
+        crate::booking::invite_grant::dispatch_confirm_booking_invite(
+            &vault,
+            id(OWNER),
+            &receipt,
+            &mut Delivered,
+            NOW,
+        )
+        .unwrap();
+    }
     let mut req = request();
     req.action_policy = action_policy;
-    req.authority = append_owner_instruction(
-        &vault,
-        req.owner_ref,
-        req.affected_window,
-        &req.reason,
-        action_policy,
-        NOW,
-    )
-    .unwrap();
+    let memory = vault.memory(id(OWNER), crate::edge::EdgeActorClass::Human);
+    req.authority = memory
+        .record_emergency_instruction(&crate::memory::EmergencyInstructionInput {
+            affected_window: crate::calendar::query::CalendarRangeDto {
+                start: req.affected_window.start,
+                end: req.affected_window.end,
+            },
+            reason: req.reason.clone(),
+            action_policy,
+            recorded_at: NOW,
+        })
+        .unwrap();
     let batch = plan_emergency_reschedule(&vault, &req, &calendars(), NOW).unwrap();
     assert!(batch.refusals.is_empty(), "{:?}", batch.refusals);
     assert_eq!(batch.plans.len(), 1);
@@ -409,19 +374,20 @@ impl crate::outbound::OutboundExecutionSink for EffectSpy<'_> {
         let (revision, payload) = item
             .picked
             .as_ref()
-            .map_or((&item.calendar, &self.plan.payload), |picked| {
-                (&picked.calendar, &picked.payload)
+            .map_or((&item.calendar, self.plan.payload.as_ref()), |picked| {
+                (&picked.calendar, Some(&picked.payload))
             });
         let heads = passports(self.vault, item.calendar.event_ref);
-        for system in [
-            BOOKING_PASSPORT_SYSTEM,
-            crate::calendar::CALENDAR_INVITE_PASSPORT_SYSTEM,
-        ] {
-            assert!(
-                heads
-                    .iter()
-                    .any(|head| head.system == system && head.last_sequence == revision.sequence)
-            );
+        assert!(
+            heads
+                .iter()
+                .any(|head| head.system == BOOKING_PASSPORT_SYSTEM
+                    && head.last_sequence == revision.sequence)
+        );
+        if let Some(payload) = payload {
+            assert!(heads.iter().any(|head| head.system
+                == crate::calendar::CALENDAR_INVITE_PASSPORT_SYSTEM
+                && head.last_sequence == payload.sequence));
         }
         let records = crate::outbound_intent_ledger::intent_ledger_records(self.vault).unwrap();
         let frozen = records
@@ -434,7 +400,7 @@ impl crate::outbound::OutboundExecutionSink for EffectSpy<'_> {
         if let Some(part) = &request.calendar_invite {
             assert_eq!(
                 part.ics,
-                crate::calendar::read_calendar_invite_ics(self.vault, payload).unwrap()
+                crate::calendar::read_calendar_invite_ics(self.vault, payload.unwrap()).unwrap()
             );
             assert!(part.content_type.starts_with("text/calendar; method="));
         }
@@ -467,12 +433,22 @@ fn execute(
         &plan.request,
         plan,
         &calendars(),
-        &consumer(now),
+        &consumer(vault, now),
         spy,
     )
 }
 
+fn emergency_records(vault: &Vault) -> Vec<crate::outbound_intent_ledger::IntentLedgerRecord> {
+    crate::outbound_intent_ledger::intent_ledger_records(vault).unwrap().into_iter().filter(|record| {
+        serde_json::from_slice::<serde_json::Value>(record.payload()).unwrap()["idempotency_key"]
+            .as_str().is_some_and(|key| key.starts_with("intent:booking_emergency:"))
+    }).collect()
+}
+
+mod calendar_sync;
+mod corrections;
 mod effects;
 mod follow_up;
 mod host_binding;
 mod instruction;
+mod owner_revocation;

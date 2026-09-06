@@ -211,6 +211,46 @@ pub struct BookingSolver<'a> {
 }
 
 impl SlotOracle for BookingSolver<'_> {
+    fn solve_bound(
+        &self,
+        req: &SolveRequest,
+        hosts: &[String],
+    ) -> Result<SolveResult, BookingError> {
+        let mut config = match &self.synthetic_config {
+            Some(config) => config.clone(),
+            None => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
+        };
+        if hosts.is_empty()
+            || hosts.iter().any(|owner| {
+                !config
+                    .hosts
+                    .iter()
+                    .any(|host| host.host_ref.to_hex() == *owner)
+            })
+        {
+            return Err(BookingError::InvalidConfig(
+                "bound booking hosts are unavailable".to_owned(),
+            ));
+        }
+        config
+            .hosts
+            .retain(|host| hosts.contains(&host.host_ref.to_hex()));
+        config.routing = if hosts.len() == 1 {
+            RoutingMode::Either
+        } else {
+            RoutingMode::Both
+        };
+        BookingSolver {
+            vault: self.vault,
+            page_ref: self.page_ref,
+            calendars_by_host: self.calendars_by_host,
+            holds: self.holds,
+            now_utc: self.now_utc,
+            synthetic_config: Some(config),
+        }
+        .solve(req)
+    }
+
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
         // The visitor zone is validated at the calendar border, not guessed:
         // a malformed zone fails typed here rather than falling back to UTC.

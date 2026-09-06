@@ -147,6 +147,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     };
 
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    if let OutboundEffectCommand::New(prepared) = &command {
+        if let Some((actor, actor_class)) = prepared.verified_actor {
+            let entity_type = vault
+                .get_entity_type_in_txn(&wtxn, &actor)?
+                .ok_or(IntentLedgerError::InvalidBoundActor)?;
+            crate::provenance::validate_actor_class(entity_type, actor_class)?;
+        }
+        verify_booking_effect(vault, &wtxn, &prepared.payload)?;
+    }
     let record = read_intent_record_in_txn(vault, &wtxn, &intent_id)?;
     if let Some(record) = record {
         if let OutboundEffectCommand::New(prepared) = &command {
@@ -162,13 +171,6 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             "outbound resume target is missing",
         ));
     };
-
-    if let Some((actor, actor_class)) = prepared.verified_actor {
-        let entity_type = vault
-            .get_entity_type_in_txn(&wtxn, &actor)?
-            .ok_or(IntentLedgerError::InvalidBoundActor)?;
-        crate::provenance::validate_actor_class(entity_type, actor_class)?;
-    }
 
     // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
     // frozen bytes must carry a payload this lane can vouch for: C7's exact
@@ -429,6 +431,28 @@ fn replay_record<T: OutboundTransport>(
     }
 }
 
+fn verify_booking_effect(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    bytes: &[u8],
+) -> Result<(), IntentLedgerError> {
+    crate::booking::emergency_reschedule::verify_frozen_effect_in(vault, txn, bytes).map_err(
+        |error| {
+            let error = crate::memory::booking_error(error);
+            if let Some(denial) = error.gate_denial_error() {
+                return IntentLedgerError::Engine(denial);
+            }
+            if error.code == crate::memory::MEMORY_CODE_FORBIDDEN {
+                IntentLedgerError::InvalidBoundActor
+            } else {
+                IntentLedgerError::InvalidInput(
+                    "emergency effect authority or revision is no longer current",
+                )
+            }
+        },
+    )
+}
+
 fn send_pending<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -532,6 +556,10 @@ fn send_pending<T: OutboundTransport>(
         record
     };
     let call = FrozenOutboundCall::from_record(&record);
+    {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        verify_booking_effect(vault, &txn, record.payload())?;
+    }
     let outcome = transport.send(&call);
     match outcome {
         OutboundSendOutcome::Acked => {

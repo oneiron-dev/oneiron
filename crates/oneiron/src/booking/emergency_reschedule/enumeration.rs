@@ -53,68 +53,63 @@ pub(super) fn enumerate_with_refusals(
     .map_err(storage_failure)?;
     let mut affected = Vec::new();
     for (event_ref, occurred) in events {
-        if read_fact::<BookingStatusValue>(vault, event_ref, BOOKING_STATUS_PREDICATE)?
-            .is_none_or(|value| value.status != BookingStatus::Confirmed)
-        {
-            continue;
-        }
-        let page =
-            read_fact::<BookingSourcePageValue>(vault, event_ref, BOOKING_SOURCE_PAGE_PREDICATE)?
-                .ok_or_else(|| refused("confirmed booking has no source page"))?
-                .page_ref;
-        let event_type = read_fact::<BookingEventTypeRefValue>(
-            vault,
-            event_ref,
-            BOOKING_EVENT_TYPE_REF_PREDICATE,
-        )?
-        .ok_or_else(|| refused("confirmed booking has no event type"))?
-        .event_type;
-        let Some(context) =
-            crate::booking::lifecycle::booking_confirmation_context(vault, &event_ref)?
-        else {
-            refusals.push((
+        let candidate = (|| {
+            let context =
+                crate::booking::lifecycle::booking_confirmation_context(vault, &event_ref)?
+                    .ok_or_else(|| {
+                        refused("missing original booking context; no owner inferred")
+                    })?;
+            if context.owner_refs.is_empty() {
+                return Err(refused(
+                    "missing exact selected-host binding; no owner inferred",
+                ));
+            }
+            if !context.owner_refs.contains(&request.owner_ref.to_hex()) {
+                return Ok(None);
+            }
+            if read_fact::<BookingStatusValue>(vault, event_ref, BOOKING_STATUS_PREDICATE)?
+                .is_none_or(|value| value.status != BookingStatus::Confirmed)
+            {
+                return Ok(None);
+            }
+            let page = read_fact::<BookingSourcePageValue>(
+                vault,
                 event_ref,
-                "missing original booking context; no owner inferred".to_owned(),
-            ));
-            continue;
-        };
-        if context.owner_refs.is_empty() {
-            refusals.push((
+                BOOKING_SOURCE_PAGE_PREDICATE,
+            )?
+            .ok_or_else(|| refused("confirmed booking has no source page"))?
+            .page_ref;
+            let event_type = read_fact::<BookingEventTypeRefValue>(
+                vault,
                 event_ref,
-                "missing exact selected-host binding; no owner inferred".to_owned(),
-            ));
-            continue;
+                BOOKING_EVENT_TYPE_REF_PREDICATE,
+            )?
+            .ok_or_else(|| refused("confirmed booking has no event type"))?
+            .event_type;
+            let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+            let calendar =
+                crate::booking::lifecycle::emergency_current_revision_in(vault, &txn, event_ref)?;
+            Ok(Some(AffectedBooking {
+                calendar,
+                page_ref: page,
+                event_type,
+                context,
+                occurrence: TimeRange {
+                    start: occurred.start,
+                    end: occurred.end.checked_add(1).ok_or_else(|| {
+                        refused("booking occurrence cannot be represented half-open")
+                    })?,
+                },
+            }))
+        })();
+        match candidate {
+            Ok(Some(booking)) => affected.push(booking),
+            Ok(None) => {}
+            Err(error @ (BookingError::SlotOracle(_) | BookingError::Boundary(_))) => {
+                return Err(error);
+            }
+            Err(error) => refusals.push((event_ref, error.to_string())),
         }
-        if !context.owner_refs.contains(&request.owner_ref.to_hex()) {
-            continue;
-        }
-        let passports = live_passports_for_event(vault, &event_ref).map_err(storage_failure)?;
-        let mut matching = passports
-            .into_iter()
-            .filter(|(_, value)| value.system == BOOKING_PASSPORT_SYSTEM);
-        let (_, passport) = matching
-            .next()
-            .ok_or_else(|| refused("confirmed booking has no booking passport"))?;
-        if matching.next().is_some() {
-            return Err(refused("confirmed booking has competing booking passports"));
-        }
-        affected.push(AffectedBooking {
-            calendar: CalendarRevision {
-                event_ref,
-                uid: passport.uid,
-                sequence: passport.last_sequence,
-            },
-            page_ref: page,
-            event_type,
-            context,
-            occurrence: TimeRange {
-                start: occurred.start,
-                end: occurred
-                    .end
-                    .checked_add(1)
-                    .ok_or_else(|| refused("booking occurrence cannot be represented half-open"))?,
-            },
-        });
     }
     affected.sort_by_key(|item| (item.occurrence.start, item.calendar.event_ref));
     Ok(affected)
@@ -144,7 +139,8 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
         }
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &body.value).map_err(storage_failure)?;
-        found = Some(rmp_serde::from_slice(&bytes).map_err(storage_failure)?);
+        found =
+            Some(rmp_serde::from_slice(&bytes).map_err(|_| refused("booking fact is malformed"))?);
     }
     Ok(found)
 }

@@ -4,12 +4,15 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use crate::booking::BOOKING_PASSPORT_SYSTEM;
 use crate::booking::lifecycle::{booking_writer, hex_lower, put_meta, read_meta_bytes};
 use crate::booking::{
-    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_PASSPORT_SYSTEM, BOOKING_SOURCE_PAGE_PREDICATE,
-    BOOKING_STATUS_PREDICATE, BookingError, BookingEventTypeRefValue, BookingSourcePageValue,
-    BookingStatus, BookingStatusValue, CalendarRevision, EventTypeKey,
+    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
+    BookingError, BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus,
+    BookingStatusValue, CalendarRevision, EventTypeKey,
 };
+#[cfg(test)]
 use crate::calendar::passport::live_passports_for_event;
 use crate::calendar::query::{CalendarRead, visit_calendar_events};
 use crate::claim::{ClaimSubject, claim_surfaceable};
@@ -79,8 +82,8 @@ fn request_fields(
     action_policy: EmergencyActionPolicy,
 ) -> Result<RequestFields<'_>, BookingError> {
     if window.start > window.end || reason.trim().is_empty() || reason.len() > 4096 {
-        return Err(refused(
-            "instruction requires an ordered window and a 1..=4096 byte reason",
+        return Err(BookingError::InvalidConstraint(
+            "instruction requires an ordered window and a 1..=4096 byte reason".to_owned(),
         ));
     }
     Ok(RequestFields {
@@ -224,6 +227,7 @@ pub(crate) fn append_instruction_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     request: &EmergencyRescheduleRequest,
 ) -> Result<(), BookingError> {
+    verify_owner_home_in(vault, wtxn, request.owner_ref)?;
     let expected = canonical_emergency_request_hash(
         request.affected_window,
         &request.reason,
@@ -264,6 +268,7 @@ pub(crate) fn verify_instruction_in_txn(
     txn: &heed::RoTxn<'_>,
     request: &EmergencyRescheduleRequest,
 ) -> Result<(), BookingError> {
+    verify_owner_home_in(vault, txn, request.owner_ref)?;
     let expected = canonical_emergency_request_hash(
         request.affected_window,
         &request.reason,
@@ -300,7 +305,16 @@ mod time_range_serde {
 }
 
 fn refused(reason: &str) -> BookingError {
-    BookingError::InvalidConstraint(reason.to_owned())
+    BookingError::InvalidConfig(reason.to_owned())
+}
+
+pub(crate) fn calendar_failure(error: crate::calendar::CalendarError) -> BookingError {
+    match error {
+        crate::calendar::CalendarError::InviteRefused { reason } => {
+            BookingError::InvalidConfig(reason)
+        }
+        other => storage_failure(other),
+    }
 }
 
 fn storage_failure(error: impl std::fmt::Display) -> BookingError {
@@ -324,6 +338,10 @@ mod entity_ref_serde {
     }
 }
 
+mod state;
+pub(crate) use state::{ensure_no_pending_effect_in, verify_frozen_effect_in};
+use state::{persist_content_in, verify_owner_home_in};
+
 mod enumeration;
 mod execution;
 mod pick;
@@ -334,17 +352,18 @@ use enumeration::enumerate_with_refusals;
 use enumeration::read_fact;
 pub use enumeration::{AffectedBooking, enumerate_affected_bookings};
 pub use execution::execute_emergency_plan;
-pub(crate) use pick::verify_pick_blob;
 pub use pick::{EmergencyPick, counterparty_pick};
+pub(crate) use pick::{verify_pick_blob, verify_pick_invite_in};
+use planning::blob_id;
 #[cfg(test)]
 use planning::plan_item;
 pub use planning::{
     EMERGENCY_ITEM_META_PREFIX, EMERGENCY_PLAN_META_PREFIX, EmergencyBatchPlan, EmergencyItem,
     EmergencyLocalBasis, EmergencyPlan, plan_emergency_reschedule,
 };
-use planning::{blob_id, delivery_parties};
 pub(crate) use planning::{
-    item_key, read_item_in, solve_live, verify_plan_blob, verify_plan_in, write_item_in,
+    item_key, read_item_in, solve_live, verify_initial_invite_in, verify_plan_blob, verify_plan_in,
+    write_item_in,
 };
 
 #[cfg(test)]

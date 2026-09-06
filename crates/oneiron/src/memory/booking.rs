@@ -19,8 +19,26 @@ pub struct EmergencyInstructionInput {
     pub recorded_at: u64,
 }
 
-fn booking_error(error: crate::booking::BookingError) -> MemoryError {
-    MemoryError::bad_request(error.to_string())
+pub(crate) fn booking_error(error: crate::booking::BookingError) -> MemoryError {
+    use crate::booking::BookingError;
+    if let BookingError::Boundary(error) = error {
+        return *error;
+    }
+    let code = match &error {
+        BookingError::Boundary(_) => unreachable!(),
+        BookingError::InvalidConstraint(_) | BookingError::ConstraintParse(_) => {
+            super::MEMORY_CODE_BAD_REQUEST
+        }
+        BookingError::InvalidConfig(_) | BookingError::SessionCapExhausted => {
+            super::MEMORY_CODE_INVALID_STATE
+        }
+        BookingError::SlotOracle(_) | BookingError::Surface(_) => super::MEMORY_CODE_INTERNAL,
+    };
+    MemoryError::new(
+        code,
+        error.to_string(),
+        &["Check current booking state and local storage before retrying."],
+    )
 }
 
 impl Memory<'_> {

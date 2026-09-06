@@ -11,7 +11,10 @@ pub struct EmergencyPlan {
     pub(crate) booking: AffectedBooking,
     pub(crate) proposals: Vec<crate::booking::RankedSlot>,
     pub(crate) planned_at: u64,
-    pub(crate) payload: crate::calendar::CalendarInvitePayload,
+    pub(crate) payload: Option<crate::calendar::CalendarInvitePayload>,
+    pub(crate) recipient: String,
+    pub(crate) organizer: String,
+    pub(crate) invite_before: Option<crate::calendar::CalendarPassportValue>,
     pub(crate) content_hash: [u8; 32],
 }
 
@@ -22,8 +25,8 @@ impl EmergencyPlan {
     pub fn proposals(&self) -> &[crate::booking::RankedSlot] {
         &self.proposals
     }
-    pub fn payload(&self) -> &crate::calendar::CalendarInvitePayload {
-        &self.payload
+    pub fn payload(&self) -> Option<&crate::calendar::CalendarInvitePayload> {
+        self.payload.as_ref()
     }
     pub(super) fn hash(&self) -> Result<[u8; 32], BookingError> {
         content_hash(&(
@@ -32,6 +35,9 @@ impl EmergencyPlan {
             &self.proposals,
             self.planned_at,
             &self.payload,
+            &self.recipient,
+            &self.organizer,
+            &self.invite_before,
         ))
     }
 }
@@ -205,8 +211,10 @@ pub fn plan_emergency_reschedule(
         plans: Vec::new(),
         refusals: Vec::new(),
     };
+    let mut saved_events = std::collections::BTreeSet::new();
     {
         let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+        verify_instruction_in_txn(vault, &txn, request)?;
         for row in vault
             .store
             .vault_meta
@@ -216,22 +224,51 @@ pub fn plan_emergency_reschedule(
             let (_, raw) = row.map_err(storage_failure)?;
             let plan: EmergencyPlan = serde_json::from_slice(&raw).map_err(storage_failure)?;
             if plan.request == *request {
+                let event = plan.booking.calendar.event_ref;
+                saved_events.insert(event);
                 verify_plan_in(vault, &txn, &plan)?;
-                batch.plans.push(plan);
+                let item = read_item_in(vault, &txn, &item_key(request, event)?)?;
+                if item.as_ref().is_some_and(|item| {
+                    item.picked.is_some() || (item.calendar_delivered && item.apology_delivered)
+                }) {
+                    continue;
+                }
+                if item.is_none()
+                    && (plan.booking.occurrence.start <= now_utc
+                        || plan.proposals.iter().any(|slot| slot.start_utc <= now_utc))
+                {
+                    batch.refusals.push((
+                        event,
+                        "saved emergency proposals are no longer future".to_owned(),
+                    ));
+                    continue;
+                }
+                let expected = item
+                    .as_ref()
+                    .map_or(&plan.booking.calendar, |item| &item.calendar);
+                match crate::booking::lifecycle::emergency_current_revision_in(vault, &txn, event) {
+                    Ok(current) if current == *expected => batch.plans.push(plan),
+                    Ok(_) => batch
+                        .refusals
+                        .push((event, "saved emergency plan is superseded".to_owned())),
+                    Err(error @ (BookingError::SlotOracle(_) | BookingError::Boundary(_))) => {
+                        return Err(error);
+                    }
+                    Err(error) => batch.refusals.push((event, error.to_string())),
+                }
             }
         }
     }
     for booking in enumerate_with_refusals(vault, request, now_utc, &mut batch.refusals)? {
         let event = booking.calendar.event_ref;
-        if batch
-            .plans
-            .iter()
-            .any(|plan| plan.booking.calendar.event_ref == event)
-        {
+        if saved_events.contains(&event) {
             continue;
         }
         match plan_item(vault, request, booking, calendars, now_utc) {
             Ok(plan) => batch.plans.push(plan),
+            Err(error @ (BookingError::SlotOracle(_) | BookingError::Boundary(_))) => {
+                return Err(error);
+            }
             Err(error) => batch.refusals.push((event, error.to_string())),
         }
     }
@@ -252,7 +289,7 @@ pub(super) fn plan_item(
     now_utc: u64,
 ) -> Result<EmergencyPlan, BookingError> {
     use crate::calendar::{CalendarInviteMethod, CalendarInvitePayload};
-    let sequence = booking
+    booking
         .calendar
         .sequence
         .checked_add(1)
@@ -292,8 +329,12 @@ pub(super) fn plan_item(
             "this booking has fewer than two live solver proposals",
         ));
     }
-    let (organizer, recipient) =
-        delivery_parties(vault, request.owner_ref, booking.calendar.event_ref)?;
+    let (organizer, recipient) = delivery_parties(vault, &booking)?;
+    let invite_before = {
+        let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+        state::invite_head_in(vault, &txn, &booking.calendar)?
+    };
+    let sequence = state::next_invite_sequence(invite_before.as_ref())?;
     let method = match request.action_policy {
         EmergencyActionPolicy::Cancel => CalendarInviteMethod::Cancel,
         EmergencyActionPolicy::RequestUpdate => CalendarInviteMethod::Request,
@@ -306,60 +347,81 @@ pub(super) fn plan_item(
             end: proposals[0].end_utc,
         }
     };
-    let ics = crate::calendar::ics::emit_imip_ics(&crate::calendar::ics::ImipEmitRequest {
-        method,
-        uid: booking.calendar.uid.clone(),
-        sequence,
-        organizer,
-        attendees: vec![recipient.clone()],
-        summary: booking.event_type.0.clone(),
-        starts_at_utc: slot.start,
-        ends_at_utc: slot.end,
-        tz_label: booking.context.visitor_tz.clone(),
-        dtstamp_utc: now_utc,
-    })
-    .map_err(storage_failure)?;
-    let blob = blob_id(&ics)?;
-    let ics_blob_ref = crate::calendar::ics::persist_imip_blob(
-        vault,
-        &blob,
-        &booking.event_type.0,
-        &ics,
-        &crate::blob_artifact::BlobVersionProvenance::UserUpload,
-        crate::write_envelope::WriteActor::new(
-            request.owner_ref,
-            crate::edge::EdgeActorClass::Human,
-        ),
-        now_utc,
-    )
-    .map_err(storage_failure)?;
+    // No invitation existed: cancellation is local plus apology, not a fake
+    // CANCEL or a synthetic sequence-zero invite. A later pick sends the first REQUEST.
+    let ics = if method == CalendarInviteMethod::Cancel && invite_before.is_none() {
+        None
+    } else {
+        Some(
+            crate::calendar::ics::emit_imip_ics(&crate::calendar::ics::ImipEmitRequest {
+                method,
+                uid: booking.calendar.uid.clone(),
+                sequence,
+                organizer: organizer.clone(),
+                attendees: vec![recipient.clone()],
+                summary: booking.event_type.0.clone(),
+                starts_at_utc: slot.start,
+                ends_at_utc: slot.end,
+                tz_label: booking.context.visitor_tz.clone(),
+                dtstamp_utc: now_utc,
+            })
+            .map_err(storage_failure)?,
+        )
+    };
     let mut plan = EmergencyPlan {
         request: request.clone(),
+        payload: ics
+            .as_ref()
+            .map(|ics| {
+                Ok::<_, BookingError>(CalendarInvitePayload {
+                    method,
+                    uid: booking.calendar.uid.clone(),
+                    sequence,
+                    ics_blob_ref: format!("blob:{}", blob_id(ics)?.to_hex()),
+                    recipient: recipient.clone(),
+                })
+            })
+            .transpose()?,
         booking,
         proposals,
         planned_at: now_utc,
-        payload: CalendarInvitePayload {
-            method,
-            uid: String::new(),
-            sequence,
-            ics_blob_ref,
-            recipient,
-        },
+        recipient,
+        organizer,
+        invite_before,
         content_hash: [0; 32],
     };
-    plan.payload.uid = plan.booking.calendar.uid.clone();
     plan.content_hash = plan.hash()?;
     booking_writer(vault, |txn| {
-        verify_instruction_in_txn(vault, &*txn, request)?;
+        verify_instruction_in_txn(vault, txn, request)?;
+        if crate::booking::lifecycle::emergency_current_revision_in(
+            vault,
+            txn,
+            plan.booking.calendar.event_ref,
+        )? != plan.booking.calendar
+            || state::invite_head_in(vault, txn, &plan.booking.calendar)? != plan.invite_before
+        {
+            return Err(refused("booking or invitation changed during planning"));
+        }
         let key = plan_key(request, plan.booking.calendar.event_ref)?;
         let encoded = serde_json::to_vec(&plan).map_err(storage_failure)?;
-        if let Some(prior) = read_meta_bytes(vault, &*txn, &key)? {
+        if let Some(prior) = read_meta_bytes(vault, txn, &key)? {
             if prior != encoded {
                 return Err(refused(
                     "same emergency revision has conflicting plan content",
                 ));
             }
         } else {
+            if let Some(ics) = &ics {
+                persist_content_in(
+                    vault,
+                    txn,
+                    request,
+                    &plan.booking.event_type.0,
+                    crate::calendar::CALENDAR_INVITE_MEDIA_TYPE,
+                    ics,
+                    now_utc,
+                )?;
+            }
             put_meta(vault, txn, &key, &encoded)?;
         }
         Ok(())
@@ -367,10 +429,26 @@ pub(super) fn plan_item(
     Ok(plan)
 }
 
+pub(crate) fn verify_initial_invite_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    plan: &EmergencyPlan,
+) -> Result<(), BookingError> {
+    if state::invite_head_in(vault, txn, &plan.booking.calendar)? != plan.invite_before {
+        return Err(refused(
+            "initial invitation changed after emergency planning",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_plan_blob(vault: &Vault, plan: &EmergencyPlan) -> Result<(), BookingError> {
+    let Some(payload) = &plan.payload else {
+        return Ok(());
+    };
     let bytes =
-        crate::calendar::read_calendar_invite_ics(vault, &plan.payload).map_err(storage_failure)?;
-    if plan.payload.ics_blob_ref != format!("blob:{}", blob_id(&bytes)?.to_hex()) {
+        crate::calendar::read_calendar_invite_ics(vault, payload).map_err(storage_failure)?;
+    if payload.ics_blob_ref != format!("blob:{}", blob_id(&bytes)?.to_hex()) {
         return Err(refused(
             "emergency ICS content conflicts with its content-addressed plan",
         ));
@@ -387,57 +465,30 @@ pub(super) fn blob_id(bytes: &[u8]) -> Result<EntityId, BookingError> {
 
 pub(super) fn delivery_parties(
     vault: &Vault,
-    owner: EntityId,
-    event: EntityId,
+    booking: &AffectedBooking,
 ) -> Result<(String, String), BookingError> {
-    use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
-    let mut organizer = None;
-    for channel in ["calendar", "email"] {
-        let mut candidates = Vec::new();
-        for id in vault
-            .entities_by_type(crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY)
-            .map_err(storage_failure)?
-        {
-            if let Some(identity) = vault.get_channel_identity(&id).map_err(storage_failure)?
-                && identity.state == ChannelIdentityState::Active
-                && identity.channel == channel
-                && identity.binding == ChannelIdentityBinding::agent(owner)
-            {
-                candidates.push(identity.address_or_handle);
-            }
+    let contact = EntityId::from_hex(&booking.context.booker_ref).map_err(storage_failure)?;
+    let recipient = crate::booking::invite_grant::booker_identity(vault, &contact)?
+        .ok_or_else(|| refused("stored booker contact has no delivery identity"))?;
+    if let Some((organizer, bound_recipient)) =
+        crate::booking::lifecycle::booking_invite_identity(vault, &booking.calendar.event_ref)?
+    {
+        if recipient != bound_recipient {
+            return Err(refused(
+                "stored booker differs from the original invite recipient",
+            ));
         }
-        if candidates.len() > 1 {
-            return Err(refused("ambiguous sending identity"));
-        }
-        if let Some(address) = candidates.pop() {
-            organizer = Some(address);
-            break;
+        return Ok((organizer, recipient));
+    }
+    // Before the first invite, resolve only a confirmation-bound host, in
+    // canonical host order. The initiating Both owner does not select ORGANIZER.
+    for host in &booking.context.owner_refs {
+        let host = EntityId::from_hex(host).map_err(storage_failure)?;
+        if let Some(organizer) = crate::booking::invite_grant::sending_address(vault, host)? {
+            return Ok((organizer, recipient));
         }
     }
-    let organizer = organizer.ok_or_else(|| refused("no active sending identity"))?;
-    let mut recipients = std::collections::BTreeSet::new();
-    for id in vault.claims_for_subject(&event).map_err(storage_failure)? {
-        if let Some(body) = vault.get_claim(&id).map_err(storage_failure)?
-            && claim_surfaceable(&body)
-            && body.predicate == crate::calendar::claims::PREDICATE_CALENDAR_ATTENDEE
-        {
-            let attendee = crate::calendar::claims::decode_attendee_value(&body.value)
-                .map_err(storage_failure)?;
-            if !attendee.who.eq_ignore_ascii_case(&organizer) {
-                recipients.insert(attendee.who);
-            }
-        }
-    }
-    if recipients.len() != 1 {
-        return Err(refused(
-            "this booking requires exactly one bound counterparty",
-        ));
-    }
-    Ok((
-        organizer,
-        recipients
-            .into_iter()
-            .next()
-            .ok_or_else(|| refused("missing counterparty"))?,
+    Err(refused(
+        "bound booking hosts have no active sending identity",
     ))
 }

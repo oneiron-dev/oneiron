@@ -72,6 +72,21 @@ pub(super) fn booking_error(error: BookingError) -> ApiError {
             tracing::error!(detail = %detail, "booking surface assembly failed");
             ApiError::internal_server_error("booking surface assembly failed")
         }
+        BookingError::Boundary(error) => {
+            use crate::error::ApiErrorDetails;
+            let details = match error.code.as_str() {
+                oneiron::MEMORY_CODE_FORBIDDEN => ApiErrorDetails::Forbidden {
+                    required_scope: None,
+                },
+                oneiron::MEMORY_CODE_INVALID_STATE => ApiErrorDetails::InvalidState {
+                    state: Some("booking_state".to_owned()),
+                },
+                oneiron::MEMORY_CODE_BAD_REQUEST => ApiErrorDetails::BadRequest { field: None },
+                oneiron::MEMORY_CODE_NOT_FOUND => return ApiError::not_found("booking", None),
+                _ => return ApiError::internal_server_error("booking boundary failed"),
+            };
+            ApiError::new(error.message, details, error.suggestions)
+        }
     }
 }
 
