@@ -16,6 +16,7 @@ use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 
+use super::corpus_filter::claim_matches_corpus;
 use super::support::normalize_range;
 use super::types::{
     DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, DreamerWorkingSet, DreamerWorkingSetBudget,
@@ -470,6 +471,7 @@ impl<'a> PipelineBuilder<'a> {
         affected_person: &EntityId,
         limit: usize,
     ) -> Result<Vec<CopingOutcomeRecord>> {
+        let corpus_scope = self.corpus_scope.clone().canonicalize()?;
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -480,6 +482,9 @@ impl<'a> PipelineBuilder<'a> {
                 continue;
             };
             if body.predicate != COPING_OUTCOME_PREDICATE || !claim_surfaceable(&body) {
+                continue;
+            }
+            if !claim_matches_corpus(&corpus_scope, &body)? {
                 continue;
             }
             validate_coping_outcome_claim_structure(&body)?;

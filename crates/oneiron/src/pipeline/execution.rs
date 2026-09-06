@@ -6,7 +6,6 @@ use heed::RoTxn;
 use crate::bm25::Bm25Config;
 use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
-use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fusion;
@@ -29,13 +28,13 @@ use super::blend::{
 use super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::builder::PipelineBuilder;
 use super::channels::{
-    execute_phonetic, execute_temporal, scoped_entity_channel_limit, scoped_text_channel_limit,
-    scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
+    execute_phonetic, scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
 };
+use super::corpus_filter::CorpusFilter;
 use super::filters::{
-    apply_claim_status_gate, apply_corpus_filter, apply_facet_filter, apply_filters,
-    apply_relationship_filter, apply_world_filter, claim_status_gate_allows,
-    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
+    apply_claim_status_gate, apply_facet_filter, apply_filters, apply_relationship_filter,
+    apply_world_filter, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
+    pipeline_candidate_matches_filters_and_gate,
 };
 use super::support::normalize_range;
 use super::trace::{
@@ -45,8 +44,7 @@ use super::trace::{
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PER_SCAN_CAP_FACTOR, PPR_DAMPING,
-    PendingVectorEmbedding, PipelineFilterConfig, PipelineOutput, RelMode, ScoredEntity,
-    WorldScope,
+    PendingVectorEmbedding, PipelineOutput, RelMode, ScoredEntity,
 };
 
 /// Detailed pipeline output for the context-pack path.
@@ -119,23 +117,8 @@ impl PipelineBuilder<'_> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
-            // ONE-1914: canonicalize the audience scope ONCE per run, before
-            // the first candidate is scanned, so the candidate-scan conjunct
-            // stays a pure predicate and an empty `AnyOf` fails the run closed
-            // on that path exactly as it does post-fusion.
-            let corpus_scope = self.corpus_scope.clone().canonicalize()?;
-            let filter_config = PipelineFilterConfig {
-                type_filter: self.type_filter.as_deref(),
-                since_filter: self.since_filter,
-                occurred_range,
-                learned_range: self.learned_range,
-                repo_ref_filter: self.repo_ref_filter.as_ref(),
-                project_id_filter: self.project_id_filter.as_deref(),
-                facet_filter: self.facet_filter,
-                relationship_filter: self.relationship_filter,
-                world_scope: self.world_scope,
-                corpus_scope: &corpus_scope,
-            };
+            let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
+            let filter_config = corpus_filter.config(self, occurred_range);
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
             // after fusion; overfetch prevents that dead hit from consuming
@@ -212,44 +195,18 @@ impl PipelineBuilder<'_> {
                 || claim_gate_text_widening_active;
 
             if let Some((query_vector, limit)) = &self.vector_search {
-                // EMB-2: a `fast_dims`-length query is a first-class prefix
-                // query on the funnel read path.
-                if query_vector.len() != self.vault.config.dimensions
-                    && self.vault.config.fast_dims.map(usize::from) != Some(query_vector.len())
-                {
-                    return Err(Error::DimensionMismatch {
-                        expected: self.vault.config.dimensions,
-                        got: query_vector.len(),
-                    });
-                }
-                if let Some(error) = Error::invalid_vector_component(query_vector) {
-                    return Err(error);
-                }
-
-                let channel_limit = scoped_vector_channel_limit(
-                    &self.vault.store,
+                let vector_results = self.scoped_vector_results(
                     &rtxn,
+                    query_vector,
                     if overrides.widen_channel_limits {
                         retry_channel_limit(*limit)
                     } else {
                         *limit
                     },
-                    codebase_scope_active,
-                )?;
-                let vector_results = crate::hnsw::hnsw_search(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &rtxn,
-                    query_vector,
-                    channel_limit,
-                    self.skip_vector_rescore,
-                )?;
-                let mut vector_probe_claim_gate = ClaimStatusGateCache::default();
-                import_claim_gate_decisions_for_scores(
+                    filter_config,
+                    &mut metadata_cache,
                     &mut claim_gate,
-                    &mut vector_probe_claim_gate,
-                    &vector_results,
-                );
+                )?;
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Vector,
@@ -283,30 +240,18 @@ impl PipelineBuilder<'_> {
                     .expect("hyde expansion has config")
                     .2
                     .channel_limit;
-                let channel_limit = scoped_vector_channel_limit(
-                    &self.vault.store,
+                let hyde_results = self.scoped_vector_results(
                     &rtxn,
+                    &expansion.embedding,
                     if overrides.widen_channel_limits {
                         retry_channel_limit(limit)
                     } else {
                         limit
                     },
-                    codebase_scope_active,
-                )?;
-                let hyde_results = crate::hnsw::hnsw_search(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &rtxn,
-                    &expansion.embedding,
-                    channel_limit,
-                    self.skip_vector_rescore,
-                )?;
-                let mut hyde_probe_claim_gate = ClaimStatusGateCache::default();
-                import_claim_gate_decisions_for_scores(
+                    filter_config,
+                    &mut metadata_cache,
                     &mut claim_gate,
-                    &mut hyde_probe_claim_gate,
-                    &hyde_results,
-                );
+                )?;
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Hyde,
@@ -529,23 +474,17 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(config) = &self.temporal_search {
-                let mut scoped_config = config.clone();
-                scoped_config.limit = scoped_entity_channel_limit(
-                    &self.vault.store,
+                let mut config = config.clone();
+                if overrides.widen_channel_limits {
+                    config.limit = retry_channel_limit(config.limit);
+                }
+                let temporal_results = self.scoped_temporal_results(
                     &rtxn,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(config.limit)
-                    } else {
-                        config.limit
-                    },
-                    codebase_scope_active,
-                )?;
-                let temporal_results = execute_temporal(
-                    &self.vault.store,
-                    &rtxn,
-                    &scoped_config,
+                    &config,
                     temporal_now,
+                    filter_config,
                     &mut metadata_cache,
+                    &mut claim_gate,
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -951,14 +890,14 @@ impl PipelineBuilder<'_> {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
 
-            // ONE-1914 corpus filter: the audience scope, immediately after
-            // the epistemic one and still before truncate, same read txn. A
-            // no-op under the default `CorpusScope::All`.
-            let before_corpus = scores.len();
-            apply_corpus_filter(&mut scores, &self.vault.store, &rtxn, &corpus_scope)?;
-            if before_corpus > 0 && scores.is_empty() {
-                empty_reason = Some(EmptyReason::FilterMatchedNone);
-            }
+            empty_reason = corpus_filter.apply(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                &mut claim_gate,
+                empty_reason,
+            )?;
             if let Some((relationship, RelMode::Filter)) = self.relationship_filter {
                 let before_relationship = scores.len();
                 apply_relationship_filter(
@@ -1638,27 +1577,6 @@ impl PipelineBuilder<'_> {
                 .ppr_expand
                 .as_ref()
                 .is_some_and(|(seeds, _)| !seeds.is_empty())
-    }
-
-    fn has_codebase_scope_filter(&self) -> bool {
-        self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
-    }
-
-    fn has_strict_text_scope_filter(&self) -> bool {
-        self.type_filter.is_some()
-            || self.since_filter.is_some()
-            || self.occurred_range.is_some()
-            || self.learned_range.is_some()
-            || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
-            || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
-            || self.world_scope != WorldScope::All
-            // ONE-1914: a narrowing audience scope removes text candidates
-            // exactly like a narrowing world scope, so it must widen the text
-            // channel too. Without this, an out-of-scope exact hit still
-            // consumes the only slot at `limit = 1` and the scoped truncate
-            // step never runs. `CorpusScope::All` spans every corpus and
-            // narrows nothing, so it stays as permissive as `WorldScope::All`.
-            || self.corpus_scope != CorpusScope::All
     }
 
     fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {

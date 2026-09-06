@@ -180,6 +180,10 @@ pub(super) struct PipelineFilterConfig<'a> {
 #[derive(Default)]
 pub(super) struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    // Counts D19 body lookups across all gates sharing this run cache, including
+    // probes whose decoded bodies are discarded rather than imported.
+    #[cfg(test)]
+    pub(super) claim_body_loads: usize,
 }
 
 /// Per-run memo for the D19 claim status gate.
@@ -193,6 +197,8 @@ pub(super) struct EntityMetadataCache {
 #[derive(Default)]
 pub(super) struct ClaimStatusGateCache {
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
+    #[cfg(test)]
+    pub(super) body_loads: usize,
 }
 
 pub(crate) struct PipelineOutput {
