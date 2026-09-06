@@ -2416,6 +2416,7 @@ fn scoped_ppr_never_traverses_a_denied_node() -> Result<()> {
         &[seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &visibility,
     )?;
@@ -2467,6 +2468,7 @@ fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> 
         &[readable, denied_seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &visibility,
     )?;
@@ -2476,6 +2478,7 @@ fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> 
         &[readable],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &visibility,
     )?;
@@ -2494,6 +2497,7 @@ fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> 
         &[readable, denied_seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &all_denied,
     )?;
@@ -2532,6 +2536,7 @@ fn scoped_ppr_is_compute_only_and_repeats_bit_for_bit() -> Result<()> {
         &[seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Specificity,
         &visibility,
     )?;
@@ -2541,6 +2546,7 @@ fn scoped_ppr_is_compute_only_and_repeats_bit_for_bit() -> Result<()> {
         &[seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Specificity,
         &visibility,
     )?;
@@ -2592,6 +2598,7 @@ fn scoped_ppr_fails_closed_when_the_visibility_predicate_errors() -> Result<()> 
             &[seed],
             2,
             0.15,
+            0.0,
             SeedWeighting::Uniform,
             &failing,
         )
@@ -3105,5 +3112,191 @@ fn ppr_vad_reverse_hops_use_the_same_salience_multiplier() -> Result<()> {
     let scores = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
     let expected = 1.0_f32 * (0.6 * 0.75 / 0.75) * (1.0 + 0.4 * 0.9) * (1.0 - 0.15);
     assert_eq!(score_for(&scores, source).to_bits(), expected.to_bits());
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_signed_zero_reuses_cache_and_exact_scores() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let target = entity(2);
+    vault.put_edge(&seed, EdgeKind::Mentions, &target, 1.0)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &target,
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut config = vault.config.clone();
+    config.ppr_vad_alpha = 0.0;
+    let positive = ppr_query(&vault.store, &config, &[seed], 2, 0.15)?;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    config.ppr_vad_alpha = -0.0;
+    let negative = ppr_query(&vault.store, &config, &[seed], 2, 0.15)?;
+    assert_eq!(score_bits(&positive), score_bits(&negative));
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_before);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before
+    );
+    for mode in [SeedWeighting::Uniform, SeedWeighting::Specificity] {
+        assert_eq!(
+            hash_seeds(&[seed], 2, 0.15, 0.0, mode),
+            hash_seeds(&[seed], 2, 0.15, -0.0, mode)
+        );
+    }
+    let txn = vault.store.env.read_txn()?;
+    let fresh = ppr_compute_state_weighted(
+        &vault.store,
+        &txn,
+        &[seed],
+        SeedWeighting::Uniform,
+        2,
+        PprAlphas {
+            teleport_alpha: 0.15,
+            ppr_vad_alpha: -0.0,
+        },
+        None,
+    )?;
+    assert_eq!(score_bits(&positive), score_bits(&fresh.scores));
+    Ok(())
+}
+
+#[test]
+fn scoped_ppr_vad_preserves_visibility_and_no_cache() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let visible = entity(2);
+    let denied = entity(3);
+    for target in [visible, denied] {
+        vault.put_edge(&seed, EdgeKind::Mentions, &target, 1.0)?;
+        vault.set_edge_vad(
+            &seed,
+            EdgeKind::Mentions,
+            &target,
+            Vad {
+                valence: -1.0,
+                arousal: 1.0,
+                dominance: 0.0,
+            },
+        )?;
+    }
+    // Warm a vault-wide row containing the denied member; scoped calls must
+    // neither serve it nor overwrite it, at zero or nonzero alpha.
+    ppr_query(&vault.store, &vault.config, &[seed], 1, 0.15)?;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    let txn = vault.store.env.read_txn()?;
+    let visibility = DeniedNodes::new(&[denied]);
+    let query = |alpha| {
+        ppr_query_scoped_in_txn(
+            &vault.store,
+            &txn,
+            &[seed],
+            1,
+            0.15,
+            alpha,
+            SeedWeighting::Specificity,
+            &visibility,
+        )
+    };
+    let zero = query(0.0)?;
+    assert_eq!(score_bits(&zero), score_bits(&query(-0.0)?));
+    assert_eq!(
+        score_for(&zero, visible).to_bits(),
+        (0.6_f32 * 0.85).to_bits()
+    );
+    let weighted = query(0.4)?;
+    assert!(score_for(&weighted, visible) > score_for(&zero, visible));
+    assert_eq!(score_for(&weighted, denied), 0.0);
+    assert_eq!(score_bits(&weighted), score_bits(&query(0.4)?));
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        assert!(matches!(query(alpha), Err(Error::InvalidConfig(_))));
+        for seeds in [&[][..], &[denied][..]] {
+            assert!(matches!(
+                ppr_query_scoped_in_txn(
+                    &vault.store,
+                    &txn,
+                    seeds,
+                    0,
+                    0.15,
+                    alpha,
+                    SeedWeighting::Uniform,
+                    &visibility
+                ),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+    }
+    drop(txn);
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_before);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before
+    );
+    Ok(())
+}
+
+#[test]
+fn pull_code_memory_threads_vad_alpha_and_rejects_invalid_config() -> Result<()> {
+    let (_dir, mut vault) = open_test_vault_with(VaultConfig::device());
+    let symbol_type = crate::registry::ENTITY_TYPE_CODE_SYMBOL;
+    let person_type = crate::registry::ENTITY_TYPE_PERSON;
+    let seed = scoped_pull_entity(&vault, 0x71, symbol_type)?;
+    let neutral = scoped_pull_entity(&vault, 0x72, symbol_type)?;
+    let salient = scoped_pull_entity(&vault, 0x73, symbol_type)?;
+    let author = scoped_pull_entity(&vault, 0x74, person_type)?;
+    let subject = scoped_pull_entity(&vault, 0x75, person_type)?;
+    let _neutral_note = scoped_pull_note(&vault, author, subject, neutral, 1)?;
+    let salient_note = scoped_pull_note(&vault, author, subject, salient, 2)?;
+    for target in [neutral, salient] {
+        vault.put_edge(&seed, EdgeKind::Mentions, &target, 1.0)?;
+    }
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &salient,
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut request = CodeMemoryPullRequest::new(vec![seed]);
+    request.minimum_relevance = 0.35;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    for alpha in [0.0, -0.0] {
+        vault.config.ppr_vad_alpha = alpha;
+        let result = vault.pull_code_memory(actor_key("vad-reader"), request.clone())?;
+        assert!(result.notes.is_empty());
+    }
+    vault.config.ppr_vad_alpha = 0.4;
+    let weighted = vault.pull_code_memory(actor_key("vad-reader"), request.clone())?;
+    assert_eq!(pulled_payload_ids(&weighted), vec![salient_note]);
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        vault.config.ppr_vad_alpha = alpha;
+        assert!(matches!(
+            vault.pull_code_memory(actor_key("vad-reader"), request.clone()),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            vault.pull_code_memory(
+                actor_key("vad-reader"),
+                CodeMemoryPullRequest::new(Vec::new())
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_before);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before
+    );
     Ok(())
 }

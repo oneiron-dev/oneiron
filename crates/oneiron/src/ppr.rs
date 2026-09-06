@@ -5,9 +5,9 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::config::validate_ppr_vad_alpha;
 #[cfg(test)]
-use crate::config::VaultConfig;
-use crate::config::{PPR_VAD_ALPHA_DEFAULT, validate_ppr_vad_alpha};
+use crate::config::{PPR_VAD_ALPHA_DEFAULT, VaultConfig};
 #[cfg(test)]
 use crate::edge::EDGE_VALUE_STRUCTURAL_LEN;
 use crate::edge::{
@@ -88,6 +88,7 @@ struct PprAlphas {
     ppr_vad_alpha: f32,
 }
 
+#[cfg(test)]
 impl PprAlphas {
     fn default_vad(teleport_alpha: f32) -> Self {
         Self {
@@ -581,7 +582,7 @@ fn frontier_to_map(frontier: Vec<PprFrontierEntry>) -> HashMap<(EntityId, u32), 
 
 /// Test-only uniform-seeded entry point ([`ppr_compute_weighted`] with
 /// [`SeedWeighting::Uniform`]); production callers route through
-/// `ppr_query_in_txn_with_deferred_cache`, which carries the mode.
+/// `ppr_query_in_txn_with_vad_deferred_cache`, which carries the mode.
 #[cfg(test)]
 pub(crate) fn ppr_compute(
     store: &impl ManifestDbs,
@@ -725,7 +726,7 @@ fn recency_tiered_cache_ttl_secs(
 
 /// Test-only convenience wrapper. Seeds UNIFORM mass (the `expand_ppr` /
 /// pre-Layer-2 path); Layer-2 tests go through
-/// [`ppr_query_in_txn_with_deferred_cache`] or the pipeline.
+/// [`ppr_query_in_txn_with_vad_deferred_cache`] or the pipeline.
 #[cfg(test)]
 pub(crate) fn ppr_query(
     store: &Store,
@@ -783,26 +784,7 @@ pub(crate) fn ppr_query_in_txn(
     .map(|(scores, _)| scores)
 }
 
-pub(crate) fn ppr_query_in_txn_with_deferred_cache(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    seeds: &[EntityId],
-    depth: u32,
-    teleport_alpha: f32,
-    weighting: SeedWeighting,
-) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
-    ppr_query_in_txn_with_vad_deferred_cache(
-        store,
-        txn,
-        seeds,
-        depth,
-        teleport_alpha,
-        PPR_VAD_ALPHA_DEFAULT,
-        weighting,
-    )
-}
-
-/// VAD-aware vault-wide query; the default-only wrapper preserves other callers.
+/// VAD-aware vault-wide query using the owning vault's configured coefficient.
 pub(crate) fn ppr_query_in_txn_with_vad_deferred_cache(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -829,7 +811,7 @@ pub(crate) fn ppr_query_in_txn_with_vad_deferred_cache(
 /// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
 ///
 /// Same Layer-1 formula, same λ table, same gates as
-/// [`ppr_query_in_txn_with_deferred_cache`], plus [`PprNodeVisibility`] as a
+/// [`ppr_query_in_txn_with_vad_deferred_cache`], plus [`PprNodeVisibility`] as a
 /// traversal gate — and three deliberate subtractions:
 ///
 /// 1. NO CACHE READ. `ppr_cache` rows are keyed by `(seeds, depth, teleport_alpha,
@@ -845,15 +827,21 @@ pub(crate) fn ppr_query_in_txn_with_vad_deferred_cache(
 /// dropped BEFORE [`seed_weights`] runs, so the personalization vector
 /// renormalizes over the readable seeds and still sums to 1.0. An all-denied
 /// seed set yields no scores at all rather than an unpersonalized walk.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scoped PPR carries both configured alphas and visibility"
+)]
 pub(crate) fn ppr_query_scoped_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
     teleport_alpha: f32,
+    ppr_vad_alpha: f32,
     weighting: SeedWeighting,
     visibility: &dyn PprNodeVisibility,
 ) -> Result<Vec<ScoredEntity>> {
+    validate_ppr_vad_alpha(ppr_vad_alpha)?;
     validate_ppr_request(seeds, depth)?;
 
     let mut readable_seeds = Vec::with_capacity(seeds.len());
@@ -872,7 +860,10 @@ pub(crate) fn ppr_query_scoped_in_txn(
         &readable_seeds,
         weighting,
         depth,
-        PprAlphas::default_vad(teleport_alpha),
+        PprAlphas {
+            teleport_alpha,
+            ppr_vad_alpha,
+        },
         Some(visibility),
     )?;
     Ok(state.scores)
@@ -1467,6 +1458,11 @@ fn sort_frontier(frontier: &mut [PprFrontierEntry]) {
     });
 }
 
+/// Signed zero has one identity, just as it has one production computation.
+pub(crate) fn canonical_vad_alpha(alpha: f32) -> f32 {
+    if alpha == 0.0 { 0.0 } else { alpha }
+}
+
 /// Cache key: `xxh3_128(sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖ PPR_FORMULA_VERSION ‖
 /// seed-weighting byte)`. The weighting byte keeps `search_ppr`
 /// (specificity-seeded) and `expand_ppr` (uniform-seeded) rows from ever
@@ -1492,7 +1488,7 @@ fn hash_seeds(
     }
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&teleport_alpha.to_le_bytes());
-    bytes.extend_from_slice(&ppr_vad_alpha.to_le_bytes());
+    bytes.extend_from_slice(&canonical_vad_alpha(ppr_vad_alpha).to_le_bytes());
     bytes.extend_from_slice(&PPR_FORMULA_VERSION.to_le_bytes());
     bytes.push(weighting.cache_key_byte());
 

@@ -6732,6 +6732,13 @@ fn ppr_vad_pipeline_search_and_real_expansion_thread_alpha_and_fork() -> Result<
         for id in [entity_id(2), entity_id(3)] {
             assert!(ppr_vad_trace_bits(&zero).contains(&(*id.as_bytes(), baseline.to_bits())));
         }
+        vault.config.ppr_vad_alpha = -0.0;
+        let negative_zero = ppr_vad_pipeline_trace(&vault, expand)?;
+        assert_eq!(
+            ppr_vad_trace_bits(&zero),
+            ppr_vad_trace_bits(&negative_zero)
+        );
+        assert_eq!(zero.fork_hash, negative_zero.fork_hash);
         vault.config.ppr_vad_alpha = 0.4;
         let weighted = ppr_vad_pipeline_trace(&vault, expand)?;
         let expected = 1.0_f32 * (0.6 * 0.5 / 1.0) * 1.4 * (1.0 - PPR_DAMPING);
