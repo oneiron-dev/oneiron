@@ -7,3 +7,4 @@
 
 pub mod smart_http;
 pub mod lfs;
+pub mod publication;
