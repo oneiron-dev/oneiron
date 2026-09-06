@@ -15,6 +15,7 @@ mod put_apply;
 mod short_id;
 mod txn_builder;
 mod types;
+mod vad_postcommit;
 mod vector_apply;
 
 #[cfg(test)]
@@ -22,6 +23,7 @@ mod tests;
 
 pub use self::builder::BatchBuilder;
 pub use self::txn_builder::TxnBatchBuilder;
+pub(crate) use self::vad_postcommit::VadPostcommitScope;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 pub(crate) use self::builder::BatchOp;

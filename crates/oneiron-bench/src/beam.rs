@@ -1307,6 +1307,23 @@ fn ppr_vad_retrieval_sample(
     depth: u32,
     alpha: f32,
 ) -> BeamResult<(Vec<oneiron::ScoredEntity>, f64)> {
+    let (_dir, vault) = ppr_vad_fixture_vault(fixture, alpha)?;
+    let start = Instant::now();
+    let rows = vault
+        .query()
+        .search_ppr(seeds, depth)
+        .limit(PPR_VAD_RECALL_K)
+        .run()?;
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    Ok((rows, elapsed_ms))
+}
+
+/// Validation and timed retrieval load the same stored graph through the same
+/// public write doors. Only query execution belongs in the latency sample.
+fn ppr_vad_fixture_vault(
+    fixture: &BeamFixture,
+    alpha: f32,
+) -> BeamResult<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
     let mut config = beam_vault_config();
     config.ppr_vad_alpha = alpha;
@@ -1322,14 +1339,7 @@ fn ppr_vad_retrieval_sample(
             vault.set_edge_vad(&source, kind, &target, vad)?;
         }
     }
-    let start = Instant::now();
-    let rows = vault
-        .query()
-        .search_ppr(seeds, depth)
-        .limit(PPR_VAD_RECALL_K)
-        .run()?;
-    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-    Ok((rows, elapsed_ms))
+    Ok((dir, vault))
 }
 
 fn validate_ppr_vad_fixture(manifest: &RunManifest, fixture: &BeamFixture) -> BeamResult<()> {
@@ -1398,7 +1408,16 @@ fn validate_ppr_vad_fixture(manifest: &RunManifest, fixture: &BeamFixture) -> Be
             "sweep requires both emotionally_salient and neutral selected subsets",
         ));
     }
-    let graph = ppr_vad_fixture_graph(fixture, &ids)?;
+    validate_ppr_vad_fixture_edges(fixture, &ids)?;
+    // Nonnegative propagation makes the largest sweep coefficient the widest
+    // reachable frontier. Observe a real mass change there, not graph-only
+    // connectivity. This diagnostic is separate from final-retrieval samples.
+    let alpha = oneiron::config::PPR_VAD_ALPHA_SWEEP
+        .iter()
+        .copied()
+        .max_by(f32::total_cmp)
+        .ok_or_else(|| invalid_fixture(fixture, "sweep has no coefficients"))?;
+    let (_dir, vault) = ppr_vad_fixture_vault(fixture, alpha)?;
     for case in fixture
         .cases
         .iter()
@@ -1409,7 +1428,7 @@ fn validate_ppr_vad_fixture(manifest: &RunManifest, fixture: &BeamFixture) -> Be
             .as_ref()
             .ok_or_else(|| invalid_fixture(fixture, "selected sweep cases require pprVadQuery"))?;
         if query.subset == PprVadSubset::EmotionallySalient
-            && !ppr_vad_reaches_salient_edge(query, &graph)?
+            && !ppr_vad_reaches_salient_edge(query, &vault)?
         {
             return Err(invalid_fixture(
                 fixture,
@@ -1423,10 +1442,10 @@ fn validate_ppr_vad_fixture(manifest: &RunManifest, fixture: &BeamFixture) -> Be
     Ok(())
 }
 
-fn ppr_vad_fixture_graph(
+fn validate_ppr_vad_fixture_edges(
     fixture: &BeamFixture,
     ids: &BTreeSet<EntityId>,
-) -> BeamResult<BTreeMap<EntityId, Vec<PprVadTraversalHop>>> {
+) -> BeamResult<()> {
     if fixture.ppr_vad_edges.is_empty() {
         return Err(invalid_fixture(
             fixture,
@@ -1434,7 +1453,6 @@ fn ppr_vad_fixture_graph(
         ));
     }
     let mut edges = BTreeSet::new();
-    let mut graph = BTreeMap::<EntityId, Vec<PprVadTraversalHop>>::new();
     for edge in &fixture.ppr_vad_edges {
         let source = EntityId::from_hex(&edge.source)?;
         let target = EntityId::from_hex(&edge.target)?;
@@ -1463,23 +1481,8 @@ fn ppr_vad_fixture_graph(
                 "sweep edges must be unique with valid kind, weight and VAD",
             ));
         }
-        // Mirror the production traversal exclusions, not default edge-weight
-        // priors. Opposes has a zero kind budget even with positive weight.
-        if edge.weight <= 0.0 || !ppr_vad_traversed_kind(kind) {
-            continue;
-        }
-        let salient = edge
-            .vad
-            .is_some_and(|vad| vad.valence.abs().max(vad.arousal) > 0.0);
-        for (from, to) in [(source, target), (target, source)] {
-            graph.entry(from).or_default().push(PprVadTraversalHop {
-                target: to,
-                part_of: kind == oneiron::EdgeKind::PartOf,
-                salient,
-            });
-        }
     }
-    Ok(graph)
+    Ok(())
 }
 
 // Closed allowlists keep new, unknown kinds fail-closed. Structural VAD is
@@ -1502,66 +1505,22 @@ fn ppr_vad_semantic_kind(kind: oneiron::EdgeKind) -> bool {
     )
 }
 
-fn ppr_vad_traversed_kind(kind: oneiron::EdgeKind) -> bool {
-    use oneiron::EdgeKind::*;
-    matches!(
-        kind,
-        AuthoredBy
-            | ScopedTo
-            | PartOf
-            | Supersedes
-            | BelongsTo
-            | ClaimOf
-            | DerivedFrom
-            | Mentions
-            | About
-            | Supports
-            | ParticipatesIn
-            | Attached
-            | EmployedBy
-            | HasFacet
-            | FacetOf
-            | InWorld
-            | SetIn
-            | MergedInto
-            | SplitInto
-    )
-}
-
-struct PprVadTraversalHop {
-    target: EntityId,
-    part_of: bool,
-    salient: bool,
-}
-
-/// Both stored directions are walked. Track the PartOf budget per path, just
-/// like PPR; reaching the source at the depth limit is not traversing its edge.
-fn ppr_vad_reaches_salient_edge(
-    query: &PprVadQuery,
-    graph: &BTreeMap<EntityId, Vec<PprVadTraversalHop>>,
-) -> BeamResult<bool> {
-    let mut frontier = query
+/// Use the production search pipeline, bypassing PPR caches only for this
+/// diagnostic. Its own frontier cutoff, per-direction strength normalization,
+/// seed specificity, teleport mass and PartOf cap decide effective reachability.
+/// The returned final rows are not substituted for the timed recall samples.
+fn ppr_vad_reaches_salient_edge(query: &PprVadQuery, vault: &Vault) -> BeamResult<bool> {
+    let seeds = query
         .seeds
         .iter()
-        .map(|id| EntityId::from_hex(id).map(|id| (id, 0_u32)))
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    for _ in 0..query.depth {
-        let mut next = BTreeSet::new();
-        for (node, hops) in frontier {
-            for edge in graph.get(&node).into_iter().flatten() {
-                let hops = hops + u32::from(edge.part_of);
-                if hops > 2 {
-                    continue;
-                }
-                if edge.salient {
-                    return Ok(true);
-                }
-                next.insert((edge.target, hops));
-            }
-        }
-        frontier = next;
-    }
-    Ok(false)
+        .map(|id| EntityId::from_hex(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (_, effective) = vault
+        .query()
+        .search_ppr(&seeds, query.depth)
+        .limit(PPR_VAD_RECALL_K)
+        .run_with_ppr_vad_evidence()?;
+    Ok(effective)
 }
 
 struct DeterministicContextPackArm;
@@ -2166,10 +2125,10 @@ pub(crate) fn run_fixture_manifest(
 
 fn run_manifest(manifest: &RunManifest, fixture: Option<&BeamFixture>) -> BeamResult<BeamReport> {
     validate_manifest(manifest)?;
+    validate_manifest_paths(manifest)?;
     if let (DatasetSource::Fixture { .. }, Some(fixture)) = (&manifest.dataset, fixture) {
         validate_manifest_fixture_cases(manifest, fixture)?;
     }
-    validate_manifest_paths(manifest)?;
 
     if matches!(manifest.dataset, DatasetSource::Jsonl { .. }) {
         return run_jsonl_manifest_isolated(manifest);
@@ -2721,8 +2680,12 @@ fn validate_manifest_dataset(manifest: &RunManifest) -> BeamResult<()> {
 }
 
 fn validate_manifest_paths(manifest: &RunManifest) -> BeamResult<()> {
-    let DatasetSource::Jsonl { path, .. } = &manifest.dataset else {
-        return Ok(());
+    let path = match &manifest.dataset {
+        DatasetSource::Jsonl { path, .. }
+        | DatasetSource::Fixture {
+            path: Some(path), ..
+        } => path,
+        _ => return Ok(()),
     };
     let Some(outputs) = &manifest.outputs else {
         return Ok(());
@@ -2733,7 +2696,12 @@ fn validate_manifest_paths(manifest: &RunManifest) -> BeamResult<()> {
     if input == output {
         return Err(invalid_manifest(
             manifest,
-            "outputs.packsJsonl must not resolve to the input run.jsonl path",
+            match &manifest.dataset {
+                DatasetSource::Jsonl { .. } => {
+                    "outputs.packsJsonl must not resolve to the input run.jsonl path"
+                }
+                _ => "outputs.packsJsonl must not resolve to the input fixture path",
+            },
         ));
     }
 
@@ -6488,6 +6456,83 @@ neighbors:
         ));
     }
 
+    fn fixture_file_manifest(dir: &Path, input: &str, output: &str) -> PathBuf {
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("fixture manifest");
+        manifest["dataset"]["path"] = serde_json::json!(input);
+        manifest["outputs"] = serde_json::json!({"packsJsonl": output});
+        manifest["arms"] = serde_json::json!(["deterministic"]);
+        let competitor = manifest["competitors"][0].clone();
+        manifest["competitors"] = serde_json::json!([competitor]);
+        let path = dir.join("run.json");
+        std::fs::write(&path, manifest.to_string()).expect("manifest file");
+        path
+    }
+
+    #[test]
+    fn fixture_outputs_must_not_overwrite_relative_input() {
+        for output in [
+            "data/fixture.json",
+            "data/./fixture.json",
+            "data/../data/fixture.json",
+        ] {
+            let dir = tempfile::tempdir().expect("private test directory");
+            std::fs::create_dir(dir.path().join("data")).expect("data directory");
+            let input = dir.path().join("data/fixture.json");
+            std::fs::write(&input, BUILTIN_FIXTURE_JSON).expect("fixture file");
+            let manifest = fixture_file_manifest(dir.path(), "data/fixture.json", output);
+            assert!(matches!(run_manifest_path(&manifest),
+                Err(BeamError::InvalidManifest { reason, .. })
+                    if reason.contains("must not resolve to the input fixture path")));
+            assert_eq!(
+                std::fs::read(&input).expect("preserved input"),
+                BUILTIN_FIXTURE_JSON.as_bytes()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fixture_outputs_must_not_overwrite_symlink_alias_input() {
+        for alias_is_input in [false, true] {
+            let dir = tempfile::tempdir().expect("private test directory");
+            let input = dir.path().join("fixture.json");
+            std::fs::write(&input, BUILTIN_FIXTURE_JSON).expect("fixture file");
+            std::os::unix::fs::symlink("fixture.json", dir.path().join("alias.json"))
+                .expect("private fixture alias");
+            let (source, output) = if alias_is_input {
+                ("alias.json", "fixture.json")
+            } else {
+                ("fixture.json", "alias.json")
+            };
+            let manifest = fixture_file_manifest(dir.path(), source, output);
+            assert!(matches!(run_manifest_path(&manifest),
+                Err(BeamError::InvalidManifest { reason, .. })
+                    if reason.contains("must not resolve to the input fixture path")));
+            assert_eq!(
+                std::fs::read(&input).expect("preserved input"),
+                BUILTIN_FIXTURE_JSON.as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn fixture_file_run_preserves_input_with_distinct_output() {
+        let dir = tempfile::tempdir().expect("private test directory");
+        let input = dir.path().join("fixture.json");
+        std::fs::write(&input, BUILTIN_FIXTURE_JSON).expect("fixture file");
+        let manifest = fixture_file_manifest(dir.path(), "./fixture.json", "packs.jsonl");
+        for _ in 0..2 {
+            let report = run_manifest_path(&manifest).expect("normal fixture run");
+            assert_eq!(report.fixture_id, "beam-128k-smoke");
+            assert!(dir.path().join("packs.jsonl").is_file());
+            assert_eq!(
+                std::fs::read(&input).expect("preserved input"),
+                BUILTIN_FIXTURE_JSON.as_bytes()
+            );
+        }
+    }
+
     #[test]
     fn contract_pack_rows_use_budgeted_serialized_text() {
         let manifest = parse_manifest_json(CONTRACT_MANIFEST_JSON).expect("manifest parses");
@@ -7037,6 +7082,100 @@ neighbors:
                 "{bridge_kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn ppr_vad_sweep_reachability_obeys_production_frontier_score_cutoff() {
+        let (mut fixture, manifest) = ppr_vad_test_fixture_and_manifest();
+        let mut edges = Vec::new();
+        for index in 0..8 {
+            edges.push(PprVadFixtureEdge {
+                source: fixture.records[index].id.clone(),
+                target: fixture.records[index + 1].id.clone(),
+                kind: oneiron::EdgeKind::SetIn as u8,
+                weight: 1.0,
+                vad: Some(oneiron::Vad::NEUTRAL),
+            });
+        }
+        let mut salient = fixture.ppr_vad_edges.last().expect("salient edge").clone();
+        salient.source = fixture.records[8].id.clone();
+        edges.push(salient);
+        fixture.ppr_vad_edges = edges;
+        fixture.cases[0]
+            .ppr_vad_query
+            .as_mut()
+            .expect("salient query")
+            .depth = 9;
+        // Graph reachability alone accepts this depth-nine path. Production
+        // stops its eight neutral SetIn hops below SCORE_EPSILON before it
+        // can multiply the only salient edge, at every sweep coefficient.
+        assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { reason, .. })
+                if reason.contains("must reach a positive-weight traversed semantic edge")));
+        let query = fixture.cases[0]
+            .ppr_vad_query
+            .as_ref()
+            .expect("salient query");
+        for &alpha in oneiron::config::PPR_VAD_ALPHA_SWEEP {
+            let (_dir, vault) = ppr_vad_fixture_vault(&fixture, alpha).expect("cutoff graph");
+            assert!(!ppr_vad_reaches_salient_edge(query, &vault).expect("production evidence"));
+        }
+        // Same depth, weights and VAD. Raising one neutral kind budget carries
+        // enough real frontier mass to traverse the salient edge at depth nine.
+        fixture.ppr_vad_edges[7].kind = oneiron::EdgeKind::Supports as u8;
+        assert!(validate_ppr_vad_fixture(&manifest, &fixture).is_ok());
+    }
+
+    #[test]
+    fn ppr_vad_evidence_uses_real_traversal_even_after_a_cached_query() {
+        let (fixture, _) = ppr_vad_test_fixture_and_manifest();
+        let query = fixture.cases[0]
+            .ppr_vad_query
+            .as_ref()
+            .expect("salient query");
+        let seeds = query
+            .seeds
+            .iter()
+            .map(|id| EntityId::from_hex(id).expect("seed"))
+            .collect::<Vec<_>>();
+        for &alpha in oneiron::config::PPR_VAD_ALPHA_SWEEP {
+            let (_dir, vault) = ppr_vad_fixture_vault(&fixture, alpha).expect("salient graph");
+            let rows = vault
+                .query()
+                .search_ppr(&seeds, query.depth)
+                .limit(15)
+                .run()
+                .expect("warm cache");
+            let (observed_rows, effective) = vault
+                .query()
+                .search_ppr(&seeds, query.depth)
+                .limit(15)
+                .run_with_ppr_vad_evidence()
+                .expect("fresh production evidence");
+            assert_eq!(effective, alpha != 0.0);
+            assert_eq!(
+                rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+                observed_rows.iter().map(|row| row.id).collect::<Vec<_>>()
+            );
+            // Diagnostic state cannot leak into subsequent queries or alphas.
+            assert_eq!(
+                ppr_vad_reaches_salient_edge(query, &vault).expect("repeat evidence"),
+                effective
+            );
+        }
+    }
+
+    #[test]
+    fn ppr_vad_sweep_rejects_salience_that_rounds_to_neutral() {
+        let (mut fixture, manifest) = ppr_vad_test_fixture_and_manifest();
+        fixture.ppr_vad_edges.last_mut().expect("salient edge").vad = Some(oneiron::Vad {
+            valence: 0.0,
+            arousal: f32::MIN_POSITIVE,
+            dominance: 0.0,
+        });
+        assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
+            Err(BeamError::InvalidFixture { reason, .. })
+                if reason.contains("must reach a positive-weight traversed semantic edge")));
     }
 
     #[test]

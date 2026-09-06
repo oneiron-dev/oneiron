@@ -3518,6 +3518,95 @@ fn ppr_community_preserves_canonical_vad_keys_and_nonzero_salience() -> Result<(
 }
 
 #[test]
+fn ppr_community_vad_evidence_bypasses_cold_exact_and_resume_cache_writes() -> Result<()> {
+    use crate::ppr_community::community_cache_identity;
+
+    for alpha in [0.0, 0.4] {
+        let mut config = embedding_test_config();
+        config.ppr_community.beta = 0.2;
+        config.ppr_vad_alpha = alpha;
+        let (_dir, vault) = open_test_vault_with(config);
+        community_ppr_fixture(&vault)?;
+        vault
+            .batch()
+            .text(&entity(1), &[("body", "salientseed")])
+            .commit()?;
+        vault.put_edge(&entity(1), EdgeKind::Mentions, &entity(2), 1.0)?;
+        vault.set_edge_vad(
+            &entity(1),
+            EdgeKind::Mentions,
+            &entity(2),
+            Vad {
+                valence: -1.0,
+                arousal: 1.0,
+                dominance: 0.0,
+            },
+        )?;
+        let query = |depth| {
+            vault
+                .query()
+                .search_text("salientseed", 10)
+                .expand_ppr(&[entity(1)], depth)
+                .with_temporal_now(1)
+                .limit(10)
+        };
+
+        // The nonzero community prior still runs, but a cold snapshot must
+        // not reintroduce the deferred write suppressed by the diagnostic.
+        let (cold, effective) = query(1).run_with_ppr_vad_evidence()?;
+        assert!(!cold.is_empty());
+        assert_eq!(effective, alpha != 0.0);
+        {
+            let txn = vault.store.env.read_txn()?;
+            assert_eq!(vault.store.ppr_cache.len(&txn)?, 0);
+            assert_eq!(vault.store.ppr_cache_deps.len(&txn)?, 0);
+            assert!(vault.store.ppr_community_snapshot_in_txn(&txn)?.is_none());
+        }
+
+        // Normal queries retain the community namespace and publish both
+        // caches after the diagnostic scope has ended.
+        let warm = query(1).run()?;
+        assert_scores_equal(&cold, &warm);
+        let key = hash_community_seeds(
+            hash_seeds(&[entity(1)], 1, 0.15, alpha, SeedWeighting::Uniform),
+            community_cache_identity(0.2, graph_version(&vault)?).expect("identity"),
+        );
+        {
+            let mut txn = vault.store.env.write_txn()?;
+            assert!(vault.store.ppr_cache.get(&txn, &key)?.is_some());
+            assert!(vault.store.ppr_community_snapshot_in_txn(&txn)?.is_some());
+            // A malformed row proves bypass, not just a lucky cache miss.
+            vault.store.ppr_cache.put(&mut txn, &key, b"corrupt")?;
+            txn.commit()?;
+        }
+        let (cache_count, dep_count) = {
+            let txn = vault.store.env.read_txn()?;
+            (
+                vault.store.ppr_cache.len(&txn)?,
+                vault.store.ppr_cache_deps.len(&txn)?,
+            )
+        };
+        for depth in [1, 2] {
+            // Depth one would read the exact row; depth two would resume it.
+            let (rows, effective) = query(depth).run_with_ppr_vad_evidence()?;
+            assert_eq!(effective, alpha != 0.0);
+            if depth == 1 {
+                assert_scores_equal(&rows, &warm);
+            }
+            let txn = vault.store.env.read_txn()?;
+            assert_eq!(vault.store.ppr_cache.len(&txn)?, cache_count);
+            assert_eq!(vault.store.ppr_cache_deps.len(&txn)?, dep_count);
+            assert_eq!(
+                vault.store.ppr_cache.get(&txn, &key)?.as_deref(),
+                Some(b"corrupt".as_slice())
+            );
+        }
+        assert!(matches!(query(1).run(), Err(Error::CorruptedIndex(_))));
+    }
+    Ok(())
+}
+
+#[test]
 fn ppr_community_nonzero_cache_contains_base_state_and_session_decay_is_not_cached() -> Result<()> {
     use crate::ppr_community::{CommunityBoostContext, community_cache_identity};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());

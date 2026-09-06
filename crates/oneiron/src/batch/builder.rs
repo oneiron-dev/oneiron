@@ -819,28 +819,8 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
-        let mut pending_vad_ids = Vec::new();
-        for op in &self.ops {
-            let (id, approval) = match op {
-                BatchOp::Put {
-                    id,
-                    entity_type,
-                    data,
-                    allow_reserved_predicate: false,
-                    ..
-                } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
-                    (*id, crate::claim::decode_claim_body(data, false)?.approval)
-                }
-                BatchOp::ClaimCandidate { id, envelope, .. } => (*id, envelope.approval()),
-                _ => continue,
-            };
-            if self
-                .vault
-                .pending_dreamer_vad_approval_in_txn(&wtxn, &id, approval)?
-            {
-                pending_vad_ids.push(id);
-            }
-        }
+        let pending_vad_ids =
+            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
 
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
