@@ -1656,7 +1656,10 @@ fn ref_tree_carries_path(
             return Ok(false);
         }
         let entries = read_tree_entries(wire, handle, trees, &current)?;
-        let Some(entry) = entries.iter().find(|entry| entry.name == component.as_bytes()) else {
+        let Some(entry) = entries
+            .iter()
+            .find(|entry| entry.name == component.as_bytes())
+        else {
             return Ok(false);
         };
         let mode = entry.mode;

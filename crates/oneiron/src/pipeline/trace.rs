@@ -196,6 +196,10 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
+    fork_hash_f32(
+        &mut hasher,
+        crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+    );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
     fork_hash_bool(&mut hasher, builder.recency_blend_enabled);

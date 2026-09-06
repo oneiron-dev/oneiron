@@ -72,12 +72,20 @@ fn write_dreamer_proposal(
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, time(1), 1, b"dreamer actor")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
     let envelope = dreamer_envelope(actor, run_id);
+    let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     let candidate = crate::write_envelope::ClaimCandidate::new(
         predicate,
         ClaimSubject::Entity(subject),
         Value::from(value),
         0.9,
-    );
+    )
+    .with_evidence(evidence);
     vault
         .batch()
         .claim_candidate(
@@ -367,6 +375,13 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
         &[REASON_CEILING],
     )?;
 
+    let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     vault
         .batch()
         .claim_candidate(
@@ -376,7 +391,8 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
                 ClaimSubject::Entity(subject),
                 Value::from("go"),
                 0.9,
-            ),
+            )
+            .with_evidence(evidence),
             &dreamer_envelope(actor, run_id),
             time(21),
             21,
@@ -1641,4 +1657,296 @@ fn an_unmeasurable_pair_records_the_gap_instead_of_raising() {
     let (delta, reasons) = captured_amendment_delta(&good, &good);
     assert!(delta.is_some());
     assert!(reasons.is_empty());
+}
+
+#[cfg(test)]
+mod vad_vetting_tests {
+    use super::*;
+    use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, Vad, VadAnnotation, VadAnnotationSource};
+    use crate::edge::EdgeKind;
+    use crate::registry::ENTITY_TYPE_TURN;
+
+    const RUN: &str = "vad-vetting";
+    const FULL_VAD: Vad = Vad {
+        valence: -0.5,
+        arousal: 0.75,
+        dominance: 0.25,
+    };
+
+    fn proposal(vault: &Vault, predicate: &str) -> Result<(EntityId, EntityId)> {
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        let turn = EntityId::now();
+        let claim = EntityId::now();
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, time(1), 1, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
+        let turn_body =
+            rmp_serde::to_vec_named(&serde_json::json!({"txt": "evidence"})).expect("turn body");
+        vault.put_entity(&turn, ENTITY_TYPE_TURN, time(2), 2, &turn_body)?;
+        vault.annotate_turn_vad(
+            &turn,
+            VadAnnotation::new(FULL_VAD, VadAnnotationSource::ModelInference, 3)?,
+        )?;
+        let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
+            &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+                refs: vec![turn],
+                chain: Vec::new(),
+                source_meet: ClaimSource::Generated,
+            },
+        );
+        let candidate = crate::write_envelope::ClaimCandidate::new(
+            predicate,
+            ClaimSubject::Entity(subject),
+            Value::from("draft"),
+            0.9,
+        )
+        .with_evidence(evidence);
+        vault
+            .batch()
+            .claim_candidate(
+                &claim,
+                candidate,
+                &dreamer_envelope(actor, RUN),
+                time(10),
+                10,
+            )
+            .commit()?;
+        add_pending_row(vault, claim, actor, 10, &[REASON_CHECKER], RUN)?;
+        vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+        vault.put_edge(&subject, EdgeKind::Supports, &claim, 1.0)?;
+        vault.put_edge(&claim, EdgeKind::BelongsTo, &subject, 1.0)?;
+        Ok((claim, turn))
+    }
+
+    fn assert_populated_before_retry(vault: &Vault, claim: EntityId) -> Result<()> {
+        assert_eq!(
+            vault.get_claim(&claim)?.expect("approved").approval,
+            ClaimApprovalStatus::Approved
+        );
+        let mut semantic = 0;
+        let mut structural = 0;
+        for edge in vault
+            .edges_out(&claim)?
+            .into_iter()
+            .chain(vault.edges_in(&claim)?)
+        {
+            match edge.kind {
+                EdgeKind::Mentions | EdgeKind::Supports => {
+                    semantic += 1;
+                    assert_eq!(edge.vad, Some(FULL_VAD));
+                }
+                EdgeKind::BelongsTo => {
+                    structural += 1;
+                    assert_eq!(edge.vad, None);
+                }
+                _ => {}
+            }
+        }
+        let mut states = Vec::new();
+        for edge in vault.edges_in(&claim)? {
+            if edge.kind == EdgeKind::ClaimOf
+                && let Some(body) = vault.get_claim(&edge.target)?
+                && body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                states.push(edge.target);
+            }
+        }
+        assert_eq!(
+            semantic, 2,
+            "both incident directions populated by production hook"
+        );
+        assert_eq!(structural, 1);
+        assert_eq!(states.len(), 1, "hook created exactly one audit state");
+        let retry = vault.consolidate_claim_vad_now(&claim, 30)?;
+        assert_eq!(retry.vad, Some(FULL_VAD));
+        assert_eq!(retry.reappraisal.active_claim_id, Some(states[0]));
+        assert_eq!(retry.reappraisal.created_claim_id, None);
+        Ok(())
+    }
+
+    #[test]
+    fn inbox_accept_all_hook_populates_full_vad_and_skips_structural() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let (claim, _) = proposal(&vault, "profile.name")?;
+        let (other, _) = proposal(&vault, "profile.tone")?;
+        let resolution = vault.resolve_inbox_group_at(RUN, InboxBulkVerb::AcceptAll, None, 20)?;
+        assert_eq!(resolution.item_receipts.len(), 2);
+        assert_populated_before_retry(&vault, claim)?;
+        assert_populated_before_retry(&vault, other)?;
+        assert!(matches!(
+            vault.resolve_inbox_group_at(RUN, InboxBulkVerb::AcceptAll, None, 31),
+            Err(Error::EntityNotFound)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn inbox_edit_hook_populates_full_vad_and_skips_structural() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let (claim, _) = proposal(&vault, "profile.name")?;
+        let amended = edited_body(&vault, claim, "reviewed")?;
+        let approval = vault.approve_inbox_member_with_edit_at(&claim, &amended, 20)?;
+        assert_eq!(approval.receipt.outcome, OUTCOME_APPROVED_AMENDED);
+        assert_eq!(
+            vault.get_claim(&claim)?.expect("amended").value,
+            Value::from("reviewed")
+        );
+        assert_populated_before_retry(&vault, claim)?;
+        Ok(())
+    }
+
+    #[test]
+    fn inbox_approval_vad_failure_is_loud_after_approved_commit() -> Result<()> {
+        for (predicate, expected) in [
+            (
+                CLAIM_VAD_REAPPRAISAL_PREDICATE,
+                "claim VAD state claims cannot be consolidated",
+            ),
+            (
+                "affect.vad",
+                "turn VAD annotation claims cannot be consolidated",
+            ),
+        ] {
+            for edit in [false, true] {
+                let (_tmp, vault) = temp_vault();
+                let (claim, _) = proposal(&vault, predicate)?;
+                let amended = edited_body(&vault, claim, "reviewed")?;
+                let approve = || {
+                    if edit {
+                        vault
+                            .approve_inbox_member_with_edit_at(&claim, &amended, 20)
+                            .map(|_| ())
+                    } else {
+                        vault
+                            .resolve_inbox_group_at(RUN, InboxBulkVerb::AcceptAll, None, 20)
+                            .map(|_| ())
+                    }
+                };
+                assert!(matches!(
+                    approve(),
+                    Err(Error::InvalidClaimBody(message)) if message == expected
+                ));
+                assert_eq!(
+                    vault.get_claim(&claim)?.expect("durable approval").approval,
+                    ClaimApprovalStatus::Approved
+                );
+                assert!(vault.pending_gate_consents(10)?.is_empty());
+                assert!(matches!(approve(), Err(Error::EntityNotFound)));
+                assert!(matches!(
+                    vault.consolidate_claim_vad_now(&claim, 30),
+                    Err(Error::InvalidClaimBody(message)) if message == expected
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inbox_vad_error_keeps_approval_and_canonical_retry_recovers_idempotently() -> Result<()> {
+        for edit in [false, true] {
+            let (_tmp, vault) = temp_vault();
+            let (claim, turn) = proposal(&vault, "profile.name")?;
+            let annotation = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+            let original = {
+                let rtxn = vault.store.env.read_txn()?;
+                vault
+                    .store
+                    .entities
+                    .get(&rtxn, annotation.as_bytes())?
+                    .expect("annotation claim")
+                    .to_vec()
+            };
+            // A valid envelope with the wrong entity type is a deterministic
+            // canonical VAD error, not an approval or evidence-binding failure.
+            vault.with_write_txn(|wtxn| {
+                let corrupt = crate::test_util::entity_record(
+                    ENTITY_TYPE_PERSON,
+                    time(3),
+                    3,
+                    b"corrupt annotation",
+                );
+                vault
+                    .store
+                    .entities
+                    .put(wtxn, annotation.as_bytes(), &corrupt)?;
+                Ok(())
+            })?;
+            let amended = edited_body(&vault, claim, "reviewed")?;
+            let approve = || {
+                if edit {
+                    vault
+                        .approve_inbox_member_with_edit_at(&claim, &amended, 20)
+                        .map(|_| ())
+                } else {
+                    vault
+                        .resolve_inbox_group_at(RUN, InboxBulkVerb::AcceptAll, None, 20)
+                        .map(|_| ())
+                }
+            };
+            assert!(matches!(
+                approve(),
+                Err(Error::CorruptedIndex("VAD annotation claim"))
+            ));
+            let stored = vault
+                .get_claim(&claim)?
+                .expect("approved survives VAD failure");
+            assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+            if edit {
+                assert_eq!(stored.value, Value::from("reviewed"));
+            }
+            assert!(vault.pending_gate_consents(10)?.is_empty());
+            assert!(matches!(approve(), Err(Error::EntityNotFound)));
+            vault.with_write_txn(|wtxn| {
+                vault
+                    .store
+                    .entities
+                    .put(wtxn, annotation.as_bytes(), &original)?;
+                Ok(())
+            })?;
+            let recovered = vault.consolidate_claim_vad_now(&claim, 30)?;
+            assert_eq!(recovered.vad, Some(FULL_VAD));
+            assert!(recovered.reappraisal.created_claim_id.is_some());
+            assert_populated_before_retry(&vault, claim)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inbox_non_approving_verbs_do_not_consolidate() -> Result<()> {
+        for verb in [InboxBulkVerb::RejectAll, InboxBulkVerb::ReviewEach] {
+            let (_tmp, vault) = temp_vault();
+            let (claim, _) = proposal(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+            vault.resolve_inbox_group_at(RUN, verb, None, 20)?;
+            let stored = vault.get_claim(&claim)?.expect("stored member");
+            assert_ne!(stored.approval, ClaimApprovalStatus::Approved);
+            for edge in vault.edges_out(&claim)? {
+                if edge.kind == EdgeKind::Mentions {
+                    assert_eq!(edge.vad, Some(Vad::NEUTRAL));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inbox_non_dreamer_edit_does_not_consolidate() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let (claim, _) = proposal(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+        vault.with_write_txn(|wtxn| {
+            let mut pending = vault
+                .store
+                .pending_gate_consent_in_txn(wtxn, &claim)?
+                .expect("pending");
+            pending.dreamer_run_id = None;
+            vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+        })?;
+        let amended = edited_body(&vault, claim, "reviewed")?;
+        vault.approve_inbox_member_with_edit_at(&claim, &amended, 20)?;
+        assert_eq!(
+            vault.get_claim(&claim)?.expect("approved").approval,
+            ClaimApprovalStatus::Approved
+        );
+        Ok(())
+    }
 }

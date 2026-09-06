@@ -570,12 +570,13 @@ impl PipelineBuilder<'_> {
                 // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                 // instead of uniform 1/n.
                 let (ppr_results, deferred_cache_write) =
-                    crate::ppr::ppr_query_in_txn_with_deferred_cache(
+                    crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
                         &self.vault.store,
                         &rtxn,
                         seeds,
                         *depth,
                         PPR_DAMPING,
+                        self.vault.config.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Specificity,
                     )?;
                 add_signal_score_components(
@@ -738,12 +739,13 @@ impl PipelineBuilder<'_> {
                     // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
                     // specificity weighting is search_ppr-only.
                     let (mut ppr_results, deferred_cache_write) =
-                        crate::ppr::ppr_query_in_txn_with_deferred_cache(
+                        crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
                             &self.vault.store,
                             &rtxn,
                             &seeds,
                             *depth,
                             PPR_DAMPING,
+                            self.vault.config.ppr_vad_alpha,
                             crate::ppr::SeedWeighting::Uniform,
                         )?;
                     if let Some(deferred_cache_write) = deferred_cache_write {
@@ -1230,6 +1232,9 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        if self.ppr_search.is_some() || self.ppr_expand.is_some() {
+            crate::config::validate_ppr_vad_alpha(self.vault.config.ppr_vad_alpha)?;
+        }
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
