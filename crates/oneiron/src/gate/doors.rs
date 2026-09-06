@@ -12,8 +12,15 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
+use crate::llm::{
+    AUTO_CHECK_VALUE_PREVIEW_BYTES, AutoCheckCandidate, AutoCheckOutcome, AutoChecker,
+    truncate_on_char_boundary,
+};
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
+use crate::store::{
+    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store,
+    checker_hold_receipt_reason,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope};
 
@@ -68,6 +75,7 @@ pub(crate) fn check_claim_policy_for_write(
         ClaimGateWrite {
             body,
             envelope,
+            auto_checker: None,
             defer_metrics_until_commit: false,
         },
         policy,
@@ -100,6 +108,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         ClaimGateWrite {
             body,
             envelope,
+            auto_checker: None,
             defer_metrics_until_commit: false,
         },
         policy,
@@ -153,6 +162,7 @@ fn check_claim_policy_for_write_with_record_inner(
     let ClaimGateWrite {
         body,
         envelope,
+        auto_checker,
         defer_metrics_until_commit,
     } = write;
     *recorded_decision = None;
@@ -271,6 +281,82 @@ fn check_claim_policy_for_write_with_record_inner(
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
         }
+
+        // ONE-1296: the host's auto checker is the LAST word on an ORDINARY
+        // Auto verdict, and only that. It runs after everything the engine
+        // decides for itself — pre-commit validity, the policy verdict,
+        // GATE-13 isolation, the critical-confirm attachment — so a write
+        // already refused or already parked is never consulted about, and the
+        // checker can only NARROW a verdict, never widen one.
+        //
+        // The consult is EXACTLY: a manifest names a checker, a checker is
+        // injected for this write, the ordinary decision is Auto, the write is
+        // an agent-class Dreamer write, and its source is one that requires an
+        // explicit auto permit. Human and owner writes therefore never reach a
+        // checker at all, and neither does any door that passes `None`.
+        //
+        // A confirm-attached Auto is excluded because it is not the ordinary
+        // verdict: the ordinary verdict there was a criticality-floor PEND,
+        // and what replaced it is an owner ceremony bound to this exact claim.
+        // A host hedge must not overrule a confirmation the owner just gave,
+        // and rewriting that decision would also drop the criticality marker
+        // the inbox classifies on.
+        //
+        // ONE-1314 widens this source check to source OR lineage.
+        let mut checker_receipt_reasons: Vec<String> = Vec::new();
+        if decision.outcome() == GateOutcome::Allow
+            && !attach_critical_confirm
+            && dreamer_candidate
+            && policy.auto_checker().is_some()
+            && let Some(checker) = auto_checker
+            && let Some(source) = body
+                .source
+                .filter(|source| source.requires_explicit_auto_permit())
+        {
+            let value_preview = auto_check_value_preview(&body.value);
+            let candidate = AutoCheckCandidate {
+                predicate: &body.predicate,
+                value_preview: &value_preview,
+                source,
+                actor_class: &input.actor.actor_class,
+                sensitivity_band: claim_sensitivity_band(body),
+            };
+            // Exactly one call per write. `normalized` is applied here too, so
+            // an unbounded implementation injected without the bounded wrapper
+            // still cannot write an unexplained hold or an unbounded receipt.
+            match checker.check(&candidate).normalized() {
+                AutoCheckOutcome::Allow => {}
+                AutoCheckOutcome::Hold { reasons } => {
+                    // A host names its reasons in prose; the decision ledger's
+                    // receipt field is a closed token vocabulary vetted on the
+                    // append AND decode paths. Rendering them here is what
+                    // keeps a hold RECORDABLE: the raw text would fail the vet
+                    // and cost the whole decision row, so the write the
+                    // checker meant to park would fail with a corrupt-ledger
+                    // error instead of parking.
+                    checker_receipt_reasons = reasons
+                        .iter()
+                        .filter_map(|reason| checker_hold_receipt_reason(reason.as_str()))
+                        .collect();
+                    // Same rule `AutoCheckOutcome::normalized` already applies
+                    // one step earlier: a hold left naming no reason is a
+                    // malformed verdict, not a quiet hold, and an unexplained
+                    // refusal on the receipt is the one thing this seam must
+                    // not produce. Both verdicts park the write, so nothing
+                    // widens either way.
+                    decision = if checker_receipt_reasons.is_empty() {
+                        GateDecision::pending(vec![GateReasonCode::PendingCheckerUnavailable])
+                    } else {
+                        GateDecision::pending(vec![GateReasonCode::PendingChecker])
+                    };
+                }
+                AutoCheckOutcome::Unavailable => {
+                    decision =
+                        GateDecision::pending(vec![GateReasonCode::PendingCheckerUnavailable]);
+                }
+            }
+        }
+
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
         let created_at = crate::unix_seconds_now();
@@ -288,6 +374,11 @@ fn check_claim_policy_for_write_with_record_inner(
                 .receipt_reasons()
                 .iter()
                 .map(|reason| (*reason).to_owned())
+                // The checker's own reasons append to the receipt, rendered
+                // above into the ledger's token vocabulary: an owner reviewing
+                // a held write reads WHY the host held it, not just that
+                // something did.
+                .chain(checker_receipt_reasons)
                 .collect(),
             system_notices: Vec::new(),
             actor_class: input.actor.actor_class.clone(),
@@ -393,6 +484,22 @@ fn check_claim_policy_for_write_with_record_inner(
     check_claim_source_trust(body, actor_ref.as_deref(), policy)
 }
 
+/// The bounded claim-value prefix an auto-check candidate carries (ONE-1296).
+///
+/// A string value is shown as itself; anything else is rendered through the
+/// MessagePack value's own display, because the engine does not interpret
+/// typed claim payloads. Either way the checker sees at most
+/// [`AUTO_CHECK_VALUE_PREVIEW_BYTES`], truncated on a character boundary: this
+/// seam asks for a second opinion on a candidate, it is not a disclosure
+/// channel for whole claim values.
+fn auto_check_value_preview(value: &Value) -> String {
+    let rendered = match value.as_str() {
+        Some(text) => text.to_owned(),
+        None => value.to_string(),
+    };
+    truncate_on_char_boundary(&rendered, AUTO_CHECK_VALUE_PREVIEW_BYTES).to_owned()
+}
+
 /// The hex actor ref an envelope attributes a write to, for source-trust row
 /// selection. An envelope-less local write stays unattributed (`None`) and so
 /// never rides an actor-bound permit.
@@ -412,6 +519,13 @@ pub(crate) struct GateWriteMode {
 pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) body: &'a ClaimBody,
     pub(crate) envelope: Option<&'a WriteEnvelope>,
+    /// The host's auto checker for THIS write (ONE-1296), or `None`.
+    ///
+    /// Injection rides the write options and nothing else: the checker is
+    /// never stored on the `Store` or on a resolved `PolicyManifestResolution`,
+    /// so there is no hidden mutable host state a later write could inherit,
+    /// and every door that does not opt in is unchanged by construction.
+    pub(crate) auto_checker: Option<&'a dyn AutoChecker>,
     pub(crate) defer_metrics_until_commit: bool,
 }
 

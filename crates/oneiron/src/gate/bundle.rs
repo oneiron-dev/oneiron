@@ -134,6 +134,9 @@ impl Vault {
                     ClaimGateWrite {
                         body: &body,
                         envelope: Some(&envelope),
+                        // Bundle merge is an owner-resolution path, not an
+                        // agent-class Dreamer write; it never consults.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -683,6 +686,9 @@ fn replay_gate_consent_bundle_member(
         ClaimGateWrite {
             body,
             envelope: Some(&envelope),
+            // Consent-bundle resolution replays an owner's decision; there is
+            // no fresh Auto verdict for a checker to weigh in on.
+            auto_checker: None,
             defer_metrics_until_commit: true,
         },
         policy,

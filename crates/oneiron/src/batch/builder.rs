@@ -905,6 +905,10 @@ pub(super) fn preflight_gate_decisions_in_txn(
                     crate::gate::ClaimGateWrite {
                         body: &body,
                         envelope: Some(envelope),
+                        // Ordinary batch preflight: no checker is injected on
+                        // this door, so an Auto verdict here is the engine's
+                        // own and nothing consults a host.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -949,6 +953,9 @@ pub(super) fn preflight_gate_decisions_in_txn(
                             crate::gate::ClaimGateWrite {
                                 body: &body,
                                 envelope: None,
+                                // Envelope-less local claim put: no Dreamer
+                                // authorship to consult about.
+                                auto_checker: None,
                                 defer_metrics_until_commit: true,
                             },
                             &policy,
@@ -979,6 +986,10 @@ pub(super) fn preflight_gate_decisions_in_txn(
                     crate::gate::ClaimGateWrite {
                         body: &body,
                         envelope: Some(envelope),
+                        // Ordinary batch preflight: no checker is injected on
+                        // this door, so an Auto verdict here is the engine's
+                        // own and nothing consults a host.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,

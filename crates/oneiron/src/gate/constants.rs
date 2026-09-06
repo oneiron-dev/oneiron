@@ -15,6 +15,16 @@ pub(super) const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 pub(super) const POLICY_SIGNATURE_KEY: &str = "signature";
 pub(super) const POLICY_SIGNATURES_KEY: &str = "signatures";
 pub(super) const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
+/// Optional top-level manifest key naming the HOST's auto checker (ONE-1296).
+///
+/// The value is an opaque non-empty string the engine never interprets: it
+/// selects which checker the host supplies, and its PRESENCE is what arms the
+/// consult at the claim write door. An absent key leaves the door byte
+/// identical to a vault that never heard of a checker — including its policy
+/// frontier hash. Duplicate rows inside one manifest, and two manifests naming
+/// different checkers, both fail the gate closed; two manifests naming the
+/// same checker are one configuration stated twice.
+pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
 /// string (a pinned `CallPurpose` snake-case name, or any other non-empty

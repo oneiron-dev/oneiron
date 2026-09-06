@@ -8,10 +8,11 @@ use rmpv::Value;
 use crate::Vault;
 use crate::affect::Vad;
 use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
-use crate::claim::{PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
+use crate::claim::{ClaimApprovalStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::AutoChecker;
 use crate::off_record::PromoteReplayGrant;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::temporal::TimeRange;
@@ -559,6 +560,36 @@ impl<'a> TxnBatchBuilder<'a> {
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        self.apply_recording_gate_decisions_inner(wtxn, None)
+    }
+
+    /// [`Self::apply_recording_gate_decisions`] with the host's auto checker
+    /// injected for this batch's claim candidates (ONE-1296).
+    ///
+    /// `None` is byte-identical to the method above — same single apply pass,
+    /// same receipts, same metrics — so this terminal costs a caller that has
+    /// no checker exactly nothing.
+    pub(crate) fn apply_recording_gate_decisions_with_checker(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        checker: Option<&dyn AutoChecker>,
+    ) -> Result<()> {
+        self.apply_recording_gate_decisions_inner(wtxn, checker)
+    }
+
+    fn apply_recording_gate_decisions_inner(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        checker: Option<&dyn AutoChecker>,
+    ) -> Result<()> {
+        // A batch that already failed builder validation never reaches a host
+        // checker: the builder's own refusal is the answer, and asking anyway
+        // would spend a host call on a write that cannot happen.
+        if let Some(checker) = checker
+            && self.validation_error.is_none()
+        {
+            consult_auto_checker_for_claim_candidates(self.vault, &self.ops, wtxn, checker)?;
+        }
         self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true))
     }
 
@@ -585,4 +616,80 @@ impl<'a> TxnBatchBuilder<'a> {
             self.origin,
         )
     }
+}
+
+/// Runs the claim write door over this batch's candidate ops with the host's
+/// auto checker injected, BEFORE the ordinary apply pass runs the same door
+/// without one.
+///
+/// The consult pass records nothing and persists nothing: its only job is to
+/// let the checker narrow an otherwise-Auto verdict, and a narrowed verdict
+/// surfaces as the door's ordinary typed refusal — which aborts the caller's
+/// transaction before any claim-side write lands. Splitting the consult out
+/// this way is what keeps the checker to EXACTLY ONE call per candidate: the
+/// apply pass below re-evaluates the ordinary decision with no checker
+/// injected, so it cannot ask a second time.
+///
+/// A manifest that names no checker returns before the door is opened at all,
+/// so an unset knob adds no work and no receipts to this path.
+fn consult_auto_checker_for_claim_candidates(
+    vault: &Vault,
+    ops: &[BatchOp],
+    wtxn: &mut RwTxn<'_>,
+    checker: &dyn AutoChecker,
+) -> Result<()> {
+    let mut candidates = ops
+        .iter()
+        .filter_map(|op| match op {
+            BatchOp::ClaimCandidate {
+                id,
+                candidate,
+                envelope,
+                internal_lexical_query_hint: false,
+                ..
+            } => Some((id, candidate, envelope)),
+            _ => None,
+        })
+        .peekable();
+    if candidates.peek().is_none() {
+        return Ok(());
+    }
+
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &*wtxn)?;
+    if policy.auto_checker().is_none() {
+        return Ok(());
+    }
+
+    for (id, candidate, envelope) in candidates {
+        let body = (**candidate).clone().into_claim_body(envelope);
+        // Only a candidate REQUESTING Auto is the checker's business. One
+        // already asking for Proposed is not asking to self-approve, so there
+        // is nothing for a hold to narrow here — and asking anyway would spend
+        // a host call on an answer this pass could not act on.
+        if body.approval != ClaimApprovalStatus::Auto {
+            continue;
+        }
+        let mut recorded_decision = None;
+        crate::gate::check_claim_policy_for_write_with_record(
+            &vault.store,
+            wtxn,
+            id,
+            crate::gate::ClaimGateWrite {
+                body: &body,
+                envelope: Some(envelope),
+                auto_checker: Some(checker),
+                defer_metrics_until_commit: true,
+            },
+            &policy,
+            crate::gate::GateWriteMode {
+                record_decision: false,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: false,
+            },
+            &mut recorded_decision,
+        )?;
+    }
+    Ok(())
 }

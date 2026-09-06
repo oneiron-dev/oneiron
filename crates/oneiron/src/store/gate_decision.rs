@@ -72,6 +72,13 @@ pub(super) const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 
 const GATE_RECEIPT_REASON_MAX_LEN: usize = 128;
 
+/// Receipt-reason family carrying a host auto-checker's hold reasons
+/// (ONE-1296). The only producer is [`checker_hold_receipt_reason`], which
+/// lives beside the vet on purpose: a host reason is FREE TEXT, and free text
+/// reaching this field unrendered is what makes a row unwritable AND
+/// unreadable.
+const GATE_RECEIPT_REASON_CHECKER_PREFIX: &str = "checker_";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GateDecisionId {
     bytes: [u8; 16],
@@ -1202,7 +1209,7 @@ fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-fn valid_gate_receipt_reason(reason: &str) -> bool {
+pub(super) fn valid_gate_receipt_reason(reason: &str) -> bool {
     if let Some(rest) = reason.strip_prefix("gate.allow.") {
         return !rest.is_empty()
             && rest.len() <= GATE_RECEIPT_REASON_MAX_LEN
@@ -1214,15 +1221,69 @@ fn valid_gate_receipt_reason(reason: &str) -> bool {
     // Accepted receipt-reason prefix FAMILIES (everything else is rejected):
     // counterparty_* (OF-347 contact/consent), connector_key_* and
     // effector_budget_* (OF-277 GOV-01 status wall / budget exhaustion),
-    // charter_* (GOV-10 drift / never-list). The charset and length rules
-    // below apply to every family.
+    // charter_* (GOV-10 drift / never-list), checker_* (ONE-1296 host
+    // auto-check hold). The charset and length rules below apply to every
+    // family.
+    //
+    // Adding a family LOOSENS the read path too, so a row an older binary
+    // would have called corrupt now decodes. That direction is safe for
+    // existing bytes — every row already on disk still vets exactly as before
+    // — and the receipt-family ABI-pin rule on [`STORAGE_ABI_VERSION`] binds
+    // the VERSION constants, none of which move here.
     !reason.is_empty()
         && reason.len() <= GATE_RECEIPT_REASON_MAX_LEN
         && (reason.starts_with("counterparty_")
             || reason.starts_with("connector_key_")
             || reason.starts_with("effector_budget_")
-            || reason.starts_with("charter_"))
+            || reason.starts_with("charter_")
+            || reason.starts_with(GATE_RECEIPT_REASON_CHECKER_PREFIX))
         && reason
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// Renders one host auto-checker hold reason as a receipt reason THIS ledger
+/// accepts, or `None` when the host's text carries no surviving token
+/// (ONE-1296).
+///
+/// The gate-decision receipt is a closed token vocabulary, not a free-text
+/// field: `valid_gate_receipt_reason` runs on the append path AND the decode
+/// path, so a host reason like `"checker: hedged verdict"` written verbatim
+/// makes the row unwritable and, were it ever persisted, unreadable —
+/// `CorruptedIndex("gate decision ledger")`. A host must not be able to reach
+/// that state by returning ordinary prose, so the engine RENDERS the reason
+/// rather than trusting it: every non-alphanumeric run collapses to a single
+/// `_`, ASCII letters lowercase, and the result is truncated to fit the
+/// family prefix inside [`GATE_RECEIPT_REASON_MAX_LEN`].
+///
+/// The WHY survives in readable form — `"hedged: low confidence"` becomes
+/// `checker_hedged_low_confidence` — which is the point: an owner reading a
+/// held write still sees what the host objected to, not merely that something
+/// did. The family prefix is the ENGINE's and is always applied, so host text
+/// that already says "checker" simply renders after it.
+///
+/// POSTCONDITION: every `Some` value returned here satisfies
+/// [`valid_gate_receipt_reason`]. Keep that true if either side moves.
+#[must_use]
+pub(crate) fn checker_hold_receipt_reason(reason: &str) -> Option<String> {
+    let budget = GATE_RECEIPT_REASON_MAX_LEN - GATE_RECEIPT_REASON_CHECKER_PREFIX.len();
+    let mut slug = String::with_capacity(budget);
+    for character in reason.chars() {
+        if slug.len() >= budget {
+            break;
+        }
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('_') {
+            // Separator runs — including non-ASCII, which carries no token the
+            // charset can keep — collapse to one `_`, and a leading one never
+            // starts the slug.
+            slug.push('_');
+        }
+    }
+    let slug = slug.trim_end_matches('_');
+    if slug.is_empty() {
+        return None;
+    }
+    Some(format!("{GATE_RECEIPT_REASON_CHECKER_PREFIX}{slug}"))
 }
