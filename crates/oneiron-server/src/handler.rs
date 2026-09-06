@@ -26,7 +26,7 @@ use oneiron::sync::{
 };
 use tokio::time::{Duration, Instant};
 
-use crate::auth::{RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
+use crate::auth::{CoreAuth, RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes, window_sub_tags};
 use crate::server::SyncServer;
@@ -132,6 +132,8 @@ struct ConnState {
     rate_limiter: MessageRateLimiter,
     window_sync_mode: WindowSyncMode,
     protocol_version: u8,
+    /// App-tier authority is established only by a successful in-band bind.
+    bound_auth: Option<CoreAuth>,
 }
 
 impl ConnState {
@@ -146,6 +148,7 @@ impl ConnState {
             rate_limiter: MessageRateLimiter::new(max_messages_per_sec),
             window_sync_mode: WindowSyncMode::Unbound,
             protocol_version,
+            bound_auth: None,
         }
     }
 
@@ -185,7 +188,10 @@ impl ConnState {
             return Ok(());
         }
         match mode {
-            WindowSyncMode::Selector if self.protocol_version != protocol::PROTOCOL_VERSION => {
+            WindowSyncMode::Selector
+                if self.protocol_version != protocol::PROTOCOL_VERSION
+                    && self.protocol_version != protocol::LEGACY_SELECTOR_PROTOCOL_VERSION =>
+            {
                 return Err(ProtocolError::InvalidPayload(
                     "selector sync requires the current selector protocol",
                 ));
@@ -418,6 +424,8 @@ struct GuardedTransport<S> {
     socket: Option<S>,
     revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
     session_jti: Option<String>,
+    /// Set only while an app-tier frame is draining; sync keeps its owner guard.
+    app_jti: Option<String>,
     conn_id: u32,
     /// The socket's own `write_buffer_size`, mirrored so the refusal below can
     /// be stated against it.
@@ -465,6 +473,7 @@ where
             socket: Some(socket),
             revoked,
             session_jti,
+            app_jti: None,
             conn_id,
             write_through_threshold,
         }
@@ -472,6 +481,7 @@ where
 
     fn credential_revoked(&self) -> bool {
         session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
+            || session_credential_revoked(self.revoked.as_ref(), self.app_jti.as_deref())
     }
 
     /// Reads the next inbound frame.
@@ -787,6 +797,7 @@ enum ConnEvent {
     Inbound(Option<Result<WsMessage, axum::Error>>),
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
     Direct(Option<Vec<u8>>),
+    AppDelivery,
 }
 
 /// Main connection lifecycle.
@@ -881,6 +892,12 @@ async fn handle_connection(
         federation_quota,
     );
 
+    let mut app_connection = crate::livequery::connection::Connection::new(
+        crate::livequery::connection::Hub::for_server(&server),
+        conn_id,
+    );
+    let mut app_tick = tokio::time::interval(Duration::from_millis(25));
+
     // One loop, one owner. The outbound arms used to run in a spawned task over
     // the split sink; they are folded in here because two tasks cannot share
     // this transport safely — see [`GuardedTransport`]. Reads and writes now
@@ -896,10 +913,35 @@ async fn handle_connection(
             msg = transport.read_next() => ConnEvent::Inbound(msg),
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
+            _ = app_tick.tick() => ConnEvent::AppDelivery,
         };
 
         let next_message = match event {
             ConnEvent::Inbound(msg) => msg,
+            ConnEvent::AppDelivery => {
+                if conn_state.bound_auth.is_some() {
+                    if require_bound_app_auth(&server, &conn_state).is_err() {
+                        transport
+                            .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+                                reason: Utf8Bytes::from_static(
+                                    "bound credential is no longer live",
+                                ),
+                            })))
+                            .await;
+                        break;
+                    }
+                    match app_connection.delivery() {
+                        Ok(frames) => {
+                            for frame in frames {
+                                let _ = direct_tx.send(frame);
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                continue;
+            }
             ConnEvent::Broadcast(broadcast_result) => {
                 match broadcast_result {
                     Ok(Some(data)) => {
@@ -925,7 +967,34 @@ async fn handle_connection(
                 let Some(data) = direct_msg else {
                     break;
                 };
-                if !transport.send_binary(data).await {
+                let app_frame = matches!(
+                    data.first().copied(),
+                    Some(protocol::TAG_RPC | protocol::TAG_SUB)
+                );
+                if app_frame
+                    && conn_state.bound_auth.as_ref().is_none_or(|auth| {
+                        session_credential_revoked(server.vault().as_ref(), auth.jti())
+                    })
+                {
+                    transport
+                        .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                            code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+                            reason: Utf8Bytes::from_static("bound credential is no longer live"),
+                        })))
+                        .await;
+                    break;
+                }
+                transport.app_jti = if app_frame {
+                    conn_state
+                        .bound_auth
+                        .as_ref()
+                        .and_then(|auth| auth.jti().map(str::to_owned))
+                } else {
+                    None
+                };
+                let sent = transport.send_binary(data).await;
+                transport.app_jti = None;
+                if !sent {
                     break;
                 }
                 continue;
@@ -1005,10 +1074,44 @@ async fn handle_connection(
                     );
                     break;
                 }
-                let handle_result =
-                    handle_sync_message(&server, conn_id, msg, &direct_tx, &mut conn_state).await;
+                let handle_result = match msg {
+                    SyncMessage::Rpc(payload) => handle_app_message_with_connection(
+                        &server,
+                        &mut conn_state,
+                        protocol::TAG_RPC,
+                        &payload,
+                        &direct_tx,
+                        Some(&mut app_connection),
+                    ),
+                    SyncMessage::Sub(payload) => handle_app_message_with_connection(
+                        &server,
+                        &mut conn_state,
+                        protocol::TAG_SUB,
+                        &payload,
+                        &direct_tx,
+                        Some(&mut app_connection),
+                    ),
+                    msg => {
+                        handle_sync_message(&server, conn_id, msg, &direct_tx, &mut conn_state)
+                            .await
+                    }
+                };
                 if let Err(e) = handle_result {
                     match &e {
+                        ProtocolError::RpcVersionMismatch | ProtocolError::RpcNoPrincipal => {
+                            let code = if matches!(e, ProtocolError::RpcVersionMismatch) {
+                                close_codes::CLOSE_RPC_VERSION_MISMATCH
+                            } else {
+                                close_codes::CLOSE_RPC_NO_PRINCIPAL
+                            };
+                            transport
+                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                    code,
+                                    reason: Utf8Bytes::from_static("app-tier admission refused"),
+                                })))
+                                .await;
+                            break;
+                        }
                         ProtocolError::InvalidPayload(msg) => {
                             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
                             break;
@@ -1108,6 +1211,7 @@ fn validate_protocol_hello(frame: &[u8]) -> Result<u8, u16> {
     match protocol::decode_protocol_hello(frame) {
         Ok(version)
             if version == protocol::PROTOCOL_VERSION
+                || version == protocol::LEGACY_SELECTOR_PROTOCOL_VERSION
                 || version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION =>
         {
             Ok(version)
@@ -1146,7 +1250,9 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         SyncMessage::Ephemeral(_)
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
-        | SyncMessage::WindowSync { .. } => true,
+        | SyncMessage::WindowSync { .. }
+        | SyncMessage::Rpc(_)
+        | SyncMessage::Sub(_) => true,
     }
 }
 
@@ -1329,6 +1435,12 @@ async fn handle_sync_message(
     conn_state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     match msg {
+        SyncMessage::Rpc(payload) => {
+            handle_app_message(server, conn_state, protocol::TAG_RPC, &payload, direct_tx)
+        }
+        SyncMessage::Sub(payload) => {
+            handle_app_message(server, conn_state, protocol::TAG_SUB, &payload, direct_tx)
+        }
         SyncMessage::RootUpdate(_update_bytes) => {
             // Root doc is server-authoritative — reject client updates silently
             tracing::debug!(
@@ -1431,6 +1543,86 @@ async fn handle_sync_message(
             .await
         }
     }
+}
+
+/// App-tier admission is disjoint from sync-mode binding. In particular, a
+/// sync-only connection can remain unbound for its entire lifetime.
+fn handle_app_message(
+    server: &SyncServer,
+    state: &mut ConnState,
+    tag: u8,
+    payload: &[u8],
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    handle_app_message_with_connection(server, state, tag, payload, direct_tx, None)
+}
+
+fn handle_app_message_with_connection(
+    server: &SyncServer,
+    state: &mut ConnState,
+    tag: u8,
+    payload: &[u8],
+    direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    connection: Option<&mut crate::livequery::connection::Connection>,
+) -> Result<(), ProtocolError> {
+    if state.protocol_version < protocol::APP_TIER_PROTOCOL_VERSION_VERSION {
+        return Err(ProtocolError::RpcVersionMismatch);
+    }
+    if tag == protocol::TAG_RPC {
+        let request = crate::livequery::decode_rpc(payload).map_err(|_| {
+            if state.bound_auth.is_none() {
+                ProtocolError::RpcNoPrincipal
+            } else {
+                ProtocolError::InvalidPayload("invalid RPC request")
+            }
+        })?;
+        if request.method == "auth.bind" {
+            if state.bound_auth.is_some() {
+                return Err(ProtocolError::RpcNoPrincipal);
+            }
+            let token = crate::livequery::bind_token(&request.params)
+                .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            let auth = CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
+                .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+            state.bound_auth = Some(auth);
+            let frame = crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?;
+            direct_tx
+                .send(frame)
+                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            return Ok(());
+        }
+        let auth = require_bound_app_auth(server, state)?;
+        let frame = crate::livequery::bound_rpc(server.vault(), auth, request)?;
+        direct_tx
+            .send(frame)
+            .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+    } else {
+        let auth = require_bound_app_auth(server, state)?;
+        let request = serde_json::from_slice(payload)
+            .map_err(|_| ProtocolError::InvalidPayload("invalid subscription request"))?;
+        let connection =
+            connection.ok_or(ProtocolError::InvalidPayload("subscription owner missing"))?;
+        for frame in connection.control(auth, request)? {
+            direct_tx
+                .send(frame)
+                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+        }
+    }
+    Ok(())
+}
+
+fn require_bound_app_auth<'a>(
+    server: &SyncServer,
+    state: &'a ConnState,
+) -> Result<&'a CoreAuth, ProtocolError> {
+    let auth = state
+        .bound_auth
+        .as_ref()
+        .ok_or(ProtocolError::RpcNoPrincipal)?;
+    if session_credential_revoked(server.vault().as_ref(), auth.jti()) {
+        return Err(ProtocolError::RpcNoPrincipal);
+    }
+    Ok(auth)
 }
 
 /// Handles a WindowSync message: routes to the correct window LoroDoc.
@@ -1686,3 +1878,7 @@ fn selector_grant_scope() -> oneiron::FederationGrantScope {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "handler/app_tier_tests.rs"]
+mod app_tier_tests;

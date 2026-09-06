@@ -76,7 +76,12 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// (SYNC-EPH-1 replaces JSON awareness bytes).
 /// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
 /// kept distinct from v6 for broadcast filtering.
-pub const PROTOCOL_VERSION: u8 = 7;
+/// v8 = in-band bound app-tier RPC and subscription frames.
+pub const PROTOCOL_VERSION: u8 = 8;
+/// Sync version that introduces app-tier tags and their close codes.
+pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
+/// Selector-capable sync-only peers retain the v7 wire semantics.
+pub const LEGACY_SELECTOR_PROTOCOL_VERSION: u8 = 7;
 /// Full-window protocol version kept separate from selector-capable clients.
 ///
 /// Full-window peers cannot use selector sync, but their
@@ -98,6 +103,10 @@ pub const TAG_WINDOW_SYNC: u8 = 10;
 pub const TAG_BULK_TRANSFER: u8 = 20;
 /// BulkTransferDone: `[window_key_len:1][window_key][state_len:4BE][state]`.
 pub const TAG_BULK_TRANSFER_DONE: u8 = 21;
+/// App-tier request/reply frames; JSON after the tag byte.
+pub const TAG_RPC: u8 = 30;
+/// App-tier subscription control/push frames; JSON after the tag byte.
+pub const TAG_SUB: u8 = 31;
 
 /// Sub-tags within WindowSync messages.
 pub mod window_sub_tags {
