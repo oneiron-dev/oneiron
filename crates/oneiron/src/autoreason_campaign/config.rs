@@ -532,7 +532,7 @@ fn validate_metric_pin(pin: &CampaignMetricPin) -> CampaignResult<()> {
             reason: "derivation envelope member is empty",
         });
     }
-    Ok(())
+    check_metric_pin(pin, &of360_metric_definitions()?)
 }
 
 fn is_unit_interval_f32(value: f32) -> bool {

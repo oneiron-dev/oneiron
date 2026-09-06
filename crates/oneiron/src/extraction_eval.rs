@@ -249,13 +249,8 @@ impl Of360Ar3MetricTier {
     pub(crate) fn validate(&self) -> Of360Result<()> {
         validate_metric_definitions(&self.metric_definitions)?;
         // The landed envelope is a symbolic pin, not a hash computed from JSON.
-        // Bind its payload without imposing a contract on other definition pins.
-        let canonical = of360_metric_definitions()?;
-        if self.metric_definitions.set_id == canonical.set_id
-            && self.metric_definitions.revision == canonical.revision
-            && self.metric_definitions.derivation_envelope == canonical.derivation_envelope
-            && self.metric_definitions != canonical
-        {
+        // Only the canonical definitions can be emitted by the AR-3 evaluator.
+        if self.metric_definitions != of360_metric_definitions()? {
             return Err(Of360EvalError::InvalidMetricTier {
                 reason: "metric definition payload differs from the canonical pin",
             });
@@ -287,6 +282,30 @@ impl Of360Ar3MetricTier {
                 });
             }
             case.metrics.validate()?;
+            // Gold memories are counted once per case at their best score:
+            // omitted = 0, partial = 0.5, full = 1. Weights do not enter recall.
+            let mut seen_gold_ids = HashSet::new();
+            if case
+                .omitted_gold_memory_ids
+                .iter()
+                .chain(&case.partial_gold_memory_ids)
+                .any(|id| !seen_gold_ids.insert(id))
+            {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "gold diagnostic ids are not unique and disjoint",
+                });
+            }
+            let recall = case.metrics.halumem_recall;
+            let omitted = case.omitted_gold_memory_ids.len() as f64;
+            let partial = case.partial_gold_memory_ids.len() as f64;
+            if recall.denominator.fract() != 0.0
+                || omitted + partial > recall.denominator
+                || omitted + 0.5 * partial != recall.denominator - recall.numerator
+            {
+                return Err(Of360EvalError::InvalidMetricTier {
+                    reason: "gold diagnostic counts differ from recall",
+                });
+            }
             // A claim can appear in several diagnostics, but only once in each.
             for (ids, count) in [
                 (
