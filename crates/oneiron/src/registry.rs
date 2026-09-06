@@ -77,11 +77,23 @@ pub const ENTITY_TYPE_POLICY_MANIFEST: u8 = 67;
 /// FED-001 FederationGrant entity. Engine-authored maintenance kind for
 /// shared-vault membership records.
 pub const ENTITY_TYPE_FEDERATION_GRANT: u8 = 68;
-// Byte 69 DIAGNOSTIC, byte 72 SUSPICIOUS_WAKE, byte 74 CLAIM_CLASS_DESCRIPTOR
-// and byte 75 SKILL_HUB are canon-reserved system bytes with no engine
-// substrate yet. They stay deliberately unregistered — present in the canon
-// conformance census as reserves, rejected with `InvalidEntityType` on every
-// write path — rather than disappearing from the record.
+/// GATE-14 DiagnosticEvent entity (ONE-1394). Engine-authored maintenance kind
+/// carrying one typed, addressable, provenance-bearing self-healing
+/// observation; public puts are rejected with `MaintenanceKindNotWritable` and
+/// the only writer is the engine-authored `Vault::emit_diagnostic_event` door
+/// in `self_heal.rs`. No short-ID prefix.
+///
+/// Byte-space v3 migrated this kind OUT of the pre-v3 experimental byte 126
+/// and into the System band at 69, so 126 is not a DIAGNOSTIC home — it is
+/// dev-only experimental space that `validate_entity_type_for_mode` admits
+/// under `dev` alone, which is not where a production maintenance kind can
+/// live.
+pub const ENTITY_TYPE_DIAGNOSTIC: u8 = 69;
+// Byte 72 SUSPICIOUS_WAKE, byte 74 CLAIM_CLASS_DESCRIPTOR and byte 75
+// SKILL_HUB are canon-reserved system bytes with no engine substrate yet. They
+// stay deliberately unregistered — present in the canon conformance census as
+// reserves, rejected with `InvalidEntityType` on every write path — rather
+// than disappearing from the record.
 /// OF-277 connector-key registry record (GOV-01, ONE-1416). Engine-authored
 /// maintenance kind carrying effector budgets (sends / spend / rate) and the
 /// charter slots for one outbound connector key; public puts are rejected
@@ -641,8 +653,21 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         zone: TypeByteZone::System,
     },
-    // Byte 125 CONNECTION_RECORD, byte 126 DIAGNOSTIC, and byte 127
-    // FEDERATION_KEY_ENVELOPE are reserved and intentionally unregistered.
+    EntityTypeRegistryEntry {
+        kind: "DIAGNOSTIC",
+        type_byte: ENTITY_TYPE_DIAGNOSTIC,
+        short_id_prefix: None,
+        legacy_short_id_prefixes: &[],
+        classification: EntityClassification::Maintenance,
+        zone: TypeByteZone::System,
+    },
+    // Byte 125 CONNECTION_RECORD and byte 127 FEDERATION_KEY_ENVELOPE are
+    // reserved and intentionally unregistered.
+    //
+    // DIAGNOSTIC is NOT among them any more: this comment used to read "byte
+    // 126 DIAGNOSTIC", a pre-migration leftover that named a dev-only
+    // experimental byte. Byte-space v3 ratified the move to byte 69, which is
+    // registered above (ONE-1394) — nothing may re-claim 126 for it.
     EntityTypeRegistryEntry {
         kind: "ACCESS_GRANT",
         type_byte: ENTITY_TYPE_ACCESS_GRANT,
@@ -801,21 +826,22 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 /// REGISTERED `Maintenance`-classified kind fails with the distinct
 /// [`Error::MaintenanceKindNotWritable`] — every engine-authored record in the
 /// v3 system zone (REDACTION_AUDIT, MODEL, AUTHORITY_LOG, POLICY_MANIFEST,
-/// FEDERATION_GRANT, CONNECTOR_KEY, PSYCH_PROFILE, ACCESS_GRANT,
+/// FEDERATION_GRANT, DIAGNOSTIC, CONNECTOR_KEY, PSYCH_PROFILE, ACCESS_GRANT,
 /// IDENTITY_TOPOLOGY_EVENT, SECRET_CUSTODY, CHANNEL_IDENTITY,
 /// COUNTERPARTY_CONTACT, OUTBOUND_GRANT, PERSONA_SNAPSHOT_EXPORT, COMM_RECORD,
 /// SKILL_CONTENT_ANCHOR). Classification, not zone position, is what makes a
 /// kind engine-authored — COMPANION_REGISTER shares the zone and stays
 /// publicly writable. The canon-reserved system bytes with no engine substrate
-/// (DIAGNOSTIC = 69, SUSPICIOUS_WAKE = 72, CLAIM_CLASS_DESCRIPTOR = 74,
-/// SKILL_HUB = 75) still fail with [`Error::InvalidEntityType`] so
-/// API-boundary error codes never conflate "unknown byte" with "reserved
-/// system kind".
+/// (SUSPICIOUS_WAKE = 72, CLAIM_CLASS_DESCRIPTOR = 74, SKILL_HUB = 75) still
+/// fail with [`Error::InvalidEntityType`] so API-boundary error codes never
+/// conflate "unknown byte" with "reserved system kind". SUSPICIOUS_WAKE stays
+/// on that list: ONE-1394 spends only byte 69, and a suspicious wake is a
+/// DIAGNOSTIC event CLASS rather than an entity kind of its own.
 /// Engine-internal writers (the REDACTION_AUDIT receipt writer, the MODEL
 /// get-or-create door in `vault.rs`, policy-manifest resolver fixtures,
-/// federation-grant substrate writers, the PsychProfile snapshot writer, and
-/// the identity-topology apply/undo door) bypass this gate via
-/// `allow_maintenance`.
+/// federation-grant substrate writers, the PsychProfile snapshot writer, the
+/// identity-topology apply/undo door, and the DIAGNOSTIC door
+/// `Vault::emit_diagnostic_event`) bypass this gate via `allow_maintenance`.
 ///
 /// [`Error::InvalidEntityType`]: crate::error::Error::InvalidEntityType
 /// [`Error::MaintenanceKindNotWritable`]: crate::error::Error::MaintenanceKindNotWritable

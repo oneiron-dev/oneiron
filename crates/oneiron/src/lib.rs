@@ -133,6 +133,7 @@ pub mod secret_lease;
 pub mod secret_manifest;
 pub mod secret_rotation;
 pub mod secret_snapshot;
+pub mod self_heal;
 pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;
@@ -355,6 +356,13 @@ pub use crate::run_tree::{
     GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle, GateConsentBundleAction,
     GateConsentBundleMember, GateConsentBundleReceipt, RunTree, RunTreeAdapter, RunTreeEvent,
     RunTreeEventKind, RunTreeNode, RunTreeRepair, RunTreeStatus,
+};
+pub use crate::self_heal::{
+    ConsentDeniedDetector, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector,
+    DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation,
+    DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
+    decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
+    run_deterministic_detectors,
 };
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
