@@ -1530,6 +1530,8 @@ impl Vault {
     ///
     /// The transaction commits on `Ok(())` return and rolls back on `Err`.
     /// Used by the sync layer to atomically write entity data + pending-mirror markers.
+    /// As with [`Self::try_with_write_txn`], VAD postcommit errors are returned
+    /// after the approval is durable, not as a rollback of the closure.
     pub fn with_write_txn<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
@@ -1541,17 +1543,30 @@ impl Vault {
     /// callers to return their own error type.
     ///
     /// The transaction commits on `Ok` return and rolls back on `Err`.
+    /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
+    /// consolidation after commit. A postcommit error retains Approved; retry
+    /// [`Self::consolidate_claim_vad_now`] to finish that work.
     pub fn try_with_write_txn<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let result = {
+        let (result, pending_vad_ids) = {
             let _active_write_txn = crate::store::active_write_txn_guard();
-            f(&mut wtxn)?
+            let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
+            let result = f(&mut wtxn)?;
+            (result, vad_scope.finish())
         };
+        let approved_vad_ids =
+            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit().map_err(Error::from)?;
+        // Approval is durable now. The canonical consolidator opens its own
+        // writer; its failure is returned without rolling back Approved.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.consolidate_claim_vad_now(&id, now)?;
+        }
         Ok(result)
     }
 
