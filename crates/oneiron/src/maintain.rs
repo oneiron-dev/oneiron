@@ -789,7 +789,7 @@ fn prepare_rebuild_hnsw_with_discipline(
     })
 }
 
-fn validate_rebuild_vector(
+pub(crate) fn validate_rebuild_vector(
     vault: &Vault,
     id_bytes: &[u8],
     vector_bytes: &[u8],

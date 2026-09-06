@@ -291,6 +291,14 @@ impl Vault {
         // Step 3 — derived indexes, one write transaction, committed once. Any
         // failure aborts it and leaves every derived row unchanged.
         let derived = self.with_write_txn(|wtxn| {
+            // Heal-mode maintenance can leave malformed source rows outside
+            // the usable graph. Validate without healing in this SAME write
+            // snapshot before dropping anything: lazy rebuild must be able
+            // to recover every source row, not just the healed subset.
+            for entry in self.store.vectors.iter(&*wtxn)? {
+                let (id_bytes, vector_bytes) = entry?;
+                crate::maintain::validate_rebuild_vector(self, &id_bytes, &vector_bytes)?;
+            }
             let ppr = crate::ppr::drop_rebuildable_ppr_cache(&self.store, wtxn)?;
             let hnsw = crate::hnsw::drop_rebuildable_hnsw(&self.store, wtxn)?;
             Ok(ppr.merged(hnsw))

@@ -508,6 +508,111 @@ fn shed_failure_leaves_admission_residency() -> Result<()> {
 }
 
 #[test]
+fn shed_refuses_unrebuildable_healed_graph_without_mutation() -> Result<()> {
+    let malformed_rows = [
+        (entity(43).as_bytes().to_vec(), b"bad".to_vec()),
+        (entity(43).as_bytes().to_vec(), vec![0; 12]),
+        (
+            entity(43).as_bytes().to_vec(),
+            [f32::NAN, 0.0, 0.0, 0.0]
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect(),
+        ),
+        (b"bad-key".to_vec(), vec![0; 16]),
+        (vec![0; 16], vec![0; 16]),
+    ];
+    for (key, value) in malformed_rows {
+        for already_slim in [false, true] {
+            let (_dir, vault) = fixture();
+            let ids = warm(&vault)?;
+            let record = pending(&vault, 1);
+            let prior = already_slim.then(|| entered(&vault).0);
+            vault.with_write_txn(|txn| {
+                vault.store.vectors.put(txn, &key, &value)?;
+                Ok(())
+            })?;
+            let vectors = rows(&vault, &vault.store.vectors)?;
+            let strict_error = vault.maintain().rebuild_hnsw().run().unwrap_err();
+            let report = vault.maintain().rebuild_hnsw_heal_invalid_vectors().run()?;
+            assert_eq!(report.hnsw_invalid_vectors_skipped, 1);
+            assert_eq!(vectors, rows(&vault, &vault.store.vectors)?);
+            assert!(!dropped(&vault)?);
+            let expected = probes(&vault)?;
+            for result in &expected {
+                assert!(!result.is_empty());
+                assert!(result.iter().all(|(id, _)| {
+                    ids.contains(id) && id.as_bytes().as_slice() != key.as_slice()
+                }));
+            }
+            let expected_ppr = ppr(&vault, ids[0])?;
+            // A failed re-shed must not even refresh the residue timestamp.
+            ledger::record_definite_non_delivery(&vault, record.id, 30).unwrap();
+            let databases = [
+                &vault.store.vectors,
+                &vault.store.vault_meta,
+                &vault.store.hnsw_meta,
+                &vault.store.hnsw_neighbors,
+                &vault.store.ppr_cache,
+                &vault.store.ppr_cache_deps,
+            ];
+            let before = databases
+                .iter()
+                .map(|db| rows(&vault, db))
+                .collect::<Result<Vec<_>>>()?;
+            assert!(!before[3].is_empty());
+            assert!(!before[4].is_empty());
+            let revision = vault.store.env.info().last_txn_id;
+            let error = shed(&vault).unwrap_err();
+            assert!(matches!(
+                error,
+                Error::InvalidKey
+                    | Error::InvalidVector { .. }
+                    | Error::DimensionMismatch { .. }
+                    | Error::CorruptedIndex(_)
+            ));
+            assert_eq!(error.to_string(), strict_error.to_string());
+            assert_eq!(vault.store.env.info().last_txn_id, revision);
+            for (db, expected_rows) in databases.iter().zip(before) {
+                assert_eq!(expected_rows, rows(&vault, db)?);
+            }
+            assert_eq!(
+                *vault.slim.lock_state(),
+                prior.map_or(SlimState::Full, SlimState::Slim)
+            );
+            assert!(!dropped(&vault)?);
+            assert_eq!(expected, probes(&vault)?);
+            assert_eq!(expected_ppr, ppr(&vault, ids[0])?);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn lazy_read_still_refuses_new_malformed_source_rows() -> Result<()> {
+    let (_dir, vault) = fixture();
+    warm(&vault)?;
+    drop_graph(&vault)?;
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .vectors
+            .put(txn, entity(43).as_bytes(), b"bad")?;
+        Ok(())
+    })?;
+    let vectors = rows(&vault, &vault.store.vectors)?;
+    let metadata = rows(&vault, &vault.store.hnsw_meta)?;
+    let revision = vault.store.env.info().last_txn_id;
+    assert!(matches!(probes(&vault), Err(Error::CorruptedIndex(_))));
+    assert_eq!(vault.store.env.info().last_txn_id, revision);
+    assert_eq!(vectors, rows(&vault, &vault.store.vectors)?);
+    assert_eq!(metadata, rows(&vault, &vault.store.hnsw_meta)?);
+    assert!(dropped(&vault)?);
+    assert!(rows(&vault, &vault.store.hnsw_neighbors)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn malformed_ledger_selection_preserves_residency() -> Result<()> {
     for already_slim in [false, true] {
         let (_dir, vault) = fixture();

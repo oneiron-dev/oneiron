@@ -1167,17 +1167,15 @@ pub(crate) fn hnsw_search(
     } else {
         None
     };
-    let rebuilt_neighbors: Option<HashMap<EntityId, Vec<EntityId>>> = rebuilt
-        .as_ref()
-        .map(|graph| graph.neighbors.iter().cloned().collect());
-    let graph = match rebuilt_neighbors.as_ref() {
-        Some(neighbors_by_id) => GraphSource::Rebuilt(neighbors_by_id),
-        None => GraphSource::Persisted,
-    };
-
     let (count, entry_point) = match rebuilt.as_ref() {
         Some(graph) => (graph.count, graph.entry_point),
         None => (read_count(store, rtxn)?, read_entry_point(store, rtxn)?),
+    };
+    let rebuilt_neighbors: Option<HashMap<EntityId, Vec<EntityId>>> =
+        rebuilt.map(|graph| graph.neighbors.into_iter().collect());
+    let graph = match rebuilt_neighbors.as_ref() {
+        Some(neighbors_by_id) => GraphSource::Rebuilt(neighbors_by_id),
+        None => GraphSource::Persisted,
     };
     if count == 0 {
         let graph_rows_exist = match graph {
