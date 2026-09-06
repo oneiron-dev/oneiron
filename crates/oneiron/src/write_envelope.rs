@@ -111,9 +111,9 @@ impl SourceLineage {
         self.sources.contains(&source)
     }
 
-    /// Fail-closed: ANY member that requires an explicit auto permit makes the
-    /// whole lineage require one. A single tool-output hop in the history is
-    /// enough; no member can vouch for another.
+    /// Whether ANY member requires an explicit auto permit. This classifies
+    /// the history; it does not authorize it. Authorization must check each
+    /// restricted member's own permit. No member can vouch for another.
     #[must_use]
     pub fn requires_explicit_auto_permit(&self) -> bool {
         self.sources
@@ -242,12 +242,10 @@ impl WriteEnvelope {
         &self.lineage
     }
 
-    /// The auto-permit question every envelope-bearing write door asks:
-    /// does EITHER the declared label or the observed lineage require an
-    /// explicit auto permit?
-    ///
-    /// Fail-closed OR. A trivial lineage answers exactly what the declared
-    /// label answered before this axis existed.
+    /// Whether the gate must expose the declared source and sensitivity even
+    /// for a non-Auto write. This is an input-shape question, not authorization:
+    /// the gate must still check the actual restricted lineage members.
+    /// A trivial lineage answers exactly what the declared label answered.
     #[must_use]
     pub(crate) fn effective_requires_explicit_auto_permit(&self) -> bool {
         self.source.requires_explicit_auto_permit() || self.lineage.requires_explicit_auto_permit()
