@@ -816,8 +816,14 @@ fn added_bound_handle_needs_human_stamp() {
     assert_eq!(last_good, &baseline_revision());
     assert_eq!(
         outcome.pending_candidate(),
-        Some(candidate),
+        Some(candidate.as_ref()),
         "the candidate is offered for approval"
+    );
+    assert!(
+        outcome
+            .pending_candidate()
+            .is_some_and(|pending| std::ptr::eq(pending, candidate.as_ref())),
+        "the pending accessor borrows the boxed candidate"
     );
 }
 
@@ -987,7 +993,7 @@ fn retargeted_result_set_row_needs_human_stamp() {
     assert_eq!(last_good, &baseline_revision());
     assert_eq!(
         outcome.pending_candidate(),
-        Some(candidate),
+        Some(candidate.as_ref()),
         "the candidate is offered for approval"
     );
 }
