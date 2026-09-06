@@ -128,6 +128,127 @@ fn stranded_write_preserves_exact_actor_and_prior_shortcut_bytes() -> Result<()>
 }
 
 #[test]
+fn valid_actor_cache_cannot_hide_another_shells_stranded_prior_from_a_write() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let provider = "provider_cached_with_strand";
+    let actor = entity(0x22);
+    let shell = entity(0x23);
+    let foreign = entity(0x24);
+    put_actor(&vault, shell, provider)?;
+    let stranded_prior = write_provider_prior(&vault, provider, 0.30, "evidence:shell")?;
+    put_actor(&vault, actor, provider)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .vault_meta
+            .put(wtxn, &provider_actor_index_key(provider), actor.as_bytes())?;
+        Ok(())
+    })?;
+    let cached_prior = write_provider_prior(&vault, provider, 0.70, "evidence:cached")?;
+    put_actor(&vault, foreign, "provider_other")?;
+    merge(&vault, shell, foreign)?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&actor)?,
+        EntityLifecycleState::Active
+    );
+    let stranded_body = vault.get_claim(&stranded_prior)?.expect("shell prior");
+    assert_eq!(stranded_body.subject, ClaimSubject::Entity(shell));
+    assert_eq!(stranded_body.lifecycle, ClaimLifecycleStatus::Active);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        validated_prior_head_owner_in_txn(&vault, &rtxn, &cached_prior, provider)?,
+        Some((actor, actor))
+    );
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &provider_actor_index_key(provider))?
+            .as_deref(),
+        Some(actor.as_bytes().as_slice())
+    );
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&rtxn, &provider_prior_head_index_key(provider))?
+            .as_deref(),
+        Some(cached_prior.as_bytes().as_slice())
+    );
+    drop(rtxn);
+
+    // Snapshot every manifest database, including exact shortcut and claim
+    // bytes, subject/supersession edges, temporal indexes, and sync rows.
+    let snapshot = || {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for db in [
+            &vault.store.entities,
+            &vault.store.type_index,
+            &vault.store.short_ids,
+            &vault.store.short_ids_reverse,
+            &vault.store.vault_meta,
+            &vault.store.vectors,
+            &vault.store.hnsw_neighbors,
+            &vault.store.hnsw_meta,
+            &vault.store.text_postings,
+            &vault.store.text_meta,
+            &vault.store.text_forward,
+            &vault.store.text_bm25_field_stats,
+            &vault.store.text_doc_field_lengths,
+            &vault.store.edges_out,
+            &vault.store.edges_in,
+            &vault.store.ppr_cache,
+            &vault.store.ppr_cache_deps,
+            &vault.store.temporal_occurred_start,
+            &vault.store.temporal_occurred_end,
+            &vault.store.temporal_learned,
+            &vault.store.temporal_long_intervals,
+            &vault.store.phonetic_index,
+            &vault.store.phonetic_forward,
+            &vault.store.sync_queue,
+            &vault.store.attempt_records,
+            &vault.store.attempt_ready,
+            &vault.store.attempt_dedupe,
+        ] {
+            rows.push(
+                db.iter(&rtxn)?
+                    .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
+                    .collect::<Result<Vec<_>>>()?,
+            );
+        }
+        rows.push(
+            vault
+                .store
+                .sync_state
+                .iter(&rtxn)?
+                .map(|row| row.map(|(key, value)| (key.as_bytes().to_vec(), value.into_owned())))
+                .collect::<Result<Vec<_>>>()?,
+        );
+        Ok::<_, Error>(rows)
+    };
+    let before = snapshot()?;
+    // Valid cached READS retain their existing cross-actor staleness bound.
+    assert_eq!(
+        vault.with_write_txn(|wtxn| active_provider_prior_in_txn(&vault, wtxn, provider))?,
+        Some(0.70)
+    );
+    assert_eq!(snapshot()?, before);
+    let error = write_provider_prior(&vault, provider, 0.50, "evidence:no-hidden-strand")
+        .expect_err("a valid actor cache must not authorize a write past another stranded shell");
+    assert!(matches!(
+        error,
+        Error::InvalidClaimBody("provider confidence prior stranded by merge")
+    ));
+    assert_eq!(
+        snapshot()?,
+        before,
+        "rejected write must change no stored bytes"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_merge_with_a_missing_or_nonactive_head_strands_its_prior() -> Result<()> {
     for missing in [false, true] {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
