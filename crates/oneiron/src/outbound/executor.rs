@@ -10,6 +10,7 @@ use super::dispatch_types::{
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
+use super::retry_audit::persist_failed_send_receipt_and_retry;
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -18,9 +19,9 @@ use crate::attempt_queue::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::receipt::{SendReceiptOutcome, persist_send_receipt, persist_send_receipt_in_txn};
+use crate::receipt::{SendReceiptOutcome, persist_send_receipt};
 
-const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
+pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
 /// First re-arm delay for a send the Gate parked on a human decision.
 const PENDING_GATE_BACKOFF_BASE_SECS: u64 = 1;
 /// Ceiling for that curve: a granted approval waits at most five minutes.
@@ -364,49 +365,6 @@ impl Vault {
         }
         Ok(executed)
     }
-}
-
-/// Commits the audit row, source finalization, successor and indexes together.
-/// No receipt may advertise a retry edge unless that retry also commits. A
-/// delivered TASK is sticky: losing that race must not re-arm it.
-pub(super) fn persist_failed_send_receipt_and_retry(
-    vault: &Vault,
-    attempt: &crate::attempt_queue::AttemptRecord,
-    task_ref: EntityId,
-    mut receipt: crate::receipt::ReceiptRecord,
-    reason: &str,
-    retry_at: u64,
-    now: u64,
-) -> Result<bool, Error> {
-    receipt
-        .fields
-        .insert("retry_at".to_owned(), retry_at.to_string());
-    let queue = AttemptQueue::new(vault);
-    vault.with_write_txn(|wtxn| {
-        if !persist_send_receipt_in_txn(
-            &vault.store,
-            wtxn,
-            task_ref,
-            receipt,
-            SendReceiptOutcome::Failed,
-            false,
-            None,
-        )? {
-            return Ok(false);
-        }
-        queue.retry_in_txn(
-            wtxn,
-            RetryAttempt {
-                id: attempt.id,
-                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                attempt_count: attempt.attempt_count,
-                backoff_until: retry_at,
-                last_error: Some(reason.to_owned()),
-                now,
-            },
-        )?;
-        Ok(true)
-    })
 }
 
 fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {

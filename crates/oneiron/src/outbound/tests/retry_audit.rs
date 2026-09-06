@@ -5,7 +5,7 @@ use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
     EnqueueOutcome, RetryAttempt,
 };
-use crate::outbound::executor::persist_failed_send_receipt_and_retry;
+use crate::outbound::retry_audit::persist_failed_send_receipt_and_retry;
 use crate::receipt::{
     FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery, ReceiptRecord,
     delivered_send_receipt_for_task, outbound_intent_receipt, persist_send_receipt,

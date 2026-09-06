@@ -58,26 +58,6 @@ impl Store {
             .map(|value| value.to_vec()))
     }
 
-    /// Appends one attempt receipt without allowing its evidence to be replaced.
-    /// An identical write is harmless; reusing an identity for other bytes fails.
-    pub(crate) fn append_send_receipt_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        task_id: &EntityId,
-        receipt_id: &str,
-        value: &[u8],
-    ) -> Result<()> {
-        let key = send_receipt_audit_key(task_id, receipt_id);
-        if let Some(existing) = self.vault_meta.get(wtxn, &key)? {
-            if existing.as_ref() != value {
-                return Err(Error::InvariantViolation("send receipt identity reused"));
-            }
-            return Ok(());
-        }
-        self.vault_meta.put(wtxn, &key, value)?;
-        Ok(())
-    }
-
     /// Inserts a connector-send TASK summary, leaving an existing row intact.
     pub(crate) fn put_send_receipt_in_txn(
         &self,
@@ -188,7 +168,7 @@ fn send_receipt_key(task_id: &EntityId) -> Vec<u8> {
     key
 }
 
-fn send_receipt_audit_key(task_id: &EntityId, receipt_id: &str) -> Vec<u8> {
+pub(super) fn send_receipt_audit_key(task_id: &EntityId, receipt_id: &str) -> Vec<u8> {
     let hash = blake3::hash(receipt_id.as_bytes());
     let mut key = Vec::with_capacity(SEND_RECEIPT_AUDIT_KEY_PREFIX.len() + 48);
     key.extend_from_slice(SEND_RECEIPT_AUDIT_KEY_PREFIX);
