@@ -518,7 +518,10 @@ fn check_session_bundle_actor_policy(
         enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
     let actor_ref = actor.entity_ref().to_hex();
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
+    // Read-only review over already-proposed bodies. Bundle MERGE builds its
+    // own trivial-lineage envelope above, so there is no observed history for
+    // this door to read: declared-source only, exactly as before.
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
 }
 
 /// One bundle member paired with the hash of the LIVE claim body the digest
