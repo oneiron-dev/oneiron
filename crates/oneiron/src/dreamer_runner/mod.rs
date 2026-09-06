@@ -22,6 +22,15 @@ mod tests;
 // below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become
 // visible to the whole dreamer_runner tree, tests.rs included.
+// ONE-1707 registration: the plugin-suggestion payload type rides the
+// EXISTING generic `DREAMER_RUNNER_ATTEMPT_KIND` queue. Re-exported here so
+// the runner's attempt-type vocabulary is complete in one place, exactly as
+// the other payload discriminators are. No queue kind, lease, retry, budget,
+// or run-tree machinery is added: the job body lives in
+// `dreamer_plugin_suggest` and reaches the queue through the ordinary
+// `DreamerRunnerStore::enqueue` door.
+pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
+
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;

@@ -332,6 +332,59 @@ pub(crate) fn whole_vault_export_manifest_artifact(
     ExportManifestArtifact::from_manifest(&ExportManifest::from_secrets_nulled(secrets_nulled))
 }
 
+/// Whether any artifact in `artifacts` carries secret taint refs.
+///
+/// STATE-INDEPENDENT on purpose: `TaintedLive` exhaust is nulled exactly as
+/// `TaintedStale` exhaust is. An export leaves this vault; the honest
+/// question at the egress door is "did a secret go into making this", and
+/// the answer does not improve because the secret has not rotated yet.
+/// That also keeps the manifest reproducible — a bundle does not change
+/// shape merely because someone rotated a key between two exports.
+pub fn export_bundle_carries_tainted_exhaust(
+    vault: &Vault,
+    artifacts: &[EntityId],
+) -> Result<bool> {
+    for id in artifacts {
+        if !vault.artifact_taint_refs(id)?.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Narrows a caller's `secrets_nulled` declaration for the bundle it will
+/// describe: tainted exhaust in the bundle FORCES the structural
+/// placeholder, and touches nothing else.
+///
+/// One direction only. This can turn the placeholder flag on; it can never
+/// turn a caller's flag off, so a redacted export stays redacted.
+pub fn secrets_nulled_for_export_bundle(
+    vault: &Vault,
+    secrets_nulled: ExportSecretsNulledManifest,
+    artifacts: &[EntityId],
+) -> Result<ExportSecretsNulledManifest> {
+    if export_bundle_carries_tainted_exhaust(vault, artifacts)? {
+        return Ok(secrets_nulled.with_structural_placeholders());
+    }
+    Ok(secrets_nulled)
+}
+
+/// Builds a whole-vault export manifest for a bundle whose artifacts are
+/// known, flipping the manifest through [`ExportManifest::from_secrets_nulled`]
+/// when the bundle carries secret-tainted exhaust (SECRET-04, ONE-1922).
+///
+/// The manifest and the bundle cannot disagree: the same
+/// [`secrets_nulled_for_export_bundle`] answer that nulls the exhaust is the
+/// one stamped into the manifest that describes it.
+pub fn whole_vault_export_manifest_artifact_for_bundle(
+    vault: &Vault,
+    secrets_nulled: ExportSecretsNulledManifest,
+    artifacts: &[EntityId],
+) -> Result<ExportManifestArtifact> {
+    let secrets_nulled = secrets_nulled_for_export_bundle(vault, secrets_nulled, artifacts)?;
+    whole_vault_export_manifest_artifact_for_vault(vault, secrets_nulled)
+}
+
 /// Builds a whole-vault export manifest for a vault handle.
 ///
 /// Runs unconditionally: the manifest describes the vault's SHAPE (serializer,
@@ -838,6 +891,23 @@ impl ExportSecretsNulledManifest {
         Self {
             payloads: redacted,
             structural_placeholders: redacted,
+        }
+    }
+
+    /// Declares STRUCTURAL placeholders without forcing payload nulling.
+    ///
+    /// [`Self::from_redacted`] couples the two flags because a redacted
+    /// export means both. SECRET-04 (ONE-1922) needs exactly one of them:
+    /// an export carrying secret-tainted build exhaust serializes that
+    /// exhaust nulled with the structural placeholder, while the rest of
+    /// the bundle's payloads are as clear as the caller asked for. Coupling
+    /// them here would have quietly redacted a whole export because one
+    /// artifact touched one secret.
+    #[must_use]
+    pub const fn with_structural_placeholders(self) -> Self {
+        Self {
+            payloads: self.payloads,
+            structural_placeholders: true,
         }
     }
 

@@ -22,6 +22,9 @@ use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::run_tree::{
+    GATE_CONSENT_BUNDLE_FALLBACK_LABEL, GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundleAction,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
@@ -2590,7 +2593,7 @@ fn gate_source_trust_unstamped_claim_hits_floor_band() -> Result<()> {
         body.scope = scope;
         // The manifest's row carries no `actor_ref`, so it is class-wide and
         // answers an unattributed write exactly as it answers an attributed one.
-        let allowed = check_claim_source_trust(&body, None, &policy).is_ok();
+        let allowed = check_claim_source_trust(&body, None, &policy, false).is_ok();
         assert_eq!(allowed, expect_auto, "{label}");
     }
     Ok(())
@@ -3314,8 +3317,11 @@ fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> 
     Ok(())
 }
 
+/// ONE-1752: the grant is irrelevant to the opt-out consequence, exactly as
+/// before — only the consequence itself moved from a deny to a held owner
+/// decision.
 #[test]
-fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result<()> {
+fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
         "sender",
@@ -3348,10 +3354,10 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
         check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
-    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
-        vec!["gate.deny.counterparty_opt_out"]
+        vec!["gate.pending.counterparty_opt_out"]
     );
     assert_eq!(
         decision.receipt_reasons(),
@@ -3363,10 +3369,10 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
 
     let decisions = vault.store.gate_decisions(10)?;
     assert_eq!(decisions.len(), 1);
-    assert_eq!(decisions[0].outcome, "deny");
+    assert_eq!(decisions[0].outcome, "pending");
     assert_eq!(
         decisions[0].reason_codes,
-        vec!["gate.deny.counterparty_opt_out"]
+        vec!["gate.pending.counterparty_opt_out"]
     );
     assert_eq!(
         decisions[0].receipt_reasons,
@@ -3381,7 +3387,7 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
     assert_eq!(
         receipts[0].policy_trace,
         vec![
-            "gate.deny.counterparty_opt_out",
+            "gate.pending.counterparty_opt_out",
             "counterparty_opt_out_unsubscribe",
             "counterparty_first_touch_user_introduction"
         ]
@@ -3397,6 +3403,487 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
             .map(String::as_str),
         Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
     );
+    Ok(())
+}
+
+/// The manifest every ONE-1752 opt-out fixture below evaluates against: one
+/// scoped grant for `sender` on `line`, plus whatever posture entry the caller
+/// wants.
+fn opt_out_posture_manifest(posture: Option<&str>) -> Vec<u8> {
+    let mut entries = vec![external_effect_scoped_grant_entry(
+        "sender",
+        "send",
+        Value::Map(vec![
+            (
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("line"),
+            ),
+            (
+                Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
+                Value::from(ExternalEffectPolicyRisk::Normal.as_str()),
+            ),
+        ]),
+        None,
+    )];
+    if let Some(posture) = posture {
+        entries.push((
+            Value::from(POLICY_COMM_OPT_OUT_POSTURE_KEY),
+            Value::from(posture),
+        ));
+    }
+    encode_policy_manifest(entries)
+}
+
+/// An opted-out contact for `counterparty`, written through the redirected
+/// contact writers so the claim heads — not a hand-placed row — are the truth
+/// the gate hydrates.
+fn opted_out_contact(
+    vault: &crate::Vault,
+    identity: EntityId,
+    contact_id: EntityId,
+    counterparty: &str,
+    reason: CounterpartyOptOutReason,
+) -> Result<()> {
+    let contact = CounterpartyContactRecord::user_introduction(identity, counterparty, 10)?;
+    vault.create_counterparty_contact(&contact_id, &contact)?;
+    vault.opt_out_counterparty_contact(&contact_id, reason, 20)?;
+    Ok(())
+}
+
+/// A bound human, the only actor class that may rule on a send override.
+fn owner_actor(vault: &crate::Vault, seed: u8) -> Result<WriteActor> {
+    let owner = test_id(seed);
+    vault.put_entity(
+        &owner,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    Ok(WriteActor::new(owner, EdgeActorClass::Human))
+}
+
+/// ARCH-0057 §3.1, end to end on the full hydration path: an opted-out
+/// counterparty HOLDS the send for the owner, the owner rules with
+/// `mint_send_override`, and the resubmitted send is allowed and says so.
+///
+/// The owner-facing deny is never emitted.
+#[test]
+fn gate_opt_out_escalates_never_denies_owner() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xE5), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+    assert_eq!(policy.comm_opt_out_posture(), CommOptOutPosture::Escalate);
+
+    opted_out_contact(
+        &vault,
+        test_id(0xE6),
+        test_id(0xE7),
+        "kenji@example.com",
+        CounterpartyOptOutReason::Stop,
+    )?;
+
+    // No channel identity: the shipping constructors leave it None, so this is
+    // the real hydration path (party-channel index plus mandatory full scan).
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+    effect.send_ref = Some("intent:kenji:1".to_owned());
+
+    let (_decision_id, held, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(held.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&held),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    assert!(
+        !gate_reason_strs(&held).contains(&GateReasonCode::DenyCounterpartyOptOut.as_str()),
+        "the owner path must never see the deny"
+    );
+    assert_eq!(
+        held.receipt_reasons(),
+        &[
+            "counterparty_opt_out_stop",
+            "counterparty_first_touch_user_introduction"
+        ]
+    );
+
+    // The decision is recorded as the pending owner ask the dispatch path holds
+    // on. (`outbound::tests` pins the Held/Pending dispatch outcome itself.)
+    let decisions = vault.store.gate_decisions(10)?;
+    let held_record = decisions
+        .iter()
+        .find(|record| record.reason_codes == vec!["gate.pending.counterparty_opt_out"])
+        .expect("the pending opt-out decision is recorded");
+    assert_eq!(held_record.outcome, "pending");
+
+    // The owner rules. The channel is minted mixed-case and padded on purpose:
+    // mint and hydration share one normalizer, so it still covers `line`.
+    let owner = owner_actor(&vault, 0xE8)?;
+    crate::comm::mint_send_override(
+        &vault,
+        "kenji@example.com",
+        Some(" LINE "),
+        crate::comm::SendOverrideScope::Standing,
+        None,
+        owner,
+        30,
+        None,
+    )
+    .expect("the owner may rule on a send override");
+
+    // The caller resubmits the SAME send.
+    let (_decision_id, allowed, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(allowed.outcome(), GateOutcome::Allow);
+    assert!(
+        allowed
+            .receipt_reasons()
+            .contains(&"comm_send_override_standing"),
+        "the allow must name the override that decided it: {:?}",
+        allowed.receipt_reasons()
+    );
+    // The override authorized a send; it cleared nothing.
+    let contact = vault
+        .get_counterparty_contact(&test_id(0xE7))?
+        .expect("contact row");
+    assert!(contact.is_opted_out());
+    Ok(())
+}
+
+/// The receipt names exactly ONE override source — never both, and never one
+/// when no override decided the send.
+#[test]
+fn override_receipt_is_source_specific() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xEA), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+    opted_out_contact(
+        &vault,
+        test_id(0xEB),
+        test_id(0xEC),
+        "mika@example.com",
+        CounterpartyOptOutReason::Unsubscribe,
+    )?;
+
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("mika@example.com".to_owned());
+    effect.send_ref = Some("intent:mika:1".to_owned());
+
+    let owner = owner_actor(&vault, 0xED)?;
+    crate::comm::mint_send_override(
+        &vault,
+        "mika@example.com",
+        Some("line"),
+        crate::comm::SendOverrideScope::OneShot,
+        Some("intent:mika:1"),
+        owner,
+        30,
+        Some(u64::MAX),
+    )
+    .expect("the owner may rule on a send override");
+    let (_decision_id, one_shot, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(one_shot.outcome(), GateOutcome::Allow);
+    assert_eq!(
+        override_tokens(&one_shot),
+        vec!["comm_send_override_one_shot"]
+    );
+    // The chained sources are RETAINED, not replaced.
+    assert!(
+        one_shot
+            .receipt_reasons()
+            .contains(&"counterparty_opt_out_unsubscribe")
+    );
+    assert!(
+        one_shot
+            .receipt_reasons()
+            .contains(&"counterparty_first_touch_user_introduction")
+    );
+
+    // A standing head now also covers this send. Standing wins, and the receipt
+    // still names exactly one source.
+    crate::comm::mint_send_override(
+        &vault,
+        "mika@example.com",
+        None,
+        crate::comm::SendOverrideScope::Standing,
+        None,
+        owner,
+        31,
+        None,
+    )
+    .expect("the owner may rule on a send override");
+    let (_decision_id, standing, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(
+        override_tokens(&standing),
+        vec!["comm_send_override_standing"]
+    );
+
+    // A posture-`allow_with_receipt` send with no override at all carries
+    // neither token.
+    let (_other_tmp, other_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &other_vault,
+        test_id(0xEE),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let other_policy = resolve(&other_vault)?;
+    opted_out_contact(
+        &other_vault,
+        test_id(0xEB),
+        test_id(0xEC),
+        "mika@example.com",
+        CounterpartyOptOutReason::Unsubscribe,
+    )?;
+    let (_decision_id, plain, _charge) = other_vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&other_vault.store, wtxn, &effect, &other_policy, true)
+    })?;
+    assert_eq!(plain.outcome(), GateOutcome::Allow);
+    assert!(override_tokens(&plain).is_empty());
+    assert!(
+        plain
+            .receipt_reasons()
+            .contains(&"counterparty_opt_out_unsubscribe"),
+        "allow_with_receipt keeps the opt-out trail: {:?}",
+        plain.receipt_reasons()
+    );
+    Ok(())
+}
+
+/// The override tokens one decision carries, in receipt order.
+fn override_tokens(decision: &GateDecision) -> Vec<&'static str> {
+    decision
+        .receipt_reasons()
+        .iter()
+        .copied()
+        .filter(|reason| reason.starts_with("comm_send_override_"))
+        .collect()
+}
+
+/// The DEC-0005 posture dial: default, effect, composition, and parse failure.
+#[test]
+fn posture_dial_allow_with_receipt() -> Result<()> {
+    // Absent everywhere resolves to the restrictive pole.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xF0), &opt_out_posture_manifest(None))?;
+    assert_eq!(
+        resolve(&vault)?.comm_opt_out_posture(),
+        CommOptOutPosture::Escalate
+    );
+
+    // One pack saying `allow_with_receipt` sends immediately, keeping the trail.
+    let (_allow_tmp, allow_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &allow_vault,
+        test_id(0xF1),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let allow_policy = resolve(&allow_vault)?;
+    assert_eq!(
+        allow_policy.comm_opt_out_posture(),
+        CommOptOutPosture::AllowWithReceipt
+    );
+    opted_out_contact(
+        &allow_vault,
+        test_id(0xF2),
+        test_id(0xF3),
+        "kenji@example.com",
+        CounterpartyOptOutReason::BlockOrFriendRemoval,
+    )?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+    let (_decision_id, decision, _charge) = allow_vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&allow_vault.store, wtxn, &effect, &allow_policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert_eq!(
+        decision.receipt_reasons(),
+        &[
+            "counterparty_opt_out_block_or_friend_removal",
+            "counterparty_first_touch_user_introduction"
+        ]
+    );
+
+    // An unrecognized token fails the manifest closed, in the same class as an
+    // invalid `on_budget_exhausted` token.
+    let (_bad_tmp, bad_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &bad_vault,
+        test_id(0xF4),
+        &opt_out_posture_manifest(Some("allow")),
+    )?;
+    let bad_policy = resolve(&bad_vault)?;
+    assert!(bad_policy.diagnostics().malformed_manifest_seen);
+    assert!(bad_policy.is_fail_closed());
+    assert_eq!(
+        bad_policy.comm_opt_out_posture(),
+        CommOptOutPosture::Escalate
+    );
+
+    // Composition is restrictive: one `escalate` pack wins over an
+    // `allow_with_receipt` one.
+    let (_mixed_tmp, mixed_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &mixed_vault,
+        test_id(0xF5),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    put_policy_manifest_bytes(
+        &mixed_vault,
+        test_id(0xF6),
+        &opt_out_posture_manifest(Some("escalate")),
+    )?;
+    let mixed_policy = resolve(&mixed_vault)?;
+    assert!(!mixed_policy.diagnostics().malformed_manifest_seen);
+    assert_eq!(
+        mixed_policy.comm_opt_out_posture(),
+        CommOptOutPosture::Escalate
+    );
+    Ok(())
+}
+
+/// The posture is frontier state: flipping it moves `read_frontier_hash`, so
+/// every consent binding taken under the old posture — a standing outbound
+/// grant's included — stops matching.
+#[test]
+fn posture_flip_moves_frontier_hash() -> Result<()> {
+    let (_escalate_tmp, escalate_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &escalate_vault,
+        test_id(0xF7),
+        &opt_out_posture_manifest(Some("escalate")),
+    )?;
+    let escalate_policy = resolve(&escalate_vault)?;
+
+    let (_allow_tmp, allow_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &allow_vault,
+        test_id(0xF7),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let allow_policy = resolve(&allow_vault)?;
+
+    assert_ne!(
+        escalate_policy.read_frontier_hash()?,
+        allow_policy.read_frontier_hash()?
+    );
+
+    // The binding a standing outbound grant is minted under is that same
+    // frontier, so a grant minted under one posture is not active under the
+    // other.
+    let intent = GrantMintIntent {
+        principal_ref: "sender".to_owned(),
+        origin_component_id: "ask-1".to_owned(),
+        origin_action_id: "escalate_always_this_verb_class".to_owned(),
+        origin_receipt_ref: Some("gate:ask-1".to_owned()),
+        scope: GrantMintIntentScope::VerbClass {
+            verb_class: "send".to_owned(),
+        },
+    };
+    let (escalate_handle, escalate_frontier) =
+        standing_outbound_grant_binding_parts(&intent, &escalate_policy)?;
+    let (allow_handle, allow_frontier) =
+        standing_outbound_grant_binding_parts(&intent, &allow_policy)?;
+    assert_eq!(
+        escalate_handle, allow_handle,
+        "the grant itself is identical; only the policy floor moved"
+    );
+    assert_ne!(escalate_frontier, allow_frontier);
+    Ok(())
+}
+
+/// ONE-1868's fold is untouched: ONE-1752 changed what the folded bit DOES, not
+/// which sources set it.
+#[test]
+fn dnc_and_132_fold_unchanged() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xB0), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+
+    // Control: nothing suppresses this send.
+    let (_decision_id, control, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(control.outcome(), GateOutcome::Allow);
+
+    // Leg 1 — the type-132 full-scan fallback. This contact's identity resolves
+    // to no ChannelIdentity row, so the party-channel index never learned it and
+    // only the mandatory scan can find it.
+    opted_out_contact(
+        &vault,
+        test_id(0xB1),
+        test_id(0xB2),
+        "kenji@example.com",
+        CounterpartyOptOutReason::Stop,
+    )?;
+    let (_decision_id, folded, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(folded.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&folded),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+
+    // A SECOND contact for the same party that is not opted out cannot clear the
+    // first: the aggregate is restrictive.
+    let clean =
+        CounterpartyContactRecord::user_introduction(test_id(0xB3), "kenji@example.com", 10)?;
+    vault.create_counterparty_contact(&test_id(0xB4), &clean)?;
+    let (_decision_id, still_folded, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(still_folded.outcome(), GateOutcome::Pending);
+
+    // Leg 2 — CA-01's `comm.do_not_contact`, on a party with no contact row at
+    // all, and a caller-asserted bit that hydration may never clear.
+    let mut other = external_effect_gate_input("sender", "send", "line");
+    other.counterparty = Some("mika@example.com".to_owned());
+    let party = crate::comm::resolve_or_create_comm_party(&vault, "mika@example.com")
+        .map_err(|_| Error::InvalidClaimBody("comm party"))?;
+    let mut dnc = ClaimBody::new(
+        crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
+        ClaimSubject::Entity(party),
+        Value::Map(vec![(
+            Value::from("scope"),
+            Value::from(crate::campaign::claims::DO_NOT_CONTACT_SCOPE_ALL),
+        )]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    dnc.valid_from = Some(1);
+    vault.put_claim(&test_id(0xB5), &dnc, TimeRange { start: 1, end: 1 }, 1)?;
+    let (_decision_id, dnc_folded, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &other, &policy, true)
+    })?;
+    assert_eq!(dnc_folded.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&dnc_folded),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    assert_eq!(
+        dnc_folded.receipt_reasons(),
+        &["counterparty_opt_out_do_not_contact"]
+    );
+
+    // A caller-asserted bit for a party with no head at all still stands.
+    let mut prehydrated = external_effect_gate_input("sender", "send", "line");
+    prehydrated.counterparty = Some("nobody@example.com".to_owned());
+    prehydrated.counterparty_opted_out = true;
+    let (_decision_id, kept, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &prehydrated, &policy, true)
+    })?;
+    assert_eq!(kept.outcome(), GateOutcome::Pending);
     Ok(())
 }
 
@@ -13000,5 +13487,989 @@ fn witness_message_id_refuses_a_divergent_canonical_reput() -> Result<()> {
         .expect_err("same-id divergent canonical body is refused");
     assert_eq!(error.kind(), ErrorKind::InvalidWitnessMessageBody);
     assert_eq!(vault.get_raw(&id)?.as_deref(), Some(before.as_slice()));
+    Ok(())
+}
+
+// ---- GATE-13: persona-core / mirroring-prone Dreamer isolation ----
+
+use crate::claim::PREDICATE_COMPANION_EXPRESSION;
+use crate::inbox::{InboxExceptionClass, InboxGroupMember, InboxQuery, InboxReviewDial};
+
+const ISOLATION_RUN_ID: &str = "gate13-isolation-run";
+
+/// A vault whose manifest grants BOTH the Dreamer's `agent` actor and the
+/// human candidate actor `auto`, so a write that stops short of Auto stopped
+/// for a reason of its own rather than for want of a ceiling.
+fn isolation_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
+    let (tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::Generated, 0),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+    );
+    trust_human_candidate_actor(&mut data);
+    put_policy_manifest_bytes(&vault, test_id(0x90), &data)?;
+    Ok((tmp, vault))
+}
+
+fn seed_isolation_session(vault: &crate::Vault, session: &EntityId) -> Result<()> {
+    vault.put_entity(
+        session,
+        crate::registry::ENTITY_TYPE_SESSION,
+        test_time(1),
+        1,
+        b"isolation sitting",
+    )
+}
+
+/// Seeds one TURN plus, when `session` is present, the engine-owned
+/// membership fact binding it to that sitting — the same `vault_meta` row the
+/// witness door records beside a turn. A turn seeded with `None` is the
+/// witnessed-outside-any-sitting case, which must not count.
+fn seed_isolation_turn(
+    vault: &crate::Vault,
+    turn: &EntityId,
+    session: Option<EntityId>,
+) -> Result<()> {
+    vault.put_entity(
+        turn,
+        crate::registry::ENTITY_TYPE_TURN,
+        test_time(1),
+        1,
+        b"isolation turn",
+    )?;
+    if session.is_some() {
+        let mut wtxn = vault.store.env.write_txn()?;
+        crate::session_lifecycle::record_turn_session_membership_in_txn(
+            &vault.store,
+            &mut wtxn,
+            turn,
+            session,
+        )?;
+        wtxn.commit()?;
+    }
+    Ok(())
+}
+
+/// One turn witnessed into its own fresh sitting: a whole cycle.
+fn seed_isolation_cycle(vault: &crate::Vault, turn: &EntityId, session: &EntityId) -> Result<()> {
+    seed_isolation_session(vault, session)?;
+    seed_isolation_turn(vault, turn, Some(*session))
+}
+
+/// A Dreamer-authored candidate body on `predicate`, citing `refs` as its
+/// candidate evidence.
+fn isolation_body(predicate: &str, value: Value, refs: Vec<EntityId>) -> ClaimBody {
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.predicate = predicate.to_owned();
+    body.value = value;
+    body.evidence = Some(precommit_evidence(refs));
+    body
+}
+
+/// The mirroring-prone witness, built through the affect module's own value
+/// codec so the claim's structural validator is satisfied by construction.
+fn isolation_affect_body(person: EntityId, trigger_turn: EntityId) -> Result<ClaimBody> {
+    let value = crate::affect::AffectTriggerValue::new(
+        person,
+        trigger_turn,
+        crate::affect::VadDelta::new(-0.2, 0.4, -0.3)?,
+        0.75,
+        2,
+        9,
+    )?;
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.predicate = crate::affect::AFFECT_TRIGGER_PREDICATE.to_owned();
+    body.subject = ClaimSubject::Entity(person);
+    body.confidence = value.confidence();
+    body.value = crate::affect::affect_trigger_value(&value);
+    body.evidence = Some(precommit_evidence(vec![trigger_turn]));
+    Ok(body)
+}
+
+fn attempt_isolation_write(
+    vault: &crate::Vault,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    let (candidate, envelope) = dreamer_claim_candidate_write_parts(
+        vault,
+        body,
+        first_party_eiri_connector_actor_id(),
+        ISOLATION_RUN_ID,
+    )?;
+    vault
+        .batch()
+        .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()
+}
+
+/// Asserts the raw rejection shape.
+///
+/// The isolation codes are gate-internal today: the public `GateDenialReason`
+/// table does not carry them, so `Error::gate_denial()` declines to type this
+/// rejection and the assertion reads the exact stable strings off the error.
+fn assert_isolation_rejected(err: Error, outcome: &'static str, reason_codes: &[&'static str]) {
+    match err {
+        Error::GateWriteRejected {
+            outcome: got_outcome,
+            reason_codes: got_reason_codes,
+        } => {
+            assert_eq!(got_outcome, outcome);
+            assert_eq!(got_reason_codes, reason_codes);
+        }
+        other => panic!("expected GateWriteRejected, got {other:?}"),
+    }
+}
+
+fn isolation_pending_row(
+    vault: &crate::Vault,
+    claim_id: &EntityId,
+) -> Result<PendingGateConsentRecord> {
+    Ok(vault
+        .pending_gate_consents(10)?
+        .into_iter()
+        .find(|record| record.claim_id == *claim_id.as_bytes())
+        .expect("an isolated row mints a pending consent"))
+}
+
+/// The reason-code pair one isolation class stamps, spelled through the enum
+/// so the row a dial reads carries the SAME criticality marker string
+/// `classify_member` compares against rather than a re-literalized copy.
+fn isolation_reason_codes(isolation: GateReasonCode) -> Vec<String> {
+    vec![
+        isolation.as_str().to_owned(),
+        GateReasonCode::PendingCriticalityFloor.as_str().to_owned(),
+    ]
+}
+
+fn surfaced_inbox_member(vault: &crate::Vault, claim_id: &EntityId) -> Result<InboxGroupMember> {
+    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+    let hex = claim_id.to_hex();
+    Ok(groups
+        .iter()
+        .flat_map(|group| group.members.iter())
+        .find(|member| member.claim_id == hex)
+        .expect("an isolated row surfaces as an inbox member")
+        .clone())
+}
+
+fn assert_exception_class(member: &InboxGroupMember, class: InboxExceptionClass) {
+    assert!(
+        member.exception_classes.contains(&class),
+        "{class:?} missing from {:?}",
+        member.exception_classes
+    );
+}
+
+/// Persona-core writes are NEVER Auto, whatever the manifest grants, and two
+/// distinct sittings buy an owner-review row rather than the head itself.
+#[test]
+fn persona_core_isolated() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let first_turn = test_id(0xD1);
+    let second_turn = test_id(0xD2);
+    seed_isolation_cycle(&vault, &first_turn, &test_id(0xE2))?;
+    seed_isolation_cycle(&vault, &second_turn, &test_id(0xE3))?;
+
+    let body = isolation_body(
+        PREDICATE_COMPANION_EXPRESSION,
+        Value::from("warm"),
+        vec![first_turn, second_turn],
+    );
+
+    // This actor holds an `auto` ceiling and the candidate clears every other
+    // axis, so the isolation ceiling is the only thing that can refuse the
+    // Auto ask — and it refuses rather than letting Auto land.
+    let auto_claim = test_id(0x91);
+    let err = attempt_isolation_write(&vault, &auto_claim, &body)
+        .expect_err("persona-core is never Auto");
+    assert_isolation_rejected(
+        err,
+        "pending",
+        &[
+            "gate.pending.persona_isolation",
+            "gate.pending.criticality_floor",
+        ],
+    );
+    assert!(vault.get_raw(&auto_claim)?.is_none());
+    assert!(!has_pending_gate_consent(&vault, &auto_claim)?);
+
+    // The same candidate asked as Proposed lands as an owner-review row.
+    let proposed_claim = test_id(0x92);
+    let mut proposed = body;
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    attempt_isolation_write(&vault, &proposed_claim, &proposed)?;
+
+    let stored = stored_claim_body(&vault, &proposed_claim)?;
+    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
+    assert_ne!(
+        stored.approval,
+        ClaimApprovalStatus::Auto,
+        "an isolated persona-core row is never Auto"
+    );
+
+    let pending = isolation_pending_row(&vault, &proposed_claim)?;
+    assert_eq!(
+        pending.reason_codes,
+        isolation_reason_codes(GateReasonCode::PendingPersonaIsolation)
+    );
+    assert_eq!(pending.dreamer_run_id.as_deref(), Some(ISOLATION_RUN_ID));
+    Ok(())
+}
+
+/// One cycle is not a transformation. A persona-core write whose evidence
+/// reaches a single sitting is DENIED rather than parked; a mirroring-prone
+/// write, which carries no multi-cycle floor, parks on the same evidence.
+#[test]
+fn casual_edit_to_isolated_class_escalated() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let turn = test_id(0xD1);
+    seed_isolation_cycle(&vault, &turn, &test_id(0xE2))?;
+
+    let single_cycle = test_id(0x93);
+    let mut body = isolation_body(
+        PREDICATE_COMPANION_EXPRESSION,
+        Value::from("unrestricted"),
+        vec![turn],
+    );
+    body.approval = ClaimApprovalStatus::Proposed;
+    let err = attempt_isolation_write(&vault, &single_cycle, &body)
+        .expect_err("one sitting cannot move a persona head");
+    assert_isolation_rejected(
+        err,
+        "deny",
+        &["gate.deny.dreamer_precommit.persona_single_cycle"],
+    );
+    assert!(vault.get_raw(&single_cycle)?.is_none());
+    assert!(
+        !has_pending_gate_consent(&vault, &single_cycle)?,
+        "a deny mints no owner-review row"
+    );
+
+    let mirroring_claim = test_id(0x94);
+    let mut mirroring = isolation_affect_body(test_id(0xBA), turn)?;
+    mirroring.approval = ClaimApprovalStatus::Proposed;
+    attempt_isolation_write(&vault, &mirroring_claim, &mirroring)?;
+
+    assert_eq!(
+        stored_claim_body(&vault, &mirroring_claim)?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        isolation_pending_row(&vault, &mirroring_claim)?.reason_codes,
+        isolation_reason_codes(GateReasonCode::PendingMirroringIsolation)
+    );
+    Ok(())
+}
+
+/// Isolation is scoped to the agent path. The owner writing the same
+/// persona-core predicate, with no multi-sitting evidence at all, keeps the
+/// pre-existing gate behaviour.
+#[test]
+fn owner_writes_unrestricted() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let claim_id = test_id(0x95);
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.predicate = PREDICATE_COMPANION_EXPRESSION.to_owned();
+    body.value = Value::from("professional");
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+    vault
+        .batch()
+        .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()?;
+
+    let stored = stored_claim_body(&vault, &claim_id)?;
+    assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(stored.source, Some(ClaimSource::UserStated));
+    assert!(
+        !has_pending_gate_consent(&vault, &claim_id)?,
+        "an owner write is not parked for owner review"
+    );
+    Ok(())
+}
+
+/// Both classes ride the EXISTING criticality marker, so the inbox
+/// projection — untouched by this change — classifies them manifest-critical
+/// and no dial position can waive them.
+#[test]
+fn isolated_rows_surface_as_manifest_critical() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let first_turn = test_id(0xD1);
+    let second_turn = test_id(0xD2);
+    seed_isolation_cycle(&vault, &first_turn, &test_id(0xE2))?;
+    seed_isolation_cycle(&vault, &second_turn, &test_id(0xE3))?;
+
+    let persona_claim = test_id(0x96);
+    let mut persona = isolation_body(
+        PREDICATE_COMPANION_EXPRESSION,
+        Value::from("warm"),
+        vec![first_turn, second_turn],
+    );
+    persona.approval = ClaimApprovalStatus::Proposed;
+    attempt_isolation_write(&vault, &persona_claim, &persona)?;
+
+    let mirroring_claim = test_id(0x97);
+    let mut mirroring = isolation_affect_body(test_id(0xBA), first_turn)?;
+    mirroring.approval = ClaimApprovalStatus::Proposed;
+    attempt_isolation_write(&vault, &mirroring_claim, &mirroring)?;
+
+    for dial in [
+        InboxReviewDial::ApproveAll,
+        InboxReviewDial::ExceptionsOnly,
+        InboxReviewDial::ReviewEverything,
+    ] {
+        vault.set_inbox_review_dial(dial)?;
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        let held: usize = groups.iter().map(|group| group.held_member_count).sum();
+        assert_eq!(held, 0, "{dial:?} must hold back no isolated row");
+
+        for claim_id in [persona_claim, mirroring_claim] {
+            let member = surfaced_inbox_member(&vault, &claim_id)?;
+            assert_exception_class(&member, InboxExceptionClass::ManifestCritical);
+        }
+    }
+    Ok(())
+}
+
+/// The floor counts SITTINGS, and only the ones the engine can prove. Every
+/// case here cites two refs of which at most one resolves to a distinct
+/// sitting; the control at the end lands the same shape once the second
+/// sitting is real.
+#[test]
+fn persona_core_session_floor_counts_only_provable_sittings() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let good_turn = test_id(0xD1);
+    seed_isolation_cycle(&vault, &good_turn, &test_id(0xE2))?;
+
+    // Never seeded at all.
+    let absent_ref = test_id(0xD3);
+    // Resolves, but not to a TURN.
+    let not_a_turn = test_id(0xD4);
+    vault.put_entity(
+        &not_a_turn,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"not a turn",
+    )?;
+    // A TURN carrying no recorded sitting at all.
+    let unbound_turn = test_id(0xD5);
+    seed_isolation_turn(&vault, &unbound_turn, None)?;
+    // A TURN whose recorded sitting is not a SESSION entity.
+    let mistyped_turn = test_id(0xD6);
+    let mistyped_session = test_id(0xE4);
+    vault.put_entity(
+        &mistyped_session,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"not a sitting",
+    )?;
+    seed_isolation_turn(&vault, &mistyped_turn, Some(mistyped_session))?;
+    // A TURN bound to a sitting that was never written.
+    let dangling_turn = test_id(0xD8);
+    seed_isolation_turn(&vault, &dangling_turn, Some(test_id(0xE5)))?;
+    // A second turn inside the SAME sitting: one cycle, cited twice.
+    let same_sitting_turn = test_id(0xD9);
+    seed_isolation_turn(&vault, &same_sitting_turn, Some(test_id(0xE2)))?;
+
+    for (seed, refs) in [
+        (0x98_u8, vec![good_turn, absent_ref]),
+        (0x99, vec![good_turn, not_a_turn]),
+        (0x9A, vec![good_turn, unbound_turn]),
+        (0x9B, vec![good_turn, mistyped_turn]),
+        (0x9C, vec![good_turn, dangling_turn]),
+        (0x9D, vec![good_turn, same_sitting_turn]),
+    ] {
+        let claim_id = test_id(seed);
+        let mut body = isolation_body(PREDICATE_COMPANION_EXPRESSION, Value::from("warm"), refs);
+        body.approval = ClaimApprovalStatus::Proposed;
+        let err = attempt_isolation_write(&vault, &claim_id, &body)
+            .expect_err("unprovable evidence cannot buy a second sitting");
+        assert_isolation_rejected(
+            err,
+            "deny",
+            &["gate.deny.dreamer_precommit.persona_single_cycle"],
+        );
+        assert!(vault.get_raw(&claim_id)?.is_none(), "{seed:#04x}");
+    }
+
+    // A malformed ref inside an otherwise well-formed envelope is refused by
+    // the GATE-12 validity floor FIRST: isolation never replaces a stricter
+    // denial with one of its own.
+    let mut malformed = precommit_evidence(vec![good_turn]);
+    if let Value::Map(entries) = &mut malformed {
+        for (key, value) in entries {
+            if key.as_str() == Some(PRECOMMIT_EVIDENCE_REFS_KEY) {
+                *value = Value::Array(vec![Value::Binary(vec![0x01, 0x02, 0x03, 0x04])]);
+            }
+        }
+    }
+    let malformed_claim = test_id(0x9E);
+    let mut malformed_body = isolation_body(
+        PREDICATE_COMPANION_EXPRESSION,
+        Value::from("warm"),
+        Vec::new(),
+    );
+    malformed_body.evidence = Some(malformed);
+    malformed_body.approval = ClaimApprovalStatus::Proposed;
+    let err = attempt_isolation_write(&vault, &malformed_claim, &malformed_body)
+        .expect_err("a malformed evidence envelope is no evidence at all");
+    assert_isolation_rejected(err, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
+
+    // The control: a real second sitting, and the same write parks instead.
+    let second_turn = test_id(0xDA);
+    seed_isolation_cycle(&vault, &second_turn, &test_id(0xE6))?;
+    let landed = test_id(0x9F);
+    let mut body = isolation_body(
+        PREDICATE_COMPANION_EXPRESSION,
+        Value::from("warm"),
+        vec![good_turn, second_turn],
+    );
+    body.approval = ClaimApprovalStatus::Proposed;
+    attempt_isolation_write(&vault, &landed, &body)?;
+    assert_eq!(
+        stored_claim_body(&vault, &landed)?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        isolation_pending_row(&vault, &landed)?.reason_codes,
+        isolation_reason_codes(GateReasonCode::PendingPersonaIsolation)
+    );
+    Ok(())
+}
+
+/// Replicated replay stays trust-blind: an isolated predicate arriving over
+/// replication rematerializes exactly as sent, without an isolation verdict,
+/// a demotion or an owner-review row.
+#[test]
+fn replay_untouched() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let claim_id = test_id(0x91);
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.predicate = PREDICATE_COMPANION_EXPRESSION.to_owned();
+    body.value = Value::from("warm");
+    let data = crate::claim::encode_claim_body(&body)?;
+
+    vault
+        .batch()
+        .put_replicated(
+            &claim_id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time(5),
+            5,
+            &data,
+        )
+        .commit()?;
+
+    let stored = stored_claim_body(&vault, &claim_id)?;
+    assert_eq!(
+        stored.approval,
+        ClaimApprovalStatus::Auto,
+        "replay is not re-gated"
+    );
+    assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+    Ok(())
+}
+
+/// An isolated row is a PROPOSAL. It leaves the owner's own head on the same
+/// predicate exactly as it was, and surfaces as superseding user-stated truth
+/// so the dial cannot approve it away unseen either.
+#[test]
+fn generated_cannot_retire_user_stated() -> Result<()> {
+    let (_tmp, vault) = isolation_vault()?;
+    let owner_claim = test_id(0x95);
+    let mut owner = source_trust_claim(ClaimSource::UserStated);
+    owner.predicate = PREDICATE_COMPANION_EXPRESSION.to_owned();
+    owner.value = Value::from("professional");
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &owner)?;
+    vault
+        .batch()
+        .claim_candidate(&owner_claim, candidate, &envelope, test_time(3), 3)
+        .commit()?;
+
+    let first_turn = test_id(0xD1);
+    let second_turn = test_id(0xD2);
+    seed_isolation_cycle(&vault, &first_turn, &test_id(0xE2))?;
+    seed_isolation_cycle(&vault, &second_turn, &test_id(0xE3))?;
+
+    let dreamer_claim = test_id(0x96);
+    let mut dreamer = isolation_body(
+        PREDICATE_COMPANION_EXPRESSION,
+        Value::from("warm"),
+        vec![first_turn, second_turn],
+    );
+    dreamer.approval = ClaimApprovalStatus::Proposed;
+    attempt_isolation_write(&vault, &dreamer_claim, &dreamer)?;
+
+    let head = stored_claim_body(&vault, &owner_claim)?;
+    assert_eq!(head.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(head.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(head.source, Some(ClaimSource::UserStated));
+    assert_eq!(
+        head.value,
+        Value::from("professional"),
+        "a proposal cannot retire user-stated truth"
+    );
+
+    vault.set_inbox_review_dial(InboxReviewDial::ApproveAll)?;
+    let member = surfaced_inbox_member(&vault, &dreamer_claim)?;
+    assert_exception_class(&member, InboxExceptionClass::SupersedesUserStated);
+    assert_exception_class(&member, InboxExceptionClass::ManifestCritical);
+    Ok(())
+}
+
+// ONE-1452 GateConsentBundle: one dreamer run's still-pending consent rows
+// projected into a single named, content-bound unit that approves or declines
+// atomically and leaves exactly one bundle receipt.
+
+/// Parks one Dreamer-authored proposal on `run_id`'s consent lane.
+fn park_consent_bundle_member(
+    vault: &crate::Vault,
+    claim_id: EntityId,
+    actor: EntityId,
+    subject_seed: u8,
+    run_id: &str,
+    value: &'static str,
+    learned_at: u64,
+) -> Result<()> {
+    let mut body = source_trust_claim(ClaimSource::Generated);
+    body.subject = ClaimSubject::Entity(test_id(subject_seed));
+    body.value = Value::from(value);
+    body.approval = ClaimApprovalStatus::Proposed;
+    // Dreamer-authored bodies satisfy the evidence floor with their own seeded
+    // subject entity.
+    body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
+    let (candidate, envelope) = dreamer_claim_candidate_write_parts(vault, &body, actor, run_id)?;
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            candidate,
+            &envelope,
+            test_time(learned_at),
+            learned_at,
+        )
+        .commit()?;
+    // Members sort by their parked decision id, which is time-ordered: the
+    // pause keeps the fixture's parking order stable.
+    std::thread::sleep(Duration::from_millis(2));
+    Ok(())
+}
+
+fn consent_bundle_owner(
+    vault: &crate::Vault,
+    owner_id: EntityId,
+) -> Result<crate::consent::AuthenticatedOwner> {
+    vault.put_entity(
+        &owner_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"consent bundle owner",
+    )?;
+    vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
+}
+
+/// Every ledger row that represents a bundle ACTION (never a member).
+fn consent_bundle_receipts(vault: &crate::Vault) -> Result<Vec<GateDecisionRecord>> {
+    Ok(vault
+        .store
+        .gate_decisions(64)?
+        .into_iter()
+        .filter(|record| record.content_kind == GATE_BUNDLE_CONTENT_KIND)
+        .collect())
+}
+
+#[test]
+fn gate_consent_bundle_aggregates_one_run_into_one_named_unit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-run-a";
+    let other_run = "consent-bundle-run-b";
+    let first = test_id(0x30);
+    let second = test_id(0x31);
+    let outsider = test_id(0x32);
+    park_consent_bundle_member(&vault, first, test_id(0x40), 0x50, run, "first", 3)?;
+    park_consent_bundle_member(&vault, second, test_id(0x40), 0x51, run, "second", 3)?;
+    park_consent_bundle_member(
+        &vault,
+        outsider,
+        test_id(0x41),
+        0x52,
+        other_run,
+        "outsider",
+        3,
+    )?;
+
+    let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+
+    assert_eq!(bundle.schema_version, GATE_CONSENT_BUNDLE_SCHEMA_VERSION);
+    assert_eq!(bundle.dreamer_run_id, run);
+    let member_ids: Vec<EntityId> = bundle
+        .members
+        .iter()
+        .map(|member| member.claim_id)
+        .collect();
+    assert_eq!(
+        member_ids,
+        vec![first, second],
+        "membership is every still-pending row of THIS run, and no other run's"
+    );
+    // A member is its parked pending row, surfaced verbatim.
+    let rtxn = vault.store.env.read_txn()?;
+    let parked = vault
+        .store
+        .pending_gate_consent_in_txn(&rtxn, &first)?
+        .expect("first member is parked");
+    drop(rtxn);
+    assert_eq!(bundle.members[0].decision_id, parked.decision_id);
+    assert_eq!(bundle.members[0].created_at, parked.created_at);
+    assert_eq!(bundle.members[0].diff_handle, parked.diff_handle);
+    assert_eq!(
+        bundle.members[0].read_frontier_hash,
+        parked.read_frontier_hash
+    );
+    assert_eq!(bundle.members[0].reason_codes, parked.reason_codes);
+
+    // The engine name is the run tree's root agent label — absent here, so the
+    // fallback — plus the first eight hex characters of the bundle id.
+    assert_eq!(bundle.agent_label, None);
+    let bundle_hex = crate::entity_id::bytes_to_hex_lower(&bundle.bundle_id);
+    let id8 = &bundle_hex[..8];
+    assert_eq!(
+        bundle.name,
+        format!("{GATE_CONSENT_BUNDLE_FALLBACK_LABEL} · {id8}")
+    );
+
+    // Deterministic and non-mutating: the same rows project the same bundle,
+    // and the proposals it exposes stay proposed and parked.
+    assert_eq!(vault.review_gate_consent_bundle(&reviewer, run)?, bundle);
+    for id in [first, second] {
+        assert!(has_pending_gate_consent(&vault, &id)?);
+        assert_eq!(
+            vault.get_claim(&id)?.expect("member claim").approval,
+            ClaimApprovalStatus::Proposed
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn gate_consent_bundle_requires_a_named_run_with_open_members() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let actor = test_id(0x40);
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"dreamer actor",
+    )?;
+    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
+
+    assert!(matches!(
+        vault.review_gate_consent_bundle(&reviewer, ""),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    assert!(matches!(
+        vault.review_gate_consent_bundle(&reviewer, "consent-bundle-empty"),
+        Err(Error::EntityNotFound)
+    ));
+    Ok(())
+}
+
+#[test]
+fn gate_consent_bundle_review_is_content_bound_and_goes_stale() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-stale";
+    let first = test_id(0x30);
+    let second = test_id(0x31);
+    park_consent_bundle_member(&vault, first, test_id(0x40), 0x50, run, "first", 3)?;
+
+    let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+    let reviewed = vault.review_gate_consent_bundle(&reviewer, run)?;
+
+    // An edited member body re-parks the proposal, and the digest moves with
+    // the bytes it binds.
+    park_consent_bundle_member(&vault, first, test_id(0x40), 0x50, run, "first-edited", 5)?;
+    let edited = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(edited.members.len(), 1);
+    assert_ne!(edited.bundle_id, reviewed.bundle_id);
+
+    // So does an added member.
+    park_consent_bundle_member(&vault, second, test_id(0x40), 0x51, run, "second", 6)?;
+    let widened = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(widened.members.len(), 2);
+    assert_ne!(widened.bundle_id, edited.bundle_id);
+
+    // The first review is now stale, and a stale review resolves nothing.
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let err = vault
+        .resolve_gate_consent_bundle(
+            &owner,
+            reviewed.bundle_id,
+            run,
+            GateConsentBundleAction::Approve,
+            9,
+        )
+        .expect_err("a stale review must not resolve");
+    assert!(matches!(err, Error::GateConsentStale { .. }));
+    for id in [first, second] {
+        assert!(has_pending_gate_consent(&vault, &id)?);
+        assert_eq!(
+            vault.get_claim(&id)?.expect("member claim").approval,
+            ClaimApprovalStatus::Proposed
+        );
+    }
+    assert!(consent_bundle_receipts(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gate_consent_bundle_approve_applies_every_member_with_one_receipt() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-approve";
+    let first = test_id(0x30);
+    let second = test_id(0x31);
+    park_consent_bundle_member(&vault, first, test_id(0x40), 0x50, run, "first", 3)?;
+    park_consent_bundle_member(&vault, second, test_id(0x40), 0x51, run, "second", 3)?;
+
+    let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    let owner_id = test_id(0x60);
+    let owner = consent_bundle_owner(&vault, owner_id)?;
+
+    let receipt = vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        run,
+        GateConsentBundleAction::Approve,
+        9,
+    )?;
+
+    assert_eq!(receipt.schema_version, GATE_CONSENT_BUNDLE_SCHEMA_VERSION);
+    assert_eq!(receipt.action, GateConsentBundleAction::Approve);
+    assert_eq!(receipt.bundle_id, bundle.bundle_id);
+    assert_eq!(receipt.dreamer_run_id, run);
+    assert_eq!(receipt.member_claim_ids, vec![first, second]);
+    assert_eq!(receipt.created_at, 9);
+
+    for id in [first, second] {
+        assert_eq!(
+            vault.get_claim(&id)?.expect("member claim").approval,
+            ClaimApprovalStatus::Approved
+        );
+        assert!(!has_pending_gate_consent(&vault, &id)?);
+    }
+
+    // Exactly ONE ledger row represents the unit, and it is an ordinary
+    // gate-decision row queryable through the ordinary ledger.
+    let bundle_rows = consent_bundle_receipts(&vault)?;
+    assert_eq!(bundle_rows.len(), 1);
+    let row = &bundle_rows[0];
+    assert_eq!(row.decision_id, receipt.receipt_id);
+    assert_eq!(row.outcome, GATE_BUNDLE_OUTCOME_APPROVED);
+    assert_eq!(row.reason_codes, vec![GATE_BUNDLE_REASON_APPROVED]);
+    assert_eq!(row.claim_id, None);
+    assert_eq!(row.diff_handle, bundle.bundle_id.to_vec());
+    assert_eq!(row.actor_class, "human");
+    assert_eq!(row.actor_ref, Some(owner_id.to_hex()));
+    assert_eq!(row.created_at, 9);
+
+    // Per-claim history survives beside it: one resolution receipt per member.
+    let member_rows: Vec<GateDecisionRecord> = vault
+        .store
+        .gate_decisions(64)?
+        .into_iter()
+        .filter(|record| record.claim_id.is_some() && record.outcome == "approved")
+        .collect();
+    assert_eq!(member_rows.len(), 2);
+    for member_row in &member_rows {
+        assert_eq!(member_row.reason_codes, vec![GATE_BUNDLE_REASON_APPROVED]);
+        assert_eq!(member_row.content_kind, "claim");
+    }
+
+    // The run is empty afterwards; there is nothing left to review.
+    assert!(matches!(
+        vault.review_gate_consent_bundle(&reviewer, run),
+        Err(Error::EntityNotFound)
+    ));
+    Ok(())
+}
+
+#[test]
+fn gate_consent_bundle_decline_closes_every_member_with_one_receipt() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-decline";
+    let first = test_id(0x30);
+    let second = test_id(0x31);
+    park_consent_bundle_member(&vault, first, test_id(0x40), 0x50, run, "first", 3)?;
+    park_consent_bundle_member(&vault, second, test_id(0x40), 0x51, run, "second", 3)?;
+
+    let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+
+    let receipt = vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        run,
+        GateConsentBundleAction::Decline,
+        9,
+    )?;
+    assert_eq!(receipt.action, GateConsentBundleAction::Decline);
+    assert_eq!(receipt.member_claim_ids, vec![first, second]);
+
+    for id in [first, second] {
+        let claim = vault.get_claim(&id)?.expect("member claim");
+        assert_eq!(claim.approval, ClaimApprovalStatus::Rejected);
+        assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert_eq!(claim.valid_to, Some(9));
+        assert!(
+            !has_pending_gate_consent(&vault, &id)?,
+            "no member stays pending after a successful decline"
+        );
+    }
+
+    let bundle_rows = consent_bundle_receipts(&vault)?;
+    assert_eq!(bundle_rows.len(), 1);
+    assert_eq!(bundle_rows[0].decision_id, receipt.receipt_id);
+    assert_eq!(bundle_rows[0].outcome, GATE_BUNDLE_OUTCOME_DECLINED);
+    assert_eq!(
+        bundle_rows[0].reason_codes,
+        vec![GATE_BUNDLE_REASON_DECLINED]
+    );
+    assert_eq!(bundle_rows[0].claim_id, None);
+    assert_eq!(bundle_rows[0].diff_handle, bundle.bundle_id.to_vec());
+    Ok(())
+}
+
+#[test]
+fn gate_consent_bundle_rolls_back_when_one_member_is_stale() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-rollback";
+    let good = test_id(0x30);
+    let bad = test_id(0x31);
+    park_consent_bundle_member(&vault, good, test_id(0x40), 0x50, run, "good", 3)?;
+    park_consent_bundle_member(&vault, bad, test_id(0x40), 0x51, run, "bad", 3)?;
+
+    // The LATER member's parked binding no longer answers to its own body, so
+    // the unit fails after the earlier member has already passed the gate and
+    // had its tray row closed inside the same transaction.
+    vault.with_write_txn(|wtxn| {
+        let mut pending = vault
+            .store
+            .pending_gate_consent_in_txn(wtxn, &bad)?
+            .ok_or(Error::CorruptedIndex("pending gate consent"))?;
+        pending.diff_handle = vec![0xFF];
+        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    })?;
+
+    let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(bundle.members.len(), 2);
+    assert_eq!(bundle.members[0].claim_id, good);
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let metric_emissions_before = gate_metric_emission_count_for_test();
+
+    let err = vault
+        .resolve_gate_consent_bundle(
+            &owner,
+            bundle.bundle_id,
+            run,
+            GateConsentBundleAction::Approve,
+            9,
+        )
+        .expect_err("one bad member must abort the whole bundle");
+    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == bad));
+
+    for id in [good, bad] {
+        assert_eq!(
+            vault.get_claim(&id)?.expect("member claim").approval,
+            ClaimApprovalStatus::Proposed,
+            "no member commits when any member fails"
+        );
+        assert!(has_pending_gate_consent(&vault, &id)?);
+    }
+    assert!(consent_bundle_receipts(&vault)?.is_empty());
+    assert_eq!(
+        gate_metric_emission_count_for_test(),
+        metric_emissions_before,
+        "a rolled-back bundle emits no gate metrics"
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-owner-only";
+    let claim = test_id(0x30);
+    let agent = test_id(0x40);
+    park_consent_bundle_member(&vault, claim, agent, 0x50, run, "proposal", 3)?;
+
+    // The proposing agent can REVIEW its own run...
+    let reviewer = WriteActor::new(agent, EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(bundle.members.len(), 1);
+
+    // ...but `resolve_gate_consent_bundle` takes an `AuthenticatedOwner`, and
+    // `Vault::authenticate_owner` is its only constructor. A non-human actor
+    // and an unauthenticated principal both fail there, so an agent has no
+    // route to approve or decline what it proposed.
+    let machine = test_id(0x71);
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        test_time(1),
+        1,
+        b"agent host",
+    )?;
+    assert!(matches!(
+        vault.authenticate_owner(machine, &machine.to_hex(), true, GateDecisionId::now()),
+        Err(Error::ConsentOwnerNotAuthenticated(_))
+    ));
+    let owner_id = test_id(0x60);
+    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    assert!(matches!(
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), false, GateDecisionId::now()),
+        Err(Error::ConsentOwnerNotAuthenticated(_))
+    ));
+
+    // Nothing resolved: the proposal is still parked and still proposed.
+    assert!(has_pending_gate_consent(&vault, &claim)?);
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("member claim").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(consent_bundle_receipts(&vault)?.is_empty());
+
+    // The authenticated owner does resolve it.
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        run,
+        GateConsentBundleAction::Approve,
+        9,
+    )?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("member claim").approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
     Ok(())
 }

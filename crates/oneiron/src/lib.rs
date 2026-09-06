@@ -27,6 +27,7 @@ pub mod channel_identity;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
+pub mod channel_identity_selection;
 pub mod checkout;
 pub mod claim;
 pub mod cluster;
@@ -40,7 +41,9 @@ pub mod codebase;
 pub mod comm;
 pub mod commitment;
 pub mod commitment_ledger;
+pub mod commitment_lifecycle;
 pub mod commitment_schedule;
+pub mod commitment_wake;
 pub mod compaction;
 pub mod companion;
 pub mod config;
@@ -60,6 +63,7 @@ pub mod delivery_window;
 pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
+pub mod dreamer_plugin_suggest;
 pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
@@ -74,7 +78,9 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod fanout_auto;
 pub mod federation;
+pub mod feedback;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
@@ -125,6 +131,7 @@ pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod secret_manifest;
+pub mod secret_rotation;
 pub mod secret_snapshot;
 pub mod serialize;
 pub mod session_lifecycle;
@@ -143,6 +150,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod task_authority;
 pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
@@ -189,6 +197,13 @@ pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
     DevEmailIdentityAdapterConfig, EmailProviderInbound,
 };
+pub use crate::channel_identity_selection::{
+    ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
+    ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery,
+    ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet, ChannelIdentitySelectionWriter,
+    ChannelIdentityThreadPin, RelationshipContext, SelectionRuleScope, SelectionRuleWriterKind,
+    resolve_channel_identity_selection,
+};
 pub use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     ExpressionKeigo, ExpressionPreferenceKind, ExpressionPreferenceOrigin,
@@ -197,6 +212,24 @@ pub use crate::claim::{
 pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
+};
+pub use crate::commitment::FulfillmentSource;
+pub use crate::commitment_lifecycle::{
+    BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
+    LapseSweepReport, PREDICATE_COMMITMENT_FULFILLMENT_PROPOSAL, fulfill_commitment_from,
+    fulfill_commitments_for_brief, lapse_overdue_commitments, link_brief_fulfillment,
+    propose_commitment_fulfilled, release_commitment_with_close, supersede_commitment_with_close,
+};
+pub use crate::commitment_wake::{
+    ApprovedCommitmentWake, CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakeExecutor,
+    CommitmentWakeFireOutcome, CommitmentWakePhase, CommitmentWakeProposalDraft,
+    CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip, CommitmentWakeSkip,
+    approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
+    encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
+};
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
@@ -249,10 +282,30 @@ pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 pub use crate::federation::FederationGrantScope;
+pub use crate::feedback::{
+    FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
+    FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_DAG_MAX_HOPS,
+    FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
+    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_MECHANISM_MAX_BYTES,
+    FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
+    FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_REF_MAX_BYTES,
+    FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS, FeedbackApproval,
+    FeedbackApprovalScope, FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot,
+    FeedbackDagHop, FeedbackError, FeedbackExportOutcome, FeedbackHealerDiagnosis,
+    FeedbackHnswSnapshot, FeedbackPlatform, FeedbackPreview, FeedbackRedactionError,
+    FeedbackRedactor, FeedbackSendContext, FeedbackSendOutcome, FeedbackSendRoute,
+    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, PassThroughFeedbackRedactor,
+    decode_feedback_bundle, encode_feedback_bundle, export_feedback_bundle, feedback_approval_card,
+    feedback_approval_component_id, feedback_approval_disclosure, feedback_bundle_digest,
+    feedback_content_ref, feedback_dispatch_request, feedback_logical_send_ref,
+    prepare_feedback_preview, send_feedback, validate_feedback_approval,
+};
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED,
-    GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
+    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
@@ -298,8 +351,10 @@ pub use crate::repo_mutation::{
     repo_commit_provenance,
 };
 pub use crate::run_tree::{
-    RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeNode, RunTreeRepair,
-    RunTreeStatus,
+    GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_FALLBACK_LABEL,
+    GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle, GateConsentBundleAction,
+    GateConsentBundleMember, GateConsentBundleReceipt, RunTree, RunTreeAdapter, RunTreeEvent,
+    RunTreeEventKind, RunTreeNode, RunTreeRepair, RunTreeStatus,
 };
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
@@ -315,6 +370,10 @@ pub use crate::surface_event::{
     InboundSurfaceRouteReceipt, SurfaceCounterpartyStamp, SurfaceEventAck, SurfaceEventAction,
     SurfaceEventAdmission, SurfaceEventHandoffState, SurfaceEventHandoffStatus, SurfaceEventSource,
     SurfaceInteractionKind, SurfaceSourceApp,
+};
+pub use crate::task_authority::{
+    TASK_AUTHORITY_FACT_SCHEMA_VERSION, TASK_AUTHORITY_FACT_SUBKIND, TaskAuthorityFact,
+    TaskAuthorityFactKind, TaskAuthorityState,
 };
 pub use crate::temporal::TimeRange;
 pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack_tokens};
@@ -338,7 +397,9 @@ pub use crate::wave_orchestration::{
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
     blocked_by_edge_write,
 };
-pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+pub use crate::write_envelope::{
+    ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     #[cfg(test)]

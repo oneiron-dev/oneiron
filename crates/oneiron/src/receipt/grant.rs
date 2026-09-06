@@ -521,6 +521,13 @@ fn append_outbound_grant_scope_fields(
                 endpoint_allowlist.join("\n"),
             );
         }
+        StandingOutboundGrantScope::BookingPageInvites { page_ref } => {
+            // Token parity with the codec's `SCOPE_KIND_BOOKING_PAGE_INVITES`:
+            // the audit surface and the stored row spell the scope the same
+            // way, and the field name is the scope payload's own field name.
+            fields.insert("scope".to_owned(), "booking_page_invites".to_owned());
+            fields.insert("page_ref".to_owned(), page_ref.to_hex());
+        }
     }
 }
 

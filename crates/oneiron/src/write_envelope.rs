@@ -1,5 +1,7 @@
 //! Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping.
 
+use std::collections::BTreeSet;
+
 use rmpv::Value;
 
 use crate::claim::ClaimApprovalStatus;
@@ -65,6 +67,66 @@ impl WriteProvenance {
     }
 }
 
+/// The set of source classes a write's own history actually drew on.
+///
+/// The envelope's `source` is a DECLARATION: one label the writer stamps. The
+/// lineage is what happened — every source class in the effect history behind
+/// this write. A code-mode run that observed an external effect and then wrote
+/// a claim declares `Generated` truthfully about the declaration and falsely
+/// about the run; the lineage carries `ToolOutput` alongside it, and the
+/// auto-permit decision consults both.
+///
+/// It is a SET, not a trail: order and per-hop identity are deliberately not
+/// modelled here, so the type cannot drift into a provenance chain (that lives
+/// in candidate evidence). Membership is additive and never removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceLineage {
+    sources: BTreeSet<ClaimSource>,
+}
+
+impl SourceLineage {
+    /// The trivial lineage: exactly the one declared source class.
+    ///
+    /// Every 4-arity [`WriteEnvelope`] construction lands here, so a write
+    /// whose history is its own declaration behaves exactly as it did before
+    /// lineage existed.
+    #[must_use]
+    pub fn of(source: ClaimSource) -> Self {
+        Self {
+            sources: BTreeSet::from([source]),
+        }
+    }
+
+    /// Adds one more observed source class. Additive: an already-present
+    /// class is a no-op, and nothing is ever removed.
+    #[must_use]
+    pub fn with(mut self, source: ClaimSource) -> Self {
+        self.sources.insert(source);
+        self
+    }
+
+    /// Whether this class is part of the write's history.
+    #[must_use]
+    pub fn contains(&self, source: ClaimSource) -> bool {
+        self.sources.contains(&source)
+    }
+
+    /// Fail-closed: ANY member that requires an explicit auto permit makes the
+    /// whole lineage require one. A single tool-output hop in the history is
+    /// enough; no member can vouch for another.
+    #[must_use]
+    pub fn requires_explicit_auto_permit(&self) -> bool {
+        self.sources
+            .iter()
+            .any(|source| source.requires_explicit_auto_permit())
+    }
+
+    /// The member classes, in the set's canonical (`Ord`) order.
+    pub fn iter(&self) -> impl Iterator<Item = ClaimSource> + '_ {
+        self.sources.iter().copied()
+    }
+}
+
 /// Required metadata for writing a [`ClaimCandidate`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct WriteEnvelope {
@@ -73,6 +135,10 @@ pub struct WriteEnvelope {
     provenance: WriteProvenance,
     approval: ClaimApprovalStatus,
     session_tag: Option<String>,
+    /// ONE-1314. Stamped HOST-INTERNALLY only: no public constructor, guest
+    /// payload, or API argument reaches this field, and the 4-arity
+    /// constructors below can only produce the trivial value.
+    lineage: SourceLineage,
 }
 
 impl WriteEnvelope {
@@ -90,6 +156,31 @@ impl WriteEnvelope {
             provenance,
             approval,
             session_tag: None,
+            lineage: SourceLineage::of(source),
+        }
+    }
+
+    /// Creates an envelope whose history is WIDER than its declared source.
+    ///
+    /// The ONE non-trivial-lineage constructor, reserved for host dispatchers
+    /// that own a run's effect history (the code-run dispatcher, the Dreamer
+    /// promotion writer). It is `pub(crate)` on purpose: no public, guest, or
+    /// API path may supply a lineage value, so a caller cannot narrow its own
+    /// history to ride the auto lane.
+    pub(crate) fn with_lineage(
+        actor: WriteActor,
+        source: ClaimSource,
+        provenance: WriteProvenance,
+        approval: ClaimApprovalStatus,
+        lineage: SourceLineage,
+    ) -> Self {
+        Self {
+            actor,
+            source,
+            provenance,
+            approval,
+            session_tag: None,
+            lineage,
         }
     }
 
@@ -143,6 +234,30 @@ impl WriteEnvelope {
     #[must_use]
     pub const fn approval(&self) -> ClaimApprovalStatus {
         self.approval
+    }
+
+    /// The source classes this write's history actually drew on.
+    #[must_use]
+    pub const fn lineage(&self) -> &SourceLineage {
+        &self.lineage
+    }
+
+    /// The auto-permit question every envelope-bearing write door asks:
+    /// does EITHER the declared label or the observed lineage require an
+    /// explicit auto permit?
+    ///
+    /// Fail-closed OR. A trivial lineage answers exactly what the declared
+    /// label answered before this axis existed.
+    #[must_use]
+    pub(crate) fn effective_requires_explicit_auto_permit(&self) -> bool {
+        self.source.requires_explicit_auto_permit() || self.lineage.requires_explicit_auto_permit()
+    }
+
+    /// Whether the lineage says nothing the declared source did not already
+    /// say. Trivial lineage stamps NO evidence entry, so every write that
+    /// existed before this axis keeps byte-identical evidence.
+    fn lineage_is_trivial(&self) -> bool {
+        self.lineage == SourceLineage::of(self.source)
     }
 
     /// Tags every emitted claim with the agent session that produced it.
@@ -290,6 +405,10 @@ pub(crate) const WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY: &str = "actor_entity_ref";
 pub(crate) const WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY: &str = "actor_class";
 pub(crate) const WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY: &str = "provenance";
 pub(crate) const WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY: &str = "candidate_evidence";
+/// ONE-1314: the engine-owned record of what the write's history drew on.
+/// Present ONLY when the lineage says more than the declared source already
+/// did, so trivial-lineage writes keep the evidence map they always had.
+pub(crate) const WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY: &str = "lineage";
 
 pub(crate) fn write_envelope_evidence(
     envelope: &WriteEnvelope,
@@ -311,6 +430,22 @@ pub(crate) fn write_envelope_evidence(
         ),
     ];
 
+    // Engine-owned and strictly additive: a writer cannot suppress it (the
+    // lineage is not caller-supplied) and cannot mint it (a trivial lineage
+    // stamps nothing at all, which is every pre-ONE-1314 write).
+    if !envelope.lineage_is_trivial() {
+        entries.push((
+            Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),
+            Value::Array(
+                envelope
+                    .lineage()
+                    .iter()
+                    .map(|source| Value::from(source.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
+
     if let Some(candidate_evidence) = candidate_evidence {
         entries.push((
             Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY),
@@ -320,3 +455,6 @@ pub(crate) fn write_envelope_evidence(
 
     Value::Map(entries)
 }
+
+#[cfg(test)]
+mod tests;

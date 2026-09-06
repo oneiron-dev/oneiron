@@ -6,7 +6,7 @@
 //! action event into an approved host write is the job of [`super::mediation`].
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
 };
 
@@ -15,18 +15,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use crate::{Error, Result, llm::ContentPart};
 
 use super::atom::{
-    CollectionAtom, FiniteF64, LENS_ATOM_KIT_VERSION, LensAtom, LensNode, LensNodeSeed, LensText,
-    LensTextSpan, MetaLineAtom, RESULT_SET_ATOM_KIND, TextBlockAtom,
+    CollectionAtom, FiniteF64, GeneratedUiResultSetSelectAll, LENS_ATOM_KIT_VERSION, LensAtom,
+    LensNode, LensNodeSeed, LensText, LensTextSpan, MetaLineAtom, RESULT_SET_ATOM_KIND,
+    TextBlockAtom,
 };
 use super::self_ui::{SelfUiAction, SelfUiValue};
 use super::validate::{
     LensBudget, compile_atom_for_surface, validate_generated_ui_node_count,
-    validate_generated_ui_protocol_version, validate_lens_collection_len, validate_lens_tree,
-    validate_required_lens_text,
+    validate_generated_ui_protocol_version, validate_lens_collection_len, validate_lens_token,
+    validate_lens_tree, validate_required_lens_text,
 };
 use super::wire_ids::{
-    LensAtomId, LensHandleRef, LensRenderId, MAX_LENS_TREE_DEPTH, SelfUiActionId,
-    SelfUiOptionValue, SelfUiStateKey,
+    LensAtomId, LensHandleName, LensHandleRef, LensHandleRole, LensRenderId, MAX_LENS_TREE_DEPTH,
+    SelfUiActionId, SelfUiOptionValue, SelfUiStateKey,
 };
 use super::wire_limits::{deserialize_limited_vec, serialize_tagged};
 
@@ -51,19 +52,101 @@ fn contained_atom_kit_version(root: &LensNode) -> u16 {
     minimum
 }
 
+/// The apps-contract revision a lens body was generated against. It answers "was this
+/// body compiled for the shell contracts this build ships?", which is a different
+/// question from [`LENS_ATOM_KIT_VERSION`]'s "which atoms may this tree contain?".
+/// The first stamped revision is `1`; it moves independently of the atom-kit constant.
+pub const LENS_APPS_CONTRACT_VERSION: u16 = 1;
+
+/// The version pair carried in a lens body. Both components are body data, so a decoded
+/// revision can be compared against the running constants without re-parsing anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LensVersionStamp {
+    kit_version: u16,
+    apps_contract_version: u16,
+}
+
+impl LensVersionStamp {
+    #[must_use]
+    pub const fn new(kit_version: u16, apps_contract_version: u16) -> Self {
+        Self {
+            kit_version,
+            apps_contract_version,
+        }
+    }
+
+    /// The pair a freshly regenerated body must carry. Regeneration always targets this
+    /// pair; a stale body is never auto-stamped with it.
+    #[must_use]
+    pub const fn current() -> Self {
+        Self::new(LENS_ATOM_KIT_VERSION, LENS_APPS_CONTRACT_VERSION)
+    }
+
+    #[must_use]
+    pub const fn kit_version(self) -> u16 {
+        self.kit_version
+    }
+
+    #[must_use]
+    pub const fn apps_contract_version(self) -> u16 {
+        self.apps_contract_version
+    }
+}
+
+/// What a shell loader must do with a decoded lens body. This names caller work rather
+/// than performing it: there is no queue trait, storage import, or mount mutation here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LensLoadAction {
+    MountCurrent,
+    MountLastGoodAndQueueRegeneration {
+        stored: LensVersionStamp,
+        live: LensVersionStamp,
+    },
+}
+
+/// Exact pair equality means current. "Differs" is symmetric: a stamp older *or* newer
+/// than the running constants both mount the decoded body as last-good and queue
+/// regeneration against the live pair.
+#[must_use]
+pub const fn lens_load_action(stored: LensVersionStamp, live: LensVersionStamp) -> LensLoadAction {
+    if stored.kit_version == live.kit_version
+        && stored.apps_contract_version == live.apps_contract_version
+    {
+        LensLoadAction::MountCurrent
+    } else {
+        LensLoadAction::MountLastGoodAndQueueRegeneration { stored, live }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GeneratedLens {
     kit_version: u16,
+    apps_contract_version: u16,
     root: LensNode,
 }
 
 impl GeneratedLens {
-    /// Stamp the version this exact tree needs, not the version the crate is built at:
-    /// a tree of pre-v3 atoms keeps declaring 2 after a kit bump, so a v2-only surface
-    /// never has to re-negotiate for atoms it already understands.
+    /// Stamp the live pair, [`LensVersionStamp::current`]: a body built here was by
+    /// construction compiled against the atom kit and the shell contracts this build
+    /// ships, so it is exactly what [`lens_load_action`] calls current and what
+    /// [`regenerate_lens`] accepts as a candidate for the requested target.
+    ///
+    /// Neither component is derived from the tree. The contained-atom minimum is a
+    /// *floor* an envelope may not under-declare (see the tree validator below), never
+    /// the stamp: stamping it would mint bodies that are born stale against the running
+    /// constants, so every freshly built pre-v3 card would report
+    /// [`LensLoadAction::MountLastGoodAndQueueRegeneration`] and a regenerator using
+    /// this constructor could never match its own target. The accepted consequence is
+    /// that a v2-only surface re-negotiates after a kit bump like any other body.
+    ///
+    /// The apps-contract component records the shell contracts this body was generated
+    /// against, so it is likewise always the running [`LENS_APPS_CONTRACT_VERSION`].
     pub fn new(root: LensNode) -> Result<Self> {
+        let current = LensVersionStamp::current();
         let lens = Self {
-            kit_version: contained_atom_kit_version(&root),
+            kit_version: current.kit_version(),
+            apps_contract_version: current.apps_contract_version(),
             root,
         };
         lens.validate()?;
@@ -71,8 +154,18 @@ impl GeneratedLens {
     }
 
     #[must_use]
-    pub fn kit_version(&self) -> u16 {
+    pub const fn kit_version(&self) -> u16 {
         self.kit_version
+    }
+
+    #[must_use]
+    pub const fn apps_contract_version(&self) -> u16 {
+        self.apps_contract_version
+    }
+
+    #[must_use]
+    pub const fn version_stamp(&self) -> LensVersionStamp {
+        LensVersionStamp::new(self.kit_version, self.apps_contract_version)
     }
 
     #[must_use]
@@ -109,6 +202,7 @@ impl<'de> Deserialize<'de> for GeneratedLens {
         #[serde(field_identifier, rename_all = "snake_case")]
         enum Field {
             KitVersion,
+            AppsContractVersion,
             Root,
         }
 
@@ -126,8 +220,9 @@ impl<'de> Deserialize<'de> for GeneratedLens {
                 A: de::MapAccess<'de>,
             {
                 let mut kit_version = None;
+                let mut apps_contract_version = None;
                 let mut root = None;
-                let mut skipped_root_before_version = false;
+                let mut skipped_root_before_versions = false;
 
                 while let Some(field) = map.next_key::<Field>()? {
                     match field {
@@ -135,23 +230,30 @@ impl<'de> Deserialize<'de> for GeneratedLens {
                             if kit_version.is_some() {
                                 return Err(de::Error::duplicate_field("kit_version"));
                             }
-                            let version = map.next_value::<u16>()?;
-                            if !(MIN_LENS_ATOM_KIT_VERSION..=LENS_ATOM_KIT_VERSION)
-                                .contains(&version)
-                            {
-                                return Err(de::Error::custom(format!(
-                                    "unsupported generated lens atom kit version {version}"
-                                )));
+                            // Deliberately no window check: a stamp older or newer than
+                            // the running constants is stale *state*, not a decode
+                            // error, so a decodable last-good body still loads while
+                            // regeneration is queued. `lens_load_action` owns that
+                            // decision; unknown atom kinds and invalid payloads still
+                            // fail closed below through the closed-enum tree validator.
+                            kit_version = Some(map.next_value::<u16>()?);
+                        }
+                        Field::AppsContractVersion => {
+                            if apps_contract_version.is_some() {
+                                return Err(de::Error::duplicate_field("apps_contract_version"));
                             }
-                            kit_version = Some(version);
+                            apps_contract_version = Some(map.next_value::<u16>()?);
                         }
                         Field::Root => {
-                            if root.is_some() || skipped_root_before_version {
+                            if root.is_some() || skipped_root_before_versions {
                                 return Err(de::Error::duplicate_field("root"));
                             }
-                            if kit_version.is_none() {
+                            // Either stamp field may come first, but both must precede
+                            // the tree: skipping the body preserves the shipped
+                            // allocation guard against an unversioned oversized root.
+                            if kit_version.is_none() || apps_contract_version.is_none() {
                                 map.next_value::<de::IgnoredAny>()?;
-                                skipped_root_before_version = true;
+                                skipped_root_before_versions = true;
                             } else {
                                 root = Some(map.next_value::<LensNode>()?);
                             }
@@ -159,15 +261,23 @@ impl<'de> Deserialize<'de> for GeneratedLens {
                     }
                 }
 
+                // Fixed post-map order: missing kit_version, then missing
+                // apps_contract_version, then precedence, then a missing root.
                 let kit_version =
                     kit_version.ok_or_else(|| de::Error::missing_field("kit_version"))?;
-                if skipped_root_before_version {
+                let apps_contract_version = apps_contract_version
+                    .ok_or_else(|| de::Error::missing_field("apps_contract_version"))?;
+                if skipped_root_before_versions {
                     return Err(de::Error::custom(
-                        "generated lens kit_version must precede root",
+                        "generated lens version fields must precede root",
                     ));
                 }
                 let root = root.ok_or_else(|| de::Error::missing_field("root"))?;
-                let lens = GeneratedLens { kit_version, root };
+                let lens = GeneratedLens {
+                    kit_version,
+                    apps_contract_version,
+                    root,
+                };
                 lens.validate().map_err(de::Error::custom)?;
                 Ok(lens)
             }
@@ -176,23 +286,26 @@ impl<'de> Deserialize<'de> for GeneratedLens {
             where
                 A: de::SeqAccess<'de>,
             {
+                // Positional form: 0 = kit_version, 1 = apps_contract_version, 2 = root.
+                // The pair is not compared to the live constants here either.
                 let kit_version = seq
                     .next_element::<u16>()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                if !(MIN_LENS_ATOM_KIT_VERSION..=LENS_ATOM_KIT_VERSION).contains(&kit_version) {
-                    return Err(de::Error::custom(format!(
-                        "unsupported generated lens atom kit version {kit_version}"
-                    )));
-                }
-
+                let apps_contract_version = seq
+                    .next_element::<u16>()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
                 let root = seq
                     .next_element_seed(LensNodeSeed { depth: 1 })?
-                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
                 if seq.next_element::<de::IgnoredAny>()?.is_some() {
-                    return Err(de::Error::invalid_length(3, &self));
+                    return Err(de::Error::invalid_length(4, &self));
                 }
 
-                let lens = GeneratedLens { kit_version, root };
+                let lens = GeneratedLens {
+                    kit_version,
+                    apps_contract_version,
+                    root,
+                };
                 lens.validate().map_err(de::Error::custom)?;
                 Ok(lens)
             }
@@ -200,7 +313,7 @@ impl<'de> Deserialize<'de> for GeneratedLens {
 
         deserializer.deserialize_struct(
             "GeneratedLens",
-            &["kit_version", "root"],
+            &["kit_version", "apps_contract_version", "root"],
             GeneratedLensVisitor,
         )
     }
@@ -1172,6 +1285,13 @@ impl GeneratedUiCard {
             .collect()
     }
 
+    /// Surface the stale-card decision to a shell loader. A decoded card body always
+    /// stays mountable; only the returned action says whether regeneration is owed.
+    #[must_use]
+    pub const fn load_action(&self) -> LensLoadAction {
+        lens_load_action(self.tree.version_stamp(), LensVersionStamp::current())
+    }
+
     fn validate(&self) -> Result<()> {
         if self.protocol_version != GENERATED_UI_WIRE_VERSION {
             return Err(Error::InvalidConfig(format!(
@@ -1887,5 +2007,753 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
         };
         data_model.validate().map_err(de::Error::custom)?;
         Ok(data_model)
+    }
+}
+
+// ── Regen-on-update: behavior fingerprint, structured diff, adoption decision ──
+//
+// Everything below is a pure decision path over *rendered* lens bodies. It performs no
+// store write, gate call, approval mutation, queue write, mount mutation, or model
+// routing, and it never accepts prompt text, generated source, source bytes, or any
+// hash of them. Only validated golden renders cross into the comparison.
+
+/// The rendered behavior of one golden corpus, keyed by fixture id.
+///
+/// Fixture boundaries are part of the comparison domain: the corpus is never flattened
+/// into one set, so a handle or atom moving between cases stays visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensBehaviorFingerprint {
+    cases: BTreeMap<String, LensFixtureBehavior>,
+}
+
+/// The four semantic dimensions compared per fixture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LensFixtureBehavior {
+    atom_tree: Vec<LensAtomTreeEntry>,
+    bound_handles: BTreeSet<LensHandleBinding>,
+    /// The subset of declared reach a result-set atom actually *points at*: every row
+    /// `target_handle` and every select-all `predicate_handle`, resolved to the
+    /// `(name, role)` pair its own node declared. This is not a second declared set —
+    /// each pair here is by construction already in `bound_handles` — it is which of
+    /// those declarations the host is really told to read.
+    referenced_handles: BTreeSet<LensHandleBinding>,
+    atom_inventory: BTreeMap<GeneratedUiPrimitive, u32>,
+}
+
+/// One ordered pre-order tree position. Primitive plus position plus child count encodes
+/// the atom-kind shape without node ids or any text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct LensAtomTreeEntry {
+    primitive: GeneratedUiPrimitive,
+    child_count: usize,
+}
+
+/// The bound-read identity: the full `(name, role)` pair. Name equality alone is not
+/// authority, and duplicate occurrences of an identical pair deduplicate in the set.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LensHandleBinding {
+    name: LensHandleName,
+    role: LensHandleRole,
+}
+
+impl LensBehaviorFingerprint {
+    /// Build behavior from already-rendered, validated golden-corpus outputs.
+    ///
+    /// The diff path accepts [`GeneratedLens`] values, not source text:
+    ///
+    /// ```compile_fail
+    /// use oneiron::lens::LensBehaviorFingerprint;
+    /// let _ = LensBehaviorFingerprint::from_golden_renders([
+    ///     ("fixture", "generated lens source text"),
+    /// ]);
+    /// ```
+    ///
+    /// ```
+    /// use oneiron::lens::{GeneratedLens, LensBehaviorFingerprint};
+    ///
+    /// fn fingerprint(rendered: &GeneratedLens) {
+    ///     let _ = LensBehaviorFingerprint::from_golden_renders([
+    ///         ("fixture", rendered),
+    ///     ]);
+    /// }
+    ///
+    /// let _ = fingerprint as fn(&GeneratedLens);
+    /// ```
+    pub fn from_golden_renders<'a>(
+        renders: impl IntoIterator<Item = (&'a str, &'a GeneratedLens)>,
+    ) -> Result<Self> {
+        let mut cases = BTreeMap::new();
+        for (fixture_id, rendered) in renders {
+            validate_lens_token("lens golden fixture id", fixture_id)?;
+            let behavior = fingerprint_render(rendered)?;
+            if cases.insert(fixture_id.to_owned(), behavior).is_some() {
+                return Err(Error::InvalidConfig(format!(
+                    "lens golden corpus contains duplicate fixture id {fixture_id}"
+                )));
+            }
+        }
+        if cases.is_empty() {
+            return Err(Error::InvalidConfig(
+                "lens golden corpus must contain at least one fixture".to_string(),
+            ));
+        }
+        Ok(Self { cases })
+    }
+
+    #[must_use]
+    pub fn fixture_ids(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.cases.keys().map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn fixture_count(&self) -> usize {
+        self.cases.len()
+    }
+}
+
+/// Reduce one validated render to its four behavior dimensions.
+///
+/// Node ids, fallback text, literal/interpolated text values, labels, layout payloads,
+/// and any source or prompt material are deliberately not inputs.
+fn fingerprint_render(rendered: &GeneratedLens) -> Result<LensFixtureBehavior> {
+    let mut atom_tree = Vec::new();
+    let mut bound_handles = BTreeSet::new();
+    let mut referenced_handles = BTreeSet::new();
+    let mut atom_inventory: BTreeMap<GeneratedUiPrimitive, u32> = BTreeMap::new();
+    let mut stack = vec![rendered.root()];
+
+    while let Some(node) = stack.pop() {
+        // The closed atom vocabulary is read through `LensAtom::primitive()`, never a
+        // mirrored kind list, so any future atom participates automatically.
+        let primitive = node.atom.primitive();
+        atom_tree.push(LensAtomTreeEntry {
+            primitive,
+            child_count: node.children.len(),
+        });
+        let count = atom_inventory.entry(primitive).or_insert(0_u32);
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| Error::InvalidConfig("lens atom inventory overflowed".to_string()))?;
+
+        // `node.bindings` and `AnswerSheetAtom::citations` are the only
+        // `(LensHandleName, LensHandleRole)` surfaces in a generated lens tree.
+        // `node.state_bindings` (the `$bind` descriptors) are excluded on purpose: a
+        // `$bind` names one `$state` key and one control property and carries no
+        // `LensHandleRole`, so it belongs to the same role-less class as interpolation
+        // keys, graph node/edge ids, backing refs, `SelfUiValue::Handle`, and media
+        // handles. Promoting any of them here would contradict the fixed
+        // `(name, role)` bound-read boundary.
+        for binding in &node.bindings {
+            bound_handles.insert(LensHandleBinding {
+                name: binding.name.clone(),
+                role: binding.role,
+            });
+        }
+        if let LensAtom::AnswerSheet(answer) = &node.atom {
+            for binding in &answer.citations {
+                bound_handles.insert(LensHandleBinding {
+                    name: binding.name.clone(),
+                    role: binding.role,
+                });
+            }
+        }
+
+        // A result set's row `target_handle` and its select-all `predicate_handle` are
+        // *references*, not declarations: each one has to name reach this same node
+        // already advertised, and `super::mediation::select_atom` copies the host
+        // backing row for exactly that handle. So swapping a row from one declared
+        // handle to another leaves the declared set above byte-identical while moving
+        // which host rows the selection actually reads — a data-read change the
+        // `bound_handles` dimension alone cannot see.
+        if let LensAtom::ResultSet(result_set) = &node.atom {
+            for row in &result_set.rows {
+                referenced_handles.insert(referenced_binding(node, &row.target_handle)?);
+            }
+            if let GeneratedUiResultSetSelectAll::WithinFilter { predicate_handle } =
+                &result_set.select_all
+            {
+                referenced_handles.insert(referenced_binding(node, predicate_handle)?);
+            }
+        }
+
+        // Reversed push keeps the pop order equal to the source child order.
+        stack.extend(node.children.iter().rev());
+    }
+
+    Ok(LensFixtureBehavior {
+        atom_tree,
+        bound_handles,
+        referenced_handles,
+        atom_inventory,
+    })
+}
+
+/// Resolve one result-set handle reference against the declaring node's own bindings.
+///
+/// The tree validator already proved every such reference names a handle this node
+/// declares exactly once, so a missing or duplicated declaration is a broken invariant.
+/// It fails the fingerprint rather than resolving to nothing: a reference silently
+/// dropped here would read as "no reference changed" and could auto-adopt.
+fn referenced_binding(node: &LensNode, handle: &LensHandleName) -> Result<LensHandleBinding> {
+    let mut declared = node
+        .bindings
+        .iter()
+        .filter(|binding| &binding.name == handle);
+    let binding = declared.next().ok_or_else(|| {
+        Error::InvalidConfig(
+            "lens result set handle must be declared by the node that references it".to_string(),
+        )
+    })?;
+    if declared.next().is_some() {
+        return Err(Error::InvalidConfig(
+            "lens result set handle must be declared exactly once by its own node".to_string(),
+        ));
+    }
+    Ok(LensHandleBinding {
+        name: binding.name.clone(),
+        role: binding.role,
+    })
+}
+
+/// One `(fixture, name, role)` data read that was added or removed — either a
+/// declared binding or the reach a result-set reference resolves to.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LensBehaviorHandle {
+    fixture_id: String,
+    name: LensHandleName,
+    role: LensHandleRole,
+}
+
+impl LensBehaviorHandle {
+    #[must_use]
+    pub fn fixture_id(&self) -> &str {
+        &self.fixture_id
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &LensHandleName {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn role(&self) -> LensHandleRole {
+        self.role
+    }
+}
+
+/// A handle name whose role set changed. The old and new pairs are also present in
+/// `removed_handles`/`added_handles`; this is the direct before/after evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensHandleRoleChange {
+    fixture_id: String,
+    name: LensHandleName,
+    before: BTreeSet<LensHandleRole>,
+    after: BTreeSet<LensHandleRole>,
+}
+
+impl LensHandleRoleChange {
+    #[must_use]
+    pub fn fixture_id(&self) -> &str {
+        &self.fixture_id
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &LensHandleName {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn before(&self) -> &BTreeSet<LensHandleRole> {
+        &self.before
+    }
+
+    #[must_use]
+    pub const fn after(&self) -> &BTreeSet<LensHandleRole> {
+        &self.after
+    }
+}
+
+/// An atom-kind count that changed in one fixture. Equal counts never produce an entry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LensAtomInventoryChange {
+    fixture_id: String,
+    primitive: GeneratedUiPrimitive,
+    before: u32,
+    after: u32,
+}
+
+impl LensAtomInventoryChange {
+    #[must_use]
+    pub fn fixture_id(&self) -> &str {
+        &self.fixture_id
+    }
+
+    #[must_use]
+    pub const fn primitive(&self) -> GeneratedUiPrimitive {
+        self.primitive
+    }
+
+    #[must_use]
+    pub const fn before(&self) -> u32 {
+        self.before
+    }
+
+    #[must_use]
+    pub const fn after(&self) -> u32 {
+        self.after
+    }
+}
+
+/// The full behavior delta between two corpus fingerprints.
+///
+/// All four dimensions are reported, but only handle changes — declared *or*
+/// referenced — drive the adoption lane: structure and inventory are evidence, not
+/// approval authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensBehaviorDiff {
+    structural_cases: BTreeSet<String>,
+    added_handles: BTreeSet<LensBehaviorHandle>,
+    removed_handles: BTreeSet<LensBehaviorHandle>,
+    added_referenced_handles: BTreeSet<LensBehaviorHandle>,
+    removed_referenced_handles: BTreeSet<LensBehaviorHandle>,
+    role_changes: Vec<LensHandleRoleChange>,
+    inventory_changes: BTreeSet<LensAtomInventoryChange>,
+}
+
+impl LensBehaviorDiff {
+    /// Compare two corpus fingerprints.
+    ///
+    /// The fixture-id sets must be equal; a missing render is never treated as empty
+    /// behavior and the two sides are never intersected or position-matched.
+    pub fn between(
+        before: &LensBehaviorFingerprint,
+        after: &LensBehaviorFingerprint,
+    ) -> Result<Self> {
+        if !before.cases.keys().eq(after.cases.keys()) {
+            return Err(Error::InvalidConfig(
+                "lens behavior fingerprints cover different golden fixtures".to_string(),
+            ));
+        }
+
+        let mut diff = Self {
+            structural_cases: BTreeSet::new(),
+            added_handles: BTreeSet::new(),
+            removed_handles: BTreeSet::new(),
+            added_referenced_handles: BTreeSet::new(),
+            removed_referenced_handles: BTreeSet::new(),
+            role_changes: Vec::new(),
+            inventory_changes: BTreeSet::new(),
+        };
+        // The key sets are proven equal above, so the two ordered maps walk in lockstep.
+        for ((fixture_id, before_case), (_, after_case)) in
+            before.cases.iter().zip(after.cases.iter())
+        {
+            diff.push_fixture(fixture_id, before_case, after_case);
+        }
+        diff.role_changes.sort_by(|left, right| {
+            left.fixture_id
+                .cmp(&right.fixture_id)
+                .then_with(|| left.name.as_str().cmp(right.name.as_str()))
+        });
+        Ok(diff)
+    }
+
+    fn push_fixture(
+        &mut self,
+        fixture_id: &str,
+        before: &LensFixtureBehavior,
+        after: &LensFixtureBehavior,
+    ) {
+        if before.atom_tree != after.atom_tree {
+            self.structural_cases.insert(fixture_id.to_owned());
+        }
+        self.push_inventory_changes(fixture_id, before, after);
+        self.push_handle_changes(fixture_id, before, after);
+        self.push_referenced_handle_changes(fixture_id, before, after);
+        self.push_role_changes(fixture_id, before, after);
+    }
+
+    fn push_inventory_changes(
+        &mut self,
+        fixture_id: &str,
+        before: &LensFixtureBehavior,
+        after: &LensFixtureBehavior,
+    ) {
+        let primitives = before
+            .atom_inventory
+            .keys()
+            .chain(after.atom_inventory.keys())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        for &primitive in &primitives {
+            // An absent side counts as zero; an unchanged count emits nothing at all.
+            let before_count = before.atom_inventory.get(&primitive).copied().unwrap_or(0);
+            let after_count = after.atom_inventory.get(&primitive).copied().unwrap_or(0);
+            if before_count != after_count {
+                self.inventory_changes.insert(LensAtomInventoryChange {
+                    fixture_id: fixture_id.to_owned(),
+                    primitive,
+                    before: before_count,
+                    after: after_count,
+                });
+            }
+        }
+    }
+
+    fn push_handle_changes(
+        &mut self,
+        fixture_id: &str,
+        before: &LensFixtureBehavior,
+        after: &LensFixtureBehavior,
+    ) {
+        for binding in after.bound_handles.difference(&before.bound_handles) {
+            self.added_handles
+                .insert(behavior_handle(fixture_id, binding));
+        }
+        for binding in before.bound_handles.difference(&after.bound_handles) {
+            self.removed_handles
+                .insert(behavior_handle(fixture_id, binding));
+        }
+    }
+
+    /// The same set difference over the *referenced* dimension. A pair can appear here
+    /// while `added_handles`/`removed_handles` stay empty: that is exactly a result set
+    /// retargeted between two handles the node declares either way.
+    fn push_referenced_handle_changes(
+        &mut self,
+        fixture_id: &str,
+        before: &LensFixtureBehavior,
+        after: &LensFixtureBehavior,
+    ) {
+        let before_referenced = &before.referenced_handles;
+        let after_referenced = &after.referenced_handles;
+        for binding in after_referenced.difference(before_referenced) {
+            self.added_referenced_handles
+                .insert(behavior_handle(fixture_id, binding));
+        }
+        for binding in before_referenced.difference(after_referenced) {
+            self.removed_referenced_handles
+                .insert(behavior_handle(fixture_id, binding));
+        }
+    }
+
+    fn push_role_changes(
+        &mut self,
+        fixture_id: &str,
+        before: &LensFixtureBehavior,
+        after: &LensFixtureBehavior,
+    ) {
+        let before_roles = roles_by_handle_name(&before.bound_handles);
+        let after_roles = roles_by_handle_name(&after.bound_handles);
+        for (name, before_set) in &before_roles {
+            // Only a name present on both sides can have *changed* role; a name that
+            // appears on one side alone is already an added/removed pair.
+            let Some(after_set) = after_roles.get(name) else {
+                continue;
+            };
+            if before_set == after_set {
+                continue;
+            }
+            self.role_changes.push(LensHandleRoleChange {
+                fixture_id: fixture_id.to_owned(),
+                name: (*name).clone(),
+                before: before_set.clone(),
+                after: after_set.clone(),
+            });
+        }
+    }
+
+    /// True when all seven collections are empty.
+    #[must_use]
+    pub fn is_identical(&self) -> bool {
+        self.structural_cases.is_empty()
+            && self.added_handles.is_empty()
+            && self.removed_handles.is_empty()
+            && self.added_referenced_handles.is_empty()
+            && self.removed_referenced_handles.is_empty()
+            && self.role_changes.is_empty()
+            && self.inventory_changes.is_empty()
+    }
+
+    /// The single adoption predicate: which reach is declared, *and* which of it a
+    /// result set points at. Structural and inventory churn never forces a human stamp
+    /// on its own, and `role_changes` stays evidence — every role move is already a
+    /// removed/added pair here.
+    #[must_use]
+    pub fn has_data_read_change(&self) -> bool {
+        !self.added_handles.is_empty()
+            || !self.removed_handles.is_empty()
+            || !self.added_referenced_handles.is_empty()
+            || !self.removed_referenced_handles.is_empty()
+    }
+
+    #[must_use]
+    pub const fn structural_cases(&self) -> &BTreeSet<String> {
+        &self.structural_cases
+    }
+
+    #[must_use]
+    pub const fn added_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
+        &self.added_handles
+    }
+
+    #[must_use]
+    pub const fn removed_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
+        &self.removed_handles
+    }
+
+    /// Reach a result-set row or select-all predicate newly points at.
+    #[must_use]
+    pub const fn added_referenced_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
+        &self.added_referenced_handles
+    }
+
+    /// Reach a result-set row or select-all predicate no longer points at.
+    #[must_use]
+    pub const fn removed_referenced_handles(&self) -> &BTreeSet<LensBehaviorHandle> {
+        &self.removed_referenced_handles
+    }
+
+    #[must_use]
+    pub fn role_changes(&self) -> &[LensHandleRoleChange] {
+        &self.role_changes
+    }
+
+    #[must_use]
+    pub const fn inventory_changes(&self) -> &BTreeSet<LensAtomInventoryChange> {
+        &self.inventory_changes
+    }
+}
+
+fn behavior_handle(fixture_id: &str, binding: &LensHandleBinding) -> LensBehaviorHandle {
+    LensBehaviorHandle {
+        fixture_id: fixture_id.to_owned(),
+        name: binding.name.clone(),
+        role: binding.role,
+    }
+}
+
+fn roles_by_handle_name(
+    handles: &BTreeSet<LensHandleBinding>,
+) -> BTreeMap<&LensHandleName, BTreeSet<LensHandleRole>> {
+    let mut grouped: BTreeMap<&LensHandleName, BTreeSet<LensHandleRole>> = BTreeMap::new();
+    for binding in handles {
+        grouped
+            .entry(&binding.name)
+            .or_default()
+            .insert(binding.role);
+    }
+    grouped
+}
+
+/// Where a regeneration attempt stopped. Every variant preserves the last-good body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LensRegenFailurePhase {
+    SummaryPromptRerun,
+    Compile,
+    Validate,
+    GoldenRender,
+    BehaviorDiff,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensRegenFailure {
+    phase: LensRegenFailurePhase,
+    message: String,
+}
+
+impl LensRegenFailure {
+    #[must_use]
+    pub fn new(phase: LensRegenFailurePhase, message: impl Into<String>) -> Self {
+        Self {
+            phase,
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn phase(&self) -> LensRegenFailurePhase {
+        self.phase
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// A regeneration request carries the target contract stamp and nothing else — no
+/// prompt, no source, no hash. The concrete regenerator is already bound to the lens
+/// artifact's summary prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LensRegenRequest {
+    target_version: LensVersionStamp,
+}
+
+impl LensRegenRequest {
+    #[must_use]
+    pub const fn new(target_version: LensVersionStamp) -> Self {
+        Self { target_version }
+    }
+
+    #[must_use]
+    pub const fn target_version(self) -> LensVersionStamp {
+        self.target_version
+    }
+}
+
+/// A validated lens paired with the behavior it produced over the golden corpus.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LensEvaluatedRevision {
+    lens: GeneratedLens,
+    behavior: LensBehaviorFingerprint,
+}
+
+impl LensEvaluatedRevision {
+    /// Trusted caller-owned seam. `behavior` must be the fingerprint produced by
+    /// rendering `lens` over the same golden corpus used for the comparison.
+    /// This constructor does not and cannot re-render to prove that pairing.
+    #[must_use]
+    pub const fn new(lens: GeneratedLens, behavior: LensBehaviorFingerprint) -> Self {
+        Self { lens, behavior }
+    }
+
+    #[must_use]
+    pub const fn lens(&self) -> &GeneratedLens {
+        &self.lens
+    }
+
+    #[must_use]
+    pub const fn behavior(&self) -> &LensBehaviorFingerprint {
+        &self.behavior
+    }
+
+    #[must_use]
+    pub fn into_lens(self) -> GeneratedLens {
+        self.lens
+    }
+}
+
+/// The injected regeneration seam. It is narrow on purpose: no model client, prompt
+/// router, async worker, executor dependency, or cloud/local routing policy enters this
+/// module. An implementation may schedule or await work internally before returning.
+pub trait LensRegenerator {
+    /// Re-run the summary prompt, compile/validate the candidate, render that
+    /// candidate over the configured golden corpus, and return its fingerprint.
+    /// Every failure is returned as a typed phase; never manufacture a blank lens.
+    fn regenerate(
+        &self,
+        request: &LensRegenRequest,
+    ) -> std::result::Result<LensEvaluatedRevision, LensRegenFailure>;
+}
+
+/// The adoption decision. There is no `None`, empty-body, or error-only return, so
+/// fail-blank is impossible at this boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LensRegenOutcome {
+    AutoAdopt {
+        candidate: LensEvaluatedRevision,
+        diff: LensBehaviorDiff,
+    },
+    NeedsHumanStamp {
+        last_good: LensEvaluatedRevision,
+        candidate: Box<LensEvaluatedRevision>,
+        diff: LensBehaviorDiff,
+    },
+    RolledBack {
+        last_good: LensEvaluatedRevision,
+        failure: LensRegenFailure,
+    },
+}
+
+impl LensRegenOutcome {
+    /// The revision that remains mountable without any further approval.
+    #[must_use]
+    pub const fn active_revision(&self) -> &LensEvaluatedRevision {
+        match self {
+            Self::AutoAdopt { candidate, .. } => candidate,
+            Self::NeedsHumanStamp { last_good, .. } | Self::RolledBack { last_good, .. } => {
+                last_good
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn diff(&self) -> Option<&LensBehaviorDiff> {
+        match self {
+            Self::AutoAdopt { diff, .. } | Self::NeedsHumanStamp { diff, .. } => Some(diff),
+            Self::RolledBack { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn pending_candidate(&self) -> Option<&LensEvaluatedRevision> {
+        match self {
+            Self::NeedsHumanStamp { candidate, .. } => Some(candidate.as_ref()),
+            Self::AutoAdopt { .. } | Self::RolledBack { .. } => None,
+        }
+    }
+}
+
+/// Run one regeneration and decide adoption.
+///
+/// The decision is binary: the same bound data reads may auto-adopt, changed bound data
+/// reads need a human stamp. There is no severity score, no heuristic, and no fourth
+/// outcome. The returned value performs nothing — the caller enacts adoption, routes the
+/// candidate through the existing Proposed-approval flow, or keeps the last-good body.
+#[must_use]
+pub fn regenerate_lens<R: LensRegenerator + ?Sized>(
+    regenerator: &R,
+    request: &LensRegenRequest,
+    last_good: LensEvaluatedRevision,
+) -> LensRegenOutcome {
+    // Regeneration always targets the live pair; a stale-targeted request is rejected
+    // before the regenerator is ever invoked.
+    if request.target_version() != LensVersionStamp::current() {
+        return LensRegenOutcome::RolledBack {
+            last_good,
+            failure: LensRegenFailure::new(
+                LensRegenFailurePhase::Validate,
+                "regen request must target the live version pair",
+            ),
+        };
+    }
+
+    let candidate = match regenerator.regenerate(request) {
+        Ok(candidate) => candidate,
+        Err(failure) => return LensRegenOutcome::RolledBack { last_good, failure },
+    };
+
+    if candidate.lens().version_stamp() != request.target_version() {
+        return LensRegenOutcome::RolledBack {
+            last_good,
+            failure: LensRegenFailure::new(
+                LensRegenFailurePhase::Validate,
+                "regenerated lens version does not match requested target",
+            ),
+        };
+    }
+
+    let diff = match LensBehaviorDiff::between(last_good.behavior(), candidate.behavior()) {
+        Ok(diff) => diff,
+        Err(error) => {
+            return LensRegenOutcome::RolledBack {
+                last_good,
+                failure: LensRegenFailure::new(
+                    LensRegenFailurePhase::BehaviorDiff,
+                    error.to_string(),
+                ),
+            };
+        }
+    };
+
+    if diff.has_data_read_change() {
+        LensRegenOutcome::NeedsHumanStamp {
+            last_good,
+            candidate: Box::new(candidate),
+            diff,
+        }
+    } else {
+        LensRegenOutcome::AutoAdopt { candidate, diff }
     }
 }

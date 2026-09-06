@@ -122,6 +122,7 @@ pub(crate) fn git_http_routes() -> Router<Arc<SyncServer>> {
         .route("/git/{repo}/info/refs", get(git_info_refs))
         .route("/git/{repo}/git-upload-pack", post(git_upload_pack))
         .route("/git/{repo}/git-receive-pack", post(git_receive_pack))
+        .merge(crate::api::git_lfs::lfs_routes())
 }
 
 /// `GET /git/{repo}/info/refs` — the ref advertisement, streamed.

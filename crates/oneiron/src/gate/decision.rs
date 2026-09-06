@@ -2,6 +2,7 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 
 use super::input::ExternalEffectGateContext;
@@ -201,6 +202,29 @@ pub(crate) enum GateReasonCode {
     /// bucket that needs authority beyond a bound actor is `system`, whose rows
     /// carry no `AuthoredBy` edge and so speak in the engine's own voice.
     DenyWitnessMessageAuthorNotAuthorized,
+    /// GATE-13: a Dreamer-authored write landed on a persona-core predicate.
+    /// The ceiling is forced to Proposed — never Auto — and the row rides
+    /// beside [`Self::PendingCriticalityFloor`] so every inbox dial surfaces
+    /// it.
+    PendingPersonaIsolation,
+    /// GATE-13: a Dreamer-authored write landed on a mirroring-prone
+    /// predicate. Same forced Proposed ceiling and same criticality marker,
+    /// with no multi-cycle evidence floor of its own.
+    PendingMirroringIsolation,
+    /// GATE-13: a persona-core Dreamer write cited evidence spanning fewer
+    /// than two distinct SESSION entities. A persona head may only move on
+    /// deliberate transformation, so one cycle is refused outright rather
+    /// than parked for review.
+    DenyPersonaSingleCycle,
+    /// ONE-1752 (ARCH-0057 §3.1): the counterparty is opted out, no
+    /// `comm.send_override` covers this send, and the resolved
+    /// `comm_opt_out_posture` is `escalate`. The send is HELD for the owner
+    /// rather than denied to them: suppression is the counterparty's word about
+    /// the counterparty, and the owner's own instrument may not refuse the
+    /// owner outright. [`Self::DenyCounterpartyOptOut`] keeps its position,
+    /// token and metric class for decode compatibility and is no longer emitted
+    /// on the owner path. Appended LAST — this enum is append-only.
+    PendingCounterpartyOptOut,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -240,6 +264,10 @@ impl GateReasonCode {
             Self::DenyWitnessMessageAuthorNotAuthorized => {
                 "gate.deny.witness_message.author_not_authorized"
             }
+            Self::PendingPersonaIsolation => "gate.pending.persona_isolation",
+            Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
+            Self::DenyPersonaSingleCycle => "gate.deny.dreamer_precommit.persona_single_cycle",
+            Self::PendingCounterpartyOptOut => "gate.pending.counterparty_opt_out",
         }
     }
 
@@ -259,7 +287,12 @@ impl GateReasonCode {
             Self::PendingExternalEffectAuthority | Self::PendingConnectorKeyUnregistered => {
                 GateMetricReasonClass::ExternalEffectAuthority
             }
-            Self::DenyCounterpartyOptOut => GateMetricReasonClass::CounterpartyOptOut,
+            // The consequence moved from deny to pending-escalation; the METRIC
+            // class did not. Both reason codes count as one opt-out class so
+            // dashboards keep their series across the cutover.
+            Self::DenyCounterpartyOptOut | Self::PendingCounterpartyOptOut => {
+                GateMetricReasonClass::CounterpartyOptOut
+            }
             Self::DenyEffectorBudgetExhausted | Self::DenyConnectorKeySuspended => {
                 GateMetricReasonClass::EffectorBudget
             }
@@ -278,6 +311,14 @@ impl GateReasonCode {
             | Self::DenyWitnessMessageAuthorNotAuthorized => {
                 GateMetricReasonClass::WitnessMessageCeiling
             }
+            // GATE-13 isolation rides the classes it already belongs to: the
+            // two pends carry the existing criticality marker, and the
+            // persona single-cycle refusal is a Dreamer pre-commit denial. No
+            // new metric class, so the counter width is unchanged.
+            Self::PendingPersonaIsolation | Self::PendingMirroringIsolation => {
+                GateMetricReasonClass::CriticalityFloor
+            }
+            Self::DenyPersonaSingleCycle => GateMetricReasonClass::DreamerPrecommit,
         }
     }
 }
@@ -344,6 +385,13 @@ impl GateDecision {
     }
 }
 
+/// The receipt vocabulary one external effect contributes, in source order.
+///
+/// Three chained sources, each contributing at most one token: the opt-out
+/// reason, the first-touch class, and — ONE-1752 — the `comm.send_override`
+/// head hydration matched for this send. The override token records the
+/// DECISION SOURCE of an opt-out fall-through; it is never both scopes, because
+/// the match itself is one variant.
 pub(super) fn external_effect_receipt_reasons(
     effect: &ExternalEffectGateContext,
 ) -> impl Iterator<Item = &'static str> {
@@ -355,6 +403,11 @@ pub(super) fn external_effect_receipt_reasons(
                 .counterparty_first_touch
                 .map(CounterpartyFirstTouch::receipt_reason),
         )
+        .chain(match effect.counterparty_send_override {
+            Some(SendOverrideMatch::Standing) => Some("comm_send_override_standing"),
+            Some(SendOverrideMatch::OneShot) => Some("comm_send_override_one_shot"),
+            None => None,
+        })
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

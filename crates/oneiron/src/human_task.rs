@@ -358,7 +358,10 @@ fn vetoed_channel_classes(
             continue;
         }
         match claim.value {
-            CommClaimValue::OptOut { channel_class, .. }
+            CommClaimValue::OptOut {
+                channel_class: Some(channel_class),
+                ..
+            }
             | CommClaimValue::ReachableVia {
                 channel_class,
                 reachable: false,
@@ -366,7 +369,13 @@ fn vetoed_channel_classes(
             } => {
                 vetoed.insert(channel_class);
             }
-            CommClaimValue::ReachableVia { .. }
+            // ONE-1752 fan-out only. This helper answers a PER-CLASS question,
+            // and neither a party-wide (channel-less) opt-out nor a send
+            // override names a class, so neither contributes a row here. Every
+            // channel-scoped opt-out head vetoes exactly as before.
+            CommClaimValue::OptOut { .. }
+            | CommClaimValue::SendOverride { .. }
+            | CommClaimValue::ReachableVia { .. }
             | CommClaimValue::LastTouch { .. }
             | CommClaimValue::ThreadMember { .. } => {}
         }
@@ -1037,7 +1046,7 @@ mod tests {
 
     use crate::attempt_queue::AttemptQueue;
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, SelfHeldShape,
     };
     use crate::comm::{
         CommClaimValue, record_comm_inbound_stop, resolve_or_create_comm_party, run_comm_projector,
@@ -1197,7 +1206,7 @@ mod tests {
                 &ChannelIdentity::requested(
                     "email",
                     OWN_ADDRESS,
-                    ChannelIdentityShape::DedicatedAddress,
+                    SelfHeldShape::DedicatedAddress,
                     ChannelIdentityBinding::vault(1),
                     NOW,
                 ),

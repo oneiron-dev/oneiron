@@ -4157,3 +4157,188 @@ fn healed_failed_step_families_each_count_exactly_one_committed_turn() {
         );
     }
 }
+
+// ─── ONE-1314 · lineage crosses the resume, host-internally ─────────────────
+
+/// Appends one already-recorded bridge call to the run's DURABLE history,
+/// exactly as a step that parked on that effect would have left it.
+fn append_durable_bridge_call(
+    vault: &Vault,
+    run_id: EntityId,
+    call: &SelfCall,
+    outcome: &SelfDispatchOutcome,
+) {
+    let mut record = vault
+        .get_code_run_replay_record(&run_id)
+        .expect("load replay")
+        .expect("stored replay");
+    let generation = record.generation().expect("replay generation");
+    let seq = record.bridge_calls.len() as u64;
+    let at_ms = determinism().frozen_unix_ms.saturating_add(seq);
+    record.bridge_calls.push(
+        CodeRunBridgeCall::record(seq, call, outcome, at_ms, at_ms).expect("bridge call row"),
+    );
+    vault
+        .put_code_run_replay_record_if_generation(&record, Some(generation))
+        .expect("append durable bridge call");
+}
+
+/// Runs one step that dispatches a claim write, resuming the given run under a
+/// FRESH gated write, and returns the landed claim's evidence entries.
+fn resume_with_claim_write(
+    vault: &Vault,
+    config: &EngineExecutorConfig,
+    run_ref: &str,
+    claim: EntityId,
+    subject: EntityId,
+) -> Vec<(Value, Value)> {
+    let lease = BudgetLease::for_test("executor-lease");
+    let backend = FixtureBackend::new(["await self.memory.put_claim(candidate);"]);
+    let candidate = ClaimCandidate::new(
+        "profile.favorite_drink",
+        ClaimSubject::Entity(subject),
+        Value::from("sencha"),
+        0.9,
+    );
+    let mut runtime =
+        FixtureRuntime::new([JsCodeModeStepOutcome::complete("written")]).with_calls([vec![
+            SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(claim, candidate, range(5), 6)),
+        ]]);
+    // FRESH dispatcher: nothing about the earlier step survives in memory, so
+    // whatever lineage this write carries came from the durable record.
+    let gated_write = gated_actor_write(vault, run_ref);
+    let mut executor =
+        EngineNativeExecutor::new(vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(config)).expect("resumed run");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+
+    let stored = vault
+        .get_claim(&claim)
+        .expect("read claim")
+        .expect("stored claim");
+    let Some(Value::Map(evidence)) = stored.evidence else {
+        panic!("expected write envelope evidence");
+    };
+    evidence
+}
+
+fn evidence_lineage_members(evidence: &[(Value, Value)]) -> Option<Vec<String>> {
+    let entry = evidence.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
+            .then_some(value)
+    })?;
+    let Value::Array(members) = entry else {
+        panic!("lineage evidence is an array of source strings");
+    };
+    Some(
+        members
+            .iter()
+            .map(|member| member.as_str().expect("source string").to_owned())
+            .collect(),
+    )
+}
+
+/// Runs the first, yielding step of a two-step lineage fixture.
+fn park_first_step(vault: &Vault, config: &EngineExecutorConfig, run_ref: &str) {
+    let lease = BudgetLease::for_test("executor-lease");
+    let backend = FixtureBackend::new(["const first = true;"]);
+    let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending("first observation")]);
+    let gated_write = gated_actor_write(vault, run_ref);
+    let mut executor =
+        EngineNativeExecutor::new(vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(config)).expect("first run");
+    assert_eq!(
+        outcome.status,
+        EngineExecutorStatus::Yielded { next_step_seq: 1 }
+    );
+}
+
+/// `lineage_tamper_rejected`, runtime arm.
+///
+/// A run that reached OUTSIDE cannot come back after the resume and write as
+/// if it never had. An outbound effect parks its step, so the write always
+/// lands in a later step against a fresh dispatcher; the durable bridge-call
+/// history is the only record of the hop, and the executor stamps the write
+/// from it host-internally — nothing in the guest call, and nothing the guest
+/// authored, participates.
+#[test]
+fn lineage_tamper_rejected() {
+    let (_dir, vault) = open_test_vault();
+    let subject = seed_person(&vault, 0xD1);
+    let claim = entity(0xD2);
+    let config = executor_config(
+        entity(0xD3),
+        EngineExecutorLimits {
+            soft_steps: 1,
+            hard_steps: 3,
+        },
+    );
+
+    park_first_step(&vault, &config, "run-lineage-outbound");
+    append_durable_bridge_call(
+        &vault,
+        config.run_id,
+        &SelfCall::OutboundFixture(crate::code_run::SelfFixtureEffectCall::new("send message")),
+        &SelfDispatchOutcome::DurableWait(SelfDurableWait {
+            wait_id: entity(0xD4),
+            effect: SelfEffect::OutboundFixture,
+            reason: SelfDurableWaitReason::OutboundEffect,
+            prompt: Some("send message".to_owned()),
+        }),
+    );
+
+    let evidence = resume_with_claim_write(&vault, &config, "run-lineage-outbound", claim, subject);
+    let lineage = evidence_lineage_members(&evidence)
+        .expect("the post-resume write carries the durable history's lineage");
+    assert!(lineage.contains(&crate::ClaimSource::Generated.as_str().to_owned()));
+    assert!(
+        lineage.contains(&crate::ClaimSource::ToolOutput.as_str().to_owned()),
+        "the parked outbound hop rides the write that resumed after it"
+    );
+
+    let stored = vault
+        .get_claim(&claim)
+        .expect("read claim")
+        .expect("stored claim");
+    assert_eq!(
+        stored.source,
+        Some(crate::ClaimSource::Generated),
+        "the host-bound declaration is unchanged; lineage is the second axis"
+    );
+}
+
+/// NEG arm: a run whose durable history is only memory reads stays trivially
+/// `Generated`. Memory access is not a tool effect.
+#[test]
+fn lineage_stays_trivial_without_an_external_effect() {
+    let (_dir, vault) = open_test_vault();
+    let subject = seed_person(&vault, 0xD5);
+    let claim = entity(0xD6);
+    // 0xD7 is the production-pinned default policy manifest id, so the run id
+    // skips it and continues at 0xD8 (outside `PINNED_ID_BYTES`).
+    let config = executor_config(
+        entity(0xD8),
+        EngineExecutorLimits {
+            soft_steps: 1,
+            hard_steps: 3,
+        },
+    );
+
+    park_first_step(&vault, &config, "run-lineage-reads-only");
+    append_durable_bridge_call(
+        &vault,
+        config.run_id,
+        &SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("tea", 1)),
+        &SelfDispatchOutcome::MemorySearch(crate::code_run::SelfMemorySearchResult {
+            query: "tea".to_owned(),
+            results: Vec::new(),
+        }),
+    );
+
+    let evidence =
+        resume_with_claim_write(&vault, &config, "run-lineage-reads-only", claim, subject);
+    assert!(
+        evidence_lineage_members(&evidence).is_none(),
+        "a read-only history stamps no lineage entry at all"
+    );
+}
