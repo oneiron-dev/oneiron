@@ -638,6 +638,11 @@ pub fn merge_campaign_arm_report(
             reason: "held-out slot holds a non-held-out split report",
         });
     }
+    if search.metric_definition_digest != held_out.metric_definition_digest {
+        return Err(CampaignError::ReportMismatch {
+            reason: "search and held-out reports have different metric definition digests",
+        });
+    }
     Ok(CampaignArmReport {
         arm: search.arm,
         search,
@@ -2158,6 +2163,41 @@ mod tests {
         let err = merge_campaign_arm_report(search, forged)
             .expect_err("a smoke-killed row with a live score is refused before assembly");
         assert!(matches!(err, CampaignError::ReportMismatch { .. }));
+    }
+
+    #[test]
+    fn merge_campaign_arm_report_rejects_different_metric_definition_digests() {
+        let mut report = arm_report(
+            &test_config(),
+            CampaignExecutableArm::SinglePass,
+            SplitFixture::passed(0.20, 0.60),
+            SplitFixture::passed(0.25, 0.90),
+        );
+        report
+            .held_out
+            .metric_definition_digest
+            .push_str("-different");
+        report
+            .held_out
+            .of360
+            .metric_definitions
+            .derivation_envelope
+            .content_hash = report.held_out.metric_definition_digest.clone();
+
+        report.search.validate().expect("valid search report");
+        report.held_out.validate().expect("valid held-out report");
+        assert_ne!(
+            report.search.metric_definition_digest,
+            report.held_out.metric_definition_digest
+        );
+        let err = merge_campaign_arm_report(report.search, report.held_out)
+            .expect_err("individually valid reports with different metric digests cannot merge");
+        assert!(matches!(
+            err,
+            CampaignError::ReportMismatch {
+                reason: "search and held-out reports have different metric definition digests",
+            }
+        ));
     }
 
     #[test]
