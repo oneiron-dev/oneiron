@@ -1221,45 +1221,6 @@ fn integrate_mints_one_epoch_summary_from_the_request() -> Result<()> {
 }
 
 #[test]
-fn a_second_compaction_mints_epoch_two_and_starts_at_prior_turn_end_plus_one() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x65);
-    let mut driver = engine_driver(1_000);
-
-    let first = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0xC0, 1, 3),
-    )?;
-    assert_eq!(first.epoch, 1);
-
-    // The DURABLE prior summary is the counter — no mutable session row.
-    driver.evaluate_now(&vault, u64::MAX)?;
-    let second_window = host_window(&vault, 0xD0, 4, 2);
-    let request = driver.request_for(&vault, &session, second_window)?;
-    assert_eq!(
-        request.turn_start, 4,
-        "the next span begins at the durable prior turn_end + 1"
-    );
-
-    let product = driver.backend().compact(&request)?;
-    let second = driver.integrate(&vault, &session, actor, &request, product, &[])?;
-    assert_eq!(second.epoch, 2);
-
-    let body = stored_summary_body(&vault, &second.summary_id);
-    assert_eq!((body.turn_start, body.turn_end), (4, 5));
-
-    // The first keyframe is untouched: byte-stable from its mint moment.
-    let first_body = stored_summary_body(&vault, &first.summary_id);
-    assert_eq!(first_body.epoch, 1);
-    assert_eq!((first_body.turn_start, first_body.turn_end), (1, 3));
-    Ok(())
-}
-
-#[test]
 fn the_mint_is_byte_stable_and_leaves_the_scope_clause_untouched() -> Result<()> {
     let (_dir, vault) = open_vault();
     let session = mint_session(&vault, 10);

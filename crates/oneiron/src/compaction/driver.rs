@@ -77,6 +77,20 @@ pub struct CompactionWatermark {
     pub turn_id: Option<EntityId>,
 }
 
+impl CompactionWatermark {
+    /// `None` is after every exact key in its second, not Option's ordering.
+    fn is_after(self, prior: Self) -> bool {
+        if self.learned_at != prior.learned_at {
+            return self.learned_at > prior.learned_at;
+        }
+        match (self.turn_id, prior.turn_id) {
+            (Some(current), Some(previous)) => current > previous,
+            (None, Some(_)) => true,
+            _ => false,
+        }
+    }
+}
+
 /// The compaction job the driver hands the host to run on ITS runtime.
 ///
 /// Created only by [`CompactionDriver::request_for`]. Hosts may read, move or
@@ -261,12 +275,7 @@ impl MarginLaw {
     /// `margin = ceil(latency_ema x velocity_ema)` — the law, nothing else.
     #[must_use]
     pub fn margin_tokens(&self) -> u64 {
-        let margin = (self.latency_ema_ms / 1_000.0 * self.velocity_ema_tps).ceil();
-        if margin.is_finite() && margin > 0.0 {
-            margin as u64
-        } else {
-            0
-        }
+        ceil_non_negative(self.latency_ema_ms / 1_000.0 * self.velocity_ema_tps)
     }
 
     /// The latency EMA in milliseconds, rounded half-up — the exact field a
@@ -307,7 +316,8 @@ fn round_half_up(value: f64) -> u64 {
 
 fn ceil_non_negative(value: f64) -> u64 {
     let ceiled = value.ceil();
-    if ceiled.is_finite() && ceiled > 0.0 {
+    if ceiled > 0.0 {
+        // The cast saturates positive overflow, including infinity, to u64::MAX.
         ceiled as u64
     } else {
         0
@@ -375,6 +385,8 @@ pub struct CompactionDriver {
     backend: Arc<dyn CompactionBackend>,
     margin: MarginLaw,
     state: CompactionState,
+    /// Only a committed mint advances this fence; failed/abandoned work does not.
+    completed_watermark: Option<CompactionWatermark>,
     /// Resolved copy of the profile that produced this driver.
     profile: MemoryProfile,
 }
@@ -385,6 +397,7 @@ impl std::fmt::Debug for CompactionDriver {
             .field("backend_key", &self.backend.backend_key())
             .field("margin", &self.margin)
             .field("state", &self.state)
+            .field("completed_watermark", &self.completed_watermark)
             .field("profile", &self.profile)
             .finish()
     }
@@ -407,6 +420,7 @@ impl CompactionDriver {
                 backend: registry.resolve(profile)?,
                 margin: MarginLaw::new(),
                 state: CompactionState::Idle,
+                completed_watermark: None,
                 profile: profile.clone(),
             })),
         }
@@ -487,12 +501,19 @@ impl CompactionDriver {
     ///
     /// Every observation entry funnels here, so a second crossing while a
     /// compaction is in flight is `Quiet` — not a queue. One compaction stays
-    /// in flight by construction.
+    /// in flight by construction. Once a mint succeeds, the watermark must
+    /// advance before another flight begins, even if the pack remains large.
     fn directive(&mut self, vault: &Vault, used_tokens: u64) -> Result<CompactionDirective> {
         match self.state {
             CompactionState::Compacting { .. } => Ok(CompactionDirective::Quiet),
             CompactionState::Idle if used_tokens >= self.compact_at() => {
                 let watermark = snapshot_watermark(vault)?;
+                if self
+                    .completed_watermark
+                    .is_some_and(|completed| !watermark.is_after(completed))
+                {
+                    return Ok(CompactionDirective::Quiet);
+                }
                 self.state = CompactionState::Compacting {
                     watermark,
                     request: None,
@@ -672,6 +693,7 @@ impl CompactionDriver {
         let (epoch, summary_id) =
             mint_epoch_summary(vault, session_ref, byline, request, &product)?;
         self.margin.observe_latency(product.latency);
+        self.completed_watermark = Some(request.watermark);
         self.state = CompactionState::Idle;
         Ok(SwapPlan {
             epoch,

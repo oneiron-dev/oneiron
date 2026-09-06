@@ -2,6 +2,93 @@
 
 use super::*;
 
+/// Host fixture: settle Dreamer's complete-second boundary before another flight.
+pub(super) fn advance_test_watermark(vault: &Vault, learned_at: u64) -> Result<()> {
+    crate::dreamer_consolidation::advance_watermark(
+        vault,
+        crate::dreamer_runner::DreamerConsolidationScope::Micro,
+        learned_at,
+    )
+}
+
+#[test]
+fn a_second_compaction_mints_epoch_two_and_starts_at_prior_turn_end_plus_one() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x65);
+    let mut driver = engine_driver(1_000);
+
+    let first = compact_once(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        host_window(&vault, 0xC0, 1, 3),
+    )?;
+    assert_eq!(first.epoch, 1);
+
+    // The DURABLE prior summary is the counter — no mutable session row.
+    advance_test_watermark(&vault, 5)?;
+    driver.evaluate_now(&vault, u64::MAX)?;
+    let second_window = host_window(&vault, 0xD0, 4, 2);
+    let request = driver.request_for(&vault, &session, second_window)?;
+    assert_eq!(
+        request.turn_start, 4,
+        "the next span begins at the durable prior turn_end + 1"
+    );
+
+    let product = driver.backend().compact(&request)?;
+    let second = driver.integrate(&vault, &session, actor, &request, product, &[])?;
+    assert_eq!(second.epoch, 2);
+
+    let body = stored_summary_body(&vault, &second.summary_id);
+    assert_eq!((body.turn_start, body.turn_end), (4, 5));
+
+    // The first keyframe is untouched: byte-stable from its mint moment.
+    let first_body = stored_summary_body(&vault, &first.summary_id);
+    assert_eq!(first_body.epoch, 1);
+    assert_eq!((first_body.turn_start, first_body.turn_end), (1, 3));
+    Ok(())
+}
+
+#[test]
+fn finite_velocity_overflow_saturates_margin_and_starvation_deficit() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let mut driver = engine_driver(1_000);
+    driver.observe_velocity(f64::MAX);
+    assert_eq!(driver.margin().margin_tokens(), u64::MAX);
+    assert_eq!(driver.margin().measured_velocity_tps(), u64::MAX);
+
+    // Overflow in a product is valid; non-finite or negative input is not.
+    let measured = *driver.margin();
+    for invalid in [-1.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+        driver.observe_velocity(invalid);
+        assert_eq!(*driver.margin(), measured);
+    }
+    assert_eq!(driver.compact_at(), 500);
+    assert!(matches!(
+        driver.evaluate_now(&vault, 500)?,
+        CompactionDirective::Begin { .. }
+    ));
+    assert_eq!(
+        driver.starvation_check(Duration::from_secs(2), u64::MAX),
+        Some(CompactionSignal::Starvation {
+            deficit_tokens: u64::MAX,
+            measured_latency_ms: driver.margin().measured_latency_ms(),
+            measured_velocity_tps: u64::MAX,
+        }),
+        "positive projected overflow cannot become a zero-token deficit"
+    );
+    assert!(matches!(
+        driver.starvation_check(Duration::ZERO, u64::MAX),
+        Some(CompactionSignal::Starvation {
+            deficit_tokens,
+            ..
+        }) if deficit_tokens == u64::MAX - 1_000
+    ));
+    Ok(())
+}
+
 /// Exercise the real integration door and observe both storage and driver state.
 fn refuse_wrong_request(
     vault: &Vault,
@@ -110,6 +197,7 @@ fn a_completed_result_cannot_consume_a_later_flight() -> Result<()> {
     assert_eq!(stored_row_count(&vault), rows);
     assert_eq!(*driver.margin(), margin);
 
+    advance_test_watermark(&vault, 4)?;
     driver.evaluate_now(&vault, u64::MAX)?;
     let current = driver.request_for(&vault, &session, host_window(&vault, 0x90, 3, 2))?;
     refuse_wrong_request(&vault, &mut driver, session, actor, &old);
@@ -219,6 +307,7 @@ fn request_refuses_gaps_reordering_and_wrong_durable_boundaries() -> Result<()> 
         actor,
         host_window(&vault, 0x80, 1, 4),
     )?;
+    advance_test_watermark(&vault, 6)?;
     driver.evaluate_now(&vault, u64::MAX)?;
     let turn_ids = [put_turn(&vault, 0x90, 5), put_turn(&vault, 0x91, 6)];
     let before = stored_row_count(&vault);
@@ -299,5 +388,275 @@ fn first_epoch_refuses_missing_turns_and_wrapping_turn_numbers() -> Result<()> {
         request.turn_start, 5,
         "the first epoch need not start at turn one"
     );
+    Ok(())
+}
+
+#[test]
+fn exact_context_token_budget_mints_the_unmodified_summary() -> Result<()> {
+    let text = " \tRésumé テスト: keep <|endoftext|> as ordinary prose.\n";
+    let tokens = crate::tokenizer::count_context_pack_tokens(text) as u64;
+    assert!(tokens > 0);
+    for split in [None, Some(ContextBudgetSplit::new(0.25, 0.125, 0.5, 0.125))] {
+        let (_dir, vault) = open_vault();
+        let session = mint_session(&vault, 10);
+        let actor = loom_actor(&vault, 0x60);
+        let mut profile = profile(
+            tokens * if split.is_some() { 2 } else { 4 },
+            CompactionOwnership::Engine,
+        );
+        profile.budget_split = split;
+        let mut driver =
+            CompactionDriver::for_profile(&profile, &cheap_registry())?.expect("engine driver");
+        driver.evaluate_now(&vault, u64::MAX)?;
+        let request = driver.request_for(&vault, &session, host_window(&vault, 0x80, 1, 2))?;
+        assert_eq!(request.summary_token_budget, tokens);
+        let plan = driver.integrate(
+            &vault,
+            &session,
+            actor,
+            &request,
+            CompactionProduct {
+                summary_text: text.to_owned(),
+                latency: Duration::from_millis(9),
+            },
+            &[],
+        )?;
+        assert_eq!(stored_summary_body(&vault, &plan.summary_id).text, text);
+        assert_eq!(summary_row_count(&vault), 1);
+        assert_eq!(pending_embedding_marker_count(&vault), 1);
+        assert_eq!(driver.margin().measured_latency_ms(), 9);
+        assert!(!driver.is_compacting());
+    }
+    Ok(())
+}
+
+#[test]
+fn over_budget_products_write_nothing_and_allow_same_flight_or_abandoned_retry() -> Result<()> {
+    for abandon in [false, true] {
+        let (_dir, vault) = open_vault();
+        let session = mint_session(&vault, 10);
+        let actor = loom_actor(&vault, 0x60);
+        let mut driver = engine_driver(4);
+        driver.evaluate_now(&vault, u64::MAX)?;
+        let window = host_window(&vault, 0x80, 1, 2);
+        let mut request = driver.request_for(&vault, &session, window.clone())?;
+        assert_eq!(request.summary_token_budget, 1);
+        // Exactly one token over the ceiling under the context tokenizer.
+        let text = "x x";
+        assert_eq!(crate::tokenizer::count_context_pack_tokens(text), 2);
+        let rows = stored_row_count(&vault);
+        let markers = pending_embedding_marker_count(&vault);
+        let margin = *driver.margin();
+        let error = driver
+            .integrate(
+                &vault,
+                &session,
+                actor,
+                &request,
+                CompactionProduct {
+                    summary_text: text.to_owned(),
+                    latency: Duration::from_secs(900),
+                },
+                &[],
+            )
+            .expect_err("the backend cannot exceed the sealed token allocation");
+        assert_eq!(
+            invariant(error),
+            "compaction product summary_text exceeds summary_token_budget"
+        );
+        assert_eq!(stored_row_count(&vault), rows);
+        assert_eq!(pending_embedding_marker_count(&vault), markers);
+        assert_eq!(summary_row_count(&vault), 0);
+        assert_eq!(*driver.margin(), margin);
+        assert!(driver.is_compacting());
+        assert_eq!(
+            driver.evaluate_now(&vault, u64::MAX)?,
+            CompactionDirective::Quiet
+        );
+        if abandon {
+            driver.abandon();
+            assert_eq!(
+                driver.evaluate_now(&vault, u64::MAX)?,
+                CompactionDirective::Begin {
+                    watermark: request.watermark,
+                }
+            );
+            let retry = driver.request_for(&vault, &session, window)?;
+            assert_ne!(retry, request);
+            request = retry;
+        }
+        let plan = driver.integrate(
+            &vault,
+            &session,
+            actor,
+            &request,
+            CompactionProduct {
+                summary_text: "x".to_owned(),
+                latency: Duration::from_millis(1),
+            },
+            &[],
+        )?;
+        assert_eq!(plan.epoch, 1);
+        assert_eq!(stored_summary_body(&vault, &plan.summary_id).text, "x");
+        assert!(!driver.is_compacting());
+    }
+    Ok(())
+}
+
+fn set_test_watermark(vault: &Vault, watermark: CompactionWatermark) -> Result<()> {
+    match watermark.turn_id {
+        None => advance_test_watermark(vault, watermark.learned_at),
+        Some(turn_id) => crate::dreamer_consolidation::advance_watermark_to_turn(
+            vault,
+            crate::dreamer_runner::DreamerConsolidationScope::Micro,
+            &crate::dreamer_consolidation::WorkingSetTurn {
+                turn_id,
+                learned_at: watermark.learned_at,
+                role: crate::dreamer_runner::DreamerTurnRole::User,
+                conversation: None,
+            },
+        ),
+    }
+}
+
+#[test]
+fn completed_watermark_suppresses_same_and_older_but_allows_newer_positions() -> Result<()> {
+    let low = Some(entity(0x80));
+    let mid = Some(entity(0x81));
+    let high = Some(entity(0x82));
+    for (completed_at, completed_id, observed_at, observed_id, newer) in [
+        (0, None, 0, None, false),
+        (0, None, 0, low, false),
+        (0, None, 1, low, true),
+        (10, mid, 10, mid, false),
+        (10, mid, 10, low, false),
+        (10, mid, 10, high, true),
+        (10, mid, 10, None, true),
+        (10, mid, 9, None, false),
+        (10, mid, 11, low, true),
+        (10, None, 10, high, false),
+        (10, None, 10, None, false),
+        (10, None, 11, low, true),
+    ] {
+        let (_dir, vault) = open_vault();
+        let session = mint_session(&vault, 10);
+        let actor = loom_actor(&vault, 0x60);
+        let completed = CompactionWatermark {
+            learned_at: completed_at,
+            turn_id: completed_id,
+        };
+        set_test_watermark(&vault, completed)?;
+        let mut driver = engine_driver(1_000);
+        compact_once(
+            &vault,
+            &mut driver,
+            session,
+            actor,
+            host_window(&vault, 0x90, 1, 2),
+        )?;
+        let observed = CompactionWatermark {
+            learned_at: observed_at,
+            turn_id: observed_id,
+        };
+        set_test_watermark(&vault, observed)?;
+        let rows = stored_row_count(&vault);
+        let markers = pending_embedding_marker_count(&vault);
+        let margin = *driver.margin();
+        let expected = if newer {
+            CompactionDirective::Begin {
+                watermark: observed,
+            }
+        } else {
+            CompactionDirective::Quiet
+        };
+        assert_eq!(
+            driver.observe_from_context_build(&vault, u64::MAX)?,
+            expected
+        );
+        assert_eq!(driver.is_compacting(), newer);
+        assert_eq!(
+            driver.evaluate_now(&vault, u64::MAX)?,
+            CompactionDirective::Quiet
+        );
+        assert_eq!(stored_row_count(&vault), rows);
+        assert_eq!(pending_embedding_marker_count(&vault), markers);
+        assert_eq!(*driver.margin(), margin);
+    }
+    Ok(())
+}
+
+#[test]
+fn completion_fence_keeps_trigger_watermark_and_survives_newer_failed_flights() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x60);
+    let mut driver = engine_driver(1_000);
+    advance_test_watermark(&vault, 10)?;
+    driver.evaluate_now(&vault, u64::MAX)?;
+    let first = driver.request_for(&vault, &session, host_window(&vault, 0x80, 1, 2))?;
+    // Dreamer can advance while the host's backend is running. Completion
+    // fences the request's W=10, not the now-current W=20.
+    advance_test_watermark(&vault, 20)?;
+    let product = driver.backend().compact(&first)?;
+    driver.integrate(&vault, &session, actor, &first, product, &[])?;
+    let newer = CompactionWatermark {
+        learned_at: 20,
+        turn_id: None,
+    };
+    assert_eq!(
+        driver.evaluate_now(&vault, u64::MAX)?,
+        CompactionDirective::Begin { watermark: newer }
+    );
+    let window = host_window(&vault, 0x90, 3, 2);
+    let failed = driver.request_for(&vault, &session, window.clone())?;
+    let rows = stored_row_count(&vault);
+    let markers = pending_embedding_marker_count(&vault);
+    let margin = *driver.margin();
+    let error = driver
+        .integrate(
+            &vault,
+            &session,
+            actor,
+            &failed,
+            CompactionProduct {
+                summary_text: String::new(),
+                latency: Duration::from_secs(99),
+            },
+            &[],
+        )
+        .expect_err("failed work cannot advance the fence");
+    assert_eq!(invariant(error), "compaction product summary_text is empty");
+    assert!(driver.is_compacting());
+    assert_eq!(stored_row_count(&vault), rows);
+    assert_eq!(pending_embedding_marker_count(&vault), markers);
+    assert_eq!(*driver.margin(), margin);
+    driver.abandon();
+    advance_test_watermark(&vault, 10)?;
+    assert_eq!(
+        driver.evaluate_now(&vault, u64::MAX)?,
+        CompactionDirective::Quiet
+    );
+    assert!(!driver.is_compacting());
+    advance_test_watermark(&vault, 20)?;
+    assert_eq!(
+        driver.evaluate_now(&vault, u64::MAX)?,
+        CompactionDirective::Begin { watermark: newer }
+    );
+    // Abandoning even before request issuance must leave this boundary retryable.
+    driver.abandon();
+    assert_eq!(
+        driver.evaluate_now(&vault, u64::MAX)?,
+        CompactionDirective::Begin { watermark: newer }
+    );
+    let retry = driver.request_for(&vault, &session, window)?;
+    let product = driver.backend().compact(&retry)?;
+    let plan = driver.integrate(&vault, &session, actor, &retry, product, &[])?;
+    assert_eq!(plan.epoch, 2);
+    driver.abandon();
+    assert_eq!(
+        driver.evaluate_now(&vault, u64::MAX)?,
+        CompactionDirective::Quiet
+    );
+    assert_eq!(summary_row_count(&vault), 2);
     Ok(())
 }

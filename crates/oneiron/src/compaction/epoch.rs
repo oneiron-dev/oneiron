@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::tokenizer::count_context_pack_tokens;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
@@ -229,6 +230,45 @@ fn epoch_summary_hex_ref(value: &Value) -> Result<String> {
     Ok(text.to_owned())
 }
 
+/// Recognizes a session's epoch-shaped map even when strict decoding fails.
+///
+/// Only top-level epoch/range keys distinguish it from an ordinary SUMMARY.
+/// Read pairs in order so a damaged suffix cannot hide an already identified
+/// session and epoch key. Bytes that lose that identity are not attributable
+/// to a session; this is not a heuristic search through arbitrary payloads.
+fn is_epoch_candidate_for_session(bytes: &[u8], session_ref: &EntityId) -> bool {
+    let (pairs, mut cursor) = match bytes {
+        [marker @ 0x80..=0x8f, rest @ ..] => (u32::from(*marker & 0x0f), rest),
+        [0xde, a, b, rest @ ..] => (u32::from(u16::from_be_bytes([*a, *b])), rest),
+        [0xdf, a, b, c, d, rest @ ..] => (u32::from_be_bytes([*a, *b, *c, *d]), rest),
+        _ => return false,
+    };
+    let mut matching_session = false;
+    let mut epoch_shaped = false;
+    for _ in 0..pairs {
+        let Ok(key) = rmpv::decode::read_value(&mut cursor) else {
+            break;
+        };
+        epoch_shaped |= matches!(
+            key.as_str(),
+            Some(KEY_EPOCH_EPOCH | KEY_EPOCH_TURN_START | KEY_EPOCH_TURN_END)
+        );
+        let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+            break;
+        };
+        if key.as_str() == Some(KEY_EPOCH_SESSION) {
+            matching_session |= value
+                .as_str()
+                .and_then(|text| EntityId::from_hex(text).ok())
+                .is_some_and(|id| id == *session_ref);
+        }
+        if matching_session && epoch_shaped {
+            return true;
+        }
+    }
+    matching_session && epoch_shaped
+}
+
 /// One durable prior epoch of a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PriorEpoch {
@@ -281,13 +321,13 @@ pub(super) fn validate_epoch_boundary(prior: Option<PriorEpoch>, turn_start: u64
 ///
 /// Rows whose body is not an epoch-summary record are SKIPPED, not refused: an
 /// ordinary witness SUMMARY is a different kind of row that happens to share
-/// the type byte, and it carries no epoch to compare.
+/// the type byte, and it carries no epoch to compare. An identifiable malformed
+/// epoch candidate for this session is refused rather than losing its lineage.
 pub(super) fn prior_epoch_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     session_ref: &EntityId,
 ) -> Result<Option<PriorEpoch>> {
-    let session = session_ref.to_hex();
     let mut best: Option<EpochSummaryBody> = None;
     let mut conflicting = false;
     for row in store.entities.iter(rtxn)? {
@@ -297,18 +337,27 @@ pub(super) fn prior_epoch_in_txn(
         if header.entity_type != ENTITY_TYPE_SUMMARY || raw.len() <= ENTITY_METADATA_HEADER_LEN {
             continue;
         }
-        let Ok(body) = decode_epoch_summary_body(&raw[ENTITY_METADATA_HEADER_LEN..]) else {
-            continue;
+        let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let body = match decode_epoch_summary_body(bytes) {
+            Ok(body) => body,
+            Err(error) if is_epoch_candidate_for_session(bytes, session_ref) => return Err(error),
+            Err(_) => continue,
         };
-        if body.session != session {
+        if EntityId::from_hex(&body.session)? != *session_ref {
             continue;
         }
         match best.as_ref() {
             Some(prior) if body.epoch < prior.epoch => {}
             Some(prior) if body.epoch == prior.epoch => {
-                // Identical copies are harmless. Different keyframes at the
-                // highest epoch have no agreed successor boundary or content.
-                conflicting |= body != *prior;
+                // Session IDs and epoch numbers already match. Compare actor
+                // IDs semantically too, without changing the codec's spelling.
+                // Different keyframes at the highest epoch remain conflicts.
+                conflicting |= body.v != prior.v
+                    || body.turn_start != prior.turn_start
+                    || body.turn_end != prior.turn_end
+                    || body.level != prior.level
+                    || body.text != prior.text
+                    || EntityId::from_hex(&body.actor)? != EntityId::from_hex(&prior.actor)?;
             }
             _ => {
                 best = Some(body);
@@ -377,6 +426,14 @@ pub(super) fn mint_epoch_summary(
         ));
     }
 
+    // Use the same tokenizer as context-pack accounting. Reject, never trim:
+    // the backend owns the prose, but cannot exceed the sealed allocation.
+    if count_context_pack_tokens(&product.summary_text) as u64 > request.summary_token_budget {
+        return Err(Error::InvariantViolation(
+            "compaction product summary_text exceeds summary_token_budget",
+        ));
+    }
+
     // `DerivedFrom` targets come from the REQUEST's window, deduplicated in
     // first-seen order and hard-capped. The body's turn range stays truth.
     let mut derived: Vec<EntityId> = Vec::new();
@@ -392,7 +449,7 @@ pub(super) fn mint_epoch_summary(
     // The keyframe's temporal position IS the compaction moment: the recorded
     // watermark. Wall-clock would make an otherwise byte-stable row depend on
     // when it happened to be minted.
-    let at = request.watermark.learned_at.max(1);
+    let at = request.watermark.learned_at;
     let summary_id = EntityId::now();
 
     let epoch = vault.with_write_txn(|wtxn| {
