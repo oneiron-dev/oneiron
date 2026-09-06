@@ -1289,7 +1289,17 @@ pub fn forward_rematerialize(
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
+            let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+                vault.with_write_txn(|wtxn| {
+                    super::diagnostic_ingest::ingest_diagnostic_in_txn(
+                        vault,
+                        wtxn,
+                        &id,
+                        blob,
+                        lease_vault_id,
+                    )
+                })
+            } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
                 #[cfg(any(test, feature = "test-hooks"))]
                 if let Err(err) = test_hooks::run_receipt_revocation_race(vault) {
                     entity_error = Some(err);
