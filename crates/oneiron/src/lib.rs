@@ -100,6 +100,7 @@ pub mod lens;
 pub(crate) mod limits;
 pub mod linear_sync;
 pub mod linkedin_connector;
+pub mod linkedin_lead_preload;
 pub mod llm;
 pub mod maintain;
 pub mod memory;
