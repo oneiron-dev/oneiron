@@ -17,6 +17,9 @@ use crate::session_lifecycle::SessionMintOutcome;
 use crate::temporal::TimeRange;
 use crate::test_util::{entity, open_test_vault_with};
 
+mod driver_regressions;
+mod epoch_regressions;
+
 // ── fixture plumbing ────────────────────────────────────────────────────
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -632,11 +635,11 @@ fn admission_writes_nothing_on_either_outcome() {
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::agent_def::{ContextBudgetSplit, MemoryProfile};
+use crate::agent_def::{CompactionOwnership, ContextBudgetSplit, MemoryProfile};
 use crate::context_pack::PackFormat;
 use crate::llm::ModelTierRef;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 
 const CHEAP_BACKEND: &str = "test.cheap.slm";
@@ -1023,7 +1026,7 @@ fn a_backend_error_abandons_to_idle_and_the_next_crossing_begins_again() -> Resu
 fn request_for_is_legal_only_while_compacting() -> Result<()> {
     let (_dir, vault) = open_vault();
     let session = mint_session(&vault, 10);
-    let driver = engine_driver(1_000);
+    let mut driver = engine_driver(1_000);
     let window = host_window(&vault, 0x80, 1, 2);
 
     let refused = driver
@@ -1741,13 +1744,18 @@ fn the_compaction_module_carries_no_scheduler_primitive() {
         "std::thread",
         "tokio::spawn",
     ];
-    let source = include_str!("../compaction.rs");
-    for needle in BANNED {
-        assert_eq!(
-            source.matches(needle).count(),
-            0,
-            "compaction.rs must not contain {needle}"
-        );
+    for source in [
+        include_str!("../compaction.rs"),
+        include_str!("driver.rs"),
+        include_str!("epoch.rs"),
+    ] {
+        for needle in BANNED {
+            assert_eq!(
+                source.matches(needle).count(),
+                0,
+                "compaction modules must not contain {needle}"
+            );
+        }
     }
 }
 
