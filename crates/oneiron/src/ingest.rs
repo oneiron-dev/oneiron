@@ -172,6 +172,7 @@ pub struct ImportedEvidenceEntityResolution {
     /// nothing, and inventing a subject for it here would defeat the band that
     /// declined to link — a provisional mention belongs to whatever path mints
     /// provisional entities, not to this admission door.
+    /// A waterfall `selected` is always a canonical Active head.
     pub subject: EntityId,
 }
 
@@ -380,7 +381,7 @@ pub enum EntityResolutionRoute {
 /// A candidate with the effective confidence the waterfall scored it at.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScoredEntityResolutionCandidate {
-    /// The candidate as supplied.
+    /// The candidate with its subject projected to the canonical Active head.
     pub candidate: EntityResolutionCandidate,
     /// Stored confidence composed with the provider's active prior.
     pub effective_confidence: f32,
@@ -389,8 +390,10 @@ pub struct ScoredEntityResolutionCandidate {
 /// The waterfall's verdict for one mention.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntityResolutionWaterfallDecision {
-    /// Every candidate, scored and ranked best-first.
+    /// Every authority-admissible candidate, scored and ranked best-first.
     pub ranked: Vec<ScoredEntityResolutionCandidate>,
+    /// Surfaceable claims excluded by the stricter `claim_consolidatable` gate.
+    pub claims_suppressed: usize,
     /// The chosen subject; `None` for [`EntityResolutionRoute::ProvisionalEntity`].
     pub selected: Option<EntityId>,
     /// The top effective confidence; `None` for the provisional route.
@@ -415,8 +418,10 @@ pub struct EntityResolutionWaterfallDecision {
 ///
 /// * [`Error::InvalidClaimBody`] when a candidate's confidence CLAIM does not
 ///   have that candidate as its subject, when the CLAIM is not currently
-///   effective, or when it fails the shared `provider.enrichment` structural
-///   validator.
+///   effective, when either subject lacks exactly one canonical Active head,
+///   or when it fails the shared `provider.enrichment` structural validator.
+///   Surfaceable claims that fail `claim_consolidatable` are excluded and counted,
+///   not errors.
 /// * The underlying read error otherwise.
 ///
 /// [`Error::InvalidClaimBody`]: crate::error::Error::InvalidClaimBody
@@ -425,8 +430,12 @@ pub fn evaluate_entity_resolution_waterfall(
     candidates: &[EntityResolutionCandidate],
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
-    let mut ranked: Vec<ScoredEntityResolutionCandidate> = vault.with_write_txn(|wtxn| {
+    let (mut ranked, claims_suppressed) = vault.with_write_txn(|wtxn| {
+        // Prior truth cannot change during scoring. Reuse each provider's
+        // resolution (including absence) only for this transaction.
+        let mut prior_memo = crate::provider_confidence::ProviderPriorMemo::default();
         let mut scored = Vec::with_capacity(candidates.len());
+        let mut claims_suppressed = 0;
         for candidate in candidates {
             let body = vault
                 .get_claim_in_txn(&*wtxn, &candidate.confidence_claim_ref)?
@@ -434,7 +443,16 @@ pub fn evaluate_entity_resolution_waterfall(
             // The candidate and its evidence must be the same assertion.
             // A claim about some OTHER subject scoring this one would let a
             // caller borrow an unrelated provider's confidence.
-            if body.subject != ClaimSubject::Entity(candidate.subject) {
+            let subject = canonical_waterfall_subject_in_txn(vault, &*wtxn, &candidate.subject)?;
+            let claim_subject = match body.subject {
+                ClaimSubject::Entity(id) => canonical_waterfall_subject_in_txn(vault, &*wtxn, &id)?,
+                _ => {
+                    return Err(crate::error::Error::InvalidClaimBody(
+                        "waterfall candidate subject does not match confidence claim subject",
+                    ));
+                }
+            };
+            if subject != claim_subject {
                 return Err(crate::error::Error::InvalidClaimBody(
                     "waterfall candidate subject does not match confidence claim subject",
                 ));
@@ -448,6 +466,10 @@ pub fn evaluate_entity_resolution_waterfall(
                 ));
             }
             crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
+            if !crate::claim::claim_consolidatable(&body) {
+                claims_suppressed += 1;
+                continue;
+            }
             // The EFFECTIVE confidence, never the stored column: a claim's
             // own number says how sure its provider was, not how much this
             // vault has learned to trust that provider.
@@ -455,13 +477,17 @@ pub fn evaluate_entity_resolution_waterfall(
                 vault,
                 wtxn,
                 &candidate.confidence_claim_ref,
+                &mut prior_memo,
             )?;
             scored.push(ScoredEntityResolutionCandidate {
-                candidate: *candidate,
+                candidate: EntityResolutionCandidate {
+                    subject,
+                    confidence_claim_ref: candidate.confidence_claim_ref,
+                },
                 effective_confidence,
             });
         }
-        Ok(scored)
+        Ok((scored, claims_suppressed))
     })?;
 
     // Total and deterministic: effective confidence descending, then subject
@@ -508,11 +534,30 @@ pub fn evaluate_entity_resolution_waterfall(
 
     Ok(EntityResolutionWaterfallDecision {
         ranked,
+        claims_suppressed,
         selected,
         selected_effective_confidence,
         route,
         requires_async_verification,
     })
+}
+
+fn canonical_waterfall_subject_in_txn(
+    vault: &crate::Vault,
+    rtxn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> crate::Result<EntityId> {
+    let heads = vault.resolve_entity_in_txn(rtxn, subject)?;
+    if let [head] = heads.as_slice()
+        && vault.get_entity_type_in_txn(rtxn, head)?.is_some()
+        && vault.entity_lifecycle_state_in_txn(rtxn, head)?
+            == crate::identity_topology::EntityLifecycleState::Active
+    {
+        return Ok(*head);
+    }
+    Err(crate::error::Error::InvalidClaimBody(
+        "waterfall candidate subject is not a canonical active entity",
+    ))
 }
 
 pub type IngestResult<T> = std::result::Result<T, IngestError>;
