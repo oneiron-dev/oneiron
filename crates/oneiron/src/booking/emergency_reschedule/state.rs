@@ -115,32 +115,13 @@ pub(crate) fn ensure_no_pending_effect_in(
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<(), BookingError> {
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, EMERGENCY_ITEM_META_PREFIX)
-        .map_err(storage_failure)?
+    if let Some(item) = lookup::pending_event_in(vault, txn, event)?
+        && let Some(expected) = lookup::pending_revision(&item)
+        && crate::booking::lifecycle::emergency_current_revision_in(vault, txn, event)? == *expected
     {
-        let (_, raw) = row.map_err(storage_failure)?;
-        let item: EmergencyItem = serde_json::from_slice(&raw).map_err(storage_failure)?;
-        if item.calendar.event_ref != event {
-            continue;
-        }
-        let (expected, pending) = item.picked.as_ref().map_or(
-            (
-                &item.calendar,
-                !item.calendar_delivered || !item.apology_delivered,
-            ),
-            |picked| (&picked.calendar, !picked.calendar_delivered),
-        );
-        if pending
-            && crate::booking::lifecycle::emergency_current_revision_in(vault, txn, event)?
-                == *expected
-        {
-            return Err(refused(
-                "pending emergency delivery fences this lifecycle revision",
-            ));
-        }
+        return Err(refused(
+            "pending emergency delivery fences this lifecycle revision",
+        ));
     }
     Ok(())
 }
@@ -192,88 +173,93 @@ fn verify_content_head_in(
 pub(crate) fn verify_frozen_effect_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    attempt: crate::attempt_queue::AttemptId,
     bytes: &[u8],
 ) -> Result<(), BookingError> {
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+    // Classification comes from the existing ledger identity, not from JSON
+    // that may be malformed or have lost its emergency idempotency key.
+    let item = lookup::effect_item_in(vault, txn, attempt)?;
+    let value = serde_json::from_slice::<serde_json::Value>(bytes);
+    let Some(item) = item else {
+        if value.as_ref().ok().is_some_and(|value| {
+            value["idempotency_key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("intent:booking_emergency:"))
+        }) {
+            return Err(refused(
+                "frozen emergency effect has no lifecycle checkpoint",
+            ));
+        }
+        // Ordinary connectors may use arbitrary non-JSON bytes.
         return Ok(());
     };
-    let Some(key) = value["idempotency_key"]
+    let value = value.map_err(|_| refused("malformed frozen emergency effect"))?;
+    let key = value["idempotency_key"]
         .as_str()
-        .filter(|key| key.starts_with("intent:booking_emergency:"))
-    else {
-        return Ok(());
+        .ok_or_else(|| refused("frozen emergency effect has no idempotency key"))?;
+    let lane = key.rsplit(':').next().unwrap_or_default();
+    let (hash, expected, payload) = if lane == "pick" {
+        let picked = item
+            .picked
+            .as_ref()
+            .ok_or_else(|| refused("frozen emergency effect has no pick checkpoint"))?;
+        (picked.content_hash, &picked.calendar, Some(&picked.payload))
+    } else {
+        (
+            item.plan.content_hash,
+            &item.calendar,
+            item.plan.payload.as_ref(),
+        )
     };
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, EMERGENCY_ITEM_META_PREFIX)
-        .map_err(storage_failure)?
+    if effect_ref(&item, lane, hash)? != key
+        || crate::outbound::outbound_dispatch_attempt_id(key).map_err(storage_failure)? != attempt
     {
-        let (_, raw) = row.map_err(storage_failure)?;
-        let item: EmergencyItem = serde_json::from_slice(&raw).map_err(storage_failure)?;
-        let lane = key.rsplit(':').next().unwrap_or_default();
-        let (hash, expected, payload) = if lane == "pick" {
-            let Some(picked) = &item.picked else {
-                continue;
-            };
-            (picked.content_hash, &picked.calendar, Some(&picked.payload))
-        } else {
-            (
-                item.plan.content_hash,
-                &item.calendar,
-                item.plan.payload.as_ref(),
-            )
-        };
-        if effect_ref(&item, lane, hash)? != key {
-            continue;
-        }
-        verify_plan_in(vault, txn, &item.plan)?;
-        if crate::booking::lifecycle::emergency_current_revision_in(
-            vault,
-            txn,
-            item.calendar.event_ref,
-        )? != *expected
-            || (lane != "pick" && item.picked.is_some())
-            || value["actor"].as_str() != Some(item.plan.request.owner_ref.to_hex().as_str())
-            || value["target"].as_str() != Some(item.plan.recipient.as_str())
-        {
-            return Err(refused("emergency effect is superseded or misbound"));
-        }
-        match lane {
-            "calendar" | "pick" => {
-                let payload = payload
-                    .ok_or_else(|| refused("no calendar effect for an unsent cancellation"))?;
-                if value["calendar_invite"]
-                    != serde_json::to_value(payload).map_err(storage_failure)?
-                    || value["verb"] != crate::calendar::CALENDAR_INVITE_VERB
-                    || value["channel"] != "calendar"
-                {
-                    return Err(refused(
-                        "frozen calendar content differs from its checkpoint",
-                    ));
-                }
-                verify_content_head_in(vault, txn, &payload.ics_blob_ref)?;
-                let head = invite_head_in(vault, txn, expected)?
-                    .ok_or_else(|| refused("calendar effect has no admitted passport"))?;
-                if head.last_sequence != payload.sequence {
-                    return Err(refused("calendar effect has a superseded invite sequence"));
-                }
-            }
-            "apology" => {
-                let content = format!("blob:{}", blob_id(&apology_bytes(&item)?)?.to_hex());
-                verify_content_head_in(vault, txn, &content)?;
-                if value["content_ref"].as_str() != Some(content.as_str())
-                    || value["verb"] != "send"
-                    || value["channel"] != "email"
-                {
-                    return Err(refused("frozen apology differs from its checkpoint"));
-                }
-            }
-            _ => return Err(refused("unknown emergency effect lane")),
-        }
-        return Ok(());
+        return Err(refused(
+            "frozen emergency effect conflicts with its checkpoint",
+        ));
     }
-    Err(refused(
-        "frozen emergency effect has no lifecycle checkpoint",
-    ))
+    verify_plan_in(vault, txn, &item.plan)?;
+    if crate::booking::lifecycle::emergency_current_revision_in(
+        vault,
+        txn,
+        item.calendar.event_ref,
+    )? != *expected
+        || (lane != "pick" && item.picked.is_some())
+        || value["actor"].as_str() != Some(item.plan.request.owner_ref.to_hex().as_str())
+        || value["target"].as_str() != Some(item.plan.recipient.as_str())
+    {
+        return Err(refused("emergency effect is superseded or misbound"));
+    }
+    match lane {
+        "calendar" | "pick" => {
+            let payload =
+                payload.ok_or_else(|| refused("no calendar effect for an unsent cancellation"))?;
+            if value["calendar_invite"] != serde_json::to_value(payload).map_err(storage_failure)?
+                || value["verb"] != crate::calendar::CALENDAR_INVITE_VERB
+                || value["channel"] != "calendar"
+            {
+                return Err(refused(
+                    "frozen calendar content differs from its checkpoint",
+                ));
+            }
+            verify_content_head_in(vault, txn, &payload.ics_blob_ref)?;
+            let head = invite_head_in(vault, txn, expected)?
+                .ok_or_else(|| refused("calendar effect has no admitted passport"))?;
+            if head.last_sequence != payload.sequence {
+                return Err(refused("calendar effect has a superseded invite sequence"));
+            }
+        }
+        "apology" => {
+            let content = format!("blob:{}", blob_id(&apology_bytes(&item)?)?.to_hex());
+            verify_content_head_in(vault, txn, &content)?;
+            if value["content_ref"].as_str() != Some(content.as_str())
+                || value["verb"] != "send"
+                || value["channel"] != "email"
+            {
+                return Err(refused("frozen apology differs from its checkpoint"));
+            }
+        }
+        _ => return Err(refused("unknown emergency effect lane")),
+    }
+    Ok(())
 }

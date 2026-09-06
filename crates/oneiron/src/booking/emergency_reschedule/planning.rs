@@ -115,12 +115,14 @@ pub(crate) fn write_item_in(
     txn: &mut heed::RwTxn<'_>,
     item: &EmergencyItem,
 ) -> Result<(), BookingError> {
+    let key = item_key(&item.plan.request, item.calendar.event_ref)?;
     put_meta(
         vault,
         txn,
-        &item_key(&item.plan.request, item.calendar.event_ref)?,
+        &key,
         &serde_json::to_vec(item).map_err(storage_failure)?,
-    )
+    )?;
+    lookup::index_item_in(vault, txn, item, &key)
 }
 
 pub(crate) fn verify_plan_in(
@@ -215,47 +217,51 @@ pub fn plan_emergency_reschedule(
     {
         let txn = vault.store.env.read_txn().map_err(storage_failure)?;
         verify_instruction_in_txn(vault, &txn, request)?;
+        let prefix = lookup::request_plan_prefix(request)?;
         for row in vault
             .store
             .vault_meta
-            .prefix_iter(&txn, EMERGENCY_PLAN_META_PREFIX)
+            .prefix_iter(&txn, &prefix)
             .map_err(storage_failure)?
         {
-            let (_, raw) = row.map_err(storage_failure)?;
+            let (_, key) = row.map_err(storage_failure)?;
+            let raw = read_meta_bytes(vault, &txn, &key)?
+                .ok_or_else(|| refused("indexed emergency plan is missing"))?;
             let plan: EmergencyPlan = serde_json::from_slice(&raw).map_err(storage_failure)?;
-            if plan.request == *request {
-                let event = plan.booking.calendar.event_ref;
-                saved_events.insert(event);
-                verify_plan_in(vault, &txn, &plan)?;
-                let item = read_item_in(vault, &txn, &item_key(request, event)?)?;
-                if item.as_ref().is_some_and(|item| {
-                    item.picked.is_some() || (item.calendar_delivered && item.apology_delivered)
-                }) {
-                    continue;
+            if plan.request != *request {
+                return Err(refused("emergency plan lookup names another instruction"));
+            }
+            let event = plan.booking.calendar.event_ref;
+            saved_events.insert(event);
+            verify_plan_in(vault, &txn, &plan)?;
+            let item = read_item_in(vault, &txn, &item_key(request, event)?)?;
+            if item.as_ref().is_some_and(|item| {
+                item.picked.is_some() || (item.calendar_delivered && item.apology_delivered)
+            }) {
+                continue;
+            }
+            if item.is_none()
+                && (plan.booking.occurrence.start <= now_utc
+                    || plan.proposals.iter().any(|slot| slot.start_utc <= now_utc))
+            {
+                batch.refusals.push((
+                    event,
+                    "saved emergency proposals are no longer future".to_owned(),
+                ));
+                continue;
+            }
+            let expected = item
+                .as_ref()
+                .map_or(&plan.booking.calendar, |item| &item.calendar);
+            match crate::booking::lifecycle::emergency_current_revision_in(vault, &txn, event) {
+                Ok(current) if current == *expected => batch.plans.push(plan),
+                Ok(_) => batch
+                    .refusals
+                    .push((event, "saved emergency plan is superseded".to_owned())),
+                Err(error @ (BookingError::SlotOracle(_) | BookingError::Boundary(_))) => {
+                    return Err(error);
                 }
-                if item.is_none()
-                    && (plan.booking.occurrence.start <= now_utc
-                        || plan.proposals.iter().any(|slot| slot.start_utc <= now_utc))
-                {
-                    batch.refusals.push((
-                        event,
-                        "saved emergency proposals are no longer future".to_owned(),
-                    ));
-                    continue;
-                }
-                let expected = item
-                    .as_ref()
-                    .map_or(&plan.booking.calendar, |item| &item.calendar);
-                match crate::booking::lifecycle::emergency_current_revision_in(vault, &txn, event) {
-                    Ok(current) if current == *expected => batch.plans.push(plan),
-                    Ok(_) => batch
-                        .refusals
-                        .push((event, "saved emergency plan is superseded".to_owned())),
-                    Err(error @ (BookingError::SlotOracle(_) | BookingError::Boundary(_))) => {
-                        return Err(error);
-                    }
-                    Err(error) => batch.refusals.push((event, error.to_string())),
-                }
+                Err(error) => batch.refusals.push((event, error.to_string())),
             }
         }
     }
@@ -424,7 +430,7 @@ pub(super) fn plan_item(
             }
             put_meta(vault, txn, &key, &encoded)?;
         }
-        Ok(())
+        lookup::index_plan_in(vault, txn, &plan, &key)
     })?;
     Ok(plan)
 }

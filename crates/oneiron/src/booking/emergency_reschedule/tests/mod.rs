@@ -452,3 +452,4 @@ mod follow_up;
 mod host_binding;
 mod instruction;
 mod owner_revocation;
+mod pending_lookup;
