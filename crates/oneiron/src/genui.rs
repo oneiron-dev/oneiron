@@ -5,6 +5,7 @@
 //! remain in later gates.
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU16;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -32,6 +33,10 @@ use crate::{
     registry::ENTITY_TYPE_MESSAGE,
     run_tree::{RunTree, RunTreeFailureDiagram, mark_run_tree_failure},
 };
+
+mod failure_card_validation;
+
+use failure_card_validation::{require_diagnosed_route, require_thread_membership};
 
 pub const OF336_PROTOCOL_VERSION: u16 = 1;
 pub const OF336_CARD_CATALOG_VERSION: &str = "eirispec.card.v1";
@@ -1552,9 +1557,6 @@ fn meta_line(label: &str, value: &str) -> Result<MetaLineAtom> {
 /// The only schema constant this card carries.
 pub const SURFACED_FAILURE_CARD_SCHEMA_VERSION: u16 = 1;
 
-/// Edges one Q&A validation step reads before it stops looking.
-const HEALER_QA_EDGE_SCAN_LIMIT: usize = 64;
-
 /// Where the healer's diagnosis stands when the card is emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1614,8 +1616,13 @@ pub struct SurfacedFailureCardInput {
     pub failure_class: FailureClass,
     pub consecutive_transients: u16,
     pub pathology: Option<RetryLineagePathology>,
+    /// Caller policy's max_consecutive_transients, used only for a claimed pathology.
+    pub retry_lineage_limit: NonZeroU16,
     pub tree: RunTree,
     pub failing_attempt_id: AttemptId,
+    /// Expected pre-fail checkpoint from caller-trusted lease context.
+    /// This card door does not authenticate the lease or resolve a checkpoint store.
+    pub pre_fail_checkpoint_ref: EntityId,
     pub diagnosis: FailureDiagnosisState,
     pub blocked_reports: Vec<BlockedReportRef>,
     pub qa: HealerQaFeed,
@@ -1625,8 +1632,8 @@ pub struct SurfacedFailureCardInput {
 ///
 /// `card_ref`/`case_ref` are MINTED here from `failing_attempt_id` through the
 /// pinned domain-separated derivation — never accepted as free caller strings.
-/// The pathology carrier is copied through unchanged: it is `Some` only for an
-/// immediate pathology surface and never enters a `HealerCase`.
+/// A claimed pathology must match the bounded stored lineage and carry
+/// Ambiguous + zero transients. Cards without a pathology do not re-walk it.
 ///
 /// # Errors
 ///
@@ -1634,8 +1641,9 @@ pub struct SurfacedFailureCardInput {
 /// node, when a ref is not hex, when a `message_ref` does not resolve to a live
 /// MESSAGE, when membership or authorship does not hold, when `occurred_at`
 /// disagrees with the message's `occurred_start`, when a permanent/ambiguous
-/// failure carries a nonzero transient count, or when a diagnosed repair does
-/// not name the failing attempt's dispatched agent.
+/// failure carries a nonzero transient count, when a claimed pathology does not
+/// match the bounded lineage or Ambiguous class, or when a diagnosed repair has
+/// noncanonical refs or mismatched agent/pre-fail checkpoint bindings.
 pub fn surfaced_failure_card(
     vault: &Vault,
     input: SurfacedFailureCardInput,
@@ -1649,8 +1657,31 @@ pub fn surfaced_failure_card(
             "permanent/ambiguous failure cards require zero consecutive_transients".to_owned(),
         ));
     }
+    if let Some(pathology) = &input.pathology {
+        if input.failure_class != FailureClass::Ambiguous || input.consecutive_transients != 0 {
+            return Err(Error::InvalidConfig(
+                "pathology failure cards require Ambiguous and zero consecutive_transients"
+                    .to_owned(),
+            ));
+        }
+        let actual = crate::failure_ladder::retry_lineage_pathology(
+            vault,
+            input.failing_attempt_id,
+            input.retry_lineage_limit,
+        )?;
+        if actual.as_ref() != Some(pathology) {
+            return Err(Error::InvalidConfig(
+                "failure card pathology must match the bounded retry lineage".to_owned(),
+            ));
+        }
+    }
     if let FailureDiagnosisState::Diagnosed(route) = &input.diagnosis {
-        require_diagnosed_agent(vault, input.failing_attempt_id, route)?;
+        require_diagnosed_route(
+            vault,
+            input.failing_attempt_id,
+            input.pre_fail_checkpoint_ref,
+            route,
+        )?;
     }
     let diagram = mark_run_tree_failure(input.tree, input.failing_attempt_id)?;
     let qa = validated_qa_feed(vault, input.qa)?;
@@ -1668,33 +1699,6 @@ pub fn surfaced_failure_card(
         blocked_reports,
         qa,
     })
-}
-
-/// A selected repair must target the agent dispatched by the failing row.
-/// Initial cards without a diagnosis do not require this additional read.
-fn require_diagnosed_agent(
-    vault: &Vault,
-    failing_attempt_id: AttemptId,
-    route: &HealerRepairRoute,
-) -> Result<()> {
-    let agent_ref = match route {
-        HealerRepairRoute::SkillEdit { agent_ref, .. }
-        | HealerRepairRoute::PromptInjectAndForkResume { agent_ref, .. }
-        | HealerRepairRoute::Environment { agent_ref, .. }
-        | HealerRepairRoute::EscalateWithDiagnosis { agent_ref, .. } => agent_ref,
-    };
-    let expected = parse_card_ref("healer diagnosis agent_ref", agent_ref)?;
-    let record = crate::AttemptQueue::new(vault)
-        .get(failing_attempt_id)?
-        .ok_or_else(|| {
-            Error::InvalidConfig("healer diagnosis requires a stored failing attempt".to_owned())
-        })?;
-    if crate::failure_ladder::dispatched_target_ref(&record) != Some(expected) {
-        return Err(Error::InvalidConfig(
-            "healer diagnosis agent must match the failing attempt's dispatched agent".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 /// Validates every Q&A entry against the vault, then orders the survivors
@@ -1750,52 +1754,6 @@ fn message_occurred_start(vault: &Vault, message_ref: EntityId) -> Result<u64> {
         ));
     }
     Ok(header.occurred_start)
-}
-
-/// Membership is an EDGE fact read through the vault's existing bounded
-/// neighbor surface. Direct membership uses `PartOf` or `BelongsTo`; canonical
-/// MESSAGE→TURN→CONVERSATION membership uses `PartOf` then `ChildOf`. The walk
-/// stops at two hops, and `thread_ref` may name either container.
-fn require_thread_membership(
-    vault: &Vault,
-    message_ref: EntityId,
-    thread_ref: EntityId,
-) -> Result<()> {
-    let containers = vault.neighbor_edges_bounded(
-        &message_ref,
-        true,
-        Some(EdgeKind::PartOf),
-        None,
-        HEALER_QA_EDGE_SCAN_LIMIT,
-    )?;
-    if containers.iter().any(|edge| edge.target == thread_ref) {
-        return Ok(());
-    }
-    let conversations = vault.neighbor_edges_bounded(
-        &message_ref,
-        true,
-        Some(EdgeKind::BelongsTo),
-        None,
-        HEALER_QA_EDGE_SCAN_LIMIT,
-    )?;
-    if conversations.iter().any(|edge| edge.target == thread_ref) {
-        return Ok(());
-    }
-    for edge in &containers {
-        let outer = vault.neighbor_edges_bounded(
-            &edge.target,
-            true,
-            Some(EdgeKind::ChildOf),
-            None,
-            HEALER_QA_EDGE_SCAN_LIMIT,
-        )?;
-        if outer.iter().any(|hop| hop.target == thread_ref) {
-            return Ok(());
-        }
-    }
-    Err(Error::InvalidConfig(
-        "healer qa message_ref is not part of the named thread".to_owned(),
-    ))
 }
 
 /// Authorship is likewise an edge fact. A MESSAGE with NO `AuthoredBy` edge —
