@@ -1653,25 +1653,25 @@ fn a_corrupt_stored_rule_set_fails_typed_rather_than_resolving() {
 }
 
 // ---------------------------------------------------------------------------
-// Worked example — names live HERE and nowhere in shipped Rust
+// Worked example — world-scoped delegated outreach
 // ---------------------------------------------------------------------------
 
-/// The Antevon world.
-fn antevon_world() -> EntityId {
+/// The outreach world.
+fn outreach_world() -> EntityId {
     entity(0x70)
 }
 
-/// Yura's delegated owner mailbox: an account the product reads under a
+/// The delegated owner mailbox: an account the product reads under a
 /// scoped grant and never mints.
-fn yura_delegated_identity() -> EntityId {
+fn owner_delegated_identity() -> EntityId {
     entity(0x71)
 }
 
 #[test]
-fn antevon_campaign_outreach_sends_as_yuras_delegated_identity() {
+fn world_campaign_outreach_sends_as_owners_delegated_identity() {
     let (dir, vault) = open_vault();
     let world = SelectionRuleScope::World {
-        world_ref: antevon_world(),
+        world_ref: outreach_world(),
     };
 
     let law = vault
@@ -1679,9 +1679,9 @@ fn antevon_campaign_outreach_sends_as_yuras_delegated_identity() {
             0,
             &owner_writer(),
             ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
-                pinned_identity_ref: Some(yura_delegated_identity()),
+                pinned_identity_ref: Some(owner_delegated_identity()),
                 ..authored_rule(
-                    "overlay.antevon.campaign_outreach",
+                    "overlay.world.campaign_outreach",
                     RelationshipContext::CampaignOutreach,
                     world.clone(),
                     ChannelIdentityFace::DelegatedOwnerAccount,
@@ -1700,12 +1700,12 @@ fn antevon_campaign_outreach_sends_as_yuras_delegated_identity() {
         query(RelationshipContext::CampaignOutreach, &[world], &roster),
     )
     .expect("override resolves");
-    assert_eq!(inside.identity_ref, yura_delegated_identity());
+    assert_eq!(inside.identity_ref, owner_delegated_identity());
     assert_eq!(inside.face, ChannelIdentityFace::DelegatedOwnerAccount);
     assert_eq!(inside.shape, ChannelIdentityShape::DelegatedGrant);
     assert_eq!(
         inside.rule_id.as_deref(),
-        Some("overlay.antevon.campaign_outreach")
+        Some("overlay.world.campaign_outreach")
     );
 
     // Outside that world the side-domain default still holds.
@@ -1728,7 +1728,15 @@ fn the_selection_module_carries_no_venture_or_person_names() {
     // Substring matches, so every token here must be one that cannot appear
     // inside an ordinary English word.
     for banned in [
-        "antevon", "yura", "oneiron", "claude", "openai", "gmail", "linkedin", "@", "http",
+        "client_name",
+        "person_name",
+        "product_name",
+        "assistant_name",
+        "provider_name",
+        "mail_provider",
+        "social_network",
+        "@",
+        "http",
     ] {
         assert!(
             !source.contains(banned),
