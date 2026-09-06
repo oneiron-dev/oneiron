@@ -156,6 +156,7 @@ pub(super) struct EntityMetadata {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
+    pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) type_filter: Option<&'a [u8]>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
@@ -182,6 +183,7 @@ pub(super) struct EntityMetadataCache {
 /// Non-type-0 entities never enter this map (their bodies are opaque, AC 5).
 #[derive(Default)]
 pub(super) struct ClaimStatusGateCache {
+    pub(super) include_stale: bool,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
 }
 

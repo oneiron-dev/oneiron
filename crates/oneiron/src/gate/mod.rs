@@ -17,6 +17,7 @@ mod effect;
 mod grants;
 mod input;
 mod resolution;
+mod retrieval_filter;
 mod witness_message;
 
 #[cfg(test)]
@@ -82,6 +83,10 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub use self::retrieval_filter::RetrievalFilter;
+pub(crate) use self::retrieval_filter::{
+    ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
+};
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{

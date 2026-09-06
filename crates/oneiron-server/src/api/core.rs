@@ -1079,9 +1079,9 @@ pub(crate) fn run_core_query(
     limit: usize,
 ) -> oneiron::Result<Vec<oneiron::ScoredEntity>> {
     match (query, vector) {
-        (Some(query), Some(vector)) => scoped_read.search(query, vector, limit),
-        (Some(query), None) => scoped_read.search_text(query, limit),
-        (None, Some(vector)) => scoped_read.search_vector(vector, limit),
+        (Some(query), Some(vector)) => scoped_read.search(query, vector, limit, None),
+        (Some(query), None) => scoped_read.search_text(query, limit, None),
+        (None, Some(vector)) => scoped_read.search_vector(vector, limit, None),
         (None, None) => Ok(Vec::new()),
     }
 }

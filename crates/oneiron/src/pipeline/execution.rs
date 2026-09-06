@@ -94,6 +94,18 @@ impl PipelineBuilder<'_> {
         explicit_time_dependent_now: Option<u64>,
         overrides: HydeAttemptOverrides<'_>,
     ) -> Result<RetrievalTxnOutput> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let owner_filter;
+        let authority_filter = match self.authority_filter.as_ref() {
+            Some(filter) => filter,
+            None => {
+                let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
+                let floor: crate::gate::RetrievalPolicyFloor =
+                    policy.retrieval_floor_for_actor(None);
+                owner_filter = crate::gate::narrow_retrieval_filter(&floor, None)?;
+                &owner_filter
+            }
+        };
         let no_data_fallback_eligible = self.no_data_fallback_eligible();
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
@@ -107,20 +119,26 @@ impl PipelineBuilder<'_> {
             let mut signal_components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
             let mut trace_channels = Vec::<RetrievalTraceChannelRecord>::new();
             let mut trace_ranked_lists = Vec::<Vec<ScoredEntity>>::new();
-            let mut trace_claim_gate = ClaimStatusGateCache::default();
+            let mut trace_claim_gate = ClaimStatusGateCache {
+                include_stale: authority_filter.include_stale,
+                ..ClaimStatusGateCache::default()
+            };
             let mut fused_trace_scores = None;
             let mut blended_trace_scores = None;
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
-            let rtxn = self.vault.store.env.read_txn()?;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
-            let mut claim_gate = ClaimStatusGateCache::default();
+            let mut claim_gate = ClaimStatusGateCache {
+                include_stale: authority_filter.include_stale,
+                ..ClaimStatusGateCache::default()
+            };
             let mut deferred_ppr_cache_writes = Vec::new();
             let mut community_diversity = None;
             let mut community_trace_identity = None;
             let codebase_scope_active = self.has_codebase_scope_filter();
             let filter_config = PipelineFilterConfig {
+                authority_filter,
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
                 occurred_range,
@@ -137,7 +155,10 @@ impl PipelineBuilder<'_> {
             // the only text-channel slot. Live exact claims already satisfy
             // the D19 gate, so they must not widen ordinary
             // `search_text(..., limit)` calls.
-            let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
+            let mut claim_gate_widening_probe = ClaimStatusGateCache {
+                include_stale: authority_filter.include_stale,
+                ..ClaimStatusGateCache::default()
+            };
             let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
                 && *limit > 0
             {
@@ -239,7 +260,10 @@ impl PipelineBuilder<'_> {
                     channel_limit,
                     self.skip_vector_rescore,
                 )?;
-                let mut vector_probe_claim_gate = ClaimStatusGateCache::default();
+                let mut vector_probe_claim_gate = ClaimStatusGateCache {
+                    include_stale: authority_filter.include_stale,
+                    ..ClaimStatusGateCache::default()
+                };
                 import_claim_gate_decisions_for_scores(
                     &mut claim_gate,
                     &mut vector_probe_claim_gate,
@@ -296,7 +320,10 @@ impl PipelineBuilder<'_> {
                     channel_limit,
                     self.skip_vector_rescore,
                 )?;
-                let mut hyde_probe_claim_gate = ClaimStatusGateCache::default();
+                let mut hyde_probe_claim_gate = ClaimStatusGateCache {
+                    include_stale: authority_filter.include_stale,
+                    ..ClaimStatusGateCache::default()
+                };
                 import_claim_gate_decisions_for_scores(
                     &mut claim_gate,
                     &mut hyde_probe_claim_gate,
@@ -426,7 +453,10 @@ impl PipelineBuilder<'_> {
                     } else {
                         retry_scoped_text_limit
                     };
-                    let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache::default();
+                    let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache {
+                        include_stale: authority_filter.include_stale,
+                        ..ClaimStatusGateCache::default()
+                    };
                     let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                         pipeline_candidate_matches_filters_and_gate(
                             &self.vault.store,
@@ -609,6 +639,17 @@ impl PipelineBuilder<'_> {
                 ranked_lists.push(ppr_results);
             }
 
+            // Entity-type authority can narrow each channel before fusion.
+            // CLAIM scalar constraints use the decoded post-fusion stage below.
+            for scores in &mut ranked_lists {
+                super::authority::apply_types(
+                    scores,
+                    authority_filter,
+                    &self.vault.store,
+                    &rtxn,
+                    &mut metadata_cache,
+                )?;
+            }
             if ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     scores: Vec::new(),
@@ -901,6 +942,14 @@ impl PipelineBuilder<'_> {
                 &rtxn,
                 filter_config,
                 &mut metadata_cache,
+            )?;
+            super::authority::apply(
+                &mut scores,
+                authority_filter,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                &mut claim_gate,
             )?;
             if before_filters > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
@@ -1694,7 +1743,8 @@ impl PipelineBuilder<'_> {
     }
 
     fn has_strict_text_scope_filter(&self) -> bool {
-        self.type_filter.is_some()
+        self.authority_filter.is_some()
+            || self.type_filter.is_some()
             || self.since_filter.is_some()
             || self.occurred_range.is_some()
             || self.learned_range.is_some()
