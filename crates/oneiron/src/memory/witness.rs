@@ -1029,7 +1029,7 @@ fn incoming_turn_speaker(messages: &[WitnessMessage]) -> MemoryResult<Option<&'s
 
 /// Returns the one target an existing structural edge kind names. More than
 /// one target is already a re-parented row and therefore fails closed.
-fn sole_edge_target(
+pub(crate) fn sole_edge_target(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     source: &EntityId,

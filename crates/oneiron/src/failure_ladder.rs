@@ -768,7 +768,7 @@ fn dispatched_target_ref(record: &AttemptRecord) -> Option<EntityId> {
     Some(target)
 }
 
-fn verified_blocked_reports(
+pub(crate) fn verified_blocked_reports(
     vault: &Vault,
     reports: &[BlockedReportRef],
 ) -> Result<Vec<BlockedReportRef>> {
