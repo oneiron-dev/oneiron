@@ -755,7 +755,7 @@ fn require_dispatch_scope(record: &AttemptRecord, scope: &FailureScope) -> Resul
 
 /// The dispatched AGENT_DEF ref of a queue row, read through the SAME pinned
 /// codec the dispatch and landing-successor paths use.
-fn dispatched_target_ref(record: &AttemptRecord) -> Option<EntityId> {
+pub(crate) fn dispatched_target_ref(record: &AttemptRecord) -> Option<EntityId> {
     if record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return None;
     }

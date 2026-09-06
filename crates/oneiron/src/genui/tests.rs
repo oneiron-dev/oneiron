@@ -716,7 +716,7 @@ fn surfaced_failure_card_carries_marked_tree_diagnosis_and_qa_refs() -> Result<(
     let (failing, tree) = failed_run(&vault)?;
     let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
     let turn = put_container(&vault, 0x65, crate::registry::ENTITY_TYPE_TURN)?;
-    vault.put_edge(&turn, EdgeKind::PartOf, &thread, 1.0)?;
+    vault.put_edge(&turn, EdgeKind::ChildOf, &thread, 1.0)?;
     let actor = put_actor(&vault, 0x66)?;
     // Direct MESSAGE→thread membership, and the MESSAGE→TURN→CONVERSATION hop.
     let direct = put_qa_message(&vault, 0x67, thread, Some(actor), 100, 0)?;
@@ -805,8 +805,8 @@ fn surfaced_failure_card_rejects_message_ref_from_other_thread() -> Result<()> {
     let conversation = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
     let outer = put_container(&vault, 0x6b, crate::registry::ENTITY_TYPE_CONVERSATION)?;
     let foreign = put_container(&vault, 0x6a, crate::registry::ENTITY_TYPE_CONVERSATION)?;
-    vault.put_edge(&turn, EdgeKind::PartOf, &conversation, 1.0)?;
-    vault.put_edge(&conversation, EdgeKind::PartOf, &outer, 1.0)?;
+    vault.put_edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)?;
+    vault.put_edge(&conversation, EdgeKind::ChildOf, &outer, 1.0)?;
     let actor = put_actor(&vault, 0x66)?;
     // MESSAGE -> TURN -> CONVERSATION -> outer CONVERSATION.
     let message = put_qa_message(&vault, 0x67, turn, Some(actor), 100, 0)?;
@@ -837,7 +837,7 @@ fn surfaced_failure_card_rejects_message_ref_from_other_thread() -> Result<()> {
     // Three hops do not: the membership walk stops at two.
     assert_eq!(
         card_for(outer)
-            .expect_err("membership is bounded at two PartOf hops")
+            .expect_err("membership is bounded at two hops")
             .kind(),
         crate::ErrorKind::InvalidConfig
     );
