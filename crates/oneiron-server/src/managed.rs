@@ -12,10 +12,11 @@
 //! - **Off by default.** Managed mode is reachable only through
 //!   `--managed-by-hypnos`. Without it, [`crate::commands::serve`] never
 //!   enters this module and the unmanaged path is exactly what it was.
-//! - **Argv is the whole configuration.** Managed mode never consults a config
-//!   file, the `ONEIRON_*` environment (including `ONEIRON_AUTH_SECRET` —
-//!   bearer auth is the supervisor's job) or the XDG layers. It reads exactly
-//!   one environment variable, [`HYPNOS_LISTEN_FD`], and even the dictionary
+//! - **Argv is the whole configuration.** Managed mode never loads settings from
+//!   a config file, the `ONEIRON_*` environment (including `ONEIRON_AUTH_SECRET` —
+//!   bearer auth is the supervisor's job) or the XDG layers. Explicit privacy
+//!   environment settings and `ONEIRON_CONFIG` are refused by presence alone.
+//!   Only [`HYPNOS_LISTEN_FD`] supplies an environment value; even dictionary
 //!   search roots come from argv rather than the usual `HOME`/`XDG_*` probe.
 //! - **The engine schedules nothing.** There is no timer here. Alarms are
 //!   pushed by the supervisor over the ctl socket; the ledger tells it when to
@@ -60,7 +61,7 @@ use crate::build_app;
 use crate::config::{ServeArgs, ServeConfig};
 use crate::server::SyncServer;
 
-/// The one environment variable managed mode consults. When set, it names an
+/// The one environment value managed mode uses. When set, it names an
 /// already-bound listening unix socket the supervisor passed across spawn.
 pub const HYPNOS_LISTEN_FD: &str = "HYPNOS_LISTEN_FD";
 
@@ -133,6 +134,12 @@ pub enum ManagedError {
     #[error("--managed-by-hypnos conflicts with --{flag}: {reason}")]
     ConflictingFlag {
         flag: &'static str,
+        reason: &'static str,
+    },
+
+    #[error("--managed-by-hypnos conflicts with {env}: {reason}")]
+    ConflictingEnvironment {
+        env: &'static str,
         reason: &'static str,
     },
 
@@ -468,6 +475,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.allowed_origins.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
+    // Contract v1 has no managed privacy override: refuse instead of dropping it.
+    (
+        "privacy-posture",
+        |args| args.privacy_posture.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "hosted-kms-key-ref",
+        |args| args.hosted_kms_key_ref.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
     // The tuning layer: defaults, except the four fields below.
     (
         "lease-vault-id",
@@ -634,6 +652,21 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
             return Err(ManagedError::ConflictingFlag { flag, reason });
         }
     }
+    // Check presence only: never parse these values or load the requested file.
+    // Even an empty or non-Unicode setting is an explicit unmanaged request,
+    // not permission to fall back to the managed default custody.
+    for env in [
+        "ONEIRON_PRIVACY_POSTURE",
+        "ONEIRON_HOSTED_KMS_KEY_REF",
+        "ONEIRON_CONFIG",
+    ] {
+        if std::env::var_os(env).is_some() {
+            return Err(ManagedError::ConflictingEnvironment {
+                env,
+                reason: NO_CONFIG_LAYER_REASON,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -652,8 +685,8 @@ pub enum ServeListener {
 impl ServeListener {
     /// Resolves the managed HTTP listener.
     ///
-    /// [`HYPNOS_LISTEN_FD`] is the only environment variable managed mode
-    /// reads, and its absence is not an error — it selects the self-bind
+    /// [`HYPNOS_LISTEN_FD`] is the only environment value managed mode
+    /// uses, and its absence is not an error — it selects the self-bind
     /// fallback on `--http-socket`.
     pub fn for_managed(args: &ManagedArgs) -> Result<Self, ManagedError> {
         match std::env::var(HYPNOS_LISTEN_FD) {

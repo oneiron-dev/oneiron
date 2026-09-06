@@ -852,9 +852,31 @@ pub fn resolve_serve_config_with_sources(
     };
 
     let mut resolved = ServeConfig::default();
-    file_values.apply_to(&mut resolved);
-    env.values.apply_to(&mut resolved);
-    flag_values.apply_to(&mut resolved);
+    let mut posture_source = None;
+    let mut key_ref_source = None;
+    for (source, values) in [file_values, env.values, flag_values]
+        .into_iter()
+        .enumerate()
+    {
+        if values.privacy_posture.is_some() {
+            posture_source = Some(source);
+        }
+        if values.hosted_kms_key_ref.is_some() {
+            key_ref_source = Some(source);
+        }
+        values.apply_to(&mut resolved);
+    }
+    // Only the final posture may discard inherited custody. An intermediate
+    // self-host layer can still be overridden by a later hosted layer, which
+    // needs the highest-precedence reference even when it came from the file.
+    if resolved.privacy_posture == HostingPrivacyPosture::SelfHostLocal
+        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
+        && key_ref_source < posture_source
+    {
+        resolved.hosted_kms_key_ref = None;
+    }
+    // Same-source or higher-precedence references remain for validation to
+    // refuse rather than silently fixing a contradictory self-host request.
     validate_serve_config(&resolved)?;
     Ok(resolved)
 }
@@ -1188,18 +1210,8 @@ impl PartialServeConfig {
         if let Some(value) = self.runtime {
             resolved.runtime.apply_override(value);
         }
-        // Custody travels with the posture. A source that explicitly selects
-        // self-host/local also drops any host-managed reference inherited from
-        // a lower-precedence source, so overriding a hosted config file back to
-        // owner-held custody takes one setting instead of an impossible
-        // "unset" of the reference. A reference named by this SAME source is
-        // still applied below and is then refused by validation as a stray
-        // self-host reference — an operator asking for both is a real error.
         if let Some(value) = self.privacy_posture {
             resolved.privacy_posture = value;
-            if value == HostingPrivacyPosture::SelfHostLocal {
-                resolved.hosted_kms_key_ref = None;
-            }
         }
         if let Some(value) = self.hosted_kms_key_ref {
             resolved.hosted_kms_key_ref = Some(value);
@@ -1466,5 +1478,7 @@ fn redacted_secret(secret: &Option<String>) -> Option<&'static str> {
     secret.as_ref().map(|_| "<redacted>")
 }
 
+#[cfg(test)]
+mod privacy_tests;
 #[cfg(test)]
 mod tests;
