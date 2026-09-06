@@ -24,6 +24,20 @@ pub(crate) const COUNT_KEY: &[u8] = b"count";
 /// one-time migration runs via `maintain().rebuild_hnsw()`.
 pub(crate) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
 const SYMMETRIC_LINKS_ENABLED: u8 = 1;
+/// `hnsw_meta` marker: present (value `[1]`) when a SLIM shed (ONE-1933
+/// OF-447) dropped the derived graph SHAPE — `hnsw_neighbors`, [`COUNT_KEY`],
+/// the entry point and the `ow1:` exception keyspace — while preserving every
+/// source row (`vectors`, vector version, model id, HNSW compatibility/config
+/// rows, rebuild counters and unrelated `hnsw_meta` keys).
+///
+/// A present marker means "graph shape absent", never "empty vector corpus":
+/// [`hnsw_entity_count`] reports the source-vector count while it is set, and
+/// both lazy first-use routes below rebuild deterministically from the
+/// surviving vectors under the vault's persisted [`LinkDiscipline`]. A
+/// present-but-malformed marker is the existing fail-closed
+/// [`Error::CorruptedIndex`] direction, never a silent "not dropped".
+pub(crate) const DROPPED_REBUILDABLE_KEY: &[u8] = b"dropped_rebuildable";
+const DROPPED_REBUILDABLE_ENABLED: u8 = 1;
 /// `hnsw_meta` counter (u64 LE): number of times the localized refresh path
 /// had to fall back to a full symmetric snapshot rebuild. The fallback is an
 /// explicit, measured, rare path (ONE-324 AC10) — this counter is how it is
@@ -57,6 +71,7 @@ const ERR_SYMMETRIC_MARKER_BYTES: &str = "hnsw symmetric-links marker bytes are 
 const ERR_FALLBACK_COUNTER_BYTES: &str = "hnsw refresh fallback counter bytes are malformed";
 const ERR_LEGACY_REBUILDS_BYTES: &str = "hnsw legacy rebuild counter bytes are malformed";
 const ERR_ONE_WAY_EXCEPTION_BYTES: &str = "hnsw one-way exception record bytes are malformed";
+const ERR_DROPPED_MARKER_BYTES: &str = "hnsw dropped-rebuildable marker bytes are malformed";
 
 /// `hnsw_meta` key prefix for one-way-link exception records (ONE-325). When
 /// orphan protection keeps a node's last remaining link `holder -> target`
@@ -85,12 +100,99 @@ pub(crate) enum LinkDiscipline {
     Legacy,
 }
 
-fn read_link_discipline(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<LinkDiscipline> {
+pub(crate) fn read_link_discipline(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> Result<LinkDiscipline> {
     match store.hnsw_meta().get(txn, SYMMETRIC_LINKS_KEY)? {
         None => Ok(LinkDiscipline::Legacy),
         Some(raw) if *raw == [SYMMETRIC_LINKS_ENABLED] => Ok(LinkDiscipline::Symmetric),
         Some(_) => Err(Error::CorruptedIndex(ERR_SYMMETRIC_MARKER_BYTES)),
     }
+}
+
+/// Whether the derived graph shape is currently dropped by a SLIM shed.
+///
+/// Fail-closed like [`read_link_discipline`]: a present-but-malformed marker
+/// is [`Error::CorruptedIndex`], never a silent "not dropped".
+pub(crate) fn hnsw_is_dropped(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
+    match store.hnsw_meta().get(txn, DROPPED_REBUILDABLE_KEY)? {
+        None => Ok(false),
+        Some(raw) if *raw == [DROPPED_REBUILDABLE_ENABLED] => Ok(true),
+        Some(_) => Err(Error::CorruptedIndex(ERR_DROPPED_MARKER_BYTES)),
+    }
+}
+
+/// SLIM (ONE-1933 / OF-447) concrete HNSW drop producer: clears the derived
+/// graph shape inside the caller's write transaction and stamps
+/// [`DROPPED_REBUILDABLE_KEY`], preserving every source row.
+///
+/// Deleted: `hnsw_neighbors`, [`COUNT_KEY`], the entry point, and the `ow1:`
+/// one-way-exception keyspace. Preserved: `vectors`, the vector version, the
+/// embedding model id, the symmetric-links marker, the rebuild counters, and
+/// every other `hnsw_meta` key.
+///
+/// The caller commits; on any error the transaction aborts and the derived
+/// rows are unchanged. Re-running while already dropped is safe and re-parks
+/// whatever lazy use re-inflated since the previous shed.
+pub(crate) fn drop_rebuildable_hnsw(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<crate::slim::HeapDropReport> {
+    // Read the marker FIRST so a malformed one fails closed before any
+    // mutation, exactly like every other decode on this module's write paths.
+    let was_dropped = hnsw_is_dropped(store, &*wtxn)?;
+
+    let mut hnsw_nodes = 0_u64;
+    let mut estimated_reclaimed_bytes = 0_u64;
+    for entry in store.hnsw_neighbors().iter(&*wtxn)? {
+        let (key, neighbors) = entry?;
+        hnsw_nodes = hnsw_nodes
+            .checked_add(1)
+            .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+        estimated_reclaimed_bytes =
+            estimated_reclaimed_bytes.saturating_add((key.len() + neighbors.len()) as u64);
+    }
+
+    store.hnsw_neighbors().clear(wtxn)?;
+    store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
+    store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+    clear_one_way_exceptions(store, wtxn)?;
+    store.hnsw_meta().put(
+        wtxn,
+        DROPPED_REBUILDABLE_KEY,
+        &[DROPPED_REBUILDABLE_ENABLED],
+    )?;
+
+    tracing::debug!(
+        was_dropped,
+        hnsw_nodes,
+        estimated_reclaimed_bytes,
+        "slim: dropped the rebuildable hnsw graph shape"
+    );
+    Ok(crate::slim::HeapDropReport {
+        hnsw_nodes,
+        estimated_reclaimed_bytes,
+        ..crate::slim::HeapDropReport::default()
+    })
+}
+
+/// Deterministic in-memory rehydrate of a dropped graph from `txn`'s vector
+/// snapshot under the vault's persisted discipline. Shared by both lazy
+/// first-use routes so a search-served graph and a write-persisted graph are
+/// byte-for-byte the same rebuild.
+fn rebuild_dropped_graph_from_snapshot(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    txn: &RoTxn<'_>,
+) -> Result<(RebuiltHnswGraph, LinkDiscipline)> {
+    // NEVER hardcode `Symmetric`: a Legacy (pre-migration) vault lazily
+    // rebuilds as Legacy, matching landed `NeedsLegacyRebuild` behavior. Only
+    // explicit maintenance migrates a vault.
+    let discipline = read_link_discipline(store, txn)?;
+    let vector_ids = collect_vector_ids(store, txn)?;
+    let rebuilt = build_hnsw_graph_from_snapshot(store, config, txn, &vector_ids, discipline)?;
+    Ok((rebuilt, discipline))
 }
 
 /// Stamps the vault as maintaining the symmetric-link invariant. Called when
@@ -425,6 +527,20 @@ fn hnsw_insert_inner(
     ops: &mut u64,
 ) -> Result<InsertOutcome> {
     let discipline = read_link_discipline(store, &*wtxn)?;
+    // SLIM lazy WRITE route (ONE-1933 / OF-447). Production stages the
+    // triggering vector row BEFORE this hook (`apply_vector` /
+    // `stage_vector_row` in `batch::ops_pipeline`), so the transaction's
+    // CURRENT vector snapshot already contains it. The deterministic rebuild
+    // IS this mutation's graph application — no separate insertion or refresh
+    // runs afterwards — and the shared graph-write helper clears the marker in
+    // the same transaction, only after the graph write succeeds.
+    if hnsw_is_dropped(store, &*wtxn)? {
+        *ops += 1;
+        let (rebuilt, rebuilt_discipline) =
+            rebuild_dropped_graph_from_snapshot(store, config, &*wtxn)?;
+        write_rebuilt_hnsw(store, wtxn, &rebuilt, rebuilt_discipline)?;
+        return Ok(InsertOutcome::Applied);
+    }
     *ops += 1;
     if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
         *ops += 1;
@@ -905,7 +1021,17 @@ pub(crate) fn write_rebuilt_hnsw(
 
     if discipline == LinkDiscipline::Symmetric {
         rebuild_one_way_exception_index(store, wtxn, &rebuilt.neighbors)?;
+        mark_symmetric_links(store, wtxn)?;
+    } else {
+        store.hnsw_meta().delete(wtxn, SYMMETRIC_LINKS_KEY)?;
     }
+
+    // ONE-1933 / OF-447: every PERSISTED complete rebuild — manual
+    // maintenance, the marker-aware rehydrate, and the lazy write route —
+    // rehydrates the graph shape, so the SLIM dropped marker is cleared here,
+    // in the same transaction as the neighbors, count and entry point, and
+    // never before the graph write above succeeded.
+    store.hnsw_meta().delete(wtxn, DROPPED_REBUILDABLE_KEY)?;
 
     Ok(())
 }
@@ -919,6 +1045,9 @@ pub(crate) fn clear_hnsw_graph_in_txn(
     store.hnsw_neighbors().clear(wtxn)?;
     store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
     store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
+    // The source corpus itself is gone, so an inherited SLIM dropped marker
+    // would describe nothing: clear it with the shape it referred to.
+    store.hnsw_meta().delete(wtxn, DROPPED_REBUILDABLE_KEY)?;
     clear_one_way_exceptions(store, wtxn)
 }
 
@@ -1027,10 +1156,35 @@ pub(crate) fn hnsw_search(
         return Ok(Vec::new());
     }
 
-    let count = read_count(store, rtxn)?;
-    let entry_point = read_entry_point(store, rtxn)?;
+    // SLIM lazy READ route (ONE-1933 / OF-447). A dropped graph shape is
+    // re-derived in memory from THIS snapshot's vectors under the vault's
+    // persisted discipline and serves the current call. A pure search never
+    // opens a write transaction — LMDB permits none while the caller's read
+    // snapshot is live — so it neither commits the rebuild nor clears the
+    // marker; the marker may persist across any number of searches.
+    let rebuilt = if hnsw_is_dropped(store, rtxn)? {
+        Some(rebuild_dropped_graph_from_snapshot(store, config, rtxn)?.0)
+    } else {
+        None
+    };
+    let rebuilt_neighbors: Option<HashMap<EntityId, Vec<EntityId>>> = rebuilt
+        .as_ref()
+        .map(|graph| graph.neighbors.iter().cloned().collect());
+    let graph = match rebuilt_neighbors.as_ref() {
+        Some(neighbors_by_id) => GraphSource::Rebuilt(neighbors_by_id),
+        None => GraphSource::Persisted,
+    };
+
+    let (count, entry_point) = match rebuilt.as_ref() {
+        Some(graph) => (graph.count, graph.entry_point),
+        None => (read_count(store, rtxn)?, read_entry_point(store, rtxn)?),
+    };
     if count == 0 {
-        if entry_point.is_some() || store.hnsw_neighbors().first(rtxn)?.is_some() {
+        let graph_rows_exist = match graph {
+            GraphSource::Persisted => store.hnsw_neighbors().first(rtxn)?.is_some(),
+            GraphSource::Rebuilt(neighbors_by_id) => !neighbors_by_id.is_empty(),
+        };
+        if entry_point.is_some() || graph_rows_exist {
             return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
         return Ok(Vec::new());
@@ -1038,17 +1192,20 @@ pub(crate) fn hnsw_search(
 
     let entry_point = entry_point.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
 
-    let mut nearest = beam_search(
+    let mut nearest = beam_search_graph(
         store,
         rtxn,
         query_vector,
         entry_point,
-        BeamOptions {
-            ef: config.hnsw.ef_search.max(limit),
-            lenient_neighbors: true,
-            check_existence: true,
-            score_dims: score_dims_for(config),
-        },
+        (
+            BeamOptions {
+                ef: config.hnsw.ef_search.max(limit),
+                lenient_neighbors: true,
+                check_existence: true,
+                score_dims: score_dims_for(config),
+            },
+            graph,
+        ),
         config.dimensions,
         &mut 0,
     )?;
@@ -1185,6 +1342,19 @@ pub(crate) fn hnsw_deindex_probed(
     Ok(())
 }
 
+/// Where [`beam_search`] reads neighbor lists from.
+///
+/// The persisted rows are the only production source; `Rebuilt` serves the
+/// SLIM lazy-search route (ONE-1933 / OF-447), where the graph shape was
+/// dropped and re-derived in memory for the current read snapshot. Both
+/// variants share one traversal so neighbor ordering, tie-breaks, `fast_dims`
+/// prefix scoring, beam width and the full-dimension rescore are identical.
+#[derive(Clone, Copy, Debug)]
+enum GraphSource<'a> {
+    Persisted,
+    Rebuilt(&'a HashMap<EntityId, Vec<EntityId>>),
+}
+
 /// Beam-search knobs, bundled so probed call sites stay within argument
 /// limits.
 #[derive(Clone, Copy, Debug)]
@@ -1229,6 +1399,26 @@ fn beam_search(
     dimensions: usize,
     ops: &mut u64,
 ) -> Result<Vec<HeapEntry>> {
+    beam_search_graph(
+        store,
+        txn,
+        query_vector,
+        entry_point,
+        (options, GraphSource::Persisted),
+        dimensions,
+        ops,
+    )
+}
+
+fn beam_search_graph(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    query_vector: &[f32],
+    entry_point: EntityId,
+    (options, graph): (BeamOptions, GraphSource<'_>),
+    dimensions: usize,
+    ops: &mut u64,
+) -> Result<Vec<HeapEntry>> {
     let BeamOptions {
         ef,
         lenient_neighbors,
@@ -1258,7 +1448,10 @@ fn beam_search(
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
-    let graph_nodes = usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0);
+    let graph_nodes = match graph {
+        GraphSource::Persisted => usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0),
+        GraphSource::Rebuilt(neighbors_by_id) => neighbors_by_id.len(),
+    };
     // Reserve extra headroom so the visited set can absorb frontier growth
     // without immediately rehashing.
     let mut visited: HashSet<EntityId> =
@@ -1279,10 +1472,18 @@ fn beam_search(
         }
 
         *ops += 1;
-        let neighbors = if lenient_neighbors {
-            load_neighbors_lenient(store, txn, &current.id)?
-        } else {
-            load_neighbors(store, txn, &current.id)?
+        let neighbors = match graph {
+            GraphSource::Persisted if lenient_neighbors => {
+                load_neighbors_lenient(store, txn, &current.id)?
+            }
+            GraphSource::Persisted => load_neighbors(store, txn, &current.id)?,
+            // The in-memory rebuild was produced by this module and carries
+            // no reserved-sentinel or ragged-length rows, so the lenient and
+            // strict decodes coincide.
+            GraphSource::Rebuilt(neighbors_by_id) => neighbors_by_id
+                .get(&current.id)
+                .cloned()
+                .unwrap_or_default(),
         };
         for neighbor_id in neighbors {
             if !visited.insert(neighbor_id) {
@@ -1777,7 +1978,18 @@ fn read_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes))
 }
 
+/// Live indexed-entity count.
+///
+/// While the SLIM dropped marker is set (ONE-1933 / OF-447) the graph shape is
+/// absent but the source corpus is intact, so this reports the SOURCE-VECTOR
+/// count rather than the absent graph-node count. Dropped means "graph shape
+/// absent", not "empty corpus" — which is what keeps `PipelineBuilder`'s
+/// fence-widening loop correct without editing `pipeline.rs`.
 pub(crate) fn hnsw_entity_count(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<usize> {
+    if hnsw_is_dropped(store, txn)? {
+        return usize::try_from(store.vectors().len(txn)?)
+            .map_err(|_| Error::IndexOverflow("hnsw entity count"));
+    }
     usize::try_from(read_count(store, txn)?).map_err(|_| Error::IndexOverflow("hnsw entity count"))
 }
 
@@ -2065,3 +2277,93 @@ fn decode_vector_into<'a>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod slim_graph_tests {
+    use super::*;
+    use crate::TimeRange;
+    use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+
+    #[test]
+    fn dropped_write_is_single_graph_application() -> Result<()> {
+        for discipline in [LinkDiscipline::Legacy, LinkDiscipline::Symmetric] {
+            let (_dir, vault) = open_test_vault_with(embedding_test_config());
+            let id = entity(50);
+            vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+            vault.with_write_txn(|txn| {
+                if discipline == LinkDiscipline::Legacy {
+                    vault.store.hnsw_meta.delete(txn, SYMMETRIC_LINKS_KEY)?;
+                } else {
+                    mark_symmetric_links(&vault.store, txn)?;
+                }
+                drop_rebuildable_hnsw(&vault.store, txn)?;
+                // The landed production order: source row first, then hook.
+                let vector = [1.0_f32, 0.0, 0.0, 0.0];
+                let raw: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
+                vault.store.vectors.put(txn, id.as_bytes(), &raw)?;
+                let mut ops = 0;
+                hnsw_insert_probed(&vault.store, &vault.config, txn, &id, &vector, &mut ops)?;
+                assert_eq!(ops, 1, "rebuild returns before insertion/refresh");
+                assert!(!hnsw_is_dropped(&vault.store, txn)?);
+                assert_eq!(read_link_discipline(&vault.store, txn)?, discipline);
+                assert_eq!(read_count(&vault.store, txn)?, 1);
+                assert_eq!(
+                    load_neighbors(&vault.store, txn, &id)?,
+                    Vec::<EntityId>::new()
+                );
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dropped_marker_clear_is_atomic_with_full_graph() -> Result<()> {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let id = entity(50);
+        vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+        vault.with_write_txn(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
+        let graph = {
+            let txn = vault.store.env.read_txn()?;
+            build_hnsw_graph_from_snapshot(
+                &vault.store,
+                &vault.config,
+                &txn,
+                &[id],
+                LinkDiscipline::Symmetric,
+            )?
+        };
+        let revision = vault.store.env.info().last_txn_id;
+        {
+            let mut txn = vault.store.env.write_txn()?;
+            write_rebuilt_hnsw(&vault.store, &mut txn, &graph, LinkDiscipline::Symmetric)?;
+            assert!(!hnsw_is_dropped(&vault.store, &txn)?);
+            assert_eq!(read_count(&vault.store, &txn)?, 1);
+            assert_eq!(read_entry_point(&vault.store, &txn)?, Some(id));
+            assert_eq!(vault.store.hnsw_neighbors.len(&txn)?, 1);
+            // Abort a fully staged graph write: neither shape nor clear lands.
+        }
+        assert_eq!(vault.store.env.info().last_txn_id, revision);
+        {
+            let txn = vault.store.env.read_txn()?;
+            assert!(hnsw_is_dropped(&vault.store, &txn)?);
+            assert_eq!(vault.store.hnsw_neighbors.len(&txn)?, 0);
+            assert_eq!(read_count(&vault.store, &txn)?, 0);
+            assert_eq!(read_entry_point(&vault.store, &txn)?, None);
+        }
+        vault.with_write_txn(|txn| {
+            write_rebuilt_hnsw(&vault.store, txn, &graph, LinkDiscipline::Symmetric)
+        })?;
+        let txn = vault.store.env.read_txn()?;
+        assert!(!hnsw_is_dropped(&vault.store, &txn)?);
+        assert_eq!(read_count(&vault.store, &txn)?, 1);
+        assert_eq!(vault.store.hnsw_neighbors.len(&txn)?, 1);
+        assert_eq!(read_entry_point(&vault.store, &txn)?, Some(id));
+        assert_eq!(
+            read_link_discipline(&vault.store, &txn)?,
+            LinkDiscipline::Symmetric
+        );
+        Ok(())
+    }
+}
