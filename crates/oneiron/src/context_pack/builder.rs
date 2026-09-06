@@ -229,6 +229,50 @@ impl UnfinalizedContextPack<'_> {
             run_id: telemetry_run_id,
         }
     }
+
+    /// Finalizes this assembly's retrieval-run row against the pack AS IT NOW
+    /// STANDS — after the caller's own scope filtering, clamping and
+    /// truncation — and returns it UNPROJECTED.
+    ///
+    /// The sibling of [`Self::finish_projected_json`] for a caller that
+    /// answers with the engine-canonical pack instead of an HTTP JSON
+    /// projection (ONE-1433's `code_run::vault_read` adapter). Deferring the
+    /// finalize is the whole point of the door: a durable run row published
+    /// out of an actor-scoped read must carry EXACTLY the ids that actor
+    /// received, so the surfaced ids, the suppression count and the empty
+    /// reason are all read back off the post-filter value rather than off the
+    /// assembly's own pre-filter results. An entity the caller's filter
+    /// removed is then as absent from telemetry as it is from the response —
+    /// the same fail-closed boundary OF-365 states for the disclosure clamp,
+    /// where a durable trace must not retain ids a clamp removed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a failed finalize exactly as the finalizing doors
+    /// ([`ContextPackBuilder::run_with_telemetry`]) do. This door deliberately
+    /// does NOT take [`Self::finish_projected_json`]'s best-effort posture:
+    /// its caller has a `Result` to carry the failure, so the failure
+    /// semantics of the `run()` door it replaces are preserved.
+    pub fn finish_post_filter(mut self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        let surfaced_result_ids: Vec<[u8; 16]> = self
+            .value
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let telemetry_run_id = finalize_context_pack_telemetry(
+            self.telemetry,
+            self.telemetry_run_id.take(),
+            self.value.stats.query_time_us,
+            self.value.stats.claims_suppressed,
+            &surfaced_result_ids,
+            context_pack_empty_reason(&self.value, &surfaced_result_ids),
+        )?;
+        Ok(RetrievalWithTelemetry {
+            value: self.value,
+            run_id: telemetry_run_id,
+        })
+    }
 }
 
 impl<'a> ContextPackBuilder<'a> {
