@@ -54,6 +54,6 @@ interface NativeBinding {
 // the selection is a runtime decision this package must not try to make in a
 // static import specifier.
 const require = createRequire(import.meta.url)
-const binding = require("../native/index.js") as NativeBinding
+const binding = require("../native/index.cjs") as NativeBinding
 
 export const NativeClient: NativeClientConstructor = binding.NativeClient

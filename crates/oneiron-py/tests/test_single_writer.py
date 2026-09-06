@@ -19,7 +19,8 @@ from oneiron import Oneiron, OneironError
 OWNER = """
 import sys, time
 from oneiron import Oneiron
-Oneiron.open(sys.argv[1])
+# Keep the client alive: dropping the last handle releases the writer lease.
+memory = Oneiron.open(sys.argv[1])
 open(sys.argv[2], "w").write("ready")
 time.sleep(120)
 """

@@ -2,13 +2,12 @@
 //!
 //! These prove the properties the two language bindings are allowed to ASSUME:
 //! that the catalog is a declared list rather than whatever the code happens
-//! to expose, that a same-PID reopen shares one native vault, and that
-//! divergent reopen options are refused instead of quietly honored.
+//! to expose, and that divergent reopen options are refused instead of quietly
+//! honored. The same-PID reopen proof lives in `same_pid_reopen.rs` so its
+//! process-wide open counter is isolated from the vault opens in this binary.
 
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN};
-use oneiron_remote::{
-    FACADE_VERB_CATALOG, OneironClient, OpenOptions, store_open_count, unix_seconds_now,
-};
+use oneiron_remote::{FACADE_VERB_CATALOG, OneironClient, OpenOptions, unix_seconds_now};
 
 /// The declared catalog, spelled once here so a silent reorder or addition in
 /// the crate fails a test rather than a downstream census.
@@ -42,41 +41,6 @@ fn remote_route_catalog_is_total() {
         assert!(seen.insert(verb), "{verb:?} appears twice in the catalog");
     }
     assert_eq!(seen.len(), FACADE_VERB_CATALOG.len());
-}
-
-/// §Test/Shared #3 — `same_pid_reopen_shares_native_vault`.
-///
-/// Both halves matter. Sharing without counting would pass on an
-/// implementation that opened the store twice and discarded one; counting
-/// without comparing pointers would pass on one that handed back an unrelated
-/// vault it had opened earlier.
-#[test]
-fn same_pid_reopen_shares_native_vault() {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = dir.path().join("vault");
-    let options = OpenOptions::default();
-
-    let before = store_open_count();
-    let first = OneironClient::open(Some(&path), &options).expect("first open");
-    let after_first = store_open_count();
-    let second = OneironClient::open(Some(&path), &options).expect("second open");
-    let after_second = store_open_count();
-
-    assert_eq!(
-        after_first,
-        before + 1,
-        "the first open opens the store once"
-    );
-    assert_eq!(
-        after_second, after_first,
-        "a same-path, same-options reopen must not open the store again"
-    );
-    assert_eq!(
-        first.shared_vault_addr(),
-        second.shared_vault_addr(),
-        "both handles must point at the same native vault"
-    );
-    assert_eq!(first.lease_pid(), Some(std::process::id()));
 }
 
 /// §Test/Shared #3 — divergent reopen options are a typed refusal.
