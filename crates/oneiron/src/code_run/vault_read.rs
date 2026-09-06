@@ -427,6 +427,19 @@ pub enum VaultReadError {
     },
 }
 
+impl VaultReadError {
+    fn method(&self) -> VaultReadMethod {
+        match self {
+            Self::InvalidRequest { method, .. }
+            | Self::Transport { method, .. }
+            | Self::ProtocolMismatch { method, .. }
+            | Self::RuntimeUnavailable { method }
+            | Self::Unimplemented { method, .. }
+            | Self::Engine { method, .. } => *method,
+        }
+    }
+}
+
 fn invalid_request(method: VaultReadMethod, field: &str, reason: &str) -> VaultReadError {
     VaultReadError::InvalidRequest {
         method,
@@ -450,14 +463,6 @@ fn engine_failure(method: VaultReadMethod, error: &crate::Error) -> VaultReadErr
         method,
         engine_code: INTERNAL_ENGINE_CODE.to_owned(),
         message: error.to_string(),
-    }
-}
-
-fn engine_corruption(method: VaultReadMethod, detail: &str) -> VaultReadError {
-    VaultReadError::Engine {
-        method,
-        engine_code: INTERNAL_ENGINE_CODE.to_owned(),
-        message: detail.to_owned(),
     }
 }
 
@@ -1356,39 +1361,36 @@ impl<T: sealed::Backend + ?Sized> VaultReadClient for T {}
 // ─── Projection helpers ──────────────────────────────────────────────────────
 
 /// Decodes already-clamped entity bytes into the public JSON projection.
-fn decode_scoped_body(method: VaultReadMethod, body: &[u8]) -> VaultReadResult<Value> {
+/// Opaque bodies use the accepted server's lossless `bodyBytes` representation.
+fn decode_scoped_body(body: &[u8]) -> Value {
     let mut cursor = Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| engine_corruption(method, "entity body is not valid MessagePack"))?;
-    if cursor.position() != body.len() as u64 {
-        return Err(engine_corruption(
-            method,
-            "trailing bytes after entity body",
-        ));
+    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
+        && cursor.position() == body.len() as u64
+    {
+        return companion_value_to_json(&value);
     }
-    Ok(companion_value_to_json(&value))
+    serde_json::json!({ "bodyBytes": body })
 }
 
 fn entity_record_from_parts(
-    method: VaultReadMethod,
     id: &EntityId,
     entity_type: u8,
     learned_at: u64,
     score: Option<f32>,
     body: &[u8],
     view: View,
-) -> VaultReadResult<CoreEntityRecord> {
+) -> CoreEntityRecord {
     let body = match view {
         View::Standard => None,
-        View::Summary | View::Full => Some(decode_scoped_body(method, body)?),
+        View::Summary | View::Full => Some(decode_scoped_body(body)),
     };
-    Ok(CoreEntityRecord {
+    CoreEntityRecord {
         id: id.to_hex(),
         entity_type,
         learned_at,
         score,
         body,
-    })
+    }
 }
 
 fn project_signal(signal: Signal) -> CoreContextPackSignal {
@@ -1588,8 +1590,10 @@ fn batch_item_from_result(
 
 // ─── In-process adapter ──────────────────────────────────────────────────────
 
-/// Embedded-host adapter. It stores a [`ScopedRead`], never a naked vault
-/// convenience client: proximity to `Vault` is never authority.
+/// Embedded-host adapter. It stores an actor-keyed [`ScopedRead`] binding,
+/// never a naked vault convenience client: proximity to `Vault` is never
+/// authority. Each dispatch opens a fresh reader so its policy memo lasts only
+/// for that request, not for the lifetime of the adapter.
 pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
 }
@@ -1644,14 +1648,13 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 continue;
             };
             items.push(entity_record_from_parts(
-                METHOD,
                 &result.id,
                 entity_type,
                 learned_at,
                 Some(result.score),
                 &body,
                 view,
-            )?);
+            ));
         }
         Ok(CoreQueryResponse {
             items,
@@ -1781,8 +1784,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 item: None,
             });
         };
-        let item =
-            entity_record_from_parts(method, &id, entity_type, learned_at, None, &body, view)?;
+        let item = entity_record_from_parts(&id, entity_type, learned_at, None, &body, view);
         Ok(CoreHydrateResponse {
             status: CoreHydrateStatus::Live,
             short_id,
@@ -1984,20 +1986,26 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         &self,
         request: sealed::ValidatedVaultReadRequest,
     ) -> VaultReadResult<VaultReadResponse> {
+        // Policy is memoized by ScopedRead. Never execute through the retained
+        // binding: a grant may have been revoked or narrowed since the last call.
+        let reader = Self::new(
+            self.scoped_read.vault(),
+            self.scoped_read.actor_key().clone(),
+        );
         match request.into_inner() {
             VaultReadRequest::Query(request) => {
-                self.query_op(&request).map(VaultReadResponse::Query)
+                reader.query_op(&request).map(VaultReadResponse::Query)
             }
-            VaultReadRequest::ContextPack(request) => self
+            VaultReadRequest::ContextPack(request) => reader
                 .context_pack_op(&request)
                 .map(VaultReadResponse::ContextPack),
             VaultReadRequest::Hydrate(request) => {
-                self.hydrate_op(&request).map(VaultReadResponse::Hydrate)
+                reader.hydrate_op(&request).map(VaultReadResponse::Hydrate)
             }
-            VaultReadRequest::HydrateMany(request) => self
+            VaultReadRequest::HydrateMany(request) => reader
                 .hydrate_many_op(&request)
                 .map(VaultReadResponse::HydrateMany),
-            VaultReadRequest::MemoryTimeline(request) => self
+            VaultReadRequest::MemoryTimeline(request) => reader
                 .memory_timeline_op(&request)
                 .map(VaultReadResponse::MemoryTimeline),
             // Unreachable through the generated wrappers, which refuse runtime
@@ -2064,10 +2072,19 @@ fn decode_wire_envelope(
         ));
     }
     if let Some(error) = envelope.get("err") {
-        // Forwarded untranslated: the daemon's semantic variant is the answer.
         let error: VaultReadError = serde_json::from_value(error.clone()).map_err(|error| {
             protocol_mismatch(method, format!("err arm is not a VaultReadError: {error}"))
         })?;
+        if error.method() != method {
+            return Err(protocol_mismatch(
+                method,
+                format!(
+                    "expected error for {method:?}, received {:?}",
+                    error.method()
+                ),
+            ));
+        }
+        // Identity is validated; forward the semantic variant and payload intact.
         return Err(error);
     }
     let Some(ok) = envelope.get("ok") else {
@@ -2123,6 +2140,8 @@ impl sealed::Backend for CloudVaultReadAdapter {
 
 #[cfg(test)]
 mod tests {
+    mod regressions;
+
     use super::*;
 
     use std::sync::Mutex;
@@ -2940,18 +2959,8 @@ mod tests {
     fn standard_view_omits_body() {
         let id = entity(0x52);
         let body = msgpack_body("blue hallway door");
-        let record = |view| {
-            entity_record_from_parts(
-                VaultReadMethod::Query,
-                &id,
-                0,
-                1_780_000_000,
-                Some(0.75),
-                &body,
-                view,
-            )
-            .expect("record projects")
-        };
+        let record =
+            |view| entity_record_from_parts(&id, 0, 1_780_000_000, Some(0.75), &body, view);
 
         let standard = record(View::Standard);
         assert_eq!(standard.id, id.to_hex());
@@ -2975,20 +2984,12 @@ mod tests {
 
         let mut trailing = body.clone();
         trailing.push(0xC0);
-        let error = entity_record_from_parts(
-            VaultReadMethod::Hydrate,
-            &id,
-            0,
-            1,
-            None,
-            &trailing,
-            View::Full,
-        )
-        .expect_err("trailing bytes are corruption");
-        assert!(matches!(
-            error,
-            VaultReadError::Engine { ref engine_code, .. } if engine_code == INTERNAL_ENGINE_CODE
-        ));
+        let projected = entity_record_from_parts(&id, 0, 1, None, &trailing, View::Full);
+        assert_eq!(
+            projected.body,
+            Some(json!({ "bodyBytes": trailing })),
+            "trailing bytes are preserved, not silently dropped or treated as corruption"
+        );
     }
 
     #[test]
@@ -3590,19 +3591,32 @@ mod tests {
             start: 1_780_000_000,
             end: 1_780_000_000,
         };
-        // A stored body whose first MessagePack value does not consume the
-        // whole payload: projection rejects it as corruption, which is a
-        // non-NOT_FOUND engine error and therefore batch-aborting.
+        // Arbitrary body bytes are valid. Corrupt the short-id index instead:
+        // its forward row MUST contain a 16-byte entity id, so a truncated row
+        // causes a real storage error before projection in both hydrate doors.
         vault
             .put_entity(
                 &corrupt,
                 ENTITY_TYPE_PERSON,
                 occurred,
                 occurred.start,
-                b"corrupt body",
+                &msgpack_body("valid body"),
             )
-            .expect("entity with an undecodable body");
+            .expect("valid entity");
         let reference = short_ref(&vault, &corrupt);
+        let (short_id, content_hash) =
+            parse_short_ref(VaultReadMethod::Hydrate, &reference).expect("valid short ref");
+        let forward_key = crate::batch::encode_short_id_forward_key(&short_id, content_hash);
+        vault
+            .with_write_txn(|wtxn| {
+                vault.store.short_ids.put(wtxn, &forward_key, &[0x66])?;
+                Ok(())
+            })
+            .expect("inject a truncated short-id index row");
+        assert!(matches!(
+            vault.hydrate_short_id(&short_id, content_hash),
+            Err(crate::Error::CorruptedIndex(_))
+        ));
         let adapter = InProcessVaultReadAdapter::new(
             &vault,
             ScopedReadActorKey::new("reader").expect("actor key"),

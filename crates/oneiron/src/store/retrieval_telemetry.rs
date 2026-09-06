@@ -2,7 +2,7 @@
 //! reward-weighted blend-weight tuning. This file also carries the
 //! session-side [`SessionStoreView`] retrieval siblings.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::str;
 
 use heed::{RoTxn, RwTxn};
@@ -1038,6 +1038,20 @@ fn stage_context_pack_retrieval_run_finalize(
     }
     record.score_breakdown = surfaced_breakdown;
     if let Some(trace) = record.trace.as_mut() {
+        // Finalization publishes only the caller's post-filter result set.
+        // Earlier stages also reach the durable row and its fork index, so
+        // retain their scoring detail only for ids that actually surfaced.
+        let allowed: HashSet<[u8; 16]> = surfaced_result_ids.iter().copied().collect();
+        for channel in &mut trace.per_channel {
+            channel
+                .candidates
+                .retain(|entry| allowed.contains(&entry.result_id));
+        }
+        for stage in [&mut trace.fused, &mut trace.blended, &mut trace.reranked] {
+            stage
+                .candidates
+                .retain(|entry| allowed.contains(&entry.result_id));
+        }
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     record.empty_reason = empty_reason;
