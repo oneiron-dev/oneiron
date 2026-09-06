@@ -380,6 +380,18 @@ fn missing_or_misclassified_writer_cannot_change_subject_claims() -> Result<()> 
                 .kind(),
             expected,
         );
+        assert_eq!(
+            ensure_actor_subject(&vault, actor, person, author, 1_800_000_100)
+                .expect_err("an idempotent ensure still checks its writer")
+                .kind(),
+            expected,
+        );
+        assert_eq!(
+            ensure_model_person(&vault, person, author, 1_800_000_100)
+                .expect_err("model ensure checks its writer before the prior fact")
+                .kind(),
+            expected,
+        );
     }
     for id in [first, substrate] {
         assert_eq!(
@@ -749,5 +761,157 @@ fn substrate_rejects_malformed_dangling_wrong_kind_and_cyclic_redirects() -> Res
         );
         assert_eq!(vault.get_claim(&claim)?, historical);
     }
+    Ok(())
+}
+
+#[test]
+fn onboarding_anchor_ensure_is_idempotent_and_never_reanchors() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
+    let first = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
+    let second = seed(&vault, entity(0x63), ENTITY_TYPE_ORG);
+    ensure_actor_subject(&vault, actor, first, writer(), 100)?;
+    let claims = vault.claims_for_subject(&actor)?;
+    ensure_actor_subject(&vault, actor, first, writer(), 100)?;
+    assert_eq!(vault.claims_for_subject(&actor)?.len(), claims.len());
+    let err = ensure_actor_subject(&vault, actor, second, writer(), 101)
+        .expect_err("ensure cannot re-anchor");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(first));
+    let claim = vault.get_claim(&claims[0])?.expect("onboarding anchor");
+    assert_eq!(claim.evidence, Some(writer_evidence(writer())));
+    assert_eq!(claim.source, Some(ClaimSource::Observed));
+    let survivor = seed(&vault, entity(0x64), ENTITY_TYPE_PERSON);
+    merge_substrate_person(&vault, first, survivor)?;
+    ensure_actor_subject(&vault, actor, first, writer(), 400)?;
+    assert_eq!(
+        ensure_actor_subject(&vault, actor, survivor, writer(), 400)
+            .expect_err("a canonical read must not rewrite the stored anchor")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(survivor));
+    assert_eq!(vault.get_claim(&claims[0])?, Some(claim));
+    assert_eq!(vault.claims_for_subject(&actor)?, claims);
+    Ok(())
+}
+
+#[test]
+fn model_ensure_never_reclassifies_a_meat_person() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let person = seed(&vault, entity(0x64), ENTITY_TYPE_PERSON);
+    set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 100)?;
+    let err = ensure_model_person(&vault, person, writer(), 101)
+        .expect_err("a meat person cannot become a companion");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_eq!(
+        person_substrate(&vault, &person)?,
+        Some(PersonSubstrate::Meat)
+    );
+    let survivor = seed(&vault, entity(0x65), ENTITY_TYPE_PERSON);
+    merge_substrate_person(&vault, person, survivor)?;
+    let history = vault.claims_for_subject(&person)?;
+    let survivor_claims = vault.claims_for_subject(&survivor)?;
+    assert_eq!(
+        ensure_model_person(&vault, survivor, writer(), 400)
+            .expect_err("merged meat is not an absent substrate")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert_eq!(vault.claims_for_subject(&person)?, history);
+    assert_eq!(vault.claims_for_subject(&survivor)?, survivor_claims);
+    let model = seed(&vault, entity(0x66), ENTITY_TYPE_PERSON);
+    ensure_model_person(&vault, model, writer(), 100)?;
+    let claims = vault.claims_for_subject(&model)?;
+    ensure_model_person(&vault, model, writer(), 101)?;
+    assert_eq!(vault.claims_for_subject(&model)?, claims);
+    assert_eq!(person_substrate(&vault, &model)?, Some(PersonSubstrate::Model));
+    Ok(())
+}
+
+#[test]
+fn concurrent_onboarding_cannot_reanchor_the_same_house() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0x65), ENTITY_TYPE_AGENT_DEF);
+    let first = seed(&vault, entity(0x66), ENTITY_TYPE_ORG);
+    let second = seed(&vault, entity(0x67), ENTITY_TYPE_ORG);
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let one = scope.spawn(|| {
+            barrier.wait();
+            ensure_actor_subject(&vault, actor, first, writer(), 100)
+        });
+        let two = scope.spawn(|| {
+            barrier.wait();
+            ensure_actor_subject(&vault, actor, second, writer(), 100)
+        });
+        [
+            one.join().expect("first thread"),
+            two.join().expect("second thread"),
+        ]
+    });
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(vault.claims_for_subject(&actor)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let person = seed(&vault, entity(0x68), ENTITY_TYPE_PERSON);
+    for (id, value) in [(entity(0x69), "meat"), (entity(0x6A), "model")] {
+        let body = subject_fact(
+            PREDICATE_PERSON_SUBSTRATE,
+            person,
+            Value::from(value),
+            writer(),
+            100,
+        );
+        vault.put_claim(
+            &id,
+            &body,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )?;
+    }
+    assert_eq!(
+        person_substrate(&vault, &person)
+            .expect_err("ambiguous fact")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+    assert_eq!(
+        ensure_model_person(&vault, person, writer(), 100)
+            .expect_err("not absent")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+
+    let other = seed(&vault, entity(0x6B), ENTITY_TYPE_PERSON);
+    let body = subject_fact(
+        PREDICATE_PERSON_SUBSTRATE,
+        other,
+        Value::from("unknown"),
+        writer(),
+        100,
+    );
+    vault.put_claim(
+        &entity(0x6C),
+        &body,
+        TimeRange {
+            start: 100,
+            end: 100,
+        },
+        100,
+    )?;
+    assert_eq!(
+        person_substrate(&vault, &other)
+            .expect_err("malformed fact")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
     Ok(())
 }

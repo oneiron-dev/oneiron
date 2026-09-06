@@ -181,6 +181,7 @@ pub mod voice_identity;
 pub mod voice_segment;
 pub mod wave_orchestration;
 pub mod web_fetch;
+pub mod workspace_roster;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -516,6 +517,11 @@ pub use crate::wave_orchestration::{
     BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan,
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
     blocked_by_edge_write,
+};
+pub use crate::workspace_roster::{
+    CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
+    MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterPreset,
+    WorkspaceRosterRole,
 };
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,

@@ -398,6 +398,142 @@ fn write_head_in_txn(
     Ok(())
 }
 
+/// Onboarding may fill an absent anchor, never replace an existing someone.
+/// Validation, observation, and writing share LMDB's writer lock.
+pub(crate) fn ensure_actor_subject(
+    vault: &Vault,
+    actor: EntityId,
+    subject: EntityId,
+    writer: WriteActor,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        if vault.get_entity_type_in_txn(txn, &actor)?.is_none() {
+            return Err(Error::InvalidClaimBody(
+                "actor.subject_ref actor must exist",
+            ));
+        }
+        SubjectKind::from_entity_type(vault.get_entity_type_in_txn(txn, &subject)?)?;
+        validate_writer_in_txn(vault, txn, writer)?;
+        ensure_fact_in_txn(
+            vault,
+            txn,
+            subject_fact(
+                PREDICATE_ACTOR_SUBJECT_REF,
+                actor,
+                Value::from(subject.to_hex()),
+                writer,
+                at,
+            ),
+            at,
+            Reserved::Yes,
+        )
+    })
+}
+
+/// An existing meat or malformed substrate is not an absent model fact.
+pub(crate) fn ensure_model_person(
+    vault: &Vault,
+    person: EntityId,
+    writer: WriteActor,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        if vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
+            return Err(Error::InvalidClaimBody(
+                "person.substrate subject must be a PERSON",
+            ));
+        }
+        validate_writer_in_txn(vault, txn, writer)?;
+        ensure_fact_in_txn(
+            vault,
+            txn,
+            subject_fact(
+                PREDICATE_PERSON_SUBSTRATE,
+                person,
+                Value::from(PersonSubstrate::Model.as_str()),
+                writer,
+                at,
+            ),
+            at,
+            Reserved::No,
+        )
+    })
+}
+
+fn ensure_fact_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    body: ClaimBody,
+    at: u64,
+    reserved: Reserved,
+) -> Result<()> {
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Err(Error::InvariantViolation(
+            "subject model fact must name an entity",
+        ));
+    };
+    let prior = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
+        active_person_substrate_bodies_in_txn(vault, txn, &subject)?
+            .pop()
+            .map(|(_, body)| body)
+    } else {
+        let prior = single_active_body_in_txn(vault, txn, &subject, &body.predicate)?;
+        if prior.is_some() && actor_subject_anchor_in_txn(vault, txn, &subject)?.is_none() {
+            return Err(Error::InvalidClaimBody(
+                "actor.subject_ref requires one canonical subject",
+            ));
+        }
+        prior
+    };
+    if let Some(prior) = prior {
+        // Proposed or qualified facts cannot prove onboarding completed. Do not
+        // hide them and then overwrite history through an "absent" fast path.
+        if !matches!(
+            prior.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) || prior.world.is_some()
+            || prior.rel.is_some()
+            || prior.scope.is_some()
+        {
+            return Err(Error::InvalidClaimBody(
+                "subject model fact is not an unqualified approved fact",
+            ));
+        }
+        // Compare the stored assertion, not the redirected anchor: a retry
+        // must never rewrite the subject the original writer actually named.
+        return if prior.value == body.value {
+            Ok(())
+        } else {
+            Err(Error::InvalidClaimBody(
+                "subject model fact is already bound differently",
+            ))
+        };
+    }
+    write_head_in_txn(vault, txn, &EntityId::now(), &body, at, reserved)
+}
+
+fn subject_fact(
+    predicate: &str,
+    subject: EntityId,
+    value: Value,
+    writer: WriteActor,
+    at: u64,
+) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        value,
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.valid_from = Some(at);
+    body.source = Some(ClaimSource::Observed);
+    body.evidence = Some(writer_evidence(writer));
+    body
+}
+
 /// The substrate recorded for `person_ref`, if any, through identity redirects.
 /// Ambiguous identities and malformed or competing active claims are refused.
 pub fn person_substrate(vault: &Vault, person_ref: &EntityId) -> Result<Option<PersonSubstrate>> {
