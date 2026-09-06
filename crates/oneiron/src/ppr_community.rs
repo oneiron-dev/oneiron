@@ -506,8 +506,10 @@ fn affected_entities(p: &CommunityProjection, old: Option<&CommunitySnapshot>, f
     let mut expanded = BTreeSet::new();
     while let Some(id) = queue.pop() {
         let mut neighbors = adj.get(&id).cloned().unwrap_or_default();
-        if let Some(old) = old {
-            if let Some(m) = old.nodes.get(&id).filter(|m| expanded.insert(m.coarse)) { neighbors.extend(&old.members[&m.coarse]); }
+        if let Some(old) = old
+            && let Some(m) = old.nodes.get(&id).filter(|m| expanded.insert(m.coarse))
+        {
+            neighbors.extend(&old.members[&m.coarse]);
         }
         for next in neighbors { if seen.insert(next) { queue.push(next); } }
     }
@@ -551,8 +553,10 @@ pub fn activated_communities(cache: &PprCommunityCache<'_>, seeds: &[ScoredEntit
     let mut active = BTreeSet::new();
     if seeds.is_empty() { return Ok(active); }
     let membership = |s: &ScoredEntity| cache.snapshot.nodes.get(&s.id).map(|m| m.fine);
-    if seeds.len() == 1 || (seeds[0].score > 0.0 && f64::from(seeds[0].score) >= 1.5 * f64::from(seeds[1].score)) {
-        if let Some(id) = membership(&seeds[0]) { active.insert(id); }
+    if (seeds.len() == 1 || (seeds[0].score > 0.0 && f64::from(seeds[0].score) >= 1.5 * f64::from(seeds[1].score)))
+        && let Some(id) = membership(&seeds[0])
+    {
+        active.insert(id);
     }
     let mut counts = BTreeMap::new();
     for seed in seeds.iter().take(5) {

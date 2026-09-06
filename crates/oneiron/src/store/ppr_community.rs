@@ -43,7 +43,7 @@ impl Store {
             let (key, value) = entry?;
             bytes = bytes.checked_add(key.len()).and_then(|n| n.checked_add(value.len()))
                 .ok_or(Error::CorruptedIndex("ppr community cache size"))?;
-            if rows.len() >= MAX_COMMUNITY_NODES * 3 + 1
+            if rows.len() > MAX_COMMUNITY_NODES * 3
                 || bytes > MAX_COMMUNITY_CACHE_BYTES
                 || key.len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
                 || value.len() > MAX_COMMUNITY_NODES * 16
@@ -100,7 +100,7 @@ impl Store {
         let mut old_keys = Vec::new();
         for entry in self.vault_meta.prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())? {
             let (key, _) = entry?;
-            if old_keys.len() >= MAX_COMMUNITY_NODES * 3 + 1
+            if old_keys.len() > MAX_COMMUNITY_NODES * 3
                 || key.len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
             {
                 return Err(Error::CorruptedIndex("ppr community cache bounds"));
