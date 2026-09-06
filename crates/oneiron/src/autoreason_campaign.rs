@@ -914,6 +914,19 @@ pub fn compare_campaign(
         reason: "absent",
     })?;
     validate_arm_pairing(&single_pass, &tournament)?;
+    for split in [
+        &single_pass.search,
+        &single_pass.held_out,
+        &tournament.search,
+        &tournament.held_out,
+    ] {
+        check_metric_pin(&config.metric_pin, &split.of360.metric_definitions)?;
+        if &split.dataset != campaign_split_dataset_ref(config, split.split) {
+            return Err(CampaignError::ReportMismatch {
+                reason: "split dataset ref differs from the configured split",
+            });
+        }
+    }
     check_config_held_out_anchor(&decision.external_anchor, &config.splits.held_out)?;
     check_held_out_anchor(
         &decision.external_anchor,
@@ -1069,7 +1082,15 @@ fn validate_arm_pairing(
     tournament: &CampaignArmReport,
 ) -> CampaignResult<()> {
     validate_arm_report(single_pass, CampaignExecutableArm::SinglePass)?;
-    validate_arm_report(tournament, CampaignExecutableArm::Tournament)
+    validate_arm_report(tournament, CampaignExecutableArm::Tournament)?;
+    if single_pass.search.dataset != tournament.search.dataset
+        || single_pass.held_out.dataset != tournament.held_out.dataset
+    {
+        return Err(CampaignError::ReportMismatch {
+            reason: "corresponding arm splits use different dataset refs",
+        });
+    }
+    Ok(())
 }
 
 fn validate_arm_report(
@@ -2245,6 +2266,170 @@ mod tests {
         )
         .expect_err("a mutated metric pin is refused");
         assert!(matches!(err, CampaignError::MetricPinMismatch));
+    }
+
+    #[test]
+    fn compare_campaign_binds_every_split_to_full_metric_pin() {
+        type MetricMutation = fn(&mut Of360MetricDefinitionSet);
+
+        let fixture = held_out_fixture(
+            SplitFixture::passed(0.20, 0.60),
+            SplitFixture::passed(0.90, 0.80),
+            0.01,
+        );
+        let mutations: [(&str, MetricMutation); 6] = [
+            ("set_id", |definitions| {
+                definitions.set_id.push_str("-other");
+            }),
+            ("revision", |definitions| {
+                definitions.revision.push_str("-other");
+            }),
+            ("content_hash", |definitions| {
+                definitions
+                    .derivation_envelope
+                    .content_hash
+                    .push_str("-other");
+            }),
+            ("model_id", |definitions| {
+                definitions.derivation_envelope.model_id.push_str("-other");
+            }),
+            ("version", |definitions| {
+                definitions.derivation_envelope.version.push_str("-other");
+            }),
+            ("params_hash", |definitions| {
+                definitions
+                    .derivation_envelope
+                    .params_hash
+                    .push_str("-other");
+            }),
+        ];
+        for (field, mutate) in mutations {
+            // None forges all four reports consistently. Each Some case also
+            // checks that no individual split escapes the full pin check.
+            for altered_split in [None, Some(0), Some(1), Some(2), Some(3)] {
+                let mut single_pass = fixture.single_pass.clone();
+                let mut tournament = fixture.tournament.clone();
+                for (index, split) in [
+                    &mut single_pass.search,
+                    &mut single_pass.held_out,
+                    &mut tournament.search,
+                    &mut tournament.held_out,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if altered_split.is_none() || altered_split == Some(index) {
+                        mutate(&mut split.of360.metric_definitions);
+                        split.metric_definition_digest = split
+                            .of360
+                            .metric_definitions
+                            .derivation_envelope
+                            .content_hash
+                            .clone();
+                    }
+                    split.validate().expect("internally consistent split");
+                }
+                let encoded = serde_json::to_value((&single_pass, &tournament))
+                    .expect("public arm reports encode");
+                let decoded: (CampaignArmReport, CampaignArmReport) =
+                    serde_json::from_value(encoded).expect("forged arm reports decode");
+                for (single_pass, tournament) in [(single_pass, tournament), decoded] {
+                    let err = compare_campaign(
+                        AttemptId::now(),
+                        &fixture.config,
+                        single_pass,
+                        tournament,
+                        fixture.decision.clone(),
+                    )
+                    .expect_err("public and decoded reports must match the config metric pin");
+                    assert!(
+                        matches!(err, CampaignError::MetricPinMismatch),
+                        "{field}, altered split {altered_split:?}: {err:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn comparison_rejects_wrong_split_datasets_in_public_and_decoded_reports() {
+        let fixture = held_out_fixture(
+            SplitFixture::passed(0.20, 0.60),
+            SplitFixture::passed(0.90, 0.80),
+            0.01,
+        );
+        let base = compare(&fixture);
+        for split_kind in [
+            CampaignEvaluationSplit::Search,
+            CampaignEvaluationSplit::HeldOut,
+        ] {
+            for change_revision in [false, true] {
+                let mut dataset = campaign_split_dataset_ref(&fixture.config, split_kind).clone();
+                if change_revision {
+                    dataset.revision.push_str("-other");
+                } else {
+                    dataset.dataset_id.push_str("-other");
+                }
+                for altered_arm in [
+                    None,
+                    Some(CampaignExecutableArm::SinglePass),
+                    Some(CampaignExecutableArm::Tournament),
+                ] {
+                    let mut report = base.clone();
+                    for arm in [&mut report.single_pass, &mut report.tournament] {
+                        if altered_arm.is_some() && altered_arm != Some(arm.arm) {
+                            continue;
+                        }
+                        let split = match split_kind {
+                            CampaignEvaluationSplit::Search => &mut arm.search,
+                            CampaignEvaluationSplit::HeldOut => &mut arm.held_out,
+                        };
+                        // Keep each public split internally consistent so the
+                        // config/pair binding, not local validation, refuses it.
+                        split.dataset = dataset.clone();
+                        split.of360.report.dataset_id = dataset.dataset_id.clone();
+                        split.of360.report.dataset_revision = dataset.revision.clone();
+                        split.validate().expect("internally consistent split");
+                    }
+                    if altered_arm.is_none() && split_kind == CampaignEvaluationSplit::HeldOut {
+                        report.decision.external_anchor.dataset_id = dataset.dataset_id.clone();
+                        report.decision.external_anchor.revision = dataset.revision.clone();
+                    }
+                    let encoded = serde_json::to_value(&report).expect("public report encodes");
+                    let decoded: CampaignComparisonReport =
+                        serde_json::from_value(encoded).expect("forged report decodes");
+                    for report in [report, decoded] {
+                        let expected_reason = if altered_arm.is_none() {
+                            report
+                                .validate()
+                                .expect("paired refs are internally consistent");
+                            "split dataset ref differs from the configured split"
+                        } else {
+                            assert!(matches!(
+                                report.validate(),
+                                Err(CampaignError::ReportMismatch {
+                                    reason: "corresponding arm splits use different dataset refs",
+                                })
+                            ));
+                            "corresponding arm splits use different dataset refs"
+                        };
+                        let err = compare_campaign(
+                            report.campaign_ref,
+                            &fixture.config,
+                            report.single_pass,
+                            report.tournament,
+                            report.decision,
+                        )
+                        .expect_err("wrong split datasets cannot be certified by the config");
+                        assert!(
+                            matches!(err, CampaignError::ReportMismatch { reason }
+                                if reason == expected_reason),
+                            "{split_kind:?}, rev {change_revision}, arm {altered_arm:?}: {err:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
