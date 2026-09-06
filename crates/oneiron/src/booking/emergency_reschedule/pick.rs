@@ -41,9 +41,9 @@ impl EmergencyPick {
         crate::calendar::ics::emit_imip_ics(&crate::calendar::ics::ImipEmitRequest {
             method: crate::calendar::CalendarInviteMethod::Request,
             uid: self.calendar.uid.clone(),
-            sequence: self.calendar.sequence,
+            sequence: self.payload.sequence,
             organizer: self.organizer.clone(),
-            attendees: vec![item.plan.payload.recipient.clone()],
+            attendees: vec![item.plan.recipient.clone()],
             summary: item.plan.booking.event_type.0.clone(),
             starts_at_utc: slot.start_utc,
             ends_at_utc: slot.end_utc,
@@ -71,13 +71,14 @@ pub(super) fn prepare_pick(
         .sequence
         .checked_add(1)
         .ok_or_else(|| refused("booking passport sequence is exhausted"))?;
-    let (organizer, recipient) =
-        delivery_parties(vault, item.plan.request.owner_ref, item.calendar.event_ref)?;
-    if recipient != item.plan.payload.recipient {
-        return Err(refused(
-            "picked request counterparty differs from the delivered proposal",
-        ));
-    }
+    let organizer = item.plan.organizer.clone();
+    let recipient = item.plan.recipient.clone();
+    let invite_sequence = item.plan.payload.as_ref().map_or(Ok(0), |payload| {
+        payload
+            .sequence
+            .checked_add(1)
+            .ok_or_else(|| refused("calendar invite sequence is exhausted"))
+    })?;
     let mut picked = EmergencyPick {
         proposal_index,
         calendar: CalendarRevision {
@@ -90,28 +91,50 @@ pub(super) fn prepare_pick(
         payload: crate::calendar::CalendarInvitePayload {
             method: crate::calendar::CalendarInviteMethod::Request,
             uid: item.calendar.uid.clone(),
-            sequence,
+            sequence: invite_sequence,
             ics_blob_ref: String::new(),
             recipient,
         },
         content_hash: [0; 32],
     };
     let ics = picked.ics(item)?;
-    picked.payload.ics_blob_ref = crate::calendar::ics::persist_imip_blob(
-        vault,
-        &blob_id(&ics)?,
-        &item.plan.booking.event_type.0,
-        &ics,
-        &crate::blob_artifact::BlobVersionProvenance::UserUpload,
-        crate::write_envelope::WriteActor::new(
-            item.plan.request.owner_ref,
-            crate::edge::EdgeActorClass::Human,
-        ),
-        now_utc,
-    )
-    .map_err(storage_failure)?;
+    picked.payload.ics_blob_ref = booking_writer(vault, |txn| {
+        verify_plan_in(vault, txn, &item.plan)?;
+        verify_pick_invite_in(vault, txn, item)?;
+        if crate::booking::lifecycle::emergency_current_revision_in(
+            vault,
+            txn,
+            item.calendar.event_ref,
+        )? != item.calendar
+        {
+            return Err(refused("pick preparation is superseded"));
+        }
+        persist_content_in(
+            vault,
+            txn,
+            &item.plan.request,
+            &item.plan.booking.event_type.0,
+            crate::calendar::CALENDAR_INVITE_MEDIA_TYPE,
+            &ics,
+            now_utc,
+        )
+    })?;
     picked.content_hash = picked.hash(item)?;
     Ok(picked)
+}
+
+pub(crate) fn verify_pick_invite_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    item: &EmergencyItem,
+) -> Result<(), BookingError> {
+    let head = state::invite_head_in(vault, txn, &item.calendar)?;
+    if head.as_ref().map(|head| head.last_sequence)
+        != item.plan.payload.as_ref().map(|payload| payload.sequence)
+    {
+        return Err(refused("invitation changed before the emergency pick"));
+    }
+    Ok(())
 }
 
 pub(crate) fn verify_pick_blob(
@@ -123,9 +146,15 @@ pub(crate) fn verify_pick_blob(
         || picked.calendar.uid != item.calendar.uid
         || Some(picked.calendar.sequence) != item.calendar.sequence.checked_add(1)
         || picked.payload.uid != picked.calendar.uid
-        || picked.payload.sequence != picked.calendar.sequence
+        || Some(picked.payload.sequence)
+            != item
+                .plan
+                .payload
+                .as_ref()
+                .map_or(Some(0), |payload| payload.sequence.checked_add(1))
+        || picked.organizer != item.plan.organizer
         || picked.payload.method != crate::calendar::CalendarInviteMethod::Request
-        || picked.payload.recipient != item.plan.payload.recipient
+        || picked.payload.recipient != item.plan.recipient
         || picked.hash(item)? != picked.content_hash
     {
         return Err(refused(
@@ -154,10 +183,6 @@ pub fn counterparty_pick(
     input: &crate::booking::BookingLifecycleConsumerInput,
     sink: &mut impl crate::outbound::OutboundExecutionSink,
 ) -> Result<CalendarRevision, BookingError> {
-    use crate::calendar::outcome::{
-        EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, read_event_outcome,
-        record_event_outcome,
-    };
     let (snapshot, proposal_index) =
         crate::booking::lifecycle::read_emergency_pick(vault, token, input)?;
     let prepared = prepare_pick(vault, &snapshot, proposal_index, input.now_utc)?;
@@ -167,22 +192,6 @@ pub fn counterparty_pick(
         .picked
         .as_ref()
         .ok_or_else(|| refused("pick checkpoint disappeared"))?;
-    if read_event_outcome(vault, picked.calendar.event_ref)
-        .map_err(storage_failure)?
-        .is_some_and(|value| value.outcome == EventOutcome::CancelledPreStart)
-    {
-        record_event_outcome(
-            vault,
-            picked.calendar.event_ref,
-            &EventOutcomeClaimValue {
-                outcome: EventOutcome::Unknown,
-                basis: EventOutcomeBasis::OwnerAttested,
-                recorded_at: picked.committed_at,
-            },
-            crate::claim::ClaimSource::UserStated,
-        )
-        .map_err(storage_failure)?;
-    }
     if !picked.calendar_delivered {
         verify_pick_blob(vault, &item, picked)?;
         crate::booking::lifecycle::admit_emergency_pick(vault, &item, input)?;
@@ -194,6 +203,15 @@ pub fn counterparty_pick(
             input.now_utc,
         )?;
         booking_writer(vault, |txn| {
+            verify_plan_in(vault, txn, &item.plan)?;
+            if crate::booking::lifecycle::emergency_current_revision_in(
+                vault,
+                txn,
+                item.calendar.event_ref,
+            )? != picked.calendar
+            {
+                return Err(refused("picked delivery checkpoint is superseded"));
+            }
             let mut current = read_item_in(
                 vault,
                 &*txn,

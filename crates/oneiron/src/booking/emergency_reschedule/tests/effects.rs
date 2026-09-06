@@ -4,6 +4,12 @@ use super::*;
 fn each_item_has_two_or_three_live_solver_proposals() {
     let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
     assert!((2..=3).contains(&plan.proposals.len()));
+    let distinct: std::collections::BTreeSet<_> = plan
+        .proposals
+        .iter()
+        .map(|slot| (slot.start_utc, slot.end_utc))
+        .collect();
+    assert_eq!(distinct.len(), plan.proposals.len());
     for slot in &plan.proposals {
         let solved = solve_live(
             &vault,
@@ -44,7 +50,7 @@ fn cancel_keeps_uid_and_increments_sequence_once() {
     assert_eq!(first.calendar.sequence, 1);
     assert_eq!(sink.calls.len(), 2);
     assert_eq!(
-        plan.payload.method,
+        plan.payload.as_ref().unwrap().method,
         crate::calendar::CalendarInviteMethod::Cancel
     );
     // Existing ordinary cancel token returns the same cancellation receipt.
@@ -68,7 +74,7 @@ fn update_uses_request_same_uid_and_increments_sequence_once() {
     assert_eq!(item.calendar.uid, receipt.calendar.uid);
     assert_eq!(item.calendar.sequence, 1);
     assert_eq!(
-        plan.payload.method,
+        plan.payload.as_ref().unwrap().method,
         crate::calendar::CalendarInviteMethod::Request
     );
     assert_eq!(
@@ -87,16 +93,12 @@ fn update_uses_request_same_uid_and_increments_sequence_once() {
 #[test]
 fn local_lifecycle_passport_and_item_state_commit_before_intent_freeze() {
     let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
-    assert!(
-        crate::outbound_intent_ledger::intent_ledger_records(&vault)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(emergency_records(&vault).is_empty());
     let item = crate::booking::lifecycle::commit_emergency_item(
         &vault,
         &plan,
         &calendars(),
-        &consumer(NOW),
+        &consumer(&vault, NOW),
     )
     .unwrap();
     assert_eq!(checkpoint(&vault, &plan), Some(item));
@@ -105,17 +107,14 @@ fn local_lifecycle_passport_and_item_state_commit_before_intent_freeze() {
             .iter()
             .all(|p| p.last_sequence == 1)
     );
-    assert!(
-        crate::outbound_intent_ledger::intent_ledger_records(&vault)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(emergency_records(&vault).is_empty());
     execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
 }
 #[test]
 fn raw_ics_is_blob_backed_and_mime_is_connector_owned() {
     let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
-    let raw = crate::calendar::read_calendar_invite_ics(&vault, &plan.payload).unwrap();
+    let raw =
+        crate::calendar::read_calendar_invite_ics(&vault, plan.payload.as_ref().unwrap()).unwrap();
     assert!(String::from_utf8(raw).unwrap().contains("METHOD:CANCEL"));
     let mut sink = spy(&vault, &plan);
     execute(&vault, &plan, &mut sink, NOW).unwrap();
@@ -124,7 +123,13 @@ fn raw_ics_is_blob_backed_and_mime_is_connector_owned() {
             .unwrap()
             .contains("BEGIN:VCALENDAR")
     );
-    assert!(plan.payload.ics_blob_ref.starts_with("blob:"));
+    assert!(
+        plan.payload
+            .as_ref()
+            .unwrap()
+            .ics_blob_ref
+            .starts_with("blob:")
+    );
 }
 #[test]
 fn intent_is_logged_before_each_external_effect() {
@@ -199,11 +204,7 @@ fn calendar_send_still_passes_gate_hygiene() {
     let mut sink = spy(&vault, &plan);
     assert!(execute(&vault, &plan, &mut sink, NOW).is_err());
     assert!(sink.calls.is_empty());
-    assert!(
-        crate::outbound_intent_ledger::intent_ledger_records(&vault)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(emergency_records(&vault).is_empty());
 }
 #[test]
 fn apology_contains_two_or_three_opaque_rebook_actions() {
@@ -247,7 +248,7 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
     let item = execute(&vault, &plan, &mut spy(&vault, &plan), NOW).unwrap();
     let mut sink = spy(&vault, &plan);
     let token = &item.actions[0];
-    let mut remote = consumer(NOW);
+    let mut remote = consumer(&vault, NOW);
     remote.local_node_id = 10;
     let before = (meta(&vault), entities(&vault));
     assert!(counterparty_pick(&vault, token, &calendars(), &remote, &mut sink).is_err());
@@ -270,12 +271,21 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
     );
     // A competing home-node confirm wins the first offered slot.
     book(&vault, PAGE, plan.proposals[0].start_utc);
-    assert!(counterparty_pick(&vault, token, &calendars(), &consumer(NOW), &mut sink).is_err());
+    assert!(
+        counterparty_pick(
+            &vault,
+            token,
+            &calendars(),
+            &consumer(&vault, NOW),
+            &mut sink
+        )
+        .is_err()
+    );
     let picked = counterparty_pick(
         &vault,
         &item.actions[1],
         &calendars(),
-        &consumer(NOW),
+        &consumer(&vault, NOW),
         &mut sink,
     )
     .unwrap();
@@ -286,13 +296,22 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
             &vault,
             &item.actions[1],
             &calendars(),
-            &consumer(NOW),
+            &consumer(&vault, NOW),
             &mut sink
         )
         .unwrap(),
         picked
     );
-    assert!(counterparty_pick(&vault, token, &calendars(), &consumer(NOW), &mut sink).is_err());
+    assert!(
+        counterparty_pick(
+            &vault,
+            token,
+            &calendars(),
+            &consumer(&vault, NOW),
+            &mut sink
+        )
+        .is_err()
+    );
 }
 #[test]
 fn pre_start_cancel_writes_owner_attested_cancelled_pre_start() {
@@ -375,7 +394,7 @@ fn facade_entrypoints_extend_memory_facade_only() {
 fn sequence_overflow_and_same_sequence_content_conflict_refuse_without_effects() {
     let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
     let mut forged = plan.clone();
-    forged.payload.ics_blob_ref = "blob:changed".to_owned();
+    forged.payload.as_mut().unwrap().ics_blob_ref = "blob:changed".to_owned();
     forged.content_hash = forged.hash().unwrap();
     let before = (meta(&vault), entities(&vault));
     let mut sink = spy(&vault, &plan);
@@ -385,7 +404,7 @@ fn sequence_overflow_and_same_sequence_content_conflict_refuse_without_effects()
             &plan.request,
             &forged,
             &calendars(),
-            &consumer(NOW),
+            &consumer(&vault, NOW),
             &mut sink
         )
         .is_err()
@@ -406,8 +425,15 @@ fn sequence_overflow_and_same_sequence_content_conflict_refuse_without_effects()
 #[test]
 fn changed_blob_head_refuses_before_lifecycle_or_intent_writes() {
     let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
-    let artifact =
-        EntityId::from_hex(plan.payload.ics_blob_ref.strip_prefix("blob:").unwrap()).unwrap();
+    let artifact = EntityId::from_hex(
+        plan.payload
+            .as_ref()
+            .unwrap()
+            .ics_blob_ref
+            .strip_prefix("blob:")
+            .unwrap(),
+    )
+    .unwrap();
     vault
         .append_blob_artifact_version(
             &artifact,
@@ -427,11 +453,7 @@ fn changed_blob_head_refuses_before_lifecycle_or_intent_writes() {
     assert_eq!((meta(&vault), entities(&vault)), before);
     assert!(checkpoint(&vault, &plan).is_none());
     assert!(sink.calls.is_empty());
-    assert!(
-        crate::outbound_intent_ledger::intent_ledger_records(&vault)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(emergency_records(&vault).is_empty());
 }
 
 #[test]

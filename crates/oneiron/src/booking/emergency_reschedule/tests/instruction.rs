@@ -275,8 +275,9 @@ fn verification_precedes_even_a_failing_booking_read() {
     assert_eq!((meta(&vault), entities(&vault)), before);
     let req = logged(&vault);
     let before = (meta(&vault), entities(&vault));
-    let error = enumerate_affected_bookings(&vault, &req, NOW).unwrap_err();
-    assert!(matches!(error, BookingError::InvalidConstraint(_)));
+    let rows = enumerate_affected_bookings(&vault, &req, NOW).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].calendar.event_ref, broken.calendar.event_ref);
     assert_eq!((meta(&vault), entities(&vault)), before);
 }
 

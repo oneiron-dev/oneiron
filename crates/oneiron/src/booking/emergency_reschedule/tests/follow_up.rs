@@ -11,7 +11,7 @@ fn pick(
         vault,
         &item.actions[index],
         &calendars(),
-        &consumer(now),
+        &consumer(vault, now),
         sink,
     )
 }
@@ -227,7 +227,7 @@ fn picked_request_admission_failure_resumes_saved_content_after_identity_returns
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
         &vault,
         &item.actions[0],
-        &consumer(NOW + 1),
+        &consumer(&vault, NOW + 1),
     )
     .unwrap();
     let prepared = super::super::pick::prepare_pick(&vault, &snapshot, index, NOW + 1).unwrap();
@@ -235,7 +235,7 @@ fn picked_request_admission_failure_resumes_saved_content_after_identity_returns
         &vault,
         &item.actions[0],
         &calendars(),
-        &consumer(NOW + 1),
+        &consumer(&vault, NOW + 1),
         &prepared,
     )
     .unwrap();
@@ -273,7 +273,7 @@ fn pick_busy_race_after_request_preparation_does_not_advance_sequence() {
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
         &vault,
         &item.actions[0],
-        &consumer(NOW + 1),
+        &consumer(&vault, NOW + 1),
     )
     .unwrap();
     let prepared = super::super::pick::prepare_pick(&vault, &snapshot, index, NOW + 1).unwrap();
@@ -283,7 +283,7 @@ fn pick_busy_race_after_request_preparation_does_not_advance_sequence() {
         &vault,
         &item.actions[0],
         &calendars(),
-        &consumer(NOW + 1),
+        &consumer(&vault, NOW + 1),
         &prepared,
     )
     .unwrap_err();
@@ -343,7 +343,7 @@ fn competing_same_pick_preparations_reuse_the_winning_checkpoint() {
     let (snapshot, index) = crate::booking::lifecycle::read_emergency_pick(
         &vault,
         &item.actions[0],
-        &consumer(NOW + 1),
+        &consumer(&vault, NOW + 1),
     )
     .unwrap();
     let first = super::super::pick::prepare_pick(&vault, &snapshot, index, NOW + 1).unwrap();
@@ -353,7 +353,7 @@ fn competing_same_pick_preparations_reuse_the_winning_checkpoint() {
         &vault,
         &item.actions[0],
         &calendars(),
-        &consumer(NOW + 1),
+        &consumer(&vault, NOW + 1),
         &first,
     )
     .unwrap();
@@ -361,7 +361,7 @@ fn competing_same_pick_preparations_reuse_the_winning_checkpoint() {
         &vault,
         &item.actions[0],
         &calendars(),
-        &consumer(NOW + 2),
+        &consumer(&vault, NOW + 2),
         &second,
     )
     .unwrap();

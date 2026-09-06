@@ -20,7 +20,6 @@ pub fn execute_emergency_plan(
             "a picked emergency item cannot send its old revision",
         ));
     }
-    record_cancel_outcome(vault, &item)?;
     if !item.calendar_delivered {
         // CAL hydrates current hygiene again. Replay is lawful here: the
         // passport and checkpoint deliberately precede the frozen intent.
@@ -28,97 +27,39 @@ pub fn execute_emergency_plan(
         crate::calendar::admit_calendar_invite(
             vault,
             request.owner_ref,
-            &plan.payload,
+            plan.payload
+                .as_ref()
+                .ok_or_else(|| refused("missing pending calendar payload"))?,
             input.now_utc,
         )
-        .map_err(storage_failure)?;
+        .map_err(calendar_failure)?;
         dispatch_item_effect(vault, &item, EmergencyEffect::Calendar, sink, input.now_utc)?;
         mark_delivered(vault, &mut item, true)?;
     }
     if !item.apology_delivered {
-        let bytes = serde_json::to_vec(&serde_json::json!({ "reason": request.reason,
-            "actions": item.actions.iter().zip(&plan.proposals).map(|(token, slot)| serde_json::json!({
-                "action": format!("booking:emergency-pick:{}", token.0), "proposal": slot
-            })).collect::<Vec<_>>() })).map_err(storage_failure)?;
-        let artifact = blob_id(&bytes)?;
-        if vault
-            .get_blob_artifact(&artifact)
-            .map_err(storage_failure)?
-            .is_none()
-        {
-            vault
-                .put_blob_artifact(
-                    &artifact,
-                    &crate::blob_artifact::BlobArtifactBody::new(
-                        &plan.booking.event_type.0,
-                        "application/json",
-                    ),
-                    TimeRange {
-                        start: item.committed_at,
-                        end: item.committed_at,
-                    },
-                    item.committed_at,
-                )
-                .map_err(storage_failure)?;
-        }
-        vault
-            .append_blob_artifact_version(
-                &artifact,
+        let bytes = state::apology_bytes(&item)?;
+        let content = booking_writer(vault, |txn| {
+            verify_plan_in(vault, txn, plan)?;
+            persist_content_in(
+                vault,
+                txn,
+                request,
+                &plan.booking.event_type.0,
+                "application/json",
                 &bytes,
-                &crate::blob_artifact::BlobVersionProvenance::UserUpload,
-                crate::write_envelope::WriteActor::new(
-                    request.owner_ref,
-                    crate::edge::EdgeActorClass::Human,
-                ),
-                TimeRange {
-                    start: item.committed_at,
-                    end: item.committed_at,
-                },
                 item.committed_at,
             )
-            .map_err(storage_failure)?;
+        })?;
         dispatch_item_effect(
             vault,
             &item,
-            EmergencyEffect::Apology(format!("blob:{}", artifact.to_hex())),
+            EmergencyEffect::Apology(content),
             sink,
             input.now_utc,
         )?;
         mark_delivered(vault, &mut item, false)?;
     }
     Ok(item)
-}
-
-fn record_cancel_outcome(vault: &Vault, item: &EmergencyItem) -> Result<(), BookingError> {
-    use crate::calendar::outcome::{
-        EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, read_event_outcome,
-        record_event_outcome,
-    };
-    if item.basis != EmergencyLocalBasis::PreStartCancellation {
-        return Ok(());
-    }
-    let value = EventOutcomeClaimValue {
-        outcome: EventOutcome::CancelledPreStart,
-        basis: EventOutcomeBasis::OwnerAttested,
-        recorded_at: item.committed_at,
-    };
-    let prior = read_event_outcome(vault, item.calendar.event_ref).map_err(storage_failure)?;
-    if prior == Some(value) {
-        return Ok(());
-    }
-    if prior.is_some_and(|prior| prior.recorded_at > value.recorded_at) {
-        return Err(refused(
-            "newer outcome evidence supersedes this emergency cancellation",
-        ));
-    }
-    record_event_outcome(
-        vault,
-        item.calendar.event_ref,
-        &value,
-        crate::claim::ClaimSource::UserStated,
-    )
-    .map_err(storage_failure)?;
-    Ok(())
 }
 
 pub(super) enum EmergencyEffect {
@@ -143,7 +84,7 @@ pub(super) fn dispatch_item_effect(
     let (lane, payload, content_ref, hash) = match effect {
         EmergencyEffect::Calendar => (
             "calendar",
-            Some(&item.plan.payload),
+            item.plan.payload.as_ref(),
             None,
             item.plan.content_hash,
         ),
@@ -158,26 +99,16 @@ pub(super) fn dispatch_item_effect(
             ("pick", Some(&picked.payload), None, picked.content_hash)
         }
     };
-    let intent_ref = format!(
-        "intent:booking_emergency:{}:{lane}",
-        hex_lower(&content_hash(&(
-            item_key(&item.plan.request, item.calendar.event_ref)?,
-            hash
-        ))?)
-    );
+    let intent_ref = state::effect_ref(item, lane, hash)?;
     let (verb, channel) = if payload.is_some() {
         (crate::calendar::CALENDAR_INVITE_VERB, "calendar")
     } else {
         ("send", "email")
     };
     let owner = item.plan.request.owner_ref;
-    let mut draft = OutboundIntentDraft::new(
-        owner.to_hex(),
-        verb,
-        channel,
-        item.plan.payload.recipient.clone(),
-    )
-    .idempotency_key(intent_ref.clone());
+    let mut draft =
+        OutboundIntentDraft::new(owner.to_hex(), verb, channel, item.plan.recipient.clone())
+            .idempotency_key(intent_ref.clone());
     draft.content_ref = content_ref;
     let intent = OutboundIntent::from_trigger(
         draft,
@@ -194,17 +125,57 @@ pub(super) fn dispatch_item_effect(
         now_utc,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
-    .counterparty_ref(item.plan.payload.recipient.clone());
+    .counterparty_ref(item.plan.recipient.clone());
     if let Some(payload) = payload {
         dispatch = dispatch.calendar_invite(payload.clone());
     }
     let result = vault
-        .dispatch_outbound_intent(dispatch, sink)
-        .map_err(storage_failure)?;
+        .dispatch_outbound_intent_with_verified_actor(
+            dispatch,
+            sink,
+            owner,
+            crate::edge::EdgeActorClass::Human,
+        )
+        .map_err(|error| {
+            BookingError::Boundary(Box::new(
+                crate::memory::facade_error_from_outbound_dispatch(error),
+            ))
+        })?;
     if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
-        return Err(refused(
-            "emergency effect is not delivered; resume its existing intent",
-        ));
+        let gate_outcome = result.receipt.fields.get("gate_outcome");
+        let denied = gate_outcome.is_some_and(|outcome| outcome == "deny" || outcome == "pending");
+        return Err(BookingError::Boundary(Box::new(
+            crate::memory::MemoryError {
+                code: if denied {
+                    crate::memory::MEMORY_CODE_FORBIDDEN
+                } else {
+                    crate::memory::MEMORY_CODE_INVALID_STATE
+                }
+                .to_owned(),
+                message: "emergency effect is not delivered; resume its existing intent".to_owned(),
+                suggestions: vec!["Inspect the outbound receipt before retrying.".to_owned()],
+                successor_short_id: None,
+                gate_denial: if denied {
+                    Some(Box::new(crate::memory::MemoryGateDenial {
+                        outcome: gate_outcome.cloned().unwrap_or_default(),
+                        reason_codes: result
+                            .receipt
+                            .fields
+                            .get("gate_reason_codes")
+                            .map(|codes| {
+                                codes
+                                    .split(',')
+                                    .filter(|code| !code.is_empty())
+                                    .map(str::to_owned)
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    }))
+                } else {
+                    None
+                },
+            },
+        )));
     }
     Ok(())
 }
@@ -215,6 +186,15 @@ fn mark_delivered(
     calendar: bool,
 ) -> Result<(), BookingError> {
     *item = booking_writer(vault, |txn| {
+        verify_plan_in(vault, txn, &item.plan)?;
+        if crate::booking::lifecycle::emergency_current_revision_in(
+            vault,
+            txn,
+            item.calendar.event_ref,
+        )? != item.calendar
+        {
+            return Err(refused("delivery checkpoint is superseded"));
+        }
         let mut current = read_item_in(
             vault,
             &*txn,

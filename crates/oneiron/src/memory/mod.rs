@@ -24,6 +24,8 @@
 //! unchanged from the flat-file era.
 
 mod booking;
+pub(crate) use booking::booking_error;
+pub(crate) use outbound::facade_error_from_outbound_dispatch;
 mod campaign;
 mod chat;
 mod claims;

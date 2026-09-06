@@ -81,6 +81,8 @@ pub enum BookingError {
     SlotOracle(String),
     /// Surface assembly (lens atoms, controls, card) failed.
     Surface(String),
+    /// A typed existing facade/engine boundary failure.
+    Boundary(Box<crate::memory::MemoryError>),
 }
 
 impl fmt::Display for BookingError {
@@ -92,6 +94,7 @@ impl fmt::Display for BookingError {
             Self::SessionCapExhausted => f.write_str("booking session cap exhausted"),
             Self::SlotOracle(detail) => write!(f, "booking slot oracle failed: {detail}"),
             Self::Surface(detail) => write!(f, "booking surface assembly failed: {detail}"),
+            Self::Boundary(error) => fmt::Display::fmt(error, f),
         }
     }
 }
@@ -361,6 +364,23 @@ pub struct SlotMask {
 /// `Send` and ONE-1819's server handlers cannot call this front at all.
 pub trait SlotOracle: Send + Sync {
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError>;
+
+    fn solve_bound(
+        &self,
+        req: &SolveRequest,
+        hosts: &[String],
+    ) -> Result<SolveResult, BookingError> {
+        let mut result = self.solve(req)?;
+        result
+            .host_bindings
+            .retain(|binding| binding.host_refs == hosts);
+        result.slots.retain(|slot| {
+            result.host_bindings.iter().any(|binding| {
+                binding.start_utc == slot.start_utc && binding.end_utc == slot.end_utc
+            })
+        });
+        Ok(result)
+    }
 }
 
 // -------------------------------------------------------------------------

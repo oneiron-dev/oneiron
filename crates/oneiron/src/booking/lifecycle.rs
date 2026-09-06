@@ -68,9 +68,7 @@ use crate::calendar::claims::{
     CalendarPassportPresence, CalendarStatus, CalendarStatusBasis, PREDICATE_CALENDAR_PASSPORT,
     PREDICATE_CALENDAR_STATUS,
 };
-use crate::calendar::passport::{
-    encode_passport_value, index_passport_uid, live_passports_for_event,
-};
+use crate::calendar::passport::{encode_passport_value, index_passport_uid};
 use crate::calendar::{CalendarPassportDirection, CalendarPassportValue};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -483,6 +481,8 @@ struct LifecycleReceiptRow {
     /// so a retry from another session cannot read this receipt back.
     #[serde(with = "opt_digest_serde")]
     session_hash: Option<[u8; 32]>,
+    confirmation: Option<BookingConfirmationContext>,
+    invite_identity: Option<(String, String)>,
 }
 
 impl LifecycleReceiptRow {
@@ -1176,18 +1176,11 @@ fn confirm_in_writer(
     }
     let context = BookingConfirmationContext {
         owner_refs,
+        booker_ref: spec.booker_contact.to_hex(),
         visitor_tz: hold.visitor_tz.clone(),
         constraint: hold.constraint.clone(),
     };
-    write_booking_event(
-        vault,
-        wtxn,
-        &event_ref,
-        &hold,
-        spec.booker_contact,
-        &context,
-        now_utc,
-    )?;
+    write_booking_event(vault, wtxn, &event_ref, &hold, spec.booker_contact, now_utc)?;
     write_outbound_passport(vault, wtxn, &event_ref, &uid, &hold, now_utc)?;
     let (reschedule_token, cancel_token) =
         write_revision_tokens(vault, wtxn, event_ref, &spec.hold_token)?;
@@ -1205,6 +1198,8 @@ fn confirm_in_writer(
             uid: revision.uid.clone(),
             sequence: revision.sequence,
             session_hash: Some(session_hash),
+            confirmation: Some(context),
+            invite_identity: None,
         },
     )?;
     delete_meta(vault, wtxn, &hold_row_key)?;
@@ -1262,12 +1257,19 @@ pub(crate) fn execute_reschedule(
             });
         }
 
-        let solved = oracle.solve(&SolveRequest {
-            event_type: booking.event_type.clone(),
-            window: inclusive_occurrence(spec.new_slot)?,
-            constraint: spec.constraint.clone(),
-            visitor_tz: spec.visitor_tz.clone(),
-        })?;
+        let context = booking
+            .context
+            .as_ref()
+            .ok_or_else(|| refused("booking has no immutable host binding"))?;
+        let solved = oracle.solve_bound(
+            &SolveRequest {
+                event_type: booking.event_type.clone(),
+                window: inclusive_occurrence(spec.new_slot)?,
+                constraint: spec.constraint.clone(),
+                visitor_tz: spec.visitor_tz.clone(),
+            },
+            &context.owner_refs,
+        )?;
         if !offers_slot(&solved.slots, spec.new_slot) {
             return Err(refused("the requested slot is no longer available"));
         }
@@ -1282,7 +1284,7 @@ pub(crate) fn execute_reschedule(
                 ENTITY_TYPE_EVENT,
                 inclusive_occurrence(spec.new_slot)?,
                 now_utc,
-                &encode_event_body(&booking.event_type, booking.context.as_ref())?,
+                &encode_event_body(&booking.event_type)?,
             )
             .apply(wtxn)
             .map_err(|error| engine_failure("booking event rewrite", error))?;
@@ -1308,6 +1310,8 @@ pub(crate) fn execute_reschedule(
                 uid: revision.uid.clone(),
                 sequence: revision.sequence,
                 session_hash: None,
+                confirmation: None,
+                invite_identity: None,
             },
         )?;
         Ok(RevisionReceipt { calendar: revision })
@@ -1386,10 +1390,20 @@ pub(crate) fn execute_cancel(
                 uid: revision.uid.clone(),
                 sequence: revision.sequence,
                 session_hash: None,
+                confirmation: None,
+                invite_identity: None,
             },
         )?;
         Ok(RevisionReceipt { calendar: revision })
     })
+}
+
+mod confirmation_state;
+use confirmation_state::confirmation_receipt_in;
+pub(crate) use confirmation_state::{bind_booking_invite_identity_in, booking_invite_identity};
+
+fn emergency_refused(detail: impl Into<String>) -> BookingError {
+    BookingError::InvalidConfig(detail.into())
 }
 
 // BK-09 extends this same home-node writer, not the ordinary token scopes.
@@ -1406,30 +1420,53 @@ fn require_emergency_home(
     vault: &Vault,
     input: &BookingLifecycleConsumerInput,
 ) -> Result<(), BookingError> {
+    let txn = read_txn(vault)?;
     let home = DreamerRunnerStore::new(vault)
-        .home_node_designation()
+        .home_node_designation_in_txn(&txn)
         .map_err(|error| engine_failure("home node designation read", error))?;
-    if home.is_none_or(|home| home.node_id != input.local_node_id) {
-        return Err(refused(
-            "emergency transition requires the lifecycle home node",
+    let local = crate::identity::read_client_id_in_txn(vault, &txn)
+        .map_err(|error| engine_failure("local node identity read", error))?;
+    if local != Some(input.local_node_id) || home.is_none_or(|home| Some(home.node_id) != local) {
+        return Err(BookingError::InvalidConfig(
+            "emergency transition requires the lifecycle home node".to_owned(),
         ));
     }
     Ok(())
 }
 
-fn emergency_current_revision(
+pub(crate) fn emergency_current_revision_in(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<CalendarRevision, BookingError> {
-    let mut passports = live_passports_for_event(vault, &event)
-        .map_err(calendar_wrap)?
-        .into_iter()
-        .filter(|(_, value)| value.system == BOOKING_PASSPORT_SYSTEM);
+    let mut values = Vec::new();
+    for id in vault
+        .claims_for_subject_in_txn(txn, &event)
+        .map_err(|error| engine_failure("booking passport scan", error))?
+    {
+        if let Some(body) = vault
+            .get_claim_in_txn(txn, &id)
+            .map_err(|error| engine_failure("booking passport read", error))?
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_PASSPORT
+        {
+            let value =
+                crate::calendar::claims::decode_passport_value(&body.value).map_err(|_| {
+                    emergency_refused("booking has malformed calendar passport metadata")
+                })?;
+            if value.system == BOOKING_PASSPORT_SYSTEM {
+                values.push((id, value));
+            }
+        }
+    }
+    let mut passports = values.into_iter();
     let (_, current) = passports
         .next()
-        .ok_or_else(|| refused("booking carries no outbound calendar passport"))?;
+        .ok_or_else(|| emergency_refused("booking carries no outbound calendar passport"))?;
     if passports.next().is_some() {
-        return Err(refused("booking has competing outbound passports"));
+        return Err(emergency_refused(
+            "booking has competing outbound passports",
+        ));
     }
     Ok(CalendarRevision {
         event_ref: event,
@@ -1449,7 +1486,14 @@ pub(crate) fn commit_emergency_item(
     };
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
-        require_emergency_home(vault, input)?;
+        if crate::identity::read_client_id_in_txn(vault, &*txn)
+            .map_err(|error| engine_failure("local identity read", error))?
+            != Some(input.local_node_id)
+        {
+            return Err(BookingError::InvalidConfig(
+                "wrong lifecycle home node".to_owned(),
+            ));
+        }
         emergency::verify_plan_in(vault, &*txn, plan)?;
         emergency::verify_plan_blob(vault, plan)?;
         crate::memory::verify_deletion_authority_in_txn(
@@ -1458,16 +1502,19 @@ pub(crate) fn commit_emergency_item(
             plan.request.owner_ref,
             crate::edge::EdgeActorClass::Human,
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|error| BookingError::Boundary(Box::new(error)))?;
         let key = emergency::item_key(&plan.request, plan.booking.calendar.event_ref)?;
         if let Some(item) = emergency::read_item_in(vault, &*txn, &key)? {
             if item.plan != *plan {
-                return Err(refused("same emergency sequence has conflicting content"));
+                return Err(emergency_refused(
+                    "same emergency sequence has conflicting content",
+                ));
             }
             if (!item.calendar_delivered || !item.apology_delivered)
-                && emergency_current_revision(vault, item.calendar.event_ref)? != item.calendar
+                && emergency_current_revision_in(vault, &*txn, item.calendar.event_ref)?
+                    != item.calendar
             {
-                return Err(refused(
+                return Err(emergency_refused(
                     "a newer lifecycle revision supersedes this pending emergency effect",
                 ));
             }
@@ -1486,14 +1533,16 @@ pub(crate) fn commit_emergency_item(
                 .owner_refs
                 .contains(&plan.request.owner_ref.to_hex())
             || plan.planned_at >= booking.slot.start
-            || emergency_current_revision(vault, event)? != plan.booking.calendar
+            || emergency_current_revision_in(vault, &*txn, event)? != plan.booking.calendar
         {
-            return Err(refused(
+            return Err(emergency_refused(
                 "emergency booking snapshot is stale or does not belong to this owner",
             ));
         }
         if !(2..=3).contains(&plan.proposals.len()) {
-            return Err(refused("emergency requires two or three genuine proposals"));
+            return Err(emergency_refused(
+                "emergency requires two or three genuine proposals",
+            ));
         }
         for slot in &plan.proposals {
             let target = TimeRange {
@@ -1508,18 +1557,32 @@ pub(crate) fn commit_emergency_item(
                 input.now_utc,
             )?;
             if slot.start_utc <= input.now_utc || !offers_slot(&solved.slots, target) {
-                return Err(refused("an emergency proposal is no longer available"));
+                return Err(emergency_refused(
+                    "an emergency proposal is no longer available",
+                ));
             }
         }
-        let admission = crate::calendar::admit_calendar_invite(
-            vault,
-            plan.request.owner_ref,
-            &plan.payload,
-            input.now_utc,
-        )
-        .map_err(calendar_wrap)?;
-        if admission.event_ref() != event {
-            return Err(refused("calendar admission names another booking"));
+        emergency::verify_initial_invite_in(vault, txn, plan)?;
+        let admission = plan
+            .payload
+            .as_ref()
+            .map(|payload| {
+                crate::calendar::admit_calendar_invite(
+                    vault,
+                    plan.request.owner_ref,
+                    payload,
+                    input.now_utc,
+                )
+                .map_err(crate::booking::emergency_reschedule::calendar_failure)
+            })
+            .transpose()?;
+        if admission
+            .as_ref()
+            .is_some_and(|admission| admission.event_ref() != event)
+        {
+            return Err(emergency_refused(
+                "calendar admission names another booking",
+            ));
         }
         let cancel = plan.request.action_policy == EmergencyActionPolicy::Cancel;
         let status = if cancel {
@@ -1543,7 +1606,7 @@ pub(crate) fn commit_emergency_item(
                     ENTITY_TYPE_EVENT,
                     inclusive_occurrence(slot)?,
                     input.now_utc,
-                    &encode_event_body(&booking.event_type, booking.context.as_ref())?,
+                    &encode_event_body(&booking.event_type)?,
                 )
                 .apply(txn)
                 .map_err(|error| engine_failure("emergency event rewrite", error))?;
@@ -1587,14 +1650,18 @@ pub(crate) fn commit_emergency_item(
             },
             input.now_utc,
         )?;
-        if calendar.uid != plan.payload.uid || calendar.sequence != plan.payload.sequence {
-            return Err(refused(
+        if calendar.uid != plan.booking.calendar.uid
+            || Some(calendar.sequence) != plan.booking.calendar.sequence.checked_add(1)
+        {
+            return Err(emergency_refused(
                 "emergency calendar sequence conflicts with the lifecycle revision",
             ));
         }
-        admission
-            .commit_in_txn(vault, txn, input.now_utc)
-            .map_err(calendar_wrap)?;
+        if let Some(admission) = admission {
+            admission
+                .commit_in_txn(vault, txn, input.now_utc)
+                .map_err(crate::booking::emergency_reschedule::calendar_failure)?;
+        }
         if cancel {
             write_receipt(
                 vault,
@@ -1605,6 +1672,8 @@ pub(crate) fn commit_emergency_item(
                     uid: calendar.uid.clone(),
                     sequence: calendar.sequence,
                     session_hash: None,
+                    confirmation: None,
+                    invite_identity: None,
                 },
             )?;
         }
@@ -1634,10 +1703,28 @@ pub(crate) fn commit_emergency_item(
             },
             committed_at: input.now_utc,
             actions,
-            calendar_delivered: false,
+            // No initial invitation means no CANCEL effect is owed.
+            calendar_delivered: plan.payload.is_none(),
             apology_delivered: false,
             picked: None,
         };
+        if item.basis == EmergencyLocalBasis::PreStartCancellation {
+            use crate::calendar::outcome::{
+                EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
+            };
+            crate::calendar::outcome::record_lifecycle_outcome_in_txn(
+                vault,
+                txn,
+                event,
+                &EventOutcomeClaimValue {
+                    outcome: EventOutcome::CancelledPreStart,
+                    basis: EventOutcomeBasis::OwnerAttested,
+                    recorded_at: item.committed_at,
+                },
+                None,
+            )
+            .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
+        }
         emergency::write_item_in(vault, txn, &item)?;
         Ok(item)
     })
@@ -1653,9 +1740,9 @@ fn emergency_pick_in(
     use crate::booking::emergency_reschedule as emergency;
     let action: EmergencyPickRow =
         read_meta(vault, txn, BOOKING_TOKEN_META_PREFIX, &token_digest(token))?
-            .ok_or_else(|| refused("unknown emergency lifecycle action"))?;
+            .ok_or_else(|| emergency_refused("unknown emergency lifecycle action"))?;
     let item = emergency::read_item_in(vault, txn, &action.emergency_item_key)?
-        .ok_or_else(|| refused("emergency action has no durable checkpoint"))?;
+        .ok_or_else(|| emergency_refused("emergency action has no durable checkpoint"))?;
     emergency::verify_plan_in(vault, txn, &item.plan)?;
     crate::memory::verify_deletion_authority_in_txn(
         vault,
@@ -1663,14 +1750,16 @@ fn emergency_pick_in(
         item.plan.request.owner_ref,
         crate::edge::EdgeActorClass::Human,
     )
-    .map_err(|error| refused(error.to_string()))?;
+    .map_err(|error| BookingError::Boundary(Box::new(error)))?;
     if !item.calendar_delivered || !item.apology_delivered {
-        return Err(refused(
+        return Err(emergency_refused(
             "emergency actions are not released until both deliveries complete",
         ));
     }
     if item.actions.get(action.proposal_index) != Some(token) {
-        return Err(refused("emergency action does not bind this proposal"));
+        return Err(emergency_refused(
+            "emergency action does not bind this proposal",
+        ));
     }
     Ok((item, action.proposal_index))
 }
@@ -1698,20 +1787,27 @@ pub(crate) fn pick_emergency_item(
     use crate::booking::emergency_reschedule as emergency;
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
-        require_emergency_home(vault, input)?;
+        if crate::identity::read_client_id_in_txn(vault, &*txn)
+            .map_err(|error| engine_failure("local identity read", error))?
+            != Some(input.local_node_id)
+        {
+            return Err(BookingError::InvalidConfig(
+                "wrong lifecycle home node".to_owned(),
+            ));
+        }
         let (mut item, proposal_index) = emergency_pick_in(vault, &*txn, token)?;
         let proposal = item
             .plan
             .proposals
             .get(proposal_index)
-            .ok_or_else(|| refused("missing genuine proposal"))?;
+            .ok_or_else(|| emergency_refused("missing genuine proposal"))?;
         let target = TimeRange {
             start: proposal.start_utc,
             end: proposal.end_utc,
         };
         let event = item.calendar.event_ref;
         let booking = read_booking_facts(vault, &*txn, &event)?;
-        let current = emergency_current_revision(vault, event)?;
+        let current = emergency_current_revision_in(vault, &*txn, event)?;
         if let Some(picked) = &item.picked {
             return if picked.proposal_index == proposal_index
                 && booking.status == BookingStatus::Confirmed
@@ -1720,7 +1816,9 @@ pub(crate) fn pick_emergency_item(
             {
                 Ok(item)
             } else {
-                Err(refused("this emergency action has already been consumed"))
+                Err(emergency_refused(
+                    "this emergency action has already been consumed",
+                ))
             };
         }
         let expected_status =
@@ -1733,7 +1831,7 @@ pub(crate) fn pick_emergency_item(
             || booking.status != expected_status
             || booking.context.as_ref() != Some(&item.plan.booking.context)
         {
-            return Err(refused(
+            return Err(emergency_refused(
                 "only this exact emergency revision may accept its proposal",
             ));
         }
@@ -1741,11 +1839,14 @@ pub(crate) fn pick_emergency_item(
             || prepared.committed_at != input.now_utc
             || prepared.calendar_delivered
         {
-            return Err(refused("prepared REQUEST does not bind this pick"));
+            return Err(emergency_refused(
+                "prepared REQUEST does not bind this pick",
+            ));
         }
         emergency::verify_pick_blob(vault, &item, prepared)?;
+        emergency::verify_pick_invite_in(vault, txn, &item)?;
         if target.start <= input.now_utc {
-            return Err(refused("the picked proposal is no longer future"));
+            return Err(emergency_refused("the picked proposal is no longer future"));
         }
         // A RequestUpdate already occupies its first proposal. Retaining that
         // exact slot is not a new allocation and must not collide with itself.
@@ -1758,7 +1859,7 @@ pub(crate) fn pick_emergency_item(
                 input.now_utc,
             )?;
             if !offers_slot(&solved.slots, target) {
-                return Err(refused("the picked proposal is now busy"));
+                return Err(emergency_refused("the picked proposal is now busy"));
             }
         }
         vault
@@ -1768,7 +1869,7 @@ pub(crate) fn pick_emergency_item(
                 ENTITY_TYPE_EVENT,
                 inclusive_occurrence(target)?,
                 input.now_utc,
-                &encode_event_body(&booking.event_type, booking.context.as_ref())?,
+                &encode_event_body(&booking.event_type)?,
             )
             .apply(txn)
             .map_err(|error| engine_failure("emergency picked event rewrite", error))?;
@@ -1805,7 +1906,7 @@ pub(crate) fn pick_emergency_item(
             input.now_utc,
         )?;
         if revision != prepared.calendar {
-            return Err(refused(
+            return Err(emergency_refused(
                 "picked REQUEST sequence conflicts with the lifecycle revision",
             ));
         }
@@ -1818,6 +1919,27 @@ pub(crate) fn pick_emergency_item(
                     &revision_receipt_key(&event, None),
                 ),
             )?;
+        }
+        if item.basis == emergency::EmergencyLocalBasis::PreStartCancellation {
+            use crate::calendar::outcome::{
+                EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
+            };
+            crate::calendar::outcome::record_lifecycle_outcome_in_txn(
+                vault,
+                txn,
+                event,
+                &EventOutcomeClaimValue {
+                    outcome: EventOutcome::Unknown,
+                    basis: EventOutcomeBasis::OwnerAttested,
+                    recorded_at: prepared.committed_at,
+                },
+                Some(EventOutcomeClaimValue {
+                    outcome: EventOutcome::CancelledPreStart,
+                    basis: EventOutcomeBasis::OwnerAttested,
+                    recorded_at: item.committed_at,
+                }),
+            )
+            .map_err(|error| BookingError::Boundary(Box::new(error.into())))?;
         }
         item.picked = Some(prepared.clone());
         emergency::write_item_in(vault, txn, &item)?;
@@ -1836,7 +1958,14 @@ pub(crate) fn admit_emergency_pick(
     use crate::booking::emergency_reschedule as emergency;
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
-        require_emergency_home(vault, input)?;
+        if crate::identity::read_client_id_in_txn(vault, &*txn)
+            .map_err(|error| engine_failure("local identity read", error))?
+            != Some(input.local_node_id)
+        {
+            return Err(BookingError::InvalidConfig(
+                "wrong lifecycle home node".to_owned(),
+            ));
+        }
         emergency::verify_plan_in(vault, &*txn, &item.plan)?;
         crate::memory::verify_deletion_authority_in_txn(
             vault,
@@ -1844,25 +1973,28 @@ pub(crate) fn admit_emergency_pick(
             item.plan.request.owner_ref,
             crate::edge::EdgeActorClass::Human,
         )
-        .map_err(|error| refused(error.to_string()))?;
+        .map_err(|error| BookingError::Boundary(Box::new(error)))?;
         let current = emergency::read_item_in(
             vault,
             &*txn,
             &emergency::item_key(&item.plan.request, item.calendar.event_ref)?,
         )?
-        .ok_or_else(|| refused("pick checkpoint disappeared"))?;
+        .ok_or_else(|| emergency_refused("pick checkpoint disappeared"))?;
         let picked = item
             .picked
             .as_ref()
-            .ok_or_else(|| refused("missing picked REQUEST"))?;
+            .ok_or_else(|| emergency_refused("missing picked REQUEST"))?;
         if current.plan != item.plan
             || current
                 .picked
                 .as_ref()
                 .is_none_or(|saved| saved.content_hash != picked.content_hash)
-            || emergency_current_revision(vault, item.calendar.event_ref)? != picked.calendar
+            || emergency_current_revision_in(vault, &*txn, item.calendar.event_ref)?
+                != picked.calendar
         {
-            return Err(refused("a newer revision supersedes this picked REQUEST"));
+            return Err(emergency_refused(
+                "a newer revision supersedes this picked REQUEST",
+            ));
         }
         emergency::verify_pick_blob(vault, item, picked)?;
         let admission = crate::calendar::admit_calendar_invite(
@@ -1871,13 +2003,13 @@ pub(crate) fn admit_emergency_pick(
             &picked.payload,
             input.now_utc,
         )
-        .map_err(calendar_wrap)?;
+        .map_err(crate::booking::emergency_reschedule::calendar_failure)?;
         if admission.event_ref() != picked.calendar.event_ref {
-            return Err(refused("picked REQUEST names another booking"));
+            return Err(emergency_refused("picked REQUEST names another booking"));
         }
         admission
             .commit_in_txn(vault, txn, input.now_utc)
-            .map_err(calendar_wrap)
+            .map_err(crate::booking::emergency_reschedule::calendar_failure)
     })
 }
 
@@ -2057,11 +2189,13 @@ fn supersede_outbound_passport(
     content: &BookingContent,
     now_utc: u64,
 ) -> Result<CalendarRevision, BookingError> {
-    let (old_id, current) = live_passports_for_event(vault, event_ref)
-        .map_err(calendar_wrap)?
-        .into_iter()
-        .find(|(_, value)| value.system == BOOKING_PASSPORT_SYSTEM)
-        .ok_or_else(|| refused("booking carries no outbound calendar passport"))?;
+    crate::booking::emergency_reschedule::ensure_no_pending_effect_in(vault, wtxn, *event_ref)?;
+    let (old_id, current) =
+        crate::calendar::passport::live_passports_for_event_in_txn(vault, wtxn, event_ref)
+            .map_err(calendar_wrap)?
+            .into_iter()
+            .find(|(_, value)| value.system == BOOKING_PASSPORT_SYSTEM)
+            .ok_or_else(|| refused("booking carries no outbound calendar passport"))?;
     let sequence = current
         .last_sequence
         .checked_add(1)
@@ -2102,6 +2236,7 @@ fn supersede_outbound_passport(
 #[serde(deny_unknown_fields)]
 pub struct BookingConfirmationContext {
     pub owner_refs: Vec<String>,
+    pub booker_ref: String,
     pub visitor_tz: String,
     pub constraint: Option<ConstraintObject>,
 }
@@ -2121,25 +2256,8 @@ fn confirmation_context_in(
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
 ) -> Result<Option<BookingConfirmationContext>, BookingError> {
-    let raw = vault
-        .store
-        .entities
-        .get(rtxn, event_ref.as_bytes())
-        .map_err(|error| engine_failure("booking context read", error))?
-        .ok_or_else(|| refused("booking EVENT no longer exists"))?;
-    let body = raw
-        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-        .ok_or_else(|| refused("booking EVENT header is truncated"))?;
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
-        .map_err(|_| refused("booking EVENT body is unreadable"))?;
-    let Some(fields) = value.as_map() else {
-        return Err(refused("booking EVENT body is not a map"));
-    };
-    fields
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("booking_context"))
-        .map(|(_, value)| decode_claim_value(value, "confirmation context"))
-        .transpose()
+    Ok(confirmation_receipt_in(vault, rtxn, event_ref)?
+        .and_then(|(_, receipt)| receipt.confirmation))
 }
 
 /// The booking facts a revision needs from its EVENT.
@@ -2160,7 +2278,6 @@ fn write_booking_event(
     event_ref: &EntityId,
     hold: &SoftHoldRow,
     booker_contact: EntityId,
-    context: &BookingConfirmationContext,
     now_utc: u64,
 ) -> Result<(), BookingError> {
     vault
@@ -2170,7 +2287,7 @@ fn write_booking_event(
             ENTITY_TYPE_EVENT,
             inclusive_occurrence(hold.slot)?,
             now_utc,
-            &encode_event_body(&hold.event_type, Some(context))?,
+            &encode_event_body(&hold.event_type)?,
         )
         .apply(wtxn)
         .map_err(|error| engine_failure("booking event write", error))?;
@@ -2346,25 +2463,18 @@ fn occurrence_in(
     ))
 }
 
-/// The EVENT body retains the event type and original confirmation context.
-/// No booker contact or free-text note travels in the structural row.
-fn encode_event_body(
-    event_type: &EventTypeKey,
-    context: Option<&BookingConfirmationContext>,
-) -> Result<Vec<u8>, BookingError> {
-    let mut fields = vec![(
-        rmpv::Value::from("name"),
-        rmpv::Value::from(event_type.0.as_str()),
-    )];
-    if let Some(context) = context {
-        fields.push((
-            rmpv::Value::from("booking_context"),
-            encode_claim_value(context)?,
-        ));
-    }
+/// Calendar writers may replace this structural body. Authority stays in the
+/// immutable confirmation receipt, never in the provider-owned EVENT body.
+fn encode_event_body(event_type: &EventTypeKey) -> Result<Vec<u8>, BookingError> {
     let mut body = Vec::new();
-    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))
-        .map_err(|_| refused("booking event body did not encode"))?;
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("name"),
+            rmpv::Value::from(event_type.0.as_str()),
+        )]),
+    )
+    .map_err(|_| refused("booking event body did not encode"))?;
     Ok(body)
 }
 
