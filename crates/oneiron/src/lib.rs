@@ -116,6 +116,7 @@ pub mod persona_snapshot;
 pub mod pipeline;
 pub mod policy_model;
 pub(crate) mod ppr;
+pub mod ppr_community;
 pub mod prompt;
 pub mod provenance;
 pub mod provider_confidence;
@@ -241,7 +242,7 @@ pub use crate::companion::{
     CompanionScopeResolutionSource, CompanionSubject, CompanionTaskKind, EndCompanionRelationship,
     EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
-pub use crate::config::{HnswConfig, VaultConfig};
+pub use crate::config::{HnswConfig, PprCommunityConfig, VaultConfig};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
