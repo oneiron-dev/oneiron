@@ -33,6 +33,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) temporal_search: Option<TemporalSearchConfig>,
     pub(super) ppr_search: Option<(Vec<EntityId>, u32)>,
     pub(super) ppr_expand: Option<(Vec<EntityId>, u32)>,
+    pub(super) community_session_usage: Option<&'a HashMap<crate::ppr_community::CommunityId, u32>>,
     pub(super) recency_blend_enabled: bool,
     pub(super) apply_salience: bool,
     pub(super) apply_confidence: bool,
@@ -77,6 +78,7 @@ impl<'a> PipelineBuilder<'a> {
             temporal_search: None,
             ppr_search: None,
             ppr_expand: None,
+            community_session_usage: None,
             recency_blend_enabled: false,
             apply_salience: false,
             apply_confidence: false,
@@ -338,6 +340,55 @@ impl<'a> PipelineBuilder<'a> {
     pub fn expand_ppr(mut self, seeds: &[EntityId], depth: u32) -> Self {
         self.ppr_expand = Some((seeds.to_vec(), depth));
         self
+    }
+
+    /// Supplies caller-owned fine-community usage counts for this expansion.
+    /// Counts are borrowed for this run, never persisted or shared through PPR
+    /// cache rows. Inert at beta zero and on `search_ppr`-only queries.
+    pub fn with_community_session_usage(
+        mut self,
+        usage: &'a HashMap<crate::ppr_community::CommunityId, u32>,
+    ) -> Self {
+        self.community_session_usage = Some(usage);
+        self
+    }
+
+    pub(super) fn community_trace_identity(
+        &self,
+        seeds: &[ScoredEntity],
+        version: u64,
+    ) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(b"oneiron.retrieval_trace.community.v0");
+        hash.update(version.to_le_bytes());
+        let config = &self.vault.config.ppr_community;
+        for value in [
+            config.beta,
+            config.gamma,
+            config.multiplier_cap,
+            config.max_graph_fraction,
+            config.max_top_k_fraction,
+        ] {
+            hash.update(value.to_bits().to_le_bytes());
+        }
+        hash.update((seeds.len() as u64).to_le_bytes());
+        for seed in seeds {
+            hash.update(seed.id.as_bytes());
+            hash.update(seed.score.to_bits().to_le_bytes());
+        }
+        let mut usage: Vec<_> = self
+            .community_session_usage
+            .into_iter()
+            .flat_map(|map| map.iter())
+            .collect();
+        usage.sort_unstable_by_key(|(id, _)| **id);
+        hash.update((usage.len() as u64).to_le_bytes());
+        for (id, count) in usage {
+            hash.update(id.as_bytes());
+            hash.update(count.to_le_bytes());
+        }
+        hash.finalize().into()
     }
 
     /// Enables the recency signal for the retrieval blend.
