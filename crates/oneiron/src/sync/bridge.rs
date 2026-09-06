@@ -102,6 +102,7 @@ pub struct Materializer {
     /// Uses `std::sync::Mutex` (NOT `tokio::sync::Mutex`) per spec.
     mutex: Mutex<()>,
     lease_vault_id: u64,
+    live_query_tees: Mutex<Vec<std::sync::Weak<dyn LiveQueryTee>>>,
 }
 
 impl Default for Materializer {
@@ -109,6 +110,7 @@ impl Default for Materializer {
         Self {
             mutex: Mutex::new(()),
             lease_vault_id: crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+            live_query_tees: Mutex::new(Vec::new()),
         }
     }
 }
@@ -122,6 +124,32 @@ impl Materializer {
         Self {
             mutex: Mutex::new(()),
             lease_vault_id,
+            live_query_tees: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Attaches a late server consumer to the existing Observer B instances.
+    /// Weak ownership avoids retaining a disconnected subscription owner and
+    /// never installs a second materializer on a live document.
+    pub fn attach_live_query_tee(&self, tee: &Arc<dyn LiveQueryTee>) {
+        let mut tees = self
+            .live_query_tees
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tees.retain(|entry| entry.strong_count() != 0);
+        tees.push(Arc::downgrade(tee));
+    }
+
+    fn notify_live_queries(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+        let tees: Vec<_> = self
+            .live_query_tees
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect();
+        for tee in tees {
+            tee.on_materialized(path, diff, by);
         }
     }
 
@@ -357,6 +385,36 @@ pub fn register_observer_a(
     }))
 }
 
+/// Post-commit notification consumer. Implementations must not write to the
+/// observed Loro document or re-enter materialization from this callback.
+pub trait LiveQueryTee: Send + Sync {
+    /// Called once per committed container batch, never for an aborted batch.
+    fn on_materialized(
+        &self,
+        container_path: &str,
+        diff: &MaterializedDiffSummary,
+        by: &OriginMark,
+    );
+}
+
+/// Coarse read dependencies invalidated by one committed container batch.
+#[derive(Clone, Debug)]
+pub struct MaterializedDiffSummary {
+    /// Changed paths (`w:<window>/<container>/<key>`), not entity bodies.
+    pub containers: Vec<String>,
+    /// Total changed key and binary-value bytes, for accounting only.
+    pub bytes: usize,
+}
+
+/// Transport correlation only; never actor authority.
+#[derive(Clone, Debug, Default)]
+pub struct OriginMark {
+    /// Parsed only from the server's existing `conn:<id>` import marker.
+    pub conn_id: Option<u32>,
+    /// Exact Loro origin, when present.
+    pub origin: Option<String>,
+}
+
 /// Registers Observer B on a window Doc: materializes CRDT changes to LMDB.
 ///
 /// Loro subscriptions work on
@@ -373,6 +431,18 @@ pub fn register_observer_b(
     materializer: &Arc<Materializer>,
     window_key: &str,
 ) -> (Subscription, Subscription, Subscription) {
+    register_observer_b_with_tee(doc, vault, materializer, window_key, None)
+}
+
+/// Registers the same materializer with an optional server-side live-query tee.
+/// The frozen entrypoint above retains precisely the no-tee behavior.
+pub fn register_observer_b_with_tee(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+    tee: Option<Arc<dyn LiveQueryTee>>,
+) -> (Subscription, Subscription, Subscription) {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let tombstones_map = doc.get_map("tombstones");
@@ -384,6 +454,7 @@ pub fn register_observer_b(
         materializer,
         window_key,
         materialize_entities_from_delta,
+        ("entities", tee.clone()),
     );
     let edge_sub = subscribe_map_observer(
         doc,
@@ -392,6 +463,7 @@ pub fn register_observer_b(
         materializer,
         window_key,
         materialize_edges_from_delta,
+        ("edges", tee.clone()),
     );
     let tombstone_sub = subscribe_map_observer(
         doc,
@@ -400,6 +472,7 @@ pub fn register_observer_b(
         materializer,
         window_key,
         materialize_tombstones_from_delta,
+        ("tombstones", tee.clone()),
     );
 
     (entity_sub, edge_sub, tombstone_sub)
@@ -413,7 +486,8 @@ fn subscribe_map_observer(
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64),
+    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64) -> bool,
+    live_query: (&'static str, Option<Arc<dyn LiveQueryTee>>),
 ) -> Subscription {
     let callback_doc = doc.clone();
     let subscription_doc = doc.clone();
@@ -426,18 +500,61 @@ fn subscribe_map_observer(
         &cid,
         Arc::new(move |event| {
             if matches!(event.origin, BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN) {
+                // These paths bypass rematerialization. Defer the read until
+                // the owner loop runs, after the writer releases its locks.
+                materializer.notify_live_queries(
+                    &format!("w:{window_key}/{}", live_query.0),
+                    &MaterializedDiffSummary {
+                        containers: Vec::new(),
+                        bytes: 0,
+                    },
+                    &OriginMark {
+                        conn_id: None,
+                        origin: Some(event.origin.to_owned()),
+                    },
+                );
                 return;
             }
             let _guard = materializer.lock();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    materialize(
+                    let committed = materialize(
                         &callback_doc,
                         map_delta,
                         &vault,
                         &window_key,
                         lease_vault_id,
                     );
+                    if committed {
+                        let path = format!("w:{window_key}/{}", live_query.0);
+                        let mut bytes = 0usize;
+                        let containers = map_delta
+                            .updated
+                            .iter()
+                            .map(|(key, value)| {
+                                bytes = bytes.saturating_add(key.len());
+                                if let Some(loro::ValueOrContainer::Value(
+                                    loro::LoroValue::Binary(blob),
+                                )) = value
+                                {
+                                    bytes = bytes.saturating_add(blob.len());
+                                }
+                                format!("{path}/{key}")
+                            })
+                            .collect();
+                        let by = OriginMark {
+                            conn_id: event
+                                .origin
+                                .strip_prefix("conn:")
+                                .and_then(|id| id.parse().ok()),
+                            origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
+                        };
+                        let diff = MaterializedDiffSummary { containers, bytes };
+                        if let Some(tee) = &live_query.1 {
+                            tee.on_materialized(&path, &diff, &by);
+                        }
+                        materializer.notify_live_queries(&path, &diff, &by);
+                    }
                 }
             }
         }),
@@ -464,7 +581,7 @@ fn materialize_entities_from_delta(
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
-) {
+) -> bool {
     let tombstones_map = doc.get_map("tombstones");
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
@@ -648,6 +765,7 @@ fn materialize_entities_from_delta(
         );
     }
 
+    let committed = result.is_ok();
     if let Err(e) = result {
         // ONE-1147: the whole batch txn aborted — every applied op's write
         // (and any quarantine row staged alongside) is lost while the ops
@@ -683,6 +801,7 @@ fn materialize_entities_from_delta(
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
+    committed
 }
 
 /// Materialize edge changes from a Loro MapDelta to LMDB.
@@ -706,7 +825,7 @@ fn materialize_edges_from_delta(
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
-) {
+) -> bool {
     // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
     // pushed into the batch, retained outside the txn for the swallow site
     // below (no surviving per-op failure point on whole-txn failure).
@@ -1094,6 +1213,7 @@ fn materialize_edges_from_delta(
         );
     }
 
+    let committed = result.is_ok();
     if let Err(e) = result {
         // ONE-1147: whole-txn failure — same marker semantics and
         // best-effort layering as the entity swallow site above. Two classes
@@ -1137,6 +1257,7 @@ fn materialize_edges_from_delta(
             "observer-b: edge batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
+    committed
 }
 
 /// HOLE-1871-F2 — the `ChildOf` presentation repair: the projection must follow
@@ -1681,7 +1802,7 @@ fn materialize_tombstones_from_delta(
     vault: &Vault,
     window_key: &str,
     _lease_vault_id: u64,
-) {
+) -> bool {
     let entities_map = doc.get_map("entities");
     // Staged BEFORE the batch transaction opens: the door gates below are
     // document reads plus their own committing quarantine writes (pre-batch
@@ -1811,12 +1932,12 @@ fn materialize_tombstones_from_delta(
     }
 
     if staged.is_empty() {
-        return;
+        return false;
     }
     // Soft-over-hard `ra:` reassert for staged soft items runs INSIDE
     // apply_tombstone_batch's single parent write txn (ONE-521) — materialize
     // must not open any per-item committing helper over staged work.
-    apply_tombstone_batch(vault, window_key, &staged);
+    apply_tombstone_batch(vault, window_key, &staged)
 }
 
 /// One tombstone staged out of the delta, owned so the batch transaction can
@@ -1860,7 +1981,7 @@ enum TombstoneFailureStage {
 /// as partial success. The tombstones stay in the CRDT map, which is both the
 /// resurrection gate for entity materialization and the replay source for
 /// forward rematerialization, so the work is not lost.
-fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWork]) {
+fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWork]) -> bool {
     let mut failures = Vec::<(&TombstoneWork, TombstoneFailureStage, Error)>::new();
 
     #[cfg(test)]
@@ -1943,7 +2064,7 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
             error = %e,
             "observer-b: tombstone batch transaction FAILED — NO tombstone in this delta was applied; the CRDT tombstones map keeps gating materialization and remains the replay source"
         );
-        return;
+        return false;
     }
 
     for (work, stage, err) in &failures {
@@ -1962,6 +2083,7 @@ fn apply_tombstone_batch(vault: &Vault, window_key: &str, staged: &[TombstoneWor
             ),
         }
     }
+    true
 }
 
 /// Applies one staged tombstone inside a nested write transaction (savepoint)

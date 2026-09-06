@@ -11,8 +11,9 @@ pub(crate) use oneiron::sync::{
 
 // Re-export tag constants from shared transport (avoid redefinition).
 pub(crate) use oneiron::sync::transport::{
-    LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED, LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
+    APP_TIER_PROTOCOL_VERSION_VERSION, LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED,
+    LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
     decode_lease_request, decode_protocol_hello, encode_ephemeral, encode_lease_granted,
 };
 
@@ -112,6 +113,10 @@ impl<T> PaginatedResponse<T> {
 /// Parsed top-level message from the wire.
 #[derive(Debug)]
 pub(crate) enum SyncMessage {
+    /// Kept raw until the version/binding gate has run, including malformed JSON.
+    Rpc(Vec<u8>),
+    /// A separate id space from RPC requests and WindowSync.
+    Sub(Vec<u8>),
     /// Root doc update bytes (tag 0). Server rejects these from clients.
     RootUpdate(Vec<u8>),
     /// Loro-native ephemeral store bytes (tag 1). Bidirectional.
@@ -143,6 +148,8 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
     let payload = &data[1..];
 
     match tag {
+        TAG_RPC => Ok(SyncMessage::Rpc(payload.to_vec())),
+        TAG_SUB => Ok(SyncMessage::Sub(payload.to_vec())),
         TAG_SYNC_UPDATE => Ok(SyncMessage::RootUpdate(payload.to_vec())),
         TAG_EPHEMERAL => Ok(SyncMessage::Ephemeral(payload.to_vec())),
         TAG_VERSION_VECTOR => Ok(SyncMessage::RootVersionVector(payload.to_vec())),
@@ -202,6 +209,10 @@ pub(crate) fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
 /// Protocol-level errors specific to Oneiron's custom sync protocol.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ProtocolError {
+    #[error("app-tier requires a newer negotiated protocol")]
+    RpcVersionMismatch,
+    #[error("app-tier requires a live bound principal")]
+    RpcNoPrincipal,
     #[error("invalid payload: {0}")]
     InvalidPayload(&'static str),
     #[error("unknown custom tag: {0}")]
@@ -243,6 +254,10 @@ pub(crate) mod close_codes {
     /// Protocol-version hello mismatch, missing, malformed, or timed out
     /// (ONE-1127). Sent BEFORE any sync payload flows.
     pub(crate) const VERSION_MISMATCH: u16 = 4006;
+    /// RPC/SUB on a protocol older than the introducing-version constant.
+    pub(crate) const CLOSE_RPC_VERSION_MISMATCH: u16 = 4007;
+    /// Missing, invalid, revoked, or repeated in-band bind.
+    pub(crate) const CLOSE_RPC_NO_PRINCIPAL: u16 = 4008;
 }
 
 #[cfg(test)]
