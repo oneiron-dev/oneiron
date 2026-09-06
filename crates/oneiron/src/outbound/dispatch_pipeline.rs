@@ -783,7 +783,7 @@ fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
     )
 }
 
-fn outbound_dispatch_attempt_id(
+pub(crate) fn outbound_dispatch_attempt_id(
     intent_ref: &str,
 ) -> std::result::Result<crate::attempt_queue::AttemptId, OutboundDispatchError> {
     let mut hasher = blake3::Hasher::new();
