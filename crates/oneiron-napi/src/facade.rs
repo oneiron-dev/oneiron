@@ -111,8 +111,10 @@ const FORGET_PAGE_SIZE: usize = 64;
 /// Blob content ceiling for the N-API boundary: 32 MiB raw (double the
 /// B8-validated 16 MiB probe). The base64 length is bounded BEFORE any
 /// decode allocation, so oversized inputs cannot exhaust process memory.
-const MAX_NAPI_BLOB_CONTENT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_NAPI_BLOB_BASE64_LEN: usize = MAX_NAPI_BLOB_CONTENT_BYTES / 3 * 4 + 4;
+/// ONE-1441: aliased to the shared boundary contract in `oneiron-remote`, so
+/// the N-API and remote transports enforce one number rather than two.
+const MAX_NAPI_BLOB_CONTENT_BYTES: usize = oneiron_remote::MAX_BLOB_CONTENT_BYTES;
+const MAX_NAPI_BLOB_BASE64_LEN: usize = oneiron_remote::MAX_BLOB_BASE64_LEN;
 
 fn decode_blob_base64(input: &str) -> BoundaryResult<Vec<u8>> {
     if input.len() > MAX_NAPI_BLOB_BASE64_LEN {
@@ -1115,11 +1117,7 @@ impl ActorScopedVault {
     pub fn witness(&self, turn: NapiWitnessTurn) -> napi::Result<NapiWitnessReceipt> {
         let engine_turn = witness_turn_to_engine(&turn).map_err(boundary_error)?;
         let receipt = self.facade()?.witness(&engine_turn).map_err(facade_error)?;
-        Ok(NapiWitnessReceipt {
-            turn_short_id: receipt.turn_short_id,
-            message_short_ids: receipt.message_short_ids,
-            receipt_ref: receipt.receipt_ref,
-        })
+        Ok(witness_receipt_from_engine(receipt))
     }
 
     /// Commits claims, one individually gated write per element; rejected
@@ -1278,19 +1276,7 @@ impl ActorScopedVault {
             .map_err(facade_error)?;
         records
             .into_iter()
-            .map(|record| {
-                Ok(NapiGateReceipt {
-                    receipt_ref: record.receipt_ref,
-                    outcome: record.outcome,
-                    created_at: ts_from_engine(record.created_at, "created_at")
-                        .map_err(boundary_error)?,
-                    reason_codes: record.reason_codes,
-                    actor_class: record.actor_class,
-                    actor_ref: record.actor_ref,
-                    content_kind: record.content_kind,
-                    claim_ref: record.claim_ref,
-                })
-            })
+            .map(|record| gate_receipt_from_engine(record).map_err(boundary_error))
             .collect()
     }
 
@@ -1529,55 +1515,12 @@ impl ActorScopedVault {
                 "unknown effort {effort:?}; use minimal, standard, or deep"
             ))
         })?;
-        let scope = scope.map_or_else(RecallScope::default, |scope| RecallScope {
-            world_ref: scope.world_ref,
-            facet: scope.facet,
-        });
+        let scope = recall_scope_to_engine(scope);
         let pack = self
             .facade()?
             .recall(&query, effort, &scope, limit, format.as_deref(), None)
             .map_err(facade_error)?;
-        Ok(NapiMemoryPack {
-            items: pack
-                .items
-                .into_iter()
-                .map(|item| NapiMemoryItem {
-                    short_id: item.short_id,
-                    kind: item.kind,
-                    predicate: item.predicate,
-                    value_text: item.value_text,
-                    confidence: f64::from(item.confidence),
-                    hedge_bucket: item.hedge_bucket,
-                    provenance: NapiMemoryProvenance {
-                        source: item.provenance.source,
-                        source_revision_ids: item.provenance.source_revision_ids,
-                        evidence_turn_ids: item.provenance.evidence_turn_ids,
-                    },
-                    world: item.world,
-                    facet: item.facet,
-                    salience: item.salience.map(f64::from),
-                })
-                .collect(),
-            scope_honesty: NapiScopeHonesty {
-                out_of_scope_worlds: pack.scope_honesty.out_of_scope_worlds,
-            },
-            retrieval_meta: NapiRetrievalMeta {
-                sparse: pack.retrieval_meta.sparse,
-                total_candidates: ts_from_engine(
-                    pack.retrieval_meta.total_candidates,
-                    "total_candidates",
-                )
-                .map_err(boundary_error)?,
-                claims_returned: ts_from_engine(
-                    pack.retrieval_meta.claims_returned,
-                    "claims_returned",
-                )
-                .map_err(boundary_error)?,
-                deep_pending: pack.retrieval_meta.deep_pending,
-            },
-            pack_version: pack.pack_version,
-            rendered: pack.rendered,
-        })
+        memory_pack_from_engine(pack).map_err(boundary_error)
     }
 
     /// Enqueues one Dreamer consolidation job; long work returns a job
@@ -2291,5 +2234,207 @@ mod tests {
         }
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+// ── ONE-1441 WIRE-P1: the shared-backend client behind the `oneiron` npm
+//    package ───────────────────────────────────────────────────────────────
+//
+// `VaultBridge`/`ActorScopedVault` above stay exactly as they are for existing
+// direct native consumers. `NativeClient` is the SDK seam: it holds one
+// `oneiron_remote::OneironClient`, so the embedded and remote backends differ
+// by a constructor and nothing else, and neither this file nor the TypeScript
+// wrapper contains an endpoint, a timeout, or a route table.
+//
+// It is PRIVATE to the npm package. `packages/oneiron` re-exports `Oneiron` and
+// `OneironError` only; this class is an implementation detail the wrapper
+// holds and never hands out.
+
+/// One turn to witness, with an OPTIONAL timestamp (ONE-1441 I14).
+///
+/// The only difference from [`NapiWitnessTurn`] is that `occurredAt` may be
+/// omitted, which is the §HEAD-CONTRACT surface. Omission is stamped with
+/// current wall-clock Unix seconds by `oneiron_remote::stamp_occurred_at` —
+/// the same function the Python binding calls — so the stamping rule has one
+/// implementation rather than one per language.
+#[napi(object)]
+pub struct NapiWitnessTurnInput {
+    /// CONVERSATION ref (32-hex create-or-get, or existing short ref).
+    pub conversation_ref: String,
+    /// TURN ref (create-or-get); omitted ⇒ a fresh TURN.
+    pub turn_ref: Option<String>,
+    /// Messages, attributed to the bound actor unless `system`.
+    pub messages: Vec<NapiWitnessMessage>,
+    /// Unix seconds; omitted ⇒ stamped at the call boundary.
+    pub occurred_at: Option<f64>,
+}
+
+/// Projects an engine witness receipt onto the boundary DTO.
+fn witness_receipt_from_engine(receipt: oneiron::memory::WitnessReceipt) -> NapiWitnessReceipt {
+    NapiWitnessReceipt {
+        turn_short_id: receipt.turn_short_id,
+        message_short_ids: receipt.message_short_ids,
+        receipt_ref: receipt.receipt_ref,
+    }
+}
+
+/// Projects one engine gate receipt onto the boundary DTO.
+fn gate_receipt_from_engine(
+    record: oneiron::memory::MemoryReceipt,
+) -> BoundaryResult<NapiGateReceipt> {
+    Ok(NapiGateReceipt {
+        receipt_ref: record.receipt_ref,
+        outcome: record.outcome,
+        created_at: ts_from_engine(record.created_at, "created_at")?,
+        reason_codes: record.reason_codes,
+        actor_class: record.actor_class,
+        actor_ref: record.actor_ref,
+        content_kind: record.content_kind,
+        claim_ref: record.claim_ref,
+    })
+}
+
+/// Projects one engine memory item onto the boundary DTO.
+fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> NapiMemoryItem {
+    NapiMemoryItem {
+        short_id: item.short_id,
+        kind: item.kind,
+        predicate: item.predicate,
+        value_text: item.value_text,
+        confidence: f64::from(item.confidence),
+        hedge_bucket: item.hedge_bucket,
+        provenance: NapiMemoryProvenance {
+            source: item.provenance.source,
+            source_revision_ids: item.provenance.source_revision_ids,
+            evidence_turn_ids: item.provenance.evidence_turn_ids,
+        },
+        world: item.world,
+        facet: item.facet,
+        salience: item.salience.map(f64::from),
+    }
+}
+
+/// Projects an engine memory pack onto the boundary DTO.
+///
+/// The pack crosses UNCHANGED apart from field spelling: same items, same
+/// scope honesty, same retrieval accounting, same `packVersion`. There is no
+/// wrapper rerank, no truncation, and no synthesized field.
+fn memory_pack_from_engine(pack: oneiron::memory::MemoryPack) -> BoundaryResult<NapiMemoryPack> {
+    Ok(NapiMemoryPack {
+        items: pack.items.into_iter().map(memory_item_from_engine).collect(),
+        scope_honesty: NapiScopeHonesty {
+            out_of_scope_worlds: pack.scope_honesty.out_of_scope_worlds,
+        },
+        retrieval_meta: NapiRetrievalMeta {
+            sparse: pack.retrieval_meta.sparse,
+            total_candidates: ts_from_engine(
+                pack.retrieval_meta.total_candidates,
+                "total_candidates",
+            )?,
+            claims_returned: ts_from_engine(pack.retrieval_meta.claims_returned, "claims_returned")?,
+            deep_pending: pack.retrieval_meta.deep_pending,
+        },
+        pack_version: pack.pack_version,
+        rendered: pack.rendered,
+    })
+}
+
+/// Lowers the boundary recall scope onto the engine's.
+fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallScope {
+    scope.map_or_else(RecallScope::default, |scope| RecallScope {
+        world_ref: scope.world_ref,
+        facet: scope.facet,
+    })
+}
+
+/// The private native handle behind `packages/oneiron`.
+#[napi]
+pub struct NativeClient {
+    inner: oneiron_remote::OneironClient,
+}
+
+#[napi]
+impl NativeClient {
+    /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`.
+    #[napi(factory)]
+    pub fn open(path: Option<String>, dimensions: Option<u32>) -> napi::Result<Self> {
+        let options = oneiron_remote::OpenOptions {
+            dimensions: dimensions.map(|value| value as usize),
+        };
+        let path = path.map(std::path::PathBuf::from);
+        let inner = oneiron_remote::OneironClient::open(path.as_deref(), &options)
+            .map_err(facade_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Binds a remote `oneiron-server` with a minted slip, passed verbatim.
+    #[napi(factory)]
+    pub fn connect(url: String, key: String) -> napi::Result<Self> {
+        let inner = oneiron_remote::OneironClient::connect(&url, &key).map_err(facade_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Returns a NEW handle bound to another actor; refuses when connected.
+    #[napi]
+    pub fn as_actor(&self, actor_key: String) -> napi::Result<Self> {
+        let inner = self.inner.as_actor(&actor_key).map_err(facade_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Witnesses one conversational turn.
+    #[napi]
+    pub fn witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
+        let stamped = oneiron_remote::stamp_occurred_at(turn.occurred_at).map_err(facade_error)?;
+        let occurred_at = i64::try_from(stamped)
+            .map_err(|_| boundary_error("occurred_at is out of range".to_owned()))?;
+        let turn = NapiWitnessTurn {
+            conversation_ref: turn.conversation_ref,
+            turn_ref: turn.turn_ref,
+            messages: turn.messages,
+            occurred_at,
+        };
+        let engine_turn = witness_turn_to_engine(&turn).map_err(boundary_error)?;
+        let receipt = self.inner.witness(&engine_turn).map_err(facade_error)?;
+        Ok(witness_receipt_from_engine(receipt))
+    }
+
+    /// Upserts one claim through the gated claim-candidate path.
+    #[napi]
+    pub fn claim_upsert(&self, claim: NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
+        let engine_claim = claim_input_to_engine(&claim).map_err(boundary_error)?;
+        let receipt = self.inner.claim_upsert(&engine_claim).map_err(facade_error)?;
+        Ok(commit_receipt_from_engine(receipt))
+    }
+
+    /// Effort-dialed retrieval into a memory pack.
+    #[napi]
+    pub fn recall(
+        &self,
+        query: String,
+        effort: Option<String>,
+        scope: Option<NapiRecallScope>,
+        limit: Option<u32>,
+        format: Option<String>,
+    ) -> napi::Result<NapiMemoryPack> {
+        let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("standard"))
+            .map_err(facade_error)?;
+        let scope = recall_scope_to_engine(scope);
+        let limit = limit.map_or(oneiron_remote::DEFAULT_RECALL_LIMIT, |value| value as usize);
+        let pack = self
+            .inner
+            .recall(&query, effort, &scope, limit, format.as_deref())
+            .map_err(facade_error)?;
+        memory_pack_from_engine(pack).map_err(boundary_error)
+    }
+
+    /// Gate decision receipts, newest first.
+    #[napi]
+    pub fn receipts(&self, limit: Option<u32>) -> napi::Result<Vec<NapiGateReceipt>> {
+        let limit = limit.map_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT, |value| value as usize);
+        let records = self.inner.receipts(limit).map_err(facade_error)?;
+        records
+            .into_iter()
+            .map(|record| gate_receipt_from_engine(record).map_err(boundary_error))
+            .collect()
     }
 }

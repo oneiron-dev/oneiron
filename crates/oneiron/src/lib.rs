@@ -380,9 +380,14 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
 // public `doctor`, `text_index_status`, and `as_actor` return them directly
 // or through the doctor report's `pub` fields, and `vault` is not `pub`.
+//
+// ONE-1441: the single-writer lease names ride the same rule. `vault` is a
+// private module, so the SDK backend that OWNS a lease value and compares the
+// contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+    ActorBound, HydratedShortId, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE,
+    Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultWriterLease,
 };
 pub use crate::web_fetch::{
     CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,

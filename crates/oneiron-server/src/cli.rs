@@ -69,6 +69,16 @@ pub struct TokenMintArgs {
     #[arg(long = "principal-ref", requires = "scope")]
     pub principal_ref: Option<String>,
 
+    /// D13 actor class the token binds write identity to: `human`, `agent`,
+    /// or `system`. Required by `/v1/core/facade` routes; absent by default.
+    ///
+    /// Requires `--principal-ref`, which itself requires `--scope`: a class
+    /// without a principal names nobody, and an owner-grade token is never
+    /// actor-bound. The value is grammar-checked before the token is emitted,
+    /// so a typo fails at the CLI instead of 401ing later.
+    #[arg(long = "actor-class", requires = "principal_ref")]
+    pub actor_class: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
