@@ -63,7 +63,12 @@ impl ClaimLifecycleStatus {
 }
 
 /// Claim provenance source (`src`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `PartialOrd`/`Ord` are MECHANICAL (ONE-1314): they exist so a source class
+/// can be a `BTreeSet` member in `SourceLineage`. Declaration order carries no
+/// trust meaning — the trust lattice is `claim_source_rank`/`source_meet`, and
+/// the auto-permit question is `requires_explicit_auto_permit` below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ClaimSource {
     UserStated,
     Observed,

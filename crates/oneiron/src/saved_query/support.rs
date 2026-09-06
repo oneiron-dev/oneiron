@@ -249,6 +249,11 @@ pub(super) fn edge_kind_from_name(value: &str) -> Option<EdgeKind> {
         "set_in" => EdgeKind::SetIn,
         "merged_into" => EdgeKind::MergedInto,
         "split_into" => EdgeKind::SplitInto,
+        // ONE-1541 (CMT-4): read-side mapping only. A saved query filters and
+        // traverses; it never mints an edge, so naming the reserved
+        // fulfillment pair here opens no write door.
+        "fulfills" => EdgeKind::Fulfills,
+        "discharged_by" => EdgeKind::DischargedBy,
         _ => return None,
     };
     Some(kind)

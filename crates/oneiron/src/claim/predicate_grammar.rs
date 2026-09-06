@@ -101,6 +101,56 @@ pub const PREDICATE_ACTOR_EDIT_COST: &str = "actor.edit_cost";
 /// `put_reserved_claim_in_txn`. Registry-exempt for the same reason.
 pub const PREDICATE_SKILL_EDIT_COST: &str = "skill.edit_cost";
 
+/// Predicate families a Dreamer-authored write is ISOLATED into at the gate.
+///
+/// The distinction is what a wrong head costs. A persona-core head answers
+/// "who is the companion", so a single conversation must never be able to
+/// rewrite it. A mirroring-prone head is one a generator is apt to echo back
+/// out of the transcript it just read, which is why its writes are owner
+/// decisions rather than automatic ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DreamerIsolationClass {
+    /// The companion's own identity surface.
+    PersonaCore,
+    /// Opinions, beliefs, values and affect.
+    MirroringProne,
+}
+
+/// Predicate prefixes whose heads are persona-core.
+pub const PERSONA_CORE_PREFIXES: [&str; 3] = ["companion.", "eiri.persona.", "core.identity."];
+
+/// Predicate prefixes whose heads are mirroring-prone.
+pub const MIRRORING_PRONE_PREFIXES: [&str; 4] =
+    ["core.opinion.", "core.belief.", "core.value.", "affect."];
+
+/// Classifies `predicate` into its isolation class, or `None` when neither
+/// table matches.
+///
+/// Persona-core is tested FIRST, so a predicate carried by both tables is
+/// persona-core: overlap resolves to the stricter class here, once, rather
+/// than at each call site. Pure prefix arithmetic on the predicate string —
+/// no clock, no randomness, no I/O, no registry or manifest lookup — so the
+/// same predicate classifies the same way at every door.
+///
+/// Both tables are anchored at the FRONT and every entry carries its trailing
+/// dot, so `companionship.tone` and `core.values.list` stay outside them.
+#[must_use]
+pub fn dreamer_isolation_class(predicate: &str) -> Option<DreamerIsolationClass> {
+    if PERSONA_CORE_PREFIXES
+        .iter()
+        .any(|p| predicate.starts_with(p))
+    {
+        return Some(DreamerIsolationClass::PersonaCore);
+    }
+    if MIRRORING_PRONE_PREFIXES
+        .iter()
+        .any(|p| predicate.starts_with(p))
+    {
+        return Some(DreamerIsolationClass::MirroringProne);
+    }
+    None
+}
+
 /// Grouping unit of a dotted predicate: every segment EXCEPT the last
 /// ("drop the leaf" — DESIGN-PIN A0). The grammar guarantees ≥2 segments
 /// (`validate_predicate`), so the root is always non-empty on valid

@@ -230,6 +230,12 @@ pub enum ReceiptKind {
     /// amended approval — the amended op body verbatim. Projects from the
     /// type-76 resolution ledger event; there is no separate receipt store.
     ProposalOutcome,
+    /// Commitment lifecycle receipt (CMT-4, ONE-1541): a `commitment.record`
+    /// CLAIM reached a terminal status — kept, waived, or let go. Projected
+    /// from the claim row itself; there is no lifecycle ledger, so the
+    /// invariant it carries is bounded by [`MAX_RECEIPT_QUERY_SCAN`] exactly
+    /// like every other projected kind.
+    CommitmentLifecycle,
 }
 
 impl ReceiptKind {
@@ -244,6 +250,7 @@ impl ReceiptKind {
             Self::Share => "share",
             Self::ArtifactSettle => "artifact_settle",
             Self::ProposalOutcome => "proposal_outcome",
+            Self::CommitmentLifecycle => "commitment_lifecycle",
         }
     }
 
@@ -258,6 +265,7 @@ impl ReceiptKind {
             "share" => Some(Self::Share),
             "artifact_settle" => Some(Self::ArtifactSettle),
             "proposal_outcome" => Some(Self::ProposalOutcome),
+            "commitment_lifecycle" => Some(Self::CommitmentLifecycle),
             _ => None,
         }
     }
