@@ -59,6 +59,7 @@ mod instructions;
 mod lifecycle;
 mod offerability;
 mod page_token;
+mod public;
 mod subject;
 mod transport;
 mod validate;
@@ -73,6 +74,7 @@ pub(crate) use self::instructions::{
 use self::lifecycle::{booking_oracle, run_booking_verb};
 use self::offerability::unoffered_slot_answer;
 pub(crate) use self::page_token::{booking_page_token, resolve_booking_page};
+use self::public::public_booking_router;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;
 use self::validate::validate_operation_shape;
@@ -153,6 +155,7 @@ pub(crate) fn booking_routes() -> Router<Arc<SyncServer>> {
             post(booking_reschedule),
         )
         .route("/api/booking/{page_token}/cancel", post(booking_cancel))
+        .merge(public_booking_router())
 }
 
 // -------------------------------------------------------------------------

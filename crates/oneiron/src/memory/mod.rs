@@ -23,6 +23,7 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
+mod booking_publication;
 mod campaign;
 mod chat;
 mod claims;
@@ -77,4 +78,5 @@ pub use structural::{
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
+pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use support::{facade_provenance, verify_actor_binding};

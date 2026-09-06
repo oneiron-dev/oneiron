@@ -15,6 +15,8 @@ pub mod constraint;
 pub mod disclosure_rung;
 pub mod invite_grant;
 pub mod lifecycle;
+pub mod public_lens;
+pub mod publication;
 pub mod solver;
 #[cfg(test)]
 mod tests;
@@ -64,6 +66,16 @@ pub use lifecycle::{
     booking_claim_class_descriptors, enqueue_booking_verb, is_booking_family_claim_predicate,
     is_booking_lifecycle_claim_predicate, issue_checkout_lease, run_booking_lifecycle_once,
     token_page_ref, validate_booking_family_claim,
+};
+pub use public_lens::{
+    BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard,
+    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, ThemeTokens,
+    validate_booking_page_model,
+};
+pub use publication::{
+    BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,
+    PublicBookingAvailability, decode_public_booking_page_value, encode_public_booking_page_value,
+    load_public_booking_page,
 };
 pub use solver::{
     ActiveHoldSource, BookingCountBucket, BookingCounts, BookingSolver, NoActiveHolds, slot_mask,

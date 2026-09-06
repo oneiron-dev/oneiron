@@ -268,6 +268,9 @@ impl Memory<'_> {
                     ],
                 ));
             }
+            if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
+                self.verify_public_booking_writer_in_txn(wtxn)?;
+            }
             // Retracting your OWN claim is not an owner power and needs no
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.
@@ -500,6 +503,9 @@ impl Memory<'_> {
         };
         before_txn();
 
+        // Preserve the owner's typed refusal across the engine transaction
+        // closure, whose error type is the storage API's rather than MemoryError.
+        let publication_refusal = std::cell::RefCell::new(None);
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
         // Every commit is ONE engine transaction: gate decision, claim
@@ -536,6 +542,14 @@ impl Memory<'_> {
                 end: occurred_at,
             };
             self.vault.with_write_txn(|wtxn| {
+                if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
+                    && let Err(error) = self.verify_public_booking_writer_in_txn(wtxn)
+                {
+                    *publication_refusal.borrow_mut() = Some(error);
+                    return Err(Error::InvalidClaimBody(
+                        "booking publication owner authority refused",
+                    ));
+                }
                 if self
                     .vault
                     .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
@@ -572,9 +586,10 @@ impl Memory<'_> {
                     && err.kind() == ErrorKind::GateWriteRejected =>
             {
                 approval = ClaimApprovalStatus::Proposed;
-                write(approval)?
+                write(approval)
+                    .map_err(|err| publication_refusal.take().unwrap_or_else(|| err.into()))?
             }
-            Err(err) => return Err(err.into()),
+            Err(err) => return Err(publication_refusal.take().unwrap_or_else(|| err.into())),
         };
         if refused {
             return Err(hard_deleted_refusal(&id));
