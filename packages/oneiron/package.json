@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build:native": "bunx --bun @napi-rs/cli build --platform --release --cargo-cwd ../../crates/oneiron-napi --output-dir native",
+    "build:native": "bunx --bun @napi-rs/cli build --platform --release --manifest-path ../../crates/oneiron-napi/Cargo.toml --output-dir native --js index.cjs",
     "build:ts": "bunx --bun tsc --project tsconfig.json",
     "build": "bun run build:native && bun run build:ts",
     "check:snippets": "bun run scripts/check-readme-snippets.mjs",

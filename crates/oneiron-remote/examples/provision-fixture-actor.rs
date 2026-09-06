@@ -23,7 +23,11 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     };
 
-    let options = oneiron_remote::OpenOptions::default();
+    // Keep this fixture pin aligned with --dimensions in scripts/wire-test-server.sh.
+    // Embedded and server defaults differ; neither default defines this fixture.
+    let options = oneiron_remote::OpenOptions {
+        dimensions: Some(1024),
+    };
     let client =
         match oneiron_remote::OneironClient::open(Some(std::path::Path::new(&path)), &options) {
             Ok(client) => client,

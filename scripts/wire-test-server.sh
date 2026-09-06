@@ -75,9 +75,12 @@ if [[ ! "$PRINCIPAL_REF" =~ ^[0-9a-f]{32}$ ]]; then
   exit 1
 fi
 
+# Match the explicit OpenOptions dimensions in provision-fixture-actor.rs.
+# HNSW dimensions are persisted at creation; the server default is different.
 log "starting oneiron-server on ${BASE_URL}"
 "$SERVER_BIN" serve \
   --vault-path "$VAULT_DIR" \
+  --dimensions 1024 \
   --host 127.0.0.1 \
   --port "$PORT" \
   --auth-secret "$AUTH_SECRET" \
@@ -134,8 +137,22 @@ printf 'ONEIRON_WIRE_KEY=%s\n' "$SLIP"
 # The caller drives the tests; this process stays alive so the server does,
 # and the EXIT trap tears both down together.
 if [[ -n "${ONEIRON_WIRE_EXEC:-}" ]]; then
+  # Negative-authority fixtures use the same real mint path. They are only
+  # passed to the child; the two public stdout lines above stay unchanged.
+  NO_CLASS_SLIP="$("$SERVER_BIN" token mint \
+    --vault-path "$VAULT_DIR" --auth-secret "$AUTH_SECRET" \
+    --scope core:read,core:write --principal-ref "$PRINCIPAL_REF")"
+  NO_PRINCIPAL_SLIP="$("$SERVER_BIN" token mint \
+    --vault-path "$VAULT_DIR" --auth-secret "$AUTH_SECRET" \
+    --scope core:read,core:write)"
+  READ_SLIP="$("$SERVER_BIN" token mint \
+    --vault-path "$VAULT_DIR" --auth-secret "$AUTH_SECRET" \
+    --scope core:read --principal-ref "$PRINCIPAL_REF" --actor-class human)"
   log "running: ${ONEIRON_WIRE_EXEC}"
   ONEIRON_WIRE_URL="$BASE_URL" ONEIRON_WIRE_KEY="$SLIP" \
+    ONEIRON_WIRE_NO_CLASS_KEY="$NO_CLASS_SLIP" \
+    ONEIRON_WIRE_NO_PRINCIPAL_KEY="$NO_PRINCIPAL_SLIP" \
+    ONEIRON_WIRE_READ_KEY="$READ_SLIP" \
     bash -c "$ONEIRON_WIRE_EXEC"
 else
   wait "$SERVER_PID"

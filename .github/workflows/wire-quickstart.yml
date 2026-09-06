@@ -1,0 +1,191 @@
+name: Wire quickstart
+
+# ONE-1441: install the shipped four-call SDK surface, then prove parity
+# through the real facade fixture. No publication or upload occurs here.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/oneiron/**"
+      - "crates/oneiron-py/**"
+      - "crates/oneiron-remote/**"
+      - "crates/oneiron-napi/**"
+      - "crates/oneiron-server/**"
+      - "crates/oneiron/src/memory/**"
+      - "crates/oneiron/src/vault.rs"
+      - "scripts/wire-test-server.sh"
+      - "scripts/tests/test_wire_quickstart.py"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/wire-quickstart.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/oneiron/**"
+      - "crates/oneiron-py/**"
+      - "crates/oneiron-remote/**"
+      - "crates/oneiron-napi/**"
+      - "crates/oneiron-server/**"
+      - "crates/oneiron/src/memory/**"
+      - "crates/oneiron/src/vault.rs"
+      - "scripts/wire-test-server.sh"
+      - "scripts/tests/test_wire_quickstart.py"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/wire-quickstart.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
+  PYTHONNOUSERSITE: "1"
+  PYTHONPATH: ""
+
+concurrency:
+  group: wire-quickstart-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  wire-quickstart:
+    name: Install-and-run both SDKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      WIRE_DIST: ${{ runner.temp }}/wire-dist
+      WIRE_NODE_PROJECT: ${{ runner.temp }}/wire-node
+      WIRE_PYTHON_ENV: ${{ runner.temp }}/wire-python
+      WIRE_RESULTS: ${{ runner.temp }}/wire-results
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wire-quickstart
+
+      # Bun orchestrates source builds/tests. Node runs the installed artifact.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.22"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Python build and metadata tooling
+        run: python -m pip install --disable-pip-version-check maturin==1.9.4 twine==6.1.0
+
+      - name: Build the SDK crates and server fixture
+        run: |
+          cargo build --locked -p oneiron-remote -p oneiron-napi -p oneiron-py
+          cargo build --locked -p oneiron-server --bin oneiron-server
+          cargo build --locked -p oneiron-remote --example provision-fixture-actor
+
+      - name: Shared backend contract tests
+        run: cargo test --locked -p oneiron-remote
+
+      - name: Build the npm package
+        working-directory: packages/oneiron
+        run: |
+          # This retained package has no lockfile. Do not request a frozen one.
+          bun install
+          bun run check:snippets
+          bun run check:sdk-major
+          bun run build
+
+      - name: Assemble archives outside the measured stage
+        run: |
+          mkdir -p "$WIRE_DIST"
+          maturin build --locked --release --interpreter python \
+            --out "$WIRE_DIST" --manifest-path crates/oneiron-py/Cargo.toml
+          cd packages/oneiron
+          # Build and all prepack checks are explicit workflow stages. Packing
+          # must not rebuild or run tests inside the developer-experience timer.
+          bun pm pack --ignore-scripts --filename "$WIRE_DIST/oneiron.tgz"
+          tar -tzf "$WIRE_DIST/oneiron.tgz"
+
+      - name: Measured install-from-artifacts and both quickstarts
+        run: |
+          set -Eeuo pipefail
+          START=$(date +%s)
+          ISOLATED_HOME=$(mktemp -d)
+          mkdir -p "$ISOLATED_HOME/node" "$ISOLATED_HOME/python" \
+            "$WIRE_NODE_PROJECT" "$WIRE_RESULTS"
+
+          # Separate empty homes prevent fixed quickstart IDs from sharing a vault.
+          export HOME="$ISOLATED_HOME/node"
+          cd "$WIRE_NODE_PROJECT"
+          printf '{"private":true,"type":"module"}\n' > package.json
+          npm install --offline --ignore-scripts --no-audit --no-fund \
+            --package-lock=false "$WIRE_DIST/oneiron.tgz"
+          cp "$GITHUB_WORKSPACE/packages/oneiron/quickstart/node.mjs" .
+          node node.mjs > "$WIRE_RESULTS/node.json"
+
+          export HOME="$ISOLATED_HOME/python"
+          python -m venv "$WIRE_PYTHON_ENV"
+          "$WIRE_PYTHON_ENV/bin/python" -m pip install --disable-pip-version-check \
+            --no-index --find-links "$WIRE_DIST" oneiron
+          cp "$GITHUB_WORKSPACE/packages/oneiron/quickstart/python.py" "$WIRE_RESULTS/"
+          "$WIRE_PYTHON_ENV/bin/python" "$WIRE_RESULTS/python.py" > "$WIRE_RESULTS/python.json"
+
+          ELAPSED=$(( $(date +%s) - START ))
+          echo "measured install-and-run stage: ${ELAPSED}s"
+          if [ "$ELAPSED" -gt 300 ]; then
+            echo "::error::install-and-run exceeded the 300-second budget (${ELAPSED}s)"
+            exit 1
+          fi
+
+      - name: Prepare the installed-artifact test environment
+        run: |
+          "$WIRE_PYTHON_ENV/bin/python" -m pip install --disable-pip-version-check pytest==8.4.2
+          cp packages/oneiron/scripts/wire-parity.mjs "$WIRE_NODE_PROJECT/"
+
+      - name: Structural assertions on both measured quickstart outputs
+        run: >-
+          "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
+          scripts/tests/test_wire_quickstart.py::test_installed_quickstarts
+
+      - name: Remote DTO and error parity through the real server
+        env:
+          ONEIRON_WIRE_EXEC: >-
+            "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
+            scripts/tests/test_wire_quickstart.py::test_remote_sdk_parity
+        run: bash scripts/wire-test-server.sh
+
+      # Remote tests above are explicit node IDs, not filters that can select
+      # nothing. Embedded tests below never need or silently skip a server.
+      - name: Node package tests
+        working-directory: packages/oneiron
+        run: bun test
+
+      - name: Python package tests
+        run: '"$WIRE_PYTHON_ENV/bin/python" -m pytest crates/oneiron-py/tests -q'
+
+      - name: npm pack dry run
+        working-directory: packages/oneiron
+        run: bun pm pack --dry-run --ignore-scripts
+
+      - name: PyPI metadata dry run
+        run: twine check --strict "$WIRE_DIST"/*.whl
+
+      # The only acceptance signal: every preceding stage must succeed.
+      - name: Emit the acceptance marker
+        run: echo "WIRE-QUICKSTART-OK"
