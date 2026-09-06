@@ -439,7 +439,9 @@ pub(crate) async fn execute_booking_operation(
                 constraint,
                 visitor_tz: input.visitor_tz,
             })?;
-            let SolveResult { slots, flex_used } = solved;
+            let SolveResult {
+                slots, flex_used, ..
+            } = solved;
             Ok(BookingOperationResponse::Availability { slots, flex_used })
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {

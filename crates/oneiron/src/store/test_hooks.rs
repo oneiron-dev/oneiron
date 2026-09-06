@@ -26,6 +26,7 @@ type LmdbOpenHookSlot = LazyLock<Mutex<Option<TargetedLmdbOpenHook>>>;
 /// inside the library. Production correctness never depends on it being armed
 /// — the exact `/proc/self/fd/<dirfd>` path is what makes the open safe; this
 /// hook only makes the schedule observable.
+#[cfg(target_os = "linux")]
 static BEFORE_LMDB_OPEN: LmdbOpenHookSlot = LazyLock::new(|| Mutex::new(None));
 
 /// The mirror of [`BEFORE_LMDB_OPEN`] on the other side of the open: on the
@@ -66,10 +67,12 @@ fn run_lmdb_open_hook(slot: &LmdbOpenHookSlot, path: &Path) {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn arm_before_lmdb_open(path: PathBuf, hook: impl FnOnce(&Path) + Send + 'static) {
     arm_lmdb_open_hook(&BEFORE_LMDB_OPEN, path, hook);
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn run_before_lmdb_open(path: &Path) {
     run_lmdb_open_hook(&BEFORE_LMDB_OPEN, path);
 }
