@@ -211,3 +211,105 @@ fn self_host_privacy_rejects_same_source_and_higher_source_key_references() {
         }
     }
 }
+
+#[test]
+fn direct_vault_config_conversion_preserves_valid_privacy_pairs() {
+    use HostingPrivacyPosture::{Hosted, SelfHostLocal};
+
+    for (posture, key_ref, custody) in [
+        (SelfHostLocal, None, VaultDataKeyCustody::OwnerHeldLocal),
+        (
+            Hosted,
+            Some("kms://example/direct-ref"),
+            VaultDataKeyCustody::HostManagedKms {
+                key_ref: "kms://example/direct-ref".to_owned(),
+            },
+        ),
+    ] {
+        // Bypass the resolver, as a public library caller can.
+        let direct = ServeConfig {
+            privacy_posture: posture,
+            hosted_kms_key_ref: key_ref.map(ToOwned::to_owned),
+            dimensions: 8,
+            map_size: 64 * 1024 * 1024,
+            ..Default::default()
+        };
+        let converted = direct.vault_config();
+        assert_eq!(converted.dimensions, direct.dimensions);
+        assert_eq!(converted.map_size, direct.map_size);
+        assert_eq!(converted.privacy.posture, posture);
+        assert_eq!(converted.privacy.data_key_custody, custody);
+        converted.privacy.validate().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault");
+        let vault = oneiron::Vault::open(&path, converted).unwrap();
+        assert_eq!(vault.privacy_posture(), posture);
+        assert_eq!(vault.is_host_readable(), posture == Hosted);
+        drop(vault);
+        let reopened = oneiron::Vault::open_existing(&path, direct.vault_config()).unwrap();
+        assert_eq!(reopened.privacy_posture(), posture);
+        assert_eq!(reopened.is_host_readable(), posture == Hosted);
+    }
+}
+
+#[test]
+fn direct_vault_config_conversion_preserves_invalid_pairs_for_side_effect_free_refusal() {
+    use HostingPrivacyPosture::{Hosted, SelfHostLocal};
+
+    for (posture, key_ref) in [
+        (SelfHostLocal, Some("kms://example/stray-ref")),
+        (SelfHostLocal, Some("")),
+        (SelfHostLocal, Some("   ")),
+        (SelfHostLocal, Some("\t\n")),
+        (Hosted, None),
+        (Hosted, Some("")),
+        (Hosted, Some("   ")),
+        (Hosted, Some("\t\n")),
+    ] {
+        let direct = ServeConfig {
+            privacy_posture: posture,
+            hosted_kms_key_ref: key_ref.map(ToOwned::to_owned),
+            dimensions: 8,
+            map_size: 64 * 1024 * 1024,
+            ..Default::default()
+        };
+        let converted = direct.vault_config();
+        assert_eq!(converted.privacy.posture, posture);
+        assert_eq!(
+            converted.privacy.data_key_custody,
+            VaultDataKeyCustody::HostManagedKms {
+                key_ref: key_ref.unwrap_or_default().to_owned(),
+            }
+        );
+        let validation_error = converted.privacy.validate().unwrap_err();
+        let expected = match posture {
+            Hosted => "non-empty host-managed KMS key reference",
+            SelfHostLocal => "rejects host-managed KMS key custody",
+        };
+        assert!(matches!(
+            &validation_error,
+            oneiron::Error::InvalidConfig(message) if message.contains(expected)
+        ));
+        assert!(!format!("{converted:?}").contains("stray-ref"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing-parent").join("vault");
+        // Both public openers must refuse before creating even a parent
+        // directory, or writing anything into an already-existing directory.
+        for path in [missing.as_path(), dir.path()] {
+            for existing_only in [false, true] {
+                let result = if existing_only {
+                    oneiron::Vault::open_existing(path, direct.vault_config())
+                } else {
+                    oneiron::Vault::open(path, direct.vault_config())
+                };
+                let error = result.err().expect("invalid custody must not open a vault");
+                assert_eq!(error.to_string(), validation_error.to_string());
+                assert!(!format!("{error:?}").contains("stray-ref"));
+                assert!(!missing.exists());
+                assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
+            }
+        }
+    }
+}

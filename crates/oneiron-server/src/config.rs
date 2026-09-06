@@ -728,20 +728,21 @@ impl ServeConfig {
         config
     }
 
-    /// Maps the resolved posture onto the engine's posture/custody pairing.
+    /// Maps posture and custody without repairing invalid direct caller input.
     ///
-    /// Hosted carries the opaque host-managed reference; self-host/local
-    /// carries no host reference at all, so a stale reference cannot ride
-    /// along into an owner-operated deployment. `validate_serve_config`
-    /// already rejects a hosted config without a reference; the empty string
-    /// left here in that impossible case is rejected again by
-    /// `VaultPrivacyConfig::validate` before the store opens.
+    /// The resolver clears only lower-precedence references when self-host/local
+    /// wins. A reference still present here must survive conversion so
+    /// `VaultPrivacyConfig::validate` refuses contradictory custody before any
+    /// store opens. Hosted without a reference retains an invalid empty one.
     fn vault_privacy_config(&self) -> VaultPrivacyConfig {
-        let data_key_custody = match self.privacy_posture {
-            HostingPrivacyPosture::Hosted => VaultDataKeyCustody::HostManagedKms {
-                key_ref: self.hosted_kms_key_ref.clone().unwrap_or_default(),
+        let data_key_custody = match (self.privacy_posture, &self.hosted_kms_key_ref) {
+            (_, Some(key_ref)) => VaultDataKeyCustody::HostManagedKms {
+                key_ref: key_ref.clone(),
             },
-            HostingPrivacyPosture::SelfHostLocal => VaultDataKeyCustody::OwnerHeldLocal,
+            (HostingPrivacyPosture::Hosted, None) => VaultDataKeyCustody::HostManagedKms {
+                key_ref: String::new(),
+            },
+            (HostingPrivacyPosture::SelfHostLocal, None) => VaultDataKeyCustody::OwnerHeldLocal,
         };
         VaultPrivacyConfig {
             posture: self.privacy_posture,
@@ -759,7 +760,23 @@ pub struct EnvConfig {
 
 impl EnvConfig {
     pub fn from_process() -> anyhow::Result<Self> {
-        Self::from_lookup(|key| std::env::var(key).ok())
+        // Privacy inputs fail closed by presence. Read each once and never
+        // attach VarError::NotUnicode, whose diagnostics expose the raw value.
+        let privacy_value = |key: &str| match std::env::var(key) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(anyhow::anyhow!("{key} must contain valid Unicode"))
+            }
+        };
+        let privacy_posture = privacy_value("ONEIRON_PRIVACY_POSTURE")?;
+        let hosted_kms_key_ref = privacy_value("ONEIRON_HOSTED_KMS_KEY_REF")?;
+        Self::from_lookup(|key| match key {
+            "ONEIRON_PRIVACY_POSTURE" => privacy_posture.clone(),
+            "ONEIRON_HOSTED_KMS_KEY_REF" => hosted_kms_key_ref.clone(),
+            // Keep the existing semantics for every unrelated environment key.
+            _ => std::env::var(key).ok(),
+        })
     }
 
     pub fn from_pairs<I, K, V>(pairs: I) -> anyhow::Result<Self>
@@ -1480,5 +1497,7 @@ fn redacted_secret(secret: &Option<String>) -> Option<&'static str> {
 
 #[cfg(test)]
 mod privacy_tests;
+#[cfg(all(test, unix))]
+mod process_env_tests;
 #[cfg(test)]
 mod tests;
