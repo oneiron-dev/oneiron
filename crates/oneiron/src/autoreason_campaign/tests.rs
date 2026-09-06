@@ -1845,10 +1845,11 @@ fn comparison_rejects_wrong_split_datasets_in_public_and_decoded_reports() {
 
 #[test]
 fn campaign_ref_is_exact_run_tree_root() {
+    // Exact binary verdict operands keep this identity test free of decimal drift.
     let fixture = held_out_fixture(
-        SplitFixture::passed(0.20, 0.60),
-        SplitFixture::passed(0.90, 0.80),
-        0.01,
+        SplitFixture::passed(0.20, 0.50),
+        SplitFixture::passed(0.90, 0.75),
+        0.125,
     );
     // Rootness is the caller's contract; this module echoes the id it is
     // handed and mints no second identity.
@@ -1924,6 +1925,48 @@ fn held_out_tournament_win_net_of_cost_keeps() {
         "experiment.verdict.keep"
     );
     assert!(report.verdict.net_delta >= report.verdict_epsilon);
+}
+
+#[test]
+fn deserialized_net_delta_drift_is_rejected() {
+    // Exact binary verdict operands isolate tampering from decimal round-off.
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.50),
+        SplitFixture::passed(0.90, 0.75),
+        0.125,
+    );
+    let report = compare(&fixture);
+    assert_eq!(report.verdict.net_delta, 0.125);
+
+    let encoded = serde_json::to_string(&report).expect("report encodes");
+    let decoded: CampaignComparisonReport = serde_json::from_str(&encoded).expect("report decodes");
+    assert_eq!(decoded, report);
+    decoded.validate().expect("unchanged report validates");
+
+    // Alter only the encoded net delta; the decision and verdict pair stay intact.
+    let mut json = serde_json::to_value(&report).expect("report encodes");
+    *json
+        .pointer_mut("/verdict/net_delta")
+        .expect("net delta node") = serde_json::Value::from(1.0);
+    let encoded = serde_json::to_string(&json).expect("tampered report encodes");
+    let decoded: CampaignComparisonReport =
+        serde_json::from_str(&encoded).expect("numeric drift still decodes");
+    let mut forged = report;
+    forged.verdict.net_delta = 1.0;
+    assert_eq!(
+        decoded, forged,
+        "decode must preserve the tampered net delta"
+    );
+
+    for report in [forged, decoded] {
+        assert!(matches!(
+            report.validate(),
+            Err(CampaignError::InvalidDecision {
+                field: "verdict",
+                reason: "does not match the re-derived precedence ladder",
+            })
+        ));
+    }
 }
 
 #[test]
