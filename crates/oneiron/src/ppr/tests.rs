@@ -3302,7 +3302,12 @@ fn pull_code_memory_threads_vad_alpha_and_rejects_invalid_config() -> Result<()>
 }
 
 fn community_ppr_fixture(vault: &Vault) -> Result<()> {
-    for n in 1..=100 {
+    // Keep 100 fixture nodes without aliasing any production-pinned identity.
+    // The low, unpinned IDs used by the graph and query assertions stay unchanged.
+    for n in (1..=u8::MAX)
+        .filter(|n| !crate::test_util::PINNED_ID_BYTES.contains(n))
+        .take(100)
+    {
         vault.put_entity(&entity(n), 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
     }
     vault.put_edge(&entity(1), EdgeKind::BelongsTo, &entity(2), 1.0)?;
