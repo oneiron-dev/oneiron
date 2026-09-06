@@ -412,10 +412,10 @@ fn lens_body(
             &fixture.claims.len().to_string(),
         ));
     }
-    if flavor.duplicates_a_node_id() {
-        if let Some(duplicate) = root.children.first().cloned() {
-            root.children.push(duplicate);
-        }
+    if flavor.duplicates_a_node_id()
+        && let Some(duplicate) = root.children.first().cloned()
+    {
+        root.children.push(duplicate);
     }
     lens_at(&root, stamp)
 }

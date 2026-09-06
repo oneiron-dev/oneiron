@@ -33,7 +33,13 @@ fn assert_scores_equal(left: &[ScoredEntity], right: &[ScoredEntity]) {
 }
 
 fn cache_row(vault: &Vault, seeds: &[EntityId], depth: u32, alpha: f32) -> Result<Vec<u8>> {
-    let hash = hash_seeds(seeds, depth, alpha, SeedWeighting::Uniform);
+    let hash = hash_seeds(
+        seeds,
+        depth,
+        alpha,
+        vault.config.ppr_vad_alpha,
+        SeedWeighting::Uniform,
+    );
     let rtxn = vault.store.env.read_txn()?;
     let row = vault
         .store
@@ -57,7 +63,7 @@ fn plant_cache_row(
     computed_at: u64,
     scores: &[ScoredEntity],
 ) -> Result<[u8; SEED_HASH_LEN]> {
-    let hash = hash_seeds(seeds, depth, alpha, weighting);
+    let hash = hash_seeds(seeds, depth, alpha, 0.0, weighting);
     let version = graph_version(vault)?;
     let value = encode_cache_value(computed_at, version, 0, scores);
     let mut wtxn = vault.store.env.write_txn()?;
@@ -78,7 +84,7 @@ fn plant_state_cache_row(
     computed_at: u64,
     state: &PprCacheState,
 ) -> Result<[u8; SEED_HASH_LEN]> {
-    let hash = hash_seeds(seeds, depth, alpha, SeedWeighting::Uniform);
+    let hash = hash_seeds(seeds, depth, alpha, 0.0, SeedWeighting::Uniform);
     let version = graph_version(vault)?;
     let value = encode_cache_value_with_state(computed_at, version, 0, state)?;
     let mut wtxn = vault.store.env.write_txn()?;
@@ -169,9 +175,9 @@ fn legacy_dep_key(
     key
 }
 
-/// ONE-1116 AC4 — the cache key hashes `sorted seeds ‖ depth ‖ alpha ‖
+/// Cache identity hashes `sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖
 /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
-/// version 4 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+/// version 5 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
 /// here, NOT read from the constants, so a wrong bump fails). The two
 /// weighting modes must never collide — `search_ppr` rows are not
 /// servable to `expand_ppr` and vice versa.
@@ -183,13 +189,14 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let alpha: f32 = 0.15;
 
     let mut bytes = Vec::with_capacity(
-        ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>() + 1,
+        ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + 2 * std::mem::size_of::<f32>() + 1,
     );
     bytes.extend_from_slice(a.as_bytes());
     bytes.extend_from_slice(b.as_bytes());
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
-    bytes.extend_from_slice(&4_u32.to_le_bytes());
+    bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+    bytes.extend_from_slice(&5_u32.to_le_bytes());
 
     let mut uniform_bytes = bytes.clone();
     uniform_bytes.push(0_u8);
@@ -200,15 +207,15 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
 
     assert_eq!(
-        PPR_FORMULA_VERSION, 4,
-        "ONE-1236 lexical hint traversal skip must pin version 4"
+        PPR_FORMULA_VERSION, 5,
+        "ONE-215 VAD propagation must pin version 5"
     );
     assert_eq!(
-        hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
+        hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
         expected_uniform
     );
     assert_eq!(
-        hash_seeds(&[a, b], depth, alpha, SeedWeighting::Specificity),
+        hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Specificity),
         expected_specificity
     );
     assert_ne!(
@@ -216,8 +223,8 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
         "uniform and specificity rows must never share a cache key"
     );
     assert_eq!(
-        hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
-        hash_seeds(&[b, a], depth, alpha, SeedWeighting::Uniform)
+        hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
+        hash_seeds(&[b, a], depth, alpha, 0.0, SeedWeighting::Uniform)
     );
 }
 
@@ -849,7 +856,7 @@ fn ppr_cache_state_tracks_frontier_and_expanded_dependencies() -> Result<()> {
     assert_eq!(state.completed_depth, 2);
     assert!(!state.frontier.is_empty());
 
-    let seed_hash = hash_seeds(&[a], 2, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 2, 0.15, 0.0, SeedWeighting::Uniform);
     assert!(dep_exists(&vault, a, &seed_hash)?);
     assert!(dep_exists(&vault, b, &seed_hash)?);
 
@@ -883,7 +890,7 @@ fn ppr_query_resumes_from_cached_frontier_and_matches_fresh_compute() -> Result<
     vault.put_edge(&c, EdgeKind::About, &e, 0.7)?;
 
     let _ = ppr_query(&vault.store, &vault.config, &[a], 1, 0.15)?;
-    let depth_one_hash = hash_seeds(&[a], 1, 0.15, SeedWeighting::Uniform);
+    let depth_one_hash = hash_seeds(&[a], 1, 0.15, 0.0, SeedWeighting::Uniform);
     let depth_one_row = cache_row(&vault, &[a], 1, 0.15)?;
     let (computed_at, graph_version, stale) = parse_cache_header(&depth_one_row)?;
     assert_eq!(stale, 0);
@@ -914,7 +921,7 @@ fn ppr_query_resumes_from_cached_frontier_and_matches_fresh_compute() -> Result<
     };
     assert_scores_equal(&resumed, &fresh);
 
-    let depth_three_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let depth_three_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     assert!(
         dep_exists(&vault, sentinel_dep, &depth_three_hash)?,
         "depth-3 cache must inherit dependencies from the resumed state"
@@ -942,7 +949,7 @@ fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
             &[a],
             SeedWeighting::Uniform,
             1,
-            0.15,
+            PprAlphas::default_vad(0.15),
             None,
         )?
     };
@@ -962,7 +969,7 @@ fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
     };
     assert_scores_equal(&resumed, &fresh);
 
-    let depth_three_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let depth_three_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     assert!(
         dep_exists(&vault, sentinel_dep, &depth_three_hash)?,
         "depth-3 cache must inherit dependencies from the expired resume state"
@@ -1014,9 +1021,9 @@ fn ppr_cache_key_changes_with_depth_and_alpha() -> Result<()> {
     let _ = ppr_query(&vault.store, &vault.config, &[a], 4, 0.15)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.25)?;
 
-    let hash_depth_3 = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
-    let hash_depth_4 = hash_seeds(&[a], 4, 0.15, SeedWeighting::Uniform);
-    let hash_alpha_25 = hash_seeds(&[a], 3, 0.25, SeedWeighting::Uniform);
+    let hash_depth_3 = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
+    let hash_depth_4 = hash_seeds(&[a], 4, 0.15, 0.0, SeedWeighting::Uniform);
+    let hash_alpha_25 = hash_seeds(&[a], 3, 0.25, 0.0, SeedWeighting::Uniform);
 
     assert_ne!(hash_depth_3, hash_depth_4);
     assert_ne!(hash_depth_3, hash_alpha_25);
@@ -1054,7 +1061,7 @@ fn batch_noop_delete_edge_does_not_bump_version_or_stale_cache() -> Result<()> {
 
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let before = graph_version(&vault)?;
 
     vault
@@ -1111,7 +1118,7 @@ fn direct_delete_edge_increments_graph_version_and_stales_cache() -> Result<()> 
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let before = graph_version(&vault)?;
     assert!(vault.delete_edge(&a, EdgeKind::BelongsTo, &b)?);
@@ -1141,7 +1148,7 @@ fn batch_delete_edge_cleans_inbound_orphans_without_staling_cache() -> Result<()
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let key_out = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
     let key_in = Store::encode_edge_key(&b, EdgeKind::BelongsTo, &a);
@@ -1248,7 +1255,7 @@ fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> 
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let mut wtxn = vault.store.env.write_txn()?;
     let orphan_dep = encode_dep_key(&missing, &seed_hash);
@@ -1326,7 +1333,7 @@ fn cleanup_ppr_cache_prunes_malformed_dep_rows() -> Result<()> {
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
     malformed_dep[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
@@ -1369,7 +1376,7 @@ fn cleanup_ppr_cache_evicts_cache_when_last_dep_row_is_malformed() -> Result<()>
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     delete_dep_rows_for_hash(&vault, &seed_hash)?;
 
     let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
@@ -1407,7 +1414,7 @@ fn invalidate_ppr_caches_prunes_malformed_cache_rows() -> Result<()> {
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(60);
     let b = entity(61);
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let dep_key = encode_dep_key(&a, &seed_hash);
 
     vault.put_entity(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"a-data")?;
@@ -1568,7 +1575,7 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(48);
     let b = entity(49);
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
@@ -1606,7 +1613,7 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(83);
     let stale_dep = entity(84);
-    let seed_hash = hash_seeds(&[seed], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let graph_version = graph_version(&vault)?;
     let first_state = PprCacheState {
         completed_depth: 3,
@@ -1729,7 +1736,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
                 vault.store.edges_out.put(&mut wtxn, &key, &value)?;
             }
             Site::CachedScores => {
-                let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+                let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
                 let cache = encode_cache_value(
                     crate::unix_seconds_now(),
                     0,
@@ -1909,8 +1916,8 @@ fn expand_ppr_pipeline_seeds_stay_uniform() -> Result<()> {
         .expand_ppr(&[a, b], 1)
         .run()?;
 
-    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Uniform);
-    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Specificity);
+    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Uniform);
+    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Specificity);
     let rtxn = vault.store.env.read_txn()?;
     assert!(
         vault
@@ -1966,8 +1973,8 @@ fn search_ppr_pipeline_applies_specificity_seeding() -> Result<()> {
 
     let first = vault.query().search_ppr(&[a, b], 1).run()?;
 
-    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Uniform);
-    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Specificity);
+    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Uniform);
+    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Specificity);
     let raw = {
         let rtxn = vault.store.env.read_txn()?;
         assert!(
@@ -2051,7 +2058,7 @@ fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
     );
     assert!(score_for(&scores, b) > 0.0);
 
-    let current_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let current_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     {
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &current_hash)?.is_some());
@@ -2800,5 +2807,303 @@ fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
         version_before,
         "a pull is a read: it never bumps the graph version"
     );
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_multiplier_contract() {
+    for (vad, salience) in [
+        (Vad::NEUTRAL, 0.0),
+        (
+            Vad {
+                valence: -1.0,
+                arousal: 0.0,
+                dominance: 0.0,
+            },
+            1.0,
+        ),
+        (
+            Vad {
+                valence: 1.0,
+                arousal: 0.0,
+                dominance: 0.0,
+            },
+            1.0,
+        ),
+        (
+            Vad {
+                valence: 0.1,
+                arousal: 0.9,
+                dominance: 1.0,
+            },
+            0.9,
+        ),
+    ] {
+        assert_eq!(vad_salience(vad), salience);
+        assert_eq!(vad_multiplier(Some(vad), 0.4), 1.0 + 0.4 * salience);
+        assert_eq!(vad_multiplier(Some(vad), 0.0).to_bits(), 1.0_f32.to_bits());
+    }
+    assert_eq!(vad_multiplier(None, 0.4), 1.0);
+    // Alpha zero must not evaluate the VAD expression at all.
+    assert_eq!(
+        vad_multiplier(
+            Some(Vad {
+                valence: f32::NAN,
+                arousal: f32::INFINITY,
+                dominance: 0.0
+            }),
+            0.0
+        )
+        .to_bits(),
+        1.0_f32.to_bits()
+    );
+}
+
+#[test]
+fn ppr_vad_normalized_share_and_zero_baseline_bits() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let neutral = entity(2);
+    let salient = entity(3);
+    let structural = entity(4);
+    vault.put_edge(&seed, EdgeKind::Mentions, &neutral, 0.25)?;
+    vault.put_edge(&seed, EdgeKind::Mentions, &salient, 0.75)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &salient,
+        Vad {
+            valence: -1.0,
+            arousal: 0.8,
+            dominance: 0.4,
+        },
+    )?;
+    vault.put_edge(&seed, EdgeKind::BelongsTo, &structural, 1.0)?;
+    for alpha in [0.0, 0.4] {
+        let mut config = vault.config.clone();
+        config.ppr_vad_alpha = alpha;
+        let fresh = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
+        let cached = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
+        for (left, right) in fresh.iter().zip(&cached) {
+            assert_eq!(left.id, right.id);
+            assert_eq!(left.score.to_bits(), right.score.to_bits());
+        }
+        // Literal pre-change formula, with exactly the original operation order.
+        let baseline_neutral = 1.0_f32 * (0.6 * 0.25 / 1.0) * (1.0 - 0.15);
+        let baseline_salient = 1.0_f32 * (0.6 * 0.75 / 1.0) * (1.0 - 0.15);
+        assert_eq!(
+            score_for(&fresh, neutral).to_bits(),
+            baseline_neutral.to_bits()
+        );
+        assert_eq!(score_for(&fresh, structural).to_bits(), 0.85_f32.to_bits());
+        if alpha == 0.0 {
+            assert_eq!(
+                score_for(&fresh, salient).to_bits(),
+                baseline_salient.to_bits()
+            );
+        } else {
+            let expected = 1.0_f32 * (0.6 * 0.75 / 1.0) * 1.4 * (1.0 - 0.15);
+            assert_eq!(score_for(&fresh, salient).to_bits(), expected.to_bits());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_gate_carries_canonical_stored_layouts() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    for (target, kind, provenance, len) in [
+        (entity(2), EdgeKind::BelongsTo, None, 12),
+        (entity(3), EdgeKind::Mentions, None, 24),
+        (
+            entity(4),
+            EdgeKind::Mentions,
+            Some(EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Confirmed,
+                actor_class: EdgeActorClass::Human,
+            }),
+            26,
+        ),
+    ] {
+        let vad = if len == 12 {
+            Vad::NEUTRAL
+        } else {
+            Vad {
+                valence: -0.8,
+                arousal: 0.9,
+                dominance: 0.4,
+            }
+        };
+        vault
+            .batch()
+            .edge_with_value_fields(
+                &seed,
+                kind,
+                &target,
+                EdgeValueFields {
+                    weight: 0.6,
+                    created_at: 1,
+                    vad,
+                    provenance,
+                },
+            )
+            .commit()?;
+        let txn = vault.store.env.read_txn()?;
+        let key = Store::encode_edge_key(&seed, kind, &target);
+        let value = vault.store.edges_out.get(&txn, &key)?.expect("stored edge");
+        assert_eq!(value.len(), len);
+        let gated = gate_edge(&vault.store, &txn, &key, &value, 0)?.expect("traversable");
+        assert_eq!(gated.vad, if len == 12 { None } else { Some(vad) });
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_cache_separates_both_alphas_and_resume_state() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    vault.put_edge(&seed, EdgeKind::Mentions, &entity(2), 1.0)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &entity(2),
+        Vad {
+            valence: 0.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut hashes = HashSet::new();
+    for &alpha in crate::config::PPR_VAD_ALPHA_SWEEP {
+        let mut config = vault.config.clone();
+        config.ppr_vad_alpha = alpha;
+        for teleport_alpha in [0.15, 0.25] {
+            assert!(hashes.insert(hash_seeds(
+                &[seed],
+                2,
+                teleport_alpha,
+                alpha,
+                SeedWeighting::Uniform
+            )));
+            ppr_query(&vault.store, &config, &[seed], 1, teleport_alpha)?;
+            let resumed = ppr_query(&vault.store, &config, &[seed], 2, teleport_alpha)?;
+            let txn = vault.store.env.read_txn()?;
+            let fresh = ppr_compute_state_weighted(
+                &vault.store,
+                &txn,
+                &[seed],
+                SeedWeighting::Uniform,
+                2,
+                PprAlphas {
+                    teleport_alpha,
+                    ppr_vad_alpha: alpha,
+                },
+                None,
+            )?;
+            assert_scores_equal(&resumed, &fresh.scores);
+            let hash = hash_seeds(&[seed], 2, teleport_alpha, alpha, SeedWeighting::Uniform);
+            assert!(vault.store.ppr_cache.get(&txn, &hash)?.is_some());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_invalid_alpha_rejected_before_empty_or_cached_query() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    ppr_query(&vault.store, &vault.config, &[seed], 1, 0.15)?;
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        let mut config = vault.config.clone();
+        config.ppr_vad_alpha = alpha;
+        for seeds in [&[][..], &[seed][..]] {
+            assert!(matches!(
+                ppr_query(&vault.store, &config, seeds, 1, 0.15),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_zero_matches_multiround_baseline_and_resume_bits() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let target = entity(2);
+    vault.put_edge(&seed, EdgeKind::Mentions, &target, 0.75)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &target,
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.5,
+        },
+    )?;
+    let mut seed_frontier = 1.0_f32;
+    let mut target_frontier = 0.0_f32;
+    let mut seed_score = 1.0_f32;
+    let mut target_score = 0.0_f32;
+    for depth in 1..=4 {
+        // Independent recurrence of the pre-VAD formula for one bidirectional
+        // semantic edge. Two frontier terms make addition order immaterial.
+        let total = seed_frontier + target_frontier;
+        let next_seed = target_frontier * (0.6 * 0.75 / 0.75) * (1.0 - 0.15) + total * 0.15;
+        let next_target = seed_frontier * (0.6 * 0.75 / 0.75) * (1.0 - 0.15);
+        seed_score += next_seed;
+        target_score += next_target;
+        seed_frontier = next_seed;
+        target_frontier = next_target;
+        let resumed = ppr_query(&vault.store, &vault.config, &[seed], depth, 0.15)?;
+        let cached = ppr_query(&vault.store, &vault.config, &[seed], depth, 0.15)?;
+        let txn = vault.store.env.read_txn()?;
+        let fresh = ppr_compute(&vault.store, &txn, &[seed], depth, 0.15)?;
+        for scores in [&resumed, &cached, &fresh] {
+            assert_eq!(score_for(scores, seed).to_bits(), seed_score.to_bits());
+            assert_eq!(score_for(scores, target).to_bits(), target_score.to_bits());
+            assert_eq!(
+                scores.iter().map(|row| row.id).collect::<Vec<_>>(),
+                vec![seed, target]
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_reverse_hops_use_the_same_salience_multiplier() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let source = entity(1);
+    let seed = entity(2);
+    let vad = Vad {
+        valence: 0.0,
+        arousal: 0.9,
+        dominance: 1.0,
+    };
+    vault
+        .batch()
+        .edge_with_value_fields(
+            &source,
+            EdgeKind::Mentions,
+            &seed,
+            EdgeValueFields {
+                weight: 0.75,
+                created_at: 1,
+                vad,
+                provenance: Some(EdgeProvenanceFlags {
+                    confirmation_status: EdgeConfirmationStatus::Confirmed,
+                    actor_class: EdgeActorClass::Human,
+                }),
+            },
+        )
+        .commit()?;
+    let mut config = vault.config.clone();
+    config.ppr_vad_alpha = 0.4;
+    let scores = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
+    let expected = 1.0_f32 * (0.6 * 0.75 / 0.75) * (1.0 + 0.4 * 0.9) * (1.0 - 0.15);
+    assert_eq!(score_for(&scores, source).to_bits(), expected.to_bits());
     Ok(())
 }

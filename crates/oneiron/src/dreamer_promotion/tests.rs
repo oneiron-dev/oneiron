@@ -1159,3 +1159,125 @@ fn tool_output_meet_promotion_no_longer_lands_auto_on_an_unsigned_manifest() -> 
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod vad_deferral_tests {
+    use super::*;
+    use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, Vad, VadAnnotation, VadAnnotationSource};
+    use crate::claim::ClaimLifecycleStatus;
+
+    const FULL_VAD: Vad = Vad {
+        valence: -0.5,
+        arousal: 0.75,
+        dominance: 0.25,
+    };
+
+    fn annotated_fixture(vault: &Vault) -> Result<PromotionFixture> {
+        let fixture = fixture(vault)?;
+        vault.annotate_turn_vad(
+            &fixture.turn,
+            VadAnnotation::new(FULL_VAD, VadAnnotationSource::ModelInference, 7)?,
+        )?;
+        Ok(fixture)
+    }
+
+    fn active_states(vault: &Vault, claim: EntityId) -> Result<Vec<EntityId>> {
+        let mut states = Vec::new();
+        for edge in vault.edges_in(&claim)? {
+            if edge.kind == EdgeKind::ClaimOf
+                && let Some(body) = vault.get_claim(&edge.target)?
+                && body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                states.push(edge.target);
+            }
+        }
+        Ok(states)
+    }
+
+    #[test]
+    fn promotion_auto_all_landed_classes_must_remain_non_consolidatable_tripwire() -> Result<()> {
+        for source in [
+            ClaimSource::Generated,
+            ClaimSource::ToolOutput,
+            ClaimSource::Imported,
+        ] {
+            let (_dir, vault) = open_auto_vault();
+            let fixture = annotated_fixture(&vault)?;
+            let mut promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);
+            promoted.evidence_meet = source;
+            let claim = promoted.claim_id;
+            // Pre-existing incident edges make an accidental population visible
+            // during promotion, before any canonical decline could clear it.
+            vault.put_edge(&claim, EdgeKind::Mentions, &fixture.subject, 0.6)?;
+            vault.put_edge(&fixture.subject, EdgeKind::Supports, &claim, 1.0)?;
+            let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+            assert_eq!(outcome.landed, vec![claim]);
+            assert!(outcome.rejected.is_empty());
+            assert!(outcome.pended.is_empty());
+            let body = vault.get_claim(&claim)?.expect("landed Auto claim");
+            assert_eq!(body.approval, ClaimApprovalStatus::Auto);
+            assert_eq!(body.source, Some(source));
+            assert!(
+                !claim_consolidatable(&body),
+                "promotion lane changed: revisit VAD trigger"
+            );
+            assert!(active_states(&vault, claim)?.is_empty());
+            let mut semantic = 0;
+            for edge in vault
+                .edges_out(&claim)?
+                .into_iter()
+                .chain(vault.edges_in(&claim)?)
+            {
+                if let Some(vad) = edge.vad {
+                    semantic += 1;
+                    assert_eq!(vad, Vad::NEUTRAL);
+                }
+            }
+            assert!(
+                semantic >= 2,
+                "incident semantic edges make the tripwire non-vacuous"
+            );
+            assert!(matches!(
+                vault.consolidate_claim_vad_now(&claim, 11_000),
+                Err(Error::InvalidClaimBody("claim is not consolidatable"))
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn promotion_deferred_approved_fixture_populates_full_vad_non_vacuously() -> Result<()> {
+        let (_dir, vault) = open_auto_vault();
+        let fixture = annotated_fixture(&vault)?;
+        let promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);
+        let claim = promoted.claim_id;
+        let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+        assert_eq!(outcome.landed, vec![claim]);
+        assert!(active_states(&vault, claim)?.is_empty());
+        vault.put_edge(&claim, EdgeKind::Mentions, &fixture.subject, 0.6)?;
+        vault.put_edge(&claim, EdgeKind::BelongsTo, &fixture.subject, 1.0)?;
+        // Fixture-only overwrite: ordinary Auto promotions have no pending
+        // consent. This is not a new production approval door.
+        let mut body = vault.get_claim(&claim)?.expect("landed claim");
+        body.approval = ClaimApprovalStatus::Approved;
+        vault.put_claim(&claim, &body, occurred(9_000), 9_000)?;
+        let populated = vault.consolidate_claim_vad_now(&claim, 11_000)?;
+        assert_eq!(populated.vad, Some(FULL_VAD));
+        assert_eq!(populated.evidence_turns.len(), 1);
+        assert!(populated.structural_edges_skipped >= 2);
+        let state = populated.reappraisal.created_claim_id.expect("new state");
+        assert_eq!(active_states(&vault, claim)?, vec![state]);
+        for edge in vault.edges_out(&claim)? {
+            if edge.kind == EdgeKind::Mentions {
+                assert_eq!(edge.vad, Some(FULL_VAD));
+            } else if edge.kind == EdgeKind::BelongsTo {
+                assert_eq!(edge.vad, None);
+            }
+        }
+        let retry = vault.consolidate_claim_vad_now(&claim, 12_000)?;
+        assert_eq!(retry.reappraisal.active_claim_id, Some(state));
+        assert_eq!(retry.reappraisal.created_claim_id, None);
+        Ok(())
+    }
+}

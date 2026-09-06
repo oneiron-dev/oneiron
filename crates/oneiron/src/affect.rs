@@ -1080,6 +1080,19 @@ impl Vault {
         claim_id: &EntityId,
         now: u64,
     ) -> Result<ClaimVadConsolidation> {
+        self.consolidate_claim_vad_now(claim_id, now)
+    }
+
+    /// Synchronous entry to the canonical claim VAD transaction.
+    ///
+    /// Call only after any enclosing write transaction has committed. Retrying
+    /// with unchanged evidence reuses the active reappraisal state. Admission
+    /// errors, including clear-on-decline, are identical to the async entry.
+    pub fn consolidate_claim_vad_now(
+        &self,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
         self.consolidate_claim_vad_in_txn(claim_id, now)
     }
 

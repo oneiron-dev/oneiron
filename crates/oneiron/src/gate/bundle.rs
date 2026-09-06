@@ -280,6 +280,15 @@ impl Vault {
     /// [`Error::GateConsentStale`] for digest or binding drift,
     /// [`Error::GateWriteRejected`] for a member the live gate refuses, and
     /// [`Error::CorruptedIndex`] for an unreadable pending row.
+    ///
+    /// Approve runs canonical claim VAD consolidation after the consent commit.
+    /// A VAD error is returned with all Approved writes and receipts durable;
+    /// earlier members may be populated and later members not yet attempted.
+    /// Retry [`Vault::consolidate_claim_vad`] on the approved member ids. With
+    /// unchanged evidence it reuses the active state. The bundle door is closed
+    /// and its retry returns [`Error::EntityNotFound`], not success. Decline does
+    /// not consolidate; annotation/reappraisal predicates are never exempted
+    /// from the canonical rejection when approved.
     pub fn resolve_gate_consent_bundle(
         &self,
         owner: &AuthenticatedOwner,
@@ -464,6 +473,13 @@ impl Vault {
         })?;
         for decision in recorded_decisions {
             decision.record_metrics();
+        }
+        // These ids are the Dreamer members actually approved in the committed
+        // transaction. The canonical consolidator must open a separate writer.
+        if action == GateConsentBundleAction::Approve {
+            for claim_id in &receipt.member_claim_ids {
+                self.consolidate_claim_vad_now(claim_id, now)?;
+            }
         }
         Ok(receipt)
     }

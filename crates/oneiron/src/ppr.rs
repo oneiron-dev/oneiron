@@ -3,9 +3,11 @@ use std::collections::{HashMap, HashSet};
 use heed::{RoTxn, RwTxn};
 use xxhash_rust::xxh3::xxh3_128;
 
+use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 #[cfg(test)]
 use crate::config::VaultConfig;
+use crate::config::{PPR_VAD_ALPHA_DEFAULT, validate_ppr_vad_alpha};
 #[cfg(test)]
 use crate::edge::EDGE_VALUE_STRUCTURAL_LEN;
 use crate::edge::{
@@ -63,8 +65,37 @@ const MAX_PPR_DEPTH: u32 = 10;
 /// instead of uniform `1/n`, and the cache key gained a [`SeedWeighting`]
 /// byte. v4 = ONE-1236 lexical query hint side claims are skipped during
 /// `ClaimOf` traversal so synthetic hint records do not consume transition
-/// mass. Pre-bump rows are unreachable under v4 keys.
-const PPR_FORMULA_VERSION: u32 = 4;
+/// mass. v5 = stored-edge VAD salience, with both alphas in cache identity.
+const PPR_FORMULA_VERSION: u32 = 5;
+
+#[inline]
+pub(crate) fn vad_salience(vad: Vad) -> f32 {
+    vad.valence.abs().max(vad.arousal)
+}
+
+#[inline]
+pub(crate) fn vad_multiplier(vad: Option<Vad>, alpha: f32) -> f32 {
+    if alpha == 0.0 {
+        1.0
+    } else {
+        vad.map_or(1.0, |vad| 1.0 + alpha * vad_salience(vad))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PprAlphas {
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
+}
+
+impl PprAlphas {
+    fn default_vad(teleport_alpha: f32) -> Self {
+        Self {
+            teleport_alpha,
+            ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
+        }
+    }
+}
 
 /// Seed-mass distribution mode (ARCH-0039 Layer 2, "Seed specificity
 /// (search_ppr only)").
@@ -225,7 +256,8 @@ struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
     txn: &'a RoTxn<'txn>,
     seeds: &'a [EntityId],
     seed_weights: &'a [f32],
-    alpha: f32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
     /// `None` for the ordinary vault-wide walk — the cached, unscoped ranking
     /// every landed caller shares. `Some` only on the compute-only scoped
     /// entry, which never reads or writes the shared cache.
@@ -236,7 +268,8 @@ struct PprCacheReadContext<'a, 'txn, D: ManifestDbs> {
     store: &'a D,
     txn: &'a RoTxn<'txn>,
     seeds: &'a [EntityId],
-    alpha: f32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
     weighting: SeedWeighting,
     now: u64,
     current_graph_version: u64,
@@ -284,9 +317,18 @@ pub(crate) fn ppr_compute_weighted(
     seeds: &[EntityId],
     weighting: SeedWeighting,
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    Ok(ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alpha, None)?.scores)
+    Ok(ppr_compute_state_weighted(
+        store,
+        txn,
+        seeds,
+        weighting,
+        depth,
+        PprAlphas::default_vad(teleport_alpha),
+        None,
+    )?
+    .scores)
 }
 
 fn ppr_compute_state_weighted(
@@ -295,9 +337,11 @@ fn ppr_compute_state_weighted(
     seeds: &[EntityId],
     weighting: SeedWeighting,
     depth: u32,
-    alpha: f32,
+    alphas: PprAlphas,
     visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<PprCacheState> {
+    validate_ppr_vad_alpha(alphas.ppr_vad_alpha)?;
+
     if seeds.is_empty() {
         return Ok(PprCacheState {
             completed_depth: 0,
@@ -323,7 +367,8 @@ fn ppr_compute_state_weighted(
         txn,
         seeds,
         seed_weights: &seed_weights,
-        alpha,
+        teleport_alpha: alphas.teleport_alpha,
+        ppr_vad_alpha: alphas.ppr_vad_alpha,
         visibility,
     };
     run_ppr_rounds(
@@ -343,7 +388,7 @@ fn ppr_resume_state_weighted(
     seeds: &[EntityId],
     weighting: SeedWeighting,
     target_depth: u32,
-    alpha: f32,
+    alphas: PprAlphas,
     resume: PprCacheState,
 ) -> Result<PprCacheState> {
     let seed_weights = seed_weights(store, txn, seeds, weighting)?;
@@ -362,7 +407,8 @@ fn ppr_resume_state_weighted(
         txn,
         seeds,
         seed_weights: &seed_weights,
-        alpha,
+        teleport_alpha: alphas.teleport_alpha,
+        ppr_vad_alpha: alphas.ppr_vad_alpha,
         // Resume replays a SHARED cached state, which only the unscoped walk
         // ever writes; the scoped entry never reads or resumes that cache.
         visibility: None,
@@ -439,17 +485,20 @@ fn run_ppr_rounds(
                     // collapses the per-edge shares toward 0.0).
                     let strength: f32 = group.iter().map(|edge| edge.weight).sum();
                     for edge in &group {
-                        // ARCH-0039 Layer 1 (D7):
-                        //   propagated = score * (λ_τ * w_uv / s(u, τ)) * (1 − α)
-                        let propagated =
-                            score * (edge.lambda * edge.weight / strength) * (1.0 - context.alpha);
+                        // Normalize within kind before applying ONE-215 VAD
+                        // salience. Zero VAD alpha returns the literal 1.0.
+                        let share = edge.lambda * edge.weight / strength;
+                        let propagated = score
+                            * share
+                            * vad_multiplier(edge.vad, context.ppr_vad_alpha)
+                            * (1.0 - context.teleport_alpha);
                         *next.entry((edge.neighbor, edge.new_hops)).or_default() += propagated;
                     }
                 }
             }
         }
 
-        let teleport_mass = total * context.alpha;
+        let teleport_mass = total * context.teleport_alpha;
         for (seed, weight) in context.seeds.iter().zip(context.seed_weights) {
             *next.entry((*seed, 0)).or_default() += teleport_mass * *weight;
         }
@@ -539,9 +588,16 @@ pub(crate) fn ppr_compute(
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    ppr_compute_weighted(store, txn, seeds, SeedWeighting::Uniform, depth, alpha)
+    ppr_compute_weighted(
+        store,
+        txn,
+        seeds,
+        SeedWeighting::Uniform,
+        depth,
+        teleport_alpha,
+    )
 }
 
 /// Resolves the normalized per-seed mass vector for `weighting`. Always sums
@@ -673,10 +729,10 @@ fn recency_tiered_cache_ttl_secs(
 #[cfg(test)]
 pub(crate) fn ppr_query(
     store: &Store,
-    _config: &VaultConfig,
+    config: &VaultConfig,
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
     let (scores, deferred_write) = {
         let rtxn = store.env.read_txn()?;
@@ -685,7 +741,10 @@ pub(crate) fn ppr_query(
             &rtxn,
             seeds,
             depth,
-            alpha,
+            PprAlphas {
+                teleport_alpha,
+                ppr_vad_alpha: config.ppr_vad_alpha,
+            },
             SeedWeighting::Uniform,
             true,
         )?
@@ -710,14 +769,14 @@ pub(crate) fn ppr_query_in_txn(
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
     ppr_query_in_txn_impl(
         store,
         txn,
         seeds,
         depth,
-        alpha,
+        PprAlphas::default_vad(teleport_alpha),
         SeedWeighting::Uniform,
         false,
     )
@@ -729,10 +788,42 @@ pub(crate) fn ppr_query_in_txn_with_deferred_cache(
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
     weighting: SeedWeighting,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
-    ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, weighting, true)
+    ppr_query_in_txn_with_vad_deferred_cache(
+        store,
+        txn,
+        seeds,
+        depth,
+        teleport_alpha,
+        PPR_VAD_ALPHA_DEFAULT,
+        weighting,
+    )
+}
+
+/// VAD-aware vault-wide query; the default-only wrapper preserves other callers.
+pub(crate) fn ppr_query_in_txn_with_vad_deferred_cache(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
+    weighting: SeedWeighting,
+) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+    ppr_query_in_txn_impl(
+        store,
+        txn,
+        seeds,
+        depth,
+        PprAlphas {
+            teleport_alpha,
+            ppr_vad_alpha,
+        },
+        weighting,
+        true,
+    )
 }
 
 /// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
@@ -741,8 +832,8 @@ pub(crate) fn ppr_query_in_txn_with_deferred_cache(
 /// [`ppr_query_in_txn_with_deferred_cache`], plus [`PprNodeVisibility`] as a
 /// traversal gate — and three deliberate subtractions:
 ///
-/// 1. NO CACHE READ. `ppr_cache` rows are keyed by `(seeds, depth, alpha,
-///    weighting)` and carry no actor, so serving one here would hand an actor
+/// 1. NO CACHE READ. `ppr_cache` rows are keyed by `(seeds, depth, teleport_alpha,
+///    ppr_vad_alpha, weighting)` and carry no actor, so serving one here would hand an actor
 ///    a ranking computed over nodes it cannot read (and, in the other
 ///    direction, a scoped row served to the ordinary path would silently
 ///    narrow it). The two rankings are different objects; they do not share
@@ -759,7 +850,7 @@ pub(crate) fn ppr_query_scoped_in_txn(
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
     weighting: SeedWeighting,
     visibility: &dyn PprNodeVisibility,
 ) -> Result<Vec<ScoredEntity>> {
@@ -781,7 +872,7 @@ pub(crate) fn ppr_query_scoped_in_txn(
         &readable_seeds,
         weighting,
         depth,
-        alpha,
+        PprAlphas::default_vad(teleport_alpha),
         Some(visibility),
     )?;
     Ok(state.scores)
@@ -808,24 +899,33 @@ fn ppr_query_in_txn_impl(
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    alphas: PprAlphas,
     weighting: SeedWeighting,
     defer_cache_writes: bool,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
     validate_ppr_request(seeds, depth)?;
 
+    validate_ppr_vad_alpha(alphas.ppr_vad_alpha)?;
+
     if seeds.is_empty() {
         return Ok((Vec::new(), None));
     }
 
-    let seed_hash = hash_seeds(seeds, depth, alpha, weighting);
+    let seed_hash = hash_seeds(
+        seeds,
+        depth,
+        alphas.teleport_alpha,
+        alphas.ppr_vad_alpha,
+        weighting,
+    );
     let now = crate::unix_seconds_now();
     let current_graph_version = read_graph_version(store, txn)?;
     let cache_context = PprCacheReadContext {
         store,
         txn,
         seeds,
-        alpha,
+        teleport_alpha: alphas.teleport_alpha,
+        ppr_vad_alpha: alphas.ppr_vad_alpha,
         weighting,
         now,
         current_graph_version,
@@ -839,9 +939,9 @@ fn ppr_query_in_txn_impl(
 
     let resume = read_deepest_resume_state(&cache_context, depth)?;
     let state = if let Some(resume) = resume {
-        ppr_resume_state_weighted(store, txn, seeds, weighting, depth, alpha, resume)?
+        ppr_resume_state_weighted(store, txn, seeds, weighting, depth, alphas, resume)?
     } else {
-        ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alpha, None)?
+        ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?
     };
     let scores = state.scores.clone();
     if !defer_cache_writes {
@@ -865,7 +965,8 @@ fn read_deepest_resume_state(
         let seed_hash = hash_seeds(
             context.seeds,
             completed_depth,
-            context.alpha,
+            context.teleport_alpha,
+            context.ppr_vad_alpha,
             context.weighting,
         );
         let Some(row) = read_resume_cache_row(context, &seed_hash, completed_depth)? else {
@@ -1244,6 +1345,7 @@ struct GatedEdge {
     kind: EdgeKind,
     lambda: f32,
     weight: f32,
+    vad: Option<Vad>,
     neighbor: EntityId,
     new_hops: u32,
 }
@@ -1324,6 +1426,7 @@ fn gate_edge(
         kind,
         lambda,
         weight: decoded.weight,
+        vad: decoded.vad,
         neighbor,
         new_hops,
     }))
@@ -1364,14 +1467,15 @@ fn sort_frontier(frontier: &mut [PprFrontierEntry]) {
     });
 }
 
-/// Cache key: `xxh3_128(sorted seeds ‖ depth ‖ alpha ‖ PPR_FORMULA_VERSION ‖
+/// Cache key: `xxh3_128(sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖ PPR_FORMULA_VERSION ‖
 /// seed-weighting byte)`. The weighting byte keeps `search_ppr`
 /// (specificity-seeded) and `expand_ppr` (uniform-seeded) rows from ever
 /// serving each other (ARCH-0039 Layer 2 is `search_ppr`-only).
 fn hash_seeds(
     seeds: &[EntityId],
     depth: u32,
-    alpha: f32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
     weighting: SeedWeighting,
 ) -> [u8; SEED_HASH_LEN] {
     let mut sorted = seeds.to_vec();
@@ -1380,14 +1484,15 @@ fn hash_seeds(
     let mut bytes = Vec::with_capacity(
         sorted.len() * ENTITY_ID_LEN
             + 2 * std::mem::size_of::<u32>()
-            + std::mem::size_of::<f32>()
+            + 2 * std::mem::size_of::<f32>()
             + 1,
     );
     for seed in &sorted {
         bytes.extend_from_slice(seed.as_bytes());
     }
     bytes.extend_from_slice(&depth.to_le_bytes());
-    bytes.extend_from_slice(&alpha.to_le_bytes());
+    bytes.extend_from_slice(&teleport_alpha.to_le_bytes());
+    bytes.extend_from_slice(&ppr_vad_alpha.to_le_bytes());
     bytes.extend_from_slice(&PPR_FORMULA_VERSION.to_le_bytes());
     bytes.push(weighting.cache_key_byte());
 

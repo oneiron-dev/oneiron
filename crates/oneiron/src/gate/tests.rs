@@ -14473,3 +14473,155 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
     assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
     Ok(())
 }
+
+#[cfg(test)]
+mod vad_vetting_tests {
+    use super::*;
+    use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, Vad, VadAnnotation, VadAnnotationSource};
+    use crate::registry::ENTITY_TYPE_TURN;
+
+    const RUN: &str = "bundle-vad-vetting";
+    const FULL_VAD: Vad = Vad {
+        valence: -0.5,
+        arousal: 0.75,
+        dominance: 0.25,
+    };
+
+    fn pending_member(vault: &crate::Vault, predicate: &str) -> Result<EntityId> {
+        let turn = EntityId::now();
+        let claim = EntityId::now();
+        let turn_body =
+            rmp_serde::to_vec_named(&serde_json::json!({"txt": "evidence"})).expect("turn body");
+        vault.put_entity(&turn, ENTITY_TYPE_TURN, test_time(2), 2, &turn_body)?;
+        vault.annotate_turn_vad(
+            &turn,
+            VadAnnotation::new(FULL_VAD, VadAnnotationSource::ModelInference, 3)?,
+        )?;
+        let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+        body.predicate = predicate.to_owned();
+        body.approval = ClaimApprovalStatus::Proposed;
+        body.evidence = Some(precommit_evidence(vec![turn]));
+        let (candidate, envelope) =
+            dreamer_claim_candidate_write_parts(vault, &body, test_id(0x40), RUN)?;
+        vault
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time(10), 10)
+            .commit()?;
+        assert!(has_pending_gate_consent(vault, &claim)?);
+        vault.put_edge(&claim, EdgeKind::Mentions, &test_id(0x21), 0.6)?;
+        vault.put_edge(&claim, EdgeKind::BelongsTo, &test_id(0x21), 1.0)?;
+        Ok(claim)
+    }
+
+    #[test]
+    fn gate_bundle_approve_hook_populates_full_vad_and_skips_structural() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x70),
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
+        )?;
+        let claim = pending_member(&vault, "profile.name")?;
+        let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+        let bundle = vault.review_gate_consent_bundle(&reviewer, RUN)?;
+        let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+        vault.resolve_gate_consent_bundle(
+            &owner,
+            bundle.bundle_id,
+            RUN,
+            GateConsentBundleAction::Approve,
+            20,
+        )?;
+        assert_eq!(
+            vault.get_claim(&claim)?.expect("approved").approval,
+            ClaimApprovalStatus::Approved
+        );
+        // Observe the production hook's state BEFORE any explicit retry.
+        let edges = vault.edges_out(&claim)?;
+        assert_eq!(
+            edges
+                .iter()
+                .find(|edge| edge.kind == EdgeKind::Mentions)
+                .expect("semantic edge")
+                .vad,
+            Some(FULL_VAD)
+        );
+        assert_eq!(
+            edges
+                .iter()
+                .find(|edge| edge.kind == EdgeKind::BelongsTo)
+                .expect("structural edge")
+                .vad,
+            None
+        );
+        let mut states = Vec::new();
+        for edge in vault.edges_in(&claim)? {
+            if edge.kind == EdgeKind::ClaimOf
+                && let Some(body) = vault.get_claim(&edge.target)?
+                && body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                states.push(edge.target);
+            }
+        }
+        assert_eq!(states.len(), 1);
+        let retry = vault.consolidate_claim_vad_now(&claim, 30)?;
+        assert_eq!(retry.vad, Some(FULL_VAD));
+        assert_eq!(retry.reappraisal.active_claim_id, Some(states[0]));
+        assert_eq!(retry.reappraisal.created_claim_id, None);
+        assert!(matches!(
+            vault.resolve_gate_consent_bundle(
+                &owner,
+                bundle.bundle_id,
+                RUN,
+                GateConsentBundleAction::Approve,
+                31,
+            ),
+            Err(Error::EntityNotFound)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn gate_bundle_vad_failure_is_loud_after_approved_commit_but_decline_skips() -> Result<()> {
+        for action in [
+            GateConsentBundleAction::Approve,
+            GateConsentBundleAction::Decline,
+        ] {
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(
+                &vault,
+                test_id(0x70),
+                &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
+            )?;
+            let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+            let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+            let bundle = vault.review_gate_consent_bundle(&reviewer, RUN)?;
+            let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+            let result =
+                vault.resolve_gate_consent_bundle(&owner, bundle.bundle_id, RUN, action, 20);
+            let stored = vault.get_claim(&claim)?.expect("committed member");
+            if action == GateConsentBundleAction::Approve {
+                assert!(matches!(
+                    result,
+                    Err(Error::InvalidClaimBody(
+                        "claim VAD state claims cannot be consolidated"
+                    ))
+                ));
+                assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+                assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+            } else {
+                result?;
+                assert_eq!(stored.approval, ClaimApprovalStatus::Rejected);
+                assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Retracted);
+            }
+            assert!(!has_pending_gate_consent(&vault, &claim)?);
+            assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
+            assert!(matches!(
+                vault.resolve_gate_consent_bundle(&owner, bundle.bundle_id, RUN, action, 30),
+                Err(Error::EntityNotFound)
+            ));
+        }
+        Ok(())
+    }
+}

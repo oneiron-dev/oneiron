@@ -86,6 +86,12 @@ pub struct PromotionOutcome {
 /// Promotes consolidated candidates as vault claims through the gate
 /// chokepoint — one candidate per write txn, in input order.
 ///
+/// Do not consolidate claim VAD here: every landed claim is Auto with a
+/// Generated, ToolOutput, or Imported evidence meet and fails the canonical
+/// consolidation read gate. VAD population belongs after an existing vetting
+/// door commits Approved, not at promotion. Ordinary promotions without pending
+/// consent have no such door and remain unvetted.
+///
 /// Caller contract (Hermes gate 9c): the attempt may be `complete()`d ONLY
 /// when `rejected` is empty — a landed-verification mismatch fails the
 /// attempt, never acks. Milestones are the caller's (CheckpointReached before
