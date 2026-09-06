@@ -93,6 +93,8 @@ fn print_help() {
                                        aligned with ONEIRON-ARCH-0042\n\
                                        (deterministic context-pack arm +\n\
                                        explicit not-ready Agentic/Chat arms)\n\
+          beam run <manifest>         run a BEAM manifest; fixture dataset.path is\n\
+                                       resolved relative to the manifest\n\
           beam trace-export           export RetrievalTrace JSONL by fork hash\n\
                                        (ONE-1311 BEAM deterministic-arm reader)\n\
           eval outcome-ingest         apply evaluator-supplied rewards from\n\

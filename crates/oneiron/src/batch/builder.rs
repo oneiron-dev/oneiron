@@ -780,6 +780,10 @@ impl<'a> BatchBuilder<'a> {
     /// transaction, so a later validation failure cannot leave an orphan
     /// receipt behind.
     ///
+    /// Approved bound Dreamer consents then run canonical VAD consolidation
+    /// after commit. A population error is returned with the batch retained;
+    /// retry [`Vault::consolidate_claim_vad`] on the approved member ids.
+    ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
@@ -815,6 +819,29 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
+        let mut pending_vad_ids = Vec::new();
+        for op in &self.ops {
+            let (id, approval) = match op {
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    allow_reserved_predicate: false,
+                    ..
+                } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
+                    (*id, crate::claim::decode_claim_body(data, false)?.approval)
+                }
+                BatchOp::ClaimCandidate { id, envelope, .. } => (*id, envelope.approval()),
+                _ => continue,
+            };
+            if self
+                .vault
+                .pending_dreamer_vad_approval_in_txn(&wtxn, &id, approval)?
+            {
+                pending_vad_ids.push(id);
+            }
+        }
+
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
@@ -829,9 +856,19 @@ impl<'a> BatchBuilder<'a> {
             ApplyOpsGateMode::new(false, true)
                 .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
         )?;
+        let approved_vad_ids = self
+            .vault
+            .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
             decision.record_metrics();
+        }
+        // The canonical wrapper starts a separate write transaction. Never run
+        // it during apply or preflight, and never turn a population error into
+        // success merely because the approval is already durable.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.vault.consolidate_claim_vad_now(&id, now)?;
         }
         Ok(())
     }

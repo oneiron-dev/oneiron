@@ -14488,6 +14488,13 @@ mod vad_vetting_tests {
     };
 
     fn pending_member(vault: &crate::Vault, predicate: &str) -> Result<EntityId> {
+        pending_member_with_turn(vault, predicate).map(|(claim, _)| claim)
+    }
+
+    fn pending_member_with_turn(
+        vault: &crate::Vault,
+        predicate: &str,
+    ) -> Result<(EntityId, EntityId)> {
         let turn = EntityId::now();
         let claim = EntityId::now();
         let turn_body =
@@ -14510,7 +14517,226 @@ mod vad_vetting_tests {
         assert!(has_pending_gate_consent(vault, &claim)?);
         vault.put_edge(&claim, EdgeKind::Mentions, &test_id(0x21), 0.6)?;
         vault.put_edge(&claim, EdgeKind::BelongsTo, &test_id(0x21), 1.0)?;
-        Ok(claim)
+        Ok((claim, turn))
+    }
+
+    fn generic_approve(
+        vault: &crate::Vault,
+        claim: EntityId,
+        batch: bool,
+        amend: bool,
+    ) -> Result<()> {
+        let mut body = vault.get_claim(&claim)?.expect("pending member");
+        body.approval = ClaimApprovalStatus::Approved;
+        if amend {
+            body.value = Value::from("unbound replacement");
+        }
+        if batch {
+            // Restore the candidate portion, not an envelope nested in itself.
+            body.evidence = body
+                .evidence
+                .as_ref()
+                .and_then(Value::as_map)
+                .and_then(|entries| {
+                    entries.iter().find(|(key, _)| {
+                        key.as_str()
+                            == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)
+                    })
+                })
+                .map(|(_, value)| value.clone());
+            let (candidate, envelope) =
+                dreamer_claim_candidate_write_parts(vault, &body, test_id(0x40), RUN)?;
+            vault
+                .batch()
+                .claim_candidate(&claim, candidate, &envelope, test_time(10), 10)
+                .commit()
+        } else {
+            vault.put_claim(&claim, &body, test_time(10), 10)
+        }
+    }
+
+    #[test]
+    fn generic_dreamer_approval_doors_populate_vad_after_commit() -> Result<()> {
+        for batch in [false, true] {
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(
+                &vault,
+                test_id(0x70),
+                &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
+            )?;
+            let claim = pending_member(&vault, "profile.name")?;
+            generic_approve(&vault, claim, batch, false)?;
+            assert!(!has_pending_gate_consent(&vault, &claim)?);
+            assert_eq!(
+                vault.get_claim(&claim)?.expect("durable approval").approval,
+                ClaimApprovalStatus::Approved
+            );
+            let edges = vault.edges_out(&claim)?;
+            assert_eq!(
+                edges
+                    .iter()
+                    .find(|edge| edge.kind == EdgeKind::Mentions)
+                    .expect("semantic")
+                    .vad,
+                Some(FULL_VAD)
+            );
+            assert_eq!(
+                edges
+                    .iter()
+                    .find(|edge| edge.kind == EdgeKind::BelongsTo)
+                    .expect("structural")
+                    .vad,
+                None
+            );
+            let retry = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
+            assert_eq!(retry.vad, Some(FULL_VAD));
+            assert!(retry.reappraisal.active_claim_id.is_some());
+            assert_eq!(retry.reappraisal.created_claim_id, None);
+            let again = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
+            assert_eq!(
+                again.reappraisal.active_claim_id,
+                retry.reappraisal.active_claim_id
+            );
+            assert_eq!(again.reappraisal.created_claim_id, None);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generic_dreamer_approval_failures_preserve_commit_boundary() -> Result<()> {
+        for batch in [false, true] {
+            for stale_binding in [false, true] {
+                let (_tmp, vault) = temp_vault();
+                put_policy_manifest_bytes(
+                    &vault,
+                    test_id(0x70),
+                    &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
+                )?;
+                let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+                let result = generic_approve(&vault, claim, batch, stale_binding);
+                if stale_binding {
+                    assert!(matches!(result, Err(Error::GateConsentStale { .. })));
+                    assert!(has_pending_gate_consent(&vault, &claim)?);
+                    assert_eq!(
+                        vault.get_claim(&claim)?.expect("uncommitted").approval,
+                        ClaimApprovalStatus::Proposed
+                    );
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(Error::InvalidClaimBody(
+                            "claim VAD state claims cannot be consolidated"
+                        ))
+                    ));
+                    assert!(!has_pending_gate_consent(&vault, &claim)?);
+                    assert_eq!(
+                        vault.get_claim(&claim)?.expect("committed").approval,
+                        ClaimApprovalStatus::Approved
+                    );
+                    assert!(matches!(
+                        vault.consolidate_claim_vad_now(&claim, 30),
+                        Err(Error::InvalidClaimBody(
+                            "claim VAD state claims cannot be consolidated"
+                        ))
+                    ));
+                }
+                assert_eq!(
+                    vault
+                        .edges_out(&claim)?
+                        .iter()
+                        .find(|edge| edge.kind == EdgeKind::Mentions)
+                        .expect("semantic")
+                        .vad,
+                    Some(Vad::NEUTRAL)
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generic_dreamer_vad_failure_recovers_through_canonical_retry() -> Result<()> {
+        for batch in [false, true] {
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(
+                &vault,
+                test_id(0x70),
+                &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
+            )?;
+            let (claim, turn) = pending_member_with_turn(&vault, "profile.name")?;
+            let annotation = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+            let original = {
+                let txn = vault.store.env.read_txn()?;
+                vault
+                    .store
+                    .entities
+                    .get(&txn, annotation.as_bytes())?
+                    .expect("annotation claim")
+                    .to_vec()
+            };
+            vault.with_write_txn(|wtxn| {
+                let corrupt = crate::test_util::entity_record(
+                    ENTITY_TYPE_PERSON,
+                    test_time(3),
+                    3,
+                    b"corrupt annotation",
+                );
+                vault
+                    .store
+                    .entities
+                    .put(wtxn, annotation.as_bytes(), &corrupt)?;
+                Ok(())
+            })?;
+            assert!(matches!(
+                generic_approve(&vault, claim, batch, false),
+                Err(Error::CorruptedIndex("VAD annotation claim"))
+            ));
+            assert_eq!(
+                vault.get_claim(&claim)?.expect("durable approval").approval,
+                ClaimApprovalStatus::Approved
+            );
+            assert!(!has_pending_gate_consent(&vault, &claim)?);
+            vault.with_write_txn(|wtxn| {
+                vault
+                    .store
+                    .entities
+                    .put(wtxn, annotation.as_bytes(), &original)?;
+                Ok(())
+            })?;
+            let recovered = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
+            assert_eq!(recovered.vad, Some(FULL_VAD));
+            assert!(recovered.reappraisal.created_claim_id.is_some());
+            let retry = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
+            assert_eq!(
+                retry.reappraisal.active_claim_id,
+                recovered.reappraisal.active_claim_id
+            );
+            assert_eq!(retry.reappraisal.created_claim_id, None);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generic_non_dreamer_consent_does_not_run_vad_hook() -> Result<()> {
+        for batch in [false, true] {
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+            let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
+            vault.with_write_txn(|wtxn| {
+                let mut pending = vault
+                    .store
+                    .pending_gate_consent_in_txn(wtxn, &claim)?
+                    .expect("pending member");
+                pending.dreamer_run_id = None;
+                vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+            })?;
+            generic_approve(&vault, claim, batch, false)?;
+            assert_eq!(
+                vault.get_claim(&claim)?.expect("approved").approval,
+                ClaimApprovalStatus::Approved
+            );
+        }
+        Ok(())
     }
 
     #[test]
