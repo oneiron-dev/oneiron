@@ -2,7 +2,10 @@ use core::assert_matches;
 use std::path::PathBuf;
 
 use super::*;
-use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
+use crate::config::{
+    HnswConfig, HostingPrivacyPosture, TextAnalyzerConfig, VaultConfig, VaultDataKeyCustody,
+    VaultPrivacyConfig,
+};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
     STORAGE_ABI_VERSION_KEY, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
@@ -27,6 +30,7 @@ fn test_config() -> VaultConfig {
         skip_text_index_manifest_check: false,
         off_record_enabled: true,
         off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
+        privacy: VaultPrivacyConfig::default(),
     }
 }
 
@@ -1036,4 +1040,222 @@ fn production_opener_has_no_test_unseeded_configuration_selector() -> Result<()>
     // TestUnseeded is only passed through the cfg(test-support) named helper;
     // VaultConfig has no seed-mode field and Vault::open hardcodes Required.
     Ok(())
+}
+
+fn hosted_custody(key_ref: &str) -> VaultDataKeyCustody {
+    VaultDataKeyCustody::HostManagedKms {
+        key_ref: key_ref.to_owned(),
+    }
+}
+
+fn privacy_config(
+    posture: HostingPrivacyPosture,
+    data_key_custody: VaultDataKeyCustody,
+) -> VaultPrivacyConfig {
+    VaultPrivacyConfig {
+        posture,
+        data_key_custody,
+    }
+}
+
+fn config_with_privacy(privacy: VaultPrivacyConfig) -> VaultConfig {
+    VaultConfig {
+        privacy,
+        ..test_config()
+    }
+}
+
+#[test]
+fn privacy_pairing_matrix_admits_exactly_the_two_supported_deployments() {
+    // Row 1: hosted + host-managed KMS reference => valid, host-readable.
+    let hosted = privacy_config(
+        HostingPrivacyPosture::Hosted,
+        hosted_custody("kms://example/prod-key-1"),
+    );
+    assert!(hosted.validate().is_ok());
+    assert!(hosted.host_readable());
+    assert_eq!(hosted.honest_label(), "host-readable");
+
+    // Row 2: hosted + owner-held local key => rejected.
+    let hosted_without_host_key = privacy_config(
+        HostingPrivacyPosture::Hosted,
+        VaultDataKeyCustody::OwnerHeldLocal,
+    );
+    assert_matches!(
+        hosted_without_host_key.validate(),
+        Err(Error::InvalidConfig(ref message))
+            if message.contains("hosted privacy posture requires host-managed KMS key custody")
+    );
+
+    // Row 3: self-host/local + owner-held local key => valid, owner-held.
+    let self_host = privacy_config(
+        HostingPrivacyPosture::SelfHostLocal,
+        VaultDataKeyCustody::OwnerHeldLocal,
+    );
+    assert!(self_host.validate().is_ok());
+    assert!(!self_host.host_readable());
+    assert_eq!(self_host.honest_label(), "owner-held-key");
+
+    // Row 4: self-host/local + host-managed KMS reference => rejected.
+    let self_host_with_host_key = privacy_config(
+        HostingPrivacyPosture::SelfHostLocal,
+        hosted_custody("kms://example/prod-key-1"),
+    );
+    assert_matches!(
+        self_host_with_host_key.validate(),
+        Err(Error::InvalidConfig(ref message))
+            if message.contains("rejects host-managed KMS key custody")
+    );
+}
+
+#[test]
+fn hosted_privacy_posture_requires_a_non_empty_key_reference() {
+    for blank in ["", "   ", "\t\n"] {
+        let hosted = privacy_config(HostingPrivacyPosture::Hosted, hosted_custody(blank));
+        assert_matches!(
+            hosted.validate(),
+            Err(Error::InvalidConfig(ref message))
+                if message.contains("non-empty host-managed KMS key reference")
+        );
+    }
+}
+
+#[test]
+fn vault_config_presets_default_to_self_host_local() {
+    for config in [
+        VaultConfig::default(),
+        VaultConfig::device(),
+        VaultConfig::server(),
+    ] {
+        assert_eq!(config.privacy, VaultPrivacyConfig::default());
+        assert_eq!(config.privacy.posture, HostingPrivacyPosture::SelfHostLocal);
+        assert_eq!(
+            config.privacy.data_key_custody,
+            VaultDataKeyCustody::OwnerHeldLocal
+        );
+        assert!(config.privacy.validate().is_ok());
+    }
+}
+
+#[test]
+fn open_default_config_reports_owner_held_key() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+
+    assert_eq!(
+        vault.privacy_posture(),
+        HostingPrivacyPosture::SelfHostLocal
+    );
+    assert_eq!(vault.privacy_posture_label(), "owner-held-key");
+    assert!(!vault.is_host_readable());
+    Ok(())
+}
+
+#[test]
+fn open_hosted_config_reports_host_readable() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let config = config_with_privacy(privacy_config(
+        HostingPrivacyPosture::Hosted,
+        hosted_custody("kms://example/prod-key-1"),
+    ));
+    let vault = Vault::open(tmp.path(), config)?;
+
+    // Hosted is exposed honestly: the operator can read this vault.
+    assert_eq!(vault.privacy_posture(), HostingPrivacyPosture::Hosted);
+    assert_eq!(vault.privacy_posture_label(), "host-readable");
+    assert!(vault.is_host_readable());
+    Ok(())
+}
+
+#[test]
+fn open_rejects_self_host_local_with_host_managed_custody() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let config = config_with_privacy(privacy_config(
+        HostingPrivacyPosture::SelfHostLocal,
+        hosted_custody("kms://example/prod-key-1"),
+    ));
+
+    assert!(matches!(
+        Vault::open(tmp.path(), config),
+        Err(Error::InvalidConfig(ref message))
+            if message.contains("rejects host-managed KMS key custody")
+    ));
+    Ok(())
+}
+
+#[test]
+fn open_rejects_hosted_without_host_managed_custody() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let config = config_with_privacy(privacy_config(
+        HostingPrivacyPosture::Hosted,
+        VaultDataKeyCustody::OwnerHeldLocal,
+    ));
+
+    assert!(matches!(
+        Vault::open(tmp.path(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn privacy_pairing_is_validated_before_the_store_is_opened() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    // `Store::open` creates its root (including missing parents) as its first
+    // filesystem effect. So an absent root after an `InvalidConfig` refusal is
+    // positive evidence that the posture gate ran BEFORE any store open.
+    let root = tmp.path().join("missing-parent").join("vault");
+    let config = config_with_privacy(privacy_config(
+        HostingPrivacyPosture::SelfHostLocal,
+        hosted_custody("kms://example/prod-key-1"),
+    ));
+
+    assert!(matches!(
+        Vault::open(&root, config),
+        Err(Error::InvalidConfig(ref message))
+            if message.contains("rejects host-managed KMS key custody")
+    ));
+    // Nothing was created on the way to the refusal: no store was opened.
+    assert!(!root.exists());
+
+    // Control: the very same path opens once the pairing is valid, proving the
+    // path itself was never the reason for the refusal above.
+    let valid = config_with_privacy(VaultPrivacyConfig::default());
+    let vault = Vault::open(&root, valid)?;
+    assert!(root.exists());
+    assert_eq!(
+        vault.privacy_posture(),
+        HostingPrivacyPosture::SelfHostLocal
+    );
+    Ok(())
+}
+
+#[test]
+fn open_existing_also_gates_on_the_privacy_pairing() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    Vault::open(tmp.path(), test_config())?;
+
+    let config = config_with_privacy(privacy_config(
+        HostingPrivacyPosture::SelfHostLocal,
+        hosted_custody("kms://example/prod-key-1"),
+    ));
+    assert!(matches!(
+        Vault::open_existing(tmp.path(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn host_managed_key_reference_is_redacted_in_debug_output() {
+    let config = config_with_privacy(privacy_config(
+        HostingPrivacyPosture::Hosted,
+        hosted_custody("kms://example/super-secret-key-ref"),
+    ));
+
+    let debug = format!("{config:?}");
+
+    assert!(!debug.contains("super-secret-key-ref"));
+    assert!(debug.contains("key_ref"));
+    assert!(debug.contains("<redacted>"));
 }

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::Args;
+use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 use serde::Deserialize;
 
 use crate::runtime::{
@@ -431,6 +432,18 @@ pub struct ServeArgs {
     /// Model id for summarizer routing.
     #[arg(long)]
     pub runtime_summarizer_model: Option<String>,
+
+    /// Deployment privacy posture: `hosted` (an operator hosts and CAN read
+    /// this vault) or `self_host_local` (owner-operated, owner-held key).
+    /// Defaults to `self_host_local`; hosting is opt-in.
+    #[arg(long, value_parser = parse_privacy_posture)]
+    pub privacy_posture: Option<HostingPrivacyPosture>,
+
+    /// Opaque host-managed KMS/HSM key reference (ARN / URI / key id), never
+    /// key material. Required by `--privacy-posture hosted` and rejected by
+    /// `self_host_local`.
+    #[arg(long)]
+    pub hosted_kms_key_ref: Option<String>,
 }
 
 impl fmt::Debug for ServeArgs {
@@ -515,6 +528,11 @@ impl fmt::Debug for ServeArgs {
                 &self.runtime_summarizer_provider_kind,
             )
             .field("runtime_summarizer_model", &self.runtime_summarizer_model)
+            .field("privacy_posture", &self.privacy_posture)
+            .field(
+                "hosted_kms_key_ref",
+                &redacted_secret(&self.hosted_kms_key_ref),
+            )
             .finish()
     }
 }
@@ -556,6 +574,12 @@ pub struct ServeConfig {
     pub max_entity_blob: usize,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
+    /// Deployment posture handed to the engine through [`Self::vault_config`].
+    pub privacy_posture: HostingPrivacyPosture,
+    /// Opaque host-managed KMS key reference. `Some` only for the hosted
+    /// posture; self-host/local keeps no host reference at all. Never key
+    /// material, and redacted in this struct's `Debug`.
+    pub hosted_kms_key_ref: Option<String>,
 }
 
 impl Default for ServeConfig {
@@ -594,6 +618,10 @@ impl Default for ServeConfig {
             max_entity_blob: server.max_entity_blob,
             max_bulk_decompressed: server.max_bulk_decompressed,
             runtime: server.runtime,
+            // Hosting is opt-in: an operator must name the posture AND supply
+            // its host-managed key reference before a vault is host-readable.
+            privacy_posture: HostingPrivacyPosture::SelfHostLocal,
+            hosted_kms_key_ref: None,
         }
     }
 }
@@ -646,6 +674,11 @@ impl fmt::Debug for ServeConfig {
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
+            .field("privacy_posture", &self.privacy_posture)
+            .field(
+                "hosted_kms_key_ref",
+                &redacted_secret(&self.hosted_kms_key_ref),
+            )
             .finish()
     }
 }
@@ -691,7 +724,30 @@ impl ServeConfig {
         config.dimensions = self.dimensions;
         config.map_size = self.map_size;
         config.dict_search_paths = self.dict_search_paths.clone();
+        config.privacy = self.vault_privacy_config();
         config
+    }
+
+    /// Maps posture and custody without repairing invalid direct caller input.
+    ///
+    /// The resolver clears only lower-precedence references when self-host/local
+    /// wins. A reference still present here must survive conversion so
+    /// `VaultPrivacyConfig::validate` refuses contradictory custody before any
+    /// store opens. Hosted without a reference retains an invalid empty one.
+    fn vault_privacy_config(&self) -> VaultPrivacyConfig {
+        let data_key_custody = match (self.privacy_posture, &self.hosted_kms_key_ref) {
+            (_, Some(key_ref)) => VaultDataKeyCustody::HostManagedKms {
+                key_ref: key_ref.clone(),
+            },
+            (HostingPrivacyPosture::Hosted, None) => VaultDataKeyCustody::HostManagedKms {
+                key_ref: String::new(),
+            },
+            (HostingPrivacyPosture::SelfHostLocal, None) => VaultDataKeyCustody::OwnerHeldLocal,
+        };
+        VaultPrivacyConfig {
+            posture: self.privacy_posture,
+            data_key_custody,
+        }
     }
 }
 
@@ -704,7 +760,23 @@ pub struct EnvConfig {
 
 impl EnvConfig {
     pub fn from_process() -> anyhow::Result<Self> {
-        Self::from_lookup(|key| std::env::var(key).ok())
+        // Privacy inputs fail closed by presence. Read each once and never
+        // attach VarError::NotUnicode, whose diagnostics expose the raw value.
+        let privacy_value = |key: &str| match std::env::var(key) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(anyhow::anyhow!("{key} must contain valid Unicode"))
+            }
+        };
+        let privacy_posture = privacy_value("ONEIRON_PRIVACY_POSTURE")?;
+        let hosted_kms_key_ref = privacy_value("ONEIRON_HOSTED_KMS_KEY_REF")?;
+        Self::from_lookup(|key| match key {
+            "ONEIRON_PRIVACY_POSTURE" => privacy_posture.clone(),
+            "ONEIRON_HOSTED_KMS_KEY_REF" => hosted_kms_key_ref.clone(),
+            // Keep the existing semantics for every unrelated environment key.
+            _ => std::env::var(key).ok(),
+        })
     }
 
     pub fn from_pairs<I, K, V>(pairs: I) -> anyhow::Result<Self>
@@ -762,6 +834,8 @@ impl EnvConfig {
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
         values.runtime = lookup_runtime_override(&mut lookup)?;
+        values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
+        values.hosted_kms_key_ref = lookup("ONEIRON_HOSTED_KMS_KEY_REF");
 
         Ok(Self {
             config_path,
@@ -795,9 +869,31 @@ pub fn resolve_serve_config_with_sources(
     };
 
     let mut resolved = ServeConfig::default();
-    file_values.apply_to(&mut resolved);
-    env.values.apply_to(&mut resolved);
-    flag_values.apply_to(&mut resolved);
+    let mut posture_source = None;
+    let mut key_ref_source = None;
+    for (source, values) in [file_values, env.values, flag_values]
+        .into_iter()
+        .enumerate()
+    {
+        if values.privacy_posture.is_some() {
+            posture_source = Some(source);
+        }
+        if values.hosted_kms_key_ref.is_some() {
+            key_ref_source = Some(source);
+        }
+        values.apply_to(&mut resolved);
+    }
+    // Only the final posture may discard inherited custody. An intermediate
+    // self-host layer can still be overridden by a later hosted layer, which
+    // needs the highest-precedence reference even when it came from the file.
+    if resolved.privacy_posture == HostingPrivacyPosture::SelfHostLocal
+        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
+        && key_ref_source < posture_source
+    {
+        resolved.hosted_kms_key_ref = None;
+    }
+    // Same-source or higher-precedence references remain for validation to
+    // refuse rather than silently fixing a contradictory self-host request.
     validate_serve_config(&resolved)?;
     Ok(resolved)
 }
@@ -811,6 +907,29 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     if config.max_ephemeral_snapshot_bytes == 0 {
         anyhow::bail!("max_ephemeral_snapshot_bytes must be positive");
+    }
+    // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
+    // refused while it is still a config error with an operator-facing
+    // remedy, not only at open time.
+    match config.privacy_posture {
+        HostingPrivacyPosture::Hosted => {
+            let key_ref = config.hosted_kms_key_ref.as_deref().unwrap_or_default();
+            if key_ref.trim().is_empty() {
+                anyhow::bail!(
+                    "hosted privacy posture requires a non-empty host-managed KMS key reference (--hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF)"
+                );
+            }
+        }
+        HostingPrivacyPosture::SelfHostLocal => {
+            // ANY reference, including a whitespace-only one, is refused: a
+            // self-hosted owner holds their own key and stores no host
+            // reference.
+            if config.hosted_kms_key_ref.is_some() {
+                anyhow::bail!(
+                    "self_host_local privacy posture rejects host-managed KMS key custody; drop --hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF or select --privacy-posture hosted"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -873,6 +992,8 @@ struct FileServeConfig {
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
+    privacy_posture: Option<HostingPrivacyPosture>,
+    hosted_kms_key_ref: Option<String>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -908,11 +1029,13 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: value.runtime,
+            privacy_posture: value.privacy_posture,
+            hosted_kms_key_ref: value.hosted_kms_key_ref,
         }
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 struct PartialServeConfig {
     vault_path: Option<PathBuf>,
     host: Option<String>,
@@ -944,6 +1067,72 @@ struct PartialServeConfig {
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
+    privacy_posture: Option<HostingPrivacyPosture>,
+    hosted_kms_key_ref: Option<String>,
+}
+
+// Hand-written so the unresolved layers redact the same fields `ServeArgs` and
+// `ServeConfig` do: `EnvConfig` wraps this struct and derives `Debug`, so a
+// derived impl here would print a host-managed key reference verbatim and
+// bypass the redaction the resolved config is careful about.
+impl fmt::Debug for PartialServeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PartialServeConfig")
+            .field("vault_path", &self.vault_path)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("auth_secret", &redacted_secret(&self.auth_secret))
+            .field("oauth_issuer", &self.oauth_issuer)
+            .field("oauth_jwks_uri", &self.oauth_jwks_uri)
+            .field("oauth_resource_indicator", &self.oauth_resource_indicator)
+            .field("allow_unauthenticated", &self.allow_unauthenticated)
+            .field("allowed_origins", &self.allowed_origins)
+            .field("lease_vault_id", &self.lease_vault_id)
+            .field("dimensions", &self.dimensions)
+            .field("map_size", &self.map_size)
+            .field("log_level", &self.log_level)
+            .field("dict_search_paths", &self.dict_search_paths)
+            .field("default_window_count", &self.default_window_count)
+            .field(
+                "compaction_threshold_bytes",
+                &self.compaction_threshold_bytes,
+            )
+            .field("compaction_throttle_secs", &self.compaction_throttle_secs)
+            .field("bulk_chunk_size", &self.bulk_chunk_size)
+            .field("max_frame_size", &self.max_frame_size)
+            .field("max_update_payload", &self.max_update_payload)
+            .field(
+                "max_windows_per_connection",
+                &self.max_windows_per_connection,
+            )
+            .field(
+                "max_federation_windows_per_connection",
+                &self.max_federation_windows_per_connection,
+            )
+            .field(
+                "federation_flood_pause_secs",
+                &self.federation_flood_pause_secs,
+            )
+            .field("max_messages_per_sec", &self.max_messages_per_sec)
+            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
+            .field(
+                "max_ephemeral_payload_bytes",
+                &self.max_ephemeral_payload_bytes,
+            )
+            .field(
+                "max_ephemeral_snapshot_bytes",
+                &self.max_ephemeral_snapshot_bytes,
+            )
+            .field("max_entity_blob", &self.max_entity_blob)
+            .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("runtime", &self.runtime)
+            .field("privacy_posture", &self.privacy_posture)
+            .field(
+                "hosted_kms_key_ref",
+                &redacted_secret(&self.hosted_kms_key_ref),
+            )
+            .finish()
+    }
 }
 
 impl PartialServeConfig {
@@ -1038,6 +1227,12 @@ impl PartialServeConfig {
         if let Some(value) = self.runtime {
             resolved.runtime.apply_override(value);
         }
+        if let Some(value) = self.privacy_posture {
+            resolved.privacy_posture = value;
+        }
+        if let Some(value) = self.hosted_kms_key_ref {
+            resolved.hosted_kms_key_ref = Some(value);
+        }
     }
 }
 
@@ -1079,6 +1274,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: runtime_override_from_args(value),
+            privacy_posture: value.privacy_posture,
+            hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
         }
     }
 }
@@ -1255,6 +1452,13 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
     value.parse()
 }
 
+/// Clap value parser for `--privacy-posture`. Accepts only the two exact wire
+/// values, so an unrecognized posture fails closed instead of resolving to a
+/// default.
+fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
+    value.parse()
+}
+
 fn split_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -1291,5 +1495,9 @@ fn redacted_secret(secret: &Option<String>) -> Option<&'static str> {
     secret.as_ref().map(|_| "<redacted>")
 }
 
+#[cfg(test)]
+mod privacy_tests;
+#[cfg(all(test, unix))]
+mod process_env_tests;
 #[cfg(test)]
 mod tests;
