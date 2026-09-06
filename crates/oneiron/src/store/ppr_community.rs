@@ -39,9 +39,14 @@ impl Store {
     ) -> Result<Option<CommunitySnapshot>> {
         let mut rows = Vec::new();
         let mut bytes = 0usize;
-        for entry in self.vault_meta.prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())? {
+        for entry in self
+            .vault_meta
+            .prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())?
+        {
             let (key, value) = entry?;
-            bytes = bytes.checked_add(key.len()).and_then(|n| n.checked_add(value.len()))
+            bytes = bytes
+                .checked_add(key.len())
+                .and_then(|n| n.checked_add(value.len()))
                 .ok_or(Error::CorruptedIndex("ppr community cache size"))?;
             if rows.len() > MAX_COMMUNITY_NODES * 3
                 || bytes > MAX_COMMUNITY_CACHE_BYTES
@@ -55,14 +60,19 @@ impl Store {
         if rows.is_empty() {
             return Ok(None);
         }
-        let meta = rows.iter().find(|(key, _)| key.as_slice() == COMMUNITY_META_KEY)
+        let meta = rows
+            .iter()
+            .find(|(key, _)| key.as_slice() == COMMUNITY_META_KEY)
             .map(|(_, value)| value)
             .ok_or(Error::CorruptedIndex("ppr community cache metadata"))?;
-        let version = meta.get(1..9).and_then(|bytes| bytes.try_into().ok())
+        let version = meta
+            .get(1..9)
+            .and_then(|bytes| bytes.try_into().ok())
             .map(u64::from_le_bytes)
             .ok_or(Error::CorruptedIndex("ppr community cache metadata"))?;
         CommunitySnapshot::decode_rows(&rows, version, MAX_COMMUNITY_NODES)
-            .map(Some).map_err(cache_error)
+            .map(Some)
+            .map_err(cache_error)
     }
 
     pub(crate) fn ppr_community_membership_in_txn(
@@ -86,19 +96,28 @@ impl Store {
         txn: &mut RwTxn<'_>,
         snapshot: &CommunitySnapshot,
     ) -> Result<()> {
-        snapshot.validate(read_graph_version(self, txn)?).map_err(cache_error)?;
+        snapshot
+            .validate(read_graph_version(self, txn)?)
+            .map_err(cache_error)?;
         if snapshot.nodes.len() > MAX_COMMUNITY_NODES {
             return Err(Error::CorruptedIndex("ppr community cache bounds"));
         }
         let rows = snapshot.encode_rows().map_err(cache_error)?;
-        let bytes = rows.iter().try_fold(0usize, |n, (key, value)| {
-            n.checked_add(key.len()).and_then(|n| n.checked_add(value.len()))
-        }).ok_or(Error::CorruptedIndex("ppr community cache size"))?;
+        let bytes = rows
+            .iter()
+            .try_fold(0usize, |n, (key, value)| {
+                n.checked_add(key.len())
+                    .and_then(|n| n.checked_add(value.len()))
+            })
+            .ok_or(Error::CorruptedIndex("ppr community cache size"))?;
         if bytes > MAX_COMMUNITY_CACHE_BYTES {
             return Err(Error::CorruptedIndex("ppr community cache bounds"));
         }
         let mut old_keys = Vec::new();
-        for entry in self.vault_meta.prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())? {
+        for entry in self
+            .vault_meta
+            .prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())?
+        {
             let (key, _) = entry?;
             if old_keys.len() > MAX_COMMUNITY_NODES * 3
                 || key.len() > PPR_COMMUNITY_CACHE_PREFIX.len() + 8 + 32
@@ -135,17 +154,24 @@ impl Store {
                 return Err(Error::CorruptedIndex("ppr community graph bounds"));
             }
             let (key, raw) = entry?;
-            let id = EntityId::from_bytes(key.as_ref().try_into()
-                .map_err(|_| Error::CorruptedIndex("ppr community entity id"))?)?;
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("entity header"))?;
-            if self.sync_state.get(txn, &crate::deletion::local_hard_delete_key(&id))?.is_some()
+            let id = EntityId::from_bytes(
+                key.as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("ppr community entity id"))?,
+            )?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if self
+                .sync_state
+                .get(txn, &crate::deletion::local_hard_delete_key(&id))?
+                .is_some()
                 || self.entity_deletion_present_in_txn(txn, &id, header.learned_at)?
             {
                 continue;
             }
             if header.entity_type == ENTITY_TYPE_CLAIM {
-                let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                let body =
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
                 if !crate::claim::claim_surfaceable(&body)
                     || body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT
                 {
@@ -183,7 +209,8 @@ impl Store {
             previous,
             now,
             config,
-        ).map_err(cache_error)
+        )
+        .map_err(cache_error)
     }
 
     pub(crate) fn refresh_ppr_communities(
@@ -195,9 +222,8 @@ impl Store {
         crate::config::validate_ppr_community(config)?;
         let mut txn = self.env.write_txn()?;
         let previous = self.ppr_community_snapshot_in_txn(&txn)?;
-        let (snapshot, report) = self.compute_ppr_communities_in_txn(
-            &txn, previous.as_ref(), changed, now, config,
-        )?;
+        let (snapshot, report) =
+            self.compute_ppr_communities_in_txn(&txn, previous.as_ref(), changed, now, config)?;
         self.replace_ppr_community_cache_in_txn(&mut txn, &snapshot)?;
         txn.commit()?;
         Ok(report)
