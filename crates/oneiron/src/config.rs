@@ -1,9 +1,199 @@
 //! Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` + `TextIndexOptions` + `Bm25RankProfile`.
 
+use std::fmt;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 /// Default hard byte budget for one live off-record session overlay.
 pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
+/// Deployment posture of the process that holds the vault's bytes.
+///
+/// Exactly two postures exist, and both are described honestly:
+///
+/// - [`Self::Hosted`] — a hosting operator runs the process and CAN read the
+///   vault. Encryption at rest and in transit, KMS/HSM custody, and operator
+///   access controls are deployment responsibilities of that tier; they are
+///   not properties this enum asserts.
+/// - [`Self::SelfHostLocal`] — the owner runs the process on their own machine
+///   with an owner-held local data-key source, so no host is in the loop.
+///
+/// There is deliberately NO third tier that claims a host cannot read the
+/// vault it stores. This type carries a posture and a custody pairing; it is
+/// not an encryption protocol.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostingPrivacyPosture {
+    /// Operator-hosted and host-readable. Must be paired with
+    /// [`VaultDataKeyCustody::HostManagedKms`] and opted into explicitly.
+    Hosted,
+    /// Owner-operated local process holding its own key material. The default
+    /// for the open-source engine and every embedded caller.
+    #[default]
+    SelfHostLocal,
+}
+
+impl HostingPrivacyPosture {
+    /// Returns the exact wire value used by the CLI, environment, TOML, and
+    /// serde representations: `hosted` or `self_host_local`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hosted => "hosted",
+            Self::SelfHostLocal => "self_host_local",
+        }
+    }
+}
+
+impl fmt::Display for HostingPrivacyPosture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for HostingPrivacyPosture {
+    type Err = String;
+
+    /// Accepts ONLY the two exact wire values. Every other spelling — including
+    /// case variants, aliases, and any legacy "unreadable hosted" naming — is a
+    /// hard error, so an unrecognized posture can never silently degrade into a
+    /// weaker or stronger one.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "hosted" => Ok(Self::Hosted),
+            "self_host_local" => Ok(Self::SelfHostLocal),
+            _ => Err(format!(
+                "expected one of hosted, self_host_local; got {value:?}"
+            )),
+        }
+    }
+}
+
+/// Where the deployment's data key comes from.
+///
+/// The hosted variant carries an OPAQUE host-managed key reference (a KMS/HSM
+/// ARN, URI, or key id) and never key material: raw key bytes are not part of
+/// this type, its serialized form, or its [`Debug`] output.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VaultDataKeyCustody {
+    /// Host-managed KMS/HSM custody, identified by an opaque reference.
+    HostManagedKms {
+        /// Opaque reference to a host-managed key (ARN / URI / key id).
+        /// NEVER key material, and redacted in [`Debug`].
+        key_ref: String,
+    },
+    /// Owner-held local key source. No host reference is stored at all.
+    OwnerHeldLocal,
+}
+
+impl fmt::Debug for VaultDataKeyCustody {
+    /// Manual so the host-managed reference never reaches logs. A derived
+    /// `Debug` would print `key_ref` verbatim everywhere a `VaultConfig` or
+    /// `Vault` config is traced.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HostManagedKms { .. } => f
+                .debug_struct("HostManagedKms")
+                .field("key_ref", &"<redacted>")
+                .finish(),
+            Self::OwnerHeldLocal => f.write_str("OwnerHeldLocal"),
+        }
+    }
+}
+
+/// Refusal text for a hosted deployment whose host-managed key reference is
+/// missing or blank.
+const HOSTED_REQUIRES_KEY_REF: &str =
+    "hosted privacy posture requires a non-empty host-managed KMS key reference";
+/// Refusal text for a hosted deployment paired with an owner-held local key.
+const HOSTED_REQUIRES_HOST_CUSTODY: &str =
+    "hosted privacy posture requires host-managed KMS key custody, not an owner-held local key";
+/// Refusal text for a self-hosted deployment carrying a host-managed key.
+const SELF_HOST_REJECTS_HOST_CUSTODY: &str = "self_host_local privacy posture rejects host-managed KMS key custody; use an owner-held local key";
+
+/// The deployment posture together with the key custody it is paired with.
+///
+/// The pairing is enforced — not merely documented — by [`Self::validate`],
+/// which every vault opener runs before the storage environment is mapped:
+///
+/// | posture | custody | outcome |
+/// |---|---|---|
+/// | `Hosted` | `HostManagedKms` with a non-empty reference | valid, host-readable |
+/// | `Hosted` | `OwnerHeldLocal` | rejected |
+/// | `SelfHostLocal` | `OwnerHeldLocal` | valid, owner-held key |
+/// | `SelfHostLocal` | `HostManagedKms` | rejected |
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultPrivacyConfig {
+    /// Deployment posture. Defaults to [`HostingPrivacyPosture::SelfHostLocal`].
+    pub posture: HostingPrivacyPosture,
+    /// Data-key custody paired with `posture`.
+    pub data_key_custody: VaultDataKeyCustody,
+}
+
+impl Default for VaultPrivacyConfig {
+    /// Self-host/local with an owner-held local key — the posture of the
+    /// open-source engine and of every embedded caller that does not opt in to
+    /// hosting. Hosted is never reached by default.
+    fn default() -> Self {
+        Self {
+            posture: HostingPrivacyPosture::SelfHostLocal,
+            data_key_custody: VaultDataKeyCustody::OwnerHeldLocal,
+        }
+    }
+}
+
+impl VaultPrivacyConfig {
+    /// Rejects every posture/custody pairing outside the two supported
+    /// deployments, with no fallback between them.
+    ///
+    /// Hosted requires a host-managed reference that is non-empty after
+    /// trimming; self-host/local requires that no host-managed reference
+    /// exists. An invalid pairing is [`crate::Error::InvalidConfig`], raised
+    /// before any storage environment is opened.
+    pub fn validate(&self) -> Result<(), crate::error::Error> {
+        use crate::error::Error;
+
+        match (self.posture, &self.data_key_custody) {
+            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::HostManagedKms { key_ref }) => {
+                if key_ref.trim().is_empty() {
+                    return Err(Error::InvalidConfig(HOSTED_REQUIRES_KEY_REF.to_owned()));
+                }
+                Ok(())
+            }
+            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::OwnerHeldLocal) => Ok(()),
+            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::OwnerHeldLocal) => Err(
+                Error::InvalidConfig(HOSTED_REQUIRES_HOST_CUSTODY.to_owned()),
+            ),
+            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::HostManagedKms { .. }) => {
+                Err(Error::InvalidConfig(
+                    SELF_HOST_REJECTS_HOST_CUSTODY.to_owned(),
+                ))
+            }
+        }
+    }
+
+    /// True when the hosting operator can read this vault.
+    ///
+    /// Hosted deployments are host-readable and say so; self-host/local ones
+    /// have no host in the loop.
+    #[must_use]
+    pub const fn host_readable(&self) -> bool {
+        matches!(self.posture, HostingPrivacyPosture::Hosted)
+    }
+
+    /// Short, honest description of who holds the key: `host-readable` for
+    /// hosted, `owner-held-key` for self-host/local. Neither label claims a
+    /// host cannot read what it stores.
+    #[must_use]
+    pub const fn honest_label(&self) -> &'static str {
+        match self.posture {
+            HostingPrivacyPosture::Hosted => "host-readable",
+            HostingPrivacyPosture::SelfHostLocal => "owner-held-key",
+        }
+    }
+}
 
 /// HNSW configuration values.
 ///
@@ -122,6 +312,14 @@ pub struct VaultConfig {
     /// alone. Hosts that admit many simultaneous sessions must cap concurrency
     /// themselves to bound total overlay memory.
     pub off_record_overlay_budget_bytes: usize,
+    /// Deployment privacy posture and the key custody paired with it.
+    ///
+    /// Defaults to self-host/local with an owner-held local key for every
+    /// preset, so an embedded caller never opts into hosting by accident.
+    /// Hosted deployments set this explicitly and supply an opaque
+    /// host-managed KMS key reference; the pairing is validated by every
+    /// opener before the storage environment is mapped.
+    pub privacy: VaultPrivacyConfig,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -299,6 +497,7 @@ impl VaultConfig {
             dimensions: 1024,
             fast_dims: None,
             embedding_model: None,
+            privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
             max_readers: 126,
             hnsw: HnswConfig::default(),
@@ -317,6 +516,9 @@ impl VaultConfig {
             dimensions: 4096,
             fast_dims: None,
             embedding_model: None,
+            // The server preset is still self-host/local by default: running a
+            // server does not by itself mean a third party hosts the vault.
+            privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 33,
             max_readers: 126,
             hnsw: HnswConfig::default(),

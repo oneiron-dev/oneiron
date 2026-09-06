@@ -1523,14 +1523,14 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         )
         .expect("seed MCP claim subject");
 
+    let mut args = mcp_propose_claim_args(actor_ref, subject_ref, "one-1222-propose-claim");
+    // The allow-path fixture needs an explicit public stamp: unstamped claims
+    // read sensitivity band 2, above the default tool_output permit's band 0 cap.
+    args["scope"] = json!({ "sensitivity": "public" });
+
     let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
-        mcp_call_request(
-            credential,
-            "mcp-write-allow",
-            "oneiron.edit",
-            mcp_propose_claim_args(actor_ref, subject_ref, "one-1222-propose-claim"),
-        ),
+        mcp_call_request(credential, "mcp-write-allow", "oneiron.edit", args),
     )
     .await;
 
