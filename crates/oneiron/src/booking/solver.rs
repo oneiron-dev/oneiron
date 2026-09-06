@@ -54,8 +54,8 @@ use crate::booking::config::{
 };
 use crate::booking::constraint::{ConstraintWeekday, validate_visitor_tz};
 use crate::booking::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotMask, SlotOracle, SolveRequest,
-    SolveResult,
+    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotHostBinding, SlotMask,
+    SlotOracle, SolveRequest, SolveResult,
 };
 use crate::calendar::CalendarError;
 use crate::calendar::freebusy::{BusyUnion, freebusy};
@@ -240,6 +240,7 @@ impl SlotOracle for BookingSolver<'_> {
             return Ok(SolveResult {
                 slots: Vec::new(),
                 flex_used: false,
+                host_bindings: Vec::new(),
             });
         };
         // CAL is asked over the extent PADDED by this event type's buffers: a
@@ -686,37 +687,41 @@ pub(crate) fn subtract_live_holds(
 // Stage 7 — routing
 // -------------------------------------------------------------------------
 
-/// Collapses the per-host candidates into the offered set.
-///
-/// `Either` is the union — any one host can take the meeting. `Both` is the
-/// intersection — every host must be free. No round-robin, weighting, or pool
-/// shaping happens here: those are later picks over this result.
+/// Collapses the per-host candidates and retains the exact routing choice.
+/// Either selects the lowest entity ID among hosts offering the whole slot;
+/// Both retains every host only when all offer it. Input order is irrelevant.
 #[must_use]
 pub(crate) fn route_host_masks(
     host_masks: Vec<(EntityId, Vec<TimeRange>)>,
     mode: RoutingMode,
-) -> Vec<TimeRange> {
-    let mut routed = match mode {
-        RoutingMode::Either => host_masks
-            .into_iter()
-            .flat_map(|(_, slots)| slots)
-            .collect(),
-        RoutingMode::Both => {
-            let mut hosts = host_masks.into_iter();
-            let Some((_, first)) = hosts.next() else {
-                return Vec::new();
-            };
-            hosts.fold(first, |common, (_, slots)| {
-                common
-                    .into_iter()
-                    .filter(|slot| slots.contains(slot))
-                    .collect()
-            })
+) -> Vec<SlotHostBinding> {
+    let host_count = host_masks.len();
+    let mut routed = std::collections::BTreeMap::<(u64, u64), Vec<String>>::new();
+    for (host, slots) in host_masks {
+        for slot in slots {
+            routed
+                .entry((slot.start, slot.end))
+                .or_default()
+                .push(host.to_hex());
         }
-    };
-    routed.sort_unstable_by_key(|slot| (slot.start, slot.end));
-    routed.dedup();
+    }
     routed
+        .into_iter()
+        .filter_map(|((start_utc, end_utc), mut host_refs)| {
+            host_refs.sort();
+            host_refs.dedup();
+            match mode {
+                RoutingMode::Either => host_refs.truncate(1),
+                RoutingMode::Both if host_refs.len() != host_count => return None,
+                RoutingMode::Both => {}
+            }
+            Some(SlotHostBinding {
+                start_utc,
+                end_utc,
+                host_refs,
+            })
+        })
+        .collect()
 }
 
 // -------------------------------------------------------------------------
@@ -735,14 +740,18 @@ pub(crate) fn route_host_masks(
 /// so it never reaches a caller.
 #[must_use]
 pub(crate) fn rank_and_emit(
-    slots: Vec<TimeRange>,
+    slots: Vec<SlotHostBinding>,
     config: &EventTypeConfig,
     constraint: Option<&ConstraintObject>,
     visitor_tz: &str,
     counts: &BookingCounts,
 ) -> SolveResult {
     let admitted: Vec<TimeRange> = slots
-        .into_iter()
+        .iter()
+        .map(|slot| TimeRange {
+            start: slot.start_utc,
+            end: slot.end_utc,
+        })
         .filter(|slot| satisfies_constraint(*slot, constraint, visitor_tz))
         .collect();
     let mut ranked: Vec<RankedSlot> = retain_under_caps(admitted, config, visitor_tz, counts)
@@ -761,9 +770,18 @@ pub(crate) fn rank_and_emit(
             .then(left.start_utc.cmp(&right.start_utc))
             .then(left.end_utc.cmp(&right.end_utc))
     });
+    let host_bindings = slots
+        .into_iter()
+        .filter(|binding| {
+            ranked
+                .iter()
+                .any(|slot| slot.start_utc == binding.start_utc && slot.end_utc == binding.end_utc)
+        })
+        .collect();
     SolveResult {
         slots: ranked,
         flex_used: false,
+        host_bindings,
     }
 }
 
@@ -1515,7 +1533,9 @@ mod tests {
         let b = (id(HOST_B), vec![slot(10), slot(11)]);
         let c = (id(0x58), vec![slot(11)]);
 
-        let flat = |routed: Vec<TimeRange>| routed.into_iter().map(|r| r.start).collect::<Vec<_>>();
+        let flat = |routed: Vec<SlotHostBinding>| {
+            routed.into_iter().map(|r| r.start_utc).collect::<Vec<_>>()
+        };
         assert_eq!(
             flat(route_host_masks(
                 vec![a.clone(), b.clone()],
@@ -1565,7 +1585,10 @@ mod tests {
         let mut config = utc_host_config();
         config.hosts[0].preferred_hours = vec![window(0, 11, 12)];
         let result = rank_and_emit(
-            vec![slot(11), slot(9), slot(10)],
+            route_host_masks(
+                vec![(id(HOST_A), vec![slot(11), slot(9), slot(10)])],
+                RoutingMode::Either,
+            ),
             &config,
             None,
             "UTC",
@@ -1586,7 +1609,10 @@ mod tests {
 
         // Identical inputs serialize byte-identically.
         let again = rank_and_emit(
-            vec![slot(10), slot(11), slot(9)],
+            route_host_masks(
+                vec![(id(HOST_A), vec![slot(10), slot(11), slot(9)])],
+                RoutingMode::Either,
+            ),
             &config,
             None,
             "UTC",
@@ -1607,7 +1633,7 @@ mod tests {
         let all = vec![slot(0, 9), slot(0, 15), slot(1, 9)];
         let emit = |constraint: Option<&ConstraintObject>, tz: &str| {
             rank_and_emit(
-                all.clone(),
+                route_host_masks(vec![(id(HOST_A), all.clone())], RoutingMode::Either),
                 &utc_host_config(),
                 constraint,
                 tz,
@@ -1689,6 +1715,7 @@ mod tests {
                 rank: ORDINARY_RANK,
             }],
             flex_used: true,
+            host_bindings: Vec::new(),
         };
         let mask = slot_mask(&req, solved);
         assert_eq!(mask.window_start_utc, MONDAY);

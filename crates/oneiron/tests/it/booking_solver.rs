@@ -1248,6 +1248,7 @@ fn booking_seam_has_one_definition_home() {
     let result: oneiron::booking::constraint::SolveResult = SolveResult {
         slots: Vec::new(),
         flex_used: false,
+        host_bindings: Vec::new(),
     };
     let mask: oneiron::booking::constraint::SlotMask = slot_mask(&request, result.clone());
     let error: oneiron::booking::constraint::BookingError =

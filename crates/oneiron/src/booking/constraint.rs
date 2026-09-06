@@ -322,11 +322,23 @@ pub struct RankedSlot {
     pub rank: f32,
 }
 
-/// What the oracle returned.
+/// Exact host choice made by routing for one half-open slot. This travels to
+/// confirmation, not to the public availability mask.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SlotHostBinding {
+    pub start_utc: u64,
+    pub end_utc: u64,
+    /// One host for Either, every participating host for Both; canonical hex.
+    pub host_refs: Vec<String>,
+}
+
+/// What the oracle returned. Host bindings belong to this solve, never to a
+/// later configuration lookup. Confirmation refuses a slot without a binding.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SolveResult {
     pub slots: Vec<RankedSlot>,
     pub flex_used: bool,
+    pub host_bindings: Vec<SlotHostBinding>,
 }
 
 /// The final availability mask shape, settled from day one. There is no
@@ -341,9 +353,8 @@ pub struct SlotMask {
     pub flex_used: bool,
 }
 
-/// The deterministic chooser of times. ONE-1823 replaces only the
-/// implementation selected by production wiring — never this trait, and never
-/// the request or result shapes.
+/// The deterministic chooser of times and their exact host bindings. Production
+/// wiring selects the implementation; confirmation consumes the same result.
 ///
 /// `Send + Sync` matches [`LlmBackend`]: a `&dyn SlotOracle` is held across the
 /// parse await in `run_constraint_turn`, so without them the turn future is not
@@ -690,7 +701,11 @@ pub(crate) mod fixture {
     impl FixtureSlotOracle {
         pub(crate) fn with_slots(slots: Vec<RankedSlot>, flex_used: bool) -> Self {
             Self {
-                result: SolveResult { slots, flex_used },
+                result: SolveResult {
+                    slots,
+                    flex_used,
+                    host_bindings: Vec::new(),
+                },
                 seen: Mutex::new(Vec::new()),
             }
         }
