@@ -59,6 +59,8 @@ mod retrieval;
 mod safeguard;
 mod session;
 
+pub mod tts_spikes;
+
 pub use cancellation::{OutputStop, StopReason};
 pub use protocol::*;
 pub use retrieval::{PartialRetrieval, SpeculativeRetrievalBridge, UtteranceHandle};
