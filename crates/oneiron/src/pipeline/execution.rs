@@ -34,7 +34,7 @@ use super::channels::{
 use super::filters::{
     apply_claim_status_gate, apply_facet_filter, apply_filters, apply_relationship_filter,
     apply_world_filter, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
-    pipeline_candidate_matches_filters_and_gate, resolve_active_world_authority,
+    pipeline_candidate_matches_filters_and_gate,
 };
 use super::support::normalize_range;
 use super::trace::{
@@ -47,6 +47,7 @@ use super::types::{
     PendingVectorEmbedding, PipelineFilterConfig, PipelineOutput, RelMode, ScoredEntity,
     WorldScope,
 };
+use super::world_authority::resolve_active_world_authority;
 
 /// Detailed pipeline output for the context-pack path.
 ///
@@ -130,6 +131,7 @@ impl PipelineBuilder<'_> {
                 &rtxn,
                 self.world_scope,
                 self.active_world_selection.as_ref(),
+                self.execution_actor,
                 temporal_now,
             )?;
             let filter_config = PipelineFilterConfig {
@@ -954,16 +956,15 @@ impl PipelineBuilder<'_> {
 
             // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
             // facet filter, before truncate, same read txn. A no-op under the
-            // default `WorldScope::All`. ONE-1420 threads the per-turn ActiveSet
-            // selection and the run clock through the same seam.
+            // default `WorldScope::All`. ActiveSet reuses the authority already
+            // resolved for the per-candidate filters in this transaction.
             let before_world = scores.len();
             apply_world_filter(
                 &mut scores,
                 &self.vault.store,
                 &rtxn,
                 self.world_scope,
-                self.active_world_selection.as_ref(),
-                temporal_now,
+                filter_config.world_active_set,
             )?;
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);

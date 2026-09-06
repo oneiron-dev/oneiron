@@ -7,6 +7,7 @@ mod filters;
 mod support;
 mod trace;
 mod types;
+mod world_authority;
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{

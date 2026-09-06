@@ -7,6 +7,9 @@ use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
 use crate::test_util::embedding_test_config;
 
+#[path = "world_authority_tests.rs"]
+mod world_authority_tests;
+
 // Shared with the sibling `decay_tests` module: the ONE-1402 read-side
 // decay suite owns its own file but keeps using this module's canonical
 // fixture helpers instead of forking them.
@@ -6737,8 +6740,15 @@ fn world_access_fixture(vault: &Vault) -> Result<WorldAccessFixture> {
 }
 
 fn world_access_query(vault: &Vault, now: u64) -> PipelineBuilder<'_> {
+    let execution = crate::code_run::HostSelfDispatcher::new(
+        vault,
+        crate::write_envelope::WriteActor::new(entity_id(0xA0), crate::edge::EdgeActorClass::Agent),
+        "world-access-test",
+    )
+    .expect("host execution");
     vault
-        .query()
+        .query_for_execution(&execution)
+        .expect("same canonical vault")
         .search_vector(&FACET_QUERY, 10)
         .with_temporal_now(now)
 }
@@ -6825,7 +6835,7 @@ impl WorldAccessRowSpec {
 
     fn put(self, vault: &Vault) -> Result<()> {
         let value = WorldAuthoritySet::new(self.include_base, self.worlds.iter().copied())?;
-        let body = world_access_claim_body(
+        let mut body = world_access_claim_body(
             self.predicate,
             self.agent,
             &value,
@@ -6834,6 +6844,9 @@ impl WorldAccessRowSpec {
             self.valid_from,
             self.valid_to,
         )?;
+        if self.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET {
+            body.evidence = Some(world_default_evidence(self.agent)?);
+        }
         vault.put_claim(
             &self.id,
             &body,
@@ -6844,6 +6857,20 @@ impl WorldAccessRowSpec {
             self.learned_at,
         )
     }
+}
+
+fn world_default_evidence(agent: EntityId) -> Result<rmpv::Value> {
+    use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(agent, crate::edge::EdgeActorClass::Agent),
+        ClaimSource::Inferred,
+        WriteProvenance::new(rmpv::Value::from("world-default-test"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    Ok(crate::write_envelope::write_envelope_evidence(
+        &envelope, None,
+    ))
 }
 
 /// Done-means 4 + 7: an explicit per-turn selection restricts the read to the
@@ -7637,6 +7664,7 @@ fn malformed_older_active_default_fails_closed_until_superseded() -> Result<()> 
         None,
     )?;
     malformed.value = rmpv::Value::from("not-a-world-access-map");
+    malformed.evidence = Some(world_default_evidence(fixture.agent)?);
     vault.put_claim(&malformed_id, &malformed, TimeRange { start: 1, end: 1 }, 1)?;
 
     for explicit in [false, true] {
@@ -7649,13 +7677,9 @@ fn malformed_older_active_default_fails_closed_until_superseded() -> Result<()> 
         assert_matches!(query.run(), Err(Error::InvalidConfig(_)));
     }
     {
-        // Exercise the post-fusion door directly as well as execution-time
-        // resolution, which normally fails before any candidates are scored.
+        // A failed resolution supplies no authority to the post-fusion door.
+        // That door must refuse rather than resolve again or admit everything.
         let rtxn = vault.store.env.read_txn()?;
-        let selection = ActiveWorldSelection {
-            agent_ref: fixture.agent,
-            selected: Some(selected),
-        };
         let mut scores = vec![ScoredEntity {
             id: fixture.claim_w,
             score: 1.0,
@@ -7666,8 +7690,7 @@ fn malformed_older_active_default_fails_closed_until_superseded() -> Result<()> 
                 &vault.store,
                 &rtxn,
                 WorldScope::ActiveSet,
-                Some(&selection),
-                WORLD_ACCESS_NOW,
+                None,
             ),
             Err(Error::InvalidConfig(_))
         );
@@ -7777,6 +7800,7 @@ fn closed_malformed_world_access_values_are_ignored() -> Result<()> {
                 lifecycle,
             );
             malformed.source = Some(ClaimSource::UserStated);
+            malformed.evidence = Some(world_default_evidence(fixture.agent)?);
             malformed.stale = stale;
             malformed.valid_from = from;
             malformed.valid_to = to;
@@ -7827,7 +7851,7 @@ fn default_subset_precedence_uses_valid_time_learned_time_then_id() -> Result<()
             .learned_at(learned_at)
             .put(&vault)?;
         let rtxn = vault.store.env.read_txn()?;
-        let resolved = super::filters::resolve_world_authority(
+        let resolved = super::world_authority::resolve_world_authority(
             &vault.store,
             &rtxn,
             &selection,
