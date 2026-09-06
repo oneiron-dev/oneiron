@@ -196,7 +196,8 @@ pub(crate) struct DeferredPprCacheWrite {
     seed_hash: [u8; SEED_HASH_LEN],
     computed_at: u64,
     graph_version: u64,
-    state: PprCacheState,
+    state: Option<PprCacheState>,
+    community_snapshot: Option<crate::ppr_community::CommunitySnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +275,7 @@ struct PprCacheReadContext<'a, 'txn, D: ManifestDbs> {
     weighting: SeedWeighting,
     now: u64,
     current_graph_version: u64,
+    community_identity: Option<[u8; 12]>,
 }
 
 /// Personalized PageRank over the edge graph.
@@ -752,13 +754,7 @@ pub(crate) fn ppr_query(
     };
 
     if let Some(deferred_write) = deferred_write {
-        write_ppr_cache(
-            store,
-            &deferred_write.seed_hash,
-            deferred_write.computed_at,
-            deferred_write.graph_version,
-            &deferred_write.state,
-        )?;
+        flush_deferred_ppr_cache_writes(store, &[deferred_write])?;
     }
 
     Ok(scores)
@@ -806,6 +802,142 @@ pub(crate) fn ppr_query_in_txn_with_vad_deferred_cache(
         weighting,
         true,
     )
+}
+
+/// Inputs captured by the Uniform expansion caller before seed IDs are sorted
+/// for the base PPR cache. Session usage is caller-owned and never persisted.
+pub(crate) struct CommunityPprRequest<'a> {
+    pub seeds: &'a [EntityId],
+    pub depth: u32,
+    pub teleport_alpha: f32,
+    pub weighting: SeedWeighting,
+    pub config: &'a crate::config::VaultConfig,
+    pub context: &'a crate::ppr_community::CommunityBoostContext<'a>,
+}
+
+/// Applies the prior once, to the completed round scores, never to a frontier
+/// that will later resume. Shared cache rows always retain the unboosted state.
+/// This entry accepts a canonical Store, not a session-composed ManifestDbs or
+/// an actor visibility predicate. Scoped PPR keeps its compute-only path.
+pub(crate) fn ppr_query_in_txn_with_community_deferred_cache(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    request: CommunityPprRequest<'_>,
+) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>, crate::ppr_community::CommunityBoostReport)> {
+    let output = ppr_community_query_in_txn(store, txn, request, false)?;
+    Ok((output.scores, output.write, output.report))
+}
+
+/// The same read snapshot and actual boosted IDs survive until final selection.
+/// Membership is metadata only: this state can never introduce a candidate.
+pub(crate) struct CommunityPprDiversity {
+    snapshot: crate::ppr_community::CommunitySnapshot,
+    boosted: std::collections::BTreeSet<EntityId>,
+}
+
+impl CommunityPprDiversity {
+    pub(crate) fn apply(
+        &self,
+        scores: &mut Vec<ScoredEntity>,
+        limit: usize,
+        config: &crate::config::PprCommunityConfig,
+    ) -> Result<()> {
+        let cache = crate::ppr_community::PprCommunityCache::new(&self.snapshot, self.snapshot.meta.graph_version)
+            .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
+        crate::ppr_community::apply_community_diversity(scores, &cache, &self.boosted, limit, config)
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        Ok(())
+    }
+}
+
+/// Uniform-only pipeline adapter: keep the complete PPR channel for fusion.
+pub(crate) fn ppr_expand_in_txn_with_community_deferred_cache(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    mut request: CommunityPprRequest<'_>,
+) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>, Option<CommunityPprDiversity>)> {
+    request.weighting = SeedWeighting::Uniform;
+    let output = ppr_community_query_in_txn(store, txn, request, true)?;
+    Ok((output.scores, output.write, output.diversity))
+}
+
+struct CommunityPprOutput {
+    scores: Vec<ScoredEntity>,
+    write: Option<DeferredPprCacheWrite>,
+    report: crate::ppr_community::CommunityBoostReport,
+    diversity: Option<CommunityPprDiversity>,
+}
+
+fn ppr_community_query_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    request: CommunityPprRequest<'_>,
+    defer_diversity: bool,
+) -> Result<CommunityPprOutput> {
+    use crate::ppr_community::{
+        CommunityBoostReport, PprCommunityCache, apply_community_prior, boost_community_scores,
+        community_cache_identity,
+    };
+    let config = &request.config.ppr_community;
+    if request.weighting != SeedWeighting::Uniform || config.beta == 0.0 {
+        let (scores, write) = ppr_query_in_txn_with_vad_deferred_cache(
+            store, txn, request.seeds, request.depth, request.teleport_alpha,
+            request.config.ppr_vad_alpha, request.weighting,
+        )?;
+        return Ok(CommunityPprOutput { scores, write, report: CommunityBoostReport::default(), diversity: None });
+    }
+    crate::config::validate_ppr_community(config)?;
+    validate_ppr_request(request.seeds, request.depth)?;
+    validate_ppr_vad_alpha(request.config.ppr_vad_alpha)?;
+    let evidence_ids: HashSet<_> = request.context.ordered_seeds.iter().map(|seed| seed.id).collect();
+    if evidence_ids.len() != request.context.ordered_seeds.len()
+        || evidence_ids != request.seeds.iter().copied().collect()
+        || request.context.ordered_seeds.iter().any(|seed| !seed.score.is_finite() || seed.score < 0.0)
+        || request.context.ordered_seeds.windows(2).any(|pair| pair[0].score < pair[1].score)
+    {
+        return Err(Error::InvalidConfig("community seed evidence must match the PPR seed set".to_owned()));
+    }
+    let version = read_graph_version(store, txn)?;
+    let previous = store.ppr_community_snapshot_in_txn(txn)?;
+    let needs_refresh = previous.as_ref().is_none_or(|snapshot| snapshot.meta.graph_version != version);
+    let snapshot = if needs_refresh {
+        // No complete changed frontier is available on the query path. Unknown
+        // churn must use the full fallback rather than guessing from seeds.
+        store.compute_ppr_communities_in_txn(txn, previous.as_ref(), &[],
+            crate::unix_seconds_now(), config)?.0
+    } else {
+        previous.ok_or(Error::CorruptedIndex("ppr community cache"))?
+    };
+    let identity = community_cache_identity(config.beta, snapshot.meta.graph_version)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    let (mut scores, mut write) = ppr_query_in_txn_with_identity(
+        store, txn, request.seeds, request.depth,
+        PprAlphas { teleport_alpha: request.teleport_alpha, ppr_vad_alpha: request.config.ppr_vad_alpha },
+        request.weighting, PprCachePolicy { defer_writes: true, community_identity: identity },
+    )?;
+    let cache = PprCommunityCache::new(&snapshot, version)
+        .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
+    let (report, boosted) = if defer_diversity {
+        boost_community_scores(&mut scores, &cache, request.context, config)
+    } else {
+        apply_community_prior(&mut scores, &cache, request.context, config)
+            .map(|report| (report, std::collections::BTreeSet::new()))
+    }.map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    if needs_refresh {
+        let pending = write.get_or_insert_with(|| DeferredPprCacheWrite {
+            seed_hash: hash_community_seeds(hash_seeds(request.seeds, request.depth,
+                request.teleport_alpha, request.config.ppr_vad_alpha, request.weighting), identity),
+            computed_at: crate::unix_seconds_now(),
+            graph_version: version,
+            state: None,
+            community_snapshot: None,
+        });
+        pending.community_snapshot = Some(snapshot.clone());
+    }
+    let diversity = (defer_diversity && report.activated_communities > 0).then_some(CommunityPprDiversity {
+        snapshot, boosted,
+    });
+    Ok(CommunityPprOutput { scores, write, report, diversity })
 }
 
 /// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
@@ -874,13 +1006,25 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
     for write in writes {
-        write_ppr_cache(
-            store,
-            &write.seed_hash,
-            write.computed_at,
-            write.graph_version,
-            &write.state,
-        )?;
+        if let Some(snapshot) = &write.community_snapshot {
+            // Both local caches describe the same read snapshot. Never publish
+            // either after a concurrent graph mutation, and never publish a
+            // partially replaced logical family.
+            let mut txn = store.env.write_txn()?;
+            if read_graph_version(store, &txn)? != write.graph_version {
+                continue;
+            }
+            store.replace_ppr_community_cache_in_txn(&mut txn, snapshot)?;
+            if let Some(state) = &write.state {
+                store_cache_entry(store, &mut txn, &write.seed_hash,
+                    write.computed_at, write.graph_version, state)?;
+            }
+            txn.commit()?;
+        } else if let Some(state) = &write.state {
+            // Literal legacy write path for beta zero and Specificity.
+            write_ppr_cache(store, &write.seed_hash, write.computed_at,
+                write.graph_version, state)?;
+        }
     }
     Ok(())
 }
@@ -894,6 +1038,25 @@ fn ppr_query_in_txn_impl(
     weighting: SeedWeighting,
     defer_cache_writes: bool,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+    ppr_query_in_txn_with_identity(store, txn, seeds, depth, alphas, weighting,
+        PprCachePolicy { defer_writes: defer_cache_writes, community_identity: None })
+}
+
+#[derive(Clone, Copy)]
+struct PprCachePolicy {
+    defer_writes: bool,
+    community_identity: Option<[u8; 12]>,
+}
+
+fn ppr_query_in_txn_with_identity(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alphas: PprAlphas,
+    weighting: SeedWeighting,
+    policy: PprCachePolicy,
+) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
     validate_ppr_request(seeds, depth)?;
 
     validate_ppr_vad_alpha(alphas.ppr_vad_alpha)?;
@@ -902,13 +1065,13 @@ fn ppr_query_in_txn_impl(
         return Ok((Vec::new(), None));
     }
 
-    let seed_hash = hash_seeds(
+    let seed_hash = hash_community_seeds(hash_seeds(
         seeds,
         depth,
         alphas.teleport_alpha,
         alphas.ppr_vad_alpha,
         weighting,
-    );
+    ), policy.community_identity);
     let now = crate::unix_seconds_now();
     let current_graph_version = read_graph_version(store, txn)?;
     let cache_context = PprCacheReadContext {
@@ -920,6 +1083,7 @@ fn ppr_query_in_txn_impl(
         weighting,
         now,
         current_graph_version,
+        community_identity: policy.community_identity,
     };
 
     if let Some(row) = read_exact_cache_row(&cache_context, &seed_hash, depth)? {
@@ -935,7 +1099,7 @@ fn ppr_query_in_txn_impl(
         ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?
     };
     let scores = state.scores.clone();
-    if !defer_cache_writes {
+    if !policy.defer_writes {
         return Ok((scores, None));
     }
 
@@ -943,7 +1107,8 @@ fn ppr_query_in_txn_impl(
         seed_hash,
         computed_at: now,
         graph_version: current_graph_version,
-        state,
+        state: Some(state),
+        community_snapshot: None,
     };
     Ok((scores, Some(deferred_write)))
 }
@@ -953,13 +1118,13 @@ fn read_deepest_resume_state(
     target_depth: u32,
 ) -> Result<Option<PprCacheState>> {
     for completed_depth in (0..target_depth).rev() {
-        let seed_hash = hash_seeds(
+        let seed_hash = hash_community_seeds(hash_seeds(
             context.seeds,
             completed_depth,
             context.teleport_alpha,
             context.ppr_vad_alpha,
             context.weighting,
-        );
+        ), context.community_identity);
         let Some(row) = read_resume_cache_row(context, &seed_hash, completed_depth)? else {
             continue;
         };
@@ -1495,6 +1660,20 @@ fn hash_seeds(
     xxh3_128(&bytes).to_le_bytes()
 }
 
+/// Only base round state is cached. The community namespace separates beta and
+/// snapshot version, while ordered scores, limits, session usage and all safety
+/// knobs are applied after every cache read and are never stored as boosted rows.
+fn hash_community_seeds(
+    baseline: [u8; SEED_HASH_LEN],
+    identity: Option<[u8; 12]>,
+) -> [u8; SEED_HASH_LEN] {
+    let Some(identity) = identity else { return baseline; };
+    let mut bytes = b"oneiron:ppr:community:v0\0".to_vec();
+    bytes.extend_from_slice(&baseline);
+    bytes.extend_from_slice(&identity);
+    xxh3_128(&bytes).to_le_bytes()
+}
+
 fn encode_dep_key(
     entity_id: &EntityId,
     seed_hash: &[u8; SEED_HASH_LEN],
@@ -1707,7 +1886,7 @@ fn encode_cache_value_with_state(
     Ok(value)
 }
 
-fn read_graph_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
+pub(crate) fn read_graph_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
     let Some(raw) = store.hnsw_meta().get(txn, GRAPH_VERSION_KEY)? else {
         return Ok(0);
     };

@@ -4688,3 +4688,132 @@ fn open_existing_serves_the_bound_vault_across_an_aba_swap_of_the_caller_path() 
     );
     Ok(())
 }
+
+fn community_store_fixture(vault: &Vault) -> Result<()> {
+    for n in 1..=100 {
+        vault.put_entity(&entity_id(n), 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    vault.put_edge(&entity_id(1), crate::EdgeKind::BelongsTo, &entity_id(2), 1.0)?;
+    vault.put_edge(&entity_id(1), crate::EdgeKind::Supports, &entity_id(3), 1.0)?;
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_refresh_uses_vault_meta_and_only_live_outgoing_projection() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    vault.put_edge(&entity_id(3), crate::EdgeKind::Opposes, &entity_id(4), 1.0)?;
+    vault.put_edge(&entity_id(250), crate::EdgeKind::About, &entity_id(1), 1.0)?;
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(&mut txn, b"unrelated:sentinel", b"keep")?;
+        txn.commit()?;
+    }
+    let report = vault.refresh_ppr_communities(&[], 42)?;
+    assert!(report.full_recompute);
+    assert_eq!(report.recomputed_entities, 100);
+    let txn = vault.store.env.read_txn()?;
+    let snapshot = vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot");
+    assert_eq!(snapshot.nodes.len(), 100);
+    assert!(!snapshot.nodes.contains_key(&entity_id(250)));
+    assert_eq!(snapshot.nodes[&entity_id(1)].fine, snapshot.nodes[&entity_id(2)].fine);
+    assert_ne!(snapshot.nodes[&entity_id(1)].fine, snapshot.nodes[&entity_id(3)].fine);
+    assert_ne!(snapshot.nodes[&entity_id(3)].fine, snapshot.nodes[&entity_id(4)].fine);
+    assert_eq!(snapshot.meta.graph_version, crate::ppr::read_graph_version(&vault.store, &txn)?);
+    assert_eq!(snapshot.meta.generated_at, 42);
+    assert_eq!(vault.store.vault_meta.get(&txn, b"unrelated:sentinel")?.expect("sentinel").as_ref(), b"keep");
+    for (key, value) in snapshot.encode_rows().expect("encode") {
+        assert_eq!(vault.store.vault_meta.get(&txn, &key)?.expect("row").as_ref(), value.as_slice());
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_incremental_refresh_invalidates_versions_and_is_atomic() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let old = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("old")
+    };
+    vault.put_edge(&entity_id(1), crate::EdgeKind::BelongsTo, &entity_id(2), 0.0)?;
+    assert!(vault.ppr_community_membership(&entity_id(1))?.is_none());
+    let report = vault.refresh_ppr_communities(&[entity_id(1), entity_id(2)], 43)?;
+    assert!(!report.full_recompute);
+    let read = vault.store.env.read_txn()?;
+    let current = vault.store.ppr_community_snapshot_in_txn(&read)?.expect("current");
+    assert_ne!(current.meta.graph_version, old.meta.graph_version);
+    assert_ne!(current.nodes[&entity_id(1)].fine, current.nodes[&entity_id(2)].fine);
+    assert_eq!(current.nodes[&entity_id(100)], old.nodes[&entity_id(100)]);
+    let mut replacement = current.clone();
+    replacement.meta.generated_at = 44;
+    {
+        let mut write = vault.store.env.write_txn()?;
+        vault.store.replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
+        // No commit: an aborted replacement must not expose any new rows.
+    }
+    assert_eq!(vault.store.ppr_community_snapshot_in_txn(&read)?.expect("old read"), current);
+    {
+        let mut write = vault.store.env.write_txn()?;
+        vault.store.replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
+        write.commit()?;
+    }
+    assert_eq!(vault.store.ppr_community_snapshot_in_txn(&read)?.expect("snapshot isolation"), current);
+    drop(read);
+    let read = vault.store.env.read_txn()?;
+    assert_eq!(vault.store.ppr_community_snapshot_in_txn(&read)?.expect("published"), replacement);
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot")
+    };
+    for remove_member in [true, false] {
+        let mut invalid = original.clone();
+        if remove_member {
+            invalid.members.pop_first();
+        } else {
+            invalid.nodes.pop_first();
+        }
+        let mut txn = vault.store.env.write_txn()?;
+        assert!(vault.store.replace_ppr_community_cache_in_txn(&mut txn, &invalid).is_err());
+        assert_eq!(vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("unchanged"), original);
+    }
+    let mut stale = original.clone();
+    stale.meta.graph_version += 1;
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        assert!(vault.store.replace_ppr_community_cache_in_txn(&mut txn, &stale).is_err());
+    }
+    let key = format!("ppr_community_cache:v0:node:{}", entity_id(1).to_hex());
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(&mut txn, key.as_bytes(), &[0; 31])?;
+    txn.commit()?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(matches!(vault.store.ppr_community_snapshot_in_txn(&txn), Err(Error::CorruptedIndex(_))));
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transaction() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.sync_state.put(&mut txn, &crate::deletion::local_hard_delete_key(&entity_id(1)), b"deleted")?;
+    let pending = crate::deletion::pending_tombstone_key("1970-01", &entity_id(2));
+    vault.store.sync_state.put(&mut txn, &pending, b"deleted")?;
+    let (snapshot, _) = vault.store.compute_ppr_communities_in_txn(
+        &txn, None, &[], 42, &crate::PprCommunityConfig::default(),
+    )?;
+    assert_eq!(snapshot.nodes.len(), 98);
+    assert!(!snapshot.nodes.contains_key(&entity_id(1)));
+    assert!(!snapshot.nodes.contains_key(&entity_id(2)));
+    Ok(())
+}
