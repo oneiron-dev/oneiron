@@ -591,3 +591,14 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
 .dial-why { display: flex; align-items: baseline; gap: 10px; }
 .dial-why[hidden] { display: none; }      /* the class would beat the UA rule */
 .dial-why .why-voice { font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--silver-2); max-width: 72ch; }
+
+/* ── scrollers (owner 09-08: the classic track read as a heavy rule between
+   the ledger and its inspector). App-wide: a thin thumb in the rule tone,
+   no track, so a scroller reads as a hairline that happens to move. The
+   pipeline board had this first; now every scroll region does. ── */
+* { scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--silver-4); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }

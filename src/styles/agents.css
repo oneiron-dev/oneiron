@@ -74,7 +74,10 @@ html[data-roster-face="portrait"] .rrow .creature-none,
 html[data-roster-face="mark"] .rrow .creature-none { display: block; }
 
 /* ── the room ── */
-.room { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* the room = the main column + the pane (owner 09-08): the pane is the
+   docked inspector, closed at rest to one mark */
+.room { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 18px; min-height: 0; min-width: 0; }
+.room-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 /* the head: the portrait at 72 (the sheet's identity, owner 09-07), the name
    in its ink, the role line, then the layer switch */
 .room-head { display: flex; gap: 20px; align-items: flex-start; padding: 2px 0 10px; }
@@ -358,3 +361,49 @@ table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--sil
   .rrow, .edit, .chan, .rung, .pick, .grant { transition: none; }
   .rrow.live .rdoing, .rmsg.live .rtext, .nrow.live .ndoing { animation: none; background: none; color: var(--silver-2); }
 }
+
+/* ── the pane: closed = one mark with the live count · open = a well column
+   inside the sheet (the vault's inspector rule: a tinted zone divides, not
+   a line). Three shapes for the mark, html[data-pane-mark]. ── */
+.rpane { min-height: 0; display: flex; flex-direction: column; align-items: flex-end; }
+.rpane.open { width: 316px; background: var(--bg-well); border-radius: 6px; padding: 12px 16px 16px; overflow-y: auto; align-items: stretch; gap: 12px; }
+.rp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.rp-body { display: flex; flex-direction: column; gap: 10px; }
+.rp-body .label { margin-top: 4px; }
+.rp-group { display: flex; flex-direction: column; gap: 12px; }
+.rp-gname { font-family: var(--serif); font-size: 13.5px; }
+.rp-run { display: flex; flex-direction: column; gap: 4px; }
+.rp-doing { font-family: var(--serif); font-size: 13.5px; line-height: 1.4; color: var(--silver-1); }
+.rp-run.still .rp-doing { color: var(--silver-3); }
+.rp-helper { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
+.rp-hwhat::before { content: "· "; color: var(--silver-4); margin-left: -10px; }
+.rp-hstate { white-space: nowrap; color: var(--silver-4); font-feature-settings: "tnum" 1; }
+.rp-helper.needs, .rp-helper.needs .rp-hstate { color: var(--silver-1); }
+.rp-helper.needs .rp-hstate::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); margin-right: 6px; vertical-align: 1px; }
+.rp-acts { display: flex; gap: 12px; padding-left: 10px; opacity: 0; transition: opacity 160ms ease; }
+.rp-run:hover .rp-acts, .rp-acts:focus-within { opacity: 1; }
+.rp-earlier { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
+.rp-ewhat { font-family: var(--serif); font-size: 13px; line-height: 1.4; color: var(--silver-3); }
+.rp-estate { font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); white-space: nowrap; }
+
+/* the closed mark */
+.pmark { appearance: none; border: 0; background: none; padding: 0; cursor: pointer; color: var(--silver-3); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; display: flex; align-items: flex-start; }
+.pmark:hover { color: var(--silver-1); }
+.pmark:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 3px; }
+.pm-line, .pm-digits, .pm-stack { display: none; }
+.pm-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); }
+.pm-line .pm-dot { margin-right: 5px; vertical-align: 1px; }
+.pm-chev { color: var(--silver-4); }
+/* line (default): one mono line at the top right of the room */
+.pmark .pm-line { display: inline; white-space: nowrap; padding-top: 6px; }
+/* strip: the pane's own edge, 26px of the well the full height, upright digits at its top */
+html[data-pane-mark="strip"] .pmark { width: 26px; height: 100%; min-height: 240px; background: var(--bg-well); border-radius: 6px; justify-content: center; padding-top: 12px; }
+html[data-pane-mark="strip"] .pmark .pm-line { display: none; }
+html[data-pane-mark="strip"] .pm-digits { display: flex; flex-direction: column; align-items: center; gap: 12px; font-size: 11px; font-feature-settings: "tnum" 1; }
+.pm-need { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--silver-1); }
+.pm-live { color: var(--silver-3); }
+/* stack: the words, each letter upright, read top to bottom */
+html[data-pane-mark="stack"] .pmark { padding-top: 6px; }
+html[data-pane-mark="stack"] .pmark .pm-line { display: none; }
+html[data-pane-mark="stack"] .pm-stack { display: block; writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 0.04em; line-height: 1; font-size: 10px; }
+html[data-pane-mark="stack"] .pm-stack .pm-dot { margin-inline-end: 8px; }

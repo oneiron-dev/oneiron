@@ -160,9 +160,9 @@ const AGENTS: Agent[] = [
 ]
 
 /* the live runs (the agent line points here) */
-const RUNS: Array<{ agent: RunKey; doing: string; tip: string; since: string; world: string; elapsed: string; tokens: string; cost: string }> = [
-  { agent: 'eiri', doing: 'Drafting the COO intro, in Yuki’s register', tip: 'run rx_9b20 · started 13:55 · it will queue, not send', since: '13:55', world: 'hokuei', elapsed: '12m', tokens: '3.1k', cost: '¥4' },
-  { agent: 'tory', doing: 'Checking the supplier rumor against the filings', tip: 'run rx_9b07 · started 13:26 · read-only scope', since: '13:26', world: 'hokuei', elapsed: '41m', tokens: '18k', cost: '¥21' },
+const RUNS: Array<{ agent: RunKey; doing: string; tip: string; since: string; world: string; elapsed: string; tokens: string; cost: string; needs?: string; helpers: Array<{ what: string; state: string; needs?: boolean }> }> = [
+  { agent: 'eiri', doing: 'Drafting the COO intro, in Yuki’s register', tip: 'run rx_9b20 · started 13:55 · it will queue, not send', since: '13:55', world: 'hokuei', elapsed: '12m', tokens: '3.1k', cost: '¥4', needs: 'reaching the COO', helpers: [{ what: 'read the site and the org chart', state: 'done 13:58' }, { what: 'drafting, in Yuki’s register', state: '12m' }, { what: 'reaching the COO', state: 'needs you', needs: true }] },
+  { agent: 'tory', doing: 'Checking the supplier rumor against the filings', tip: 'run rx_9b07 · started 13:26 · read-only scope', since: '13:26', world: 'hokuei', elapsed: '41m', tokens: '18k', cost: '¥21', helpers: [{ what: 'two filings open', state: '41m' }, { what: 'grading the source', state: '6m' }] },
 ]
 
 /* what already ran today, newest first */
@@ -474,6 +474,8 @@ function Agents() {
   const [armed, setArmed] = React.useState<string | null>(null)
   /* pause parks the agent (nothing new starts; the live run finishes) */
   const [paused, setPaused] = React.useState<Record<string, string>>({})
+  /* the work pane (owner 09-08): closed at rest, one mark carries the count */
+  const [pane, setPane] = React.useState(false)
   /* stop = the cancel signal (rule 34): the run settles midway, in place */
   const [stopped, setStopped] = React.useState<Partial<Record<RunKey, boolean>>>({})
   /* the ledger sorts on its heads: asc → desc → off */
@@ -730,6 +732,7 @@ function Agents() {
   }, [sort, room, isHouse])
   const runRows = isHouse ? RUNS : RUNS.filter((r) => r.agent === room)
   const liveCount = runRows.filter((r) => !stopped[r.agent]).length
+  const needsCount = runRows.filter((r) => !stopped[r.agent] && r.needs).length
   const writes = histRows.reduce((n, h) => n + h.writes, 0)
   const waited = histRows.reduce((n, h) => n + h.waited, 0)
 
@@ -1185,6 +1188,114 @@ function Agents() {
   }
 
   /* ── the runs layer: now · earlier today, scoped to the room ── */
+  /* ── the pane (owner 09-08): the docked inspector for this agent's work.
+     Closed at rest it is ONE mark that carries the room's live count and
+     opens on a click; the tuner offers three shapes for the mark (line ·
+     strip · stack). Open, it is a well column inside the sheet, the vault's
+     own inspector rule ("a tinted zone divides, not a line"): the runs
+     unfolded to their helpers, the one red dot on what needs you, then
+     what ran earlier. In the house the runs group under names in ink. ── */
+  const renderPane = () => {
+    const words = `${liveCount} running${needsCount ? ` · ${needsCount} needs you` : ''}`
+    const groups: Array<{ key: AgentKey | null; runs: typeof runRows }> = isHouse
+      ? (['eiri', 'tory', 'antevon'] as AgentKey[]).map((k) => ({ key: k as AgentKey | null, runs: runRows.filter((r) => r.agent === k) })).filter((g) => g.runs.length)
+      : [{ key: null, runs: runRows }]
+    return (
+      <aside className={pane ? 'rpane open' : 'rpane'} aria-label="work">
+        {pane ? (
+          <>
+            <div className="rp-head">
+              <span className="meta-line" title="this room's live work">
+                {words}
+              </span>
+              <button type="button" className="act" title="close the pane" onClick={(e) => { markCued(e); setPane(false); cue('toggle') }}>
+                close
+              </button>
+            </div>
+            <div className="rp-body">
+              <span className="label">work</span>
+              {groups.map((g) => (
+                <div key={g.key ?? 'all'} className="rp-group">
+                  {g.key ? (
+                    <span className="aname rp-gname" data-agent={g.key}>
+                      {NAMES[g.key]}
+                    </span>
+                  ) : null}
+                  {g.runs.map((r) => {
+                    const still = !!stopped[r.agent]
+                    return (
+                      <div key={r.agent} className={still ? 'rp-run still' : 'rp-run'} data-agent={r.agent}>
+                        <span className="rp-doing" title={r.tip}>
+                          {r.doing}
+                        </span>
+                        {r.helpers.map((h) => (
+                          <div key={h.what} className={h.needs && !still ? 'rp-helper needs' : 'rp-helper'}>
+                            <span className="rp-hwhat">{h.what}</span>
+                            <span className="rp-hstate">{still ? '' : h.state}</span>
+                          </div>
+                        ))}
+                        {still ? (
+                          <span className="meta-line" title="stopped at its next breakpoint">
+                            stopped {SETTLE_AT}
+                          </span>
+                        ) : (
+                          <span className="rp-acts">
+                            <button type="button" className="act" title="opens the run in the agent line · steer it there" onClick={(e) => { markCued(e); openChat(r.agent) }}>
+                              steer
+                            </button>
+                            <button type="button" className="act" title="verb: stop_run · at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
+                              stop
+                            </button>
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+              <span className="label">earlier</span>
+              {histRows.slice(0, 4).map((h) => (
+                <div key={h.id} className="rp-earlier" title={h.tip}>
+                  <span className="rp-ewhat">{h.ran}</span>
+                  <span className="rp-estate">{h.wake.replace('woke ', '')}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <button type="button" className="pmark" title={`${words} · open the work pane`} onClick={(e) => { markCued(e); setPane(true); cue('toggle') }}>
+            <span className="pm-line">
+              {liveCount} running
+              {needsCount ? (
+                <>
+                  {' · '}
+                  <i className="pm-dot" aria-hidden="true" />
+                  {needsCount} needs you
+                </>
+              ) : null}
+              <span className="pm-chev" aria-hidden="true">
+                {' ›'}
+              </span>
+            </span>
+            <span className="pm-digits" aria-hidden="true">
+              {needsCount ? (
+                <span className="pm-need">
+                  <i className="pm-dot" />
+                  {needsCount}
+                </span>
+              ) : null}
+              <span className="pm-live">{liveCount}</span>
+            </span>
+            <span className="pm-stack" aria-hidden="true">
+              {needsCount ? <i className="pm-dot" /> : null}
+              {words}
+            </span>
+          </button>
+        )}
+      </aside>
+    )
+  }
+
   const renderRuns = () => (
     <div className="runs-layer">
       <Section
@@ -1403,7 +1514,7 @@ function Agents() {
                   thread
                 </button>
                 <span className="sep" aria-hidden="true">·</span>
-                <button type="button" className="act" aria-pressed={layer === 'runs'} title="what runs now and what already ran today" onClick={(e) => { markCued(e); setLayer('runs'); cue('toggle') }}>
+                <button type="button" className="act" aria-pressed={pane} title="the work pane · what runs now and ran today" onClick={(e) => { markCued(e); setPane((x) => !x); cue('toggle') }}>
                   runs
                 </button>
               </span>
@@ -1447,7 +1558,7 @@ function Agents() {
               {c.fixture ? (
                 <>
                   <span className="sep" aria-hidden="true">·</span>
-                  <button type="button" className="act" aria-pressed={layer === 'runs'} title="what it runs now and ran today" onClick={(e) => { markCued(e); setLayer('runs'); cue('toggle') }}>
+                  <button type="button" className="act" aria-pressed={pane} title="the work pane · what it runs now and ran today" onClick={(e) => { markCued(e); setPane((x) => !x); cue('toggle') }}>
                     runs
                   </button>
                 </>
@@ -1675,6 +1786,7 @@ function Agents() {
 
           {/* ══ the room ══ */}
           <section className="room" aria-label={isHouse ? 'the house' : current?.name || 'new agent'}>
+            <div className="room-main">
             {isHouse || current ? renderHead() : null}
             {layer === 'setup' && current ? (
               renderSetup(current)
@@ -1699,6 +1811,8 @@ function Agents() {
               </div>
             )}
             {layer === 'thread' ? renderLine() : null}
+            </div>
+            {isHouse || current?.fixture ? renderPane() : null}
           </section>
         </div>
       </div>
