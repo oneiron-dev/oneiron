@@ -3,6 +3,7 @@
 //! RS1 is intentionally a projection over existing event substrates. This
 //! module does not mint a new receipt store and does not change emitter schema.
 
+mod brief_share;
 mod family;
 mod field_set;
 mod grant;
@@ -28,7 +29,8 @@ pub use self::grant::{
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{
     FIELD_MANIFEST_ACTOR_CLAIMS, FIELD_MANIFEST_SKILLS, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
-    ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptView,
+    ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation,
+    ReceiptScanPosition, ReceiptView,
 };
 pub use self::ledgers::{attempt_pack_receipt, attempt_pack_receipt_id, outbound_intent_receipt};
 pub use self::projection::{
@@ -56,7 +58,9 @@ pub(crate) use self::kernel::{
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
 #[cfg(test)]
-pub(crate) use self::ledgers::overwrite_attempt_pack_receipt_for_test;
+pub(crate) use self::ledgers::{
+    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
+};
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, delivered_send_receipt_for_task, persist_send_receipt,
     stamp_attempt_pack_receipt_in_txn,
@@ -81,9 +85,7 @@ use self::kernel::{
     reset_gate_receipt_pages_scanned,
 };
 #[cfg(test)]
-use self::ledgers::{
-    attempt_pack_receipts, decode_durable_send_receipt, put_attempt_pack_receipt_for_test,
-};
+use self::ledgers::{attempt_pack_receipts, decode_durable_send_receipt};
 #[cfg(test)]
 use self::projection::{
     counterparty_contact_records_for_receipts, finalize_receipt_query_records,

@@ -13,7 +13,7 @@ use super::corpus_filter::pipeline_candidate_matches_corpus_filter;
 use super::support::intervals_overlap;
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PipelineFilterConfig, RelMode,
-    ScoredEntity, WorldScope,
+    ScoredEntity, WorldAuthoritySet, WorldScope,
 };
 
 /// D19 read-path status gate (its own pipeline stage; ARCH-0003 retrieval
@@ -339,6 +339,7 @@ pub(super) fn apply_world_filter(
     store: &Store,
     rtxn: &RoTxn<'_>,
     scope: WorldScope,
+    active_set: Option<&WorldAuthoritySet>,
 ) -> Result<()> {
     let target = match scope {
         WorldScope::All => return drop_stale_federated_claims(scores, store, rtxn),
@@ -348,6 +349,21 @@ pub(super) fn apply_world_filter(
             let mut kept = Vec::with_capacity(scores.len());
             for scored in scores.iter().copied() {
                 if codebase_candidate_matches_scope_key(store, rtxn, &scored.id, &scope_key)? {
+                    kept.push(scored);
+                }
+            }
+            *scores = kept;
+            return Ok(());
+        }
+        // Reuse the authority resolved before scoring under this transaction.
+        // Missing authority is an invariant failure, even for an empty result.
+        WorldScope::ActiveSet => {
+            let active_set = active_set.ok_or_else(|| {
+                Error::InvalidConfig("WorldScope::ActiveSet requires resolved authority".to_owned())
+            })?;
+            let mut kept = Vec::with_capacity(scores.len());
+            for scored in scores.iter().copied() {
+                if active_set_admits(store, rtxn, &scored.id, active_set)? {
                     kept.push(scored);
                 }
             }
@@ -425,6 +441,25 @@ fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     Ok(body.world)
+}
+
+/// Whether one candidate survives a resolved per-turn ActiveSet (ONE-1420).
+///
+/// Base handling is EXPLICIT: base-reality claims and non-claim entities — the
+/// two things [`claim_world`] reports as `None` — survive only when the active
+/// set includes base. A world-scoped claim survives only when its own world is
+/// a selected member; no other world is reachable, and nothing here consults
+/// the codebase scope key.
+fn active_set_admits(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    active_set: &WorldAuthoritySet,
+) -> Result<bool> {
+    Ok(match claim_world(store, rtxn, id)? {
+        None => active_set.include_base(),
+        Some(world) => active_set.worlds().contains(&world),
+    })
 }
 
 pub(super) fn apply_filters(
@@ -579,7 +614,13 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
-    if !pipeline_candidate_matches_world_filter(store, rtxn, id, filters.world_scope)? {
+    if !pipeline_candidate_matches_world_filter(
+        store,
+        rtxn,
+        id,
+        filters.world_scope,
+        filters.world_active_set,
+    )? {
         return Ok(false);
     }
 
@@ -680,6 +721,7 @@ fn pipeline_candidate_matches_world_filter(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope: WorldScope,
+    active_set: Option<&WorldAuthoritySet>,
 ) -> Result<bool> {
     let target = match scope {
         WorldScope::All => return Ok(true),
@@ -687,6 +729,19 @@ fn pipeline_candidate_matches_world_filter(
         WorldScope::World(id) => Some(id),
         WorldScope::WorldSet(scope_key) => {
             return codebase_candidate_matches_scope_key(store, rtxn, id, &scope_key);
+        }
+        // Same admission as the post-fusion arm, against the authority the run
+        // resolved once. A missing set means the run reached a per-candidate
+        // check under `ActiveSet` with nothing resolved, which is refused
+        // rather than treated as "no restriction".
+        WorldScope::ActiveSet => {
+            let active_set = active_set.ok_or_else(|| {
+                Error::InvalidConfig(
+                    "WorldScope::ActiveSet candidate check has no resolved world authority"
+                        .to_owned(),
+                )
+            })?;
+            return active_set_admits(store, rtxn, id, active_set);
         }
     };
 

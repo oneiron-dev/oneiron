@@ -15,6 +15,7 @@ use oneiron::sync::server_state;
 use oneiron::sync::{self, EphemeralStore, WindowKey, WindowManager};
 use tokio::sync::{Mutex, broadcast};
 
+use crate::api::DeepRetrievalHost;
 use crate::config::SyncServerConfig;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
 use crate::usage::UsageLedger;
@@ -64,6 +65,15 @@ pub struct SyncServer {
     pub(crate) usage_ledger: UsageLedger,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
+    /// ONE-207: the optional deep-retrieval host.
+    ///
+    /// `None` on every server [`SyncServer::new`] builds, and that is the
+    /// shipped posture: this crate injects no backend, pins no model and mints
+    /// no deep budget, exactly as the MCP endpoints bind no `execute_code`
+    /// host. A `depth=deep` request against a `None` here is refused with
+    /// `DEEP_RETRIEVAL_UNAVAILABLE` rather than quietly served at standard
+    /// effort, so "deep" never names a read that was not deep.
+    pub(crate) deep_retrieval: Option<Arc<DeepRetrievalHost>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,7 +227,20 @@ impl SyncServer {
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             config,
             mcp_registry,
+            deep_retrieval: None,
         })
+    }
+
+    /// Attaches the ONE-207 deep-retrieval host.
+    ///
+    /// Crate-visible on purpose: the host carries a `BudgetGuard`, so wiring
+    /// one is a spend decision, and this release exposes no public seam for
+    /// making it. Tests take this door; production servers keep the `None`
+    /// [`Self::new`] builds until a hosted binding lands with its own ticket.
+    #[allow(dead_code)] // No in-tree production host yet; the tests are its only caller.
+    pub(crate) fn with_deep_retrieval_host(mut self, host: Arc<DeepRetrievalHost>) -> Self {
+        self.deep_retrieval = Some(host);
+        self
     }
 
     /// Returns the vault backing this server (used by integration tests to

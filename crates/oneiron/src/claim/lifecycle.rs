@@ -413,6 +413,12 @@ impl Vault {
         // replacement staged earlier in the same txn rolls back with it.
         let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+        if now < old_header.occurred_start {
+            return Err(Error::InvalidTimeRange {
+                start: old_header.occurred_start,
+                end: now,
+            });
+        }
 
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
@@ -424,7 +430,7 @@ impl Vault {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred: TimeRange {
                     start: old_header.occurred_start,
-                    end: now.max(old_header.occurred_start),
+                    end: now,
                 },
                 learned_at: old_header.learned_at,
                 data,
@@ -691,7 +697,12 @@ impl Vault {
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.
         let (mut body, header) = self.guarded_claim_target_parts_in(&*wtxn, id)?;
-
+        if now < header.occurred_start {
+            return Err(Error::InvalidTimeRange {
+                start: header.occurred_start,
+                end: now,
+            });
+        }
         let consent_receipt = self.store.close_pending_gate_consent_in_txn(
             wtxn,
             id,
@@ -709,7 +720,7 @@ impl Vault {
             entity_type: ENTITY_TYPE_CLAIM,
             occurred: TimeRange {
                 start: header.occurred_start,
-                end: now.max(header.occurred_start),
+                end: now,
             },
             learned_at: header.learned_at,
             data,

@@ -23,7 +23,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 
 /// Current StandingOutboundGrant body schema version.
-pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 1;
+pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 2;
 
 pub(crate) fn standing_outbound_grant_in_txn(
     store: &Store,
@@ -163,6 +163,12 @@ pub enum StandingOutboundGrantScope {
     /// this scope — the consent door resolves it from booking claims — so a
     /// live grant never widens past the page it was minted for.
     BookingPageInvites { page_ref: EntityId },
+    /// Storage-aware authority; only the atomic envelope door may use it.
+    ChannelIdentityEnvelope {
+        identity_ref: EntityId,
+        envelope_ref: EntityId,
+        verb_class: String,
+    },
 }
 
 /// Authenticated grant-time input for one payload-aware external tool scope.
@@ -228,6 +234,7 @@ impl StandingOutboundGrantScope {
             Self::BriefVerbClass { .. } => "brief_verb_class",
             Self::ScopedMcp { .. } => "scoped_mcp",
             Self::BookingPageInvites { .. } => "booking_page_invites",
+            Self::ChannelIdentityEnvelope { .. } => "channel_identity_envelope",
         }
     }
 
@@ -280,7 +287,7 @@ impl StandingOutboundGrantScope {
                 verb_class.trim() == verb.trim()
                     && brief_ref.is_some_and(|brief_ref| refs_match(grant_brief, brief_ref))
             }
-            Self::ScopedMcp { .. } => false,
+            Self::ScopedMcp { .. } | Self::ChannelIdentityEnvelope { .. } => false,
             // Exactly one verb. The page and the recipient are NOT decided
             // here: the calendar consent door resolves both from persisted
             // booking claims, so a page grant can never cover a second verb
@@ -542,8 +549,8 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
     };
     validate_keys(entries, &OUTBOUND_GRANT_TOP_LEVEL_KEYS)?;
 
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(OUTBOUND_GRANT_SCHEMA_VERSION)
-    {
+    let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
+    if version != Some(OUTBOUND_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
@@ -630,6 +637,14 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
             SCOPE_KIND_SCOPED_MCP
         }
         StandingOutboundGrantScope::BookingPageInvites { .. } => SCOPE_KIND_BOOKING_PAGE_INVITES,
+        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref, envelope_ref, verb_class } => {
+            return Value::Map(vec![
+                (Value::from("kind"), Value::from("channel_identity_envelope")),
+                (Value::from("identity_ref"), Value::from(identity_ref.to_hex())),
+                (Value::from("envelope_ref"), Value::from(envelope_ref.to_hex())),
+                (Value::from("verb_class"), Value::from(verb_class.clone())),
+            ]);
+        }
     };
 
     let mut entries = vec![
@@ -656,6 +671,14 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
+    if required_value(entries, "kind")?.as_str() == Some("channel_identity_envelope") {
+        validate_keys(entries, &["kind", "identity_ref", "envelope_ref", "verb_class"])?;
+        return Ok(StandingOutboundGrantScope::ChannelIdentityEnvelope {
+            identity_ref: decode_entity_ref(required_value(entries, "identity_ref")?)?,
+            envelope_ref: decode_entity_ref(required_value(entries, "envelope_ref")?)?,
+            verb_class: decode_canonical_non_empty_string(required_value(entries, "verb_class")?)?,
+        });
+    }
     validate_keys_with_optional(entries, &SCOPE_KEYS[..5], &SCOPE_KEYS[5..])?;
 
     let kind = required_value(entries, SCOPE_KEYS[0])?
@@ -759,6 +782,11 @@ fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
         // An `EntityId` is already the validated form of a page reference;
         // there is no string spelling to canonicalize.
         StandingOutboundGrantScope::BookingPageInvites { .. } => {}
+        StandingOutboundGrantScope::ChannelIdentityEnvelope { verb_class, .. } => {
+            if !matches!(verb_class.as_str(), "mail.draft" | "mail.send") {
+                return Err(invalid_grant());
+            }
+        }
     }
     Ok(())
 }
@@ -1114,7 +1142,7 @@ impl Vault {
         decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    fn apply_standing_outbound_grant_body(
+    pub(crate) fn apply_standing_outbound_grant_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
@@ -1216,6 +1244,104 @@ fn scoped_mcp_binding_hash_str(hasher: &mut blake3::Hasher, value: &str) {
 fn scoped_mcp_binding_hash_bytes(hasher: &mut blake3::Hasher, value: &[u8]) {
     hasher.update(&(value.len() as u64).to_le_bytes());
     hasher.update(value);
+}
+
+
+/// One usage row per immutable envelope, shared by all grants naming it.
+pub const CHANNEL_IDENTITY_GRANT_USAGE_PREFIX: &[u8] =
+    b"outbound_grant:channel_identity_usage:v1:";
+
+impl Vault {
+    /// Atomically authorizes and reserves an action using the engine clock.
+    ///
+    /// A true retry reuses the reservation; it is not permission to execute a
+    /// second delivery. Dispatch must retain the same engine effect key. This
+    /// door never reads a caller timestamp or delegates to `matches_effect`.
+    pub fn authorize_and_consume_channel_identity_grant(
+        &self,
+        grant_ref: &EntityId,
+        candidate: &crate::channel_identity_autonomy::ChannelIdentityEffectCandidate,
+    ) -> Result<bool> {
+        self.consume_channel_identity_grant_at(grant_ref, candidate, crate::unix_seconds_now())
+    }
+
+    fn consume_channel_identity_grant_at(
+        &self,
+        grant_ref: &EntityId,
+        candidate: &crate::channel_identity_autonomy::ChannelIdentityEffectCandidate,
+        now: u64,
+    ) -> Result<bool> {
+        use crate::channel_identity_autonomy::ChannelIdentityAutonomyRung;
+
+        let mut txn = self.store.env.write_txn()?;
+        let Some(grant) = standing_outbound_grant_in_txn(&self.store, &txn, grant_ref)? else {
+            return Ok(false);
+        };
+        let StandingOutboundGrantScope::ChannelIdentityEnvelope {
+            identity_ref, envelope_ref, verb_class,
+        } = &grant.scope else { return Ok(false); };
+        let verb = candidate.verb_class.trim().to_ascii_lowercase();
+        if *identity_ref != candidate.identity_ref || *verb_class != verb {
+            return Ok(false);
+        }
+        // Structural/storage failures stay errors. Absence/revocation/mismatch
+        // are denials; no error ever falls through to a less constrained dial.
+        let envelope = match self.validate_autonomy_action(&txn, &grant, now) {
+            Ok(envelope) => envelope,
+            Err(Error::InvalidConsentBound(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if envelope.relationship_context != candidate.relationship_context
+            || envelope.counterparty_class != candidate.counterparty_class
+        { return Ok(false); }
+        let mode = match self.autonomy_mode_in_txn(&txn, candidate.identity_ref,
+            candidate.relationship_context, now) {
+            Ok(mode) => mode,
+            Err(Error::InvalidConsentBound(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if mode.action_grant_ref != Some(*grant_ref)
+            || (verb == "mail.send" && mode.rung != ChannelIdentityAutonomyRung::AutonomousWithinEnvelope)
+        { return Ok(false); }
+        let mut key = CHANNEL_IDENTITY_GRANT_USAGE_PREFIX.to_vec();
+        key.extend_from_slice(envelope_ref.as_bytes());
+        let mut started = now;
+        let mut effects = Vec::<([u8; 32], [u8; 32])>::new();
+        if let Some(raw) = self.store.vault_meta.get(&txn, &key)? {
+            if raw.len() < 12 || (raw.len() - 12) % 64 != 0 { return Err(invalid_grant()); }
+            started = u64::from_be_bytes(raw[..8].try_into().map_err(|_| invalid_grant())?);
+            let used = u32::from_be_bytes(raw[8..12].try_into().map_err(|_| invalid_grant())?);
+            if used as usize != (raw.len() - 12) / 64 || used > envelope.max_actions {
+                return Err(invalid_grant());
+            }
+            // Clock rollback cannot reset a window or spend a fresh slot.
+            if now < started { return Ok(false); }
+            if now - started < envelope.window_secs {
+                for pair in raw[12..].chunks_exact(64) {
+                    effects.push((pair[..32].try_into().map_err(|_| invalid_grant())?,
+                        pair[32..].try_into().map_err(|_| invalid_grant())?));
+                }
+            } else { started = now; }
+        }
+        let fingerprint = *blake3::hash(verb.as_bytes()).as_bytes();
+        if let Some((_, stored)) = effects.iter().find(|(key, _)| *key == candidate.effect_key) {
+            return Ok(*stored == fingerprint);
+        }
+        if effects.len() >= envelope.max_actions as usize { return Ok(false); }
+        effects.push((candidate.effect_key, fingerprint));
+        let mut bytes = started.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&(effects.len() as u32).to_be_bytes());
+        for (effect, fingerprint) in effects {
+            bytes.extend_from_slice(&effect);
+            bytes.extend_from_slice(&fingerprint);
+        }
+        self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+        let touched = grant.touched(now)?;
+        self.apply_standing_outbound_grant_body(&mut txn, grant_ref, now,
+            encode_standing_outbound_grant_body(&touched)?)?;
+        txn.commit()?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

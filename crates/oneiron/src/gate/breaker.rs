@@ -41,10 +41,10 @@ use super::resolution::PolicyManifestResolution;
 pub(crate) const GATE_BREAKER_ROW_SCHEMA_VERSION: u8 = 1;
 
 /// Engine-default event budget inside one rolling window.
-pub const GATE_BREAKER_DEFAULT_MAX_EVENTS: u32 = 30;
+pub(super) const GATE_BREAKER_DEFAULT_MAX_EVENTS: u32 = 30;
 
 /// Engine-default rolling window, in seconds.
-pub const GATE_BREAKER_WINDOW_SECS: u64 = 600;
+pub(super) const GATE_BREAKER_WINDOW_SECS: u64 = 600;
 
 /// Optional policy-manifest key carrying the two-field threshold override.
 pub(crate) const GATE_BREAKER_POLICY_KEY: &str = "actor_burst_breaker";
@@ -84,7 +84,7 @@ const GATE_BREAKER_RECEIPT_DOMAIN: &[u8] = b"oneiron/gate/actor-burst-breaker-re
 /// valid `actor_burst_breaker` override; see
 /// [`parse_gate_breaker_thresholds`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GateBreakerThresholds {
+pub(crate) struct GateBreakerThresholds {
     pub max_events: u32,
     pub window_secs: u64,
 }

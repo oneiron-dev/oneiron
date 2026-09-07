@@ -68,20 +68,25 @@ fn claim() -> ClaimBody {
     body
 }
 
-fn put_claim(vault: &Vault, id: EntityId, body: &ClaimBody) -> Result<()> {
-    vault
-        .batch()
-        .put_replicated(
-            &id,
-            ENTITY_TYPE_CLAIM,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            &crate::claim::encode_claim_body(body)?,
-        )
-        .text(&id, &[("body", "authorityneedle")])
-        .vector(&id, &[1.0, 0.0, 0.0, 0.0])
-        .commit()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    pub(super) fn put_claim(vault: &Vault, id: EntityId, body: &ClaimBody) -> Result<()> {
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                &crate::claim::encode_claim_body(body)?,
+            )
+            .text(&id, &[("body", "authorityneedle")])
+            .vector(&id, &[1.0, 0.0, 0.0, 0.0])
+            .commit()
+    }
 }
+use tests::put_claim;
 
 fn reader(vault: &Vault) -> crate::claim::ScopedRead<'_> {
     vault.scoped_read(ScopedReadActorKey::new("authority-reader").unwrap())
@@ -655,6 +660,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 facet_filter: None,
                 relationship_filter: None,
                 world_scope: WorldScope::All,
+                world_active_set: None,
                 corpus_scope: &crate::corpus::CorpusScope::All,
             };
             let mut metadata = EntityMetadataCache::default();

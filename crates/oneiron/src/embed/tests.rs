@@ -14,6 +14,10 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::SyncQueue;
 use crate::temporal::TimeRange;
 
+#[path = "warn_capture.rs"]
+mod warn_capture;
+use warn_capture::WarnCapture;
+
 #[derive(Debug)]
 struct RecordingEmbedder {
     model_id: String,
@@ -375,51 +379,6 @@ impl EgressPredicate for AllowOnly {
     }
 }
 
-#[derive(Clone, Default)]
-struct WarnCapture {
-    messages: Arc<Mutex<Vec<String>>>,
-}
-
-impl WarnCapture {
-    fn messages(&self) -> Vec<String> {
-        self.messages.lock().unwrap().clone()
-    }
-}
-
-impl tracing::Subscriber for WarnCapture {
-    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        metadata.level() == &tracing::Level::WARN
-    }
-
-    fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-
-    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-
-    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut message = String::new();
-        event.record(&mut MessageVisitor(&mut message));
-        self.messages.lock().unwrap().push(message);
-    }
-
-    fn enter(&self, _span: &tracing::span::Id) {}
-
-    fn exit(&self, _span: &tracing::span::Id) {}
-}
-
-struct MessageVisitor<'a>(&'a mut String);
-
-impl tracing::field::Visit for MessageVisitor<'_> {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.0.push_str(&format!("{value:?}"));
-        }
-    }
-}
-
 fn routed_reconciler(
     vault: &Arc<Vault>,
     local: &Arc<RecordingEmbedder>,
@@ -567,8 +526,7 @@ fn remote_failure_falls_back_local_and_warns() -> Result<()> {
     )?;
 
     let capture = WarnCapture::default();
-    let report =
-        tracing::subscriber::with_default(capture.clone(), || reconciler.reconcile_once_at(10))?;
+    let report = capture.with_default(|| reconciler.reconcile_once_at(10))?;
 
     assert_eq!(report.filled, 2);
     assert_eq!(report.remote_failed_fallback_local, 2);
@@ -977,8 +935,7 @@ fn partial_remote_completion_is_logged_when_local_batch_fails() -> Result<()> {
     ))?;
 
     let capture = WarnCapture::default();
-    let result =
-        tracing::subscriber::with_default(capture.clone(), || reconciler.reconcile_once_at(10));
+    let result = capture.with_default(|| reconciler.reconcile_once_at(10));
     assert!(result.is_err(), "the local failure still fails the pass");
     assert!(
         capture
@@ -1000,8 +957,7 @@ fn partial_remote_completion_is_logged_when_local_batch_fails() -> Result<()> {
         }) as Arc<dyn Embedder>,
     );
     let capture = WarnCapture::default();
-    let result =
-        tracing::subscriber::with_default(capture.clone(), || reconciler.reconcile_once_at(10));
+    let result = capture.with_default(|| reconciler.reconcile_once_at(10));
     assert!(result.is_err());
     assert!(
         capture

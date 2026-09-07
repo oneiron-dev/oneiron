@@ -2,26 +2,31 @@ use super::*;
 use crate::booking::{ActiveHoldSource, HoldLeaseSpec, HoldSpec, SessionKey, VaultActiveHoldSource};
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
-#[test]
-fn publication_copied_owner_evidence_cannot_use_raw_batch_or_replay_doors() {
-    let (_dir, vault) = open();
-    let receipt = vault.memory(id(2), EdgeActorClass::Human).claim_upsert(&input(publication())).expect("owner");
-    let claim = crate::memory::resolve_entity_ref(&vault, &receipt.claim_short_id).expect("id");
-    let body = vault.get_claim(&claim).expect("read").expect("body");
-    let bytes = crate::claim::encode_claim_body(&body).expect("bytes");
-    let time = TimeRange { start: 1, end: 1 };
-    assert!(vault.put_claim(&id(8), &body, time, 1).is_err());
-    assert!(vault.put_claim(&claim, &body, time, 1).is_err());
-    assert!(vault.batch().put(&id(8), crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes).commit().is_err());
-    assert!(vault.batch().put_replicated(&id(8), crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes).commit().is_err());
-    let candidate = ClaimCandidate::new(BOOKING_PUBLIC_PAGE_PREDICATE, body.subject, body.value.clone(), 1.0)
-        .with_validity(body.valid_from, body.valid_to);
-    let envelope = WriteEnvelope::new(WriteActor::new(id(2), EdgeActorClass::Human), ClaimSource::UserStated,
-        WriteProvenance::new(rmpv::Value::from("copied owner")).expect("provenance"), ClaimApprovalStatus::Auto);
-    assert!(vault.batch().claim_candidate(&id(8), candidate, &envelope, time, 1).commit().is_err());
-    assert_eq!(load_public_booking_page(&vault, id(1), 150).expect("unchanged"), Some(publication()));
-    let txn = vault.store.env.read_txn().expect("txn");
-    assert!(vault.store.vault_meta.get(&txn, &crate::memory::booking_publication::publication_write_key(claim)).expect("permit read").is_none());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publication_copied_owner_evidence_cannot_use_raw_batch_or_replay_doors() {
+        let (_dir, vault) = open();
+        let receipt = vault.memory(id(2), EdgeActorClass::Human).claim_upsert(&input(publication())).expect("owner");
+        let claim = crate::memory::resolve_entity_ref(&vault, &receipt.claim_short_id).expect("id");
+        let body = vault.get_claim(&claim).expect("read").expect("body");
+        let bytes = crate::claim::encode_claim_body(&body).expect("bytes");
+        let time = TimeRange { start: 1, end: 1 };
+        assert!(vault.put_claim(&id(8), &body, time, 1).is_err());
+        assert!(vault.put_claim(&claim, &body, time, 1).is_err());
+        assert!(vault.batch().put(&id(8), crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes).commit().is_err());
+        assert!(vault.batch().put_replicated(&id(8), crate::registry::ENTITY_TYPE_CLAIM, time, 1, &bytes).commit().is_err());
+        let candidate = ClaimCandidate::new(BOOKING_PUBLIC_PAGE_PREDICATE, body.subject, body.value.clone(), 1.0)
+            .with_validity(body.valid_from, body.valid_to);
+        let envelope = WriteEnvelope::new(WriteActor::new(id(2), EdgeActorClass::Human), ClaimSource::UserStated,
+            WriteProvenance::new(rmpv::Value::from("copied owner")).expect("provenance"), ClaimApprovalStatus::Auto);
+        assert!(vault.batch().claim_candidate(&id(8), candidate, &envelope, time, 1).commit().is_err());
+        assert_eq!(load_public_booking_page(&vault, id(1), 150).expect("unchanged"), Some(publication()));
+        let txn = vault.store.env.read_txn().expect("txn");
+        assert!(vault.store.vault_meta.get(&txn, &crate::memory::booking_publication::publication_write_key(claim)).expect("permit read").is_none());
+    }
 }
 
 #[test]

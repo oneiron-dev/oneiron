@@ -601,6 +601,7 @@ impl PolicyManifestResolution {
             // fail-closed manifest checks, and the ceiling clamp above.
             GateContentKind::Claim
             | GateContentKind::EdgeProvenanceClaim
+            | GateContentKind::Repair
             | GateContentKind::WitnessMessage => {}
             GateContentKind::PolicyManifest => {
                 pending.push(GateReasonCode::PendingPolicyManifestAuthority);

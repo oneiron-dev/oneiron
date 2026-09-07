@@ -8,7 +8,7 @@ use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
     FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
-    ReceiptKind, ReceiptRecord, hex_lower,
+    ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
 };
 use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
@@ -194,17 +194,22 @@ fn attempt_pack_receipt_key_range_end() -> Vec<u8> {
 /// Callers sort and truncate downstream, so below the cap this returns the
 /// same set the unbounded walk did.
 ///
-/// Above the cap the answer is a bounded PREFIX, not the family — which
-/// [`note_attempt_pack_scan_capped`] says out loud rather than truncating in
-/// silence.
+/// Compatibility view for callers that do not consume completeness metadata.
 pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+    Ok(scan_attempt_pack_receipts(vault)?.records)
+}
+
+/// Scans the same bounded prefix and reports a source continuation in production.
+/// The overflow probe is not decoded and does not increase the projection cap.
+pub(super) fn scan_attempt_pack_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let rtxn = vault.store.env.read_txn()?;
     let end = attempt_pack_receipt_key_range_end();
     let bounds = (
         std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
         std::ops::Bound::Excluded(&end[..]),
     );
-    let mut receipts = Vec::new();
+    let mut scan = ReceiptScan::from_complete_records(Vec::new());
+    let mut before = None;
     // One row PAST the cap is read and never decoded: it is what separates a
     // ledger holding exactly the cap from one the cap truncated.
     for row in vault
@@ -213,14 +218,16 @@ pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>>
         .rev_range(&rtxn, &bounds)?
         .take(MAX_RECEIPT_QUERY_SCAN + 1)
     {
-        let (_, raw) = row?;
-        if receipts.len() == MAX_RECEIPT_QUERY_SCAN {
+        let (key, raw) = row?;
+        if scan.records.len() == MAX_RECEIPT_QUERY_SCAN {
+            scan.mark_incomplete().attempt_pack_before = before;
             note_attempt_pack_scan_capped();
             break;
         }
-        receipts.push(decode_attempt_pack_receipt(&raw)?);
+        scan.records.push(decode_attempt_pack_receipt(&raw)?);
+        before = Some(key.to_vec());
     }
-    Ok(receipts)
+    Ok(scan)
 }
 
 /// Surfaces an attempt pack receipt scan that stopped at the work cap.
@@ -304,6 +311,11 @@ pub(super) fn decode_durable_send_receipt(
         return Err(Error::CorruptedIndex("send receipt ledger"));
     }
     Ok(durable)
+}
+
+/// This projector reads its entire existing audit source; it has no source cap.
+pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
+    durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
 }
 
 pub(super) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {

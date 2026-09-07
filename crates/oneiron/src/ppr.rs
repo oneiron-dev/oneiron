@@ -394,7 +394,7 @@ fn ppr_compute_state_weighted(
         });
     }
 
-    let seed_weights = seed_weights(store, txn, seeds, weighting)?;
+    let seed_weights = seed_weights(store, txn, seeds, weighting, visibility)?;
     let mut scores = HashMap::<EntityId, f32>::new();
     let mut frontier = HashMap::<(EntityId, u32), f32>::new();
     let mut dependencies = HashSet::<EntityId>::new();
@@ -434,7 +434,7 @@ fn ppr_resume_state_weighted(
     alphas: PprAlphas,
     resume: PprCacheState,
 ) -> Result<PprCacheState> {
-    let seed_weights = seed_weights(store, txn, seeds, weighting)?;
+    let seed_weights = seed_weights(store, txn, seeds, weighting, None)?;
     let mut scores = scores_to_map(resume.scores);
     let mut frontier = frontier_to_map(resume.frontier);
     let mut dependencies: HashSet<EntityId> = resume.dependencies.into_iter().collect();
@@ -660,10 +660,11 @@ fn seed_weights(
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     weighting: SeedWeighting,
+    visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<Vec<f32>> {
     match weighting {
         SeedWeighting::Uniform => Ok(vec![1.0 / seeds.len() as f32; seeds.len()]),
-        SeedWeighting::Specificity => specificity_seed_weights(store, txn, seeds),
+        SeedWeighting::Specificity => specificity_seed_weights(store, txn, seeds, visibility),
     }
 }
 
@@ -684,10 +685,11 @@ fn specificity_seed_weights(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
+    visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<Vec<f32>> {
     let mut raw = Vec::with_capacity(seeds.len());
     for seed in seeds {
-        let passage_count = inbound_mentions_count(store, txn, seed)?;
+        let passage_count = inbound_mentions_count(store, txn, seed, visibility)?;
         raw.push(1.0_f64 / (1.0 + passage_count.max(1) as f64).ln());
     }
 
@@ -702,18 +704,24 @@ fn specificity_seed_weights(
 /// `mentions` edges, counted by an `edges_in` prefix scan filtered to
 /// kind = [`EdgeKind::Mentions`] at query time in the same read transaction
 /// (pinned decision — the count is a literal row count over the index; no
-/// persisted counter exists in the DB manifest). Corrupt rows are a typed
-/// error, never silently skipped.
+/// persisted counter exists in the DB manifest). Scoped reads count only
+/// actor-visible sources. Corrupt rows and visibility errors fail closed.
 fn inbound_mentions_count(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seed: &EntityId,
+    visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<u64> {
     let mut count = 0_u64;
     for entry in store.edges_in().prefix_iter(txn, seed.as_bytes())? {
         let (key, _) = entry?;
-        let (_, kind, _) = parse_strict_edge_record_key(&key)?;
+        let (_, kind, source) = parse_strict_edge_record_key(&key)?;
         if kind == EdgeKind::Mentions {
+            if let Some(visibility) = visibility
+                && !visibility.ppr_node_visible(txn, &source)?
+            {
+                continue;
+            }
             count = count
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("ppr passage count"))?;

@@ -6,59 +6,65 @@ use crate::pipeline::tests::captured_retrieval_trace;
 use crate::store::RetrievalSignal;
 use crate::temporal::{TemporalAnchorMode, TimeRange};
 
-fn put_authority_corpus_claims(vault: &Vault, selected: CorpusId) -> Result<EntityId> {
-    let other = CorpusId::from_entity_id(entity_id(0xE5));
-    let eligible = entity_id(0x43);
-    // Both excluded rows outrank the eligible stale row. One fails only the
-    // authority clamp; the other fails only corpus selection.
-    for (id, corpus, confidence, stale, at, vector, text) in [
-        (
-            entity_id(0x41),
-            selected,
-            0.1,
-            false,
-            1,
-            [1.0, 0.0, 0.0, 0.0],
-            "authorityneedle authorityneedle",
-        ),
-        (
-            entity_id(0x44),
-            other,
-            0.9,
-            true,
-            1,
-            [1.0, 0.0, 0.0, 0.0],
-            "authorityneedle authorityneedle",
-        ),
-        (
-            eligible,
-            selected,
-            0.9,
-            true,
-            3,
-            [0.8, 0.6, 0.0, 0.0],
-            "authorityneedle extra unrelated tokens",
-        ),
-    ] {
-        let mut body = claim();
-        body.confidence = confidence;
-        body.stale = stale;
-        body.scope = Some(scope_with_corpus_id(body.scope, corpus)?);
-        vault
-            .batch()
-            .put_replicated(
-                &id,
-                ENTITY_TYPE_CLAIM,
-                TimeRange { start: at, end: at },
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(super) fn put_authority_corpus_claims(vault: &Vault, selected: CorpusId) -> Result<EntityId> {
+        let other = CorpusId::from_entity_id(entity_id(0xE5));
+        let eligible = entity_id(0x43);
+        // Both excluded rows outrank the eligible stale row. One fails only the
+        // authority clamp; the other fails only corpus selection.
+        for (id, corpus, confidence, stale, at, vector, text) in [
+            (
+                entity_id(0x41),
+                selected,
+                0.1,
+                false,
                 1,
-                &crate::claim::encode_claim_body(&body)?,
-            )
-            .text(&id, &[("body", text)])
-            .vector(&id, &vector)
-            .commit()?;
+                [1.0, 0.0, 0.0, 0.0],
+                "authorityneedle authorityneedle",
+            ),
+            (
+                entity_id(0x44),
+                other,
+                0.9,
+                true,
+                1,
+                [1.0, 0.0, 0.0, 0.0],
+                "authorityneedle authorityneedle",
+            ),
+            (
+                eligible,
+                selected,
+                0.9,
+                true,
+                3,
+                [0.8, 0.6, 0.0, 0.0],
+                "authorityneedle extra unrelated tokens",
+            ),
+        ] {
+            let mut body = claim();
+            body.confidence = confidence;
+            body.stale = stale;
+            body.scope = Some(scope_with_corpus_id(body.scope, corpus)?);
+            vault
+                .batch()
+                .put_replicated(
+                    &id,
+                    ENTITY_TYPE_CLAIM,
+                    TimeRange { start: at, end: at },
+                    1,
+                    &crate::claim::encode_claim_body(&body)?,
+                )
+                .text(&id, &[("body", text)])
+                .vector(&id, &vector)
+                .commit()?;
+        }
+        Ok(eligible)
     }
-    Ok(eligible)
 }
+use tests::put_authority_corpus_claims;
 
 #[test]
 fn authority_and_corpus_conjoin_before_channel_limits_and_trace() -> Result<()> {

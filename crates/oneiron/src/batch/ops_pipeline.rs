@@ -1,3 +1,4 @@
+use super::claim_materialization::consume_claim_materialization;
 use super::*;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -316,41 +317,6 @@ pub(crate) fn apply_ops_with_gate_mode(
         gate_mode,
         BaseWriteOrigin::Ordinary,
     )
-}
-
-/// Consumes only the next exact binding, then validates its current authority.
-fn consume_claim_materialization(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    claim_materializations: &mut VecDeque<ClaimMaterialization>,
-    op: &BatchOp,
-    origin: BaseWriteOrigin<'_>,
-) -> Result<Option<ClaimMaterialization>> {
-    if claim_materializations
-        .front()
-        .is_some_and(|binding| binding.matches_op(op))
-    {
-        let binding = claim_materializations
-            .pop_front()
-            .expect("matched front binding");
-        binding.validate_actor(store, txn)?;
-        reject_overlay_member_base_write(store, &binding.envelope().actor().entity_ref(), origin)?;
-        Ok(Some(binding))
-    } else if !claim_materializations.is_empty()
-        && matches!(
-            op,
-            BatchOp::Put {
-                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-                ..
-            }
-        )
-    {
-        Err(Error::InvalidClaimBody(
-            "claim materialization operation mismatch",
-        ))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Applies a batch under an explicit [`BaseWriteOrigin`].
