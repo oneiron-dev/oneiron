@@ -983,6 +983,7 @@ mod tests {
             Ok(SolveResult {
                 slots: self.slots.lock().expect("scripted slots").clone(),
                 flex_used: false,
+                host_bindings: Vec::new(),
             })
         }
     }

@@ -87,17 +87,24 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Reads the persisted MACRO home-node designation, if one exists.
-    pub fn home_node_designation(&self) -> Result<Option<DreamerHomeNodeDesignation>> {
-        let rtxn = self.vault.store.env.read_txn()?;
+    pub(crate) fn home_node_designation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<DreamerHomeNodeDesignation>> {
         let Some(raw) = self
             .vault
             .store
             .vault_meta
-            .get(&rtxn, DREAMER_PRIVATE_HOME_NODE_KEY)?
+            .get(txn, DREAMER_PRIVATE_HOME_NODE_KEY)?
         else {
             return Ok(None);
         };
         decode_home_node_designation(&raw).map(Some)
+    }
+
+    pub fn home_node_designation(&self) -> Result<Option<DreamerHomeNodeDesignation>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.home_node_designation_in_txn(&rtxn)
     }
 
     /// Atomically admits the next queued Dreamer attempt.

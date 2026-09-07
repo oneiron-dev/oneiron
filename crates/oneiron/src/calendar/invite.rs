@@ -347,6 +347,8 @@ pub struct CalendarInviteAdmission {
     change: CalendarInviteStateChange,
     next: CalendarPassportValue,
     hygiene: CalendarInviteHygieneContext,
+    organizer: String,
+    recipient: String,
 }
 
 impl CalendarInviteAdmission {
@@ -393,15 +395,33 @@ impl CalendarInviteAdmission {
         wtxn: &mut heed::RwTxn<'_>,
         now: u64,
     ) -> Result<(), CalendarError> {
-        if !self.moves_state() {
-            return Ok(());
-        }
-        let prior = live_passport_for(
+        crate::booking::lifecycle::bind_booking_invite_identity_in(
             vault,
+            wtxn,
+            &self.event_ref,
+            &self.organizer,
+            &self.recipient,
+        )
+        .map_err(|error| refused(error.to_string()))?;
+        let prior = super::passport::live_passport_for_in_txn(
+            vault,
+            wtxn,
             &self.event_ref,
             CALENDAR_INVITE_PASSPORT_SYSTEM,
             &self.next.uid,
         )?;
+        if !self.moves_state() {
+            // last_seen_at is not part of replay content identity.
+            if prior.as_ref().is_none_or(|(_, live)| {
+                live.last_sequence != self.next.last_sequence
+                    || live.content_hash != self.next.content_hash
+            }) {
+                return Err(refused(
+                    "the outbound passport moved during replay admission",
+                ));
+            }
+            return Ok(());
+        }
         match (self.change, prior.as_ref()) {
             (CalendarInviteStateChange::MintUid, Some(_)) => {
                 return Err(refused("this UID already carries an outbound passport"));
@@ -495,6 +515,8 @@ pub fn admit_calendar_invite(
         change,
         next,
         hygiene,
+        organizer: super::ics::invite_organizer(&read_calendar_invite_ics(vault, payload)?)?,
+        recipient: payload.recipient.clone(),
     })
 }
 
@@ -752,6 +774,12 @@ fn recipient_is_bound_attendee(
     event_ref: &EntityId,
     recipient: &str,
 ) -> Result<bool, CalendarError> {
+    if crate::booking::lifecycle::booking_invite_identity(vault, event_ref)
+        .map_err(|error| refused(error.to_string()))?
+        .is_some_and(|(_, bound)| attendee_matches(&bound, recipient))
+    {
+        return Ok(true);
+    }
     for claim_id in vault
         .claims_for_subject(event_ref)
         .map_err(CalendarError::from)?

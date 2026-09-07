@@ -870,9 +870,26 @@ pub(super) fn facade_error_from_calendar(err: crate::calendar::CalendarError) ->
     }
 }
 
-pub(super) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> MemoryError {
+pub(crate) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> MemoryError {
     match err {
-        OutboundDispatchError::Engine(engine) => MemoryError::from(engine),
+        OutboundDispatchError::Engine(engine)
+        | OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::Engine(engine),
+        ) => MemoryError::from(engine),
+        OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::InvalidInput(reason),
+        ) => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            reason,
+            &["Refresh the current effect state before retrying."],
+        ),
+        OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::InvalidBoundActor,
+        ) => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "outbound actor is no longer authorized",
+            &["Refresh the actor binding before retrying."],
+        ),
         OutboundDispatchError::Chokepoint(_) => MemoryError::new(
             MEMORY_CODE_INTERNAL,
             "outbound effect durability failed",
