@@ -294,6 +294,110 @@ impl Vault {
         Self::open_seeded(path, config, DefaultPolicySeedMode::TestUnseeded)
     }
 
+    /// Adds one actor-bound Imported source permit to a stock default manifest.
+    /// TEST-SUPPORT ONLY: the cap is the unstamped sensitivity floor, with the
+    /// required receipt/warning flags. Every other policy field stays unchanged.
+    /// Claims still use the normal write gate; this grants no review approval,
+    /// actor ceiling, source relabeling, or raw storage access.
+    ///
+    /// Refuses a missing or already customized default manifest rather than
+    /// replacing caller policy. Other installed manifests remain in the fold.
+    /// `Vault::open` never calls this, even when `test-support` is enabled.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_imported_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
+        use crate::batch::{BatchOp, apply_ops};
+        use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
+        use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use rmpv::Value;
+
+        let id = crate::gate::default_policy_manifest_id()?;
+        let default = crate::gate::default_policy_manifest();
+        let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
+            .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
+        let Value::Map(entries) = &mut manifest else {
+            return Err(Error::InvariantViolation(
+                "default test policy is not a map",
+            ));
+        };
+        let Some(Value::Map(rows)) = entries
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("source_trust")).then_some(value))
+        else {
+            return Err(Error::InvariantViolation(
+                "default test policy has no source trust",
+            ));
+        };
+        if rows
+            .iter()
+            .any(|(key, _)| key.as_str() == Some(ClaimSource::Imported.as_str()))
+        {
+            return Err(Error::InvariantViolation(
+                "default test policy already covers Imported",
+            ));
+        }
+        rows.push((
+            Value::from(ClaimSource::Imported.as_str()),
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                (
+                    Value::from("max_auto_sensitivity"),
+                    Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (Value::from("receipted"), Value::Boolean(true)),
+                (Value::from("warned"), Value::Boolean(true)),
+            ]),
+        ));
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &manifest)
+            .map_err(|_| Error::InvariantViolation("encode Imported test policy"))?;
+
+        self.with_write_txn(|wtxn| {
+            let raw =
+                self.store
+                    .entities
+                    .get(wtxn, id.as_bytes())?
+                    .ok_or(Error::InvariantViolation(
+                        "test permit requires a seeded default policy",
+                    ))?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("test policy header"))?;
+            if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+                || raw[ENTITY_METADATA_HEADER_LEN..] != default
+            {
+                return Err(Error::InvariantViolation(
+                    "test permit requires an unchanged default policy",
+                ));
+            }
+            // The test-only capability is confined to this fixed manifest Put.
+            // Use the existing maintenance install path, not raw database writes
+            // or replicated replay. Index maintenance and structural checks run.
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                vec![BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    learned_at: header.learned_at,
+                    data,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                true,
+                true,
+            )
+        })
+    }
+
     fn open_seeded(
         path: impl AsRef<Path>,
         config: VaultConfig,
@@ -705,6 +809,9 @@ impl Vault {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
 
+        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(None);
+        }
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
     }
 
@@ -731,6 +838,9 @@ impl Vault {
     /// Retrieves a vector for an entity.
     pub fn get_vector(&self, id: &EntityId) -> Result<Option<Vec<f32>>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::vault_cleanup::is_archived_in_txn(&self.store, &rtxn, id)? {
+            return Ok(None);
+        }
         let Some(bytes) = self.store.vectors.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
@@ -1894,6 +2004,15 @@ impl Vault {
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        if self.archive_tombstone_in_txn(&rtxn, &id)?.is_some() {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type,
+                learned_at,
+                deletion: None,
+                body: None,
+            }));
+        }
         drop(rtxn);
 
         if body.is_empty()
@@ -1919,6 +2038,12 @@ impl Vault {
 
     /// Returns true when an entity row is a soft-delete shell, not a live
     /// zero-byte payload.
+    ///
+    /// An ARCHIVED row (ONE-1931) answers `true` here as well: the archive is
+    /// a soft tombstone, and the shell it leaves behind is the same 25 B
+    /// shell `user_delete` leaves. Which of the two it is — and therefore
+    /// whether [`Self::restore_archived`] will undo it — is
+    /// [`Self::archived_entity`]'s question, not this one's.
     pub fn is_deleted_shell(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
@@ -1926,6 +2051,12 @@ impl Vault {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // Checked inside the SAME read txn as the row, and before the
+        // window-doc path below, exactly as `entity_deletion_present_in_txn`
+        // orders its own three sources.
+        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(true);
+        }
         if raw.len() != ENTITY_METADATA_HEADER_LEN {
             return Ok(false);
         }
@@ -3207,8 +3338,12 @@ pub(crate) fn live_entity_row_in_txn(
         return Ok(LiveEntityRow::Absent);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if raw.len() == ENTITY_METADATA_HEADER_LEN
-        && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?
+    if store
+        .sync_state
+        .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
+        .is_some()
+        || (raw.len() == ENTITY_METADATA_HEADER_LEN
+            && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?)
     {
         return Ok(LiveEntityRow::DeletedShell);
     }

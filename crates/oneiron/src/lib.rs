@@ -160,6 +160,8 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
+pub mod vault_cleanup;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
 pub mod voice_identity;
@@ -294,9 +296,10 @@ pub use crate::dreamer_runner::DreamerAttemptProgressProducer;
 pub use crate::dreamer_runner::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-    DreamerAdmittedAttempt, DreamerBudgetReserveOutcome, DreamerClaimAuthoringStrategy,
-    DreamerConsolidationScope, DreamerHomeNodeCandidate, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, ReserveDreamerBudget,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerBudgetReserveOutcome,
+    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
 };
 pub use crate::dreamer_wake::{
     DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -437,6 +440,14 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+};
+pub use crate::vault_cleanup::{
+    ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
+    CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal, CleanupRunReport,
+    MACHINE_MINTED_CLAIM_SOURCES, VAULT_CLEANUP_POSTURE_KEY, accept_cleanup_proposal,
+    cleanup_digests, cleanup_posture, cleanup_proposal, cleanup_proposals,
+    is_vault_cleanup_receipt, reject_cleanup_proposal, run_vault_cleanup, scan_cleanup_candidates,
+    set_cleanup_posture, zero_live_members,
 };
 pub use crate::web_fetch::{
     CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
