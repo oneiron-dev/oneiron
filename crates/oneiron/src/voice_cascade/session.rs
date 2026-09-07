@@ -17,6 +17,10 @@ use super::{
     SentenceWork, SpeculativeRetrievalBridge, StopReason, ToolEvent, UtteranceHandle,
 };
 
+#[path = "preparation.rs"]
+mod preparation;
+pub use preparation::PreparedAsr;
+
 const MAX_TOOL_EVENTS: usize = 128;
 const MAX_PENDING_SENTENCES: usize = 64;
 
@@ -88,6 +92,9 @@ pub struct VoiceCascadeSession {
     speech_started: Option<Duration>,
     speech_latched: bool,
     last_speech_observation: Option<Duration>,
+    preparation_serial: u64,
+    prepared_asr: Option<PreparedAsr>,
+    preparation_active: bool,
 }
 
 impl VoiceCascadeSession {
@@ -111,6 +118,9 @@ impl VoiceCascadeSession {
             speech_started: None,
             speech_latched: false,
             last_speech_observation: None,
+            preparation_serial: 0,
+            prepared_asr: None,
+            preparation_active: false,
         })
     }
 
@@ -125,8 +135,19 @@ impl VoiceCascadeSession {
         self.retrieval.open_utterance(utterance_id, config)
     }
 
+    /// Whether this exact utterance is still live, including after a failed final.
+    #[must_use]
+    pub fn is_utterance_open(&self, handle: &UtteranceHandle) -> bool {
+        !self.ended && self.retrieval.is_open(handle)
+    }
+
     pub fn close_utterance(&mut self, handle: &UtteranceHandle) -> bool {
-        self.retrieval.close_utterance(handle)
+        let closed = self.retrieval.close_utterance(handle);
+        if closed {
+            self.prepared_asr = None;
+            self.preparation_active = false;
+        }
+        closed
     }
 
     /// `externally_tainted` is a trusted host mark on the assembled FINAL
@@ -145,6 +166,17 @@ impl VoiceCascadeSession {
             return Ok(AsrUpdate::Ignored);
         }
         event.validate()?;
+        if matches!(event.kind, AsrEventKind::Partial | AsrEventKind::Final) {
+            self.retrieval.check_revision(handle, revision)?;
+            self.check_prepared_revision(handle, revision, &event, externally_tainted)?;
+            if event.kind == AsrEventKind::Final && self.generation.is_some() {
+                return Err(invalid(
+                    "finish or interrupt the previous generation before final",
+                ));
+            }
+            self.prepared_asr = None;
+            self.preparation_active = false;
+        }
         match event.kind {
             AsrEventKind::Partial => self
                 .retrieval
@@ -194,7 +226,7 @@ impl VoiceCascadeSession {
             }
             AsrEventKind::Endpoint => Ok(AsrUpdate::Endpoint),
             AsrEventKind::Error => {
-                self.retrieval.close_utterance(handle);
+                self.close_utterance(handle);
                 Ok(AsrUpdate::Error(event.error.unwrap_or(event.text)))
             }
             AsrEventKind::Closed => Ok(AsrUpdate::Closed(self.end())),
@@ -404,6 +436,8 @@ impl VoiceCascadeSession {
             ));
         }
         self.generation = None;
+        self.prepared_asr = None;
+        self.preparation_active = false;
         Ok(true)
     }
 
@@ -426,6 +460,8 @@ impl VoiceCascadeSession {
     }
 
     fn stop_generation(&mut self, reason: StopReason, cancel_llm: bool) -> OutputStop {
+        self.prepared_asr = None;
+        self.preparation_active = false;
         let generation = self
             .generation
             .as_ref()
