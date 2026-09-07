@@ -28,19 +28,21 @@
 //! Approved request still needs an explicit, actor-bound source permit.
 //!
 //! [`calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest`]
-//! pins the distinction on an unchanged default vault: Imported + Approved
-//! pends only on source trust and writes no EVENT or claims. The tier-scoping
-//! property — claims stored as Proposed stay invisible on every read verb —
-//! remains pinned by [`calendar_surface_scopes_read_search_and_freebusy`].
+//! preserves the default policy and projects an explicitly permitted write.
+//! [`calendar_normal_criticality_does_not_grant_imported_source_permission`]
+//! pins the other side: without that permit, Imported + Approved pends only
+//! on source trust and writes no EVENT or claims. The tier-scoping property —
+//! claims stored as Proposed stay invisible on every read verb — remains
+//! pinned by [`calendar_surface_scopes_read_search_and_freebusy`].
 
 use crate::common::entity as test_id;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     CalendarInviteMethod, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
-    ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, MEMORY_CODE_BAD_REQUEST,
-    Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
-    calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
+    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+    MEMORY_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
     memory::CALENDAR_INVITE_OUTBOUND_VERB, memory::CalendarFreebusyIntervalDto,
 };
 use rmpv::Value;
@@ -120,8 +122,8 @@ fn envelope(actor: EntityId, approval: ClaimApprovalStatus) -> WriteEnvelope {
 }
 
 /// Stores one calendar EVENT and its family through the ordinary claim
-/// candidate door at `approval`. Approved fixtures explicitly install their
-/// actor's Imported source permit; Proposed claims keep their review status.
+/// candidate door at `approval`, against the default policy plus the fixture
+/// actor's explicit Imported source permit.
 fn store_calendar_event(
     vault: &Vault,
     actor: EntityId,
@@ -164,6 +166,8 @@ fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(vault, actor)
+        .expect("authorize this CAL ingest actor's Imported source");
     (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 
@@ -177,7 +181,73 @@ fn window() -> TimeRange {
 #[test]
 fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest() {
     let (_dir, vault) = temp_vault();
+    let manifests = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("default policy manifests");
+    assert_eq!(
+        manifests.len(),
+        1,
+        "the stock vault seeds one default policy"
+    );
+    let default_manifest_id = manifests[0];
+    let default_manifest = vault
+        .get_raw(&default_manifest_id)
+        .expect("read default manifest")
+        .expect("default manifest exists");
     let (actor, facade) = actor_facade(&vault);
+    assert_eq!(
+        vault.get_raw(&default_manifest_id).expect("default policy"),
+        Some(default_manifest),
+        "the explicit Imported permit must not replace the default policy"
+    );
+
+    // The unchanged `calendar.` prefix rule resolves criticality `normal`.
+    // The separate source permit contributes no predicate axes or ceilings;
+    // approval alone does not authorize Imported provenance.
+    let busy = store_calendar_event(
+        &vault,
+        actor,
+        BUSY_SEED,
+        SECRET_NAME,
+        TimeRange {
+            start: 1_000,
+            end: 1_099,
+        },
+        "busy",
+        ClaimApprovalStatus::Approved,
+    );
+    let stored = vault
+        .get_claim(&claim_id(BUSY_SEED, 1))
+        .expect("claim row")
+        .expect("the claim-candidate door stored a row");
+    assert_eq!(stored.predicate, "calendar.time_kind");
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+
+    // …and admitted claims project under the default predicate policy plus
+    // explicit source authorization. `blocks_time` comes from the admitted
+    // `calendar.time_kind` claim rather than the EVENT header, so a true here
+    // proves the gate let the claim through to the projector.
+    let view = facade
+        .calendar_read(&CalendarReadRequest {
+            event_ref: busy.to_hex(),
+        })
+        .expect("read")
+        .expect("an authorized calendar claim projects under the default predicate policy");
+    assert_eq!(view.event_ref, busy.to_hex());
+    assert!(view.blocks_time);
+    assert_eq!(view.start_utc, Some(1_000));
+    assert_eq!(view.end_utc, Some(1_099));
+}
+
+#[test]
+fn calendar_normal_criticality_does_not_grant_imported_source_permission() {
+    let (_dir, vault) = temp_vault();
+    let actor = test_id(ACTOR_SEED);
+    vault
+        .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
+        .expect("put actor");
+    let facade = vault.memory(actor, EdgeActorClass::Human);
     let busy = test_id(BUSY_SEED);
     let envelope = envelope(actor, ClaimApprovalStatus::Approved);
 
@@ -281,7 +351,11 @@ fn calendar_imported_source_permit_is_actor_bound() {
         ("matching actor permit", Some(ACTOR_SEED)),
     ] {
         let (_dir, vault) = temp_vault();
-        let (actor, facade) = actor_facade(&vault);
+        let actor = test_id(ACTOR_SEED);
+        vault
+            .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
+            .expect("put actor");
+        let facade = vault.memory(actor, EdgeActorClass::Human);
         if let Some(seed) = permit_seed {
             let permitted_actor = test_id(seed);
             if permitted_actor != actor {

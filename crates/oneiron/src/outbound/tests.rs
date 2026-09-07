@@ -1,3 +1,6 @@
+#[path = "tests/sender_selection/facet_selection.rs"]
+mod facet_selection;
+mod retry_audit;
 mod sender_selection;
 
 use super::*;
@@ -572,8 +575,29 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     );
     let delivered_receipts =
         vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
-    assert_eq!(delivered_receipts.len(), 1);
+    assert_eq!(delivered_receipts.len(), 2);
     assert_eq!(delivered_receipts[0].outcome, "delivered_to_channel");
+    assert_eq!(delivered_receipts[1], failed_receipts[0]);
+    assert_ne!(
+        delivered_receipts[0].receipt_id,
+        failed_receipts[0].receipt_id
+    );
+    assert_eq!(
+        crate::receipt::delivered_send_receipt_for_task(&vault, task_ref)?,
+        Some(delivered_receipts[0].clone())
+    );
+    assert!(!crate::receipt::persist_send_receipt(
+        &vault,
+        task_ref,
+        delivered_receipts[0].clone(),
+        SendReceiptOutcome::Delivered,
+        true,
+        Some((actor, "failed-receipt-retry:test")),
+    )?);
+    assert_eq!(
+        vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?,
+        delivered_receipts
+    );
     let attempts = AttemptQueue::new(&vault)
         .list()?
         .into_iter()
@@ -666,7 +690,9 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
         .expect("fresh retry row");
     assert_eq!(retry.state, AttemptState::Scheduled);
     assert_eq!(retry.retry_of, Some(first_attempt));
-    assert_eq!(retry.scheduled_at, Some(261));
+    // ONE-1879: this hold is the GATE's, so the seconds-scale re-arm curve
+    // authors the instant — a first try at 201 re-arms one second later.
+    assert_eq!(retry.scheduled_at, Some(202));
     assert_eq!(retry.attempt_count, 0);
     assert_eq!(retry.payload, source.payload);
     assert_eq!(retry.task_ref, source.task_ref);
@@ -681,7 +707,7 @@ fn connector_task_retry_mints_a_fresh_attempt_under_one_task() -> crate::Result<
     );
     assert_eq!(executor.calls.len(), 0);
 
-    // At the scheduled instant the fresh row runs against the now-granting
+    // Once its instant has passed the fresh row runs against the now-granting
     // manifest, and the ONE logical send is charged exactly once.
     put_policy_manifest_bytes(
         &vault,
@@ -6301,178 +6327,466 @@ fn b2_human_explicit_instant_observes_quiet_policy_but_executes() -> crate::Resu
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// ONE-1879 — a hold the GATE parked re-arms on its own curve.
+//
+// A window hold waits on the clock, so minutes are the right grain. A
+// Gate-Pending hold waits on a PERSON: the window already admits the send, and
+// it goes the moment authority lands, so the executor polls it on seconds and
+// saturates at five minutes. Both curves read the `retry_of` lineage and never
+// `attempt_count`, which every fresh retry row resets to zero.
+// ---------------------------------------------------------------------------
+
+/// A vault whose actor may schedule but whose standing policy grants nothing
+/// on the channel it sends over, so every execute-time gate check parks the
+/// send Pending on human authority.
+///
+/// The manifest is REAL and grants a different channel — a missing manifest
+/// would fail closed for its own unrelated reason. No delivery-window claim is
+/// seeded, so the window admits and the Gate is the only thing holding the
+/// send.
+fn gate_pending_fixture(seed: u8) -> crate::Result<(tempfile::TempDir, Vault, EntityId)> {
+    let (tmp, vault) = temp_vault();
+    let actor = entity(seed);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(seed.wrapping_add(1)),
+        &policy_manifest(&actor.to_hex(), "slack", &["send"]),
+    )?;
+    Ok((tmp, vault, actor))
+}
+
+/// One executor round that must park the send rather than deliver it.
+fn run_parked_round(vault: &Vault, sink: &mut RecordingExecutor, now: u64, round: usize) {
+    assert_eq!(
+        vault.run_connector_task_executor(sink, now).unwrap(),
+        0,
+        "round {round}: a parked send delivers nothing"
+    );
+}
+
+/// Schedules one hostless email send that the Gate will park at execute time.
+fn schedule_gate_pending_send(
+    vault: &Vault,
+    actor: EntityId,
+    key: &str,
+) -> crate::Result<EntityId> {
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("email", "send", key))
+        .expect("an ungranted send still schedules — it parks, it is not lost");
+    assert_eq!(receipt.gate_outcome.as_deref(), Some("pending"));
+    assert_eq!(receipt.outcome, "held");
+    Ok(vault.connector_send_tasks()?.remove(0).task_ref)
+}
+
 #[test]
-fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -> crate::Result<()>
-{
-    use super::dispatch_pipeline::{
-        enrich_dispatch_channel_identity, resolve_channel_identity_ref_for_connector,
-    };
+fn gate_pending_hold_re_arms_on_the_bounded_seconds_curve() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
 
-    use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
-        DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, SelfHeldShape,
-    };
-    use crate::error::Result;
+    let (_tmp, vault, actor) = gate_pending_fixture(0x14)?;
+    let task_ref = schedule_gate_pending_send(&vault, actor, "gate-pending-curve")?;
 
-    let (_dir, vault) = temp_vault();
-    let seed_entity = |vault: &Vault, id, kind| {
-        if kind == crate::registry::ENTITY_TYPE_AGENT_DEF {
-            return crate::test_util::seed_agent_definition(vault, id, "faceted sender");
-        }
-        vault
-            .put_entity(
-                &id,
-                kind,
-                TimeRange {
-                    start: 100,
-                    end: 100,
-                },
-                100,
-                b"facet",
-            )
-            .expect("seed facet");
-        id
-    };
-    let actor = seed_entity(&vault, entity(0x91), crate::registry::ENTITY_TYPE_AGENT_DEF);
-    let other = seed_entity(&vault, entity(0x92), crate::registry::ENTITY_TYPE_AGENT_DEF);
-    let facet = seed_entity(&vault, entity(0x93), crate::registry::ENTITY_TYPE_FACET);
-    let binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
-    vault.register_connector_key(
-        &entity(0x94),
-        crate::connector_key::ConnectorKeyRecord::active("email", Some(actor), Vec::new(), 100),
-    )?;
-    let resolve = |who: Option<&EntityId>| -> Result<Option<EntityId>> {
-        let txn = vault.store.env.read_txn()?;
-        resolve_channel_identity_ref_for_connector(&vault.store, &txn, "email", who)
-    };
-    let put = |seed: u8, channel: &str, binding, state| -> Result<()> {
-        let mut identity = ChannelIdentity::requested(
-            channel,
-            format!("sender-{seed}@example.com"),
-            SelfHeldShape::DedicatedAddress,
-            binding,
-            100,
+    let mut executor = RecordingExecutor::default();
+    let mut now = ONE_1768_EXECUTE_AT;
+    let mut observed_delays = Vec::new();
+    for round in 0..11 {
+        run_parked_round(&vault, &mut executor, now, round);
+        assert!(
+            executor.calls.is_empty(),
+            "round {round}: a send parked on human authority never reaches the sink"
         );
-        identity.state = state;
-        vault.create_channel_identity(&entity(seed), &identity)
+
+        let receipt = one_1768_receipts(&vault)?
+            .pop()
+            .expect("every hold is surfaced as a receipt");
+        assert_eq!(
+            receipt_field(&receipt, "gate_outcome"),
+            Some("pending"),
+            "round {round}: the hold is the GATE's, not the window's"
+        );
+        assert_eq!(
+            receipt_field(&receipt, "window_action"),
+            Some("deliver_now"),
+            "round {round}: the window itself admits this send"
+        );
+        // The re-arm edge is SURFACED on the receipt, not merely queued.
+        let surfaced: u64 = receipt_field(&receipt, "retry_at")
+            .unwrap_or_else(|| panic!("round {round}: every executor hold stamps retry_at"))
+            .parse()
+            .expect("retry_at is an instant");
+        observed_delays.push(surfaced - now);
+
+        // The queue re-arms at exactly the instant the receipt surfaced.
+        let attempts = one_1768_bridge_attempts(&vault)?;
+        let armed = attempts
+            .iter()
+            .find(|attempt| attempt.state == AttemptState::Scheduled)
+            .expect("a fresh retry row is armed");
+        assert_eq!(
+            armed.scheduled_at,
+            Some(surfaced),
+            "round {round}: backoff_until must equal the receipted retry_at"
+        );
+        // Fresh rows reset attempt_count, so it can never be the exponent.
+        assert_eq!(armed.attempt_count, 0, "round {round}");
+        assert!(
+            armed.retry_of.is_some(),
+            "round {round}: the retry lineage is explicit"
+        );
+        // A parked send is never silently failed.
+        assert_eq!(
+            vault
+                .connector_send_task(&task_ref)?
+                .expect("task stays alive")
+                .outcome,
+            None,
+            "round {round}"
+        );
+        now = surfaced;
+    }
+
+    assert_eq!(
+        observed_delays,
+        vec![1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300],
+        "the gate-pending delay doubles from 1s by chain depth and saturates at the 300s cap"
+    );
+    Ok(())
+}
+
+#[test]
+fn same_node_pending_retries_leave_the_connector_task_byte_identical() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault, actor) = gate_pending_fixture(0x18)?;
+    let task_ref = schedule_gate_pending_send(&vault, actor, "gate-pending-bytes")?;
+
+    let mut executor = RecordingExecutor::default();
+    let mut now = ONE_1768_EXECUTE_AT;
+    // The first claim legitimately writes: it stamps the node that took it.
+    run_parked_round(&vault, &mut executor, now, 0);
+    let after_first_claim = vault.get_raw(&task_ref)?.expect("task row exists");
+
+    for round in 1..6 {
+        let receipt = one_1768_receipts(&vault)?.pop().expect("hold receipt");
+        now = receipt_field(&receipt, "retry_at")
+            .expect("retry_at")
+            .parse()
+            .expect("retry_at is an instant");
+        run_parked_round(&vault, &mut executor, now, round);
+        // The row is compared WHOLE — the 25-byte metadata header carries the
+        // learned time, so an identical body written again would still differ
+        // here. Re-marking the same node on the same still-parked TASK is a
+        // no-op, and a no-op writes nothing at all.
+        assert_eq!(
+            vault.get_raw(&task_ref)?.expect("task row exists"),
+            after_first_claim,
+            "round {round}: a same-node pending retry must not rewrite the TASK"
+        );
+        // The retry lane itself is still live: this is idempotence, not a stall.
+        assert!(
+            one_1768_bridge_attempts(&vault)?
+                .iter()
+                .any(|attempt| attempt.state == AttemptState::Scheduled),
+            "round {round}: the send is still armed"
+        );
+    }
+
+    // A terminal projection IS a state change: it writes exactly once, and
+    // repeating the same projection writes nothing further.
+    super::connector_task::project_connector_send_task_outcome(
+        &vault,
+        task_ref,
+        ConnectorSendTaskOutcome::Delivered,
+        now + 1,
+    )?;
+    let projected = vault.get_raw(&task_ref)?.expect("task row exists");
+    assert_ne!(
+        projected, after_first_claim,
+        "the terminal outcome is a real write"
+    );
+    super::connector_task::project_connector_send_task_outcome(
+        &vault,
+        task_ref,
+        ConnectorSendTaskOutcome::Delivered,
+        now + 2,
+    )?;
+    assert_eq!(
+        vault.get_raw(&task_ref)?.expect("task row exists"),
+        projected,
+        "the same terminal projection twice writes exactly once"
+    );
+    Ok(())
+}
+
+#[test]
+fn provider_retry_after_is_the_exact_re_arm_authority() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    // A rate-limited provider that states its own cool-down. The adapter
+    // reports what the provider said; it invents nothing.
+    let rate_limited = || RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_rate_limited")
+            .with_receipt_field("retry_after", "900"),
+        ..RecordingExecutor::default()
     };
-    put(
-        0x95,
-        "email",
-        ChannelIdentityBinding::actor_with_facet(other, facet),
-        ChannelIdentityState::Active,
-    )?;
-    put(
-        0x96,
-        "email",
-        ChannelIdentityBinding::vault(7),
-        ChannelIdentityState::Active,
-    )?;
-    put(0x97, "calendar", binding, ChannelIdentityState::Active)?;
-    put(0x98, "email", binding, ChannelIdentityState::Requested)?;
-    assert_eq!(resolve(Some(&actor))?, None);
 
-    // A real faceted delegated row can be provisioned and activated, but its
-    // read custody must not become sender authority or sender ambiguity.
-    let grant = DelegatedGrant::new("oauth/faceted-sender", vec![DelegatedGrantScope::MailRead]);
-    vault.register_secret(crate::secret_custody::SecretCustodyRecord {
-        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
-        name: grant.custody_record_ref.clone(),
-        class: crate::secret_custody::CustodyClass::CrossVault,
-        device_only: true,
-        value_bytes: b"test-delegated-token".to_vec(),
-        status: crate::secret_custody::SecretCustodyStatus::Active,
-        registered_at: 1_800_000_000,
-        rotated_at: None,
-        rotation_generation: 0,
-        bindings: vec![crate::secret_custody::SecretBinding {
-            effector: "connector:gmail".to_owned(),
-            tier_ceiling: crate::secret_custody::CustodyTier::T0Doored,
-            scopes: crate::channel_identity::delegated_custody_scopes(
-                "email",
-                "delegated@example.com",
+    // The dispatch path CAPTURES it: normalized beside the gate stamps, with
+    // the connector's own raw text still on the receipt next to it.
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x1C);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x1D),
+        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
+    )?;
+    let mut sink = rate_limited();
+    let result = vault
+        .dispatch_outbound_intent(
+            OutboundDispatchRequest::new(
+                "outbound:intent:one-1879-retry-after",
+                "intent:one-1879-retry-after",
+                OutboundIntent::from_trigger(
+                    OutboundIntentDraft::new(actor.to_hex(), "react", "slack", "channel:ops"),
+                    OutboundIntentTrigger::agent_immediate("session:one-1879"),
+                ),
+                OutboundDispatchActor::agent(actor),
+                OutboundDispatchGate::allow_when_policy_grants(),
+                ONE_1768_EXECUTE_AT,
+                OutboundDeliveryWindowDecision::DeliverNow,
             ),
-        }],
-        manifest_ref: String::new(),
-        declared_paths: Vec::new(),
-        policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
-    })?;
-    vault.provision_delegated_identity(
-        &entity(0x99),
-        DelegatedProvisionRequest {
-            channel: "email".to_owned(),
-            address_or_handle: "delegated@example.com".to_owned(),
-            binding,
-            grant,
-        },
-        1_800_000_000,
-    )?;
-    vault.transition_channel_identity(
-        &entity(0x99),
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
-        1_800_000_010,
-        None,
-    )?;
-    let delegated = vault.transition_channel_identity(
-        &entity(0x99),
-        ChannelIdentityState::Active,
-        None,
-        1_800_000_020,
-        None,
-    )?;
-    assert_eq!(delegated.binding, binding);
-    assert!(!delegated.may_send());
-    assert_eq!(resolve(Some(&actor))?, None);
+            &mut sink,
+        )
+        .expect("dispatch");
+    assert_eq!(sink.calls.len(), 1, "the provider was actually called");
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(
+        receipt_field(&result.receipt, "provider_retry_after"),
+        Some("900"),
+        "the cool-down is stamped as a machine-readable re-arm authority"
+    );
+    assert_eq!(
+        receipt_field(&result.receipt, "retry_after"),
+        Some("900"),
+        "and the connector's own text survives verbatim beside it"
+    );
+    assert_eq!(
+        receipt_field(&result.receipt, "gate_outcome"),
+        Some("allow"),
+        "capturing it disturbs no gate stamp"
+    );
+    assert!(result.receipt.fields.contains_key("gate_decision_ref"));
 
-    put(0x9A, "email", binding, ChannelIdentityState::Active)?;
-    assert_eq!(resolve(Some(&actor))?, Some(entity(0x9A)));
+    // The executor OBEYS it: the re-arm is the provider's exact instant, not
+    // the generic transport curve's first rung (which would be now + 60s).
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("slack", "react", "one-1879-retry-after"))
+        .expect("schedule");
+    let mut executor = rate_limited();
+    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
+    assert_eq!(executor.calls.len(), 1);
+    let attempts = one_1768_bridge_attempts(&vault)?;
+    let armed = attempts
+        .iter()
+        .find(|attempt| attempt.state == AttemptState::Scheduled)
+        .expect("a rate-limited send re-arms rather than failing terminally");
     assert_eq!(
-        resolve(Some(&other))?,
-        None,
-        "another actor has no governing key"
+        armed.scheduled_at,
+        Some(ONE_1768_EXECUTE_AT + 900),
+        "the provider's stated cool-down is the exact re-arm instant"
     );
-    assert_eq!(resolve(None)?, None, "do not infer an actor from a facet");
-    put(
-        0x9B,
-        "email",
-        ChannelIdentityBinding::actor(actor),
-        ChannelIdentityState::Active,
+    Ok(())
+}
+
+fn exercise_provider_retry_after_collision(
+    raw_retry_after: Option<&str>,
+    expected_secs: Option<u64>,
+) -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x20);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x21),
+        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
     )?;
-    assert!(
-        matches!(resolve(Some(&actor)), Err(Error::InvalidConfig(_))),
-        "masked plus unmasked is ambiguous"
-    );
-    vault.transition_channel_identity(
-        &entity(0x9B),
-        ChannelIdentityState::Released,
-        None,
-        200,
-        None,
-    )?;
-    assert_eq!(resolve(Some(&actor))?, Some(entity(0x9A)));
-    let second_facet = seed_entity(&vault, entity(0x9C), crate::registry::ENTITY_TYPE_FACET);
-    put(
-        0x9D,
-        "email",
-        ChannelIdentityBinding::actor_with_facet(actor, second_facet),
-        ChannelIdentityState::Active,
-    )?;
-    assert!(
-        matches!(resolve(Some(&actor)), Err(Error::InvalidConfig(_))),
-        "two masks are still two identities"
-    );
-    let txn = vault.store.env.read_txn()?;
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("slack", "react", "retry-after-collision"))
+        .expect("schedule");
+
+    let mut outcome = OutboundExecutionOutcome::failed("provider_rate_limited")
+        .with_receipt_field("provider_retry_after", "7")
+        .with_receipt_field("provider_error_code", " rate_limited ");
+    if let Some(raw) = raw_retry_after {
+        outcome = outcome.with_receipt_field("retry_after", raw);
+    }
+    let mut executor = RecordingExecutor {
+        outcome,
+        ..RecordingExecutor::default()
+    };
+    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
+    assert_eq!(executor.calls.len(), 1, "the provider was actually called");
+
+    let receipt = one_1768_receipts(&vault)?
+        .pop()
+        .expect("the failed send has a durable audit receipt");
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(receipt_field(&receipt, "dispatch_outcome"), Some("failed"));
+    assert_eq!(receipt_field(&receipt, "gate_outcome"), Some("allow"));
+    let expected_normalized = expected_secs.map(|secs| secs.to_string());
     assert_eq!(
-        enrich_dispatch_channel_identity(
-            &vault.store,
-            &txn,
-            "email",
-            Some(&actor),
-            Some(entity(0x9A))
-        )?,
-        Some(entity(0x9A)),
-        "explicit identity behavior is unchanged",
+        receipt_field(&receipt, "provider_retry_after"),
+        expected_normalized.as_deref(),
+        "only parsed raw retry_after may author the normalized field: {raw_retry_after:?}"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "retry_after"),
+        raw_retry_after.filter(|raw| !raw.trim().is_empty()),
+        "nonblank provider text survives verbatim; blank fields stay omitted"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "provider_error_code"),
+        Some(" rate_limited "),
+        "stripping the reserved key must preserve ordinary provider evidence"
+    );
+    let surfaced: u64 = receipt_field(&receipt, "retry_at")
+        .expect("every executor re-arm stamps retry_at")
+        .parse()
+        .expect("retry_at is an instant");
+    assert_eq!(
+        surfaced,
+        ONE_1768_EXECUTE_AT + expected_secs.unwrap_or(60),
+        "use the parsed provider delay or the exact transport fallback, never the injected 7s"
+    );
+    let attempts = one_1768_bridge_attempts(&vault)?;
+    let armed = attempts
+        .iter()
+        .find(|attempt| attempt.state == AttemptState::Scheduled)
+        .expect("a failed send re-arms rather than failing terminally");
+    assert_eq!(armed.scheduled_at, Some(surfaced));
+    Ok(())
+}
+
+#[test]
+fn missing_retry_after_rejects_injected_provider_retry_after() -> crate::Result<()> {
+    exercise_provider_retry_after_collision(None, None)
+}
+
+#[test]
+fn malformed_retry_after_rejects_injected_provider_retry_after() -> crate::Result<()> {
+    for raw in [
+        "",
+        " \t ",
+        "-1",
+        "1.5",
+        "not-a-number",
+        "18446744073709551616",
+    ] {
+        exercise_provider_retry_after_collision(Some(raw), None)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn parsed_retry_after_overrides_injected_provider_retry_after() -> crate::Result<()> {
+    exercise_provider_retry_after_collision(Some(" 900 "), Some(900))
+}
+
+/// A retried transport failure is an AUDITABLE outcome, exactly as a hold is:
+/// re-arming the queue is not a substitute for the record. Without the durable
+/// row, what the provider said, the evidence it failed on, and the instant the
+/// send actually re-arms at exist only inside a queue row the next attempt
+/// overwrites.
+#[test]
+fn transport_failed_pending_retry_persists_an_audit_receipt() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptState;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x1E);
+    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x1F),
+        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
+    )?;
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&one_1768_draft("slack", "react", "one-1879-retry-audit"))
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_rate_limited")
+            .with_receipt_field("retry_after", "900"),
+        ..RecordingExecutor::default()
+    };
+    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
+    assert_eq!(executor.calls.len(), 1, "the provider was actually called");
+
+    let receipt = one_1768_receipts(&vault)?
+        .pop()
+        .expect("a retried transport failure is still surfaced as a receipt");
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(
+        receipt_field(&receipt, "dispatch_outcome"),
+        Some("failed"),
+        "the row names the outcome it actually parked on"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "retry_state"),
+        Some("provider_rate_limited"),
+        "the failure evidence survives the retry, not just the delay"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "provider_retry_after"),
+        Some("900"),
+        "the normalized cool-down is durable"
+    );
+    assert_eq!(
+        receipt_field(&receipt, "retry_after"),
+        Some("900"),
+        "and the connector's own text survives verbatim beside it"
+    );
+    let surfaced: u64 = receipt_field(&receipt, "retry_at")
+        .expect("every executor re-arm stamps retry_at")
+        .parse()
+        .expect("retry_at is an instant");
+    assert_eq!(
+        surfaced,
+        ONE_1768_EXECUTE_AT + 900,
+        "the audited retry edge is the provider's own instant"
+    );
+
+    // The queue re-arms at exactly the instant the receipt surfaced.
+    let attempts = one_1768_bridge_attempts(&vault)?;
+    let armed = attempts
+        .iter()
+        .find(|attempt| attempt.state == AttemptState::Scheduled)
+        .expect("a rate-limited send re-arms rather than failing terminally");
+    assert_eq!(
+        armed.scheduled_at,
+        Some(surfaced),
+        "backoff_until must equal the receipted retry_at"
+    );
+
+    // Audit-only: the row is no idempotency token and closes nothing, so the
+    // send is still owed and the next attempt still dispatches.
+    assert_eq!(
+        usize::from(send_receipt_exists_for_task(&vault, task_ref)?),
+        0
+    );
+    assert_eq!(
+        vault
+            .connector_send_task(&task_ref)?
+            .expect("task stays alive")
+            .outcome,
+        None
     );
     Ok(())
 }
