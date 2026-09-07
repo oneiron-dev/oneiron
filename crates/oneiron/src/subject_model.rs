@@ -309,7 +309,9 @@ pub(crate) fn actor_subject_anchor_in_txn(
 /// Records the substrate of a PERSON, superseding any prior value.
 ///
 /// Refuses any entity that is not a PERSON: an ORG has no substrate, and an
-/// actor is not a someone at all.
+/// actor is not a someone at all. Redirects must identify one PERSON, with
+/// no malformed or competing active substrate claims. Supersession closes
+/// the canonical person's prior claim without changing its stored subject.
 pub fn set_person_substrate(
     vault: &Vault,
     person_ref: EntityId,
@@ -356,9 +358,10 @@ enum Reserved {
 /// Writes `body` as the new single active head for `subject`, closing every
 /// prior head of the same predicate in the SAME transaction.
 ///
-/// Closes EVERY prior head, not the first found: `EntityId::now()` is
-/// per-replica unique, so two replicas that each stated this fact hold two
-/// distinct claim entities and both read Active after a sync. Closing one
+/// For anchors, closes EVERY prior head, not the first found. Substrate
+/// heads must first pass the canonical person's single-head validation.
+/// `EntityId::now()` is per-replica unique, so two replicas that stated this
+/// fact hold distinct claim entities and both read Active after a sync. Closing one
 /// would leave the other live forever.
 fn write_head_in_txn(
     vault: &Vault,
@@ -374,7 +377,11 @@ fn write_head_in_txn(
         ));
     };
     let occurred = TimeRange { start: at, end: at };
-    let superseded = active_bodies_in_txn(vault, wtxn, &subject, &body.predicate)?;
+    let superseded = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
+        active_person_substrate_bodies_in_txn(vault, wtxn, &subject)?
+    } else {
+        active_bodies_in_txn(vault, wtxn, &subject, &body.predicate)?
+    };
     match reserved {
         Reserved::Yes => vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?,
         Reserved::No => vault.put_claim_in_txn(wtxn, claim_id, body, occurred, at)?,
@@ -391,19 +398,14 @@ fn write_head_in_txn(
     Ok(())
 }
 
-/// The substrate recorded for `person_ref`, if any.
+/// The substrate recorded for `person_ref`, if any, through identity redirects.
+/// Ambiguous identities and malformed or competing active claims are refused.
 pub fn person_substrate(vault: &Vault, person_ref: &EntityId) -> Result<Option<PersonSubstrate>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(body) =
-        single_active_body_in_txn(vault, &rtxn, person_ref, PREDICATE_PERSON_SUBSTRATE)?
-    else {
+    let mut heads = active_person_substrate_bodies_in_txn(vault, &rtxn, person_ref)?;
+    let Some((_, body)) = heads.pop() else {
         return Ok(None);
     };
-    if vault.get_entity_type_in_txn(&rtxn, person_ref)? != Some(ENTITY_TYPE_PERSON) {
-        return Err(Error::InvalidClaimBody(
-            "person.substrate subject must be a PERSON",
-        ));
-    }
     body.value
         .as_str()
         .and_then(PersonSubstrate::parse)
@@ -411,6 +413,84 @@ pub fn person_substrate(vault: &Vault, person_ref: &EntityId) -> Result<Option<P
         .ok_or(Error::InvalidClaimBody(
             "person.substrate must be meat or model",
         ))
+}
+
+/// Reads the canonical person's claims without moving their historical subjects.
+/// The same snapshot supplies both the read and the superseding write's old head.
+fn active_person_substrate_bodies_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person_ref: &EntityId,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
+    if vault.get_entity_type_in_txn(txn, person_ref)? != Some(ENTITY_TYPE_PERSON) {
+        if active_bodies_in_txn(vault, txn, person_ref, PREDICATE_PERSON_SUBSTRATE)?.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(Error::InvalidClaimBody(
+            "person.substrate subject must be a PERSON",
+        ));
+    }
+    let resolved = vault.resolve_entity_in_txn(txn, person_ref)?;
+    let [canonical] = resolved.as_slice() else {
+        return Err(Error::InvalidClaimBody(
+            "person.substrate requires one canonical PERSON",
+        ));
+    };
+    if vault.get_entity_type_in_txn(txn, canonical)? != Some(ENTITY_TYPE_PERSON) {
+        return Err(Error::InvalidClaimBody(
+            "person.substrate redirect must name a PERSON",
+        ));
+    }
+    let mut subjects = crate::identity_redirect::inbound_redirect_shells_in_txn(
+        &vault.store,
+        txn,
+        &std::collections::BTreeSet::from([*canonical]),
+    )?;
+    subjects.insert(*canonical);
+    let mut heads = Vec::new();
+    for subject in subjects {
+        // Validate every reached path, including an empty shell at the inverse
+        // walk's depth bound: truncation must not hide a more distant claim.
+        let resolved = vault.resolve_entity_in_txn(txn, &subject)?;
+        let bodies = active_bodies_in_txn(vault, txn, &subject, PREDICATE_PERSON_SUBSTRATE)?;
+        if bodies.is_empty() {
+            continue;
+        }
+        // Inbound shell edges also witness splits. A claim on a split shell
+        // cannot pick one of its people, even when queried through that head.
+        if !resolved.contains(canonical) {
+            continue;
+        }
+        if resolved.as_slice() != [*canonical] {
+            return Err(Error::InvalidClaimBody(
+                "person.substrate requires one canonical PERSON",
+            ));
+        }
+        if vault.get_entity_type_in_txn(txn, &subject)? != Some(ENTITY_TYPE_PERSON) {
+            return Err(Error::InvalidClaimBody(
+                "person.substrate subject must be a PERSON",
+            ));
+        }
+        for (_, body) in &bodies {
+            if body
+                .value
+                .as_str()
+                .and_then(PersonSubstrate::parse)
+                .is_none()
+            {
+                return Err(Error::InvalidClaimBody(
+                    "person.substrate must be meat or model",
+                ));
+            }
+        }
+        heads.extend(bodies);
+        if heads.len() > 1 {
+            return Err(Error::InvalidClaimBody(
+                "subject-model claim has multiple active heads",
+            ));
+        }
+    }
+    Ok(heads)
 }
 
 fn active_bodies_in_txn(
