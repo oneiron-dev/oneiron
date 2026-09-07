@@ -682,8 +682,8 @@ fn resolved_identity_never_becomes_the_deny_source_of_truth() {
     let mut sink = RecordingSink::default();
 
     // Identity resolution is live AND the opt-out was recorded through a
-    // completely different identity that resolution would never pick. The deny
-    // still fires, because `(party, channel_class)` is what decides.
+    // different identity than the explicitly selected sender. The deny still
+    // fires, because `(party, channel_class)` is what decides.
     vault
         .register_connector_key(
             &test_id(CONNECTOR_KEY_SEED),
@@ -701,7 +701,14 @@ fn resolved_identity_never_becomes_the_deny_source_of_truth() {
     put_contact(&vault, CONTACT_SEED, SECOND_IDENTITY_SEED);
     record_opt_out(&vault, CONTACT_SEED, 2);
 
-    let denied = dispatch(&vault, actor, CHANNEL, "intent:cross-identity", &mut sink);
+    let denied = dispatch_with_identity(
+        &vault,
+        actor,
+        CHANNEL,
+        "intent:cross-identity",
+        Some(test_id(IDENTITY_SEED)),
+        &mut sink,
+    );
     assert_eq!(denied.gate_outcome, "pending");
     assert!(holds(&denied.gate_reason_codes));
     assert_eq!(sink.calls, 0);

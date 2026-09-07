@@ -461,6 +461,104 @@ impl Vault {
         })
     }
 
+    /// Rebinds the stock Generated source permit to one test actor.
+    /// TEST-SUPPORT ONLY: only `actor_ref` changes; the sensitivity cap,
+    /// receipt/warning flags, and every other policy field stay unchanged.
+    /// Claims still pass the normal gate and Dreamer validation. This grants
+    /// no actor ceiling, review approval, or source relabeling.
+    ///
+    /// Refuses a missing or customized default manifest. Other installed
+    /// manifests remain in the fold. `Vault::open` never calls this helper.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_generated_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
+        use crate::batch::{BatchOp, apply_ops};
+        use crate::claim::ClaimSource;
+        use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use rmpv::Value;
+
+        let id = crate::gate::default_policy_manifest_id()?;
+        let default = crate::gate::default_policy_manifest();
+        let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
+            .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
+        let Value::Map(entries) = &mut manifest else {
+            return Err(Error::InvariantViolation(
+                "default test policy is not a map",
+            ));
+        };
+        let Some(Value::Map(rows)) = entries
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("source_trust")).then_some(value))
+        else {
+            return Err(Error::InvariantViolation(
+                "default test policy has no source trust",
+            ));
+        };
+        let Some(Value::Map(permit)) = rows.iter_mut().find_map(|(key, value)| {
+            (key.as_str() == Some(ClaimSource::Generated.as_str())).then_some(value)
+        }) else {
+            return Err(Error::InvariantViolation(
+                "default test policy has no Generated permit",
+            ));
+        };
+        let Some(actor_ref) = permit
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
+        else {
+            return Err(Error::InvariantViolation(
+                "default Generated test permit has no actor binding",
+            ));
+        };
+        *actor_ref = Value::from(actor.to_hex());
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &manifest)
+            .map_err(|_| Error::InvariantViolation("encode Generated test policy"))?;
+
+        self.with_write_txn(|wtxn| {
+            let raw =
+                self.store
+                    .entities
+                    .get(wtxn, id.as_bytes())?
+                    .ok_or(Error::InvariantViolation(
+                        "test permit requires a seeded default policy",
+                    ))?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("test policy header"))?;
+            if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+                || raw[ENTITY_METADATA_HEADER_LEN..] != default
+            {
+                return Err(Error::InvariantViolation(
+                    "test permit requires an unchanged default policy",
+                ));
+            }
+            // One fixed maintenance Put, with the default-policy comparison
+            // in the same transaction. No raw storage or replay bypass.
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                vec![BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    learned_at: header.learned_at,
+                    data,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                true,
+                true,
+            )
+        })
+    }
+
     fn open_seeded(
         path: impl AsRef<Path>,
         config: VaultConfig,
