@@ -7,6 +7,7 @@ use crate::agent_def::AgentCeiling;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::write_envelope::SourceLineage;
 
 use super::constants::MAX_DELEGATION_DEPTH;
 use super::decision::{GateDecision, GateOutcome};
@@ -408,21 +409,51 @@ impl SourceTrustCeiling {
 /// answer: an actor-bound row is invisible to every other actor, so the source
 /// falls back to its default posture (default-deny for the classes whose
 /// `requires_explicit_auto_permit` is true).
+///
+/// The declared source keeps its normal checks. Each additional restricted
+/// lineage member must clear its OWN row at the same actor and sensitivity.
+/// Non-restricted history does not invent new permit requirements. Callers
+/// without an envelope pass `None`.
 pub(super) fn check_source_trust(
     source: Option<ClaimSource>,
     approval: ClaimApprovalStatus,
     sensitivity: Option<u8>,
     actor_ref: Option<&str>,
     ceiling: &SourceTrustCeiling,
+    lineage: Option<&SourceLineage>,
 ) -> Result<()> {
     if approval != ClaimApprovalStatus::Auto {
         return Ok(());
     }
 
+    let mut restricted_members = lineage
+        .into_iter()
+        .flat_map(SourceLineage::iter)
+        .filter(|member| member.requires_explicit_auto_permit());
     let Some(source) = source else {
-        return Ok(());
+        // Source omission remains compatible only without restricted history.
+        // An absent declaration cannot authorize even a permitted lineage.
+        return match restricted_members.next() {
+            Some(member) => Err(Error::SourceNotTrustedForAuto {
+                claim_source: member.as_str(),
+            }),
+            None => Ok(()),
+        };
     };
 
+    check_source_trust_member(source, sensitivity, actor_ref, ceiling)?;
+    for member in restricted_members.filter(|member| *member != source) {
+        check_source_trust_member(member, sensitivity, actor_ref, ceiling)?;
+    }
+    Ok(())
+}
+
+fn check_source_trust_member(
+    source: ClaimSource,
+    sensitivity: Option<u8>,
+    actor_ref: Option<&str>,
+    ceiling: &SourceTrustCeiling,
+) -> Result<()> {
     if ceiling.malformed_manifest_seen {
         return Err(Error::SourceNotTrustedForAuto {
             claim_source: source.as_str(),

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::grant::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
     federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
-    standing_outbound_grants_lens,
+    scan_entities_by_type, standing_outbound_grants_lens,
 };
 use super::identity_kind::{
     channel_identity_lifecycle_receipts, companion_lifecycle_receipts, identity_topology_receipts,
@@ -268,6 +268,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
     }
+    // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
+    // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN
+    // bound as every other projector here.
+    if query.includes_kind(ReceiptKind::CommitmentLifecycle) {
+        records.extend(commitment_lifecycle_receipts(vault, &rtxn, query)?);
+    }
 
     // ED-01 (ONE-1757): the reserved Δ slot is filled from its own side-ledger
     // once, HERE, rather than by every projector that can emit an amended
@@ -277,6 +283,94 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     crate::edit_distance::delta::attach_amendment_deltas(vault, &rtxn, &mut records)?;
 
     Ok(records)
+}
+
+/// Projects one deterministic lifecycle receipt from every TERMINAL
+/// `commitment.record` CLAIM in scan range (CMT-4, ONE-1541).
+///
+/// Projection-first: there is no lifecycle store, so the terminal claim row is
+/// both the state and the receipt. The scan is bounded by
+/// [`MAX_RECEIPT_QUERY_SCAN`], and the invariant is bounded with it — within
+/// that many scanned CLAIM rows, a fulfilled/released/lapsed commitment cannot
+/// exist without its receipt. Vaults beyond the bound need the follow-up
+/// commitment-status receipt index; this projector does not imply whole-vault
+/// coverage.
+///
+/// `actor` is deliberately `None`. The status writer is not the moral author of
+/// a lapse (nothing happened — that IS the lapse), and the same-transaction
+/// Gate decision is already the audit record naming who wrote.
+///
+/// Every scanned body decodes with reserved predicates ALLOWED and is then
+/// exact-matched against `commitment.record` before the commitment codec runs,
+/// so an unrelated reserved row such as `edge.provenance` sitting beside a
+/// terminal commitment coexists instead of poisoning the query.
+fn commitment_lifecycle_receipts(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut receipts = Vec::new();
+    scan_entities_by_type(
+        vault,
+        txn,
+        crate::registry::ENTITY_TYPE_CLAIM,
+        "commitment lifecycle claim type index",
+        |id, header, body| {
+            let Ok(body) = crate::claim::decode_claim_body(body, true) else {
+                // A CLAIM row this projector cannot decode is not a commitment
+                // it can vouch for; the owning family's query surfaces it.
+                return Ok(());
+            };
+            if body.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD {
+                return Ok(());
+            }
+            // Past the exact predicate match the codec is authoritative, so a
+            // malformed commitment body is corruption rather than a row to skip.
+            let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
+                Error::InvalidClaimBody("commitment record value failed validation"),
+            )?;
+            let (outcome, trace) = match record.status {
+                crate::commitment::CommitmentStatus::Fulfilled => {
+                    ("fulfilled", "commitment.lifecycle.fulfilled")
+                }
+                crate::commitment::CommitmentStatus::Released => {
+                    ("released", "commitment.lifecycle.waived")
+                }
+                crate::commitment::CommitmentStatus::Lapsed => {
+                    ("let_go", "commitment.instance.gap_decayed")
+                }
+                // Open is not terminal, and a supersession is a replacement
+                // rather than an outcome of the promise.
+                crate::commitment::CommitmentStatus::Open
+                | crate::commitment::CommitmentStatus::Superseded => return Ok(()),
+            };
+            let mut fields = BTreeMap::new();
+            fields.insert(
+                "commitment_status".to_owned(),
+                record.status.as_str().to_owned(),
+            );
+            fields.insert("obligor_ref".to_owned(), record.obligor.entity_ref.to_hex());
+            fields.insert("beneficiary_ref".to_owned(), record.beneficiary.to_hex());
+            fields.insert("strength".to_owned(), record.strength.as_str().to_owned());
+            let receipt = ReceiptRecord {
+                receipt_id: format!("commitment:{}:{}", id.to_hex(), record.status.as_str()),
+                receipt_kind: ReceiptKind::CommitmentLifecycle,
+                occurred_at: header.learned_at,
+                actor: None,
+                on_behalf_of: None,
+                outcome: outcome.to_owned(),
+                job_ref: None,
+                trigger_ref: Some(format!("commitment:{}", id.to_hex())),
+                policy_trace: vec![trace.to_owned()],
+                fields,
+            };
+            if query.matches(&receipt) {
+                retain_newest_receipt(&mut receipts, receipt, query.limit);
+            }
+            Ok(())
+        },
+    )?;
+    Ok(receipts)
 }
 
 fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {

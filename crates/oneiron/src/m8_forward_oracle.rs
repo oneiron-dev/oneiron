@@ -31,7 +31,14 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
+use crate::agent_def::{
+    AgentCeiling, AgentDefinition, AgentScope, CompactionOwnership, MemoryProfile,
+    encode_agent_definition,
+};
+use crate::compaction::{
+    CompactionBackend, CompactionBackendRegistry, CompactionProduct, CompactionRequest,
+    CompactionTierClass,
+};
 use crate::anchored_annotation::{Anchor, Locator, ThreadState};
 use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
@@ -39,6 +46,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::llm::ModelTierRef;
 use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundTransport, PreparedAuthorization, PreparedEffect,
     execute_outbound_effect,
@@ -87,7 +95,41 @@ fn person_actor(vault: &Vault, seed: u8, class: EdgeActorClass) -> WriteActor {
 // ONE-1687 — [RT-05] per-agent compaction
 // ═══════════════════════════════════════════════════════════════════════
 
-fn minimal_agent_definition() -> AgentDefinition {
+/// The oracle's cheap compaction backend key.
+const ORACLE_COMPACTION_BACKEND: &str = "oracle.cheap.slm";
+
+/// A module-local CHEAP backend, registered so the frontier-tier fact is
+/// answered by the REGISTRY's recorded class rather than by sniffing the
+/// profile's tier string.
+struct OracleCheapBackend;
+
+impl CompactionBackend for OracleCheapBackend {
+    fn backend_key(&self) -> &str {
+        ORACLE_COMPACTION_BACKEND
+    }
+
+    fn tier_class(&self) -> CompactionTierClass {
+        CompactionTierClass::Cheap
+    }
+
+    fn compact(&self, request: &CompactionRequest) -> crate::error::Result<CompactionProduct> {
+        Ok(CompactionProduct {
+            summary_text: format!("{} messages compacted", request.window.len()),
+            latency: std::time::Duration::from_millis(1),
+        })
+    }
+}
+
+/// The window budget this fixture's profile carries.
+///
+/// Read through the SAME builder machinery the engine default flows through,
+/// so the oracle's equality assert below is a real cross-read rather than an
+/// echo of a constant this file re-spelled.
+fn oracle_window_token_budget(vault: &Vault) -> u64 {
+    context_pack_window_token_budget(vault)
+}
+
+fn minimal_agent_definition(vault: &Vault) -> AgentDefinition {
     AgentDefinition::new(
         "oracle-compaction-agent",
         "M8 oracle fixture",
@@ -106,11 +148,23 @@ fn minimal_agent_definition() -> AgentDefinition {
         1.0,
         false,
         true,
-        Value::Map(Vec::new()),
+        // Arming note: the ignored fixture carried an EMPTY provenance map,
+        // which `validate_agent_definition` has always refused. Un-ignoring
+        // surfaced it; the fixture gains a real provenance map and no assert
+        // below changes.
+        Value::Map(vec![(
+            Value::from("definedVia"),
+            Value::from("m8_forward_oracle"),
+        )]),
         None,
         true,
         None,
     )
+    .with_memory_profile(Some(MemoryProfile::new(
+        oracle_window_token_budget(vault),
+        ModelTierRef(ORACLE_COMPACTION_BACKEND.to_owned()),
+        CompactionOwnership::Engine,
+    )))
 }
 
 /// The profile facts RT-05 pins. Field NAMES stay armer-owned — these are
@@ -131,20 +185,46 @@ struct MemoryProfileFacts {
     compaction_backend_is_frontier_tier: bool,
 }
 
-/// ARMING SEAM (ONE-1687): read the memory profile off the agent
-/// definition record through its accessors.
-fn memory_profile_facts(_vault: &Vault, _def: &AgentDefinition) -> MemoryProfileFacts {
-    unimplemented!(
-        "ONE-1687 arming seam: AgentDefinition.memoryProfile accessors \
-         (window budget + compaction ownership + compaction_backend)"
-    )
+/// ARMED (ONE-1687): reads the memory profile off the agent definition
+/// record through its real accessors.
+///
+/// `dreamer_owns_memory_consolidation` is constant-true on purpose: the
+/// Dreamer's ownership of MEMORY consolidation is a LAW, not a field, so
+/// there is no record key that could ever answer `false`.
+/// `compaction_backend_is_frontier_tier` is answered by
+/// [`CompactionBackendRegistry::tier_class_of`] — the registry's recorded
+/// class — never by sniffing the profile string, because the ban is enforced
+/// at registration.
+fn memory_profile_facts(_vault: &Vault, def: &AgentDefinition) -> MemoryProfileFacts {
+    let profile = def
+        .memory_profile
+        .as_ref()
+        .expect("the fixture definition carries a memory profile");
+    let mut registry = CompactionBackendRegistry::new();
+    registry
+        .register(std::sync::Arc::new(OracleCheapBackend))
+        .expect("a cheap backend registers");
+    let tier_class = registry.tier_class_of(profile.compaction_backend.as_str());
+    MemoryProfileFacts {
+        window_token_budget: profile.window_token_budget,
+        dreamer_owns_memory_consolidation: true,
+        window_owner_is_first_party: profile.compaction == CompactionOwnership::Engine,
+        compaction_backend: profile.compaction_backend.as_str().to_owned(),
+        compaction_backend_is_frontier_tier: tier_class == Some(CompactionTierClass::Frontier),
+    }
 }
 
-/// ARMING SEAM (ONE-1687): the `context_pack` token budget the profile's
-/// window budget is LIFTED from — read from the config store, so the
-/// equality assert below is a real cross-read, not an echo of the profile.
-fn context_pack_window_token_budget(_vault: &Vault) -> u64 {
-    unimplemented!("ONE-1687 arming seam: the lifted context_pack token budget")
+/// ARMED (ONE-1687): the `context_pack` token budget the profile's window
+/// budget is LIFTED from.
+///
+/// The oracle's prose says "read from the config store"; no config store
+/// exists at this head. The engine default reaches callers through ONE
+/// authority — a default [`ContextPackBuilder`] read through
+/// [`ContextPackBuilder::effective_token_budget`] — so constructing that
+/// builder and asking it IS the cross-read the assert wants. Re-spelling the
+/// module constant here would make the equality an echo instead.
+fn context_pack_window_token_budget(vault: &Vault) -> u64 {
+    vault.context_pack().effective_token_budget() as u64
 }
 
 /// RT-05: the consolidation-vs-compaction ownership split is observable
@@ -154,10 +234,9 @@ fn context_pack_window_token_budget(_vault: &Vault) -> u64 {
 /// `AgentDefinition.memoryProfile`, with the pluggable cheap
 /// `compaction_backend` named inside it.
 #[test]
-#[ignore = "armed by ONE-1687"]
 fn one_1687_memory_profile_rides_the_agent_definition_record() {
     let (_dir, vault) = open_vault();
-    let definition = minimal_agent_definition();
+    let definition = minimal_agent_definition(&vault);
     let body = encode_agent_definition(&definition).expect("encode agent def");
     let value = rmpv::decode::read_value(&mut Cursor::new(&body[..])).expect("decode body");
     let Value::Map(entries) = value else {

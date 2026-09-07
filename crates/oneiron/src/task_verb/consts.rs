@@ -3,7 +3,7 @@
 //! Consumers: schema/subkind/realize + create/cancel predicates and gate
 //! knobs — `create_facade`/`query_facade`; schema versions — `wire_decode`;
 //! follow-up and peer-handle prefixes — `follow_up`; settle page —
-//! `consult_fanout_facade`; rate/owner prefixes — `rate_limit`.
+//! `consult_fanout_facade`; rate prefix — `rate_limit`.
 
 /// Schema 2 adds the typed consult kind, the single `Option<TaskAssignee>`
 /// wire field, the absolute TTL, the typed consult payload, and the one
@@ -25,8 +25,11 @@ pub const TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED: &str = "consult_expired";
 pub(super) const PEER_HANDLE_KEY_PREFIX: &[u8] = b"tasks.peer.handle.v1\0";
 /// Page size for the bounded TASK walk in [`Memory::settle_due_consults`](crate::memory::Memory::settle_due_consults).
 pub(super) const CONSULT_SETTLE_PAGE: usize = 256;
+/// Node-local by design: a create-rate window is a property of THIS machine's
+/// admission history, not of the task, so it stays in `vault_meta` and does
+/// not replicate. The create-time OWNER, which does, is a replicated authority
+/// fact (`task_authority`) and has no prefix here.
 pub(super) const TASK_CREATE_RATE_KEY_PREFIX: &[u8] = b"tasks.create.rate.v1\0";
-pub(super) const TASK_CREATE_OWNER_KEY_PREFIX: &[u8] = b"tasks.create.owner.v1\0";
 pub(super) const TASK_CREATE_PROPOSAL_PREDICATE: &str = "tasks.create";
 pub(super) const TASK_CANCEL_PROPOSAL_PREDICATE: &str = "tasks.cancel";
 pub(super) const TASK_CANCEL_GATE_CHANNEL: &str = "tasks";

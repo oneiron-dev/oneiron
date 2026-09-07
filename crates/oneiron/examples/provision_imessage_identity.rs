@@ -33,8 +33,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oneiron::{
     ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Vault, VaultConfig,
     channel_identity::ChannelIdentity, channel_identity::ChannelIdentityBinding,
-    channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityShape,
-    channel_identity::ChannelIdentityState,
+    channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityState,
+    channel_identity::SelfHeldShape,
 };
 
 /// Channel assignment provisioned by this door.
@@ -98,7 +98,7 @@ fn run() -> Result<(), String> {
     let requested = ChannelIdentity::requested(
         CHANNEL,
         handle,
-        ChannelIdentityShape::DedicatedHandle,
+        SelfHeldShape::DedicatedHandle,
         ChannelIdentityBinding::agent(agent_ref),
         now,
     );

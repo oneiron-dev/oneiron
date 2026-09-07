@@ -10,6 +10,7 @@ use super::kernel::{
     FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
     ReceiptKind, ReceiptRecord, hex_lower,
 };
+use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
@@ -30,11 +31,11 @@ const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct DurableSendReceipt {
-    version: u8,
-    task_ref: String,
-    outcome: SendReceiptOutcome,
-    transport_dispatched: bool,
-    receipt: ReceiptRecord,
+    pub(super) version: u8,
+    pub(super) task_ref: String,
+    pub(super) outcome: SendReceiptOutcome,
+    pub(super) transport_dispatched: bool,
+    pub(super) receipt: ReceiptRecord,
 }
 
 // ONE-1690 closes the known interim double-authority window: ledger rows are
@@ -240,64 +241,28 @@ fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
 }
 
-/// Persists the outbound pipeline receipt as the sole durable record of a
-/// connector send. A delivered row atomically installs the actor-scoped client
-/// idempotency index; a failed row remains audit-only and may be replaced by a
-/// later delivered retry for the same TASK.
+/// Appends one outbound attempt's audit receipt and updates its TASK summary.
+/// Delivered summaries are sticky and atomically install the actor-scoped client
+/// idempotency index. Failed receipts never authorize idempotency and remain in
+/// the history after a later attempt updates the summary.
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,
-    mut receipt: ReceiptRecord,
+    receipt: ReceiptRecord,
     outcome: SendReceiptOutcome,
     transport_dispatched: bool,
     delivered_idempotency: Option<(EntityId, &str)>,
 ) -> Result<bool> {
-    receipt
-        .fields
-        .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
-    receipt.fields.insert(
-        FIELD_TRANSPORT_DISPATCHED.to_owned(),
-        transport_dispatched.to_string(),
-    );
-    let durable = DurableSendReceipt {
-        version: SEND_RECEIPT_RECORD_VERSION,
-        task_ref: task_ref.to_hex(),
-        outcome,
-        transport_dispatched,
-        receipt,
-    };
-    let encoded = rmp_serde::to_vec_named(&durable)
-        .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
     vault.with_write_txn(|wtxn| {
-        let existing = vault
-            .store
-            .get_send_receipt_by_task_in_txn(&*wtxn, &task_ref)?;
-        if let Some(raw) = existing.as_deref() {
-            let existing = decode_durable_send_receipt(task_ref.as_bytes(), raw)?;
-            if existing.outcome == SendReceiptOutcome::Delivered {
-                return Ok(false);
-            }
-        }
-        if existing.is_some() {
-            vault
-                .store
-                .set_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
-        } else {
-            vault
-                .store
-                .put_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
-        }
-        if outcome == SendReceiptOutcome::Delivered
-            && let Some((actor_ref, idempotency_key)) = delivered_idempotency
-        {
-            vault.store.put_delivered_send_idempotency_in_txn(
-                wtxn,
-                &actor_ref,
-                idempotency_key,
-                &task_ref,
-            )?;
-        }
-        Ok(true)
+        persist_send_receipt_in_txn(
+            &vault.store,
+            wtxn,
+            task_ref,
+            receipt,
+            outcome,
+            transport_dispatched,
+            delivered_idempotency,
+        )
     })
 }
 

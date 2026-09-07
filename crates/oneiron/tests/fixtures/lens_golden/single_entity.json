@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "case_id": "single-entity",
+  "entities": [
+    { "id": "entity-1", "label": "first subject" }
+  ],
+  "claims": [
+    { "id": "claim-1", "subject": "entity-1", "predicate": "status", "value": "open" }
+  ],
+  "timeline": []
+}

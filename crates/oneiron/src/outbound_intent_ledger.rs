@@ -4,15 +4,12 @@
 //! and recovery reuse the persisted deterministic key; these private
 //! `vault_meta` rows never enter replication.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Cursor;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use rmpv::Value;
-use serde::Serialize;
-use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -96,8 +93,6 @@ pub type IntentId = [u8; 32];
 pub enum IntentLedgerError {
     #[error(transparent)]
     Engine(#[from] Error),
-    #[error("outbound intent canonicalization failed: {0}")]
-    Canonical(#[from] serde_json::Error),
     #[error("invalid outbound intent input: {0}")]
     InvalidInput(&'static str),
     #[error("the verified outbound actor is no longer valid")]
@@ -661,6 +656,49 @@ impl fmt::Debug for IntentLedgerRecord {
     }
 }
 
+/// One ledger row that failed to decode, kept with the evidence an auditor
+/// needs. The raw row itself is left untouched in storage: this type reports
+/// damage, it never repairs, quarantines, or deletes it.
+#[derive(Debug)]
+pub struct IntentLedgerCorruptRow {
+    /// Full `vault_meta` key bytes; enough to identify even a malformed-key row.
+    pub key: Box<[u8]>,
+    pub error: IntentLedgerError,
+}
+
+/// One audit walk over the device-local intent ledger.
+///
+/// Damage is per row: one unreadable row cannot darken every other receipt in
+/// the audit, and no corrupt row is ever presented as a valid record.
+#[derive(Debug, Default)]
+pub struct IntentLedgerListing {
+    pub records: Vec<IntentLedgerRecord>,
+    pub corrupt: Vec<IntentLedgerCorruptRow>,
+}
+
+/// Yields valid rows only; corrupt rows stay in `corrupt`.
+///
+/// `.len()` therefore counts valid rows — audit code that must fail on
+/// corruption inspects `corrupt` rather than reading a count as completeness.
+impl std::ops::Deref for IntentLedgerListing {
+    type Target = [IntentLedgerRecord];
+
+    fn deref(&self) -> &Self::Target {
+        &self.records
+    }
+}
+
+/// Consuming iteration yields valid rows only and drops `corrupt` — audit code
+/// that must fail on corruption inspects `corrupt` before consuming the listing.
+impl IntoIterator for IntentLedgerListing {
+    type Item = IntentLedgerRecord;
+    type IntoIter = std::vec::IntoIter<IntentLedgerRecord>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.records.into_iter()
+    }
+}
+
 /// One intent requiring external review; corrupt keys may not contain an id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntentEscalation {
@@ -725,6 +763,12 @@ pub(crate) fn intent_recovery_entries(
 }
 
 /// Derives the replay-stable BLAKE3 identity from canonical call identity.
+///
+/// Intent identity keeps its shipped canonical-JSON preimage: it names rows
+/// that already exist on device, and it is not what this ledger's content
+/// digest covers. The JSON canonicalizer and the entire serde-JSON surface it
+/// needs are declared inside this function so no other path in this module —
+/// `record_content_digest` above all — can reach a JSON detour.
 pub fn derive_intent_id(
     attempt_id: AttemptId,
     call_seq: u64,
@@ -732,6 +776,11 @@ pub fn derive_intent_id(
     tool: &str,
     payload_hash: &[u8; 32],
 ) -> IntentLedgerResult<[u8; 32]> {
+    use std::collections::BTreeMap;
+
+    use serde::Serialize;
+    use serde_json::{Map as JsonMap, Value as JsonValue};
+
     #[derive(Serialize)]
     struct IntentIdentity<'a> {
         attempt_id: &'a [u8; 16],
@@ -739,6 +788,35 @@ pub fn derive_intent_id(
         server: &'a str,
         tool: &'a str,
         payload_hash: &'a [u8; 32],
+    }
+
+    fn canonicalize_json(value: JsonValue) -> JsonValue {
+        match value {
+            JsonValue::Array(values) => {
+                JsonValue::Array(values.into_iter().map(canonicalize_json).collect())
+            }
+            JsonValue::Object(entries) => {
+                let mut sorted = BTreeMap::new();
+                for (key, value) in entries {
+                    sorted.insert(key, canonicalize_json(value));
+                }
+                let mut canonical = JsonMap::new();
+                for (key, value) in sorted {
+                    canonical.insert(key, value);
+                }
+                JsonValue::Object(canonical)
+            }
+            scalar => scalar,
+        }
+    }
+
+    fn canonical_hash<T: Serialize>(value: &T) -> IntentLedgerResult<[u8; 32]> {
+        const FAILED: &str = "outbound intent identity canonicalization failed";
+        let value =
+            serde_json::to_value(value).map_err(|_| IntentLedgerError::InvalidRecord(FAILED))?;
+        let bytes = serde_json::to_vec(&canonicalize_json(value))
+            .map_err(|_| IntentLedgerError::InvalidRecord(FAILED))?;
+        Ok(*blake3::hash(&bytes).as_bytes())
     }
 
     canonical_hash(&IntentIdentity {
@@ -845,20 +923,36 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
     finish_send(vault, record, send_outcome, now_ms, false)
 }
 
-/// Reads all valid device-local intent receipts. Any malformed row fails the
-/// read closed; recovery uses its separate escalation path.
-pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<Vec<IntentLedgerRecord>> {
+/// Audits every device-local intent receipt, per row.
+///
+/// Valid rows land in `records` and every row that fails decode or integrity
+/// verification lands in `corrupt` with its full key bytes and typed error, in
+/// LMDB prefix order within each vector. A damaged row is never returned as
+/// valid, rewritten, deleted, or silently omitted, and this listing is purely
+/// observational: recovery remains the only per-row crash walk, and targeted
+/// reads stay strict.
+///
+/// An unavailable storage substrate is not row damage: opening the read
+/// transaction, creating the prefix iterator, and advancing a failed iterator
+/// all stay top-level errors.
+pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<IntentLedgerListing> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    let mut records = Vec::new();
+    let mut listing = IntentLedgerListing::default();
     for row in vault
         .store
         .vault_meta
         .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
     {
         let (key, value) = row?;
-        records.push(decode_record(&key, &value)?);
+        match decode_record(&key, &value) {
+            Ok(record) => listing.records.push(record),
+            Err(error) => listing.corrupt.push(IntentLedgerCorruptRow {
+                key: key.to_vec().into_boxed_slice(),
+                error,
+            }),
+        }
     }
-    Ok(records)
+    Ok(listing)
 }
 
 /// Walks device-local intent rows after a crash. Resends use only persisted
@@ -1367,139 +1461,15 @@ pub(crate) fn hash_frozen_payload(payload: &[u8]) -> [u8; 32] {
     *blake3::hash(payload).as_bytes()
 }
 
-fn canonical_hash<T: Serialize>(value: &T) -> IntentLedgerResult<[u8; 32]> {
-    let value = serde_json::to_value(value)?;
-    let bytes = serde_json::to_vec(&canonicalize_json(value))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
-}
-
-fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8; 32]> {
-    #[derive(Serialize)]
-    struct RecordContent<'a> {
-        schema_version: u64,
-        id: &'a [u8; 32],
-        attempt_id: &'a [u8; 16],
-        call_seq: u64,
-        server: &'a str,
-        tool: &'a str,
-        // payload_hash cryptographically binds the payload; hashing the raw
-        // bytes again here is redundant and O(payload) on every encode/decode.
-        payload_hash: &'a [u8; 32],
-        idempotency_key: &'a str,
-        idempotency_supported: bool,
-        authorization_binding: Option<&'a [u8; 32]>,
-        binding_version: u64,
-        resolved_endpoint: Option<&'a str>,
-        // The typed capability identity is digest-bound like every other
-        // authority-bearing field: a swapped, added, or stripped provenance
-        // fails the content digest at decode (ONE-1885).
-        capability_grant_id: Option<&'a [u8; 16]>,
-        capability_server: Option<&'a str>,
-        capability_connector: Option<&'a str>,
-        budget_key_ref: Option<&'a [u8; 16]>,
-        budget_class: &'a str,
-        budget_matched_rows: &'a [u16],
-        budget_sends_debit: u64,
-        budget_accounted_at_ms: u64,
-        recorded_outcome: Option<&'a str>,
-        recorded_outcome_reason: Option<&'a str>,
-        state: &'a str,
-        created_ms: u64,
-        updated_ms: u64,
-    }
-
-    let capability_grant_id = record
-        .capability_provenance
-        .as_ref()
-        .map(ScopedCapabilityProvenance::grant_id);
-    canonical_hash(&RecordContent {
-        schema_version: INTENT_LEDGER_SCHEMA_VERSION,
-        id: &record.id,
-        attempt_id: record.attempt_id.as_bytes(),
-        call_seq: record.call_seq,
-        server: &record.server,
-        tool: &record.tool,
-        payload_hash: &record.payload_hash,
-        idempotency_key: &record.idempotency_key,
-        idempotency_supported: record.idempotency_supported,
-        authorization_binding: record
-            .authorization_binding
-            .as_ref()
-            .map(OutboundAuthorizationBinding::as_bytes),
-        binding_version: record.binding_version,
-        resolved_endpoint: record.resolved_endpoint.as_deref(),
-        capability_grant_id: capability_grant_id.as_ref().map(EntityId::as_bytes),
-        capability_server: record
-            .capability_provenance
-            .as_ref()
-            .map(ScopedCapabilityProvenance::server),
-        capability_connector: record
-            .capability_provenance
-            .as_ref()
-            .map(ScopedCapabilityProvenance::connector),
-        budget_key_ref: record
-            .budget_accounting
-            .key_ref
-            .as_ref()
-            .map(EntityId::as_bytes),
-        budget_class: record.budget_accounting.budget_class.as_str(),
-        budget_matched_rows: &record.budget_accounting.matched_rows,
-        budget_sends_debit: record.budget_accounting.sends_debit,
-        budget_accounted_at_ms: record.budget_accounting.accounted_at_ms,
-        recorded_outcome: record.recorded_outcome.map(|outcome| match outcome {
-            RecordedOutboundOutcome::DefiniteNonDelivery => "definite_non_delivery",
-            RecordedOutboundOutcome::Acked => "acked",
-            RecordedOutboundOutcome::Abandoned(_) => "abandoned",
-        }),
-        recorded_outcome_reason: record.recorded_outcome.and_then(|outcome| match outcome {
-            RecordedOutboundOutcome::DefiniteNonDelivery => None,
-            RecordedOutboundOutcome::Acked => None,
-            RecordedOutboundOutcome::Abandoned(reason) => Some(reason.as_str()),
-        }),
-        state: record.state.as_str(),
-        created_ms: record.created_ms,
-        updated_ms: record.updated_ms,
-    })
-}
-
-fn canonicalize_json(value: JsonValue) -> JsonValue {
-    match value {
-        JsonValue::Array(values) => {
-            JsonValue::Array(values.into_iter().map(canonicalize_json).collect())
-        }
-        JsonValue::Object(entries) => {
-            let mut sorted = BTreeMap::new();
-            for (key, value) in entries {
-                sorted.insert(key, canonicalize_json(value));
-            }
-            let mut canonical = JsonMap::new();
-            for (key, value) in sorted {
-                canonical.insert(key, value);
-            }
-            JsonValue::Object(canonical)
-        }
-        scalar => scalar,
-    }
-}
-
-fn intent_ledger_key(id: &[u8; 32]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(INTENT_LEDGER_PRIVATE_PREFIX.len() + id.len());
-    key.extend_from_slice(INTENT_LEDGER_PRIVATE_PREFIX);
-    key.extend_from_slice(id);
-    key
-}
-
-fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
-    if key.len() != INTENT_LEDGER_PRIVATE_PREFIX.len() + 32
-        || !key.starts_with(INTENT_LEDGER_PRIVATE_PREFIX)
-    {
-        return None;
-    }
-    key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
-}
-
-fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
-    let content_digest = record_content_digest(record)?;
+/// The canonical intent body used as the digest preimage.
+///
+/// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..19]`, in that order, with
+/// `KEY_CONTENT_DIGEST` absent. This is the single source of every stored body
+/// value — raw payload, authorization binding, nested budget accounting, typed
+/// capability provenance, recorded outcome, state, and timestamps — so the
+/// digested bytes and the persisted bytes cannot drift into two representations
+/// of one row.
+fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Value)> {
     let budget_accounting = Value::Map(vec![
         (
             Value::from(BUDGET_ACCOUNTING_KEYS[0]),
@@ -1566,7 +1536,7 @@ fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
             (Value::from(RECORDED_OUTCOME_KEYS[1]), reason),
         ])
     });
-    let entries = vec![
+    vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(INTENT_LEDGER_SCHEMA_VERSION),
@@ -1624,16 +1594,65 @@ fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
         (Value::from(KEY_STATE), Value::from(record.state.as_str())),
         (Value::from(KEY_CREATED_MS), Value::from(record.created_ms)),
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
-        (
-            Value::from(KEY_CONTENT_DIGEST),
-            Value::Binary(content_digest.to_vec()),
-        ),
-    ];
+    ]
+}
+
+/// Encodes `Value::Map(record_entries_without_digest(record))`.
+///
+/// The 19-entry MessagePack map header is part of the preimage, and so are the
+/// raw `payload` bytes: the preimage is definitionally the stored body minus
+/// the digest key, and carving `payload` out would reintroduce a second body
+/// representation. The O(payload) cost per encode/decode is accepted;
+/// `payload_hash` stays separately validated by `validate_record`.
+fn encode_record_digest_preimage(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
+    encode_messagepack_map(record_entries_without_digest(record))
+}
+
+/// Unkeyed BLAKE3 over the canonical body, with no domain prefix or suffix
+/// beyond the encoded row: this preserves the shipped direct-BLAKE3 convention,
+/// and there is no algorithm tag, alternate verifier, or old-digest acceptance
+/// branch. This path never traverses serde JSON; `derive_intent_id` alone owns
+/// the canonical-JSON identity preimage.
+fn record_content_digest(record: &IntentLedgerRecord) -> IntentLedgerResult<[u8; 32]> {
+    let preimage = encode_record_digest_preimage(record)?;
+    Ok(*blake3::hash(&preimage).as_bytes())
+}
+
+fn encode_messagepack_map(entries: Vec<(Value, Value)>) -> IntentLedgerResult<Vec<u8>> {
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).map_err(|_| {
         IntentLedgerError::InvalidRecord("outbound intent MessagePack encode failed")
     })?;
     Ok(encoded)
+}
+
+fn intent_ledger_key(id: &[u8; 32]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(INTENT_LEDGER_PRIVATE_PREFIX.len() + id.len());
+    key.extend_from_slice(INTENT_LEDGER_PRIVATE_PREFIX);
+    key.extend_from_slice(id);
+    key
+}
+
+fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
+    if key.len() != INTENT_LEDGER_PRIVATE_PREFIX.len() + 32
+        || !key.starts_with(INTENT_LEDGER_PRIVATE_PREFIX)
+    {
+        return None;
+    }
+    key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
+}
+
+/// Encodes the canonical 20-entry row: the digest preimage body plus the
+/// content digest computed over exactly those bytes, appended as the final
+/// `content_digest` entry.
+fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
+    let digest = record_content_digest(record)?;
+    let mut entries = record_entries_without_digest(record);
+    entries.push((
+        Value::from(KEY_CONTENT_DIGEST),
+        Value::Binary(digest.to_vec()),
+    ));
+    encode_messagepack_map(entries)
 }
 
 fn decode_record(key: &[u8], raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {

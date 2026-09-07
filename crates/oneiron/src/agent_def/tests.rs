@@ -602,9 +602,23 @@ fn pinned_key_contract_is_stable() {
             "logicalId",
             "enabled",
             "displayName",
+            "memory_profile",
         ]
     );
     assert_eq!(MCP_REF_KEYS, ["key", "minVersion"]);
+    assert_eq!(
+        MEMORY_PROFILE_KEYS,
+        [
+            "window_token_budget",
+            "budget_split",
+            "compaction_backend",
+            "compaction",
+        ]
+    );
+    assert_eq!(
+        CONTEXT_BUDGET_SPLIT_KEYS,
+        ["claims", "turns", "summaries", "other"]
+    );
 
     // A host field smuggled into the body is rejected at decode.
     let mut entries = valid_scope_all_entries();
@@ -1440,4 +1454,269 @@ fn tool_layer_defaults_validate() -> Result<()> {
     );
     encode_agent_definition(&def)?;
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RT-05 (ONE-1687) — the additive memory_profile record
+// ═══════════════════════════════════════════════════════════════════════
+
+fn full_profile() -> MemoryProfile {
+    MemoryProfile::new(
+        8_000,
+        ModelTierRef("cheap.slm".to_owned()),
+        CompactionOwnership::Engine,
+    )
+    .with_budget_split(ContextBudgetSplit::new(0.45, 0.10, 0.25, 0.20))
+}
+
+fn profile_entries() -> Vec<(Value, Value)> {
+    vec![
+        (
+            Value::from("window_token_budget"),
+            Value::from(8_000_u64),
+        ),
+        (
+            Value::from("compaction_backend"),
+            Value::from("cheap.slm"),
+        ),
+        (Value::from("compaction"), Value::from("engine")),
+    ]
+}
+
+fn body_with_profile(profile: Vec<(Value, Value)>) -> Vec<u8> {
+    let mut entries = valid_scope_all_entries();
+    entries.push(("memory_profile", Value::Map(profile)));
+    body_from(entries)
+}
+
+/// The pre-RT-05 wire shape is UNCHANGED: a body written before the profile
+/// existed decodes with `memory_profile: None` and re-encodes byte-for-byte.
+#[test]
+fn a_legacy_body_decodes_with_no_profile_and_re_encodes_byte_identically() {
+    // ONE-1890 made `enabled` the sole ALWAYS-encode key, so the byte-identity
+    // baseline is a pre-RT-05 body that already carries it, in encoder-canonical
+    // position (after `provenance`; `logicalId`/`displayName` absent here).
+    // `valid_scope_all_entries()` stays enabled-free on purpose: it is the
+    // pre-1890 legacy body that `additive_body_keys_codec` uses to prove a
+    // missing `enabled` decodes as true.
+    let mut entries = valid_scope_all_entries();
+    entries.push(("enabled", Value::Boolean(true)));
+    let legacy = body_from(entries);
+    let decoded = decode_agent_definition(&legacy).expect("legacy body decodes");
+    assert_eq!(
+        decoded.memory_profile, None,
+        "an absent key is None, never a default profile"
+    );
+    assert_eq!(
+        encode_agent_definition(&decoded).expect("re-encode"),
+        legacy,
+        "absent profile reproduces today's bytes exactly"
+    );
+    assert!(
+        !encoded_body_keys(&decoded).contains(&"memory_profile".to_owned()),
+        "the key is ELIDED when absent"
+    );
+}
+
+#[test]
+fn a_full_profile_round_trips_and_encodes_memory_profile_last() {
+    let definition = minimal_agent("1.0.0").with_memory_profile(Some(full_profile()));
+    let bytes = encode_agent_definition(&definition).expect("encode");
+    let decoded = decode_agent_definition(&bytes).expect("decode");
+    assert_eq!(decoded, definition);
+    assert_eq!(
+        encode_agent_definition(&decoded).expect("re-encode"),
+        bytes,
+        "the profile round-trips byte-identically"
+    );
+
+    let keys = encoded_body_keys(&definition);
+    assert_eq!(
+        keys.last().map(String::as_str),
+        Some("memory_profile"),
+        "memory_profile is the LAST encoded key"
+    );
+    assert_eq!(
+        keys.iter().filter(|key| *key == "memory_profile").count(),
+        1,
+        "exactly one memory_profile key"
+    );
+}
+
+#[test]
+fn budget_split_elides_when_absent() {
+    let no_split = minimal_agent("1.0.0").with_memory_profile(Some(MemoryProfile::new(
+        4_000,
+        ModelTierRef("cheap.slm".to_owned()),
+        CompactionOwnership::Byoa,
+    )));
+    let bytes = encode_agent_definition(&no_split).expect("encode");
+    let decoded = decode_agent_definition(&bytes).expect("decode");
+    assert_eq!(
+        decoded
+            .memory_profile
+            .as_ref()
+            .expect("profile present")
+            .budget_split,
+        None
+    );
+
+    // The sub-map carries three keys, not four with a nil.
+    let mut cursor = bytes.as_slice();
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("decode map") else {
+        panic!("body is not a map");
+    };
+    let profile = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("memory_profile"))
+        .map(|(_, value)| value)
+        .expect("profile key present");
+    let Value::Map(profile_entries) = profile else {
+        panic!("profile is not a map");
+    };
+    assert_eq!(profile_entries.len(), 3);
+}
+
+#[test]
+fn profile_sub_map_strict_decode_rejection_matrix() {
+    let invalid = |bytes: &[u8], why: &str| {
+        assert_eq!(
+            decode_agent_definition(bytes)
+                .expect_err(why)
+                .kind(),
+            ErrorKind::InvalidAgentDefBody,
+            "{why}"
+        );
+    };
+
+    // Unknown key inside the sub-map.
+    let mut unknown = profile_entries();
+    unknown.push((Value::from("compaction_model"), Value::from("x")));
+    invalid(&body_with_profile(unknown), "unknown profile key");
+
+    // Duplicate key inside the sub-map.
+    let mut duplicate = profile_entries();
+    duplicate.push((Value::from("compaction"), Value::from("byoa")));
+    invalid(&body_with_profile(duplicate), "duplicate profile key");
+
+    // Non-string key inside the sub-map.
+    let mut non_string = profile_entries();
+    non_string.push((Value::from(7_u64), Value::from("x")));
+    invalid(&body_with_profile(non_string), "non-string profile key");
+
+    // Missing required key.
+    invalid(
+        &body_with_profile(vec![(
+            Value::from("window_token_budget"),
+            Value::from(10_u64),
+        )]),
+        "missing required profile key",
+    );
+
+    // Unknown ownership vocabulary is a refusal, never a default.
+    let mut bad_ownership = profile_entries();
+    bad_ownership[2] = (Value::from("compaction"), Value::from("host"));
+    invalid(&body_with_profile(bad_ownership), "unknown ownership");
+
+    // The profile value must be a map.
+    let mut entries = valid_scope_all_entries();
+    entries.push(("memory_profile", Value::from("engine")));
+    invalid(&body_from(entries), "profile must be a map");
+
+    // Trailing bytes after the parent map still fail.
+    let mut trailing = body_with_profile(profile_entries());
+    trailing.push(0xC0);
+    invalid(&trailing, "trailing bytes");
+
+    // A split with a bad fraction, and one that does not sum to 1.
+    for split in [
+        vec![
+            (Value::from("claims"), Value::F32(0.0)),
+            (Value::from("turns"), Value::F32(0.3)),
+            (Value::from("summaries"), Value::F32(0.4)),
+            (Value::from("other"), Value::F32(0.3)),
+        ],
+        vec![
+            (Value::from("claims"), Value::F32(0.5)),
+            (Value::from("turns"), Value::F32(0.3)),
+            (Value::from("summaries"), Value::F32(0.4)),
+            (Value::from("other"), Value::F32(0.3)),
+        ],
+    ] {
+        let mut with_split = profile_entries();
+        with_split.insert(1, (Value::from("budget_split"), Value::Map(split)));
+        invalid(&body_with_profile(with_split), "invalid split fractions");
+    }
+}
+
+#[test]
+fn profile_validation_rejects_zero_budget_and_blank_backend() {
+    let zero_budget = minimal_agent("1.0.0").with_memory_profile(Some(MemoryProfile::new(
+        0,
+        ModelTierRef("cheap.slm".to_owned()),
+        CompactionOwnership::Engine,
+    )));
+    assert_eq!(
+        encode_agent_definition(&zero_budget)
+            .expect_err("a zero window budget is not a budget")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+
+    let blank_backend = minimal_agent("1.0.0").with_memory_profile(Some(MemoryProfile::new(
+        4_000,
+        ModelTierRef("   ".to_owned()),
+        CompactionOwnership::Engine,
+    )));
+    assert_eq!(
+        encode_agent_definition(&blank_backend)
+            .expect_err("a blank backend key names nothing")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+}
+
+#[test]
+fn ownership_wire_strings_are_pinned() {
+    assert_eq!(CompactionOwnership::Engine.as_str(), "engine");
+    assert_eq!(CompactionOwnership::Byoa.as_str(), "byoa");
+    assert_eq!(
+        CompactionOwnership::parse("engine").expect("parses"),
+        CompactionOwnership::Engine
+    );
+    assert_eq!(
+        CompactionOwnership::parse("byoa").expect("parses"),
+        CompactionOwnership::Byoa
+    );
+    assert_eq!(
+        CompactionOwnership::parse("Engine")
+            .expect_err("the vocabulary is exact")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+}
+
+/// The profile is a DIAL, not identity: it may change on update under the
+/// ordinary version-bump rule, unlike the frozen lineage/authorship fields.
+#[test]
+fn the_profile_may_change_on_update_under_the_version_bump_rule() {
+    let prior = minimal_agent("1.0.0").with_memory_profile(Some(full_profile()));
+    let widened = minimal_agent("1.1.0").with_memory_profile(Some(MemoryProfile::new(
+        32_000,
+        ModelTierRef("cheap.slm".to_owned()),
+        CompactionOwnership::Byoa,
+    )));
+    validate_agent_definition_update(&prior, &widened).expect("a profile change is a dial");
+
+    let dropped = minimal_agent("1.2.0");
+    validate_agent_definition_update(&prior, &dropped).expect("dropping the profile is allowed");
+
+    // Still bound by the version-bump rule itself.
+    let same_version = minimal_agent("1.0.0").with_memory_profile(None);
+    assert_eq!(
+        validate_agent_definition_update(&prior, &same_version)
+            .expect_err("a body change needs a version bump")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
 }

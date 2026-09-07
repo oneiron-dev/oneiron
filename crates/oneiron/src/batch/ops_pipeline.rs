@@ -48,7 +48,11 @@ impl ApplyOpsGateMode {
         self
     }
 
-    pub(super) fn with_preflight_gate_decision_ids(
+    /// Binds the receipt identities a same-transaction gate preflight already
+    /// recorded. Reachable crate-wide because `commitment::lapse_commitments_in_txn`
+    /// composes the batch apply from inside a `CommitmentGapDecay` op and must
+    /// carry its preflight identities forward rather than mint fresh ones.
+    pub(crate) fn with_preflight_gate_decision_ids(
         mut self,
         preflight_gate_decision_ids: HashMap<
             EntityId,
@@ -291,6 +295,15 @@ pub(super) fn check_decode_point_taint_guard(
         | BatchOp::Text { id, .. }
         | BatchOp::Phonetic { id, .. }
         | BatchOp::Delete { id } => check(id)?,
+        BatchOp::CommitmentGapDecay { ids, envelope, .. } => {
+            // Each id MATERIALIZES its own rewritten claim row and so also
+            // reaches the wider entity door inside `apply_put`; the envelope's
+            // actor materializes nothing, which makes it K4's.
+            for id in ids {
+                check(id)?;
+            }
+            check(&envelope.actor().entity_ref())?;
+        }
         BatchOp::Edge { src, tgt, .. }
         | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
         | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
@@ -826,6 +839,45 @@ pub(crate) fn apply_ops_with_origin(
                     had_graph_mutation = true;
                 }
             }
+            // CMT-4 (ONE-1541). All-or-nothing by construction: the helper
+            // grounds every selected instance before staging a single op and
+            // never commits, so one stale, closed or gate-refused member takes
+            // the whole selection down with the caller's transaction.
+            BatchOp::CommitmentGapDecay {
+                ids,
+                envelope,
+                learned_at,
+            } => {
+                // Hand each id its own preflight receipt identity, in the
+                // order the preflight recorded them, so the unconsumed-identity
+                // invariant below stays exact.
+                let mut lapse_decision_ids: HashMap<
+                    EntityId,
+                    VecDeque<Option<crate::store::GateDecisionId>>,
+                > = HashMap::new();
+                for id in &ids {
+                    let decision_id = preflight_gate_decision_ids
+                        .get_mut(id)
+                        .and_then(VecDeque::pop_front)
+                        .flatten();
+                    lapse_decision_ids
+                        .entry(*id)
+                        .or_default()
+                        .push_back(decision_id);
+                }
+                crate::commitment::lapse_commitments_in_txn(
+                    store,
+                    config,
+                    analyzer,
+                    wtxn,
+                    &ids,
+                    &envelope,
+                    learned_at,
+                    text_index_trusted,
+                    write_policy.as_ref(),
+                    lapse_decision_ids,
+                )?;
+            }
         }
     }
 
@@ -1117,6 +1169,10 @@ pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {
 pub(super) fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
     ops.iter().any(|op| {
         matches!(op, BatchOp::ClaimCandidate { .. })
+            // CMT-4 (ONE-1541): a gap-decay lapse rewrites a local
+            // `commitment.record` CLAIM, so the policy snapshot must be
+            // resolved before the write transaction reaches the arm.
+            || matches!(op, BatchOp::CommitmentGapDecay { .. })
             || matches!(
                 op,
                 BatchOp::Put {

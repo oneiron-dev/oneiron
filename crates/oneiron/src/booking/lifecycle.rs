@@ -59,6 +59,7 @@ use crate::attempt_queue::{
 };
 use crate::booking::config::ClaimClassDescriptorRow;
 use crate::booking::constraint::validate_visitor_tz;
+use crate::booking::invite_grant::{NoConfirmInviteSink, dispatch_confirm_booking_invite};
 use crate::booking::{
     ActiveHoldSource, BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle,
     SolveRequest, SolveResult,
@@ -75,6 +76,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
+use crate::outbound::OutboundExecutionSink;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
@@ -807,7 +809,12 @@ where
         Some(oracle) => oracle,
         None => &UnresolvedPageOracle,
     };
-    execute_booking_lifecycle_attempt(vault, oracle, &attempt, now_utc)
+    // No invite dispatch context: the consumer seam that owns the
+    // server-authenticated actor and the real connector sink supplies both
+    // trailing arguments, and a turn without them confirms exactly as before.
+    execute_booking_lifecycle_attempt::<NoConfirmInviteSink>(
+        vault, oracle, &attempt, now_utc, None, None,
+    )
 }
 
 /// Completes or fails the attempt row, whatever the transition returned.
@@ -906,17 +913,27 @@ impl SlotOracle for UnresolvedPageOracle {
 /// Dispatches one decoded attempt.
 ///
 /// Called only by the home-node consumer while it owns serialization.
-pub(crate) fn execute_booking_lifecycle_attempt(
+///
+/// `invite_actor` and `invite_sink` are the BK-03 confirm-invite context and
+/// ride here as explicit trailing arguments rather than on [`ConfirmSpec`]:
+/// the spec is `Serialize`/`Deserialize` wire data, a sink is not
+/// serializable, and an actor field on the wire would be caller-asserted
+/// identity. `None` on either leaves every verb's behavior unchanged.
+pub(crate) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     attempt: &BookingLifecycleAttempt,
     now_utc: u64,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
 ) -> Result<BookingVerbReceipt, BookingError> {
     match &attempt.request {
         BookingVerbRequest::Hold(spec) => {
             execute_hold(vault, spec, now_utc).map(BookingVerbReceipt::Held)
         }
-        BookingVerbRequest::Confirm(spec) => execute_confirm(vault, oracle, spec, now_utc),
+        BookingVerbRequest::Confirm(spec) => {
+            execute_confirm(vault, oracle, spec, now_utc, invite_actor, invite_sink)
+        }
         BookingVerbRequest::Reschedule(spec) => {
             execute_reschedule(vault, oracle, spec, now_utc).map(BookingVerbReceipt::Rescheduled)
         }
@@ -1012,11 +1029,13 @@ pub(crate) fn execute_hold(
 /// [`BookingError::InvalidConstraint`] when the hold is absent, dead, or bound
 /// to another session; [`BookingError::SlotOracle`] on store or calendar
 /// failures.
-pub(crate) fn execute_confirm(
+pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     spec: &ConfirmSpec,
     now_utc: u64,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
 ) -> Result<BookingVerbReceipt, BookingError> {
     let decided = booking_writer(vault, |wtxn| {
         confirm_in_writer(vault, oracle, spec, wtxn, now_utc)
@@ -1032,6 +1051,24 @@ pub(crate) fn execute_confirm(
             // and nesting one inside this writer would deadlock LMDB.
             index_passport_uid(vault, &receipt.calendar.uid, &receipt.calendar.event_ref)
                 .map_err(calendar_wrap)?;
+            // BK-03 (ONE-1814): with a live booking-page grant this confirm
+            // carries ONE `calendar.invite` REQUEST through the ordinary
+            // outbound door. It runs here for the same reason the UID index
+            // does — the writer has returned, and dispatch opens its own
+            // transactions, which nesting would deadlock.
+            //
+            // A dispatch failure MUST NOT fail the confirm: the EVENT, the
+            // four booking claims, the sequence-0 passport, the revision
+            // tokens, and the durable receipt are already committed, so
+            // erroring here would fail a booking that exists and re-mint a
+            // second cancel token on the retry. The absence of the
+            // intent-ledger record is the observable, and nothing retries: a
+            // second REQUEST would threaten the once-minted UID law. A replay
+            // resolves to the intent the first pass recorded rather than
+            // enqueueing another.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink) {
+                let _ = dispatch_confirm_booking_invite(vault, actor, &receipt, sink, now_utc);
+            }
             Ok(BookingVerbReceipt::Confirmed(receipt))
         }
     }

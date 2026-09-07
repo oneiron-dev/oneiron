@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 use xxhash_rust::xxh3::xxh3_128;
@@ -10,11 +12,13 @@ use crate::store::Store;
 use crate::vault::LiveEntityRow;
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeKind,
-    EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
+    EntityId, Error, Result, SourceLineage, TimeRange, Vault, WriteActor, WriteEnvelope,
+    WriteProvenance,
 };
 
 use super::consent;
 use super::consent::CodeSourceTrust;
+use super::replay::CodeRunBridgeCall;
 use super::storage::ExecutorStorage;
 use super::types::{
     SelfAskHumanCall, SelfCall, SelfContextCall, SelfContextResult, SelfDispatchOutcome,
@@ -58,6 +62,19 @@ pub struct HostSelfDispatcher<'a> {
     run_ref: String,
     human_wait_target: Option<HumanWaitDispatchTarget>,
     code_emission: Option<(consent::CodeEmissionContext, Option<consent::ReviewContext>)>,
+    /// ONE-1314. Whether this run's effect history is already known to carry
+    /// an EXTERNAL effect, so the memory writes it seals afterwards must be
+    /// stamped with tool-output lineage rather than bare `Generated`.
+    ///
+    /// Host-internal by construction: the only way to set it is
+    /// [`Self::observe_bridge_history`], which takes a recorded bridge-call
+    /// history (never a lineage value), and no `SelfCall` payload, public
+    /// constructor, or API argument reaches it. It is a `Cell` because the
+    /// executor holds the dispatcher by SHARED reference and the observation
+    /// has to land before the write it describes dispatches. Monotone: once
+    /// set it is never cleared, so a later step cannot launder an earlier
+    /// external effect out of the run.
+    external_effect_seen: Cell<bool>,
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
@@ -149,7 +166,21 @@ impl<'a> HostSelfDispatcher<'a> {
             run_ref,
             human_wait_target: None,
             code_emission: None,
+            external_effect_seen: Cell::new(false),
         })
+    }
+
+    /// Records what this run's effect history already contains.
+    ///
+    /// The HOST calls this with the run's recorded bridge calls — the durable
+    /// replay record's history plus the current step's — before dispatching a
+    /// write. It accepts a bridge-call history, never a lineage: the mapping
+    /// from history to lineage is [`lineage_for_run`], owned here, so no
+    /// caller can assert a narrower history than the one it recorded.
+    pub(crate) fn observe_bridge_history(&self, bridge_calls: &[CodeRunBridgeCall]) {
+        if lineage_for_run(bridge_calls).contains(ClaimSource::ToolOutput) {
+            self.external_effect_seen.set(true);
+        }
     }
 
     /// The bound session ref, or `None` for a canonical run.
@@ -436,11 +467,28 @@ impl<'a> HostSelfDispatcher<'a> {
                 Value::from(admission.dreamer_run_id.as_str()),
             ));
         }
-        Ok(WriteEnvelope::new(
+        // ONE-1314. Actor and source stay host-bound exactly as before; what
+        // is added is the run's OBSERVED history. Only the memory-write
+        // effects that persist a claim/edge carry it — the fixture effect
+        // persists nothing a lineage could qualify — and only when the host
+        // has actually observed an external effect, so an unobserved run
+        // builds the byte-identical trivial envelope it built before.
+        let lineage = match effect {
+            SelfEffect::MemoryPutClaim
+            | SelfEffect::MemorySupersedeClaim
+            | SelfEffect::MemoryPutEdge
+                if self.external_effect_seen.get() =>
+            {
+                SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
+            }
+            _ => SourceLineage::of(self.source()),
+        };
+        Ok(WriteEnvelope::with_lineage(
             self.actor,
             self.source(),
             WriteProvenance::new(Value::Map(provenance))?,
             ClaimApprovalStatus::Proposed,
+            lineage,
         ))
     }
 
@@ -868,6 +916,53 @@ impl<'a> HostSelfDispatcher<'a> {
     }
 }
 
+/// Whether one recorded bridge call reached OUTSIDE this vault.
+///
+/// The match is exhaustive on purpose: a new `SelfEffect` variant fails this
+/// compile until someone states which side of the boundary it sits on, so the
+/// external-effect vocabulary extends mechanically instead of silently
+/// defaulting to "internal".
+const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
+    match effect {
+        // Reaches a counterparty outside the vault; the durable wait it parks
+        // on is exactly the boundary crossing lineage records.
+        SelfEffect::OutboundFixture => true,
+        // Vault-local: memory access is not a tool effect, the destructive
+        // fixture and delegation park on authority rather than on leaving the
+        // vault, and the speech/context family never leaves the run.
+        SelfEffect::MemorySearch
+        | SelfEffect::MemoryWriteFixture
+        | SelfEffect::MemoryPutClaim
+        | SelfEffect::MemorySupersedeClaim
+        | SelfEffect::MemoryPutEdge
+        | SelfEffect::AskHuman
+        | SelfEffect::DestructiveFixture
+        | SelfEffect::TaskDelegate
+        | SelfEffect::Context
+        | SelfEffect::Speak
+        | SelfEffect::Think
+        | SelfEffect::Express => false,
+    }
+}
+
+/// The lineage a run's recorded effect history implies.
+///
+/// PURE: history in, lineage out. The base is `Generated` — first-party code
+/// wrote the call — and an external effect anywhere in the history adds
+/// `ToolOutput`, because everything the run produced after that hop may carry
+/// what the outside world said. Reads and searches add nothing: memory access
+/// is not a tool effect.
+pub(super) fn lineage_for_run(bridge_calls: &[CodeRunBridgeCall]) -> SourceLineage {
+    let lineage = SourceLineage::of(ClaimSource::Generated);
+    if bridge_calls
+        .iter()
+        .any(|call| bridge_call_is_external_effect(call.effect))
+    {
+        return lineage.with(ClaimSource::ToolOutput);
+    }
+    lineage
+}
+
 /// The write-path gate check both executor routes share.
 ///
 /// Lives here, beside the dispatcher that decides WHICH vault runs it, so the
@@ -1091,6 +1186,13 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         // proves acyclicity; a guest `self.memory.put_edge` carries neither,
         // so guest code may not mint readiness dependencies.
         | EdgeKind::Blocks
+        // ONE-1541 (CMT-4): the brief-fulfillment pair is structural and its
+        // ruled directions are only meaningful written together, after both
+        // endpoint classes have been proven. Guest code proves neither and
+        // can only ask for one direction at a time, so both bytes land on
+        // the refusal side with the rest of the structural kinds.
+        | EdgeKind::Fulfills
+        | EdgeKind::DischargedBy
         // ONE-1414: `same_as` is structural and its writes belong to the
         // federation coreference door (`put_coreference_link`), which writes
         // the link and its status Claim in ONE transaction under an actor

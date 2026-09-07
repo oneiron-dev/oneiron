@@ -98,6 +98,7 @@ enum AutoGateRuling {
 /// can never act as an unbounded allow token: same-preset within-cap asks may
 /// run, everything else re-escalates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // contract vocabulary; arming tickets construct the rest
 enum DecisionHistoryEntry {
     HumanApproved { preset: &'static str, cap: u64 },
 }
@@ -126,9 +127,9 @@ mod seam {
     use oneiron::connector_key::ConnectorDispatchTelemetry;
 
     use super::{
-        AutoGateRuling, ClearOptOutOutcome, ConnectorKeyRecord, ConnectorKeyStatus,
-        DecisionHistoryEntry, DispatchTally, EffectorBudget, EffectorBudgetDimension,
-        EffectorBudgetOnExhaust, EffectorBudgetWindow, FanOutEstimate, Vault,
+        ClearOptOutOutcome, ConnectorKeyRecord, ConnectorKeyStatus, DispatchTally, EffectorBudget,
+        EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetWindow, FanOutEstimate,
+        Vault,
     };
 
     thread_local! {
@@ -501,38 +502,20 @@ mod seam {
         unimplemented!("armed by ONE-1719: resume paused plan")
     }
 
-    // ---- ONE-1720 (ES-07): AUTO-mode escalation learning (thin) ----
-
-    /// AUTO-mode small-model classification of a fan-out ask of `consults`
-    /// size. `uncertain` marks the fixture as outside standing policy / low
-    /// confidence.
-    pub(crate) fn classify_fan_out_ask(
-        _vault: &Vault,
-        _preset: &str,
-        _consults: u64,
-        _uncertain: bool,
-        _history: &[DecisionHistoryEntry],
-    ) -> AutoGateRuling {
-        unimplemented!("armed by ONE-1720: GATE-16/17 classifier third output")
-    }
-
-    /// Applies a human ruling on an escalated ask: `approve` rules the plan
-    /// runnable or denied; `persist` optionally stores the ruling as a
-    /// policy row (storage schema deferred to workbench #6). Application is
-    /// NOT optional — the pending escalation is consumed either way.
-    pub(crate) fn apply_escalation_ruling(
-        _vault: &Vault,
-        _plan: u64,
-        _approve: bool,
-        _persist: bool,
-    ) {
-        unimplemented!("armed by ONE-1720: human ruling on escalation")
-    }
-
-    /// Pending (unruled) escalation rows.
-    pub(crate) fn count_pending_escalations(_vault: &Vault) -> usize {
-        unimplemented!("armed by ONE-1720: count pending escalation rows")
-    }
+    // ---- ONE-1720 (ES-07): AUTO-mode escalation learning ----
+    //
+    // The three seams here are gone rather than retargeted: `outbound_chokepoint`
+    // is `pub(crate)`, so ONE-1719's plan, estimate, and decider are neither
+    // nameable nor constructible from this integration-test crate and no public
+    // composition reaches the classification seam. Each successor is an in-crate
+    // test in `crates/oneiron/src/fanout_auto/tests.rs`.
+    //
+    // classify_fan_out_ask -> successor `es07_classifier_escalates_uncertain_asks_to_human`.
+    // apply_escalation_ruling -> successor `escalation_ruling_roundtrip` (the public fn of
+    // the same name; its policy-row storage is ONE-1762's, not "workbench #6").
+    // count_pending_escalations -> successor `es07_human_ruling_persistence_is_optional`,
+    // where a pre-ruling ask is ONE-1719's paused, visible plan and a ruled one is
+    // resumed or kept-paused through that same surface — never pending.
 
     // ---- ONE-1721 (ES-08): optional per-peer EffectorBudget ----
 
@@ -1236,84 +1219,26 @@ fn es06_deny_ruling_dispatches_nothing_and_records_denial() {
     assert_eq!(seam::count_engine_killed_fan_outs(&vault), 0);
 }
 
-// ===== ONE-1720 (ES-07) — AUTO-mode escalation learning (thin oracle) =====
-
-/// Doc 13 §5 amendment: the GATE-16/17 classifier gains a THIRD output —
-/// uncertain / over-policy asks ESCALATE TO HUMAN instead of forcing an
-/// allow/deny.
-#[test]
-#[ignore = "armed by ONE-1720"]
-fn es07_classifier_escalates_uncertain_asks_to_human() {
-    let (_dir, vault) = open_vault();
-    let ruling = seam::classify_fan_out_ask(&vault, "research-preset", 60, true, &[]);
-    assert_eq!(ruling, AutoGateRuling::EscalateToHuman);
-}
-
-/// Doc 13 §5 amendment: "the classifier conditions on decision history — it
-/// learns from escalations". History entries carry preset identity and the
-/// approved cap, so history is a SCOPED license, not an unbounded allow
-/// token: same-preset within-cap runs; different-preset and over-cap asks
-/// re-escalate.
-#[test]
-#[ignore = "armed by ONE-1720"]
-fn es07_classifier_conditions_on_decision_history() {
-    let (_dir, vault) = open_vault();
-    let history = [DecisionHistoryEntry::HumanApproved {
-        preset: "research-preset",
-        cap: 500,
-    }];
-
-    // Same preset, within the approved cap: the uncertain ask may Run.
-    let ruling = seam::classify_fan_out_ask(&vault, "research-preset", 300, true, &history);
-    assert_eq!(ruling, AutoGateRuling::Run);
-
-    // DIFFERENT preset with the same history: re-escalate.
-    let ruling = seam::classify_fan_out_ask(&vault, "outreach-preset", 300, true, &history);
-    assert_eq!(ruling, AutoGateRuling::EscalateToHuman);
-
-    // Same preset but OVER the approved cap: re-escalate.
-    let ruling = seam::classify_fan_out_ask(&vault, "research-preset", 501, true, &history);
-    assert_eq!(ruling, AutoGateRuling::EscalateToHuman);
-}
-
-/// Ticket ONE-1720: "human rulings OPTIONALLY persist as policy rows"
-/// (storage schema deferred to workbench ask #6). Persistence is optional —
-/// APPLICATION is not: every ruling consumes its pending escalation and has
-/// the observable outcome it ruled (approved plans run their full count,
-/// denied plans run nothing). persist=false writes no policy row;
-/// persist=true writes exactly one.
-#[test]
-#[ignore = "armed by ONE-1720"]
-fn es07_human_ruling_persistence_is_optional() {
-    let (_dir, vault) = open_vault();
-    let plan = seam::submit_fan_out_plan(&vault, "research-preset", &[("codex", 60)]);
-    seam::run_fan_out_gate(&vault, plan);
-    assert_eq!(seam::count_pending_escalations(&vault), 1);
-
-    // Approved, unpersisted: escalation consumed, the plan actually runs,
-    // no policy row.
-    seam::apply_escalation_ruling(&vault, plan, true, false);
-    assert_eq!(seam::count_pending_escalations(&vault), 0);
-    assert_eq!(seam::count_dispatched_consults(&vault, plan), 60);
-    assert_eq!(seam::count_fan_out_policy_rows(&vault), 0);
-
-    // Denied, unpersisted: escalation consumed, ZERO consults run.
-    let second = seam::submit_fan_out_plan(&vault, "research-preset", &[("codex", 60)]);
-    seam::run_fan_out_gate(&vault, second);
-    assert_eq!(seam::count_pending_escalations(&vault), 1);
-    seam::apply_escalation_ruling(&vault, second, false, false);
-    assert_eq!(seam::count_pending_escalations(&vault), 0);
-    assert_eq!(seam::count_dispatched_consults(&vault, second), 0);
-    assert_eq!(seam::count_fan_out_policy_rows(&vault), 0);
-
-    // Approved, persisted: applied AND exactly one policy row written.
-    let third = seam::submit_fan_out_plan(&vault, "research-preset", &[("codex", 60)]);
-    seam::run_fan_out_gate(&vault, third);
-    seam::apply_escalation_ruling(&vault, third, true, true);
-    assert_eq!(seam::count_pending_escalations(&vault), 0);
-    assert_eq!(seam::count_dispatched_consults(&vault, third), 60);
-    assert_eq!(seam::count_fan_out_policy_rows(&vault), 1);
-}
+// ===== ONE-1720 (ES-07) — AUTO-mode escalation learning =====
+//
+// The three ES-07 arms are RE-HOMED, not paralleled: their successors live in
+// `crates/oneiron/src/fanout_auto/tests.rs` under the same names, because the
+// crate-private fan-out types they need are not nameable from here.
+//
+// es07_classifier_escalates_uncertain_asks_to_human -> in-crate successor of the same
+// name: `AutoGateRuling::EscalateToHuman` is now `FanoutAskVerdict::EscalateToHuman`,
+// surfacing through `FanoutAutoDisposition::SurfaceHuman`.
+//
+// es07_classifier_conditions_on_decision_history -> in-crate successor of the same
+// name: the in-cap `AutoGateRuling::Run` is now an `Allow` carried by an ACCEPTED
+// standing Budget row with a 500 band ceiling, and both `EscalateToHuman` arms
+// (a different key, and an over-cap magnitude) stay `EscalateToHuman`.
+//
+// es07_human_ruling_persistence_is_optional -> in-crate successor of the same name:
+// pending-escalation counts become ONE-1719's pause-surface reads, and policy rows
+// are counted through ONE-1762's `standing_policy_for` status read — ONE-1762 owns
+// that storage schema, which is what the deferred "workbench ask #6" punt became.
+// `count_fan_out_policy_rows` stays ONE-1719-owned and untouched.
 
 // ===== ONE-1721 (ES-08) — optional per-peer EffectorBudget + handshake =====
 
@@ -1589,7 +1514,7 @@ mod calendar_invite_fixture {
         let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
             "email",
             "me@primary.test",
-            oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+            oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
             oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
             100,
         );

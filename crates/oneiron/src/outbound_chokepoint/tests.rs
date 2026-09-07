@@ -150,17 +150,13 @@ fn recovery_rejects_reconstructed_capability_without_endpoint_before_transport()
     reconstructed.resolved_endpoint = None;
     let authority = OutboundBindingAuthority::from_secret([0xAC; 32]);
     let mut transport = CountingTransport::default();
-    let result = send_pending(
-        &vault,
-        &authority,
-        reconstructed,
-        11,
-        true,
-        &mut transport,
-    )
-    .expect("recovery must fail closed");
+    let result = send_pending(&vault, &authority, reconstructed, 11, true, &mut transport)
+        .expect("recovery must fail closed");
 
-    assert_eq!(transport.sends, 0, "missing endpoint must not reach transport");
+    assert_eq!(
+        transport.sends, 0,
+        "missing endpoint must not reach transport"
+    );
     assert_eq!(result.dispatch.send_outcome, None);
     assert_eq!(result.dispatch.state, Some(IntentState::Abandoned));
     assert!(matches!(

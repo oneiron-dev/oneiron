@@ -1306,6 +1306,44 @@ pub fn request_wake(
     })
 }
 
+/// [`request_wake`] inside a CALLER-OWNED write transaction (CMT-3, ONE-1540).
+///
+/// The transactional twin, not a second scheduler: same trigger/scope
+/// semantics, same store verb, same queue keys, run-tree logic, and admission —
+/// only the transaction boundary moves outward. It exists because a wake that
+/// must be atomic with the durable fact that PROVOKED it (a commitment due
+/// phase being consumed) cannot open a transaction of its own; the public
+/// [`request_wake`] stays source-compatible for every host that does not need
+/// that composition.
+///
+/// The trigger is nominal here, not decorative: it IS the scope, derived
+/// through [`WakeTrigger::default_scope`] exactly as [`request_wake`] documents
+/// its own scope argument. The public entry point takes that scope separately
+/// because a host's Event payload may override it; this crate-private door has
+/// no such host, so deriving keeps trigger and scope from ever disagreeing.
+pub(crate) fn request_wake_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    trigger: WakeTrigger,
+    payload: DreamerAttemptPayload,
+    dedupe_key: Option<String>,
+    run_id: Option<String>,
+    now: u64,
+) -> Result<EnqueueDreamerAttemptOutcome> {
+    let scope = trigger.default_scope();
+    store.enqueue_consolidation_in_txn(
+        txn,
+        EnqueueDreamerConsolidationAttempt {
+            scope,
+            input: payload.input,
+            parent_attempt: payload.parent_attempt,
+            dedupe_key,
+            run_id,
+            now,
+        },
+    )
+}
+
 /// [`request_wake`] for a Compaction wake that CARRIES a forked-compaction
 /// packet (DREAM-008, ONE-1250).
 ///

@@ -41,9 +41,19 @@ pub enum TaskRole {
     Milestone = 3,
     Habit = 4,
     HabitCheckin = 5,
+    /// Engine-authored companion carrying one replicated TASK authority fact
+    /// (`task_authority`). RESERVED: the generic raw doors refuse it, so only
+    /// `task_authority::put_task_authority_fact_in_txn` and the sync replay
+    /// door can write one. It decodes here because facts replicate and are
+    /// read back like any other TASK row.
+    AuthorityFact = 6,
 }
 
 impl TaskRole {
+    /// The five USER-FACING roles. `AuthorityFact` is deliberately absent: it
+    /// is engine plumbing that no caller may write, nests with nothing, and
+    /// never renders — the nesting matrix and role-surface consumers that read
+    /// this list would all have to special-case it back out.
     pub const ALL: [Self; 5] = [
         Self::Task,
         Self::Goal,
@@ -60,6 +70,7 @@ impl TaskRole {
             Self::Milestone => 3,
             Self::Habit => 4,
             Self::HabitCheckin => 5,
+            Self::AuthorityFact => 6,
         }
     }
 
@@ -89,8 +100,16 @@ impl TaskRole {
             3 => Some(Self::Milestone),
             4 => Some(Self::Habit),
             5 => Some(Self::HabitCheckin),
+            6 => Some(Self::AuthorityFact),
             _ => None,
         }
+    }
+
+    /// Roles no generic writer may mint: their bodies ARE engine authority,
+    /// so a caller able to write one could prove its own ownership of someone
+    /// else's task.
+    pub(crate) const fn is_engine_reserved(self) -> bool {
+        matches!(self, Self::AuthorityFact)
     }
 }
 
@@ -317,16 +336,29 @@ pub(crate) fn strip_streak_fields(body: &[u8]) -> Result<Option<Vec<u8>>> {
     .map(Some)
 }
 
-/// Rejects a caller-supplied streak counter on the public TASK put doors. The
-/// counters are derived; a writer who could name them could mint a streak the
-/// check-in children do not support.
+/// The raw TASK doors' body refusal — the ONE entry point
+/// `batch::validate_public_raw_put` gives this module for both of them, so it
+/// holds both invariants a generic writer must never be able to state about
+/// itself.
+///
+/// The streak counters are DERIVED; a writer who could name them could mint a
+/// streak the check-in children do not support. A reserved role is ENGINE
+/// AUTHORITY ([`TaskRole::is_engine_reserved`]); a writer who could mint one
+/// could forge the proof that it owns another principal's task. The
+/// sync-replay door runs neither check by design: a peer's row is already
+/// written on the peer, and storage convergence outranks both — its counters
+/// are replaced by the local reducer, and its authority facts are re-validated
+/// strictly on every read.
 pub(crate) fn reject_public_streak_fields(body: &[u8]) -> Result<()> {
-    if task_body_entries(body)?
-        .iter()
-        .any(|(key, _)| is_streak_key(key))
-    {
+    let entries = task_body_entries(body)?;
+    if entries.iter().any(|(key, _)| is_streak_key(key)) {
         return Err(Error::InvalidTaskBody(
             "task streak counters are derived from check-ins",
+        ));
+    }
+    if task_role_from_body_bytes(body)?.is_engine_reserved() {
+        return Err(Error::InvalidTaskBody(
+            "reserved task role is written only by its engine door",
         ));
     }
     Ok(())
@@ -359,6 +391,33 @@ mod tests {
     use super::streak_from_checkin_days;
     use super::task_body_for_test;
     use super::task_role_from_body_bytes;
+
+    /// The reserved authority role DECODES — facts replicate and are read back
+    /// like any other TASK row — but no generic writer may state one, so the
+    /// raw doors refuse it where the derived-counter refusal already lives.
+    #[test]
+    fn the_reserved_authority_role_decodes_but_never_passes_a_raw_door() {
+        assert_eq!(
+            TaskRole::from_role_byte(TaskRole::AuthorityFact.role_byte()),
+            Some(TaskRole::AuthorityFact)
+        );
+        assert_eq!(
+            task_role_from_body_bytes(&task_body_for_test(TaskRole::AuthorityFact))
+                .expect("a fact body decodes"),
+            TaskRole::AuthorityFact
+        );
+        match reject_public_streak_fields(&task_body_for_test(TaskRole::AuthorityFact)) {
+            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+                assert_eq!(msg, "reserved task role is written only by its engine door");
+            }
+            other => panic!("expected a reserved-role rejection, got {other:?}"),
+        }
+        for role in TaskRole::ALL {
+            assert!(!role.is_engine_reserved());
+            reject_public_streak_fields(&task_body_for_test(role))
+                .expect("every user-facing role stays a legal raw put");
+        }
+    }
 
     #[test]
     fn task_role_from_body_bytes_rejects_malformed_bodies() {

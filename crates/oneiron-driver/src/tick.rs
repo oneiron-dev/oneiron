@@ -26,12 +26,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
-use oneiron::commitment_schedule;
 use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DreamerConsolidationScope, DreamerRunnerStore, Vault,
     WakeTrigger,
 };
+use oneiron::{commitment_schedule, commitment_wake};
 use tokio::sync::Notify;
 
 use crate::session::SessionHint;
@@ -269,6 +269,15 @@ impl<'v> AttemptQueueDeadlines<'v> {
 
 impl DeadlineSource for AttemptQueueDeadlines<'_> {
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        // The commitment lane runs FIRST (CMT-3, ONE-1540). Consuming a due
+        // phase COMMITS a Dreamer attempt, so reading the attempt queue after
+        // it is what makes that brand-new attempt visible in the same caller
+        // read — without relocating this merge into the commitment source.
+        let commitment = match &self.commitment_now {
+            Some(clock) => CommitmentDueDeadlines::with_clock(self.vault, Arc::clone(clock)),
+            None => CommitmentDueDeadlines::new(self.vault),
+        }
+        .next_deadline()?;
         let queue = AttemptQueue::new(self.vault);
         let macro_admissible = self.macro_locally_admissible()?;
         let mut next: Option<CommitmentDeadline> = None;
@@ -291,11 +300,6 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         // The two lanes are independent durable sources; the earlier one arms
         // the timer. A TIE keeps the attempt deadline, so wiring the commitment
         // lane in can never displace a deadline this source already surfaced.
-        let commitment = match &self.commitment_now {
-            Some(clock) => CommitmentDueDeadlines::with_clock(self.vault, Arc::clone(clock)),
-            None => CommitmentDueDeadlines::new(self.vault),
-        }
-        .next_deadline()?;
         Ok(match (next, commitment) {
             (Some(attempt), Some(due)) if due.due_at_ms < attempt.due_at_ms => Some(due),
             (Some(attempt), _) => Some(attempt),
@@ -304,23 +308,42 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
     }
 }
 
-/// [`DeadlineSource`] over the commitment due index (CMT-2, ONE-1539).
+/// The three phases that may arm the timer.
 ///
-/// Reads ONE phase — [`CommitmentDuePhase::Project`](commitment_schedule::CommitmentDuePhase) —
-/// and nothing else. `Lead` and `Due` belong to the surfaces, and `LifecycleDue`
-/// is a lapse marker: an unmet obligation is a fact to notice on the next pass,
-/// never a reason to wake the machine, so it structurally cannot reach the
-/// timer feed from here.
+/// `LifecycleDue` is absent BY CONSTRUCTION, not by a filter: it is a lapse
+/// marker (an unmet obligation is a fact to notice on the next pass, never a
+/// reason to wake the machine) and it is ONE-1541's caller-driven sweep input.
+/// Naming the phase set at the call site is what keeps it out of the wake feed.
+const COMMITMENT_TIMER_PHASES: [commitment_schedule::CommitmentDuePhase; 3] = [
+    commitment_schedule::CommitmentDuePhase::Project,
+    commitment_schedule::CommitmentDuePhase::Lead,
+    commitment_schedule::CommitmentDuePhase::Due,
+];
+
+/// [`DeadlineSource`] over the commitment due index (CMT-2, ONE-1539 +
+/// CMT-3, ONE-1540).
+///
+/// Reads three phases — `Project`, `Lead`, and `Due`. `LifecycleDue` is a
+/// lapse marker and ONE-1541's input: it remains visible through
+/// `next_due_at()` but structurally cannot reach the timer feed from here.
 ///
 /// This is also the SOLE production caller of
-/// [`Vault::reconcile_commitment_schedule`]. Projection runs inside the
-/// deadline read — the one moment the driver is already awake and about to arm
-/// a timer — rather than on a period, which is what keeps ARCH-0026's no-poll
-/// rule intact with no scheduler anywhere.
+/// [`Vault::reconcile_commitment_schedule`], and — since ONE-1540 — of
+/// [`fire_due_commitment_wake`](oneiron::commitment_wake::fire_due_commitment_wake).
+/// Both run inside the deadline read, the one moment the driver is already
+/// awake and about to arm a timer, rather than on a period. That is what keeps
+/// ARCH-0026's no-poll rule intact with no scheduler anywhere.
 ///
-/// A read or projection failure propagates as `Err`. Mapping it to `Ok(None)`
-/// would tell the supervisor "no obligations exist" on a corrupt index, which
-/// is the one answer a commitment engine must never give.
+/// This source NEVER touches the attempt queue. A due phase's Dreamer attempt
+/// surfaces through the existing [`AttemptQueueDeadlines`] merge, so the
+/// supervisor still sees an ordinary [`Tick::Deadline`] and no new tick variant
+/// exists: the Event-vs-Timer distinction belongs to the enqueued attempt, not
+/// to supervisor control flow.
+///
+/// A read, projection, or fire failure propagates as `Err`. Mapping it to
+/// `Ok(None)` would tell the supervisor "no obligations exist" on a corrupt
+/// index, which is the one answer a commitment engine must never give; the
+/// unconsumed row simply stays for the next read.
 pub struct CommitmentDueDeadlines<'v> {
     vault: &'v Vault,
     now: NowMillis,
@@ -338,28 +361,62 @@ impl<'v> CommitmentDueDeadlines<'v> {
     pub fn with_clock(vault: &'v Vault, now: NowMillis) -> Self {
         Self { vault, now }
     }
+
+    /// ONE-1539's Project-consume body, unchanged: a Project row that has come
+    /// due is work to DO, not a deadline to arm on. Materialize it first so the
+    /// timer arms on what the projection left behind instead of on the row it
+    /// just consumed.
+    fn reconcile_due_projects(&self, now_secs: u64) -> oneiron::Result<()> {
+        let project = [commitment_schedule::CommitmentDuePhase::Project];
+        if let Some(at) = self
+            .vault
+            .commitment_due_index_snapshot()?
+            .next_timer_at(&project)
+            && at <= now_secs
+        {
+            self.vault.reconcile_commitment_schedule(now_secs)?;
+        }
+        Ok(())
+    }
+
+    /// Drains every actionable `Lead`/`Due` phase at or before `now_secs`
+    /// through the fire-once door.
+    ///
+    /// `Enqueued`, `Existing`, `MissingInstance`, `ClosedInstance`,
+    /// `StatedIntention`, and `Decision` all consumed the exact phase
+    /// transactionally, so the loop simply re-reads and an honest backlog
+    /// terminates. `Raced` consumed nothing but is convergent: the equality
+    /// miss MEANS a competing writer already changed the minimum and owns that
+    /// progress, so re-reading is the right next move.
+    ///
+    /// A typed error propagates as `Err`, leaving the unconsumed row for the
+    /// next read.
+    fn fire_due_wake_phases(&self, now_secs: u64) -> oneiron::Result<()> {
+        loop {
+            let Some(entry) = self.vault.next_actionable_wake_phase()? else {
+                return Ok(());
+            };
+            let Some(due) = commitment_wake::CommitmentWakeDue::from_due_entry(&entry)? else {
+                return Ok(());
+            };
+            if due.fire_at > now_secs {
+                return Ok(());
+            }
+            commitment_wake::fire_due_commitment_wake(self.vault, due, now_secs)?;
+        }
+    }
 }
 
 impl DeadlineSource for CommitmentDueDeadlines<'_> {
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
-        let now_ms = (self.now)();
         // The index stores seconds; the tick lane speaks milliseconds.
-        let now_secs = now_ms / 1_000;
-        let project = [commitment_schedule::CommitmentDuePhase::Project];
-        let snapshot = self.vault.commitment_due_index_snapshot()?;
-        let snapshot = match snapshot.next_timer_at(&project) {
-            // A Project row that has come due is work to DO, not a deadline to
-            // arm on: materialize it first, then re-read, so the timer arms on
-            // what the projection left behind instead of on the row it just
-            // consumed.
-            Some(at) if at <= now_secs => {
-                self.vault.reconcile_commitment_schedule(now_secs)?;
-                self.vault.commitment_due_index_snapshot()?
-            }
-            _ => snapshot,
-        };
-        Ok(snapshot
-            .next_timer_at(&project)
+        let now_secs = (self.now)() / 1_000;
+        self.reconcile_due_projects(now_secs)?;
+        self.fire_due_wake_phases(now_secs)?;
+        Ok(self
+            .vault
+            .commitment_due_index_snapshot()?
+            .next_timer_at(&COMMITMENT_TIMER_PHASES)
             .map(|due_secs| CommitmentDeadline {
                 due_at_ms: due_secs.saturating_mul(1_000),
                 scope: DreamerConsolidationScope::Micro,
@@ -1723,12 +1780,18 @@ mod tests {
         );
 
         // Advance past it: the row is work to DO. It is consumed, the
-        // occurrence mints, and the timer re-reads what the projection left.
+        // occurrence mints, and — since CMT-3 (ONE-1540) — the Lead row the
+        // projection just left at that same instant is consumed too, so the
+        // timer arms on what remains rather than on either row it spent.
         clock.store(3_000, Ordering::SeqCst);
+        let due_at_103s = CommitmentDeadline {
+            due_at_ms: 103_000,
+            scope: DreamerConsolidationScope::Micro,
+        };
         assert_eq!(
             source.next_deadline().expect("read"),
-            None,
-            "a Once series has no further Project row to arm on"
+            Some(due_at_103s),
+            "Project and Lead are both spent; the Due row is what is left to arm on"
         );
         let after = vault.commitment_due_index_snapshot().expect("snapshot");
         assert_eq!(
@@ -1737,8 +1800,8 @@ mod tests {
         );
         assert_eq!(
             after.phase_minimum(commitment_schedule::CommitmentDuePhase::Lead),
-            Some(3),
-            "the minted occurrence's Lead row is visible"
+            None,
+            "the minted occurrence's Lead row fired and settled in the same read"
         );
         assert_eq!(
             after.phase_minimum(commitment_schedule::CommitmentDuePhase::Due),
@@ -1746,31 +1809,8 @@ mod tests {
         );
         assert_eq!(
             source.next_deadline().expect("read"),
-            None,
-            "the consumed timestamp never re-surfaces"
-        );
-
-        // Drain the two phases a surface may acknowledge. What is left is a
-        // non-empty index whose only row is a lapse marker — and the timer
-        // stays quiet, because an unmet obligation is a fact to notice, never
-        // a reason to wake the machine.
-        while let Some(entry) = vault.next_actionable_wake_phase().expect("wake read") {
-            assert!(
-                vault
-                    .acknowledge_commitment_due(&entry)
-                    .expect("an actionable phase acknowledges")
-            );
-        }
-        let lifecycle_only = vault.commitment_due_index_snapshot().expect("snapshot");
-        assert_eq!(lifecycle_only.next_due_at(), Some(103));
-        assert_eq!(
-            lifecycle_only.phase_minimum(commitment_schedule::CommitmentDuePhase::LifecycleDue),
-            Some(103)
-        );
-        assert_eq!(
-            source.next_deadline().expect("read"),
-            None,
-            "a LifecycleDue-only index is a quiet timer lane"
+            Some(due_at_103s),
+            "the consumed timestamps never re-surface"
         );
 
         // A corrupt index is the one place "nothing is due" would be a lie.
@@ -1790,6 +1830,166 @@ mod tests {
         assert!(
             merged.next_deadline().is_err(),
             "the merge must propagate the commitment lane's failure"
+        );
+    }
+
+    /// Every MICRO consolidation row currently queued.
+    fn micro_attempts(vault: &Vault) -> Vec<oneiron::attempt_queue::AttemptRecord> {
+        AttemptQueue::new(vault)
+            .list()
+            .expect("attempt list")
+            .into_iter()
+            .filter(|row| row.kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND)
+            .collect()
+    }
+
+    /// CMT-3 (ONE-1540). The whole producer-side path in ONE caller read:
+    /// the extended source still consumes due Project work, the Lead row it
+    /// leaves behind commits exactly one durable Event/Micro Dreamer attempt,
+    /// the phase settles, and the EXISTING attempt-queue merge surfaces that
+    /// brand-new attempt's deadline. The supervisor sees an ordinary
+    /// `Tick::Deadline`; no `Tick::Wake` and no new tick variant exist.
+    #[tokio::test(start_paused = true)]
+    async fn due_commitment_phase_enqueues_then_returns_attempt_deadline() {
+        let (_dir, vault) = open_vault();
+        seed_project_row_at(&vault, 3);
+        let local = vault_client_node_id(&vault);
+        let (_clock, now) = movable_clock(3_000);
+        assert!(
+            micro_attempts(&vault).is_empty(),
+            "nothing is queued before the read"
+        );
+
+        let deadline =
+            AttemptQueueDeadlines::with_commitment_clock(&vault, local, Arc::clone(&now))
+                .next_deadline()
+                .expect("merged read")
+                .expect("the newly enqueued attempt arms the timer");
+
+        // The Project row was consumed and the occurrence minted.
+        let snapshot = vault.commitment_due_index_snapshot().expect("snapshot");
+        assert_eq!(
+            snapshot.phase_minimum(commitment_schedule::CommitmentDuePhase::Project),
+            None
+        );
+        // Exactly one durable attempt, tagged as the commitment wake event that
+        // only the Event/Micro fire door produces, keyed by the phase key.
+        let attempts = micro_attempts(&vault);
+        assert_eq!(attempts.len(), 1, "one due phase, one durable attempt");
+        let payload = oneiron::dreamer_runner::decode_dreamer_attempt_payload(&attempts[0].payload)
+            .expect("dreamer payload");
+        let event = commitment_wake::decode_commitment_wake_event(&payload.input)
+            .expect("typed decode")
+            .expect("the attempt carries a commitment wake event");
+        assert_eq!(event.phase, commitment_wake::CommitmentWakePhase::Lead);
+        assert_eq!(event.fire_at, 3);
+        assert_eq!(event.due_at, 103);
+        assert_eq!(
+            attempts[0].run_id.as_deref(),
+            Some(event.idempotency_key().as_str()),
+            "the run id IS the phase key"
+        );
+        assert_eq!(
+            payload.attempt_type,
+            DreamerConsolidationScope::Micro.as_str()
+        );
+
+        // The Lead phase settled; only the Due row is still actionable.
+        assert_eq!(
+            snapshot.phase_minimum(commitment_schedule::CommitmentDuePhase::Lead),
+            None
+        );
+        assert_eq!(
+            snapshot.phase_minimum(commitment_schedule::CommitmentDuePhase::Due),
+            Some(103)
+        );
+
+        // Every synthesized COMMITMENT deadline is Micro; the merge returned the
+        // new attempt's deadline (3 s) rather than the commitment side's Due row
+        // (103 s), which is the whole point of running the commitment lane first.
+        assert_eq!(
+            CommitmentDueDeadlines::with_clock(&vault, Arc::clone(&now))
+                .next_deadline()
+                .expect("commitment read"),
+            Some(CommitmentDeadline {
+                due_at_ms: 103_000,
+                scope: DreamerConsolidationScope::Micro,
+            })
+        );
+        assert_eq!(
+            deadline,
+            CommitmentDeadline {
+                due_at_ms: 3_000,
+                scope: DreamerConsolidationScope::Micro,
+            },
+            "the caller read surfaces the attempt the same read enqueued"
+        );
+
+        // The supervisor's view: an ordinary already-due Deadline tick.
+        let timer = TimerTick::with_clock(
+            ScriptedDeadlines::new(vec![Some(deadline)]),
+            Arc::clone(&now),
+        );
+        let (push, wake, hint) = PushTick::channel(COALESCE_FLOOR_MS);
+        drop(wake);
+        drop(hint);
+        let mut hybrid = HybridTick::new(timer, push);
+        let tick = hybrid.next_tick().await;
+        assert_eq!(tick, Some(Tick::Deadline(deadline)));
+        assert!(
+            !matches!(tick, Some(Tick::Wake(_))),
+            "the timer layer never synthesizes a wake-class tick"
+        );
+    }
+
+    /// CMT-3 (ONE-1540). `LifecycleDue` is a lapse marker and ONE-1541's sweep
+    /// input: it stays visible to `next_due_at()` for CROSS-ARCH-0022, but it
+    /// can neither arm the timer nor be acknowledged here, so a
+    /// LifecycleDue-only index is a quiet lane rather than a supervisor spin.
+    #[test]
+    fn lifecycle_due_never_arms_timer() {
+        let (_dir, vault) = open_vault();
+        seed_project_row_at(&vault, 3);
+        let (clock, now) = movable_clock(3_000);
+        let mut source = CommitmentDueDeadlines::with_clock(&vault, Arc::clone(&now));
+
+        // Project + Lead spend themselves; the Due row arms the timer.
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            Some(CommitmentDeadline {
+                due_at_ms: 103_000,
+                scope: DreamerConsolidationScope::Micro,
+            })
+        );
+
+        // Past the due instant the Due row fires and settles too. What is left
+        // is a non-empty index whose only row is a lapse marker.
+        clock.store(103_000, Ordering::SeqCst);
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            None,
+            "a LifecycleDue-only index is a quiet timer lane"
+        );
+        let lifecycle_only = vault.commitment_due_index_snapshot().expect("snapshot");
+        assert_eq!(lifecycle_only.next_due_at(), Some(103));
+        assert_eq!(
+            lifecycle_only.phase_minimum(commitment_schedule::CommitmentDuePhase::LifecycleDue),
+            Some(103)
+        );
+        assert!(
+            vault
+                .next_actionable_wake_phase()
+                .expect("wake read")
+                .is_none(),
+            "LifecycleDue is not an actionable wake phase"
+        );
+
+        // Re-reading does not spin: no deadline, no further attempt.
+        assert_eq!(source.next_deadline().expect("read"), None);
+        assert_eq!(
+            micro_attempts(&vault).len(),
+            2,
+            "one attempt per phase — Lead and Due — and nothing more"
         );
     }
 }
