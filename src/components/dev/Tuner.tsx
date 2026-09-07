@@ -292,12 +292,12 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   }, [])
 
   /* the picker (owner 09-08): where the agent list lives */
-  type Picker = 'well' | 'sidebar' | 'rail'
+  type Picker = 'well' | 'sidebar' | 'rail' | 'ground'
   const [picker, setPickerState] = React.useState<Picker>('well')
   React.useEffect(() => {
     try {
       const v = localStorage.getItem('oneiron-picker')
-      if (v === 'sidebar' || v === 'rail') setPickerState(v)
+      if (v === 'sidebar' || v === 'rail' || v === 'ground') setPickerState(v)
     } catch {
       /* default */
     }
@@ -462,12 +462,12 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="t-sec">picker</div>
       <div className="t-acts">
-        {(['well', 'sidebar', 'rail'] as const).map((k) => (
+        {(['well', 'sidebar', 'rail', 'ground'] as const).map((k) => (
           <button
             key={k}
             type="button"
             className={picker === k ? 'act on' : 'act'}
-            title={k === 'well' ? 'the roster as a well column beside the room (as built)' : k === 'sidebar' ? 'the roster belongs to the sheet: flush to its left edge, top to bottom (the Slack shape)' : 'the agents as rows under `agents` in the rail · no second column'}
+            title={k === 'well' ? 'the roster as a well column beside the room (as built)' : k === 'sidebar' ? 'the roster belongs to the sheet: flush to its left edge, top to bottom (the Slack shape)' : k === 'rail' ? 'the agents as rows under `agents` in the rail · no second column' : 'the ground line is the picker: on this page a name at the bottom switches the room (his idea)'}
             onClick={() => setPicker(k)}
           >
             {k}
