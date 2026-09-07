@@ -32,7 +32,7 @@ fn missing_companion_is_rejected_before_any_effect_and_does_not_burn_the_intent(
         }
         let before = onboarding_rows(&vault)?;
         let err = vault
-            .onboard_workspace_member(missing, &writer(WRITER))
+            .onboard_workspace_member(missing, &writer(WRITER), None)
             .expect_err("a companion is required even without a profile grant request");
         assert!(matches!(
             err,
@@ -50,12 +50,12 @@ fn missing_companion_is_rejected_before_any_effect_and_does_not_burn_the_intent(
             .as_ref()
             .expect("valid fixture")
             .clone();
-        let outcome = vault.onboard_workspace_member(intent.clone(), &writer(WRITER))?;
+        let outcome = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
         assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
         assert_eq!(outcome.companion_actor_ref, Some(birth.actor_ref));
         let complete = onboarding_rows(&vault)?;
         assert_eq!(
-            vault.onboard_workspace_member(intent, &writer(WRITER))?,
+            vault.onboard_workspace_member(intent, &writer(WRITER), None)?,
             outcome
         );
         assert_eq!(onboarding_rows(&vault)?, complete);
@@ -74,11 +74,12 @@ fn missing_companion_cannot_pass_the_step_roster_or_journal_doors() -> Result<()
             .run_onboarding_step(
                 MemberOnboardingStep::CompanionBorn,
                 &intent,
-                &writer(WRITER)
+                &writer(WRITER),
+                None,
             )
             .is_err()
     );
-    assert!(record_roster_member(&vault, &intent, &writer(WRITER)).is_err());
+    assert!(record_roster_member(&vault, &intent, &writer(WRITER), None).is_err());
     assert!(
         write_journal(
             &vault,
@@ -90,6 +91,7 @@ fn missing_companion_cannot_pass_the_step_roster_or_journal_doors() -> Result<()
                 completed_at: Some(AT),
             },
             &writer(WRITER),
+            None,
         )
         .is_err()
     );
@@ -109,7 +111,7 @@ fn companion_name_must_be_supplied_and_nonblank_without_an_engine_default() -> R
         let before = onboarding_rows(&vault)?;
         assert_eq!(
             vault
-                .onboard_workspace_member(intent, &writer(WRITER))
+                .onboard_workspace_member(intent, &writer(WRITER), None)
                 .expect_err("quiz must supply a usable name")
                 .kind(),
             ErrorKind::InvalidClaimBody
@@ -122,7 +124,7 @@ fn companion_name_must_be_supplied_and_nonblank_without_an_engine_default() -> R
 #[test]
 fn a_companion_cannot_be_reused_for_a_second_principal() -> Result<()> {
     let (_dir, vault, first) = fixture("Antevon");
-    vault.onboard_workspace_member(first.clone(), &writer(WRITER))?;
+    vault.onboard_workspace_member(first.clone(), &writer(WRITER), None)?;
     let mut second = first.clone();
     second.onboarding_id = "second-principal".to_owned();
     second.person_ref = seed_plain(&vault, 0xD6, ENTITY_TYPE_PERSON);
@@ -130,7 +132,7 @@ fn a_companion_cannot_be_reused_for_a_second_principal() -> Result<()> {
     second.grant_bundle.federation_grant_ref = entity(0xD8);
     let before = onboarding_rows(&vault)?;
     let err = vault
-        .onboard_workspace_member(second.clone(), &writer(WRITER))
+        .onboard_workspace_member(second.clone(), &writer(WRITER), None)
         .expect_err("companion ownership must remain per principal");
     assert!(matches!(
         err,
@@ -150,7 +152,7 @@ fn a_companion_cannot_be_reused_for_a_second_principal() -> Result<()> {
 #[test]
 fn a_completed_principal_cannot_mint_another_companion_under_a_new_intent() -> Result<()> {
     let (_dir, vault, first) = fixture("Antevon");
-    let outcome = vault.onboard_workspace_member(first.clone(), &writer(WRITER))?;
+    let outcome = vault.onboard_workspace_member(first.clone(), &writer(WRITER), None)?;
     let mut second = first.clone();
     second.onboarding_id = "replacement-companion".to_owned();
     let birth = second.companion_birth.as_mut().expect("fixture birth");
@@ -162,14 +164,14 @@ fn a_completed_principal_cannot_mint_another_companion_under_a_new_intent() -> R
     let before = onboarding_rows(&vault)?;
     assert_eq!(
         vault
-            .onboard_workspace_member(second, &writer(WRITER))
+            .onboard_workspace_member(second, &writer(WRITER), None)
             .expect_err("principal slot is already reserved")
             .kind(),
         ErrorKind::InvalidClaimBody
     );
     assert_eq!(onboarding_rows(&vault)?, before);
     assert_eq!(
-        vault.onboard_workspace_member(first, &writer(WRITER))?,
+        vault.onboard_workspace_member(first, &writer(WRITER), None)?,
         outcome
     );
     Ok(())
@@ -178,7 +180,7 @@ fn a_completed_principal_cannot_mint_another_companion_under_a_new_intent() -> R
 #[test]
 fn stored_member_rows_cannot_silently_omit_companion_person_actor_or_facet() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
-    vault.onboard_workspace_member(intent.clone(), &writer(WRITER))?;
+    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
     let birth = intent.companion_birth.as_ref().expect("fixture birth");
     for omitted in 0..3 {
         let mut row = RosterMemberRow {

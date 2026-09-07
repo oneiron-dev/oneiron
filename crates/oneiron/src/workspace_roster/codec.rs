@@ -120,7 +120,14 @@ pub(super) fn write_journal(
     intent: &MemberOnboardingIntent,
     record: &OnboardingJournal,
     writer: &WriteActor,
+    mailbox_owner: Option<&AuthenticatedOwner>,
 ) -> Result<()> {
+    require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
+    let revision = if record.step.rank() >= MemberOnboardingStep::MailboxBound.rank() {
+        verify_mailbox_revision(vault, intent, mailbox_owner)?
+    } else {
+        None
+    };
     intent.required_companion()?;
     let encoded = encode_value(&Value::Map(vec![
         (
@@ -142,6 +149,7 @@ pub(super) fn write_journal(
         ),
     ]))?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
+        require_mailbox_revision(vault, revision)?;
         if let Some(raw) = vault.store.vault_meta.get(wtxn, key)? {
             let prior = decode_journal(&raw)?;
             if prior.intent_digest != record.intent_digest {
@@ -449,8 +457,8 @@ pub(super) fn companion_canonical_value(companion: &CompanionBirthIntent) -> Res
 pub(super) fn mailbox_canonical_value(mailbox: &DelegatedMailboxOnboarding) -> Value {
     Value::Map(vec![
         (
-            Value::from("starting_mode"),
-            Value::from(mailbox.starting_mode.as_str()),
+            Value::from("autonomy"),
+            autonomy_canonical_value(&mailbox.autonomy),
         ),
         (
             Value::from("identity_ref"),
@@ -479,6 +487,129 @@ pub(super) fn mailbox_canonical_value(mailbox: &DelegatedMailboxOnboarding) -> V
             ),
         ),
     ])
+}
+
+fn autonomy_canonical_value(desired: &ChannelIdentityAutonomyRequest) -> Value {
+    let read = &desired.read_envelope;
+    let action = desired
+        .action_envelope
+        .as_ref()
+        .map_or(Value::Nil, |action| {
+            Value::Array(vec![
+                Value::from(action.identity_ref.to_hex()),
+                Value::from(action.relationship_context.as_str()),
+                action
+                    .counterparty_class
+                    .as_deref()
+                    .map_or(Value::Nil, Value::from),
+                Value::from(action.max_actions),
+                Value::from(action.window_secs),
+            ])
+        });
+    Value::Array(vec![
+        Value::from(desired.actor_ref.to_hex()),
+        Value::from(desired.relationship_context.as_str()),
+        Value::from(desired.rung.as_str()),
+        Value::Array(vec![
+            Value::from(read.identity_ref.to_hex()),
+            Value::Array(
+                read.label_allowlist
+                    .iter()
+                    .map(|s| Value::from(s.as_str()))
+                    .collect(),
+            ),
+            Value::Array(
+                read.thread_allowlist
+                    .iter()
+                    .map(|s| Value::from(s.as_str()))
+                    .collect(),
+            ),
+            read.not_before.map_or(Value::Nil, Value::from),
+            read.not_after.map_or(Value::Nil, Value::from),
+        ]),
+        action,
+    ])
+}
+
+pub(super) fn validate_mailbox_request(mailbox: &DelegatedMailboxOnboarding) -> Result<()> {
+    let desired = &mailbox.autonomy;
+    if desired.read_envelope.identity_ref != mailbox.identity_ref
+        || desired.action_envelope.as_ref().is_some_and(|action| {
+            action.identity_ref != mailbox.identity_ref
+                || action.relationship_context != desired.relationship_context
+        })
+        || !matches!(
+            (desired.rung, &desired.action_envelope),
+            (ChannelIdentityAutonomyRung::ScopedRead, None)
+                | (
+                    ChannelIdentityAutonomyRung::DraftOnly
+                        | ChannelIdentityAutonomyRung::SendWithApproval,
+                    Some(_)
+                )
+        )
+    {
+        return Err(Error::InvalidConsentBound(
+            "delegated onboarding requires exact read/draft bounds; send authority is not admitted",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn require_mailbox_owner<'a>(
+    intent: &MemberOnboardingIntent,
+    owner: Option<&'a AuthenticatedOwner>,
+) -> Result<&'a AuthenticatedOwner> {
+    owner
+        .filter(|owner| owner.actor() == intent.person_ref)
+        .ok_or(Error::ConsentOwnerNotAuthenticated(
+            "mailbox onboarding requires its member's authenticated consent owner",
+        ))
+}
+
+pub(super) fn require_active_mailbox(
+    mailbox: &DelegatedMailboxOnboarding,
+    state: ChannelIdentityState,
+) -> Result<()> {
+    if state != ChannelIdentityState::Active {
+        // The landed autonomy door requires Active. Only the lifecycle owner
+        // may move Requested/PendingFulfillment; onboarding never does so.
+        return Err(Error::WorkspaceMailboxAutonomyNotReady {
+            identity_ref: mailbox.identity_ref,
+            requested_mode: mailbox.autonomy.rung.as_str().to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// The public verifier owns its snapshots. Fence the whole committed revision
+/// so no proof crosses a concurrent mutation before roster/journal publication.
+pub(super) fn verify_mailbox_revision(
+    vault: &Vault,
+    intent: &MemberOnboardingIntent,
+    owner: Option<&AuthenticatedOwner>,
+) -> Result<Option<usize>> {
+    let Some(mailbox) = &intent.delegated_mailbox else {
+        return Ok(None);
+    };
+    let owner = require_mailbox_owner(intent, owner)?;
+    let revision = vault.store.env.info().last_txn_id;
+    let txn = vault.store.env.read_txn()?;
+    let identity = read_onboarding_mailbox_in_txn(vault, &txn, intent, mailbox)?
+        .ok_or(Error::EntityNotFound)?;
+    require_active_mailbox(mailbox, identity.state)?;
+    drop(txn);
+    vault.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
+    Ok(Some(revision))
+}
+
+/// Called only after acquiring the publication writer lock, before any write.
+pub(super) fn require_mailbox_revision(vault: &Vault, revision: Option<usize>) -> Result<()> {
+    if revision.is_some_and(|revision| vault.store.env.info().last_txn_id != revision) {
+        return Err(Error::InvalidConsentBound(
+            "mailbox proof changed before publication; retry",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn outcome_of(

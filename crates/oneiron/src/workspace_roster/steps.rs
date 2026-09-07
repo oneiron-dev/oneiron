@@ -320,63 +320,95 @@ pub(super) fn bind_delegated_mailbox(
     mailbox: &DelegatedMailboxOnboarding,
     writer: &WriteActor,
 ) -> Result<()> {
-    let grant = DelegatedGrant::new(&mailbox.custody_name, mailbox.scopes.clone());
-    let binding = ChannelIdentityBinding::agent(intent.actor_ref);
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        if let Some(raw) = vault
-            .store
-            .entities
-            .get(txn, mailbox.identity_ref.as_bytes())?
-        {
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("mailbox entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-                return Err(Error::InvalidEntityType(header.entity_type));
-            }
-            let existing = crate::channel_identity::decode_channel_identity_body(
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )?;
-            if !existing.is_delegated()
-                || existing.assignment_key()
-                    != AssignmentKey::of(&mailbox.channel, &mailbox.address)
-                || existing.binding != binding
-                || existing.grant.as_ref() != Some(&grant)
-                || existing.state != ChannelIdentityState::Requested
-                || existing.state_changed_at != intent.occurred_at
-            {
-                return Err(invalid(
-                    "identity_ref is already bound to a different mailbox",
-                ));
-            }
-            // Re-prove the existing Requested row's custody and assignment.
-            crate::channel_identity::admit_channel_identity_transition_in_txn(
-                &vault.store,
-                txn,
-                &mailbox.identity_ref,
-                crate::channel_identity::IdentityTransition::Birth { next: &existing },
-            )?;
-        } else {
-            vault.provision_delegated_identity_in_txn(
+        if let Some(existing) = read_onboarding_mailbox_in_txn(vault, txn, intent, mailbox)? {
+            return Ok(existing.state);
+        }
+        vault
+            .provision_delegated_identity_in_txn(
                 txn,
                 &mailbox.identity_ref,
                 DelegatedProvisionRequest {
                     channel: mailbox.channel.clone(),
                     address_or_handle: mailbox.address.clone(),
-                    binding,
-                    grant,
+                    binding: ChannelIdentityBinding::agent(intent.actor_ref),
+                    grant: DelegatedGrant::new(&mailbox.custody_name, mailbox.scopes.clone()),
                 },
                 intent.occurred_at,
-            )?;
-        }
-        Ok(())
-    })?;
-    // ONE-1829 is an external remaining leg, not a second lifecycle machine.
-    // Leave the identity Requested (non-sending), the journal at CompanionBorn,
-    // and the exact requested mode pinned in the intent digest.
-    Err(Error::WorkspaceMailboxAutonomyNotReady {
-        identity_ref: mailbox.identity_ref,
-        requested_mode: mailbox.starting_mode.clone(),
+            )
+            .map(|identity| identity.state)
     })
+    .and_then(|state| require_active_mailbox(mailbox, state))
+}
+
+/// Re-prove the exact mailbox, custody, and typed member subject on every resume.
+pub(super) fn read_onboarding_mailbox_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &MemberOnboardingIntent,
+    mailbox: &DelegatedMailboxOnboarding,
+) -> Result<Option<crate::channel_identity::ChannelIdentity>> {
+    let now = crate::unix_seconds_now();
+    if intent.occurred_at > now {
+        return Err(invalid("mailbox onboarding cannot use a future event time"));
+    }
+    for at in [intent.occurred_at, now] {
+        let anchor =
+            crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &intent.actor_ref, at)?;
+        if anchor.is_none_or(|anchor| {
+            anchor.subject_ref != intent.person_ref
+                || anchor.subject_kind != crate::subject_model::SubjectKind::Person
+        }) {
+            return Err(invalid(
+                "mailbox actor must remain anchored to the member PERSON",
+            ));
+        }
+    }
+    let Some(raw) = vault
+        .store
+        .entities
+        .get(txn, mailbox.identity_ref.as_bytes())?
+    else {
+        return Ok(None);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("mailbox entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    let existing =
+        crate::channel_identity::decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let valid_time = match existing.state {
+        ChannelIdentityState::Requested => existing.state_changed_at == intent.occurred_at,
+        ChannelIdentityState::PendingFulfillment | ChannelIdentityState::Active => {
+            existing.state_changed_at >= intent.occurred_at && existing.state_changed_at <= now
+        }
+        _ => false,
+    };
+    if !existing.is_delegated()
+        || existing.assignment_key() != AssignmentKey::of(&mailbox.channel, &mailbox.address)
+        || existing.binding != ChannelIdentityBinding::agent(intent.actor_ref)
+        || existing.grant.as_ref()
+            != Some(&DelegatedGrant::new(
+                &mailbox.custody_name,
+                mailbox.scopes.clone(),
+            ))
+        || !valid_time
+    {
+        return Err(invalid(
+            "identity_ref is already bound to a different mailbox",
+        ));
+    }
+    crate::channel_identity::admit_channel_identity_transition_in_txn(
+        &vault.store,
+        txn,
+        &mailbox.identity_ref,
+        crate::channel_identity::IdentityTransition::Step {
+            prior: &existing,
+            next: &existing,
+        },
+    )?;
+    Ok(Some(existing))
 }
 
 /// Step 6: record the member's roster row so the workspace read can find it.
@@ -384,7 +416,10 @@ pub(super) fn record_roster_member(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     writer: &WriteActor,
+    mailbox_owner: Option<&AuthenticatedOwner>,
 ) -> Result<()> {
+    require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
+    let revision = verify_mailbox_revision(vault, intent, mailbox_owner)?;
     let companion = intent.required_companion()?;
     let row = RosterMemberRow {
         person_ref: intent.person_ref,
@@ -397,6 +432,7 @@ pub(super) fn record_roster_member(
     let key = roster_member_key(&intent.workspace.workspace_ref, &intent.person_ref);
     let encoded = encode_value(&roster_member_value(&row))?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
+        require_mailbox_revision(vault, revision)?;
         if let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? {
             if decode_roster_member_row(&raw)? != row {
                 return Err(invalid(

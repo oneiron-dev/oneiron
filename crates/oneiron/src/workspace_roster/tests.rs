@@ -9,19 +9,28 @@ use super::*;
 mod authorization;
 mod companion_requirement;
 mod current_architecture;
-use current_architecture::register_mailbox_custody;
+mod onboarding_replay;
+use current_architecture::{assert_mailbox_lifecycle_receipt, register_mailbox_custody};
 
 use crate::agent_def::{AgentCeiling, AgentScope};
+use crate::channel_identity_autonomy::{ChannelIdentityActionEnvelope, MailboxReadEnvelope};
+use crate::channel_identity_lifecycle::{
+    BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
+    ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent, ChannelIdentityLifecycleRequest,
+    ChannelIdentityLifecycleResult,
+};
+use crate::channel_identity_selection::RelationshipContext;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
+use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::test_util::{entity, open_test_vault_with};
 
 const VAULT_ID: u64 = 7;
-const AT: u64 = 1_800_000_000;
+const AT: u64 = 1_700_000_000;
 
 const WRITER: u8 = 0x9A;
 const OUTSIDER: u8 = 0x9B;
@@ -168,8 +177,33 @@ fn mailbox() -> DelegatedMailboxOnboarding {
         address: "member@example.test".to_owned(),
         custody_name: "custody/member-mailbox".to_owned(),
         scopes: vec![DelegatedGrantScope::MailRead],
-        starting_mode: "draft".to_owned(),
+        autonomy: ChannelIdentityAutonomyRequest::draft_only(
+            entity(MEMBER_ACTOR),
+            MailboxReadEnvelope {
+                identity_ref: entity(MAILBOX_IDENTITY),
+                label_allowlist: vec!["inbox".to_owned()],
+                thread_allowlist: vec!["thread:1".to_owned()],
+                not_before: Some(AT),
+                not_after: Some(AT + 60),
+            },
+            ChannelIdentityActionEnvelope {
+                identity_ref: entity(MAILBOX_IDENTITY),
+                relationship_context: RelationshipContext::WorkDeal,
+                counterparty_class: Some("known".to_owned()),
+                max_actions: 3,
+                window_secs: 86_400,
+            },
+        ),
     }
+}
+
+fn mailbox_owner(vault: &Vault) -> Result<AuthenticatedOwner> {
+    vault.authenticate_owner(
+        entity(MEMBER_PERSON),
+        &entity(MEMBER_PERSON).to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )
 }
 
 fn intent(vault: &Vault, workspace_ref: &str, venture_name: &str) -> MemberOnboardingIntent {
@@ -234,7 +268,7 @@ fn venture_name_is_runtime_data() -> Result<()> {
     let mut names = Vec::new();
     for venture_name in ["Antevon", "Oneiron"] {
         let (_dir, vault, intent) = fixture(venture_name);
-        vault.onboard_workspace_member(intent, &writer(WRITER))?;
+        vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
         let roster = vault.workspace_roster("antevon-slack", AT)?;
         let house = roster
             .iter()
@@ -260,7 +294,7 @@ fn venture_name_is_runtime_data() -> Result<()> {
 #[test]
 fn member_bundle_never_widens_to_admin() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
-    let outcome = vault.onboard_workspace_member(intent.clone(), &writer(WRITER))?;
+    let outcome = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
 
     let rtxn = vault.store.env.read_txn()?;
     let grant = read_federation_grant_in_txn(&vault, &rtxn, &outcome.federation_grant_ref)?
@@ -282,7 +316,7 @@ fn member_bundle_never_widens_to_admin() -> Result<()> {
         widened.grant_bundle.role = role;
         widened.grant_bundle.preset = preset;
         let err = vault
-            .onboard_workspace_member(widened, &writer(WRITER))
+            .onboard_workspace_member(widened, &writer(WRITER), None)
             .expect_err("widened bundle must be refused");
         assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     }
@@ -298,7 +332,7 @@ fn companion_birth_is_full_person() -> Result<()> {
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
     intent.companion_birth = Some(birth.clone());
 
-    let outcome = vault.onboard_workspace_member(intent, &writer(WRITER))?;
+    let outcome = vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
     assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
     assert_eq!(outcome.companion_actor_ref, Some(birth.actor_ref));
 
@@ -372,88 +406,6 @@ fn companion_birth_is_full_person() -> Result<()> {
     Ok(())
 }
 
-/// Done-means 6: identical input under the same id returns the prior outcome
-/// and mints nothing.
-#[test]
-fn onboarding_replay_is_idempotent() -> Result<()> {
-    let (_dir, vault, mut intent) = fixture("Antevon");
-    let birth = companion_birth();
-    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth);
-
-    let first = vault.onboard_workspace_member(intent.clone(), &writer(WRITER))?;
-    let counts = [
-        type_count(&vault, ENTITY_TYPE_AGENT_DEF),
-        type_count(&vault, ENTITY_TYPE_PERSON),
-        type_count(&vault, ENTITY_TYPE_FEDERATION_GRANT),
-        type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER),
-        type_count(&vault, ENTITY_TYPE_ACCESS_GRANT),
-        type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
-    ];
-
-    let second = vault.onboard_workspace_member(intent, &writer(WRITER))?;
-    assert_eq!(first, second);
-    assert_eq!(
-        counts,
-        [
-            type_count(&vault, ENTITY_TYPE_AGENT_DEF),
-            type_count(&vault, ENTITY_TYPE_PERSON),
-            type_count(&vault, ENTITY_TYPE_FEDERATION_GRANT),
-            type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER),
-            type_count(&vault, ENTITY_TYPE_ACCESS_GRANT),
-            type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
-        ]
-    );
-    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
-    Ok(())
-}
-
-/// Done-means 7: a run that dies after `ActorLinked` resumes and finishes with
-/// exactly the entity population a single clean run produces.
-#[test]
-fn crash_resume_finishes_without_duplicates() -> Result<()> {
-    let build = |venture_name: &str| {
-        let (dir, vault, mut intent) = fixture(venture_name);
-        let birth = companion_birth();
-        intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-        intent.companion_birth = Some(birth);
-        (dir, vault, intent)
-    };
-    let census = |vault: &Vault| {
-        [
-            type_count(vault, ENTITY_TYPE_AGENT_DEF),
-            type_count(vault, ENTITY_TYPE_PERSON),
-            type_count(vault, ENTITY_TYPE_FEDERATION_GRANT),
-            type_count(vault, ENTITY_TYPE_COMPANION_REGISTER),
-            type_count(vault, ENTITY_TYPE_ACCESS_GRANT),
-            type_count(vault, ENTITY_TYPE_CHANNEL_IDENTITY),
-        ]
-    };
-
-    let (_clean_dir, clean, clean_intent) = build("Antevon");
-    let expected_outcome = clean.onboard_workspace_member(clean_intent, &writer(WRITER))?;
-    let expected_census = census(&clean);
-
-    let (_dir, vault, intent) = build("Antevon");
-    let halted = vault.onboard_workspace_member_halting_after(
-        intent.clone(),
-        &writer(WRITER),
-        MemberOnboardingStep::ActorLinked,
-    )?;
-    assert!(halted.is_none(), "a halted run has no outcome yet");
-
-    let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
-        .expect("halted run leaves a resumable journal");
-    assert_eq!(journal.step, MemberOnboardingStep::ActorLinked);
-    assert_eq!(journal.completed_at, None);
-
-    let resumed = vault.onboard_workspace_member(intent, &writer(WRITER))?;
-    assert_eq!(resumed, expected_outcome);
-    assert_eq!(census(&vault), expected_census);
-    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
-    Ok(())
-}
-
 /// Done-means 5: the mailbox row carries a custody NAME and read scopes. The
 /// intent has no field a token could occupy, so the stored body cannot hold one.
 #[test]
@@ -464,12 +416,12 @@ fn optional_delegated_mailbox_uses_custody_ref_only() -> Result<()> {
 
     register_mailbox_custody(&vault, &requested, &requested.address)?;
     let err = vault
-        .onboard_workspace_member(intent, &writer(WRITER))
-        .expect_err("custody alone cannot complete the missing autonomy step");
+        .onboard_workspace_member(intent, &writer(WRITER), Some(&mailbox_owner(&vault)?))
+        .expect_err("Requested lifecycle cannot complete autonomy");
     assert!(matches!(
         err,
         Error::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode }
-            if identity_ref == requested.identity_ref && requested_mode == requested.starting_mode
+            if identity_ref == requested.identity_ref && requested_mode == requested.autonomy.rung.as_str()
     ));
 
     let identity = vault
@@ -512,7 +464,7 @@ fn unprivileged_writer_rejected() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
 
     let err = vault
-        .onboard_workspace_member(intent.clone(), &writer(OUTSIDER))
+        .onboard_workspace_member(intent.clone(), &writer(OUTSIDER), None)
         .expect_err("an unprivileged writer must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
@@ -534,38 +486,9 @@ fn unprivileged_writer_rejected() -> Result<()> {
         ),
     );
     let err = vault
-        .onboard_workspace_member(intent, &writer(OUTSIDER))
+        .onboard_workspace_member(intent, &writer(OUTSIDER), None)
         .expect_err("a member-grade writer must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-    Ok(())
-}
-
-/// Done-means 6: the same id with different inputs fails typed, and the prior
-/// outcome survives the attempt intact.
-#[test]
-fn changed_input_same_id_fails_typed() -> Result<()> {
-    let (_dir, vault, intent) = fixture("Antevon");
-    let first = vault.onboard_workspace_member(intent.clone(), &writer(WRITER))?;
-
-    let mut changed = intent.clone();
-    changed.occurred_at = AT + 1;
-    let err = vault
-        .onboard_workspace_member(changed, &writer(WRITER))
-        .expect_err("changed input under a used id must fail");
-    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-
-    let mut renamed = intent.clone();
-    renamed.workspace.venture_name = "Somewhere Else".to_owned();
-    let err = vault
-        .onboard_workspace_member(renamed, &writer(WRITER))
-        .expect_err("a changed venture name is changed input");
-    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-
-    // The original replay still answers with the original outcome.
-    assert_eq!(
-        vault.onboard_workspace_member(intent, &writer(WRITER))?,
-        first
-    );
     Ok(())
 }
 
@@ -574,7 +497,7 @@ fn changed_input_same_id_fails_typed() -> Result<()> {
 #[test]
 fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
-    vault.onboard_workspace_member(intent.clone(), &writer(WRITER))?;
+    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
 
     let mut conflicting = intent.clone();
     conflicting.onboarding_id = "onboard-2".to_owned();
@@ -583,7 +506,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     conflicting.actor_ref = entity(0xBA);
     conflicting.grant_bundle.federation_grant_ref = entity(0xBB);
     let err = vault
-        .onboard_workspace_member(conflicting, &writer(WRITER))
+        .onboard_workspace_member(conflicting, &writer(WRITER), None)
         .expect_err("a disagreeing preset must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
@@ -601,7 +524,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     second_birth.display_name = "Silverleaf".to_owned();
     second.grant_bundle.companion_profile_grant_ref = Some(second_birth.profile_grant_ref);
     second.companion_birth = Some(second_birth.clone());
-    let outcome = vault.onboard_workspace_member(second, &writer(WRITER))?;
+    let outcome = vault.onboard_workspace_member(second, &writer(WRITER), None)?;
     assert_eq!(outcome.person_ref, entity(0xB9));
 
     // Each principal has their own quiz-named companion beside the same house.
@@ -632,14 +555,152 @@ fn aliased_entity_ids_are_refused() {
     let mut aliased = intent.clone();
     aliased.actor_ref = aliased.person_ref;
     let err = vault
-        .onboard_workspace_member(aliased, &writer(WRITER))
+        .onboard_workspace_member(aliased, &writer(WRITER), None)
         .expect_err("an actor id aliased onto the member PERSON must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     let mut mismatched = intent;
     mismatched.grant_bundle.companion_profile_grant_ref = Some(entity(0xD5));
     let err = vault
-        .onboard_workspace_member(mismatched, &writer(WRITER))
+        .onboard_workspace_member(mismatched, &writer(WRITER), None)
         .expect_err("a mismatched companion profile grant ref must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+}
+
+fn mailbox_fixture() -> Result<(
+    tempfile::TempDir,
+    Vault,
+    MemberOnboardingIntent,
+    AuthenticatedOwner,
+)> {
+    let (dir, vault, mut intent) = fixture("Antevon");
+    seed_mailbox_bind_policy(&vault)?;
+    let requested = mailbox();
+    register_mailbox_custody(&vault, &requested, &requested.address)?;
+    intent.delegated_mailbox = Some(requested);
+    let owner = mailbox_owner(&vault)?;
+    Ok((dir, vault, intent, owner))
+}
+
+fn seed_mailbox_bind_policy(vault: &Vault) -> Result<()> {
+    // The legacy fixture removes the default policy. Without a persisted policy,
+    // reopen reseeds one and invalidates the frontier hash on prior draft grants.
+    let manifest = serde_json::json!({
+        "schema_version": "1.1",
+        "pack_id": "roster-mailbox-test",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "human", "actor_ref": entity(WRITER).to_hex(), "ceiling": "auto"},
+            {"actor_class": "human", "actor_ref": entity(MEMBER_PERSON).to_hex(), "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_class": "human", "actor_ref": entity(MEMBER_PERSON).to_hex(),
+            "effector": "external:bind", "scope": {"channel": "email"}
+        }]
+    });
+    let bytes = rmp_serde::to_vec_named(&manifest).expect("fixture policy");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+fn mailbox_bind_request(
+    identity: EntityId,
+    owner: &AuthenticatedOwner,
+) -> ChannelIdentityLifecycleRequest {
+    ChannelIdentityLifecycleRequest {
+        actor: ChannelIdentityLifecycleActor {
+            actor_class: "human".to_owned(),
+            actor_ref: Some(owner.actor().to_hex()),
+            actor_entity_ref: Some(owner.actor()),
+        },
+        gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
+        requested_at: AT + 1,
+        intent: ChannelIdentityLifecycleIntent::Bind(BindIntent {
+            identity_id: identity,
+            fulfillment_mode: crate::channel_identity::ChannelIdentityFulfillment::Manual,
+        }),
+    }
+}
+
+fn bind_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
+    let request = mailbox_bind_request(identity, &mailbox_owner(vault)?);
+    let result = vault.apply_channel_identity_lifecycle_intent(request)?;
+    assert_eq!(result.outcome, "pending_fulfillment");
+    assert_eq!(
+        result
+            .identity
+            .as_ref()
+            .expect("identity")
+            .pending_fulfillment,
+        Some(crate::channel_identity::ChannelIdentityFulfillment::Manual)
+    );
+    assert_mailbox_lifecycle_receipt(vault, identity, &result, "bind", Some("allow"))
+}
+
+fn fulfill_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
+    // This represents external manual completion by a trusted host. The actor
+    // attributes the marker; fulfillment itself does not authenticate an owner.
+    let result = vault.fulfill_channel_identity(ChannelIdentityFulfillmentInput {
+        actor: mailbox_bind_request(identity, &mailbox_owner(vault)?).actor,
+        identity_id: identity,
+        fulfilled_at: AT + 2,
+    })?;
+    assert_eq!(result.outcome, "active");
+    assert_eq!(
+        result
+            .identity
+            .as_ref()
+            .expect("identity")
+            .pending_fulfillment,
+        None
+    );
+    assert_mailbox_lifecycle_receipt(vault, identity, &result, "fulfill", None)
+}
+
+fn activate_mailbox(vault: &Vault, identity: EntityId) -> Result<()> {
+    bind_mailbox(vault, identity)?;
+    fulfill_mailbox(vault, identity)
+}
+
+fn assert_mailbox_waiting(
+    vault: &Vault,
+    intent: &MemberOnboardingIntent,
+    owner: &AuthenticatedOwner,
+) -> Result<OnboardingJournal> {
+    let mailbox = intent.delegated_mailbox.as_ref().expect("mailbox");
+    let error = vault
+        .onboard_workspace_member(intent.clone(), &writer(WRITER), Some(owner))
+        .expect_err("external fulfillment is still required");
+    assert!(matches!(
+        error,
+        Error::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode }
+            if identity_ref == mailbox.identity_ref && requested_mode == mailbox.autonomy.rung.as_str()
+    ));
+    let journal = read_journal(vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");
+    assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
+    assert_eq!(journal.completed_at, None);
+    assert_eq!(
+        vault
+            .workspace_roster(&intent.workspace.workspace_ref, AT)?
+            .len(),
+        1
+    );
+    assert!(
+        !vault
+            .get_channel_identity(&mailbox.identity_ref)?
+            .expect("identity")
+            .may_send()
+    );
+    assert_eq!(type_count(vault, ENTITY_TYPE_ACCESS_GRANT), 1);
+    assert_eq!(
+        type_count(vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
+        0
+    );
+    Ok(journal)
 }
