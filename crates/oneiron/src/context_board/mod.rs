@@ -91,6 +91,7 @@ mod test_support {
             worker_kind: worker_kind.to_owned(),
             agent_id: agent_id.map(str::to_owned),
             status,
+            result_ref: None,
             timestamps: RunTreeTimestamps {
                 created_at: 1,
                 updated_at: 2,

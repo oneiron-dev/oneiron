@@ -106,6 +106,10 @@ pub const fn project_agent_run_status(status: RunTreeStatus) -> AgentRunStatus {
         RunTreeStatus::Paused => AgentRunStatus::NeedsInput,
         RunTreeStatus::Completed => AgentRunStatus::Delivered,
         RunTreeStatus::Failed | RunTreeStatus::Cancelled => AgentRunStatus::Failed,
+        // Not folded onto `Failed`: this axis already owns a truthful terminal
+        // token for a run that stopped without delivering, and reporting a
+        // fault nobody observed would be the lie the fold exists to avoid.
+        RunTreeStatus::Abandoned => AgentRunStatus::Abandoned,
     }
 }
 

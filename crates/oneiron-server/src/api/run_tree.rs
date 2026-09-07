@@ -131,6 +131,12 @@ pub(crate) struct CoreRunTreeNode {
     agent_id: Option<String>,
     /// Surface lifecycle state.
     status: CoreRunTreeStatus,
+    /// The artifact version this attempt's durable output lives in, copied from
+    /// the backing queue row for every executor kind that named a result.
+    /// Elided when absent, the same shape as `agent_id`.
+    #[serde(rename = "result_ref", skip_serializing_if = "Option::is_none")]
+    #[schema(example = "blob-artifact:<hex>@<version>")]
+    result_ref: Option<String>,
     /// Queue row timestamps.
     timestamps: CoreRunTreeTimestamps,
     /// Terminal failure summary, when present.
@@ -159,6 +165,7 @@ pub(crate) enum CoreRunTreeStatus {
     Completed,
     Failed,
     Cancelled,
+    Abandoned,
 }
 
 /// Queue row timestamps for a runtime attempt.
@@ -213,6 +220,8 @@ pub(crate) enum CoreRunTreeEventKind {
     Failed,
     Cancelled,
     Interrupted,
+    Abandoned,
+    ResultAttached,
 }
 
 /// Non-mutating repair applied while rendering a run tree.
@@ -400,6 +409,7 @@ pub(crate) fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode 
         worker_kind: node.worker_kind,
         agent_id: node.agent_id,
         status: core_run_tree_status(node.status),
+        result_ref: node.result_ref,
         timestamps: CoreRunTreeTimestamps {
             created_at: node.timestamps.created_at,
             updated_at: node.timestamps.updated_at,
@@ -421,6 +431,7 @@ pub(crate) fn core_run_tree_status(status: oneiron::RunTreeStatus) -> CoreRunTre
         oneiron::RunTreeStatus::Completed => CoreRunTreeStatus::Completed,
         oneiron::RunTreeStatus::Failed => CoreRunTreeStatus::Failed,
         oneiron::RunTreeStatus::Cancelled => CoreRunTreeStatus::Cancelled,
+        oneiron::RunTreeStatus::Abandoned => CoreRunTreeStatus::Abandoned,
     }
 }
 
@@ -444,6 +455,8 @@ pub(crate) fn core_run_tree_event_kind(kind: oneiron::RunTreeEventKind) -> CoreR
         oneiron::RunTreeEventKind::Failed => CoreRunTreeEventKind::Failed,
         oneiron::RunTreeEventKind::Cancelled => CoreRunTreeEventKind::Cancelled,
         oneiron::RunTreeEventKind::Interrupted => CoreRunTreeEventKind::Interrupted,
+        oneiron::RunTreeEventKind::Abandoned => CoreRunTreeEventKind::Abandoned,
+        oneiron::RunTreeEventKind::ResultAttached => CoreRunTreeEventKind::ResultAttached,
     }
 }
 
