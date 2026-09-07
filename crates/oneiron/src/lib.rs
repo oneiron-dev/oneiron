@@ -16,6 +16,7 @@ pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod attempt_queue;
 pub mod authority;
+pub mod autoreason_campaign;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
@@ -117,6 +118,7 @@ pub mod persona_snapshot;
 pub mod pipeline;
 pub mod policy_model;
 pub(crate) mod ppr;
+pub mod ppr_community;
 pub mod prompt;
 pub mod provenance;
 pub mod provider_confidence;
@@ -145,6 +147,7 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod slim;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -158,6 +161,7 @@ pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_cascade;
 pub mod voice_identity;
 pub mod voice_segment;
 pub mod wave_orchestration;
@@ -173,12 +177,27 @@ pub mod write_envelope;
 // module tree.
 pub use crate::access_grant::AccessGrant;
 pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use crate::agent_def::{
+    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
+    MemoryProfile,
+};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
 };
 pub use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, InterveneAttempt,
+};
+pub use crate::autoreason_campaign::{
+    AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
+    CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
+    CampaignComparisonReport, CampaignConfig, CampaignCorpusFilter, CampaignCost,
+    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
+    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
+    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment,
+    CampaignTournamentConfig, CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD,
+    EXPERIMENT_VERDICT_KEEP, ExperimentVerdict, build_campaign_held_out_decision,
+    build_campaign_split_report, compare_campaign, merge_campaign_arm_report,
 };
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
@@ -233,8 +252,13 @@ pub use crate::commitment_wake::{
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
 };
 pub use crate::compaction::{
-    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
-    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionBackend, CompactionBackendRegistry,
+    CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
+    CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
+    CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
+    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
+    decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
@@ -242,7 +266,7 @@ pub use crate::companion::{
     CompanionScopeResolutionSource, CompanionSubject, CompanionTaskKind, EndCompanionRelationship,
     EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
-pub use crate::config::{HnswConfig, VaultConfig};
+pub use crate::config::{HnswConfig, PprCommunityConfig, VaultConfig};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
@@ -321,13 +345,15 @@ pub use crate::linear_sync::{
     TaskIssueLink, TaskMirrorSnapshot, WaveResult, linear_operation_id,
 };
 pub use crate::llm::{
+    AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
+    AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend,
     LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
     LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
     PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError, TierPrecedence,
-    UnsupportedCapability,
+    UnsupportedCapability, auto_check_llm_request,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
@@ -364,6 +390,10 @@ pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
 pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
+pub use crate::slim::{
+    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,
+    SlimResidue, VaultResidency,
+};
 pub use crate::store::{
     RetrievalRunId, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
