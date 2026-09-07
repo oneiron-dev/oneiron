@@ -43,12 +43,13 @@ fn fixture() -> (tempfile::TempDir, Arc<oneiron::Vault>, VoiceHost, BudgetGuard,
     config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
-    let mut server_config = crate::config::SyncServerConfig::default();
-    server_config.runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
-    let server = SyncServer::new(Arc::clone(&vault), server_config).unwrap();
+    let mut runtime = RuntimeConfig::default();
+    runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
     let (send, calls) = mpsc::unbounded_channel();
-    let budget = BudgetGuard::new("voice-test", 16_000, BudgetExhaustionPolicy::Suspend);
-    let host = server.voice_host(VoiceHostBindings {
+    let budget = BudgetGuard::with_reserve_units(
+        "voice-test", 16_000, 8_000, BudgetExhaustionPolicy::Suspend,
+    );
+    let host = VoiceHost::new(Arc::clone(&vault), &runtime, VoiceHostBindings {
         backend: Arc::new(ControlledBackend(send)),
         budget: budget.clone(),
         extraction_prompt: "Extract entity_labels and salient_terms from text. Return the JSON schema, including empty arrays when appropriate.".to_owned(),

@@ -45,6 +45,13 @@ pub enum ErrorCode {
     InvalidHeader,
     #[serde(rename = "UNSUPPORTED_CAPABILITY")]
     UnsupportedCapability,
+    /// ONE-207: deep retrieval was requested on a deployment that has no deep
+    /// backend attached. Retryable against a differently configured host, so
+    /// it follows [`Self::MirrorNotReady`] onto 503 rather than 400 — the
+    /// request is well-formed and the capability is absent, which is a
+    /// property of this server and not of the caller.
+    #[serde(rename = "DEEP_RETRIEVAL_UNAVAILABLE")]
+    DeepRetrievalUnavailable,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -76,6 +83,7 @@ impl ErrorCode {
         Self::NotAcceptable,
         Self::InvalidHeader,
         Self::UnsupportedCapability,
+        Self::DeepRetrievalUnavailable,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -101,6 +109,7 @@ impl ErrorCode {
             Self::NotAcceptable => "NOT_ACCEPTABLE",
             Self::InvalidHeader => "INVALID_HEADER",
             Self::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
+            Self::DeepRetrievalUnavailable => "DEEP_RETRIEVAL_UNAVAILABLE",
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -125,7 +134,9 @@ impl ErrorCode {
             | Self::InvalidState
             | Self::SnapshotMismatch => StatusCode::CONFLICT,
             Self::DailyBudgetExhausted => StatusCode::TOO_MANY_REQUESTS,
-            Self::MirrorNotReady => StatusCode::SERVICE_UNAVAILABLE,
+            Self::MirrorNotReady | Self::DeepRetrievalUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
@@ -195,6 +206,13 @@ pub enum ApiErrorDetails {
         #[serde(rename = "recovery_suggestions")]
         recovery_suggestions: Vec<String>,
     },
+    // ONE-207. No detail fields, and a plain comment rather than a doc one so
+    // this variant's generated schema stays the shape every other unit variant
+    // here has: the capability is either attached to this server or it is not,
+    // and naming which host is missing would describe deployment topology to an
+    // unprivileged caller.
+    #[serde(rename = "DEEP_RETRIEVAL_UNAVAILABLE")]
+    DeepRetrievalUnavailable,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -232,6 +250,7 @@ impl ApiErrorDetails {
             Self::NotAcceptable { .. } => ErrorCode::NotAcceptable,
             Self::InvalidHeader { .. } => ErrorCode::InvalidHeader,
             Self::UnsupportedCapability { .. } => ErrorCode::UnsupportedCapability,
+            Self::DeepRetrievalUnavailable => ErrorCode::DeepRetrievalUnavailable,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
@@ -316,6 +335,24 @@ impl ApiError {
             format!("{feature} is not implemented"),
             ApiErrorDetails::NotImplemented,
             ["Do not treat this response as a successful context pack."],
+        )
+    }
+
+    /// ONE-207: deep retrieval asked for on a server with no deep backend
+    /// attached.
+    ///
+    /// Not a 400 and not a 501: the request is well-formed, the tier exists in
+    /// the contract, and this deployment simply has no host wired for it — the
+    /// same shape [`ApiErrorDetails::MirrorNotReady`] already answers with, so
+    /// a client's retry logic reads it the same way.
+    pub fn deep_retrieval_unavailable() -> Self {
+        Self::new(
+            "deep retrieval is not available on this server",
+            ApiErrorDetails::DeepRetrievalUnavailable,
+            [
+                "Retry with depth=minimal or depth=standard, which need no backend.",
+                "Deep retrieval requires a host-injected deep search backend.",
+            ],
         )
     }
 
@@ -692,6 +729,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         ErrorCode::Unauthorized
         | ErrorCode::NotImplemented
         | ErrorCode::InternalServerError
+        | ErrorCode::DeepRetrievalUnavailable
         | ErrorCode::CrdtAuthExpired
         | ErrorCode::CrdtDecodeError => {}
     }

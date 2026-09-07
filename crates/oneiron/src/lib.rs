@@ -6,6 +6,7 @@ thread_local! {
 }
 
 pub mod access_grant;
+pub mod agent_inbox_lens;
 pub mod actor_claims;
 pub mod affect;
 pub mod agent_def;
@@ -26,6 +27,7 @@ pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
+pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
@@ -106,6 +108,7 @@ pub mod lens;
 pub(crate) mod limits;
 pub mod linear_sync;
 pub mod linkedin_connector;
+pub mod linkedin_lead_preload;
 pub mod llm;
 pub mod maintain;
 pub mod memory;
@@ -133,6 +136,7 @@ pub mod recovery;
 pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
+pub mod retrieval_depth;
 pub mod run_tree;
 pub mod saved_query;
 pub mod secret_custody;
@@ -140,10 +144,12 @@ pub mod secret_lease;
 pub mod secret_manifest;
 pub mod secret_rotation;
 pub mod secret_snapshot;
+pub mod self_heal;
 pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;
 pub mod settings;
+pub mod share;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
@@ -359,12 +365,10 @@ pub use crate::feedback::{
 };
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS,
-    GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
-    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
+    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, GateBreakerRunProjection, GateBreakerThresholds,
-    RetrievalFilter,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
 };
 pub use crate::genui::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
@@ -411,7 +415,12 @@ pub use crate::outbound::{
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
     unsupported_outbound_connector,
 };
-pub use crate::pipeline::{PipelineBuilder, ScoredEntity, Signal};
+pub use crate::pipeline::{
+    ActiveWorldSelection, MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PipelineBuilder, ResolvedWorldAuthority, ScoredEntity,
+    Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, decode_world_access_claim_value,
+    world_access_claim_body,
+};
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
@@ -436,9 +445,17 @@ pub use crate::run_tree::{
     GateConsentBundleMember, GateConsentBundleReceipt, RunTree, RunTreeAdapter, RunTreeEvent,
     RunTreeEventKind, RunTreeNode, RunTreeRepair, RunTreeStatus,
 };
+pub use crate::self_heal::{
+    ConsentDeniedDetector, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector,
+    DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation,
+    DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
+    decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
+    run_deterministic_detectors,
+};
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
+pub use crate::share::{ResolvedShare, Share, ShareViewerScope};
 pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
 pub use crate::slim::{
     HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,

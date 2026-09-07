@@ -1403,6 +1403,13 @@ fn gate_outcomes_remain_authoritative() {
         !receipt.fields.contains_key("intent_state"),
         "the gate hold stops before dispatch ledger admission"
     );
+    assert_eq!(
+        receipt
+            .fields
+            .get("gate_receipt_reasons")
+            .map(String::as_str),
+        Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+    );
     assert_eq!(outcome.transport_calls, 0);
     assert!(
         transport.payloads.is_empty(),

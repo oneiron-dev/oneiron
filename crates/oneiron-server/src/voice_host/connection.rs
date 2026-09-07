@@ -51,8 +51,17 @@ impl VoiceHost {
         stream: UnixStream,
         outputs: &mut VoiceOutputs<B, T, C>,
     ) -> io::Result<()> {
+        self.serve_until(stream, outputs, std::future::pending()).await
+    }
+
+    pub(super) async fn serve_until<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        stream: UnixStream,
+        outputs: &mut VoiceOutputs<B, T, C>,
+        stop: impl Future<Output = ()>,
+    ) -> io::Result<()> {
         let end_on_drop = EndOnDrop(self);
-        let result = self.serve_inner(stream, &mut outputs.brain).await;
+        let result = self.serve_inner(stream, &mut outputs.brain, stop).await;
         let stop = self.end().map_err(|_| io::Error::other("voice teardown failed"))?;
         let errors = stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
         drop(end_on_drop);
@@ -63,7 +72,13 @@ impl VoiceHost {
         Ok(())
     }
 
-    async fn serve_inner(&self, stream: UnixStream, brain: &mut impl Brain) -> io::Result<()> {
+    async fn serve_inner(
+        &self,
+        stream: UnixStream,
+        brain: &mut impl Brain,
+        stop: impl Future<Output = ()>,
+    ) -> io::Result<()> {
+        tokio::pin!(stop);
         let (read, mut write) = stream.into_split();
         let mut reader = BufReader::new(read);
         let mut frame = FrameReader::new();
@@ -76,6 +91,7 @@ impl VoiceHost {
             let response = tokio::select! {
                 biased;
                 () = &mut shutdown => break,
+                () = &mut stop => break,
                 bytes = frame.read(&mut reader) => {
                     let Some(bytes) = bytes? else { break };
                     requests += 1;
@@ -150,8 +166,14 @@ impl VoiceHost {
                 return Err(io::Error::other("voice response exceeds limit"));
             }
             bytes.push(b'\n');
-            timeout(Duration::from_secs(1), write.write_all(&bytes)).await
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice write timeout"))??;
+            tokio::select! {
+                biased;
+                () = &mut shutdown => break,
+                () = &mut stop => break,
+                result = timeout(Duration::from_secs(1), write.write_all(&bytes)) => {
+                    result.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice write timeout"))??;
+                }
+            }
             if errors >= 8 { break; }
         }
         Ok(())
