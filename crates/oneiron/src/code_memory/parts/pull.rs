@@ -201,12 +201,8 @@ fn collect_pull_candidates(
                         // bounds admission work across ALL symbols and slots,
                         // not merely the number of notes eventually retained.
                         examined_values.set(examined_values.get() + 1);
-                        if !payload_visible_in_txn(
-                            &vault.store,
-                            rtxn,
-                            scoped_read,
-                            value.payload,
-                        )? {
+                        if !payload_visible_in_txn(&vault.store, rtxn, scoped_read, value.payload)?
+                        {
                             continue;
                         }
                         candidate_notes.push((scored.score, scored.id, name.clone(), value));
@@ -272,6 +268,7 @@ pub fn pull_code_memory(
     scoped_read: &ScopedRead<'_>,
     request: CodeMemoryPullRequest,
 ) -> Result<CodeMemoryPullResult> {
+    crate::config::validate_ppr_vad_alpha(vault.config.ppr_vad_alpha)?;
     if request.seed_symbols.is_empty() {
         return Err(Error::CodeMemoryInvalidAnchor {
             reason: "pull requires at least one CODE_SYMBOL seed",
@@ -310,6 +307,7 @@ pub fn pull_code_memory(
         &request.seed_symbols,
         CODE_MEMORY_PPR_DEPTH,
         CODE_MEMORY_PPR_ALPHA,
+        vault.config.ppr_vad_alpha,
         SeedWeighting::Specificity,
         scoped_read,
     )?;
@@ -447,4 +445,3 @@ pub fn register_always_on_contract(
     }
     write_always_on(store, txn, &contract)
 }
-

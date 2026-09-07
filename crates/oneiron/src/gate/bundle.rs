@@ -134,6 +134,9 @@ impl Vault {
                     ClaimGateWrite {
                         body: &body,
                         envelope: Some(&envelope),
+                        // Bundle merge is an owner-resolution path, not an
+                        // agent-class Dreamer write; it never consults.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -280,6 +283,15 @@ impl Vault {
     /// [`Error::GateConsentStale`] for digest or binding drift,
     /// [`Error::GateWriteRejected`] for a member the live gate refuses, and
     /// [`Error::CorruptedIndex`] for an unreadable pending row.
+    ///
+    /// Approve runs canonical claim VAD consolidation after the consent commit.
+    /// A VAD error is returned with all Approved writes and receipts durable;
+    /// earlier members may be populated and later members not yet attempted.
+    /// Retry [`Vault::consolidate_claim_vad`] on the approved member ids. With
+    /// unchanged evidence it reuses the active state. The bundle door is closed
+    /// and its retry returns [`Error::EntityNotFound`], not success. Decline does
+    /// not consolidate; annotation/reappraisal predicates are never exempted
+    /// from the canonical rejection when approved.
     pub fn resolve_gate_consent_bundle(
         &self,
         owner: &AuthenticatedOwner,
@@ -465,6 +477,13 @@ impl Vault {
         for decision in recorded_decisions {
             decision.record_metrics();
         }
+        // These ids are the Dreamer members actually approved in the committed
+        // transaction. The canonical consolidator must open a separate writer.
+        if action == GateConsentBundleAction::Approve {
+            for claim_id in &receipt.member_claim_ids {
+                self.consolidate_claim_vad_now(claim_id, now)?;
+            }
+        }
         Ok(receipt)
     }
 
@@ -521,7 +540,7 @@ fn check_session_bundle_actor_policy(
     // Read-only review over already-proposed bodies. Bundle MERGE builds its
     // own trivial-lineage envelope above, so there is no observed history for
     // this door to read: declared-source only, exactly as before.
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, None)
 }
 
 /// One bundle member paired with the hash of the LIVE claim body the digest
@@ -686,6 +705,9 @@ fn replay_gate_consent_bundle_member(
         ClaimGateWrite {
             body,
             envelope: Some(&envelope),
+            // Consent-bundle resolution replays an owner's decision; there is
+            // no fresh Auto verdict for a checker to weigh in on.
+            auto_checker: None,
             defer_metrics_until_commit: true,
         },
         policy,

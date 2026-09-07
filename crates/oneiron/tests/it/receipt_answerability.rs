@@ -314,12 +314,23 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
     )?;
 
     let pending_claim_id = entity(0x91);
+    // GATE-12 needs a live candidate evidence ref even for a Proposed
+    // Dreamer write. Cite the existing guest-count subject, as the inbox
+    // proposal fixture does, without changing the runner's authorship.
+    let evidence = oneiron::dreamer_consolidation::encode_consolidation_evidence(
+        &oneiron::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     let candidate = ClaimCandidate::new(
         "profile.party_guest_count",
         ClaimSubject::Entity(subject),
         Value::from("confirm final guest count before sending venue update"),
         0.82,
-    );
+    )
+    .with_evidence(evidence);
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Agent),
         ClaimSource::Generated,
