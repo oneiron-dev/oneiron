@@ -41,10 +41,10 @@ use crate::Vault;
 use crate::actor_claims::register_session_end_distill_in_txn;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionPlan, advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
-    decode_turn_body, enqueue_partition_attempts_in_txn, plan_partitions_in_txn,
+    enqueue_partition_attempts_in_txn, plan_partitions_in_txn, read_partition_turns_in_txn,
     read_watermark_in_txn, register_substitution_mine_in_txn,
 };
-use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore, dreamer_turn_role};
+use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
@@ -205,10 +205,18 @@ impl SessionClosePredicate {
 /// plus the facts the transaction needs to guard and settle the round.
 #[derive(Debug, Clone)]
 pub struct SessionEndWake {
-    /// Partition plans over the dirty-turn backlog — the SAME payload and
-    /// dedupe shape the production `ConsolidationExecutor` decodes. Empty
-    /// when nothing is dirty: a zero-turn sitting has nothing to dream
+    /// Preview partition plans over the dirty-turn backlog — the SAME payload
+    /// and dedupe shape the production `ConsolidationExecutor` decodes. Close
+    /// rebuilds the plans and receipts together from the fenced IDs, so policy
+    /// or body changes after this preview cannot contradict the committed work.
+    /// Empty when nothing is dirty: a zero-turn sitting has nothing to dream
     /// about, so no attempt is minted for it.
+    ///
+    /// These carry only the turns the OF-361 pre-extraction screen KEPT
+    /// (`dreamer_prefilter`). `planned_turn_ids` below is deliberately the
+    /// PRE-screen scan: it is the fence's identity set and the watermark's
+    /// settlement basis, so a screened-out turn is still consumed by this
+    /// round rather than left dirty forever.
     pub plans: Vec<ConsolidationPartitionPlan>,
     /// The Meso watermark the plans were taken against. The transaction
     /// re-reads the watermark and skips the enqueue + advance when it
@@ -517,7 +525,7 @@ impl Vault {
     /// * an edge-less turn truncates the round at its `learned_at`, TIES
     ///   INCLUDED (`learned_at < cut`), so the watermark never settles past
     ///   work that was not planned;
-    /// * roles decode through the shared [`decode_turn_body`], never a bespoke
+    /// * roles decode through the shared turn-body decoder, never a bespoke
     ///   alias preference;
     /// * partitions come from [`plan_partitions_in_txn`], which keeps the
     ///   production `world_ref`/`facet_ref` fallback chain (turn body key →
@@ -531,34 +539,7 @@ impl Vault {
         let dirty_ids =
             collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
 
-        let mut scanned = Vec::with_capacity(dirty_ids.len());
-        for turn_id in dirty_ids {
-            let Some(raw) = self.get_raw_in(wtxn, &turn_id)? else {
-                continue;
-            };
-            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
-                continue;
-            };
-            let facts = decode_turn_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
-            let prefix = crate::vault::edge_kind_prefix(&turn_id, crate::edge::EdgeKind::ChildOf);
-            let conversation = self
-                .store
-                .edges_out
-                .prefix_iter(wtxn, &prefix)?
-                .next()
-                .transpose()?
-                .and_then(|(key, _)| {
-                    crate::edge::parse_strict_edge_record_key(&key)
-                        .ok()
-                        .map(|(_, _, target)| target)
-                });
-            scanned.push(crate::dreamer_consolidation::WorkingSetTurn {
-                turn_id,
-                role: dreamer_turn_role(facts.speaker.as_deref()),
-                learned_at: header.learned_at,
-                conversation,
-            });
-        }
+        let scanned = read_partition_turns_in_txn(self, wtxn, &dirty_ids)?;
 
         // The driver's exact cut rule: the first turn without its structural
         // CONVERSATION edge truncates the round at its second, dropping the
@@ -697,13 +678,21 @@ impl Vault {
                     // for a live round this holds by construction.
                     in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
                 }
-                None => true,
+                None => wake.planned_turn_ids.is_empty(),
             };
             if dirty_snapshot_matches {
-                if !wake.plans.is_empty() {
-                    let store = DreamerRunnerStore::new(self);
-                    enqueue_partition_attempts_in_txn(&store, wtxn, scope, &wake.plans, None, now)?;
-                }
+                // Rebuild both extraction and accounting from the fenced IDs
+                // under this transaction's policy, bodies, and partition facts.
+                // Preview plans are not authority after policy/body drift.
+                enqueue_partition_attempts_in_txn(
+                    self,
+                    wtxn,
+                    scope,
+                    &wake.planned_turn_ids,
+                    &current,
+                    None,
+                    now,
+                )?;
                 if let Some(advance_to) = wake.advance_watermark_to {
                     advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
                 }

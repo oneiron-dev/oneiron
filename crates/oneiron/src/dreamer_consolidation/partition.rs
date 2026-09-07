@@ -15,6 +15,9 @@ use super::watermark::{
 };
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
+use crate::dreamer_prefilter::{
+    prefilter_partition_input, prefilter_partition_input_in_txn, write_prefilter_receipts_in_txn,
+};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
@@ -161,6 +164,20 @@ fn decode_cursor(raw: &[u8]) -> Result<ConsolidationCursor> {
 /// body key → None (facet None = "channel gave no mask signal"; world None
 /// = base reality — the connector-level facet fallback applies at ingest
 /// time, where connectors stamp the body key).
+///
+/// The OF-361 statistical screen (ONE-1525) runs FIRST, over the whole input:
+/// the scan's GATE-10 role gate has already ruled on which turns MAY be
+/// extracted, and [`prefilter_partition_input`] rules on which of those are
+/// worth the budget. The order is not interchangeable — eligibility, then
+/// value. This API is a preview only. [`enqueue_partition_attempts`] rebuilds
+/// the plans and their screening receipts together in its write transaction;
+/// it takes the original pre-screen input rather than these lossy plans.
+///
+/// The screen NEVER reaches the selection authority: `dirty_turns` was chosen
+/// by the watermark scan, the caller's `planned_turn_ids` and watermark
+/// advance are taken from that same pre-screen list, and a skipped turn is
+/// therefore consumed by this round exactly as a kept one is. A screened-out
+/// turn loses its extraction, not its place in the log.
 pub fn plan_partitions(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -168,8 +185,9 @@ pub fn plan_partitions(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
+    let screened = prefilter_partition_input(vault, dirty_turns)?;
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
-    for turn in dirty_turns {
+    for turn in &screened.kept {
         let Some(conversation_ref) = turn.conversation else {
             // A turn without its structural conversation edge cannot be
             // partitioned; skip fail-closed rather than invent a partition.
@@ -200,6 +218,10 @@ pub fn plan_partitions(
 /// fallback chain (turn body key → conversation body key → None): only the read
 /// transaction differs, so an in-transaction plan and a committed-state plan of
 /// the same turns produce byte-identical partition keys.
+///
+/// The OF-361 screen composes the same way: same policy row, same pure
+/// arithmetic, only the read transaction differs, so the two twins keep or
+/// skip the same turns.
 pub(crate) fn plan_partitions_in_txn(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -208,8 +230,18 @@ pub(crate) fn plan_partitions_in_txn(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
+    let screened = prefilter_partition_input_in_txn(vault, txn, dirty_turns)?;
+    partition_screened_turns_in_txn(vault, txn, &screened.kept, watermark)
+}
+
+fn partition_screened_turns_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    kept: &[WorkingSetTurn],
+    watermark: &ConsolidationWatermark,
+) -> Result<Vec<ConsolidationPartitionPlan>> {
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
-    for turn in dirty_turns {
+    for turn in kept {
         let Some(conversation_ref) = turn.conversation else {
             // A turn without its structural conversation edge cannot be
             // partitioned; skip fail-closed rather than invent a partition.
@@ -282,51 +314,123 @@ fn partition_attempt_input(
     }
 }
 
-/// Enqueues one consolidation attempt per partition plan with the advisory
-/// dedupe key `hex(partition_hash):hex(partition_round_hash)` (idempotency
-/// floor — a re-run of the SAME planned batch coalesces, never locks). Two
-/// planners whose turn sets differ (superset or partial overlap) enqueue
-/// distinct attempts by design: re-consolidating the overlap is accepted
-/// best-effort cost, and coalescing them would drop a round's turns.
+/// Screens and enqueues a complete PRE-screen batch in one transaction, with
+/// its skip receipts and rollup. Pass the original scan, not turns flattened
+/// from [`plan_partitions`]: those preview plans have already lost the skips.
+/// Current rows and policy are read again inside this commit, so a preview is
+/// never authority for either extraction or its audit records.
+///
+/// The caller still owns watermark settlement. Exact partition-batch replays
+/// coalesce on advisory dedupe keys; overlapping batches remain distinct.
+/// Missing, malformed, or no-longer-admissible turn rows abort the whole round.
 pub fn enqueue_partition_attempts(
-    store: &DreamerRunnerStore<'_>,
+    vault: &Vault,
     scope: DreamerConsolidationScope,
-    plans: &[ConsolidationPartitionPlan],
+    dirty_turns: &[WorkingSetTurn],
+    watermark: &ConsolidationWatermark,
     run_id: &str,
     now: u64,
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
-    let mut outcomes = Vec::with_capacity(plans.len());
-    for plan in plans {
-        outcomes.push(store.enqueue_consolidation(partition_attempt_input(
+    let turn_ids: Vec<_> = dirty_turns.iter().map(|turn| turn.turn_id).collect();
+    vault.with_write_txn(|wtxn| {
+        enqueue_partition_attempts_in_txn(
+            vault,
+            wtxn,
             scope,
-            plan,
-            Some(run_id.to_owned()),
+            &turn_ids,
+            watermark,
+            Some(run_id),
             now,
-        ))?);
-    }
-    Ok(outcomes)
+        )
+    })
 }
 
-/// [`enqueue_partition_attempts`] inside a caller-owned write transaction —
-/// the ONE-1685 session close enqueues its SessionEnd → Meso round in the
-/// SAME transaction that stamps `ended_at`, so an attempt row exists exactly
-/// when the end committed.
+/// Transaction-composable form of [`enqueue_partition_attempts`]. Session close
+/// supplies its fence-matched PRE-screen IDs, not its stale preview plans.
 pub(crate) fn enqueue_partition_attempts_in_txn(
-    store: &DreamerRunnerStore<'_>,
+    vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
-    plans: &[ConsolidationPartitionPlan],
+    planned_turn_ids: &[EntityId],
+    watermark: &ConsolidationWatermark,
     run_id: Option<&str>,
     now: u64,
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
+    if planned_turn_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let turns = read_partition_turns_in_txn(vault, wtxn, planned_turn_ids)?;
+    if turns.iter().any(|turn| turn.conversation.is_none()) {
+        return Err(invalid_consolidation(
+            "dreamer planned turn has no conversation",
+        ));
+    }
+    let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
+    let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
+    let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
-    for plan in plans {
+    for plan in &plans {
         outcomes.push(store.enqueue_consolidation_in_txn(
             wtxn,
             partition_attempt_input(scope, plan, run_id.map(str::to_owned), now),
         )?);
     }
+    write_prefilter_receipts_in_txn(vault, wtxn, scope, &turns, &screen, now)?;
     Ok(outcomes)
+}
+
+/// Reconstructs complete planning input before any lossy commit. An unreadable
+/// text field can still pass unscored, but a missing/non-TURN row cannot stand
+/// in for a planned turn. Resolve roles and structural membership from this
+/// transaction, never from caller-supplied working-set metadata.
+pub(crate) fn read_partition_turns_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    turn_ids: &[EntityId],
+) -> Result<Vec<WorkingSetTurn>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut turns = Vec::with_capacity(turn_ids.len());
+    for turn_id in turn_ids {
+        if !seen.insert(*turn_id) {
+            return Err(invalid_consolidation("duplicate dreamer partition turn"));
+        }
+        let raw = vault
+            .get_raw_in(txn, turn_id)?
+            .ok_or(crate::error::Error::CorruptedIndex(
+                "dreamer planned turn is missing",
+            ))?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_TURN)
+            .ok_or(crate::error::Error::CorruptedIndex(
+                "dreamer planned turn header is invalid",
+            ))?;
+        let facts =
+            super::watermark::decode_turn_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+        let role = crate::dreamer_runner::dreamer_turn_role(facts.speaker.as_deref());
+        if !crate::dreamer_runner::dreamer_extraction_role_admissible(role) {
+            return Err(invalid_consolidation(
+                "dreamer planned turn is not admissible",
+            ));
+        }
+        let prefix = crate::vault::edge_kind_prefix(turn_id, crate::edge::EdgeKind::ChildOf);
+        let conversation = vault
+            .store
+            .edges_out
+            .prefix_iter(txn, &prefix)?
+            .next()
+            .transpose()?
+            .map(|(key, _)| {
+                crate::edge::parse_strict_edge_record_key(&key).map(|(_, _, target)| target)
+            })
+            .transpose()?;
+        turns.push(WorkingSetTurn {
+            turn_id: *turn_id,
+            role,
+            learned_at: header.learned_at,
+            conversation,
+        });
+    }
+    Ok(turns)
 }
 
 /// Registers ED-04's recurring-substitution miner (ONE-1760) for a sitting that
