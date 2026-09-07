@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
 use crate::attempt_queue::{
-    AttemptEvent, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
+    AttemptEvent, AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState,
     attempt_record_order,
 };
 use crate::consult_ladder::{A2aBaseTaskState, A2aTaskProjection, OneironA2aExtensions};
@@ -115,6 +115,73 @@ pub enum RunTreeRepair {
         attempt_id: String,
         parent_id: String,
     },
+}
+
+/// Why one rendered node is marked.
+///
+/// ONE-1887 overlay vocabulary, deliberately NOT a [`RunTreeStatus`] variant
+/// and not a second readiness axis: marking a failure is a view concern, so
+/// the shared attempt-lifecycle projection stays exactly as ONE-1795 left it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunTreeNodeMarkerKind {
+    Failing,
+}
+
+/// One typed marker naming a rendered node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTreeNodeMarker {
+    /// The same lowercase-hex spelling [`RunTreeNode::attempt_id`] carries.
+    pub attempt_id: String,
+    pub kind: RunTreeNodeMarkerKind,
+}
+
+/// An unchanged run tree plus the marker naming its failing node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTreeFailureDiagram {
+    pub tree: RunTree,
+    pub marker: RunTreeNodeMarker,
+}
+
+/// Marks the failing node of an already-rendered tree.
+///
+/// A PURE overlay: it walks `roots`/`children`, requires EXACTLY ONE matching
+/// node, and mutates nothing — every status, event, timestamp, and failure
+/// field is carried through untouched.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] when the tree does not contain exactly one node
+/// under `failing_attempt_id`.
+pub fn mark_run_tree_failure(
+    tree: RunTree,
+    failing_attempt_id: AttemptId,
+) -> Result<RunTreeFailureDiagram> {
+    let attempt_id = bytes_to_hex_lower(failing_attempt_id.as_bytes());
+    let (matched, failed) = count_marked_nodes(&tree.roots, &attempt_id);
+    if matched != 1 || !failed {
+        return Err(Error::InvalidConfig(format!(
+            "a run-tree failure marker must name exactly one rendered Failed node, found {matched}"
+        )));
+    }
+    Ok(RunTreeFailureDiagram {
+        tree,
+        marker: RunTreeNodeMarker {
+            attempt_id,
+            kind: RunTreeNodeMarkerKind::Failing,
+        },
+    })
+}
+
+fn count_marked_nodes(nodes: &[RunTreeNode], attempt_id: &str) -> (usize, bool) {
+    nodes.iter().fold((0, false), |(count, failed), node| {
+        let (children, failed_child) = count_marked_nodes(&node.children, attempt_id);
+        let matches = node.attempt_id == attempt_id;
+        (
+            count + usize::from(matches) + children,
+            failed || failed_child || (matches && node.status == RunTreeStatus::Failed),
+        )
+    })
 }
 
 /// Read adapter over the runtime attempt queue.

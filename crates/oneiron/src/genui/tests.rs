@@ -1,5 +1,7 @@
 use super::*;
 
+mod failure_integrity;
+
 fn receipt() -> ReceiptRecord {
     ReceiptRecord {
         receipt_id: "gate:abc".to_owned(),
@@ -566,4 +568,416 @@ fn calendar_scope_is_not_an_outbound_grant_scope() {
         rung: DisclosureRung::Slots,
     };
     assert!(StandingOutboundGrantScope::from_grant_mint_scope(&scope).is_err());
+}
+
+// ── ONE-1887 surfaced-failure card ──────────────────────────────────────────
+
+/// The witnessed message body the card must NEVER copy inline.
+const QA_MESSAGE_BODY: &str = "witnessed-qa-body";
+
+fn card_vault() -> (tempfile::TempDir, crate::Vault) {
+    crate::test_util::open_test_vault_with(crate::VaultConfig::device())
+}
+
+/// One terminally failed attempt plus the run tree that renders it.
+fn failed_run(vault: &crate::Vault) -> Result<(AttemptId, RunTree)> {
+    use crate::attempt_queue::{ClaimAttempt, ClaimOutcome, FailAttempt, FailOutcome};
+    use crate::dreamer_runner::{
+        DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+    };
+
+    let EnqueueDreamerAttemptOutcome::Enqueued(status) =
+        DreamerRunnerStore::new(vault).enqueue(EnqueueDreamerAttempt {
+            attempt_type: "failing.worker".to_owned(),
+            input: rmpv::Value::from("input"),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-card".to_owned()),
+            now: 10,
+        })?
+    else {
+        panic!("expected a fresh enqueue");
+    };
+    let queue = crate::AttemptQueue::new(vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "card-worker".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected a claim");
+    };
+    assert_eq!(claimed.id, status.attempt.id);
+    let FailOutcome::Failed(failed) = queue.fail(FailAttempt {
+        id: claimed.id,
+        lease_owner: "card-worker".to_owned(),
+        attempt_count: claimed.attempt_count,
+        reason: "detector.stable_code".to_owned(),
+        now: 30,
+    })?
+    else {
+        panic!("expected a terminal failure");
+    };
+    let tree = crate::run_tree::RunTreeAdapter::new(vault).read_run("run-card")?;
+    Ok((failed.id, tree))
+}
+
+fn put_container(vault: &crate::Vault, seed: u8, entity_type: u8) -> Result<EntityId> {
+    let id = crate::test_util::entity(seed);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(Vec::new()))
+        .expect("encode empty container map");
+    vault.put_entity(
+        &id,
+        entity_type,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        &body,
+    )?;
+    Ok(id)
+}
+
+fn put_actor(vault: &crate::Vault, seed: u8) -> Result<EntityId> {
+    let id = crate::test_util::entity(seed);
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"qa-actor",
+    )?;
+    Ok(id)
+}
+
+/// A witnessed MESSAGE inside `container`, optionally carrying an `AuthoredBy`
+/// edge. System-authored rows carry none by design.
+fn put_qa_message(
+    vault: &crate::Vault,
+    seed: u8,
+    container: EntityId,
+    author: Option<EntityId>,
+    occurred_at: u64,
+    order: u32,
+) -> Result<EntityId> {
+    let id = crate::test_util::entity(seed);
+    let body = crate::gate::canonical_witness_message_body_for_test(
+        "user",
+        "dialogue",
+        QA_MESSAGE_BODY,
+        true,
+        order,
+    )?;
+    vault
+        .batch()
+        .put_canonical_message_for_test(
+            &id,
+            crate::temporal::TimeRange {
+                start: occurred_at,
+                end: occurred_at,
+            },
+            occurred_at,
+            &body,
+        )
+        .commit()?;
+    vault.put_edge(&id, EdgeKind::PartOf, &container, 1.0)?;
+    if let Some(author) = author {
+        vault.put_edge(&id, EdgeKind::AuthoredBy, &author, 1.0)?;
+    }
+    Ok(id)
+}
+
+fn card_input(
+    failing_attempt_id: AttemptId,
+    tree: RunTree,
+    qa: HealerQaFeed,
+) -> SurfacedFailureCardInput {
+    SurfacedFailureCardInput {
+        failure_class: FailureClass::Permanent,
+        consecutive_transients: 0,
+        pathology: None,
+        retry_lineage_limit: crate::failure_ladder::DEFAULT_MAX_CONSECUTIVE_TRANSIENTS,
+        tree,
+        failing_attempt_id,
+        pre_fail_checkpoint_ref: crate::test_util::entity(0x75),
+        diagnosis: FailureDiagnosisState::ReservedHealerSlot,
+        blocked_reports: Vec::new(),
+        qa,
+    }
+}
+
+fn qa_entry(message_ref: EntityId, actor_ref: EntityId, occurred_at: u64) -> HealerQaEntryRef {
+    HealerQaEntryRef {
+        message_ref: message_ref.to_hex(),
+        actor_ref: actor_ref.to_hex(),
+        occurred_at,
+    }
+}
+
+#[test]
+fn surfaced_failure_card_carries_marked_tree_diagnosis_and_qa_refs() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let turn = put_container(&vault, 0x65, crate::registry::ENTITY_TYPE_TURN)?;
+    vault.put_edge(&turn, EdgeKind::ChildOf, &thread, 1.0)?;
+    let actor = put_actor(&vault, 0x66)?;
+    // Direct MESSAGE→thread membership, and the MESSAGE→TURN→CONVERSATION hop.
+    let direct = put_qa_message(&vault, 0x67, thread, Some(actor), 100, 0)?;
+    let nested = put_qa_message(&vault, 0x68, turn, Some(actor), 200, 1)?;
+
+    let card = surfaced_failure_card(
+        &vault,
+        card_input(
+            failing,
+            tree,
+            HealerQaFeed {
+                thread_ref: thread.to_hex(),
+                entries: vec![qa_entry(direct, actor, 100), qa_entry(nested, actor, 200)],
+            },
+        ),
+    )?;
+
+    assert_eq!(card.schema_version, SURFACED_FAILURE_CARD_SCHEMA_VERSION);
+    assert_eq!(card.diagram.marker.attempt_id, failing_hex(failing));
+    assert_eq!(
+        card.diagram.marker.kind,
+        crate::run_tree::RunTreeNodeMarkerKind::Failing
+    );
+    assert_eq!(card.diagnosis, FailureDiagnosisState::ReservedHealerSlot);
+    assert_eq!(card.failure_class, FailureClass::Permanent);
+    assert_eq!(card.qa.thread_ref, thread.to_hex());
+    assert_eq!(card.qa.entries.len(), 2, "both hop shapes are members");
+    assert_eq!(card.pathology, None);
+    Ok(())
+}
+
+fn failing_hex(id: AttemptId) -> String {
+    crate::entity_id::bytes_to_hex_lower(id.as_bytes())
+}
+
+#[test]
+fn surfaced_failure_card_orders_qa_entries_deterministically() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let actor = put_actor(&vault, 0x66)?;
+    // Two messages share an instant, so the message ref breaks the tie.
+    let later = put_qa_message(&vault, 0x67, thread, Some(actor), 300, 0)?;
+    let tied_high = put_qa_message(&vault, 0x69, thread, Some(actor), 100, 1)?;
+    let tied_low = put_qa_message(&vault, 0x68, thread, Some(actor), 100, 2)?;
+
+    let card = surfaced_failure_card(
+        &vault,
+        card_input(
+            failing,
+            tree,
+            HealerQaFeed {
+                thread_ref: thread.to_hex(),
+                entries: vec![
+                    qa_entry(later, actor, 300),
+                    qa_entry(tied_high, actor, 100),
+                    qa_entry(tied_low, actor, 100),
+                ],
+            },
+        ),
+    )?;
+
+    let ordered: Vec<&str> = card
+        .qa
+        .entries
+        .iter()
+        .map(|entry| entry.message_ref.as_str())
+        .collect();
+    assert_eq!(
+        ordered,
+        vec![
+            tied_low.to_hex().as_str(),
+            tied_high.to_hex().as_str(),
+            later.to_hex().as_str(),
+        ],
+        "entries order by (occurred_at, message_ref)"
+    );
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_rejects_message_ref_from_other_thread() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let turn = put_container(&vault, 0x65, crate::registry::ENTITY_TYPE_TURN)?;
+    let conversation = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let outer = put_container(&vault, 0x6b, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let foreign = put_container(&vault, 0x6a, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    vault.put_edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)?;
+    vault.put_edge(&conversation, EdgeKind::ChildOf, &outer, 1.0)?;
+    let actor = put_actor(&vault, 0x66)?;
+    // MESSAGE -> TURN -> CONVERSATION -> outer CONVERSATION.
+    let message = put_qa_message(&vault, 0x67, turn, Some(actor), 100, 0)?;
+
+    let card_for = |thread: EntityId| {
+        surfaced_failure_card(
+            &vault,
+            card_input(
+                failing,
+                tree.clone(),
+                HealerQaFeed {
+                    thread_ref: thread.to_hex(),
+                    entries: vec![qa_entry(message, actor, 100)],
+                },
+            ),
+        )
+    };
+
+    // An unrelated thread is not a member at any hop count.
+    assert_eq!(
+        card_for(foreign)
+            .expect_err("a message from another thread is not a member")
+            .kind(),
+        crate::ErrorKind::InvalidConfig
+    );
+    // Exactly two hops bind: MESSAGE -> TURN -> CONVERSATION.
+    assert!(card_for(conversation).is_ok());
+    // Three hops do not: the membership walk stops at two.
+    assert_eq!(
+        card_for(outer)
+            .expect_err("membership is bounded at two hops")
+            .kind(),
+        crate::ErrorKind::InvalidConfig
+    );
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_rejects_actor_or_timestamp_not_witnessed_by_message() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let actor = put_actor(&vault, 0x66)?;
+    let impostor = put_actor(&vault, 0x6c)?;
+    let message = put_qa_message(&vault, 0x67, thread, Some(actor), 100, 0)?;
+
+    for entry in [
+        qa_entry(message, impostor, 100),
+        qa_entry(message, actor, 101),
+    ] {
+        let error = surfaced_failure_card(
+            &vault,
+            card_input(
+                failing,
+                tree.clone(),
+                HealerQaFeed {
+                    thread_ref: thread.to_hex(),
+                    entries: vec![entry],
+                },
+            ),
+        )
+        .expect_err("author and instant must both be witnessed by the message");
+        assert_eq!(error.kind(), crate::ErrorKind::InvalidConfig);
+    }
+    Ok(())
+}
+
+#[test]
+fn system_authored_message_fails_card_validation() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let actor = put_actor(&vault, 0x66)?;
+    // System-authored rows carry no AuthoredBy edge by design.
+    let system = put_qa_message(&vault, 0x67, thread, None, 100, 0)?;
+
+    let error = surfaced_failure_card(
+        &vault,
+        card_input(
+            failing,
+            tree,
+            HealerQaFeed {
+                thread_ref: thread.to_hex(),
+                entries: vec![qa_entry(system, actor, 100)],
+            },
+        ),
+    )
+    .expect_err("an unwitnessed message cannot be attributed on a card");
+    assert_eq!(error.kind(), crate::ErrorKind::InvalidConfig);
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_refs_are_deterministic_and_domain_separated() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let feed = HealerQaFeed {
+        thread_ref: thread.to_hex(),
+        entries: Vec::new(),
+    };
+
+    let first = surfaced_failure_card(&vault, card_input(failing, tree.clone(), feed.clone()))?;
+    let second = surfaced_failure_card(&vault, card_input(failing, tree, feed))?;
+
+    assert_eq!(
+        first.card_ref, second.card_ref,
+        "correlation keys are stable"
+    );
+    assert_eq!(first.case_ref, second.case_ref);
+    assert_ne!(
+        first.card_ref, first.case_ref,
+        "the two domains keep the keys distinct for the same attempt"
+    );
+    // Re-derivable by any party from the failing attempt alone, with no store.
+    assert_eq!(first.card_ref, failure_card_ref(failing));
+    assert_eq!(first.case_ref, failure_case_ref(failing));
+    assert_eq!(first.card_ref.len(), 32);
+    Ok(())
+}
+
+#[test]
+fn reserved_healer_slot_is_not_rendered_as_not_run() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let feed = HealerQaFeed {
+        thread_ref: thread.to_hex(),
+        entries: Vec::new(),
+    };
+
+    let card = surfaced_failure_card(&vault, card_input(failing, tree, feed))?;
+
+    assert_eq!(card.diagnosis, FailureDiagnosisState::ReservedHealerSlot);
+    assert_ne!(card.diagnosis, FailureDiagnosisState::NotRun);
+    let wire = serde_json::to_string(&card.diagnosis).expect("diagnosis serializes");
+    assert_eq!(
+        wire, "\"reserved_healer_slot\"",
+        "a reserved slot is its own explicit token, not a generic failure string"
+    );
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_serialization_contains_no_inline_transcript() -> Result<()> {
+    let (_dir, vault) = card_vault();
+    let (failing, tree) = failed_run(&vault)?;
+    let thread = put_container(&vault, 0x64, crate::registry::ENTITY_TYPE_CONVERSATION)?;
+    let actor = put_actor(&vault, 0x66)?;
+    let message = put_qa_message(&vault, 0x67, thread, Some(actor), 100, 0)?;
+
+    let card = surfaced_failure_card(
+        &vault,
+        card_input(
+            failing,
+            tree,
+            HealerQaFeed {
+                thread_ref: thread.to_hex(),
+                entries: vec![qa_entry(message, actor, 100)],
+            },
+        ),
+    )?;
+    let wire = serde_json::to_string(&card).expect("card serializes");
+
+    // The card REFERENCES the witnessed MESSAGE; it never copies its body.
+    assert!(wire.contains(&message.to_hex()));
+    assert!(!wire.contains(QA_MESSAGE_BODY), "no inline transcript body");
+    assert!(!wire.contains("content"), "no transcript content field");
+    assert!(!wire.contains("prompt"), "no prompt copy");
+    assert!(!wire.contains("patch"), "no repair patch body");
+    Ok(())
 }
