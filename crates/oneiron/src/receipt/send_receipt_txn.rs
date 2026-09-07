@@ -51,7 +51,12 @@ pub(crate) fn persist_send_receipt_in_txn(
     if outcome == SendReceiptOutcome::Delivered
         && let Some((actor_ref, idempotency_key)) = delivered_idempotency
     {
-        store.put_delivered_send_idempotency_in_txn(wtxn, &actor_ref, idempotency_key, &task_ref)?;
+        store.put_delivered_send_idempotency_in_txn(
+            wtxn,
+            &actor_ref,
+            idempotency_key,
+            &task_ref,
+        )?;
     }
     Ok(true)
 }

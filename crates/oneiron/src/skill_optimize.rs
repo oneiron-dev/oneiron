@@ -29,7 +29,7 @@
 //!
 //! **One skill and at most one proposal per attempt**, by construction: the
 //! selector returns a ranking, this job reads its head. Per-cycle caps and the
-//! held-out strictly-improving accept gate live in the [`gate`] submodule
+//! held-out strictly-improving accept gate live in the `gate` submodule
 //! (ONE-1449); this job invokes neither, and cannot admit what it drafts.
 //!
 //! **This job is a DEV-VIEW-ONLY consumer, receipts and aggregates alike.**
@@ -46,7 +46,7 @@
 //!
 //! That import direction is half of ONE-1449's leakage rule (the other half is
 //! that the gate recomputes its own held-out view at accept time, so a leaky
-//! author still cannot choose which receipts score it) — see the [`gate`]
+//! author still cannot choose which receipts score it) — see the `gate`
 //! module header. It is a correctness convention, not a security boundary: a
 //! same-process reader can reach any receipt, and the threat being managed is
 //! overfitting drift, not an adversary.
@@ -221,7 +221,7 @@ pub const PROVENANCE_OPTIMIZE_ATTEMPT_KEY: &str = "attempt";
 /// Provenance key carrying the Dreamer CYCLE the proposal was drafted in.
 ///
 /// Stamped at BIRTH and immutable thereafter
-/// ([`gate::check_optimizer_admission_in_txn`]), because the per-cycle accept
+/// (`gate::check_optimizer_admission_in_txn`), because the per-cycle accept
 /// cap is counted against this label: a cycle identity recovered later from a
 /// prunable queue row would hand every proposal a private budget the moment the
 /// queue was trimmed, and a mutable one would let a relabelled proposal buy a

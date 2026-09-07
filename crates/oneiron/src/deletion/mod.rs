@@ -33,7 +33,10 @@ pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
-pub(crate) use tombstone::{LOCAL_HARD_DELETE_PREFIX, local_hard_delete_key};
+pub(crate) use tombstone::{
+    ARCHIVE_TOMBSTONE_PREFIX, LOCAL_HARD_DELETE_PREFIX, archive_tombstone_key,
+    entity_id_from_archive_tombstone_key, local_hard_delete_key,
+};
 // The `pt:` window vocabulary and the replay outcome are read by sync
 // production (`sync::window`, `sync::quarantine`, `sync::types`) and by the
 // white-box test modules that pin the base replay law; a plain no-feature

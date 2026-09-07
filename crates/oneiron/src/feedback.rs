@@ -69,7 +69,7 @@
 //! # Secret hygiene
 //!
 //! [`FeedbackConfigSnapshot`] is a whitelist projection of
-//! [`VaultConfig`](crate::config::VaultConfig): it copies a fixed list of
+//! [`VaultConfig`]: it copies a fixed list of
 //! non-secret tuning scalars and copies nothing else. Dictionary search roots,
 //! filesystem locations, environment values, connector credentials, custody
 //! references, payload bodies, hostnames, and account identifiers are all

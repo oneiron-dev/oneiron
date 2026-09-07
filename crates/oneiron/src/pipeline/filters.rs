@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_RELATIONSHIP};
 use crate::store::Store;
 
+use super::corpus_filter::pipeline_candidate_matches_corpus_filter;
 use super::support::intervals_overlap;
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PipelineFilterConfig, RelMode,
@@ -55,6 +56,9 @@ pub(super) fn claim_status_gate_allows(
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)? {
+        return Ok(false);
+    }
     // Entities without a parseable envelope are not a claim-status
     // decision; `apply_filters` drops them downstream exactly as before.
     let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
@@ -66,6 +70,12 @@ pub(super) fn claim_status_gate_allows(
 
     if let Some(decision) = gate.decisions.get(id) {
         return Ok(decision.is_some());
+    }
+
+    #[cfg(test)]
+    {
+        gate.body_loads += 1;
+        metadata_cache.claim_body_loads += 1;
     }
 
     // Read path allows reserved `edge.*` predicates so stored provenance
@@ -543,6 +553,20 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
 
     if !pipeline_candidate_matches_world_filter(store, rtxn, id, filters.world_scope)? {
+        return Ok(false);
+    }
+
+    // The audience scope, immediately after the epistemic one — the same
+    // order the post-fusion stages run in. It sits AFTER the claim status
+    // gate above, so the corpus predicate reuses its decoded body.
+    if !pipeline_candidate_matches_corpus_filter(
+        store,
+        rtxn,
+        id,
+        filters.corpus_scope,
+        metadata_cache,
+        claim_gate,
+    )? {
         return Ok(false);
     }
 
