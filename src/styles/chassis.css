@@ -602,3 +602,14 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
 *::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
 *::-webkit-scrollbar-thumb:hover { background: var(--silver-4); background-clip: padding-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── the rail picker (owner 09-08, html[data-picker="rail"]): the agents as
+   rows under `agents` — the Slack shape, one sidebar. Hidden otherwise. ── */
+.rail .agent-rows { display: none; }
+html[data-picker="rail"] .rail .agent-rows { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.rail .agent-rows a { padding-left: 8px; }
+.rail .agent-rows .face.mark { width: 16px; height: 16px; }
+.rail .agent-rows .rail-dash { display: block; width: 10px; height: 1px; background: var(--rule-strong); }
+.rail .agent-rows .txt.aname { color: var(--p-ink); }
+.rail .agent-rows .live-dot { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--silver-3); }
+html[data-picker="rail"] .rail .group:has(.agent-rows a.active) > a.agents-head.active { color: var(--silver-3); background: none; }
