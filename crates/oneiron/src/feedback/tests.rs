@@ -1339,30 +1339,44 @@ fn gate_outcomes_remain_authoritative() {
 
     let mut transport = RecordingTransport::default();
     let outcome = send_feedback(&vault, &preview, &context, &approval, &mut transport)
-        .expect("a denied dispatch is still an ordinary result");
+        .expect("a held dispatch is still an ordinary result");
 
+    // ONE-1752: approving the feedback bundle does not override the contact's
+    // opt-out. The default posture holds the send for a separate owner decision.
+    assert_eq!(outcome.dispatch.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(outcome.dispatch.gate_outcome, "pending");
     assert_eq!(
-        outcome.dispatch.outcome,
-        OutboundDispatchOutcome::Suppressed
+        outcome.dispatch.gate_reason_codes,
+        vec!["gate.pending.counterparty_opt_out".to_owned()]
     );
-    assert_eq!(outcome.dispatch.gate_outcome, "deny");
+    let receipt = &outcome.dispatch.receipt;
+    assert_eq!(receipt.outcome, "held");
+    for reason in [
+        "gate.pending.counterparty_opt_out",
+        "counterparty_opt_out_unsubscribe",
+    ] {
+        assert!(
+            receipt.policy_trace.iter().any(|code| code == reason),
+            "the opt-out hold retains its receipt reason: {reason}"
+        );
+    }
+    assert_eq!(
+        receipt.fields.get("hold_reason").map(String::as_str),
+        Some("gate.pending.counterparty_opt_out")
+    );
+    assert!(!receipt.fields.contains_key("suppression"));
+    assert!(!receipt.fields.contains_key("suppression_reason"));
     assert!(
-        outcome
-            .dispatch
-            .receipt
-            .policy_trace
-            .contains(&"gate.deny.counterparty_opt_out".to_owned()),
-        "the opt-out deny arm fired over a stored contact"
+        !receipt.fields.contains_key("intent_state"),
+        "the gate hold stops before dispatch ledger admission"
     );
     assert_eq!(outcome.transport_calls, 0);
     assert!(
         transport.payloads.is_empty(),
-        "a denied send charges no transport"
+        "a held send charges no transport"
     );
     assert!(
-        !outcome
-            .dispatch
-            .receipt
+        !receipt
             .fields
             .contains_key(FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST),
         "transport fields only exist when a transport ran"

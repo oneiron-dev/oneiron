@@ -72,12 +72,20 @@ fn write_dreamer_proposal(
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, time(1), 1, b"dreamer actor")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
     let envelope = dreamer_envelope(actor, run_id);
+    let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     let candidate = crate::write_envelope::ClaimCandidate::new(
         predicate,
         ClaimSubject::Entity(subject),
         Value::from(value),
         0.9,
-    );
+    )
+    .with_evidence(evidence);
     vault
         .batch()
         .claim_candidate(
@@ -185,14 +193,14 @@ fn review_dial_defaults_to_exceptions_only_and_round_trips() -> Result<()> {
 #[test]
 fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let run_id = "run-antevon-week";
+    let run_id = "run-weekly-review";
     let root = enqueue_dreamer_attempt(
         &vault,
         "orchestrator",
         None,
         Value::Map(vec![(
             Value::from("intent"),
-            Value::from("Your Antevon week"),
+            Value::from("Your weekly review"),
         )]),
         run_id,
         10,
@@ -236,7 +244,7 @@ fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
     assert_eq!(group.group_key, bytes_to_hex_lower(root.as_bytes()));
     assert_ne!(group.group_key, bytes_to_hex_lower(branch.as_bytes()));
     assert_eq!(group.run_id, run_id);
-    assert_eq!(group.headline, "Your Antevon week: 2 new claims");
+    assert_eq!(group.headline, "Your weekly review: 2 new claims");
     assert_eq!(group.created_at, 30);
     assert_eq!(group.members.len(), 2);
     assert_eq!(group.members[0].claim_id, entity(0x61).to_hex());
@@ -367,6 +375,13 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
         &[REASON_CEILING],
     )?;
 
+    let evidence = crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     vault
         .batch()
         .claim_candidate(
@@ -376,7 +391,8 @@ fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> R
                 ClaimSubject::Entity(subject),
                 Value::from("go"),
                 0.9,
-            ),
+            )
+            .with_evidence(evidence),
             &dreamer_envelope(actor, run_id),
             time(21),
             21,
