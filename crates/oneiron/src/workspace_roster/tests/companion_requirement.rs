@@ -42,7 +42,7 @@ fn missing_companion_is_rejected_before_any_effect_and_does_not_burn_the_intent(
         assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
         assert!(
             vault
-                .workspace_roster(&intent.workspace.workspace_ref)?
+                .workspace_roster(&intent.workspace.workspace_ref, AT)?
                 .is_empty()
         );
         let birth = intent
@@ -140,7 +140,7 @@ fn a_companion_cannot_be_reused_for_a_second_principal() -> Result<()> {
     assert!(read_journal(&vault, &onboarding_key(&second.onboarding_id))?.is_none());
     assert_eq!(
         vault
-            .workspace_roster(&first.workspace.workspace_ref)?
+            .workspace_roster(&first.workspace.workspace_ref, AT)?
             .len(),
         2
     );
@@ -195,7 +195,7 @@ fn stored_member_rows_cannot_silently_omit_companion_person_actor_or_facet() -> 
             _ => row.companion_facet_ref = None,
         }
         assert_eq!(
-            companion_entry(&vault, &intent.workspace, &row)
+            companion_entry(&vault, &intent.workspace, &row, AT)
                 .expect_err("missing companion is not an empty roster entry")
                 .kind(),
             ErrorKind::InvalidClaimBody

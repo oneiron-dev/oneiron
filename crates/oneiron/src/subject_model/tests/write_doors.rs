@@ -122,7 +122,7 @@ fn substrate_is_reserved_at_every_generic_claim_write_door() -> Result<()> {
         assert!(vault.get(&id)?.is_none(), "{door:?}");
         assert!(vault.claims_for_subject(&person)?.is_empty(), "{door:?}");
         assert!(vault.edges_out(&id)?.is_empty(), "{door:?}");
-        assert_eq!(person_substrate(&vault, &person)?, None);
+        assert_eq!(person_substrate(&vault, &person, 201)?, None);
     }
     Ok(())
 }
@@ -266,7 +266,7 @@ fn substrate_lifecycle_is_closed_to_generic_retract_supersede_and_demotion() -> 
     assert_eq!(vault.get(&old)?, before);
     assert_eq!(vault.get(&other)?, other_before);
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 201)?,
         Some(PersonSubstrate::Meat)
     );
     assert!(
@@ -278,7 +278,7 @@ fn substrate_lifecycle_is_closed_to_generic_retract_supersede_and_demotion() -> 
     // The owner door retains lifecycle rights after the generic refusals.
     set_person_substrate(&vault, person, PersonSubstrate::Model, writer(), 201)?;
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 201)?,
         Some(PersonSubstrate::Model)
     );
     Ok(())
@@ -314,12 +314,12 @@ fn substrate_replica_fixture_rematerializes_through_the_existing_reserved_door()
         .commit()?;
     assert_eq!(vault.get_claim(&id)?, Some(body));
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 201)?,
         Some(PersonSubstrate::Model)
     );
     set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 200)?;
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 201)?,
         Some(PersonSubstrate::Meat)
     );
     Ok(())

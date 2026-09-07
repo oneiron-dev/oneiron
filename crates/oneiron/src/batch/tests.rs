@@ -4527,6 +4527,13 @@ fn authority_log_first_seen_ignores_future_learned_at_metadata() -> Result<()> {
 #[test]
 fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    // Make wall/authority clock skew deterministic without sleeps. This local
+    // time is still past learned_at (2) + the 86_400-second widening delay.
+    let clock_domain = vault.store.authority_clock_domain;
+    assert_eq!(
+        crate::authority::authority_observation_secs_for_domain(clock_domain, 0, 1_000_000),
+        1_000_000
+    );
     let owner = authority_test_key(84);
     let genesis = authority_genesis_fixture(84);
     let vault_id = crate::authority::genesis_vault_id(&genesis)?;
@@ -4549,8 +4556,20 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
         Ok(())
     })?;
 
-    let observed_before = crate::unix_seconds_now();
+    // The authority clock is already anchored; deleting sidecars does not reset
+    // it. Bracket migration in that same clock domain, not raw wall time, which
+    // can cross a second before the anchor does.
+    let clock_key = crate::authority::authority_first_seen_clock_sync_key();
+    let previous_floor = authority_first_seen_for_test(&vault, clock_key)?
+        .expect("authority writes must persist the observation clock");
+    let observed_before = crate::authority::authority_observation_secs_for_domain(
+        clock_domain,
+        previous_floor,
+        crate::unix_seconds_now(),
+    );
     let backfilled_fold = vault.authority_fold()?;
+    let observed_after = authority_first_seen_for_test(&vault, clock_key)?
+        .expect("the fold must persist the observation clock");
     // fix-leg 4: the migration dates a legacy row at LOCAL OBSERVATION time, not
     // at the peer-written `learned_at` in its header. Trusting the header let a
     // sidecar-less `EnrollDevice` claiming `learned_at = 0` present as matured
@@ -4560,12 +4579,21 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
     let migrated = authority_first_seen_for_test(&vault, &enroll_sidecar)?
         .expect("migration must write a sidecar");
     assert!(
-        migrated >= observed_before,
-        "migrated first-seen must be the local observation ({migrated}), not learned_at (2)"
+        (observed_before..=observed_after).contains(&migrated),
+        "migrated first-seen ({migrated}) must be in the local observation interval \
+         {observed_before}..={observed_after}, not learned_at (2)"
     );
     assert!(
         backfilled_fold.pending_widens.contains_key(&enroll_hash),
         "an enrollment first observed at migration time is inside its delay"
+    );
+    assert_eq!(
+        backfilled_fold
+            .pending_widens
+            .get(&enroll_hash)
+            .and_then(|pending| pending.first_seen_at_secs),
+        Some(migrated),
+        "the fold must use the migrated local observation"
     );
     assert!(!backfilled_fold.roster.contains_key(&enroll_key));
 

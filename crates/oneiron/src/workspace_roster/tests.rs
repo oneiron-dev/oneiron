@@ -235,7 +235,7 @@ fn venture_name_is_runtime_data() -> Result<()> {
     for venture_name in ["Antevon", "Oneiron"] {
         let (_dir, vault, intent) = fixture(venture_name);
         vault.onboard_workspace_member(intent, &writer(WRITER))?;
-        let roster = vault.workspace_roster("antevon-slack")?;
+        let roster = vault.workspace_roster("antevon-slack", AT)?;
         let house = roster
             .iter()
             .find(|entry| entry.role == WorkspaceRosterRole::HouseMind)
@@ -308,7 +308,7 @@ fn companion_birth_is_full_person() -> Result<()> {
         Some(ENTITY_TYPE_PERSON)
     );
     assert_eq!(
-        person_substrate(&vault, &birth.person_ref)?,
+        person_substrate(&vault, &birth.person_ref, AT)?,
         Some(PersonSubstrate::Model)
     );
 
@@ -318,7 +318,7 @@ fn companion_birth_is_full_person() -> Result<()> {
         Some(ENTITY_TYPE_AGENT_DEF)
     );
     assert_eq!(
-        actor_subject_anchor(&vault, &birth.actor_ref)?,
+        actor_subject_anchor(&vault, &birth.actor_ref, AT)?,
         Some(birth.person_ref)
     );
 
@@ -360,7 +360,7 @@ fn companion_birth_is_full_person() -> Result<()> {
 
     // Done-means 8: the roster is the house mind PLUS this principal's named
     // companion, as separate rows.
-    let roster = vault.workspace_roster("antevon-slack")?;
+    let roster = vault.workspace_roster("antevon-slack", AT)?;
     assert_eq!(roster.len(), 2);
     let companion_row = &roster[1];
     assert_eq!(companion_row.role, WorkspaceRosterRole::PrincipalCompanion);
@@ -404,7 +404,7 @@ fn onboarding_replay_is_idempotent() -> Result<()> {
             type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
         ]
     );
-    assert_eq!(vault.workspace_roster("antevon-slack")?.len(), 2);
+    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
     Ok(())
 }
 
@@ -450,7 +450,7 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
     let resumed = vault.onboard_workspace_member(intent, &writer(WRITER))?;
     assert_eq!(resumed, expected_outcome);
     assert_eq!(census(&vault), expected_census);
-    assert_eq!(vault.workspace_roster("antevon-slack")?.len(), 2);
+    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
     Ok(())
 }
 
@@ -520,7 +520,7 @@ fn unprivileged_writer_rejected() -> Result<()> {
     assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
     assert_eq!(vault.get_entity_type(&entity(MEMBER_ACTOR))?, None);
     assert_eq!(vault.get_entity_type(&entity(MEMBER_GRANT))?, None);
-    assert!(vault.workspace_roster("antevon-slack")?.is_empty());
+    assert!(vault.workspace_roster("antevon-slack", AT)?.is_empty());
 
     // A member-grade grant is not an administrative one.
     seed_federation_grant(
@@ -605,7 +605,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     assert_eq!(outcome.person_ref, entity(0xB9));
 
     // Each principal has their own quiz-named companion beside the same house.
-    let roster = vault.workspace_roster("antevon-slack")?;
+    let roster = vault.workspace_roster("antevon-slack", AT)?;
     assert_eq!(roster.len(), 3);
     assert_eq!(roster[0].role, WorkspaceRosterRole::HouseMind);
     for (principal, birth) in [

@@ -741,12 +741,16 @@ impl Vault {
     ///
     /// An unknown `workspace_ref` is an empty roster, not an error — asking
     /// about a workspace nobody has onboarded into yet is a legal question.
-    pub fn workspace_roster(&self, workspace_ref: &str) -> Result<Vec<WorkspaceRosterEntry>> {
+    pub fn workspace_roster(
+        &self,
+        workspace_ref: &str,
+        at: u64,
+    ) -> Result<Vec<WorkspaceRosterEntry>> {
         let Some(preset) = read_preset(self, workspace_ref)? else {
             return Ok(Vec::new());
         };
 
-        let mut entries = vec![house_mind_entry(self, &preset)?];
+        let mut entries = vec![house_mind_entry(self, &preset, at)?];
         let mut prefix = roster_member_prefix(workspace_ref);
         prefix.push(ROSTER_KEY_SEPARATOR);
 
@@ -761,7 +765,7 @@ impl Vault {
         };
 
         for row in rows {
-            entries.push(companion_entry(self, &preset, &row)?);
+            entries.push(companion_entry(self, &preset, &row, at)?);
         }
         Ok(entries)
     }

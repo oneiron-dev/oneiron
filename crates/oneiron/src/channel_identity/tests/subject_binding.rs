@@ -1,5 +1,13 @@
 use super::*;
 
+fn subject_owner(vault: &Vault) -> Result<crate::write_envelope::WriteActor> {
+    let owner = seed_entity(vault, entity(0xE0), crate::registry::ENTITY_TYPE_PERSON);
+    let writer = crate::write_envelope::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
+    // Signed genesis and a live owner binding, not an Agent capability exemption.
+    crate::subject_model::tests::authorization::root_owner(vault, writer, 0xE0)?;
+    Ok(writer)
+}
+
 /// An identity bound to an actor anchored to a PERSON round-trips, mask and
 /// all. The binding names the ACTOR; the person is reached through the actor's
 /// subject anchor, never stored on the identity.
@@ -14,7 +22,7 @@ fn actor_person_round_trip() -> Result<()> {
         &vault,
         actor,
         person,
-        crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
+        subject_owner(&vault)?,
         1_800_000_000,
     )?;
 
@@ -29,8 +37,13 @@ fn actor_person_round_trip() -> Result<()> {
     assert_eq!(stored.binding, identity.binding);
     assert_eq!(stored.binding.actor_ref(), Some(actor));
     assert_eq!(stored.binding.facet_ref(), Some(facet));
+    // Binding is unchanged, but the anchor is absent before its occurrence.
     assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &actor)?,
+        crate::subject_model::actor_subject_anchor(&vault, &actor, 1_799_999_999)?,
+        None
+    );
+    assert_eq!(
+        crate::subject_model::actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
         Some(person)
     );
     Ok(())
@@ -48,7 +61,7 @@ fn actor_org_round_trip() -> Result<()> {
         &vault,
         actor,
         org,
-        crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
+        subject_owner(&vault)?,
         1_800_000_000,
     )?;
 
@@ -63,12 +76,12 @@ fn actor_org_round_trip() -> Result<()> {
     assert_eq!(stored.binding, ChannelIdentityBinding::actor(actor));
     assert_eq!(stored.binding.facet_ref(), None);
     assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &org)?,
+        crate::subject_model::actor_subject_anchor(&vault, &org, 1_800_000_000)?,
         None,
         "the anchor hangs off the actor, not the org"
     );
     assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &actor)?,
+        crate::subject_model::actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
         Some(org)
     );
     Ok(())

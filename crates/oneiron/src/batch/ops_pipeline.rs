@@ -1024,7 +1024,13 @@ pub(crate) fn apply_ops_session(
                 // trading a claim that cannot land for one that cannot be
                 // written, which is the same divergence facing the other way.
                 if *entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                    crate::claim::validate_claim_body_and_decode(data, *allow_reserved_predicate)?;
+                    let body = crate::claim::validate_claim_body_and_decode(
+                        data,
+                        *allow_reserved_predicate,
+                    )?;
+                    crate::subject_model::validate_person_substrate_claim_in_session(
+                        view, wtxn, &body,
+                    )?;
                 }
                 if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
                     // The overlay is a write target, not a weaker MESSAGE

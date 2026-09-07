@@ -40,14 +40,14 @@ fn unauthorized_substrate_writes_preserve_absence_and_existing_history() -> Resu
                 history
             );
             assert_eq!(
-                person_substrate(&vault, &person)?,
+                person_substrate(&vault, &person, 103)?,
                 existing.then_some(PersonSubstrate::Meat)
             );
         }
     }
     set_person_substrate(&vault, person, PersonSubstrate::Model, writer(), 102)?;
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 103)?,
         Some(PersonSubstrate::Model)
     );
     Ok(())
@@ -94,7 +94,7 @@ fn substrate_write_observes_revocation_committed_after_preflight() -> Result<()>
     );
     assert_eq!(vault.get_claim(&claim)?, before);
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 103)?,
         Some(PersonSubstrate::Meat)
     );
     assert_eq!(vault.claims_for_subject(&person)?.len(), 1);
@@ -121,7 +121,7 @@ fn unrooted_substrate_uses_canonical_human_owner_semantics() -> Result<()> {
     );
     set_person_substrate(&vault, person, PersonSubstrate::Model, writer(), 101)?;
     assert_eq!(
-        person_substrate(&vault, &person)?,
+        person_substrate(&vault, &person, 103)?,
         Some(PersonSubstrate::Model)
     );
     Ok(())
