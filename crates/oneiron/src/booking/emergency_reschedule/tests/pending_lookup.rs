@@ -56,7 +56,11 @@ fn reconstruct_pending_payload(
             bytes,
             admitted.created_ms,
         ),
-        admitted.idempotency_supported,
+        // Reach payload verification rather than the outcome-free,
+        // non-idempotent Pending abandonment path. Reconstructing email/send
+        // clears its DefiniteNonDelivery retry permit; this is synthetic
+        // storage corruption, not a change to the connector's retry contract.
+        true,
         admitted.budget_accounting.clone(),
     )
     .unwrap();
@@ -162,23 +166,27 @@ fn malformed_emergency_recovery_bytes_never_reach_transport() {
             missing.as_object_mut().unwrap().remove(field);
             malformed.push(serde_json::to_vec(&missing).unwrap());
         }
-        for bytes in malformed {
+        for (case, bytes) in malformed.into_iter().enumerate() {
             let corrupt = reconstruct_pending_payload(&vault, &pending, bytes);
             let before = (meta(&vault), entities(&vault));
             let mut transport = FrozenSpy::default();
-            assert!(matches!(
-                execute_outbound_effect(
-                    &vault,
-                    &authority,
-                    OutboundEffectCommand::Resume(corrupt.id),
-                    NOW + 2,
-                    &mut transport,
+            let result = execute_outbound_effect(
+                &vault,
+                &authority,
+                OutboundEffectCommand::Resume(corrupt.id),
+                NOW + 2,
+                &mut transport,
+            );
+            assert!(transport.0.is_empty(), "{lane} case {case}");
+            assert!(
+                matches!(
+                    &result,
+                    Err(IntentLedgerError::InvalidInput(
+                        "emergency effect authority or revision is no longer current"
+                    ))
                 ),
-                Err(IntentLedgerError::InvalidInput(
-                    "emergency effect authority or revision is no longer current"
-                ))
-            ));
-            assert!(transport.0.is_empty());
+                "{lane} case {case}: {result:?}"
+            );
             assert_eq!(
                 read_intent_record(&vault, &corrupt.id).unwrap().unwrap(),
                 corrupt
