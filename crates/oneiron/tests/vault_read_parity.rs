@@ -174,6 +174,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_claim_learned_at(1_780_000_000)
+    }
+
+    fn with_claim_learned_at(claim_learned_at: u64) -> Self {
         let dir = tempfile::tempdir().expect("temporary vault");
         let mut config = VaultConfig::device();
         config.dimensions = SEED_VECTOR.len();
@@ -202,7 +206,7 @@ impl Fixture {
                 &admitted_id,
                 &claim(subject, ADMITTED_TEXT, ClaimApprovalStatus::Auto),
                 occurred,
-                occurred.start,
+                claim_learned_at,
             )
             .expect("admitted claim");
         vault
@@ -212,7 +216,7 @@ impl Fixture {
                 // vault, and the scoped read lane refuses it.
                 &claim(subject, DENIED_TEXT, ClaimApprovalStatus::Proposed),
                 occurred,
-                occurred.start,
+                claim_learned_at,
             )
             .expect("denied claim");
         vault
@@ -333,9 +337,8 @@ fn timeline_request(id: &EntityId) -> CoreMemoryTimelineRequest {
     }
 }
 
-/// `query_time_us` measures elapsed wall-clock time, not content: it is the one
-/// field two runs of the same read cannot agree on. Both sides are normalized
-/// identically before byte comparison; every other field is compared as-is.
+/// Normalize elapsed query time only. Time-dependent scores need a stable
+/// fixture input; they and every other field remain byte-compared as-is.
 fn normalize_pack(response: &mut CoreContextPackResponse) {
     response.0.stats.query_time_us = 0;
 }
@@ -376,7 +379,13 @@ fn normalized_error(error: &VaultReadError) -> String {
 
 #[test]
 fn structured_success_parity() {
-    let fixture = Fixture::new();
+    // Each adapter call samples its own scoring second. `profile.note` has a
+    // 90-day access half-life, so even adjacent seconds can differ by two f32
+    // ULPs. The adapter has no `with_temporal_now` door. Use the public claim
+    // write's learned-at input instead: u64::MAX makes saturating age zero at
+    // every representable clock, pinning the access factor to exactly 1.0.
+    // Keep occurrence times, bodies, scope gates and all response checks intact.
+    let fixture = Fixture::with_claim_learned_at(u64::MAX);
     let in_process = fixture.in_process();
     let wire = fixture.wire();
 
@@ -398,6 +407,20 @@ fn structured_success_parity() {
     normalize_pack(&mut direct);
     normalize_pack(&mut through_wire);
     assert_eq!(encode(&direct), encode(&through_wire));
+    assert_eq!(
+        direct.0.results.len(),
+        1,
+        "score parity must not be vacuous"
+    );
+    assert_eq!(direct.0.results[0].id, fixture.admitted_id.to_hex());
+    assert_eq!(direct.0.results[0].score, 1.0, "fixture decay is neutral");
+
+    // Load-bearing guard: normalization must never erase even a one-ULP score
+    // mismatch. The fixture fixes the input; the response oracle stays exact.
+    let mut changed_score = through_wire.clone();
+    changed_score.0.results[0].score = f32::from_bits(1.0_f32.to_bits() - 1);
+    normalize_pack(&mut changed_score);
+    assert_ne!(encode(&direct), encode(&changed_score));
     assert_eq!(
         fixture.transport.ops(),
         vec![VaultReadWireOp::CoreContextPack]
