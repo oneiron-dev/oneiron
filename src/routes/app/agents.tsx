@@ -3,6 +3,8 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChanLine, ChanLinkedin, ChanMail, ChanSlack, Chevron, IconSettings } from '~/components/safelight/icons'
 import { cue, markCued, openChat, useDocumentEvent, useEscape } from '~/components/safelight/hooks'
 import { SelTools, selWithin, useSelTools } from '~/components/safelight/SelTools'
+import { searchEmoji } from '~/components/safelight/emoji'
+import { createPortal } from 'react-dom'
 import agentsCss from '~/styles/agents.css?url'
 
 /* ══ Agents · THE ROOM (owner 09-07) ══
@@ -557,8 +559,11 @@ function Agents() {
   const [alsoRoom, setAlsoRoom] = React.useState(false)
   /* the message a strip travelled to lights up for a beat */
   const [lit, setLit] = React.useState<string | null>(null)
-  /* the glyph row open on one message */
+  /* the glyph row open on one message; `+` opens the search (a fixed card
+     off the chip, portaled so the thread's scroll box never clips it) */
   const [picking, setPicking] = React.useState<string | null>(null)
+  const [emoji, setEmoji] = React.useState<{ q: string; x: number; y: number; up: boolean } | null>(null)
+  const emojiRef = React.useRef<HTMLInputElement>(null)
   const roomRef = React.useRef<HTMLElement>(null)
   const tinputRef = React.useRef<HTMLInputElement>(null)
   const { sel, raise: raiseSel, clear: clearSel } = useSelTools(roomRef, { min: 2 })
@@ -655,6 +660,11 @@ function Agents() {
       el.blur()
       return
     }
+    if (picking) {
+      setPicking(null)
+      setEmoji(null)
+      return
+    }
     if (amenuOpen) {
       setAmenuOpen(false)
       return
@@ -673,6 +683,10 @@ function Agents() {
   useDocumentEvent('click', (e) => {
     const t = e.target as HTMLElement | null
     if (!t?.closest('.agent-chip') && !t?.closest('.amenu')) setAmenuOpen(false)
+    if (!t?.closest('.rtier') && !t?.closest('.rsearch')) {
+      setPicking(null)
+      setEmoji(null)
+    }
   })
 
   const stamp = (id: string, section: string) => {
@@ -729,6 +743,7 @@ function Agents() {
     }
     setThreads((t) => ({ ...t, [room]: (t[room] ?? []).map((m) => ({ ...flip(m), replies: m.replies?.map(flip) })) }))
     setPicking(null)
+    setEmoji(null)
     cue('press')
   }
 
@@ -960,18 +975,26 @@ function Agents() {
     }
     const n = m.replies?.length ?? 0
     return (
-      <div key={m.id} data-id={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && head ? 'head' : '', lit === m.id ? 'lit' : ''].filter(Boolean).join(' ')}>
+      <div key={m.id} data-id={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && head ? 'head' : '', lit === m.id ? 'lit' : '', picking === m.id ? 'picking' : ''].filter(Boolean).join(' ')}>
         {house ? (
           <span className="rwho">
             {head && mine ? (
-              <span className="rme" title="you">
-                you
-              </span>
+              <>
+                <span className="rme" title="you">
+                  you
+                </span>
+                <span className="rat" title={`${m.at} · today`}>
+                  {m.at}
+                </span>
+              </>
             ) : head ? (
               <>
                 <Face c={who?.creature ?? 'none'} size={20} alt={who?.fixture?.creature.alt} />
                 <span className="aname" data-agent={m.who} title={NAMES[m.who as AgentKey]}>
                   {NAMES[m.who as AgentKey]}
+                </span>
+                <span className="rat" title={`${m.at} · today`}>
+                  {m.at}
                 </span>
               </>
             ) : null}
@@ -1028,6 +1051,23 @@ function Agents() {
                       {g}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className="plus"
+                    title="more · search every emoji by name"
+                    aria-label="search emoji"
+                    onClick={(e) => {
+                      markCued(e)
+                      const r = (e.currentTarget.closest('.rtier') as HTMLElement | null)?.getBoundingClientRect()
+                      if (!r) return
+                      const up = r.bottom + 240 > innerHeight
+                      setEmoji({ q: '', x: r.right, y: up ? r.top - 6 : r.bottom + 6, up })
+                      setTimeout(() => emojiRef.current?.focus(), 0)
+                      cue('toggle')
+                    }}
+                  >
+                    +
+                  </button>
                 </span>
               ) : null}
               <button type="button" className="gact" title="react · a glyph on this message" aria-label="react" aria-expanded={picking === m.id} onClick={(e) => { markCued(e); setPicking((p) => (p === m.id ? null : m.id)); cue('toggle') }}>
@@ -1045,6 +1085,43 @@ function Agents() {
           ) : null}
         </span>
       </div>
+    )
+  }
+
+  /* the emoji search: a fixed card off the chip; Enter takes the first hit */
+  const renderEmojiSearch = () => {
+    if (!emoji || !picking) return null
+    const id = picking
+    const hits = searchEmoji(emoji.q)
+    return createPortal(
+      <span
+        className={emoji.up ? 'rsearch up' : 'rsearch'}
+        role="dialog"
+        aria-label="search emoji"
+        style={emoji.up ? { left: emoji.x, bottom: innerHeight - emoji.y } : { left: emoji.x, top: emoji.y }}
+      >
+        <input
+          ref={emojiRef}
+          className="rs-in"
+          type="text"
+          placeholder="search emoji"
+          aria-label="search emoji"
+          value={emoji.q}
+          onChange={(e) => setEmoji((x) => (x ? { ...x, q: e.target.value } : x))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && hits[0]) toggleReact(id, hits[0][0])
+          }}
+        />
+        <span className="rs-grid">
+          {hits.map(([g, name]) => (
+            <button key={g} type="button" title={name} onClick={(e) => { markCued(e); toggleReact(id, g) }}>
+              {g}
+            </button>
+          ))}
+          {hits.length === 0 ? <span className="rs-none">nothing by that name</span> : null}
+        </span>
+      </span>,
+      document.body,
     )
   }
 
@@ -1951,6 +2028,7 @@ function Agents() {
             {layer === 'thread' ? renderLine() : null}
             </div>
             {(isHouse || current?.fixture) && layer === 'thread' ? (openThread ? renderThread() : renderPane()) : null}
+            {renderEmojiSearch()}
             {sel && selMsg ? (
               <SelTools sel={sel}>
                 <a className="act" href="#" title="answer these words · the pointer carries the message and the span" onClick={quoteSel}>
