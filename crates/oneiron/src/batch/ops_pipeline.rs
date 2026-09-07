@@ -318,6 +318,41 @@ pub(crate) fn apply_ops_with_gate_mode(
     )
 }
 
+/// Consumes only the next exact binding, then validates its current authority.
+fn consume_claim_materialization(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim_materializations: &mut VecDeque<ClaimMaterialization>,
+    op: &BatchOp,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<Option<ClaimMaterialization>> {
+    if claim_materializations
+        .front()
+        .is_some_and(|binding| binding.matches_op(op))
+    {
+        let binding = claim_materializations
+            .pop_front()
+            .expect("matched front binding");
+        binding.validate_actor(store, txn)?;
+        reject_overlay_member_base_write(store, &binding.envelope().actor().entity_ref(), origin)?;
+        Ok(Some(binding))
+    } else if !claim_materializations.is_empty()
+        && matches!(
+            op,
+            BatchOp::Put {
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                ..
+            }
+        )
+    {
+        Err(Error::InvalidClaimBody(
+            "claim materialization operation mismatch",
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Applies a batch under an explicit [`BaseWriteOrigin`].
 ///
 /// The K4 taint guard runs INSIDE this transaction, at the point where each op
@@ -343,6 +378,12 @@ pub(crate) fn apply_ops_with_origin(
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
+    let mut claim_materializations = gate_mode.claim_materializations;
+    if claim_gate_prechecked && !claim_materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "owner-bound materialization cannot skip the gate",
+        ));
+    }
     let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
     let staged_claim_gate = gate_mode.staged_claim_gate;
 
@@ -393,6 +434,8 @@ pub(crate) fn apply_ops_with_origin(
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
         check_decode_point_taint_guard(store, &op, origin)?;
+        let materialization =
+            consume_claim_materialization(store, &*wtxn, &mut claim_materializations, &op, origin)?;
         match op {
             BatchOp::Put {
                 id,
@@ -479,7 +522,7 @@ pub(crate) fn apply_ops_with_origin(
                     hub_sync_imported,
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
-                    None,
+                    materialization.as_ref().map(ClaimMaterialization::envelope),
                     false,
                     record_gate_decisions,
                     persist_gate_pending_consent,
@@ -492,6 +535,13 @@ pub(crate) fn apply_ops_with_origin(
                     Some(&companion_retired_histories),
                     origin,
                 )?;
+                if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                    if materialization.is_some() && !allow_reserved_predicate {
+                        claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                    } else {
+                        claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
+                    }
+                }
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
                 let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
@@ -613,6 +663,9 @@ pub(crate) fn apply_ops_with_origin(
                     preflight_decision_id
                         .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                 )?;
+                if !internal_lexical_query_hint {
+                    claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                }
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
                 }
@@ -777,6 +830,7 @@ pub(crate) fn apply_ops_with_origin(
                 reject_engine_authored_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
+                claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
                     store.let_go_pending_gate_consent_in_txn(
                         wtxn,
@@ -839,6 +893,11 @@ pub(crate) fn apply_ops_with_origin(
         }
     }
 
+    if !claim_materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "unconsumed claim materialization envelope",
+        ));
+    }
     if preflight_gate_decision_ids
         .values()
         .any(|ids| !ids.is_empty())

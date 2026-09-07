@@ -164,7 +164,7 @@ pub(crate) fn apply_staged_claim_gate_in_txn(
         body,
         actor_ref.as_deref(),
         policy,
-        envelope_lineage_requires_auto_permit(envelope),
+        envelope.map(WriteEnvelope::lineage),
     )
 }
 

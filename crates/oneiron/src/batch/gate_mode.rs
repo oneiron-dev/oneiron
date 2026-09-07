@@ -2,14 +2,15 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::entity_id::EntityId;
 
-use super::StagedClaimGateOutcome;
+use super::{ClaimMaterialization, StagedClaimGateOutcome};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct ApplyOpsGateMode {
     pub(super) record_decisions: bool,
     pub(super) persist_pending_consent: bool,
     pub(super) include_source_in_gate_input: bool,
     pub(super) claim_gate_prechecked: bool,
+    pub(super) claim_materializations: VecDeque<ClaimMaterialization>,
     pub(super) preflight_gate_decision_ids:
         HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
     /// ONE-1453: the gate verdicts this transaction's preflight already
@@ -27,9 +28,18 @@ impl ApplyOpsGateMode {
             persist_pending_consent,
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
+            claim_materializations: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
             staged_claim_gate: None,
         }
+    }
+
+    pub(super) fn with_claim_materializations(
+        mut self,
+        bindings: Vec<ClaimMaterialization>,
+    ) -> Self {
+        self.claim_materializations = bindings.into();
+        self
     }
 
     pub(crate) fn with_source_in_gate_input(mut self) -> Self {

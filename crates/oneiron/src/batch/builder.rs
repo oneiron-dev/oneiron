@@ -46,7 +46,7 @@ pub(crate) enum BatchOp {
         allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
         /// every public path; crate-private owner doors (including
-        /// [`TxnBatchBuilder::put_reserved_claim`] and the Vault skill-claim
+        /// owner-controlled claim puts and the Vault skill-claim
         /// door) plus sync replay set it.
         allow_reserved_predicate: bool,
         /// Narrow ONE-1736 inlet for an imported SKILL body accepted by the
@@ -781,6 +781,10 @@ impl<'a> BatchBuilder<'a> {
     /// transaction, so a later validation failure cannot leave an orphan
     /// receipt behind.
     ///
+    /// Approved bound Dreamer consents then run canonical VAD consolidation
+    /// after commit. A population error is returned with the batch retained;
+    /// retry [`Vault::consolidate_claim_vad`] on the approved member ids.
+    ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
@@ -849,6 +853,9 @@ impl<'a> BatchBuilder<'a> {
         // retained unchanged for post-commit metric emission.
         let staged_claim_gate = staged_claim_gate_outcomes(&staged_gate_decisions);
 
+        let pending_vad_ids =
+            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
+
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
@@ -865,9 +872,19 @@ impl<'a> BatchBuilder<'a> {
                 .with_staged_claim_gate(staged_claim_gate),
         )?;
         after_apply(&mut wtxn)?;
+        let approved_vad_ids = self
+            .vault
+            .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
             decision.record_metrics();
+        }
+        // The canonical wrapper starts a separate write transaction. Never run
+        // it during apply or preflight, and never turn a population error into
+        // success merely because the approval is already durable.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.vault.consolidate_claim_vad_now(&id, now)?;
         }
         Ok(())
     }

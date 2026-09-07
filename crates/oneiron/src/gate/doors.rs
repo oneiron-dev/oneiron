@@ -27,7 +27,9 @@ use crate::store::{
     checker_hold_receipt_reason,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope};
+use crate::write_envelope::{
+    SourceLineage, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope,
+};
 use breaker_staging::GateBreakerAccounting;
 pub(super) use breaker_staging::check_claim_policy_for_write_with_owner_bundle_replay;
 pub(crate) use breaker_staging::{
@@ -194,11 +196,10 @@ fn check_claim_policy_for_write_with_record_inner(
         validate_write_envelope(envelope)?;
     }
 
-    // ONE-1314: the write's OWN history, read once here and consulted by both
-    // auto-permit decisions this door makes (the evaluator's source-trust
-    // pend below, and the ceiling check at the end). An envelope-less local
-    // write has no history to read and keeps its exact prior verdict.
-    let lineage_requires_auto_permit = envelope_lineage_requires_auto_permit(envelope);
+    // Preserve the write's member identities for both source-trust checks:
+    // the evaluator below and the final Auto ceiling check. No member's
+    // permit can answer for a different member of the observed history.
+    let lineage = envelope.map(WriteEnvelope::lineage);
 
     // GATE-12: Dreamer authorship is detected exactly once, here, and the
     // provenance handle carries it into the evaluator input below. Pre-commit
@@ -270,7 +271,11 @@ fn check_claim_policy_for_write_with_record_inner(
             actor,
             GateContentKind::Claim,
             provenance,
-            mode.include_source_in_gate_input,
+            // Restricted lineage also needs the declared source's normal
+            // check and candidate sensitivity, even for non-Auto public writes.
+            // This boolean controls input shape, not permit authorization.
+            mode.include_source_in_gate_input
+                || envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit),
             agent_definition_ceiling,
             // Claim bodies carry no effect-fact axes the consent evaluator
             // could classify honestly; this door keeps its pre-DEC-0006
@@ -283,7 +288,7 @@ fn check_claim_policy_for_write_with_record_inner(
         // Deny aborts the caller's batch op before any claim-side write lands.
         let mut decision = match precommit_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
-            None => policy.evaluate_gate_with_lineage(&input, lineage_requires_auto_permit),
+            None => policy.evaluate_gate_with_lineage(&input, lineage),
         };
         // GATE-13: persona-core and mirroring-prone predicates are isolated
         // for the DREAMER path only, and only AFTER the validity pass above.
@@ -338,6 +343,8 @@ fn check_claim_policy_for_write_with_record_inner(
         // the inbox classifies on.
         //
         // ONE-1314 widens this source check to source OR lineage.
+        // This only selects a checker consult; authorization still checks
+        // each restricted lineage member's own permit above and below.
         let mut checker_receipt_reasons: Vec<String> = Vec::new();
         if decision.outcome() == GateOutcome::Allow
             && !attach_critical_confirm
@@ -345,7 +352,8 @@ fn check_claim_policy_for_write_with_record_inner(
             && policy.auto_checker().is_some()
             && let Some(checker) = auto_checker
             && let Some(source) = body.source.filter(|source| {
-                source.requires_explicit_auto_permit() || lineage_requires_auto_permit
+                source.requires_explicit_auto_permit()
+                    || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
         {
             let value_preview = auto_check_value_preview(&body.value);
@@ -353,6 +361,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 predicate: &body.predicate,
                 value_preview: &value_preview,
                 source,
+                lineage,
                 actor_class: &input.actor.actor_class,
                 sensitivity_band: claim_sensitivity_band(body),
             };
@@ -557,12 +566,7 @@ fn check_claim_policy_for_write_with_record_inner(
     }
 
     let actor_ref = write_envelope_actor_ref(envelope);
-    check_claim_source_trust(
-        body,
-        actor_ref.as_deref(),
-        policy,
-        lineage_requires_auto_permit,
-    )
+    check_claim_source_trust(body, actor_ref.as_deref(), policy, lineage)
 }
 
 /// The bounded claim-value prefix an auto-check candidate carries (ONE-1296).
@@ -586,13 +590,6 @@ fn auto_check_value_preview(value: &Value) -> String {
 /// never rides an actor-bound permit.
 fn write_envelope_actor_ref(envelope: Option<&WriteEnvelope>) -> Option<String> {
     envelope.map(|envelope| envelope.actor().entity_ref().to_hex())
-}
-
-/// ONE-1314: whether the write's observed lineage requires an explicit auto
-/// permit. An envelope-less write declares no history, so it answers `false`
-/// and keeps the pre-lineage verdict exactly.
-fn envelope_lineage_requires_auto_permit(envelope: Option<&WriteEnvelope>) -> bool {
-    envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,7 +626,7 @@ pub(crate) fn check_reserved_claim_policy(
         body,
         actor_ref.as_deref(),
         policy,
-        envelope_lineage_requires_auto_permit(envelope),
+        envelope.map(WriteEnvelope::lineage),
     )
 }
 
@@ -868,7 +865,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
     let actor_ref = record.actor_entity_ref.to_hex();
     // Edge-provenance claims arrive with no write envelope, so there is no
     // observed lineage to read: declared-source only, exactly as before.
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, None)
 }
 
 // The claim-door assembler takes the full axis tuple one call site at a time
