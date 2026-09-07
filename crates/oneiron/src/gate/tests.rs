@@ -15550,7 +15550,7 @@ mod auto_checker {
         rewrite_policy_manifest_entries(&mut data, |entries| {
             entries.retain(|(key, _)| key.as_str() != Some(POLICY_SOURCE_TRUST_KEY));
             if let Some(actor) = permit_actor {
-                let mut permit = source_trust_entry(ClaimSource::Observed, 0);
+                let mut permit = source_trust_entry(ClaimSource::ToolOutput, 0);
                 let Value::Map(sources) = &mut permit.1 else {
                     panic!("source-trust fixture is a map");
                 };
