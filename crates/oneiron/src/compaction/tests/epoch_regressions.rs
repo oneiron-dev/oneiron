@@ -424,6 +424,9 @@ fn malformed_epoch_candidates(body: &EpochSummaryBody) -> Vec<Vec<u8>> {
     for (key, value) in [
         ("v", Value::from(999)),
         ("epoch", Value::from("not an integer")),
+        ("turn_start", Value::from(-1)),
+        ("turn_end", Value::from("not an integer")),
+        ("level", Value::Nil),
         ("text", Value::from(" ")),
         ("actor", Value::from("not an entity ref")),
     ] {
@@ -435,9 +438,22 @@ fn malformed_epoch_candidates(body: &EpochSummaryBody) -> Vec<Vec<u8>> {
             .1 = value;
         cases.push(encode(damaged));
     }
-    let mut missing = entries.clone();
-    missing.retain(|(key, _)| key.as_str() != Some("epoch"));
-    cases.push(encode(missing));
+    for missing_key in EPOCH_SUMMARY_BODY_KEYS {
+        if missing_key == "session" {
+            continue;
+        }
+        let mut missing = entries.clone();
+        missing.retain(|(key, _)| key.as_str() != Some(missing_key));
+        cases.push(encode(missing));
+    }
+    let mut non_string = entries.clone();
+    non_string.push((Value::from(99), Value::Nil));
+    cases.push(encode(non_string));
+    // The strict codec accepts any key order, so recognition must too.
+    let mut reordered = entries.clone();
+    reordered.reverse();
+    reordered.push(reordered[0].clone());
+    cases.push(encode(reordered));
     let mut unknown = entries.clone();
     unknown.push((Value::from("unknown"), Value::from(true)));
     cases.push(encode(unknown));
@@ -450,7 +466,21 @@ fn malformed_epoch_candidates(body: &EpochSummaryBody) -> Vec<Vec<u8>> {
     let mut trailing = encoded.clone();
     trailing.push(0xc0);
     cases.push(trailing);
-    // The pinned session/epoch prefix survives a truncated actor value.
+    // Identity survives a missing or undecodable suffix after the range.
+    for prefix_len in 5..8 {
+        let mut prefix = encode(entries[..prefix_len].to_vec());
+        prefix[0] = 0x88;
+        cases.push(prefix.clone());
+        prefix.push(0xc1); // Reserved MessagePack marker, not a valid key.
+        cases.push(prefix);
+    }
+    // A readable turn_end key completes identity even if its value is lost.
+    let mut bad_range_value = encode(entries[..4].to_vec());
+    bad_range_value[0] = 0x88;
+    rmpv::encode::write_value(&mut bad_range_value, &Value::from("turn_end")).expect("encode key");
+    bad_range_value.push(0xc1);
+    cases.push(bad_range_value);
+    // The pinned identity also survives a truncated actor value.
     let truncated = encoded[..encoded.len() - 1].to_vec();
     cases.push(truncated.clone());
     // MessagePack admits map16/map32 headers even for eight entries.
@@ -524,6 +554,117 @@ fn identifiable_malformed_epochs_refuse_request_and_mint_without_writes() -> Res
                 CompactionDirective::Begin { .. }
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_partial_epoch_fields_do_not_block_request_or_mint() -> Result<()> {
+    use rmpv::Value;
+
+    for at_mint in [false, true] {
+        let (_dir, vault) = open_vault();
+        let session = mint_session(&vault, 10);
+        let actor = loom_actor(&vault, 0x60);
+        let mut prior = sample_body();
+        prior.session = session.to_hex();
+        prior.actor = actor.entity_ref().to_hex();
+        put_epoch_fixture(&vault, 0x21, &prior)?;
+        let window = host_window(&vault, 0x80, prior.turn_end + 1, 2);
+        let mut driver = engine_driver(1_000);
+        driver.evaluate_now(&vault, u64::MAX)?;
+        let request = if at_mint {
+            Some(driver.request_for(&vault, &session, window.clone())?)
+        } else {
+            None
+        };
+
+        let encode = |entries| {
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("ordinary summary");
+            bytes
+        };
+        let base = vec![
+            (
+                Value::from("session"),
+                Value::from(session.to_hex().to_uppercase()),
+            ),
+            (Value::from("v"), Value::from(EPOCH_SUMMARY_BODY_VERSION)),
+            (Value::from("level"), Value::from(0)),
+            (
+                Value::from("text"),
+                Value::from("ordinary application summary"),
+            ),
+            (
+                Value::from("actor"),
+                Value::from(actor.entity_ref().to_hex()),
+            ),
+        ];
+        let lineage = ["epoch", "turn_start", "turn_end"];
+        let mut bodies = Vec::new();
+        for key in lineage {
+            // Even all common body fields plus ONE lineage key are ordinary.
+            let field = (Value::from(key), Value::from(999));
+            let mut entries = base.clone();
+            entries.push(field.clone());
+            bodies.push(encode(entries.clone()));
+            let mut nested = entries.clone();
+            nested.push((
+                Value::from("payload"),
+                Value::Map(
+                    lineage
+                        .iter()
+                        .map(|key| (Value::from(*key), Value::from(999)))
+                        .collect(),
+                ),
+            ));
+            bodies.push(encode(nested));
+            entries.extend([field.clone(), field]);
+            bodies.push(encode(entries));
+        }
+        // Two lineage keys without the remaining pinned schema are also
+        // ordinary partial fields, not proof of a damaged epoch body.
+        for omitted in lineage {
+            let mut entries = vec![base[0].clone(), base[3].clone()];
+            for key in lineage {
+                if key != omitted {
+                    entries.push((Value::from(key), Value::from(999)));
+                }
+            }
+            bodies.push(encode(entries));
+        }
+        // A range without the codec or the remaining body keys is not enough.
+        let mut unversioned = vec![base[0].clone(), base[3].clone()];
+        unversioned.extend(
+            lineage
+                .iter()
+                .map(|key| (Value::from(*key), Value::from(999))),
+        );
+        bodies.push(encode(unversioned));
+        for (index, bytes) in bodies.iter().enumerate() {
+            vault.put_entity(
+                &entity(0x30 + u8::try_from(index).expect("small fixture")),
+                ENTITY_TYPE_SUMMARY,
+                TimeRange { start: 1, end: 1 },
+                1,
+                bytes,
+            )?;
+        }
+        let request = match request {
+            Some(request) => request,
+            None => driver.request_for(&vault, &session, window)?,
+        };
+        assert_eq!(request.turn_start, prior.turn_end + 1);
+        let product = driver.backend().compact(&request)?;
+        let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
+        assert_eq!(plan.epoch, prior.epoch + 1);
+        assert_eq!(summary_row_count(&vault), bodies.len() + 2);
+        assert_eq!(stored_summary_body(&vault, &entity(0x21)), prior);
+        for (index, bytes) in bodies.iter().enumerate() {
+            let id = entity(0x30 + u8::try_from(index).expect("small fixture"));
+            assert_eq!(vault.get(&id)?.expect("ordinary row retained"), *bytes);
+        }
+        assert!(!driver.is_compacting());
     }
     Ok(())
 }

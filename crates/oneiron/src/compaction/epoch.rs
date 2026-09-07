@@ -232,10 +232,11 @@ fn epoch_summary_hex_ref(value: &Value) -> Result<String> {
 
 /// Recognizes a session's epoch-shaped map even when strict decoding fails.
 ///
-/// Only top-level epoch/range keys distinguish it from an ordinary SUMMARY.
-/// Read pairs in order so a damaged suffix cannot hide an already identified
-/// session and epoch key. Bytes that lose that identity are not attributable
-/// to a session; this is not a heuristic search through arbitrary payloads.
+/// Identity requires the pinned version/session/epoch/turn-range keys, or
+/// the full pinned key set with just one key missing. A lone shared application
+/// field is not epoch identity. Read top-level keys in order so a damaged
+/// suffix cannot hide identity already read. Apart from the session match,
+/// strict decoding owns value validation; the codec permits any key order.
 fn is_epoch_candidate_for_session(bytes: &[u8], session_ref: &EntityId) -> bool {
     let (pairs, mut cursor) = match bytes {
         [marker @ 0x80..=0x8f, rest @ ..] => (u32::from(*marker & 0x0f), rest),
@@ -244,15 +245,17 @@ fn is_epoch_candidate_for_session(bytes: &[u8], session_ref: &EntityId) -> bool 
         _ => return false,
     };
     let mut matching_session = false;
-    let mut epoch_shaped = false;
+    let mut seen = [false; EPOCH_SUMMARY_BODY_KEYS.len()];
     for _ in 0..pairs {
         let Ok(key) = rmpv::decode::read_value(&mut cursor) else {
             break;
         };
-        epoch_shaped |= matches!(
-            key.as_str(),
-            Some(KEY_EPOCH_EPOCH | KEY_EPOCH_TURN_START | KEY_EPOCH_TURN_END)
-        );
+        if let Some(index) = EPOCH_SUMMARY_BODY_KEYS
+            .iter()
+            .position(|known| Some(*known) == key.as_str())
+        {
+            seen[index] = true;
+        }
         let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
             break;
         };
@@ -262,11 +265,12 @@ fn is_epoch_candidate_for_session(bytes: &[u8], session_ref: &EntityId) -> bool 
                 .and_then(|text| EntityId::from_hex(text).ok())
                 .is_some_and(|id| id == *session_ref);
         }
-        if matching_session && epoch_shaped {
-            return true;
-        }
     }
-    matching_session && epoch_shaped
+    // The first five pinned keys carry codec, session and lineage identity.
+    // Count distinct keys, not occurrences: duplicates cannot supply identity.
+    let identity_keys = seen[..5].iter().all(|&present| present);
+    let one_missing_key = seen.iter().filter(|&&present| !present).count() == 1;
+    matching_session && (identity_keys || one_missing_key)
 }
 
 /// One durable prior epoch of a session.
