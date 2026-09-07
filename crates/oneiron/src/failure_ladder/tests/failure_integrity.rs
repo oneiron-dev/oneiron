@@ -137,6 +137,96 @@ fn pathology_card_input(
 }
 
 #[test]
+fn public_card_transient_count_matches_stored_retry_ordinal() -> Result<()> {
+    for (retries, expected) in [
+        (
+            1,
+            RetryOrdinal::BelowLimit(NonZeroU16::new(2).expect("two")),
+        ),
+        (2, RetryOrdinal::AtLimit(DEFAULT_MAX_CONSECUTIVE_TRANSIENTS)),
+    ] {
+        let (_dir, vault) = open_vault();
+        let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+        let policy = auto_policy(agent_ref);
+        let limit = policy.max_consecutive_transients;
+        let rows = transient_chain(&vault, agent_ref, &policy, retries)?;
+        let current = rows.last().expect("stored retry chain");
+        assert_eq!(current.attempt_count, 1, "lease count is not retry depth");
+        // Terminalize through the existing ladder. The public card door also
+        // permits Transient below the limit, provided its ordinal is exact.
+        let outcome = FailureLadder::new(&vault)
+            .handle_attempt_failure(failure_input(current, indeterminate(), 60), policy)?;
+        let mut input = pathology_card_input(&vault, human_surface(&outcome), limit)?;
+        input.failure_class = FailureClass::Transient;
+        let before = AttemptQueue::new(&vault).list()?;
+        assert_eq!(retry_lineage_ordinal(&vault, current.id, limit)?, expected);
+        let ordinal = match expected {
+            RetryOrdinal::BelowLimit(ordinal) | RetryOrdinal::AtLimit(ordinal) => ordinal.get(),
+            RetryOrdinal::Pathology(_) => panic!("intact fixture lineage"),
+        };
+        for count in [0, 1, 2, 3, 4, u16::MAX] {
+            let mut changed = input.clone();
+            changed.consecutive_transients = count;
+            let result = surfaced_failure_card(&vault, changed);
+            if count == ordinal {
+                let card = result?;
+                assert_eq!(card.failure_class, FailureClass::Transient);
+                assert_eq!(card.consecutive_transients, ordinal);
+                assert_eq!(card.pathology, None);
+                assert_eq!(card.diagram.tree, input.tree);
+            } else {
+                assert!(
+                    matches!(result, Err(Error::InvalidConfig(_))),
+                    "stored ordinal {ordinal} must reject count {count}"
+                );
+            }
+        }
+        assert_eq!(AttemptQueue::new(&vault).list()?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn public_card_transient_count_stops_at_caller_lineage_bound() -> Result<()> {
+    for bound in [1, 3] {
+        let (_dir, vault) = open_vault();
+        let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+        // Build four real retry rows with headroom, then hide an ancestor
+        // beyond the bound. Neither the ladder nor the card may probe it.
+        let build_policy = policy_with(agent_ref, 4, FailureEscalationMode::Auto);
+        let rows = transient_chain(&vault, agent_ref, &build_policy, 3)?;
+        delete_attempt_record(&vault, rows[0].id)?;
+        let policy = policy_with(agent_ref, bound, FailureEscalationMode::Human);
+        let limit = policy.max_consecutive_transients;
+        let outcome = FailureLadder::new(&vault)
+            .handle_attempt_failure(failure_input(&rows[3], transient(), 60), policy)?;
+        let surface = human_surface(&outcome);
+        assert_eq!(surface.failure_class, FailureClass::Transient);
+        assert_eq!(surface.consecutive_transients, bound);
+        assert_eq!(surface.pathology, None);
+        let input = pathology_card_input(&vault, surface, limit)?;
+        let before = AttemptQueue::new(&vault).list()?;
+        let card = surfaced_failure_card(&vault, input.clone())?;
+        assert_eq!(card.consecutive_transients, bound);
+        assert_eq!(card.pathology, None);
+        assert_eq!(card.diagram.tree, input.tree);
+        for count in [0, 2, 4, u16::MAX] {
+            let mut changed = input.clone();
+            changed.consecutive_transients = count;
+            assert!(
+                matches!(
+                    surfaced_failure_card(&vault, changed),
+                    Err(Error::InvalidConfig(_))
+                ),
+                "bound {bound} must reject count {count}"
+            );
+        }
+        assert_eq!(AttemptQueue::new(&vault).list()?, before);
+    }
+    Ok(())
+}
+
+#[test]
 fn public_card_rejects_fabricated_pathology_and_missing_failing_row() -> Result<()> {
     let (_dir, vault) = open_vault();
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;

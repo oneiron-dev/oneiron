@@ -21,8 +21,8 @@ use crate::{
     edge::EdgeKind,
     entity_id::EntityId,
     failure_ladder::{
-        BlockedReportRef, FailureClass, HealerRepairRoute, RetryLineagePathology, failure_card_ref,
-        failure_case_ref,
+        BlockedReportRef, FailureClass, HealerRepairRoute, RetryLineagePathology, RetryOrdinal,
+        failure_card_ref, failure_case_ref,
     },
     lens::{
         ButtonControl, CollectionAtom, GeneratedLens, LensAtom, LensAtomId, LensNode, LensText,
@@ -1616,7 +1616,7 @@ pub struct SurfacedFailureCardInput {
     pub failure_class: FailureClass,
     pub consecutive_transients: u16,
     pub pathology: Option<RetryLineagePathology>,
-    /// Caller-trusted policy bound for validating the complete optional pathology.
+    /// Caller-trusted policy bound for validating the ordinal and complete optional pathology.
     /// Must equal the max_consecutive_transients supplied to the failure ladder.
     /// No stored policy authority exists here to verify the caller's chosen bound.
     pub retry_lineage_limit: NonZeroU16,
@@ -1634,9 +1634,10 @@ pub struct SurfacedFailureCardInput {
 ///
 /// `card_ref`/`case_ref` are MINTED here from `failing_attempt_id` through the
 /// pinned domain-separated derivation — never accepted as free caller strings.
-/// The complete optional pathology must match the bounded stored lineage;
-/// a present pathology also requires Ambiguous + zero transients. The caller
-/// must supply the same policy bound used by the ladder, including for `None`.
+/// The transient count and complete optional pathology must match the same
+/// bounded stored lineage; a present pathology also requires Ambiguous + zero
+/// transients. The caller must supply the same policy bound used by the ladder,
+/// including for `None`.
 ///
 /// # Errors
 ///
@@ -1644,7 +1645,8 @@ pub struct SurfacedFailureCardInput {
 /// node, when a ref is not hex, when a `message_ref` does not resolve to a live
 /// MESSAGE, when membership or authorship does not hold, when `occurred_at`
 /// disagrees with the message's `occurred_start`, when a permanent/ambiguous
-/// failure carries a nonzero transient count, when the failing attempt is missing,
+/// failure carries a nonzero transient count, when a transient count differs from
+/// the bounded ordinal, when the failing attempt is missing,
 /// when the optional pathology does not match the bounded lineage, when a present
 /// pathology does not carry the Ambiguous class, or when a diagnosed repair has
 /// noncanonical refs or mismatched agent/pre-fail checkpoint bindings.
@@ -1668,12 +1670,26 @@ pub fn surfaced_failure_card(
             "pathology failure cards require Ambiguous and zero consecutive_transients".to_owned(),
         ));
     }
-    let actual = crate::failure_ladder::retry_lineage_pathology(
+    let walk = crate::failure_ladder::retry_lineage_ordinal(
         vault,
         input.failing_attempt_id,
         input.retry_lineage_limit,
     )?;
-    if actual != input.pathology {
+    let actual_pathology = match walk {
+        RetryOrdinal::BelowLimit(ordinal) | RetryOrdinal::AtLimit(ordinal) => {
+            if input.failure_class == FailureClass::Transient
+                && input.consecutive_transients != ordinal.get()
+            {
+                return Err(Error::InvalidConfig(
+                    "transient failure card consecutive_transients must match the bounded retry ordinal"
+                        .to_owned(),
+                ));
+            }
+            None
+        }
+        RetryOrdinal::Pathology(pathology) => Some(pathology),
+    };
+    if actual_pathology != input.pathology {
         return Err(Error::InvalidConfig(
             "failure card pathology must match the bounded retry lineage".to_owned(),
         ));
