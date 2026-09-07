@@ -119,3 +119,108 @@ fn raw_controls_and_literal_escape_text_keep_distinct_addresses() -> Result<()> 
     }
     Ok(())
 }
+
+/// Escaping is TOTAL, so it is injective: a RAW control scalar and the literal
+/// text of its escape are two different findings and must not be able to
+/// collide on one stored body and one content-addressed id. A passthrough for
+/// already-escaped-looking input is exactly how they would collide, so there
+/// is none.
+#[test]
+fn raw_control_and_literal_escape_text_do_not_collide() {
+    let detector = "test.stub_detector";
+
+    let mut raw_tab = sample_event();
+    raw_tab.untrusted_detail = Some("a\tb".to_owned());
+    let mut escape_text = sample_event();
+    // The eight literal characters `\u{0009}`, not a tab.
+    escape_text.untrusted_detail = Some("a\\u{0009}b".to_owned());
+
+    let tab_body = encode_diagnostic_event_body(&raw_tab).expect("raw tab encodes");
+    let text_body = encode_diagnostic_event_body(&escape_text).expect("escape text encodes");
+    assert_ne!(tab_body, text_body, "distinct inputs, distinct bodies");
+    assert_ne!(
+        diagnostic_event_id(detector, &tab_body),
+        diagnostic_event_id(detector, &text_body),
+        "distinct bodies, distinct event ids"
+    );
+
+    // Both are canonical, and each round-trips back to the leaf it names: the
+    // tab is escaped, and the input that already looked escaped has its
+    // backslash escaped instead of being waved through.
+    for (body, expected) in [(&tab_body, "a\\u{0009}b"), (&text_body, "a\\\\u{0009}b")] {
+        validate_diagnostic_event_body_bytes(body).expect("canonical body is accepted");
+        let decoded = decode_diagnostic_event_body(body).expect("body decodes");
+        assert_eq!(decoded.untrusted_detail.as_deref(), Some(expected));
+        assert_eq!(
+            encode_stored_diagnostic_event_body(&decoded).expect("stored re-encode"),
+            *body,
+            "the stored leaf is terminal"
+        );
+    }
+}
+
+/// A content address has to pin BYTES, not just values: the write door
+/// re-encodes what it decoded and demands byte equality, so a body that means
+/// the right thing in the wrong spelling — re-ordered keys, a wider
+/// MessagePack marker than the value needs, an uppercase ref — is refused
+/// instead of being stored as a second byte string for one event.
+#[test]
+fn non_canonical_spellings_are_refused() {
+    let canonical = encode_diagnostic_event_body(&sample_event()).expect("sample encodes");
+    validate_diagnostic_event_body_bytes(&canonical).expect("the canonical body is accepted");
+
+    // 1. Re-ordered keys: the same 17 pairs, spelled in a different order.
+    let mut entries = body_entries(&canonical);
+    entries.swap(0, 1);
+    let reordered = encode_entries(entries);
+    assert_ne!(reordered, canonical, "the fixture really is re-ordered");
+    assert_rejected(&reordered, "re-ordered body keys");
+    assert_eq!(
+        validate_diagnostic_event_body_bytes(&reordered)
+            .expect_err("re-ordered keys must be refused")
+            .kind(),
+        ErrorKind::InvalidDiagnosticBody
+    );
+
+    // 2. An alternate wire marker: `schema_version`'s 1 written as a uint8
+    // (0xCC 0x01) instead of the positive fixint it canonically is. This
+    // decodes to the same value, so only the byte-equality gate catches it.
+    let mut key_bytes = Vec::new();
+    rmpv::encode::write_value(&mut key_bytes, &Value::from("schema_version")).expect("key encodes");
+    let at = canonical
+        .windows(key_bytes.len())
+        .position(|window| window == key_bytes)
+        .expect("the schema_version key is present")
+        + key_bytes.len();
+    assert_eq!(canonical[at], 0x01, "1 is canonically a positive fixint");
+    let mut wide_marker = canonical[..at].to_vec();
+    wide_marker.extend_from_slice(&[0xCC, 0x01]);
+    wide_marker.extend_from_slice(&canonical[at + 1..]);
+    assert_ne!(wide_marker, canonical, "the fixture really is re-marked");
+    decode_diagnostic_event_body(&wide_marker).expect("a marker alias still decodes");
+    assert_eq!(
+        validate_diagnostic_event_body_bytes(&wide_marker)
+            .expect_err("an alternate wire marker must be refused")
+            .kind(),
+        ErrorKind::InvalidDiagnosticBody
+    );
+
+    // 3. Uppercase refs: `EntityId::from_hex` is case-insensitive, so decode
+    // pins the lowercase spelling itself rather than leaning on the gate.
+    // Seed 0xAB, so the hex actually carries letters to upcase.
+    let lettered = seed_id(0xAB).to_hex();
+    let shouted = lettered.to_uppercase();
+    assert_ne!(lettered, shouted, "the fixture ref really has letters");
+
+    let mut entries = body_entries(&canonical);
+    set_key(&mut entries, "actor_ref", Value::from(shouted.clone()));
+    assert_rejected(&encode_entries(entries), "an uppercase actor ref");
+
+    let mut entries = body_entries(&canonical);
+    set_key(
+        &mut entries,
+        "evidence_refs",
+        Value::Array(vec![Value::from(shouted)]),
+    );
+    assert_rejected(&encode_entries(entries), "an uppercase evidence ref");
+}

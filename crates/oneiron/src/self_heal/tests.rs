@@ -17,6 +17,7 @@ use crate::registry::{
     ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone,
     entity_type_registry_entry,
 };
+use crate::store::Store;
 use crate::test_util::open_test_vault_with;
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -124,6 +125,13 @@ fn type_census(vault: &Vault) -> Result<BTreeMap<u8, usize>> {
         }
     }
     Ok(census)
+}
+
+fn stored_header(vault: &Vault, id: &EntityId) -> Result<EntityMetadataHeader> {
+    let raw = vault.get_raw(id)?.expect("diagnostic entity is stored");
+    let header = EntityMetadataHeader::parse(&raw).expect("entity header parses");
+    assert_eq!(header.entity_type, ENTITY_TYPE_DIAGNOSTIC);
+    Ok(header)
 }
 
 fn body_entries(bytes: &[u8]) -> Vec<(Value, Value)> {
@@ -404,6 +412,78 @@ fn maintenance_door_validates_the_body() {
     assert!(vault.get(&seed_id(6)).expect("read").is_none());
 }
 
+/// An event that is STILL valid is written as an open interval, not as an
+/// instant. `valid_to = None` means "has not ended", so it indexes to the
+/// repo's open-ended `u64::MAX`; collapsing it to `[valid_from, valid_from]`
+/// made every still-open failure invisible to a temporal read anchored after
+/// the moment it was noticed, which is every read of it. A closed event keeps
+/// its declared end.
+#[test]
+fn open_validity_indexes_as_an_open_interval() -> Result<()> {
+    let (_dir, vault) = open_vault();
+
+    let mut open = sample_event();
+    open.valid_to = None;
+    let open_id = diagnostic_event_id(&open.detector_id, &encode_diagnostic_event_body(&open)?);
+    vault.emit_diagnostic_event(&open_id, &open)?;
+
+    let closed = sample_event();
+    let closed_end = closed.valid_to.expect("the sample event is closed");
+    let closed_id =
+        diagnostic_event_id(&closed.detector_id, &encode_diagnostic_event_body(&closed)?);
+    vault.emit_diagnostic_event(&closed_id, &closed)?;
+
+    let open_header = stored_header(&vault, &open_id)?;
+    assert_eq!(open_header.occurred_start, open.valid_from);
+    assert_eq!(
+        open_header.occurred_end,
+        u64::MAX,
+        "an absent valid_to means still valid, not valid for an instant"
+    );
+
+    let closed_header = stored_header(&vault, &closed_id)?;
+    assert_eq!(closed_header.occurred_start, closed.valid_from);
+    assert_eq!(
+        closed_header.occurred_end, closed_end,
+        "a closed event is unchanged"
+    );
+
+    // `pipeline::channels` picks up a spanning interval when the row's end is
+    // beyond the query window and its start is before it. Take a window that
+    // opens a day AFTER valid_from: the open event satisfies both halves and
+    // is found, which is precisely the read the point spelling missed.
+    let window_start = open.valid_from + 86_400;
+    let window_end = window_start + 86_400;
+    let open_end = open_header.occurred_end;
+    assert!(
+        open_header.occurred_start < window_start && open_end > window_end,
+        "an open event must span a window that opens after valid_from"
+    );
+
+    let rtxn = vault.store.env.read_txn()?;
+    let open_key = Store::encode_temporal_key(open_end, &open_id);
+    assert_eq!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &open_key)?
+            .as_deref(),
+        Some(&open.valid_from.to_be_bytes()[..]),
+        "the open event must be indexed as a spanning interval"
+    );
+
+    let closed_key = Store::encode_temporal_key(closed_end, &closed_id);
+    assert!(
+        vault
+            .store
+            .temporal_long_intervals
+            .get(&rtxn, &closed_key)?
+            .is_none(),
+        "a 60-second closed event is not a spanning interval"
+    );
+    Ok(())
+}
+
 // ── 5. decode fails closed ──────────────────────────────────────────────────
 
 /// Done-means 5/6: decode rejects unknown, missing and duplicate body keys,
@@ -510,7 +590,10 @@ fn diagnostic_body_decode_fail_closed() {
     assert_rejected(&[0xC0], "a nil body");
 }
 
-/// A stored leaf is terminal: its internal re-encode must keep the content address.
+/// The untrusted leaf is escaped ONCE, at the raw author door, and is TERMINAL
+/// once stored: decode hands it back escaped and the stored door re-encodes it
+/// without touching it, so a stored diagnostic keeps its content address
+/// across a read/write round trip.
 #[test]
 fn stored_untrusted_leaf_is_terminal() {
     let mut event = sample_event();
@@ -518,7 +601,8 @@ fn stored_untrusted_leaf_is_terminal() {
     let once = encode_diagnostic_event_body(&event).expect("first encode");
     let decoded = decode_diagnostic_event_body(&once).expect("first decode");
     let twice = encode_stored_diagnostic_event_body(&decoded).expect("stored re-encode");
-    assert_eq!(once, twice, "the stored body must be a fixed point");
+    assert_eq!(once, twice, "the canonical body is a fixed point");
+    validate_diagnostic_event_body_bytes(&once).expect("the canonical body is accepted");
 
     let detail = decoded.untrusted_detail.expect("detail survives");
     assert!(!detail.contains('\t'), "the raw tab is gone");

@@ -2857,4 +2857,6 @@ pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String
 }
 
 #[cfg(test)]
+mod diagnostic_tests;
+#[cfg(test)]
 mod tests;

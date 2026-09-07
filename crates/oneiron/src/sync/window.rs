@@ -1177,8 +1177,9 @@ pub fn forward_rematerialize(
             // a tombstone-first replay left a `dt:` marker behind would
             // otherwise keep that false delete marker forever, and the
             // hard-erase sweep would later scrub append-only authority
-            // evidence for an id it believes was erased). Diagnostics validate
-            // canonical bytes, address and occurrence before their in-txn echo check.
+            // evidence for an id it believes was erased). DIAGNOSTIC rows
+            // also validate their address and occurrence before the in-txn
+            // echo check, never through the generic snapshot shortcut.
             let byte_compare_in_door = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_REDACTION_AUDIT

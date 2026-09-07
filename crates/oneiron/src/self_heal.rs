@@ -320,8 +320,8 @@ pub struct DiagnosticReplayCoordinate {
 /// it is a rumour, and encode rejects it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiagnosticEvent {
-    /// Stable detector token, persisted to bind the body to its content address.
-    /// Must match the emitting detector's identity.
+    /// Stable detector token, persisted so every admission door can reproduce
+    /// the content-addressed id. Must match the emitting detector's identity.
     pub detector_id: String,
     /// Closed event class.
     pub event_class: DiagnosticEventClass,
@@ -399,7 +399,8 @@ pub struct DiagnosticWorkingSet<'a> {
 pub trait DeterministicDetector: Send + Sync {
     /// Stable identity, folded into every derived event id.
     fn detector_id(&self) -> &'static str;
-    /// Draft events whose `detector_id` must match this detector's identity.
+    /// Draft events for this working set. Each draft's `detector_id` must
+    /// equal this detector's identity; the runner rejects a mismatch.
     fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent>;
 }
 
@@ -459,6 +460,9 @@ pub fn run_deterministic_detectors(
 
 /// Derives the stable event id for `(detector_id, canonical_body)`.
 ///
+/// Admission requires `detector_id` to equal the identity persisted in the
+/// canonical body. Every local and replicated put checks this binding.
+///
 /// 16 raw domain-separated BLAKE3 bytes, so the id is reproducible from the
 /// detector identity and the canonical body alone. The detector id is
 /// length-prefixed so no two `(id, body)` pairs can concatenate to the same
@@ -481,16 +485,19 @@ pub fn diagnostic_event_id(detector_id: &str, canonical_body: &[u8]) -> EntityId
     })
 }
 
-/// Canonicalizes and encodes one DIAGNOSTIC body from a raw draft.
-///
-/// The untrusted leaf is raw author text, even when it looks escaped. Decoded
-/// events already contain stored leaves and use the internal stored-body encoder.
+/// Canonicalizes and encodes one DIAGNOSTIC body from a RAW draft.
 ///
 /// Canonicalization is what makes determinism a property of the DATA rather
 /// than of detector discipline: invariant values are rebuilt into one normal
 /// form, evidence refs are sorted and deduplicated, and the untrusted leaf is
 /// escaped. Two detectors that mean the same thing therefore emit the same
 /// bytes and the same id.
+///
+/// `event.untrusted_detail` is read as RAW author text here, so this door must
+/// only ever see a draft. Re-encoding an event that came back out of
+/// [`decode_diagnostic_event_body`] belongs to the engine-internal stored-body
+/// door instead: its leaf is already the stored canonical one, and escaping it
+/// a second time would change the body.
 pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> {
     let untrusted_detail = match event.untrusted_detail.as_deref() {
         Some(raw) => Value::from(canonical_untrusted_detail(raw)?),
@@ -499,7 +506,12 @@ pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> 
     encode_body_with_detail(event, untrusted_detail)
 }
 
-/// Re-encode a decoded body without escaping its terminal stored leaf again.
+/// Re-encodes an event whose untrusted leaf is ALREADY the stored canonical
+/// one, i.e. one that came out of [`decode_diagnostic_event_body`].
+///
+/// The leaf is re-validated rather than re-escaped, which is what makes the
+/// canonical form a fixed point of decode + re-encode even though
+/// [`canonical_untrusted_detail`] is deliberately not idempotent.
 fn encode_stored_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> {
     let untrusted_detail = match event.untrusted_detail.as_deref() {
         Some(stored) => {
@@ -511,7 +523,9 @@ fn encode_stored_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8
     encode_body_with_detail(event, untrusted_detail)
 }
 
-/// Both encoding doors share the same canonical field grammar and key order.
+/// Builds and writes the pinned 17-key body around an already-decided
+/// `untrusted_detail` leaf, so the raw door and the stored door cannot drift
+/// apart in any other field.
 fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> Result<Vec<u8>> {
     validate_detector_id(&event.detector_id)?;
     validate_actor_class(&event.actor_class)?;
@@ -637,8 +651,20 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     })
 }
 
-/// Validate exact canonical bytes, not just decoded MessagePack values.
-/// Alternate markers and other byte aliases must not acquire distinct addresses.
+/// Fail-closed body validation for the DIAGNOSTIC write door.
+///
+/// Decoding is necessary but NOT sufficient: the grammar above constrains the
+/// VALUES, while a content-addressed body has to be pinned down to its exact
+/// BYTES. So the decoded event is re-encoded and the result must equal the
+/// input byte for byte. That closes the whole class of spellings that mean the
+/// same thing on the wire — an alternate MessagePack marker for a value that
+/// has a shorter one, or any residual re-arrangement — because such a body
+/// would decode fine and then re-encode to different bytes than it arrived as.
+///
+/// Failing closed here is what keeps `(detector_id, canonical body)` a real
+/// address: no writer, local or replicated, can store two byte strings that
+/// carry one event, and no stored byte string can be one an honest re-encode
+/// would not have produced.
 pub(crate) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
     let event = decode_diagnostic_event_body(bytes)?;
     if encode_stored_diagnostic_event_body(&event)?.as_slice() != bytes {
@@ -662,9 +688,15 @@ impl Vault {
     ) -> Result<()> {
         let data = encode_diagnostic_event_body(event)?;
         let learned_at = crate::unix_seconds_now();
+        // An absent `valid_to` means STILL VALID, not "valid for an instant".
+        // Collapsing it to a point would index the event as a closed interval
+        // that ended the moment it began, so a temporal read anchored after
+        // `valid_from` — which is every read of a still-open failure — would
+        // miss it. `u64::MAX` is the repo's open-interval end (see the
+        // open-ended CLAIM writes in `affect`), and it is what puts the event
+        // in the long-interval index a spanning query looks at.
         let occurred = TimeRange {
             start: event.valid_from,
-            // Missing valid_to is still valid, not an instantaneous occurrence.
             end: event.valid_to.unwrap_or(u64::MAX),
         };
         self.with_write_txn(|wtxn| {
@@ -757,6 +789,11 @@ fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
         if seen[index] {
             return Err(invalid_diagnostic("duplicate body key"));
         }
+        // Key ORDER is part of the body, not a rendering of it: the pinned
+        // array IS the encode order, so a map carrying the same 17 pairs in
+        // any other order is a DIFFERENT byte string and must not decode as
+        // this event. Checked here rather than repaired, for the same reason
+        // invariant values are checked rather than normalized.
         if index != position {
             return Err(invalid_diagnostic("body keys are out of canonical order"));
         }
@@ -794,6 +831,10 @@ fn entity_ref_value(entity: &EntityId) -> Value {
 
 fn decode_entity_ref(value: &Value) -> Result<EntityId> {
     let hex = decode_str(value, "entity ref must be a hex string")?;
+    // Lowercase-only, matching `hex_nibble` above and `EntityId::to_hex`, so
+    // one id has exactly one spelling on the wire. `EntityId::from_hex` is
+    // case-INSENSITIVE by design, which would otherwise let 2^32 spellings of
+    // one ref decode to one event under different bytes and different ids.
     if hex.bytes().any(|byte| byte.is_ascii_uppercase()) {
         return Err(invalid_diagnostic("entity ref must be lowercase hex"));
     }
@@ -1059,9 +1100,12 @@ fn is_forbidden_text_scalar(scalar: char) -> bool {
 /// Renders `raw` as a control-free canonical leaf.
 ///
 /// Every forbidden scalar becomes a VISIBLE `\u{XXXX}` escape and a literal
-/// backslash becomes `\\`, including in text that already looks escaped.
-/// Thus a raw control and the literal text of its escape keep distinct bodies.
-/// Stored leaves are re-encoded by a separate door, never escaped twice.
+/// backslash becomes `\\`, so the escaping is unambiguous to read. The mapping
+/// is TOTAL — it runs over every input, including one that already LOOKS
+/// escaped — which is what makes it injective: a raw tab and the literal
+/// eight-character text `\u{0009}` land on the two different leafs `\u{0009}`
+/// and `\\u{0009}`, and therefore on two different event ids, instead of
+/// colliding on one.
 fn escape_untrusted_detail(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for scalar in raw.chars() {
@@ -1126,9 +1170,22 @@ fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
     Some(cursor + 1)
 }
 
-/// Escape raw author text unconditionally; already-escaped text is still raw.
+/// Escapes ONE raw, author-supplied detail into its stored canonical leaf.
+///
+/// There is deliberately NO already-canonical passthrough. A passthrough makes
+/// the raw → stored map non-injective: a raw tab and the literal
+/// eight-character text `\u{0009}` would both store `\u{0009}`, so two
+/// different findings would share one body and one content-addressed id, and
+/// the text a reader sees would not say which of the two it came from.
+///
+/// Applying this twice is therefore NOT the identity, and must never happen. A
+/// stored leaf is TERMINAL: decode hands it back escaped and never unescapes
+/// it, so the only door back onto the wire for an already-canonical leaf is
+/// [`encode_stored_diagnostic_event_body`], which validates it instead of
+/// escaping it again. This function's one caller is the raw author door.
 fn canonical_untrusted_detail(raw: &str) -> Result<String> {
-    // Escaping cannot shrink the input, so reject oversize text before allocation.
+    // Escaping never shrinks the UTF-8 byte length. Bound raw input before
+    // allocating or scanning it, and retain the post-escape expansion bound.
     if raw.len() > MAX_UNTRUSTED_DETAIL_LEN {
         return Err(invalid_diagnostic("untrusted_detail is too long"));
     }
@@ -1158,4 +1215,8 @@ fn invalid_diagnostic(reason: &'static str) -> Error {
 }
 
 #[cfg(test)]
+mod production_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod text_tests;

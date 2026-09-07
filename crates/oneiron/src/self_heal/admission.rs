@@ -1,9 +1,11 @@
-//! Bind canonical diagnostic bodies to their address and indexed validity.
+//! Content-address and occurrence binding shared by local and replicated puts.
 
 use super::{
     diagnostic_event_id, invalid_diagnostic, validate_diagnostic_event_body_bytes, validate_token,
 };
-use crate::{entity_id::EntityId, error::Result, temporal::TimeRange};
+use crate::entity_id::EntityId;
+use crate::error::Result;
+use crate::temporal::TimeRange;
 
 pub(super) fn validate_detector_id(detector_id: &str) -> Result<()> {
     validate_token(detector_id, "detector id is not a bounded token")
