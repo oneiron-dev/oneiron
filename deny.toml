@@ -2,6 +2,10 @@
 all-features = true
 
 [advisories]
+# ONE-335's 16 temporary maintenance-risk acceptances are NOT permanent ID ignores.
+# Run python3 scripts/advisory-policy/check.py: it validates exact package/version,
+# current RustSec classification, expiry and review state before temporary ignores.
+# Plain cargo deny remains stricter. See scripts/advisory-policy/README.md.
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"

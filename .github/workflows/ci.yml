@@ -210,9 +210,17 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      # The policy wrapper and tests must use the same inspected cargo-deny version.
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          command: check
+          toolchain: "1.96"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.19.4
+      - name: Test exact maintenance-risk policy (offline fixtures)
+        run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
+      - name: Check dependencies with expiring accepted-risk policy
+        run: python3 scripts/advisory-policy/check.py
 
   typos:
     name: typos
