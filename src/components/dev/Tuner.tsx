@@ -223,12 +223,12 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   }, [])
 
   /* the selected row's chrome (owner 09-07: the rounded well reads as slop; he picks by feel) */
-  type SelChrome = 'rounded' | 'square' | 'gutter'
+  type SelChrome = 'rounded' | 'square' | 'gutter' | 'box'
   const [selChrome, setSelChromeState] = React.useState<SelChrome>('rounded')
   React.useEffect(() => {
     try {
       const v = localStorage.getItem('oneiron-select-chrome')
-      if (v === 'square' || v === 'gutter') setSelChromeState(v)
+      if (v === 'square' || v === 'gutter' || v === 'box') setSelChromeState(v)
     } catch {
       /* default */
     }
@@ -329,12 +329,12 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="t-sec">select chrome</div>
       <div className="t-acts">
-        {(['rounded', 'square', 'gutter'] as const).map((k) => (
+        {(['rounded', 'square', 'gutter', 'box'] as const).map((k) => (
           <button
             key={k}
             type="button"
             className={selChrome === k ? 'act on' : 'act'}
-            title={k === 'rounded' ? 'the well on a 5px radius (as built)' : k === 'square' ? 'the well, square corners' : 'no fill · a hair of ink at the left edge'}
+            title={k === 'rounded' ? 'the well on a 5px radius (as built)' : k === 'square' ? 'the well, square corners' : k === 'gutter' ? 'no fill · a hair of ink at the left edge' : 'no fill where a checkbox already says it (the vault); the open row keeps its bar'}
             onClick={() => setSelChrome(k)}
           >
             {k}
