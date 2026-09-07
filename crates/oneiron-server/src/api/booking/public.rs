@@ -99,7 +99,7 @@ pub(crate) async fn render_public_booking_page(
     };
     // The shared solver produces the data; the existing disclosure seam owns
     // the public clamp and validates its final half-open mask.
-    let mask = slot_mask(&request, SolveResult { slots, flex_used });
+    let mask = slot_mask(&request, SolveResult { slots, flex_used, host_bindings: Vec::new() });
     let slots = oneiron::booking::bounded_public_slots(mask).map_err(booking_error)?;
     // Do not emit an obsolete snapshot after an owner revokes or edits it
     // while admission is awaiting. No second admission or solver call.

@@ -329,6 +329,7 @@ mod tests {
                     rank: 0.5,
                 }],
                 flex_used: false,
+                host_bindings: Vec::new(),
             },
         );
         BookingPageModel::new(

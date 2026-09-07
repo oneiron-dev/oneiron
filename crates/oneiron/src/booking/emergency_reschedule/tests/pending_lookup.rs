@@ -459,6 +459,7 @@ fn checkpoint_indexes_commit_abort_reconnect_and_retry_with_the_item() {
             idempotency_key: None,
         },
         NOW + 5,
+        None,
     )
     .unwrap();
     let txn = vault.store.env.read_txn().unwrap();

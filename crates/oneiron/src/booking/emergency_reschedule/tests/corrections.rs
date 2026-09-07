@@ -91,7 +91,8 @@ fn pending_delivery_fences_ordinary_revision_and_completed_plans_do_not_reappear
                 token: receipt.cancel_token.clone(),
                 idempotency_key: None,
             },
-            NOW + 1
+            NOW + 1,
+            None
         )
         .is_err()
     );
@@ -111,6 +112,7 @@ fn pending_delivery_fences_ordinary_revision_and_completed_plans_do_not_reappear
             idempotency_key: None,
         },
         NOW + 3,
+        None,
     )
     .unwrap();
 }
@@ -125,6 +127,7 @@ fn saved_unapplied_plan_superseded_by_ordinary_cancel_is_not_executable_work() {
             idempotency_key: None,
         },
         NOW,
+        None,
     )
     .unwrap();
     let batch = plan_emergency_reschedule(&vault, &plan.request, &calendars(), NOW + 1).unwrap();

@@ -265,7 +265,8 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
                 constraint: None,
                 idempotency_key: None,
             },
-            NOW
+            NOW,
+            None
         )
         .is_err()
     );
