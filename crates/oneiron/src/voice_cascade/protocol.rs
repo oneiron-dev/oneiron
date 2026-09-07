@@ -7,6 +7,7 @@ use crate::error::Result;
 use crate::interlocutor::InterlocutorSet;
 use crate::policy_model::PolicyEnforcementAction;
 
+use super::retrieval::invalid;
 use super::{SafeguardRequest, StopReason};
 
 /// A session-local generation token. Pair with the session ref across processes.
@@ -56,6 +57,45 @@ pub struct AsrEvent {
     pub provider_latency_ms: Option<f64>,
     pub endpoint_delay_ms: Option<f64>,
     pub error: Option<String>,
+}
+
+impl AsrEvent {
+    /// Validate before the session consumes a revision or performs any work.
+    pub(super) fn validate(&self) -> Result<()> {
+        if self.kind == AsrEventKind::Final && self.text.trim().is_empty() {
+            return Err(invalid("final ASR transcript must be nonempty"));
+        }
+        if [self.provider_latency_ms, self.endpoint_delay_ms]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err(invalid("ASR latencies must be finite and nonnegative"));
+        }
+        for token in &self.tokens {
+            if [token.start_ms, token.end_ms]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.is_finite() || value < 0.0)
+            {
+                return Err(invalid("ASR token times must be finite and nonnegative"));
+            }
+            if token
+                .confidence
+                .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+            {
+                return Err(invalid(
+                    "ASR token confidence must be finite and within 0..=1",
+                ));
+            }
+            if let (Some(start), Some(end)) = (token.start_ms, token.end_ms)
+                && end < start
+            {
+                return Err(invalid("ASR token end must not precede its start"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Host-owned entity-spot/term-extraction result. An optional vector is also
