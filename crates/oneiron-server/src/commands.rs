@@ -123,6 +123,7 @@ pub fn token_mint(args: TokenMintArgs) -> anyhow::Result<()> {
         &auth_secret,
         args.scope.as_deref(),
         args.principal_ref.as_deref(),
+        args.actor_class.as_deref(),
     )?;
 
     if let Some(warning) = &mint.warning {
@@ -146,8 +147,9 @@ fn prepare_token_mint(
     auth_secret: &str,
     scope: Option<&[String]>,
     principal_ref: Option<&str>,
+    actor_class: Option<&str>,
 ) -> anyhow::Result<TokenMint> {
-    let claims = build_token_claims(scope, principal_ref);
+    let claims = build_token_claims(scope, principal_ref, actor_class);
     validate_bearer_claims(&claims).map_err(|_| {
         anyhow::anyhow!("refusing to mint a token the server would reject: {claims}")
     })?;
@@ -175,7 +177,7 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     // A fresh vault holds no tokens, so creating one here would report a
     // successful revocation against storage the server does not read.
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open(&config.vault_path, vault_config)
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
 
     let revoked = revoke_token_jti(&vault, &args.jti)?;
@@ -215,7 +217,16 @@ fn weak_auth_secret_warning(secret: &str) -> Option<String> {
 
 /// Assembles a claims string in the bearer grammar. No flags yields an empty
 /// claims string, which mints an owner-grade token.
-fn build_token_claims(scope: Option<&[String]>, principal_ref: Option<&str>) -> String {
+///
+/// ONE-1441: `actor_class` appends one `;actor_class=<v>` segment when the
+/// operator asked for one, in the pinned position AFTER `principal_ref`. The
+/// segment order is the wire form, not a detail — the MAC covers these exact
+/// bytes, so reordering them would invalidate every previously minted slip.
+fn build_token_claims(
+    scope: Option<&[String]>,
+    principal_ref: Option<&str>,
+    actor_class: Option<&str>,
+) -> String {
     let mut claims = String::new();
     if let Some(scope) = scope.filter(|scope| !scope.is_empty()) {
         claims.push_str("scope=");
@@ -227,6 +238,13 @@ fn build_token_claims(scope: Option<&[String]>, principal_ref: Option<&str>) -> 
         }
         claims.push_str("principal_ref=");
         claims.push_str(principal_ref);
+    }
+    if let Some(actor_class) = actor_class {
+        if !claims.is_empty() {
+            claims.push(';');
+        }
+        claims.push_str("actor_class=");
+        claims.push_str(actor_class);
     }
     claims
 }
@@ -465,7 +483,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
 
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
-    let vault = oneiron::Vault::open(&config.vault_path, vault_config)?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)?;
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {
@@ -507,9 +525,16 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     // `Tcp` is the only variant this path can produce, so unmanaged serve
     // still binds host:port and nothing else.
     let listener = ServeListener::Tcp(addr).bind().await?;
+    let managed::BoundServeListener::Tcp(listener) = listener else {
+        anyhow::bail!("unmanaged serve requires a TCP listener");
+    };
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let app = build_app(sync_server).layer(cors_layer);
-    let result = listener.serve(app).await;
+    let result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
     result?;
@@ -529,7 +554,7 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open(&config.vault_path, vault_config)
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
     let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
@@ -571,7 +596,7 @@ fn open_vault_for_command(args: &VaultArgs) -> anyhow::Result<oneiron::Vault> {
     let configured_paths = args.dict_search_paths.clone().unwrap_or_default();
     config.dict_search_paths = resolve_dict_search_paths(&configured_paths).paths;
 
-    oneiron::Vault::open(&args.path, config)
+    oneiron::Vault::open_owned(&args.path, config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", args.path.display()))
 }
 
@@ -700,3 +725,5 @@ fn parse_allowed_origins(origins: &[String]) -> anyhow::Result<Vec<HeaderValue>>
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, unix))]
+mod writer_lease_tests;

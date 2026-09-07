@@ -33,7 +33,8 @@ run_stage() {
   fi
 }
 
-run_stage fmt                 cargo fmt --all --check
+# Honor the workspace's heed exclusion; --all also follows local path dependencies.
+run_stage fmt                 cargo fmt --check
 run_stage clippy              cargo clippy --workspace --all-targets --all-features -- -D warnings
 run_stage clippy-featureless  cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
 run_stage test                cargo nextest run --workspace --all-features --profile full

@@ -59,6 +59,7 @@ mod cb_a {
             worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
             agent_id: None,
             status: RunTreeStatus::Running,
+            result_ref: None,
             timestamps: RunTreeTimestamps {
                 created_at: 1,
                 updated_at: 1,
@@ -66,6 +67,7 @@ mod cb_a {
             failure: None,
             events: Vec::new(),
             children: Vec::new(),
+            gate_breaker_paused: false,
         };
         let children = [
             ChildAgentPresence::from_run_tree_node(&node)
@@ -1054,6 +1056,199 @@ mod cb_a {
         assert!(landing.provenance_chain_len >= 2);
     }
 
+    /// The same valid candidate fails without the Generated lineage permit,
+    /// then lands when that permit names the unchanged Agent-class Dreamer.
+    #[test]
+    fn peer_answer_requires_generated_permit_for_dreamer_actor() {
+        use oneiron::dreamer_promotion::promote_consolidated_claims;
+        use oneiron::edge::EdgeActorClass;
+        use oneiron::{ClaimApprovalStatus, ClaimSource};
+
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        let run = fixture.run();
+        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
+        let answer = fixture.land_peer_answer("ACME");
+        let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
+        let claim_id = candidate.claim_id;
+        let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate.clone()])
+            .expect("promotion runs without a test permit");
+        assert_eq!(outcome.landed.len(), 0);
+        assert_eq!(outcome.pended.len(), 0);
+        assert_eq!(
+            outcome.rejected,
+            vec![(
+                claim_id,
+                concat!(
+                    "gated write rejected: gate write rejected: outcome=pending, ",
+                    "reasons=[\"gate.pending.source_trust\"]"
+                )
+                .to_owned()
+            )]
+        );
+        assert!(!fixture.entity_exists(claim_id));
+        assert!(fixture.entity_exists(answer.answer_turn_ref));
+        assert!(fixture.entity_exists(answer.consult_task_ref));
+        assert_eq!(fixture.pending_gate_consents(), 0);
+
+        fixture
+            .vault
+            .install_generated_source_permit_for_test(run.agent_actor.entity_ref())
+            .expect("bind only the Generated permit to this Dreamer");
+        let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate])
+            .expect("retry the same candidate through the same Dreamer");
+        assert_eq!(outcome.landed, vec![claim_id]);
+        assert_eq!(outcome.pended.len(), 0);
+        assert_eq!(outcome.rejected.len(), 0);
+        let body = fixture.claim(claim_id);
+        assert_eq!(body.approval, ClaimApprovalStatus::Auto);
+        assert_eq!(body.source, Some(ClaimSource::ToolOutput));
+        assert_eq!(fixture.pending_gate_consents(), 0);
+    }
+
+    #[test]
+    fn peer_answer_wrong_actor_generated_permit_rejects_source_trust() {
+        use oneiron::EntityId;
+        use oneiron::dreamer_promotion::promote_consolidated_claims;
+        use oneiron::edge::EdgeActorClass;
+
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        let run = fixture.run();
+        let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
+        assert_ne!(wrong_actor, run.agent_actor.entity_ref());
+        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
+        fixture
+            .vault
+            .install_generated_source_permit_for_test(wrong_actor)
+            .expect("permit the peer, not the Dreamer");
+        let answer = fixture.land_peer_answer("ACME");
+        let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
+        let claim_id = candidate.claim_id;
+        // Keep the writer (and its Auto ceiling) identical to the positive
+        // case. Only the permit's actor binding is wrong.
+        let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate])
+            .expect("promotion runs with a mismatched permit");
+        assert_eq!(outcome.landed.len(), 0);
+        assert_eq!(outcome.pended.len(), 0);
+        assert_eq!(
+            outcome.rejected,
+            vec![(
+                claim_id,
+                concat!(
+                    "gated write rejected: gate write rejected: outcome=pending, ",
+                    "reasons=[\"gate.pending.source_trust\"]"
+                )
+                .to_owned()
+            )]
+        );
+        assert!(!fixture.entity_exists(claim_id));
+        assert!(fixture.entity_exists(answer.answer_turn_ref));
+        assert!(fixture.entity_exists(answer.consult_task_ref));
+        assert_eq!(fixture.pending_gate_consents(), 0);
+    }
+
+    #[test]
+    fn generated_permit_keeps_dreamer_precommit_validation() {
+        use oneiron::dreamer_promotion::promote_consolidated_claims;
+        use oneiron::edge::EdgeActorClass;
+
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        fixture.permit_generated_source();
+        let run = fixture.run();
+        assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
+        let answer = fixture.land_peer_answer("ACME");
+        let candidate = fixture.public_peer_candidate(&answer, "I will check", 0.7);
+        let claim_id = candidate.claim_id;
+        let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate])
+            .expect("promotion runs through Dreamer precommit");
+        assert_eq!(outcome.landed.len(), 0);
+        assert_eq!(outcome.pended.len(), 0);
+        assert_eq!(
+            outcome.rejected,
+            vec![(
+                claim_id,
+                concat!(
+                    "gated write rejected: gate write rejected: outcome=deny, ",
+                    "reasons=[\"gate.deny.dreamer_precommit.degenerate_output\"]"
+                )
+                .to_owned()
+            )]
+        );
+        assert!(!fixture.entity_exists(claim_id));
+        assert_eq!(fixture.pending_gate_consents(), 0);
+    }
+
+    #[test]
+    fn generated_permit_changes_only_actor_binding_and_refuses_replacement() {
+        use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use oneiron::{EntityId, Error};
+        use rmpv::Value;
+
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
+        let ids = fixture
+            .vault
+            .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("read policy ids");
+        assert_eq!(ids.len(), 1);
+        let before = fixture.vault.get(&ids[0]).expect("read policy").unwrap();
+        let mut expected = rmpv::decode::read_value(&mut std::io::Cursor::new(&before))
+            .expect("decode stock policy");
+        let Value::Map(entries) = &mut expected else {
+            panic!("policy is a map");
+        };
+        let Some(Value::Map(rows)) = entries
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("source_trust")).then_some(value))
+        else {
+            panic!("policy has source trust");
+        };
+        let Some(Value::Map(permit)) = rows
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("generated")).then_some(value))
+        else {
+            panic!("policy has a Generated permit");
+        };
+        let actor_ref = permit
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
+            .expect("Generated permit is actor-bound");
+        let actor = fixture.run().agent_actor.entity_ref();
+        assert_ne!(*actor_ref, Value::from(actor.to_hex()));
+        *actor_ref = Value::from(actor.to_hex());
+        let mut expected_bytes = Vec::new();
+        rmpv::encode::write_value(&mut expected_bytes, &expected).expect("encode expected policy");
+
+        fixture
+            .vault
+            .install_generated_source_permit_for_test(actor)
+            .expect("install on an unchanged default");
+        let after = fixture
+            .vault
+            .get(&ids[0])
+            .expect("read installed policy")
+            .unwrap();
+        // Exact bytes pin the cap, receipt/warning flags, Imported posture,
+        // actor ceilings, and all other fields to the original default.
+        assert_eq!(after, expected_bytes);
+        let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
+        for replacement in [actor, wrong_actor] {
+            assert!(matches!(
+                fixture
+                    .vault
+                    .install_generated_source_permit_for_test(replacement),
+                Err(Error::InvariantViolation(
+                    "test permit requires an unchanged default policy"
+                ))
+            ));
+            assert_eq!(
+                fixture
+                    .vault
+                    .get(&ids[0])
+                    .expect("read refused replacement"),
+                Some(after.clone())
+            );
+        }
+    }
+
     /// Label-forgery lineage-check observations.
     struct LabelForgeryAttempt {
         /// Write paths exposed to the agent, enumerated by the fixture —
@@ -1204,12 +1399,14 @@ mod peer_fixture {
     use rmpv::Value;
 
     const PEER_NOW: u64 = 1_800_000_100;
-    /// The ONE actor a fresh vault's DEFAULT policy manifest grants an
-    /// `agent`-class Auto ceiling (the first-party connection). The Dreamer
-    /// writes as this connection; installing a wider owner manifest is a
-    /// control-plane write with no public door, so the fixture uses the
-    /// permission the shipped default already carries.
+    /// The first-party connection granted an `agent`-class Auto ceiling by
+    /// the default manifest. The fixture separately binds BOTH restricted
+    /// promotion sources to this Dreamer writer; an actor ceiling alone does
+    /// not authorize its Generated + ToolOutput lineage.
     const OWNER_BYTES: [u8; 16] = [0xE1; 16];
+    /// Unstamped claim provenance reads sensitive (band 2), never public.
+    /// The crate-private UNSTAMPED_CLAIM_SENSITIVITY_BAND pins this wire floor.
+    const PEER_SOURCE_SENSITIVITY_FLOOR: u64 = 2;
     /// The consolidated fact under test. `profile.` is one of the default
     /// manifest's normal-criticality prefixes.
     const PEER_PREDICATE: &str = "profile.employer";
@@ -1256,14 +1453,109 @@ mod peer_fixture {
         }
     }
 
+    /// Provision this fixture's owner policy without opening a production
+    /// policy-write door. Public puts reject POLICY_MANIFEST, and adding a
+    /// second manifest would fail closed: source rows with different actor
+    /// bindings merge to no permit. Replace only the two source rows in the
+    /// CLOSED temporary vault; keep every other default-policy axis intact.
+    fn open_peer_policy_vault(path: &std::path::Path, config: VaultConfig) -> Vault {
+        let vault = Vault::open(path, config.clone()).expect("open the fixture vault");
+        let manifests = vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("read the default policy manifest id");
+        assert_eq!(manifests.len(), 1, "one seeded default policy");
+        let manifest_id = manifests[0];
+        let body = vault
+            .get(&manifest_id)
+            .expect("read the default policy body")
+            .expect("default policy exists");
+        let mut raw = vault
+            .get_raw(&manifest_id)
+            .expect("read the default policy record")
+            .expect("default policy record exists");
+        let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&body))
+            .expect("decode the default policy");
+        let Value::Map(entries) = &mut manifest else {
+            panic!("default policy must be a map");
+        };
+        let (_, source_trust) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("source_trust"))
+            .expect("default policy has source trust");
+        let Value::Map(rows) = source_trust else {
+            panic!("source trust must be a map");
+        };
+        let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
+        for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
+            let (_, row) = rows
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some(source.as_str()))
+                .expect("default policy has this restricted source row");
+            *row = Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(owner.to_hex())),
+                (
+                    Value::from("max_auto_sensitivity"),
+                    Value::from(PEER_SOURCE_SENSITIVITY_FLOOR),
+                ),
+                (Value::from("receipted"), Value::Boolean(true)),
+                (Value::from("warned"), Value::Boolean(true)),
+            ]);
+        }
+        // Preserve the existing entity header and all of its index keys.
+        raw.truncate(raw.len() - body.len());
+        rmpv::encode::write_value(&mut raw, &manifest).expect("encode fixture policy");
+        drop(vault);
+
+        // SAFETY: the only Vault handle has been dropped. This path is a local
+        // TempDir owned by this fixture; no other thread opens it or changes
+        // its map size. Close this raw Env before reopening the public Vault.
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(config.map_size)
+                .max_readers(config.max_readers)
+                .max_dbs(oneiron::store::MAX_DBS)
+                .open(path)
+                .expect("open the closed fixture store")
+        };
+        let mut wtxn = env.write_txn().expect("fixture policy transaction");
+        let entities: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
+            .open_database(&wtxn, Some("entities"))
+            .expect("open fixture entities")
+            .expect("entities database exists");
+        entities
+            .put(&mut wtxn, manifest_id.as_bytes(), &raw)
+            .expect("store actor-bound source permits");
+        wtxn.commit().expect("commit fixture policy");
+        let _closing_event = env.prepare_for_closing();
+
+        let vault = Vault::open(path, config).expect("reopen the fixture vault");
+        assert_eq!(
+            vault.get_raw(&manifest_id).expect("read fixture policy"),
+            Some(raw),
+            "the actor-bound permits must survive reopen"
+        );
+        vault
+    }
+
     impl PeerFixture {
         pub(crate) fn open() -> Self {
+            Self::open_with_policy(open_peer_policy_vault)
+        }
+
+        /// Exact stock policy: Generated is not permitted for this Dreamer.
+        pub(crate) fn open_stock_policy() -> Self {
+            Self::open_with_policy(|path, config| {
+                Vault::open(path, config).expect("open the fixture vault")
+            })
+        }
+
+        fn open_with_policy(open_vault: fn(&std::path::Path, VaultConfig) -> Vault) -> Self {
             let dir = tempfile::tempdir().expect("temporary vault directory");
             let mut config = VaultConfig::device();
             config.map_size = 32 * 1024 * 1024;
             config.dimensions = 4;
             config.embedding_model = None;
-            let vault = Vault::open(dir.path(), config).expect("open the fixture vault");
+            let vault = open_vault(dir.path(), config);
 
             let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
             let peer = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
@@ -1282,7 +1574,13 @@ mod peer_fixture {
             }
         }
 
-        fn run(&self) -> DreamerRunContext {
+        pub(crate) fn permit_generated_source(&self) {
+            self.vault
+                .install_generated_source_permit_for_test(self.owner)
+                .expect("permit this Dreamer's Generated lineage hop");
+        }
+
+        pub(crate) fn run(&self) -> DreamerRunContext {
             DreamerRunContext {
                 run_id: "cb-b-1710".to_owned(),
                 attempt_id: self.attempt,
@@ -1389,13 +1687,9 @@ mod peer_fixture {
                     ClaimSubject::Entity(self.subject),
                     Value::from(value),
                     confidence,
-                )
-                // The default manifest's tool_output auto permit is banded at
-                // `public`; the consolidated fact is stamped accordingly.
-                .with_scope(Value::Map(vec![(
-                    Value::from("sensitivity"),
-                    Value::from("public"),
-                )])),
+                ),
+                // Keep the real unstamped sensitivity floor. Permission comes
+                // from both actor-bound source rows, not a public restamp.
                 evidence_turn_refs,
                 provenance_chain: chain,
                 supersedes,
@@ -1406,6 +1700,22 @@ mod peer_fixture {
                 },
                 learned_at: PEER_NOW,
             }
+        }
+
+        /// Public input isolates Generated actor binding under the stock
+        /// ToolOutput cap (0). Pregranted callers keep unstamped candidates.
+        pub(crate) fn public_peer_candidate(
+            &self,
+            answer: &LandedPeerAnswer,
+            value: &str,
+            confidence: f32,
+        ) -> PromotionCandidate {
+            let mut candidate = self.peer_candidate(answer, value, confidence, None);
+            candidate.candidate = candidate.candidate.with_scope(Value::Map(vec![(
+                Value::from("sensitivity"),
+                Value::from("public"),
+            )]));
+            candidate
         }
 
         pub(crate) fn consolidate_peer_answer(

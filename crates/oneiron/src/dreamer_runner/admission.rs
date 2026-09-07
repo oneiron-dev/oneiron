@@ -22,7 +22,7 @@ use super::codec::{
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
     DREAMER_PRIVATE_HOME_NODE_KEY, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -129,6 +129,25 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, input)
+    }
+
+    /// Atomically admits the next queued vault-cleanup attempt (ONE-1931).
+    ///
+    /// Per-device, like SKILL-OPT and for the same reason: the queue rows are
+    /// private runner state, and in the default propose-first posture the
+    /// pass's only output is a PROPOSAL. There is no home-node gate because
+    /// there is no canon to serialize — the rows a cleanup pass reads are this
+    /// vault's own, and two devices proposing the same archive is one question
+    /// asked twice, not two archives.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_vault_cleanup(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, input)
     }
 
     /// Home-aware consolidation admission.

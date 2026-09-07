@@ -513,6 +513,11 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let confidence = confidence.ok_or(Error::InvalidClaimBody("missing required field conf"))?;
     let approval = approval.ok_or(Error::InvalidClaimBody("missing required field appr"))?;
     let lifecycle = lifecycle.ok_or(Error::InvalidClaimBody("missing required field life"))?;
+    // `scope` stays opaque, but the entries the engine RECOGNIZES inside it
+    // are structurally pinned like any other decoded field: a duplicate or
+    // malformed corpus id fails closed here rather than reaching a retrieval
+    // scope decision. Unknown sibling entries are not inspected.
+    validate_known_claim_scope_entries(scope.as_ref())?;
 
     Ok(ClaimBody {
         predicate,
@@ -587,6 +592,8 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)
     {
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
+    } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
+        crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::validate_actor_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)

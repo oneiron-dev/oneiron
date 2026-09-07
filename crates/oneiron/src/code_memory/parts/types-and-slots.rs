@@ -43,7 +43,7 @@ pub const CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS: usize = 8;
 
 /// PPR expansion depth for an L2 pull.
 ///
-/// Alpha `0.15` and [`SeedWeighting::Specificity`] are copied verbatim from
+/// Alpha `0.15` and `SeedWeighting::Specificity` are copied verbatim from
 /// the landed code-symbol PPR entry; depth is fixed HERE because that entry
 /// parameterizes it and its sole landed caller supplies `2`. There is
 /// deliberately no request-level tuning knob.

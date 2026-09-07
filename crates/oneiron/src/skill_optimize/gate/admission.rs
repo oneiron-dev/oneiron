@@ -38,7 +38,7 @@ const ADMISSION_TICKET_PREFIX: &[u8] = b"skill_optimize/admission_ticket/v1\0";
 ///
 /// The one door an optimizer-born candidate can reach canon through; a bare
 /// state flip is refused at the batch chokepoint
-/// ([`check_optimizer_admission_in_txn`]). It does NOT supersede the
+/// (`check_optimizer_admission_in_txn`). It does NOT supersede the
 /// predecessor: freezing the old revision stays
 /// [`crate::Vault::supersede_skill_record`]'s act, so the landed archive chain
 /// is unchanged and callers admit, then supersede — the order that door already

@@ -29,6 +29,7 @@
 
 mod conflict;
 mod executor;
+mod extracted_people;
 mod gap;
 mod partition;
 mod provenance;

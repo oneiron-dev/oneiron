@@ -1148,6 +1148,99 @@ fn closed_claim_put_payload(
     Ok((occurred, claim.learned_at, wrapper, data))
 }
 
+/// A provenance-owner payload, not a policy permit. Only this module can mint
+/// it, after the canonical record and the owner's lifecycle checks agree.
+pub(crate) struct ProvenanceMaterialization {
+    id: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+    data: Vec<u8>,
+    envelope: crate::WriteEnvelope,
+    prior: Option<[u8; 32]>,
+}
+
+impl ProvenanceMaterialization {
+    fn new(
+        id: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: Vec<u8>,
+        prior: Option<[u8; 32]>,
+    ) -> Result<Self> {
+        let body = crate::claim::validate_claim_body_and_decode(&data, true)?;
+        if body.predicate != PREDICATE_EDGE_PROVENANCE {
+            return Err(Error::NotAProvenanceClaim(
+                "materialization requires edge.provenance",
+            ));
+        }
+        let record = decode_edge_provenance_body(&body.value)?;
+        let class = resolve_persisted_actor_class(&record, body.evidence.as_ref())?;
+        let envelope = crate::WriteEnvelope::new(
+            crate::WriteActor::new(record.actor_entity_ref, class),
+            body.source.unwrap_or(crate::claim::ClaimSource::UserStated),
+            crate::WriteProvenance::new(body.value.clone())?,
+            body.approval,
+        );
+        Ok(Self {
+            id,
+            occurred,
+            learned_at,
+            data,
+            envelope,
+            prior,
+        })
+    }
+
+    pub(crate) fn prior(&self) -> Option<[u8; 32]> {
+        self.prior
+    }
+
+    pub(crate) fn into_parts(self) -> (EntityId, TimeRange, u64, Vec<u8>, crate::WriteEnvelope) {
+        (
+            self.id,
+            self.occurred,
+            self.learned_at,
+            self.data,
+            self.envelope,
+        )
+    }
+}
+
+fn provenance_materialization_op(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+    data: Vec<u8>,
+) -> Result<(BatchOp, crate::batch::ClaimMaterialization)> {
+    use sha2::{Digest, Sha256};
+    let prior = store
+        .entities
+        .get(txn, id.as_bytes())?
+        .map(|raw| Sha256::digest(&raw).into());
+    let binding = crate::batch::ClaimMaterialization::provenance(ProvenanceMaterialization::new(
+        id,
+        occurred,
+        learned_at,
+        data.clone(),
+        prior,
+    )?)?;
+    Ok((
+        BatchOp::Put {
+            id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: true,
+            hub_sync_imported: false,
+        },
+        binding,
+    ))
+}
+
 impl Vault {
     /// Writes an `edge.provenance` Claim for an EXISTING semantic edge,
     /// applies the contract's SUPERSEDE lifecycle to prior live Claims, and
@@ -1333,9 +1426,15 @@ impl Vault {
             },
         };
 
-        self.batch_in()
-            .put_reserved_claim(claim_id, occurred, learned_at, &data)
-            .apply(&mut wtxn)?;
+        let (op, binding) = provenance_materialization_op(
+            &self.store,
+            &wtxn,
+            *claim_id,
+            occurred,
+            learned_at,
+            data,
+        )?;
+        crate::batch::apply_owner_bound_claim_puts(self, &mut wtxn, vec![op], vec![binding], true)?;
         restamp_edge_flags(&self.store, &mut wtxn, &subject, flags)?;
         ppr::invalidate_ppr_for_edge(&self.store, &mut wtxn, &subject.source, &subject.target)?;
         // The edge bytes changed without an edge BatchOp in this txn, so the
@@ -1457,6 +1556,32 @@ impl Vault {
         learned_at: u64,
         explicit_prior: Option<&EntityId>,
     ) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            self.write_edge_provenance_in_txn(
+                wtxn,
+                claim_id,
+                subject,
+                body,
+                actor_class,
+                learned_at,
+                explicit_prior,
+                None,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        subject: &EdgeRef,
+        body: &EdgeProvenanceClaimBody,
+        actor_class: EdgeActorClass,
+        learned_at: u64,
+        explicit_prior: Option<&EntityId>,
+        imported_evidence: Option<Value>,
+    ) -> Result<()> {
         if explicit_prior == Some(claim_id) {
             return Err(Error::ProvenanceSelfSupersession);
         }
@@ -1510,13 +1635,14 @@ impl Vault {
         );
         claim_body.valid_from = body.valid_from;
         claim_body.valid_to = body.valid_to;
+        if let Some(evidence) = imported_evidence {
+            imported::stamp_imported_source(&mut claim_body, evidence);
+        }
         // The write-time validated actor_class is persisted as the record's
         // BODY key (set above, ONE-1138); the wrapper's `evid` stays empty —
         // evidence purity, no legacy `{"actor_class": u8}` map.
         let data = encode_claim_body(&claim_body)?;
         validate_claim_body_bytes(&data, true)?;
-
-        let mut wtxn = self.store.env.write_txn()?;
 
         // WRITE-ONCE ids: a `claim_id` that already names ANY stored entity
         // is rejected before a single byte moves. Re-putting an existing id
@@ -1529,7 +1655,7 @@ impl Vault {
         if self
             .store
             .entities
-            .get(&wtxn, claim_id.as_bytes())?
+            .get(wtxn, claim_id.as_bytes())?
             .is_some()
         {
             return Err(Error::ProvenanceClaimIdInUse);
@@ -1537,7 +1663,7 @@ impl Vault {
 
         // Subject edge must exist — no upsert.
         let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
-        if self.store.edges_out.get(&wtxn, &edge_key)?.is_none() {
+        if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
             return Err(Error::EdgeNotFound);
         }
 
@@ -1546,7 +1672,7 @@ impl Vault {
         let actor_raw = self
             .store
             .entities
-            .get(&wtxn, body.actor_entity_ref.as_bytes())?
+            .get(wtxn, body.actor_entity_ref.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let actor_header = EntityMetadataHeader::parse(&actor_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
@@ -1560,7 +1686,7 @@ impl Vault {
             let substrate_raw = self
                 .store
                 .entities
-                .get(&wtxn, substrate_ref.as_bytes())?
+                .get(wtxn, substrate_ref.as_bytes())?
                 .ok_or(Error::InvalidModelSubstrate(
                     "substrate_ref does not name a stored entity",
                 ))?;
@@ -1583,10 +1709,10 @@ impl Vault {
             decode_model_entity_body(&substrate_raw[ENTITY_METADATA_HEADER_LEN..])?;
         }
 
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
         crate::gate::check_edge_provenance_claim_policy(
             &self.store,
-            &wtxn,
+            wtxn,
             &claim_body,
             &record,
             actor_class,
@@ -1597,7 +1723,7 @@ impl Vault {
         // live edge.provenance Claim addressing the SAME EdgeRef.
         let prior_id = explicit_prior
             .map(|prior_id| -> Result<EntityId> {
-                let prior = self.load_provenance_claim_in_txn(&wtxn, prior_id)?;
+                let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
                 if prior.subject != *subject {
                     return Err(Error::ProvenanceSubjectMismatch);
                 }
@@ -1612,7 +1738,7 @@ impl Vault {
 
         // D14 precedence: the incoming Claim may never be OLDER than the
         // live frontier — it could never take precedence.
-        let live = self.live_edge_provenance_claims_in_txn(&wtxn, subject, Some(claim_id))?;
+        let live = self.live_edge_provenance_claims_in_txn(wtxn, subject, Some(claim_id))?;
         if let Some(frontier) = live.iter().map(|claim| claim.learned_at).max()
             && learned_at < frontier
         {
@@ -1666,7 +1792,7 @@ impl Vault {
                 )?;
             crate::gate::check_edge_provenance_claim_policy(
                 &self.store,
-                &wtxn,
+                wtxn,
                 &closed_claim_body,
                 &closed_record,
                 closure.actor_class,
@@ -1679,31 +1805,44 @@ impl Vault {
         // subject edge's SOURCE entity (D12) + closure re-puts, all with
         // full Gate checks before apply and full type-0 validation at apply,
         // all in this one transaction.
-        let mut builder = self
-            .batch_in()
-            .put_reserved_claim(claim_id, occurred, learned_at, &data)
-            .edge(
-                claim_id,
-                EdgeKind::ClaimOf,
-                &subject.source,
-                CLAIM_OF_DEFAULT_WEIGHT,
-            );
+        let (op, binding) = provenance_materialization_op(
+            &self.store,
+            wtxn,
+            *claim_id,
+            occurred,
+            learned_at,
+            data,
+        )?;
+        let mut ops = vec![
+            op,
+            BatchOp::Edge {
+                src: *claim_id,
+                kind: EdgeKind::ClaimOf,
+                tgt: subject.source,
+                weight: CLAIM_OF_DEFAULT_WEIGHT,
+                vad: crate::affect::Vad::NEUTRAL,
+            },
+        ];
+        let mut bindings = vec![binding];
         for (closure_id, closed_occurred, closed_learned_at, closed_data) in closure_payloads {
-            builder = builder.put_reserved_claim(
-                &closure_id,
+            let (op, binding) = provenance_materialization_op(
+                &self.store,
+                wtxn,
+                closure_id,
                 closed_occurred,
                 closed_learned_at,
-                &closed_data,
-            );
+                closed_data,
+            )?;
+            ops.push(op);
+            bindings.push(binding);
         }
-        builder.apply(&mut wtxn)?;
+        crate::batch::apply_owner_bound_claim_puts(self, wtxn, ops, bindings, true)?;
 
         // Re-stamp the subject edge (both directions, identical bytes) and
         // invalidate the PPR caches its endpoints feed.
-        restamp_edge_flags(&self.store, &mut wtxn, subject, flags)?;
-        ppr::invalidate_ppr_for_edge(&self.store, &mut wtxn, &subject.source, &subject.target)?;
+        restamp_edge_flags(&self.store, wtxn, subject, flags)?;
+        ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
 
-        wtxn.commit()?;
         Ok(())
     }
 
@@ -1910,6 +2049,8 @@ impl Vault {
         Ok(matched)
     }
 }
+
+mod imported;
 
 #[cfg(test)]
 mod tests;

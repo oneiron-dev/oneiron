@@ -1,13 +1,17 @@
 pub mod export;
 pub(crate) mod secret_scan;
 
+mod agent_definition_create;
 mod authority_log;
 mod builder;
 mod child_of_overlay;
 mod claim_candidate_apply;
+mod claim_materialization;
 mod deindex;
 mod edge_apply;
 mod facet_validation;
+mod gate_mode;
+mod gate_staging;
 mod lexical_query_hints;
 mod ops_pipeline;
 mod phonetic_apply;
@@ -15,6 +19,7 @@ mod put_apply;
 mod short_id;
 mod txn_builder;
 mod types;
+mod vad_postcommit;
 mod vector_apply;
 
 #[cfg(test)]
@@ -22,10 +27,12 @@ mod tests;
 
 pub use self::builder::BatchBuilder;
 pub use self::txn_builder::TxnBatchBuilder;
+pub(crate) use self::vad_postcommit::VadPostcommitScope;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::child_of_overlay::child_of_prefix;
+pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
 #[cfg(test)]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
@@ -37,9 +44,12 @@ pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
 };
+pub(crate) use self::gate_mode::ApplyOpsGateMode;
+pub(crate) use self::gate_staging::StagedClaimGateOutcome;
+use self::gate_staging::{stage_preflight_decision, staged_claim_gate_outcomes};
 pub(crate) use self::ops_pipeline::{
-    ApplyOpsGateMode, BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
-    apply_ops_with_origin, apply_session_bundle_claim_puts, reject_overlay_member_base_write,
+    BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode, apply_ops_with_origin,
+    apply_session_bundle_claim_puts, reject_overlay_member_base_write,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
 pub(crate) use self::put_apply::delete_entity_index_rows;

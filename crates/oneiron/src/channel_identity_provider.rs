@@ -1132,7 +1132,7 @@ fn validate_slack_provision_intent(intent: &ProvisionIntent) -> Result<()> {
     }
     if !matches!(
         intent.identity.binding,
-        ChannelIdentityBinding::Agent { .. }
+        ChannelIdentityBinding::Actor { .. }
     ) {
         return Err(Error::InvalidConfig(
             "slack adapter requires agent-scoped personas".to_owned(),
@@ -1574,7 +1574,7 @@ fn validate_provision_intent(
     }
     if !matches!(
         intent.identity.binding,
-        ChannelIdentityBinding::Agent { .. }
+        ChannelIdentityBinding::Actor { .. }
     ) {
         return Err(Error::InvalidConfig(
             "email provider adapter requires agent-scoped identities".to_owned(),
@@ -1604,7 +1604,7 @@ fn validate_line_provision_intent(
     }
     if !matches!(
         intent.identity.binding,
-        ChannelIdentityBinding::Agent { .. }
+        ChannelIdentityBinding::Actor { .. }
     ) {
         return Err(Error::InvalidConfig(
             "LINE OA adapter requires agent-scoped identities".to_owned(),

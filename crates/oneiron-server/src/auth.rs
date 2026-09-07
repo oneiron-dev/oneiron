@@ -163,9 +163,40 @@ pub(crate) struct CoreAuth {
     /// Revocable identity of the credential this auth came from, when it has
     /// one. Retained so a long-lived session can re-consult the registry.
     jti: Option<String>,
+    /// D13 actor class the slip binds write identity to (`human`/`agent`/
+    /// `system`), when it carries the claim (ONE-1441).
+    ///
+    /// Additive and optional. Only `/v1/core/facade` handlers read it, and
+    /// they REQUIRE it; every route that existed before this field is
+    /// unchanged by its absence, which is what an owner-grade secret and a
+    /// scoped non-facade slip both present.
+    actor_class: Option<String>,
 }
 
 impl CoreAuth {
+    /// Verifies an in-band slip through the existing MAC → claims → live-jti path.
+    /// Neither the trust root (even a v2-shaped root) nor dev-mode unverified
+    /// credentials may establish app-tier authority. Claim grammar is unchanged.
+    pub(crate) fn from_bind_token(
+        token: &str,
+        config: &SyncServerConfig,
+        revoked: &dyn RevokedTokenJtis,
+    ) -> Result<Self, ApiError> {
+        let expected = config
+            .auth_secret
+            .as_deref()
+            .ok_or_else(ApiError::unauthorized)?;
+        if expected.is_empty()
+            || split_core_token_v2(token).is_none()
+            || constant_time_eq(token, expected)
+        {
+            return Err(ApiError::unauthorized());
+        }
+        let auth = bearer_auth(token, config, revoked)?;
+        auth.require_registered_principal()?;
+        Ok(auth)
+    }
+
     pub(crate) fn from_headers(
         headers: &HeaderMap,
         config: &SyncServerConfig,
@@ -186,6 +217,7 @@ impl CoreAuth {
             scopes: CoreScope::all(),
             implicit_all_scopes: true,
             jti: None,
+            actor_class: None,
         })
     }
 
@@ -196,6 +228,7 @@ impl CoreAuth {
             scopes: BTreeSet::from([CoreScope::Read]),
             implicit_all_scopes: false,
             jti: None,
+            actor_class: None,
         }
     }
 
@@ -217,6 +250,18 @@ impl CoreAuth {
 
     pub(crate) fn principal_ref(&self) -> Option<&str> {
         self.principal_ref.as_deref()
+    }
+
+    /// The D13 actor class the slip binds, when it carries one (ONE-1441).
+    ///
+    /// Read only by `/v1/core/facade` handlers, which refuse without it. The
+    /// value is already grammar-checked by `parse_actor_class`: reaching a
+    /// handler at all means it is one of `human`/`agent`/`system`, so no
+    /// handler re-validates the string. It is still not AUTHORITY — the engine
+    /// decides whether the named principal's stored entity type admits the
+    /// asserted class, per write.
+    pub(crate) fn actor_class(&self) -> Option<&str> {
+        self.actor_class.as_deref()
     }
 
     /// Requires that this credential resolves to a REGISTERED principal.
@@ -434,6 +479,10 @@ fn bearer_auth(
             scopes: CoreScope::all(),
             implicit_all_scopes: true,
             jti: None,
+            // The trust root is not an actor. An owner-grade secret binds no
+            // principal and therefore no class; facade routes refuse it for
+            // exactly that reason, while every other route is unaffected.
+            actor_class: None,
         });
     }
 
@@ -482,6 +531,7 @@ fn core_auth_for_live_claims(
         scopes: claims.scopes.unwrap_or_else(CoreScope::all),
         implicit_all_scopes,
         jti: claims.jti,
+        actor_class: claims.actor_class,
     })
 }
 
@@ -506,6 +556,7 @@ struct BearerClaims {
     scopes: Option<BTreeSet<CoreScope>>,
     principal_ref: Option<String>,
     jti: Option<String>,
+    actor_class: Option<String>,
 }
 
 fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
@@ -523,6 +574,18 @@ fn parse_bearer_claims(token_claims: &str) -> Result<BearerClaims, ApiError> {
             "principal_ref" => {
                 saw_narrowing_claim = true;
                 claims.principal_ref = Some(parse_principal_ref(value)?);
+            }
+            // ONE-1441. Narrowing like `principal_ref` beside it: the pair
+            // names WHICH actor and WHICH class a facade write is attributed
+            // to, so a slip carrying a class but no scope list is refused for
+            // the same reason a bare `principal_ref` is.
+            //
+            // Reached only AFTER the MAC check in `bearer_auth`, so this arm
+            // reads bytes the trust root already authenticated and can never
+            // weaken the verbatim/MAC gate above it.
+            "actor_class" => {
+                saw_narrowing_claim = true;
+                claims.actor_class = Some(parse_actor_class(value)?);
             }
             // Identity, not narrowing: a `jti` alone leaves the token
             // owner-grade, so it must not trip the scope requirement below.
@@ -566,6 +629,20 @@ fn parse_principal_ref(value: &str) -> Result<String, ApiError> {
     oneiron::EntityId::from_hex(value)
         .map(|id| id.to_hex())
         .map_err(|_| ApiError::unauthorized())
+}
+
+/// Parses an `actor_class` claim: the closed D13 vocabulary, exactly.
+///
+/// A value outside the enum is a MALFORMED credential, not an authorization
+/// question, so it 401s here with every other grammar failure rather than
+/// reaching a handler and becoming a 403. The distinction is load-bearing for
+/// the facade contract: a well-formed slip merely MISSING the claim does reach
+/// the handler and fails typed `FORBIDDEN` there.
+fn parse_actor_class(value: &str) -> Result<String, ApiError> {
+    match value {
+        "human" | "agent" | "system" => Ok(value.to_owned()),
+        _ => Err(ApiError::unauthorized()),
+    }
 }
 
 fn constant_time_eq(provided: &str, expected: &str) -> bool {

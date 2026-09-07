@@ -14,6 +14,7 @@ use super::cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelState, AttemptCancellation,
     AttemptLanding, AttemptLandingReserve, AttemptResumePoint,
 };
+use super::validate::validate_result_ref;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
@@ -60,6 +61,41 @@ impl AttemptId {
     }
 }
 
+/// Durable reference to the artifact version an attempt's result lives in.
+///
+/// The value is a REFERENCE, never a payload: an executor's actual output is
+/// an appended artifact version, and this row carries only the string that
+/// names it. It is validated at construction so a row can never point at an
+/// empty or unprintable reference that no reader could resolve.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AttemptResultRef(String);
+
+impl AttemptResultRef {
+    /// Builds a validated result reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidAttemptQueueRecord`] when the reference is
+    /// empty, over-long, or carries a control character.
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        validate_result_ref(&value)?;
+        Ok(Self(value))
+    }
+
+    /// The validated reference string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consumes the reference, yielding its validated string.
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
 /// Durable lifecycle state persisted on each attempt row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -82,6 +118,15 @@ pub enum AttemptState {
     /// deliberately not [`Self::Completed`] — a landing is an honest,
     /// resumable stop, not a delivered result.
     Landing,
+    /// The executor stopped without delivering a result and without anyone
+    /// stopping it. Terminal, and deliberately not [`Self::Failed`]: nothing
+    /// reported a fault, the work simply stopped being carried. Deliberately
+    /// not [`Self::Cancelled`] either: no operator or authority asked for it.
+    ///
+    /// An abandoned row always names the last durable exhaust it produced
+    /// through [`AttemptRecord::result_ref`], so the stop is auditable even
+    /// though nothing completed.
+    Abandoned,
 }
 
 impl AttemptState {
@@ -95,11 +140,15 @@ impl AttemptState {
             Self::Cancelled => "cancelled",
             Self::Scheduled => "scheduled",
             Self::Landing => "landing",
+            Self::Abandoned => "abandoned",
         }
     }
 
     /// True while the row can still reach a terminal state, so it still owns
     /// its advisory dedupe entry.
+    ///
+    /// [`Self::Abandoned`] is absent: it IS a terminal state, so an abandoned
+    /// row keeps no dedupe claim and can never re-enter queued or leased work.
     pub(super) const fn is_pending(self) -> bool {
         matches!(
             self,
@@ -125,7 +174,10 @@ impl AttemptState {
     /// True once the row can never transition again.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Abandoned
+        )
     }
 }
 
@@ -300,6 +352,14 @@ pub struct AttemptRecord {
     /// Rows without the key decode as the default, so no migration is needed.
     #[serde(default)]
     pub cancel_state: AttemptCancelState,
+    /// The artifact version this try's durable output lives in, once one
+    /// exists. Cross-executor and deliberately not BYOA-specific: any executor
+    /// that produces a durable result names it here.
+    ///
+    /// Rows written before this field existed decode as `None`, so no
+    /// migration is needed and an old row stays byte-identically readable.
+    #[serde(default)]
+    pub result_ref: Option<AttemptResultRef>,
 }
 
 impl AttemptRecord {
@@ -313,6 +373,13 @@ impl AttemptRecord {
     #[must_use]
     pub fn cancel_receipts(&self) -> &[AttemptCancelReceipt] {
         &self.cancel_state.receipts
+    }
+
+    /// The artifact version this try's durable output lives in, once one
+    /// exists.
+    #[must_use]
+    pub const fn result_ref(&self) -> Option<&AttemptResultRef> {
+        self.result_ref.as_ref()
     }
 
     /// The durable landing record, present while landing and preserved on a
@@ -427,6 +494,45 @@ pub struct FailAttempt {
 pub enum FailOutcome {
     Failed(AttemptRecord),
     AlreadyFailed(AttemptRecord),
+}
+
+/// Input for naming the artifact version a live attempt's result lives in.
+///
+/// Attaching a result is deliberately its own verb rather than a field on
+/// [`CompleteAttempt`]: the exhaust an executor produces is durable BEFORE the
+/// row settles, and an executor that then stops without completing must still
+/// point at it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetAttemptResult {
+    pub id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub result_ref: AttemptResultRef,
+    pub now: u64,
+}
+
+/// Input for abandoning a live attempt: it stopped without delivering, and
+/// nobody stopped it.
+///
+/// The result reference is REQUIRED, not optional. An abandonment with nothing
+/// to point at would be indistinguishable from a lost row, and the whole point
+/// of the state is that the stop stays auditable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbandonAttempt {
+    pub id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub result_ref: AttemptResultRef,
+    pub reason: String,
+    pub now: u64,
+}
+
+/// Typed abandon outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AbandonOutcome {
+    Abandoned(AttemptRecord),
+    AlreadyAbandoned(AttemptRecord),
 }
 
 /// Input for finalizing a leased attempt and scheduling its next try.
@@ -557,6 +663,13 @@ pub struct AttemptQueueCleanupReport {
     /// A landing cannot be requeued as ordinary work, so it cannot be part of
     /// `stale_requeued`.
     pub landing_force_cancelled: u64,
+    /// Rows that stopped without delivering and without being stopped.
+    ///
+    /// A sub-count of `done`, exactly like `landing_force_cancelled`: an
+    /// abandoned row is settled terminal work, so folding it into `failed`
+    /// would report a fault nobody observed, and leaving it only inside `done`
+    /// would hide a stopped executor behind a success-shaped counter.
+    pub abandoned: u64,
     pub retry_reasons: [AttemptQueueRetryReasonCount; ATTEMPT_QUEUE_RETRY_REASON_COUNT],
 }
 
@@ -569,6 +682,7 @@ impl Default for AttemptQueueCleanupReport {
             done: 0,
             stale_requeued: 0,
             landing_force_cancelled: 0,
+            abandoned: 0,
             retry_reasons: AttemptQueueRetryReason::metric_values()
                 .map(AttemptQueueRetryReasonCount::zero),
         }

@@ -320,7 +320,7 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
     let expected_ids: Vec<_> = reader
-        .search_text("pushdownneedle", 10)?
+        .search_text("pushdownneedle", 10, None)?
         .into_iter()
         .map(|hit| hit.id)
         .collect();

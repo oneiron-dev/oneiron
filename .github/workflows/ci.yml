@@ -65,7 +65,8 @@ jobs:
         with:
           toolchain: "1.96"
           components: rustfmt
-      - run: cargo fmt --all --check
+      # Honor the workspace's heed exclusion; --all also follows local path dependencies.
+      - run: cargo fmt --check
 
   clippy:
     name: Clippy
@@ -207,12 +208,20 @@ jobs:
   deny:
     name: cargo-deny
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      # The policy wrapper and tests must use the same inspected cargo-deny version.
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          command: check
+          toolchain: "1.96"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.19.4
+      - name: Test exact maintenance-risk policy (offline fixtures)
+        run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
+      - name: Check dependencies with expiring accepted-risk policy
+        run: python3 scripts/advisory-policy/check.py
 
   typos:
     name: typos

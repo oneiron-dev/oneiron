@@ -377,7 +377,11 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
         )?);
         let delivered = delivered_send_receipt_for_task(&vault, task_ref)?;
         let before = retry_storage_snapshot(&vault)?;
-        assert_eq!(before[3].len(), 1, "the leased source owns its dedupe entry");
+        assert_eq!(
+            before[3].len(),
+            1,
+            "the leased source owns its dedupe entry"
+        );
         assert!(!persist_failed_send_receipt_and_retry(
             &vault,
             &source,
@@ -396,9 +400,15 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
         assert_eq!(queue.list()?, vec![completed.clone()]);
         assert_eq!(queue.list_run("run:atomic-audit")?, vec![completed]);
         let after = retry_storage_snapshot(&vault)?;
-        assert_eq!(after[0], before[0], "delivery evidence and indexes are sticky");
+        assert_eq!(
+            after[0], before[0],
+            "delivery evidence and indexes are sticky"
+        );
         assert!(after[2].is_empty(), "no ready source or successor");
-        assert!(after[3].is_empty(), "completion retires the source dedupe entry");
+        assert!(
+            after[3].is_empty(),
+            "completion retires the source dedupe entry"
+        );
         assert_eq!(
             delivered_send_receipt_for_task(&vault, task_ref)?,
             delivered
@@ -554,11 +564,15 @@ fn already_delivered_completion_caller_abort_rolls_back_every_index() -> crate::
         );
         assert!(vault.store.attempt_ready.iter(wtxn)?.next().is_none());
         assert!(vault.store.attempt_dedupe.iter(wtxn)?.next().is_none());
-        Err(Error::InvariantViolation("forced abort after completion writes"))
+        Err(Error::InvariantViolation(
+            "forced abort after completion writes",
+        ))
     });
     assert!(matches!(
         result,
-        Err(Error::InvariantViolation("forced abort after completion writes"))
+        Err(Error::InvariantViolation(
+            "forced abort after completion writes"
+        ))
     ));
     assert_eq!(retry_storage_snapshot(&vault)?, before);
     assert_eq!(queue.list()?, vec![source.clone()]);
@@ -566,7 +580,10 @@ fn already_delivered_completion_caller_abort_rolls_back_every_index() -> crate::
         crate::receipt::attempt_pack_receipt(&vault, &pack_receipt_id)?,
         None
     );
-    assert_eq!(delivered_send_receipt_for_task(&vault, task_ref)?, delivered);
+    assert_eq!(
+        delivered_send_receipt_for_task(&vault, task_ref)?,
+        delivered
+    );
     assert_eq!(vault.store.send_receipt_rows()?.len(), 1);
     assert_eq!(audit_receipts(&vault)?.len(), 1);
     assert_eq!(
@@ -589,12 +606,18 @@ fn already_delivered_completion_caller_abort_rolls_back_every_index() -> crate::
     let pack = crate::receipt::attempt_pack_receipt(&vault, &pack_receipt_id)?
         .expect("completion stamps the source's pack receipt");
     assert_eq!(pack.outcome, "completed");
-    assert_eq!(pack.pack_manifest_skills(), Some(vec!["skill:atomic-audit@v1".to_owned()]));
+    assert_eq!(
+        pack.pack_manifest_skills(),
+        Some(vec!["skill:atomic-audit@v1".to_owned()])
+    );
     let attempts = queue.list()?;
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].id, source.id);
     assert_eq!(attempts[0].state, AttemptState::Completed);
-    assert_eq!(delivered_send_receipt_for_task(&vault, task_ref)?, delivered);
+    assert_eq!(
+        delivered_send_receipt_for_task(&vault, task_ref)?,
+        delivered
+    );
     assert_eq!(vault.store.send_receipt_rows()?.len(), 1);
     Ok(())
 }

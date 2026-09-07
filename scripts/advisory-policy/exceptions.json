@@ -1,0 +1,205 @@
+{
+  "schema": 1,
+  "ticket": "ONE-335",
+  "status": "accepted-maintenance-risk-not-fixed",
+  "expires": "2026-10-07T00:00:00Z",
+  "review": {
+    "trigger": "Post-wave context-pack discussion or expiry, whichever comes first.",
+    "post_wave_at": null,
+    "automatic_renewal": false
+  },
+  "entries": [
+    {
+      "id": "RUSTSEC-2024-0413",
+      "package": "atk",
+      "version": "0.18.2",
+      "parents": [
+        "gtk@0.18.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0416",
+      "package": "atk-sys",
+      "version": "0.18.2",
+      "parents": [
+        "atk@0.18.2",
+        "gtk-sys@0.18.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0412",
+      "package": "gdk",
+      "version": "0.18.2",
+      "parents": [
+        "gdkx11@0.18.2",
+        "gtk@0.18.2",
+        "webkit2gtk@2.0.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0418",
+      "package": "gdk-sys",
+      "version": "0.18.2",
+      "parents": [
+        "gdk@0.18.2",
+        "gdkwayland-sys@0.18.2",
+        "gdkx11-sys@0.18.2",
+        "gtk-sys@0.18.2",
+        "webkit2gtk-sys@2.0.2",
+        "webkit2gtk@2.0.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0411",
+      "package": "gdkwayland-sys",
+      "version": "0.18.2",
+      "parents": [
+        "tao@0.35.3"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0417",
+      "package": "gdkx11",
+      "version": "0.18.2",
+      "parents": [
+        "wry@0.55.1"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0414",
+      "package": "gdkx11-sys",
+      "version": "0.18.2",
+      "parents": [
+        "gdkx11@0.18.2",
+        "tao@0.35.3"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0415",
+      "package": "gtk",
+      "version": "0.18.2",
+      "parents": [
+        "libappindicator@0.9.0",
+        "muda@0.19.3",
+        "tao@0.35.3",
+        "tauri-runtime-wry@2.11.4",
+        "tauri-runtime@2.11.3",
+        "tauri@2.11.5",
+        "webkit2gtk@2.0.2",
+        "wry@0.55.1"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0420",
+      "package": "gtk-sys",
+      "version": "0.18.2",
+      "parents": [
+        "gtk@0.18.2",
+        "libappindicator-sys@0.9.0",
+        "libappindicator@0.9.0",
+        "webkit2gtk-sys@2.0.2",
+        "webkit2gtk@2.0.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0419",
+      "package": "gtk3-macros",
+      "version": "0.18.2",
+      "parents": [
+        "gtk@0.18.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2024-0370",
+      "package": "proc-macro-error",
+      "version": "1.0.4",
+      "parents": [
+        "glib-macros@0.18.5",
+        "gtk3-macros@0.18.2"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2025-0081",
+      "package": "unic-char-property",
+      "version": "0.9.0",
+      "parents": [
+        "unic-ucd-ident@0.9.0"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2025-0075",
+      "package": "unic-char-range",
+      "version": "0.9.0",
+      "parents": [
+        "unic-char-property@0.9.0",
+        "unic-ucd-ident@0.9.0"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2025-0080",
+      "package": "unic-common",
+      "version": "0.9.0",
+      "parents": [
+        "unic-ucd-version@0.9.0"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2025-0100",
+      "package": "unic-ucd-ident",
+      "version": "0.9.0",
+      "parents": [
+        "urlpattern@0.3.0"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2025-0098",
+      "package": "unic-ucd-version",
+      "version": "0.9.0",
+      "parents": [
+        "unic-ucd-ident@0.9.0"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2026-0247",
+      "package": "bitmaps",
+      "version": "2.1.0",
+      "parents": [
+        "im@15.1.0",
+        "sized-chunks@0.6.5"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2026-0248",
+      "package": "im",
+      "version": "15.1.0",
+      "parents": [
+        "loro-internal@1.13.9"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2026-0251",
+      "package": "sized-chunks",
+      "version": "0.6.5",
+      "parents": [
+        "im@15.1.0"
+      ]
+    }
+  ],
+  "context": [
+    {
+      "package": "tauri-utils",
+      "version": "2.9.3",
+      "dependency": "urlpattern 0.3.0"
+    },
+    {
+      "package": "loro",
+      "version": "1.13.9",
+      "dependency": "loro-internal 1.13.9"
+    },
+    {
+      "package": "loro-internal",
+      "version": "1.13.9",
+      "dependency": "im 15.1.0"
+    }
+  ]
+}

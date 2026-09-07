@@ -35,6 +35,10 @@ impl Vault {
     /// `companion.expression.*` is refused here for the same reason
     /// [`Vault::retract_claim`] refuses it: a typed door owns that family's
     /// supersession chain and this one cannot honour the contract.
+    ///
+    /// Approving a bound pending Dreamer consent also consolidates VAD after
+    /// commit. A consolidation error is returned with Approved retained. Retry
+    /// [`Vault::consolidate_claim_vad`] for that id to finish this postcommit work.
     pub fn put_claim(
         &self,
         id: &EntityId,
@@ -43,8 +47,15 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        let pending = self.pending_dreamer_vad_approval_in_txn(&wtxn, id, body.approval)?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
+        let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
         wtxn.commit()?;
+        // Canonical consolidation opens its own writer only after durable
+        // approval. Errors remain errors, without rolling back Approved.
+        for claim_id in approved {
+            self.consolidate_claim_vad_now(&claim_id, crate::unix_seconds_now())?;
+        }
         Ok(())
     }
 

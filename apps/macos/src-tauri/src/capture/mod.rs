@@ -3,7 +3,7 @@
 //!
 //! The vocabulary lives here; the platform edges live in the submodules
 //! ([`mic`] for the microphone stream, [`route`] for output-route detection,
-//! [`tap`] for the Core Audio process tap) and the running capture is
+//! `tap` for the Core Audio process tap) and the running capture is
 //! [`stream::DualStreamCapture`].
 //!
 //! Two honesty rules shape the whole module:
