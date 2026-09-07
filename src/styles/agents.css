@@ -408,3 +408,69 @@ table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--sil
 .rp-helper.needs, .rp-helper.needs .rp-hstate { color: var(--silver-1); }
 .rp-helper.needs .rp-hstate::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); margin-right: 6px; vertical-align: 1px; }
 
+
+/* ── the picker (owner 09-08, html[data-picker]): well = the roster as a well
+   column beside the room (as built) · sidebar = the column belongs to the
+   sheet, flush to its left edge top to bottom (the Slack shape) · rail = the
+   agents are rows under `agents` in the rail, no second column. ── */
+html[data-picker="sidebar"] .agents-grid { column-gap: 26px; padding-top: 0; }
+html[data-picker="sidebar"] .roster {
+  border-radius: 0; align-self: stretch; max-height: none;
+  margin: calc(-1 * var(--pane-pad-y)) 0 0 calc(-1 * var(--pane-pad-x));
+  padding: 16px 8px 16px calc(var(--pane-pad-x) - 6px);
+}
+html[data-picker="rail"] .agents-grid { grid-template-columns: minmax(0, 1fr); }
+html[data-picker="rail"] .roster { display: none; }
+
+/* ── the work pane (owner 09-08, html[data-work="pane"]): closed = one mono
+   mark at the room's top-right corner, in the air (the Codex floatie); open =
+   a well column docked at the room's right edge. The thread's live card and
+   the agent bar stand down under this axis. ── */
+.rpane { display: none; }
+html[data-work="pane"] .rlive-row, html[data-work="pane"] .agent-bar { display: none; }
+html[data-work="pane"] .rpane { display: flex; position: absolute; top: 0; right: 0; }
+html[data-work="pane"] .rpane.open {
+  position: static; flex: none; width: 316px; margin-left: auto; min-height: 0;
+  background: var(--bg-well); border-radius: 6px; padding: 12px 16px 16px; overflow-y: auto;
+  flex-direction: column; gap: 12px;
+}
+.rp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.rp-body { display: flex; flex-direction: column; gap: 10px; }
+.rp-body .label { margin-top: 4px; }
+.rp-body .ag-none { font-family: var(--serif); font-size: 13.5px; color: var(--silver-3); }
+.rp-run { display: flex; flex-direction: column; gap: 4px; }
+.rp-gname { font-family: var(--serif); font-size: 13.5px; }
+.rp-doing { font-family: var(--serif); font-size: 13.5px; line-height: 1.4; color: var(--silver-1); }
+.rp-run > .meta-line { margin: 0 0 2px; }
+.rp-acts { display: flex; gap: 12px; padding-left: 10px; padding-top: 2px; opacity: 0; transition: opacity 160ms ease; }
+.rp-run:hover .rp-acts, .rp-acts:focus-within { opacity: 1; }
+.rp-earlier { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
+.rp-ewhat { font-family: var(--serif); font-size: 13px; line-height: 1.4; color: var(--silver-3); }
+.rp-estate { font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); white-space: nowrap; }
+/* the closed mark: one mono line, top right, in the air */
+.pmark {
+  appearance: none; border: 0; background: none; padding: 6px 0 0; cursor: pointer;
+  color: var(--silver-3); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; white-space: nowrap;
+}
+.pmark:hover { color: var(--silver-1); }
+.pmark:focus-visible { outline: 2px solid var(--safelight); outline-offset: 3px; border-radius: 3px; }
+.pmark .pm-dot { margin-right: 5px; vertical-align: 1px; }
+.pm-chev { color: var(--silver-4); }
+/* a narrow room: the column gives way before the pane overlays anything */
+.room { container-type: inline-size; container-name: room; }
+@container room (max-width: 980px) {
+  .room:has(.rpane.open) .room-main { flex: 1 1 0; }
+}
+
+/* ── pause is a button with the glyph, not a word (owner 09-08): two bars at
+   rest, the play triangle while paused; the stamp reads beside it ── */
+.pause-btn {
+  appearance: none; flex: none; width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid var(--rule-strong); background: none; color: var(--silver-3);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.pause-btn svg { width: 11px; height: 11px; fill: currentColor; display: block; }
+.pause-btn:hover, .pause-btn:focus-visible { color: var(--silver-1); border-color: var(--silver-3); }
+.pause-btn:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; }
+.pause-btn[aria-pressed="true"] { color: var(--silver-1); background: var(--bg-well); }

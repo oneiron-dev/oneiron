@@ -291,6 +291,51 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* the picker (owner 09-08): where the agent list lives */
+  type Picker = 'well' | 'sidebar' | 'rail'
+  const [picker, setPickerState] = React.useState<Picker>('well')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-picker')
+      if (v === 'sidebar' || v === 'rail') setPickerState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setPicker = React.useCallback((k: Picker) => {
+    setPickerState(k)
+    if (k === 'well') document.documentElement.removeAttribute('data-picker')
+    else document.documentElement.setAttribute('data-picker', k)
+    try {
+      if (k === 'well') localStorage.removeItem('oneiron-picker')
+      else localStorage.setItem('oneiron-picker', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+  /* the work (owner 09-08): where an agent's live work prints */
+  type Work = 'thread' | 'pane'
+  const [work, setWorkState] = React.useState<Work>('thread')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-work')
+      if (v === 'pane') setWorkState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setWork = React.useCallback((k: Work) => {
+    setWorkState(k)
+    if (k === 'thread') document.documentElement.removeAttribute('data-work')
+    else document.documentElement.setAttribute('data-work', k)
+    try {
+      if (k === 'thread') localStorage.removeItem('oneiron-work')
+      else localStorage.setItem('oneiron-work', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   if (!values) return null
   return (
     <aside
@@ -410,6 +455,34 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             className={selChrome === k ? 'act on' : 'act'}
             title={k === 'rounded' ? 'the well on a 5px radius (as built)' : k === 'square' ? 'the well, square corners' : k === 'gutter' ? 'no fill · a hair of ink at the left edge' : 'no fill where a checkbox already says it (the vault); the open row keeps its bar'}
             onClick={() => setSelChrome(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">picker</div>
+      <div className="t-acts">
+        {(['well', 'sidebar', 'rail'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={picker === k ? 'act on' : 'act'}
+            title={k === 'well' ? 'the roster as a well column beside the room (as built)' : k === 'sidebar' ? 'the roster belongs to the sheet: flush to its left edge, top to bottom (the Slack shape)' : 'the agents as rows under `agents` in the rail · no second column'}
+            onClick={() => setPicker(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">work</div>
+      <div className="t-acts">
+        {(['thread', 'pane'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={work === k ? 'act on' : 'act'}
+            title={k === 'thread' ? 'the live run as a card at the foot of the conversation + the agent bar (as built)' : 'one mark at the room’s top right · click docks the work pane (the Codex shape)'}
+            onClick={() => setWork(k)}
           >
             {k}
           </button>

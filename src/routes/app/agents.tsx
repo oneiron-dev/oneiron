@@ -364,6 +364,23 @@ function DoorAct({ door, className = 'act' }: { door: Door; className?: string }
 }
 
 /* the face: one mask in the agent's ink; 72 in the room head, small in rows */
+/* the pause glyph is a button, not a word (owner 09-08) */
+function IconPause() {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <rect x="2" y="1.5" width="3" height="9" rx="0.6" />
+      <rect x="7" y="1.5" width="3" height="9" rx="0.6" />
+    </svg>
+  )
+}
+function IconPlay() {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M3 1.5 L10.5 6 L3 10.5 Z" />
+    </svg>
+  )
+}
+
 function Face({ c, size, alt }: { c: Creature; size: number; alt?: string }) {
   if (c === 'none') return <span className="creature-none" aria-hidden="true" />
   const spec = CREATURES.find((x) => x.id === c)!
@@ -449,7 +466,7 @@ function Editable({ as = 'span', className, value, placeholder, onCommit, autoFo
   )
 }
 
-type Layer = 'thread' | 'setup' | 'runs'
+type Layer = 'thread' | 'setup'
 
 function Agents() {
   const search = Route.useSearch()
@@ -478,6 +495,9 @@ function Agents() {
      when its card scrolls out of view a thin line above the composer carries the count */
   const liveRef = React.useRef<HTMLDivElement>(null)
   const [liveSeen, setLiveSeen] = React.useState(true)
+  /* the work pane (owner 09-08, "the floaty thing on top right … can expand
+     into a sidebar like Codex"): closed = one mark in the air; open = docked */
+  const [pane, setPane] = React.useState(false)
   /* stop = the cancel signal (rule 34): the run settles midway, in place */
   const [stopped, setStopped] = React.useState<Partial<Record<RunKey, boolean>>>({})
   /* the ledger sorts on its heads: asc → desc → off */
@@ -1253,6 +1273,89 @@ function Agents() {
     })
   }
 
+  /* ── the work pane (owner 09-08): closed = one mono mark at the room's
+     top-right corner, in the air (the Codex floatie); open = a well column
+     docked at the room's right edge (the vault's inspector rule: a tinted
+     zone divides). The run's tree, the one red dot on what needs you, stop
+     at rest; steering is replying below. Only under html[data-work="pane"];
+     the thread's live card and the agent bar stand down there. ── */
+  const renderPane = () => {
+    const live = runRows.filter((r) => !stopped[r.agent])
+    const one = !isHouse && live.length === 1 ? live[0] : null
+    const head = one ? `working · ${one.elapsed}` : `${liveCount} running`
+    const words = `${head}${needsCount ? ` · ${needsCount} needs you` : ''}`
+    return (
+      <aside className={pane ? 'rpane open' : 'rpane'} aria-label="work">
+        {pane ? (
+          <>
+            <div className="rp-head">
+              <span className="meta-line" title="this room's live work">
+                {words}
+              </span>
+              <button type="button" className="act" title="close the pane" onClick={(e) => { markCued(e); setPane(false); cue('toggle') }}>
+                close
+              </button>
+            </div>
+            <div className="rp-body">
+              <span className="label">work</span>
+              {live.length === 0 ? <p className="ag-none">Nothing runs right now.</p> : null}
+              {live.map((r) => (
+                <div key={r.agent} className="rp-run" data-agent={r.agent}>
+                  {isHouse ? (
+                    <span className="aname rp-gname" data-agent={r.agent}>
+                      {NAMES[r.agent]}
+                    </span>
+                  ) : null}
+                  <span className="rp-doing" title={r.tip}>
+                    {r.doing}
+                  </span>
+                  <span className="meta-line">
+                    running · {r.elapsed} · {r.helpers.length} helpers
+                  </span>
+                  {r.helpers.map((h) => (
+                    <div key={h.what} className={h.needs ? 'rp-helper needs' : 'rp-helper'}>
+                      <span className="rp-hwhat">{h.what}</span>
+                      <span className="rp-hstate">{h.state}</span>
+                    </div>
+                  ))}
+                  <span className="rp-acts">
+                    <button type="button" className="act" title="verb: stop_run · at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
+                      stop
+                    </button>
+                    <button type="button" className="act" title="say it below · the run hears it at its next breakpoint" onClick={(e) => { markCued(e); inputRef.current?.focus(); cue('press') }}>
+                      steer
+                    </button>
+                  </span>
+                </div>
+              ))}
+              <span className="label">earlier</span>
+              {histRows.slice(0, 4).map((h) => (
+                <div key={h.id} className="rp-earlier" title={h.tip}>
+                  <span className="rp-ewhat">{h.ran}</span>
+                  <span className="rp-estate">{h.wake.replace('woke ', '')}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : liveCount ? (
+          <button type="button" className="pmark" title={`${words} · open the work pane`} onClick={(e) => { markCued(e); setPane(true); cue('toggle') }}>
+            {head}
+            {needsCount ? (
+              <>
+                {' · '}
+                <i className="pm-dot" aria-hidden="true" />
+                {needsCount} needs you
+              </>
+            ) : null}
+            <span className="pm-chev" aria-hidden="true">
+              {' ›'}
+            </span>
+          </button>
+        ) : null}
+      </aside>
+    )
+  }
+
   /* the agent bar (cross-arch-0009b): when the live card is scrolled off, a
      thin line above the composer keeps the count and jumps back to it */
   const renderBar = () => {
@@ -1282,210 +1385,6 @@ function Agents() {
       </button>
     )
   }
-
-  const renderRuns = () => (
-    <div className="runs-layer">
-      <Section
-        label="now"
-        title="Now"
-        meta={
-          <span className="meta-line" title={isHouse ? 'both runs are Hokuei work' : 'live now'}>
-            {liveCount} live
-          </span>
-        }
-      >
-        {runRows.length === 0 ? (
-          <p className="ag-none">Nothing runs right now.</p>
-        ) : (
-          <div className="now">
-            <div className="nhead" aria-hidden="true">
-              <span className="label">run</span>
-              <span className="label">world</span>
-              <span className="label h-num">elapsed</span>
-              <span className="label h-num">tokens</span>
-              <span className="label h-num">cost</span>
-              <span></span>
-            </div>
-            {runRows.map((r) => {
-              const still = !!stopped[r.agent]
-              return (
-                <div key={r.agent} className={still ? 'nrow still' : 'nrow live'} data-agent={r.agent}>
-                  <div className="nline">
-                    <span className="nwho">
-                      <span className="aname withface" title={r.tip}>
-                        <span className="face mark" data-agent={r.agent} aria-hidden="true" />
-                        {NAMES[r.agent]}
-                      </span>
-                      <span className="ndoing" title={still ? 'stopped · what landed stays' : r.doing}>
-                        {r.doing}
-                      </span>
-                    </span>
-                    <span className="ncell" title="world: hokuei · the pilot client">
-                      {r.world}
-                    </span>
-                    <span className="ncell n-num" title={still ? `ran ${r.elapsed}, then stopped` : `running ${r.elapsed}`}>
-                      {r.elapsed}
-                    </span>
-                    <span className="ncell n-num" title="tokens so far">
-                      {r.tokens}
-                    </span>
-                    <span className="ncell n-num" title="cost so far">
-                      {r.cost}
-                    </span>
-                    <span className="nacts">
-                      {still ? (
-                        <span className="meta-line" title="stopped at its next breakpoint">
-                          stopped {SETTLE_AT}
-                        </span>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className="act"
-                            title="opens the run in the agent line · steer it there"
-                            onClick={(e) => {
-                              markCued(e)
-                              openChat(r.agent)
-                            }}
-                          >
-                            steer
-                          </button>
-                          <button className="act" title="settles at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
-                            stop
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  {still ? <p className="nreceipt">What landed stays. The thread stays open.</p> : null}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </Section>
-
-      <Section
-        label="earlier today"
-        title="Earlier today"
-        meta={
-          <span className="meta-line" title="today’s runs, all receipted">
-            {histRows.length} runs · {writes} writes · {waited} waited
-          </span>
-        }
-        voice={
-          isHouse ? (
-            <div className="ag-voice">
-              <span className="aname" data-agent="antevon" title="Antevon · the house mind · as of 14:07">
-                Antevon
-              </span>
-              <span>Today was mostly Eiri. Nothing left the building without you. Tory’s supplier rumor still rests on one source, so it stays a proposal.</span>
-            </div>
-          ) : undefined
-        }
-      >
-        {histRows.length === 0 ? (
-          <p className="ag-none">No run yet today.</p>
-        ) : (
-          <div className="hist-wrap">
-            <table className="ledger hist">
-              <thead>
-                <tr>
-                  {HIST_COLS.map((col) => {
-                    const dir = sort?.id === col.id ? sort.dir : null
-                    return (
-                      <th key={col.id} className={dir ? `${col.cls ?? ''} sorted`.trim() : col.cls} aria-sort={col.accessor ? (dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none') : undefined}>
-                        {col.accessor ? (
-                          <span className="th-in">
-                            <button
-                              type="button"
-                              className="th-sort"
-                              title={`sort by ${col.header}`}
-                              onClick={(e) => {
-                                markCued(e)
-                                cycleSort(col.id)
-                              }}
-                            >
-                              {col.header}
-                              <span className="arrow" aria-hidden="true">
-                                {dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : ''}
-                              </span>
-                            </button>
-                          </span>
-                        ) : (
-                          col.header
-                        )}
-                      </th>
-                    )
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {histRows.map((h) => (
-                  <tr key={h.id}>
-                    <td>
-                      <span className="ran" title={h.tip}>
-                        {h.ran}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="aname withface"
-                        data-agent={h.by}
-                        title={`${NAMES[h.by]} · a door: its room`}
-                        onClick={(e) => {
-                          markCued(e)
-                          setRoom(h.by)
-                          cue('toggle')
-                        }}
-                      >
-                        <span className="face mark" data-agent={h.by} aria-hidden="true" />
-                        {NAMES[h.by]}
-                      </button>
-                    </td>
-                    <td className="num">
-                      <span className="cnt">{h.writes}</span>
-                    </td>
-                    <td className="num">
-                      {h.waited > 0 ? (
-                        <a className="cnt" href="#" title={h.waitedTip} onClick={(e) => e.preventDefault()}>
-                          {h.waited}
-                        </a>
-                      ) : (
-                        <span className="cnt none" title={h.waitedTip}>
-                          {h.waited}
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <a className="act" href="#" title={h.receiptTip} onClick={(e) => e.preventDefault()}>
-                        open
-                      </a>
-                    </td>
-                    <td>
-                      <span className="wake" title={h.wakeTip}>
-                        {h.wake}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Section>
-
-      <div className="ag-quiet">
-        <span className="digest">
-          {isHouse ? 'Two things wait for you, both from Eiri: a draft to send and a consent ask.' : 'What waits for you lives in the inbox, never here.'}
-        </span>
-        <Link className="act" to="/app/inbox" title="the queue lives in the inbox">
-          open the inbox
-        </Link>
-      </div>
-    </div>
-  )
 
   /* ── the room head: portrait · name in ink · role · the layer switch ── */
   const renderHead = () => {
@@ -1607,19 +1506,24 @@ function Agents() {
         />
         {current?.fixture && !isHouse ? (
           <span className="line-acts">
-            {current.id === 'antevon' ? null : paused[current.id] ? (
+            {current.id === 'antevon' ? null : (
               <>
-                <span className="meta-line" title="nothing new starts · the live run finishes">
-                  paused {paused[current.id]}
-                </span>
-                <button type="button" className="act" title={`resume ${current.name}`} onClick={resume(current.id)}>
-                  resume
+                {paused[current.id] ? (
+                  <span className="meta-line" title="nothing new starts · the live run finishes">
+                    paused {paused[current.id]}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="pause-btn"
+                  aria-pressed={!!paused[current.id]}
+                  aria-label={paused[current.id] ? `resume ${current.name}` : `pause ${current.name}`}
+                  title={paused[current.id] ? `resume ${current.name}` : `pause ${current.name} · nothing new starts, the live run finishes`}
+                  onClick={paused[current.id] ? resume(current.id) : pause(current.id)}
+                >
+                  {paused[current.id] ? <IconPlay /> : <IconPause />}
                 </button>
               </>
-            ) : (
-              <button type="button" className="act" title={`pause ${current.name} · nothing new starts, the live run finishes`} onClick={pause(current.id)}>
-                pause
-              </button>
             )}
           </span>
         ) : null}
@@ -1733,8 +1637,6 @@ function Agents() {
             {isHouse || current ? renderHead() : null}
             {layer === 'setup' && current ? (
               renderSetup(current)
-            ) : layer === 'runs' ? (
-              renderRuns()
             ) : (
               <div className={room === 'house' ? 'room-thread house' : 'room-thread solo'} ref={threadRef} aria-live="polite">
                 <span className="rday">today</span>
@@ -1757,6 +1659,7 @@ function Agents() {
             {layer === 'thread' ? renderBar() : null}
             {layer === 'thread' ? renderLine() : null}
             </div>
+            {(isHouse || current?.fixture) && layer === 'thread' ? renderPane() : null}
           </section>
         </div>
       </div>

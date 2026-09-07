@@ -25,6 +25,11 @@ try {
   if (vo === 'indent' || vo === 'mono' || vo === 'glyph') document.documentElement.setAttribute('data-voice', vo);
   const vg = localStorage.getItem('oneiron-voice-ground');
   if (vg === 'none' || vg === 'hairline') document.documentElement.setAttribute('data-voice-ground', vg);
+  /* the picker + the work (owner 09-08): well/thread are the defaults, the tuner's pick restores here */
+  const pk = localStorage.getItem('oneiron-picker');
+  if (pk === 'sidebar' || pk === 'rail') document.documentElement.setAttribute('data-picker', pk);
+  const wk = localStorage.getItem('oneiron-work');
+  if (wk === 'pane') document.documentElement.setAttribute('data-work', wk);
   const sc = localStorage.getItem('oneiron-select-chrome');
   if (sc === 'square' || sc === 'gutter' || sc === 'box') document.documentElement.setAttribute('data-select-chrome', sc);
 }

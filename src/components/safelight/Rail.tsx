@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Chevron,
   IconAgents,
@@ -39,7 +39,21 @@ import {
    The masthead is dead (owner 08-14 night): the rail owns the mark and the
    vault chip; the sheet reaches the top of the page. The vmenu is fixed so
    the rail's overflow never clips it. */
+/* the rail picker (owner 09-08, an option beside the roster column): the
+   agents as rows under `agents`, the Slack shape — one sidebar, the room
+   is ?with=. Hidden unless html[data-picker="rail"]. The bench fixture. */
+const RAIL_AGENTS: Array<{ key: 'eiri' | 'tory' | 'antevon' | 'house' | 'new'; ink?: 'eiri' | 'tory' | 'antevon'; name: string; live?: boolean; tip: string }> = [
+  { key: 'eiri', ink: 'eiri', name: 'eiri', live: true, tip: 'Eiri · drafting the COO intro' },
+  { key: 'tory', ink: 'tory', name: 'tory', live: true, tip: 'Tory · checking the supplier rumor' },
+  { key: 'antevon', ink: 'antevon', name: 'antevon', tip: 'Antevon · nights' },
+  { key: 'house', name: 'the house', tip: 'the house · every agent and you in one room' },
+  { key: 'new', name: '+ new agent', tip: 'a new agent · by conversation with Antevon' },
+]
+
 export function Rail() {
+  const loc = useRouterState({ select: (st) => st.location })
+  const onAgents = loc.pathname.startsWith('/app/agents')
+  const withKey = (loc.search as { with?: string }).with ?? 'eiri'
   const railRef = React.useRef<HTMLElement>(null)
   const chipRef = React.useRef<HTMLButtonElement>(null)
   const menuRef = React.useRef<HTMLDivElement>(null)
@@ -256,12 +270,31 @@ export function Rail() {
             </span>
             <span className="txt">vault</span>
           </Link>
-          <Link to="/app/agents" title="agents">
+          <Link to="/app/agents" title="agents" className="agents-head">
             <span className="ico" aria-hidden="true">
               <IconAgents />
             </span>
             <span className="txt">agents</span>
           </Link>
+          <div className="agent-rows">
+            {RAIL_AGENTS.map((a) => (
+              <Link
+                key={a.key}
+                to="/app/agents"
+                search={{ with: a.key }}
+                className={onAgents && withKey === a.key ? 'active' : undefined}
+                title={a.tip}
+              >
+                <span className="ico" aria-hidden="true">
+                  {a.ink ? <span className="face mark" data-agent={a.ink} /> : <span className="rail-dash" />}
+                </span>
+                <span className={a.ink ? 'txt aname' : 'txt'} data-agent={a.ink}>
+                  {a.name}
+                </span>
+                {a.live ? <span className="live-dot" aria-hidden="true" /> : null}
+              </Link>
+            ))}
+          </div>
         </div>
 
         <Pack name="crm" packs={packs}>
