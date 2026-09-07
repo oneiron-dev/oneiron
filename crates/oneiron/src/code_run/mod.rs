@@ -6,6 +6,7 @@
 //! sandbox link-time boundary contract lives in [`crate::code_sandbox`].
 
 pub mod consent;
+pub mod vault_read;
 
 mod codec;
 mod dispatcher;

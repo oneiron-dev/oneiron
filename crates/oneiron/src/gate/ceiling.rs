@@ -7,6 +7,7 @@ use crate::agent_def::AgentCeiling;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::write_envelope::SourceLineage;
 
 use super::constants::MAX_DELEGATION_DEPTH;
 use super::decision::{GateDecision, GateOutcome};
@@ -409,28 +410,50 @@ impl SourceTrustCeiling {
 /// falls back to its default posture (default-deny for the classes whose
 /// `requires_explicit_auto_permit` is true).
 ///
-/// ONE-1314: `lineage_requires_auto_permit` is the SECOND axis. The declared
-/// label answers for the declaration; the lineage answers for the history the
-/// write actually has. The two are OR-combined fail-closed at every consult
-/// below, so a write whose history carries a class needing an explicit permit
-/// must clear the same explicit permit its label would have needed. Callers
-/// with no envelope in scope pass `false` and keep their exact prior verdict.
+/// The declared source keeps its normal checks. Each additional restricted
+/// lineage member must clear its OWN row at the same actor and sensitivity.
+/// Non-restricted history does not invent new permit requirements. Callers
+/// without an envelope pass `None`.
 pub(super) fn check_source_trust(
     source: Option<ClaimSource>,
     approval: ClaimApprovalStatus,
     sensitivity: Option<u8>,
     actor_ref: Option<&str>,
     ceiling: &SourceTrustCeiling,
-    lineage_requires_auto_permit: bool,
+    lineage: Option<&SourceLineage>,
 ) -> Result<()> {
     if approval != ClaimApprovalStatus::Auto {
         return Ok(());
     }
 
+    let mut restricted_members = lineage
+        .into_iter()
+        .flat_map(SourceLineage::iter)
+        .filter(|member| member.requires_explicit_auto_permit());
     let Some(source) = source else {
-        return Ok(());
+        // Source omission remains compatible only without restricted history.
+        // An absent declaration cannot authorize even a permitted lineage.
+        return match restricted_members.next() {
+            Some(member) => Err(Error::SourceNotTrustedForAuto {
+                claim_source: member.as_str(),
+            }),
+            None => Ok(()),
+        };
     };
 
+    check_source_trust_member(source, sensitivity, actor_ref, ceiling)?;
+    for member in restricted_members.filter(|member| *member != source) {
+        check_source_trust_member(member, sensitivity, actor_ref, ceiling)?;
+    }
+    Ok(())
+}
+
+fn check_source_trust_member(
+    source: ClaimSource,
+    sensitivity: Option<u8>,
+    actor_ref: Option<&str>,
+    ceiling: &SourceTrustCeiling,
+) -> Result<()> {
     if ceiling.malformed_manifest_seen {
         return Err(Error::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
@@ -448,7 +471,7 @@ pub(super) fn check_source_trust(
     let row = match ceiling.row(source) {
         Some(row) if row.binds_actor(actor_ref) => row,
         _ => {
-            if source.requires_explicit_auto_permit() || lineage_requires_auto_permit {
+            if source.requires_explicit_auto_permit() {
                 return Err(Error::SourceNotTrustedForAuto {
                     claim_source: source.as_str(),
                 });
@@ -469,9 +492,7 @@ pub(super) fn check_source_trust(
         });
     }
 
-    if (source.requires_explicit_auto_permit() || lineage_requires_auto_permit)
-        && (!row.receipted || !row.warned)
-    {
+    if source.requires_explicit_auto_permit() && (!row.receipted || !row.warned) {
         return Err(Error::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
         });
