@@ -134,6 +134,9 @@ impl Vault {
                     ClaimGateWrite {
                         body: &body,
                         envelope: Some(&envelope),
+                        // Bundle merge is an owner-resolution path, not an
+                        // agent-class Dreamer write; it never consults.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -518,7 +521,10 @@ fn check_session_bundle_actor_policy(
         enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
     let actor_ref = actor.entity_ref().to_hex();
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
+    // Read-only review over already-proposed bodies. Bundle MERGE builds its
+    // own trivial-lineage envelope above, so there is no observed history for
+    // this door to read: declared-source only, exactly as before.
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
 }
 
 /// One bundle member paired with the hash of the LIVE claim body the digest
@@ -683,6 +689,9 @@ fn replay_gate_consent_bundle_member(
         ClaimGateWrite {
             body,
             envelope: Some(&envelope),
+            // Consent-bundle resolution replays an owner's decision; there is
+            // no fresh Auto verdict for a checker to weigh in on.
+            auto_checker: None,
             defer_metrics_until_commit: true,
         },
         policy,
