@@ -1057,8 +1057,8 @@ impl AutoCheckOutcome {
     /// A `Hold` that names no surviving reason is a MALFORMED verdict, not a
     /// quiet hold: the receipt would carry a refusal nothing could explain, so
     /// it becomes [`Self::Unavailable`]. Reasons are trimmed, blank-dropped,
-    /// truncated to [`AUTO_CHECK_HOLD_REASON_MAX_BYTES`] and capped at
-    /// [`AUTO_CHECK_MAX_HOLD_REASONS`], so a host cannot write an unbounded
+    /// truncated to `AUTO_CHECK_HOLD_REASON_MAX_BYTES` and capped at
+    /// `AUTO_CHECK_MAX_HOLD_REASONS`, so a host cannot write an unbounded
     /// gate-decision receipt.
     #[must_use]
     pub fn normalized(self) -> Self {
