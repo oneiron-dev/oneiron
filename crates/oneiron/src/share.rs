@@ -383,6 +383,55 @@ fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) 
     crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
 }
 
+// PERSON admits both human and agent. Only a live, verified authority binding
+// can supply the exact read class; entity bodies and claims are not evidence.
+fn share_viewer_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    viewer: &EntityId,
+) -> Result<Option<ScopedReadActorKey>> {
+    let Some(raw) = vault.store.entities.get(txn, viewer.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(None);
+    };
+    let classes = [
+        EdgeActorClass::Human,
+        EdgeActorClass::Agent,
+        EdgeActorClass::System,
+    ];
+    if !classes
+        .iter()
+        .any(|class| crate::provenance::validate_actor_class(header.entity_type, *class).is_ok())
+    {
+        return Ok(None);
+    }
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    if fold.vault_root_is_conflicted() {
+        return Ok(None);
+    }
+    let mut actor_class = None;
+    for class in classes {
+        if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
+            continue;
+        }
+        if crate::provenance::validate_actor_class(header.entity_type, class).is_err()
+            || actor_class.replace(class).is_some()
+        {
+            return Ok(None);
+        }
+    }
+    // An unverified class cannot satisfy a class-scoped grant. Explicit-ref grants
+    // and the read lane's defaults remain valid for a resident, unbound identity.
+    Ok(match actor_class {
+        Some(class) => {
+            ScopedReadActorKey::with_actor_class(viewer.to_hex(), class.gate_actor_class())
+        }
+        None => ScopedReadActorKey::new(viewer.to_hex()),
+    })
+}
+
 impl Vault {
     /// Creates an active share only after recording an allowing external-effect decision.
     /// The transport must derive `issuer` from the authenticated principal, not request data.
@@ -505,8 +554,10 @@ impl Vault {
         if share.status != AccessGrantStatus::Active || share.recipient_ref != *viewer {
             return Ok(None);
         }
+        let Some(actor) = share_viewer_actor_in_txn(self, &txn, viewer)? else {
+            return Ok(None);
+        };
         let policy = resolve_policy_manifest(&self.store, &txn)?;
-        let actor = ScopedReadActorKey::new(viewer.to_hex()).ok_or_else(invalid_grant)?;
         let mut scope = ShareViewerScope {
             world_refs: share.world_refs,
             facet_refs: share.facet_refs,

@@ -5,6 +5,8 @@ use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, entity_record, put_policy_manifest_bytes};
 
+mod recipient_class;
+
 pub(crate) fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor, Share)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), embedding_test_config())?;
