@@ -45,8 +45,7 @@ const RAIL_AGENTS: Array<{ key: 'eiri' | 'tory' | 'antevon' | 'house' | 'new'; i
   { key: 'eiri', ink: 'eiri', name: 'eiri', tip: 'Eiri · open the room' },
   { key: 'tory', ink: 'tory', name: 'tory', tip: 'Tory · open the room' },
   { key: 'antevon', ink: 'antevon', name: 'antevon', tip: 'Antevon · nights' },
-  { key: 'house', name: 'the house', tip: 'the house · every agent and you in one room' },
-  { key: 'new', name: '+ new agent', tip: 'a new agent · by conversation with Antevon' },
+  { key: 'new', name: 'new agent', tip: 'a new agent · by conversation with Antevon' },
 ]
 
 export function Rail() {
@@ -285,7 +284,7 @@ export function Rail() {
               title={a.tip}
             >
               <span className="ico" aria-hidden="true">
-                {a.ink ? <span className="face mark" data-agent={a.ink} /> : <span className="rail-dash" />}
+                {a.ink ? <span className="face mark" data-agent={a.ink} /> : <span className="rail-plus">+</span>}
               </span>
               <span className={a.ink ? 'txt aname' : 'txt'} data-agent={a.ink}>
                 {a.name}
@@ -300,6 +299,15 @@ export function Rail() {
               <IconThreads />
             </span>
             <span className="txt">threads</span>
+          </Link>
+          <Link
+            to="/app/agents"
+            search={{ with: 'house' }}
+            className={onAgents && withKey === 'house' ? 'active' : undefined}
+            title="the house · every agent and you in one room"
+          >
+            <span className="ico" aria-hidden="true"></span>
+            <span className="txt">the house</span>
           </Link>
         </Pack>
 
