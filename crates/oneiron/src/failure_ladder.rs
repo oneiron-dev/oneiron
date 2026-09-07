@@ -328,8 +328,10 @@ fn retry_lineage_walk(
     }
 }
 
-/// Revalidates a public card's claimed pathology through the policy walker.
+/// Revalidates a public card's optional pathology through the policy walker.
 /// This is read-only and preserves the same threshold and every-link semantics.
+/// The caller must supply the same policy bound used by the failure ladder;
+/// this helper has no stored policy authority against which to verify it.
 pub(crate) fn retry_lineage_pathology(
     vault: &Vault,
     failing_attempt_id: AttemptId,

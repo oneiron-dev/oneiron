@@ -168,14 +168,16 @@ fn public_card_rejects_fabricated_pathology_and_missing_failing_row() -> Result<
         ));
     }
 
-    // A missing current row is not proof of a missing retry ancestor.
+    // A matching rendered node cannot substitute for the stored current row,
+    // even when the caller claims there is no pathology.
+    assert!(AttemptQueue::new(&vault).get(missing)?.is_none());
     let mut absent = input;
     absent.failing_attempt_id = missing;
     absent.tree.roots[0].attempt_id = crate::entity_id::bytes_to_hex_lower(missing.as_bytes());
-    assert_eq!(
-        surfaced_failure_card(&vault, absent.clone())?.pathology,
-        None
-    );
+    assert!(matches!(
+        surfaced_failure_card(&vault, absent.clone()),
+        Err(Error::InvalidConfig(_))
+    ));
     absent.pathology = Some(RetryLineagePathology::MissingAncestor {
         missing_attempt_id: missing,
     });
@@ -274,9 +276,21 @@ fn public_card_pathology_must_match_exact_bounded_lineage_and_class() -> Result<
                 Err(Error::InvalidConfig(_))
             ));
         }
-        let mut no_claim = input;
-        no_claim.pathology = None;
-        assert_eq!(surfaced_failure_card(&vault, no_claim)?.pathology, None);
+        // Omitting either a missing ancestor or a cycle cannot suppress it,
+        // regardless of the failure class on the public card input.
+        for class in [
+            FailureClass::Transient,
+            FailureClass::Permanent,
+            FailureClass::Ambiguous,
+        ] {
+            let mut no_claim = input.clone();
+            no_claim.failure_class = class;
+            no_claim.pathology = None;
+            assert!(matches!(
+                surfaced_failure_card(&vault, no_claim),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
         assert_eq!(
             AttemptQueue::new(&vault).list()?,
             before,
@@ -298,6 +312,12 @@ fn public_card_accepts_self_cycle_at_one_row_limit() -> Result<()> {
         .handle_attempt_failure(failure_input(&leased, permanent(), 20), policy)?;
     let input = pathology_card_input(&vault, human_surface(&outcome), limit)?;
     let before = AttemptQueue::new(&vault).list()?;
+    let mut suppressed = input.clone();
+    suppressed.pathology = None;
+    assert!(matches!(
+        surfaced_failure_card(&vault, suppressed),
+        Err(Error::InvalidConfig(_))
+    ));
     let card = surfaced_failure_card(&vault, input)?;
     assert_eq!(
         card.pathology,

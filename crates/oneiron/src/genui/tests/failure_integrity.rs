@@ -363,14 +363,19 @@ fn surfaced_failure_card_diagnosis_requires_a_stored_agent_dispatch() -> Result<
     let before = crate::AttemptQueue::new(&vault).list()?;
 
     for (attempt, tree) in [(failing, tree), (missing, missing_tree)] {
-        // The initial card door remains usable without an agent-dispatch binding.
+        // Initial cards need a stored attempt but not an agent-dispatch binding.
         for diagnosis in [
             FailureDiagnosisState::NotRun,
             FailureDiagnosisState::ReservedHealerSlot,
         ] {
             let mut input = card_input(attempt, tree.clone(), feed.clone());
             input.diagnosis = diagnosis.clone();
-            assert_eq!(surfaced_failure_card(&vault, input)?.diagnosis, diagnosis);
+            let result = surfaced_failure_card(&vault, input);
+            if attempt == failing {
+                assert_eq!(result?.diagnosis, diagnosis);
+            } else {
+                assert!(matches!(result, Err(Error::InvalidConfig(_))));
+            }
         }
         for route in repair_routes(&crate::test_util::entity(0x31).to_hex()) {
             let mut input = card_input(attempt, tree.clone(), feed.clone());
@@ -589,5 +594,132 @@ fn surfaced_failure_card_fork_requires_expected_nonterminal_checkpoint() -> Resu
         }
     }
     assert_eq!(crate::AttemptQueue::new(&vault).list()?, before);
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_rejects_deleted_direct_membership_containers() -> Result<()> {
+    use crate::deletion::DeleteReason;
+    use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+
+    for empty in [false, true] {
+        for (entity_type, membership) in [
+            (ENTITY_TYPE_TURN, EdgeKind::PartOf),
+            (ENTITY_TYPE_CONVERSATION, EdgeKind::PartOf),
+            (ENTITY_TYPE_CONVERSATION, EdgeKind::BelongsTo),
+        ] {
+            let (_dir, vault) = card_vault();
+            let (failing, tree) = failed_run(&vault)?;
+            let container = crate::test_util::entity(0x64);
+            let body: &[u8] = if empty { b"" } else { b"\x80" };
+            vault.put_entity(
+                &container,
+                entity_type,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )?;
+            let actor = put_actor(&vault, 0x66)?;
+            let message = put_qa_message(&vault, 0x67, container, Some(actor), 100, 0)?;
+            if membership == EdgeKind::BelongsTo {
+                assert!(vault.delete_edge(&message, EdgeKind::PartOf, &container)?);
+                vault.put_edge(&message, membership, &container, 1.0)?;
+            }
+            let input = card_input(
+                failing,
+                tree,
+                HealerQaFeed {
+                    thread_ref: container.to_hex(),
+                    entries: vec![qa_entry(message, actor, 100)],
+                },
+            );
+            let queue_before = crate::AttemptQueue::new(&vault).list()?;
+            let message_before = vault.get_raw(&message)?;
+            assert!(!vault.is_deleted_shell(&container)?);
+            let card = surfaced_failure_card(&vault, input.clone())?;
+            assert_eq!(card.qa, input.qa);
+
+            assert!(
+                vault
+                    .delete_entity_with_reason(&container, DeleteReason::UserDelete)?
+                    .existed
+            );
+            assert!(vault.is_deleted_shell(&container)?);
+            assert_eq!(
+                vault.get_raw(&container)?.expect("soft-delete shell").len(),
+                crate::batch::ENTITY_METADATA_HEADER_LEN
+            );
+            assert!(vault.edge_exists(&message, membership, &container)?);
+            assert!(matches!(
+                surfaced_failure_card(&vault, input),
+                Err(Error::InvalidConfig(_))
+            ));
+            assert_eq!(vault.get_raw(&message)?, message_before);
+            assert_eq!(crate::AttemptQueue::new(&vault).list()?, queue_before);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn surfaced_failure_card_rejects_deleted_containers_in_two_hop_membership() -> Result<()> {
+    use crate::deletion::DeleteReason;
+    use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+
+    for delete_turn in [false, true] {
+        for direct_conversation_binding in [false, true] {
+            let (_dir, vault) = card_vault();
+            let (failing, tree) = failed_run(&vault)?;
+            let conversation = put_container(&vault, 0x64, ENTITY_TYPE_CONVERSATION)?;
+            let turn = put_container(&vault, 0x65, ENTITY_TYPE_TURN)?;
+            let actor = put_actor(&vault, 0x66)?;
+            let message = put_qa_message(&vault, 0x67, turn, Some(actor), 100, 0)?;
+            vault.put_edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)?;
+            if direct_conversation_binding {
+                vault.put_edge(&message, EdgeKind::BelongsTo, &conversation, 1.0)?;
+            }
+            let card_for = |thread: EntityId| {
+                surfaced_failure_card(
+                    &vault,
+                    card_input(
+                        failing,
+                        tree.clone(),
+                        HealerQaFeed {
+                            thread_ref: thread.to_hex(),
+                            entries: vec![qa_entry(message, actor, 100)],
+                        },
+                    ),
+                )
+            };
+            let queue_before = crate::AttemptQueue::new(&vault).list()?;
+            let message_before = vault.get_raw(&message)?;
+            for thread in [turn, conversation] {
+                assert_eq!(
+                    card_for(thread)?.qa.entries,
+                    vec![qa_entry(message, actor, 100)]
+                );
+            }
+
+            let deleted = if delete_turn { turn } else { conversation };
+            assert!(
+                vault
+                    .delete_entity_with_reason(&deleted, DeleteReason::UserDelete)?
+                    .existed
+            );
+            assert!(vault.is_deleted_shell(&deleted)?);
+            assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+            assert!(vault.edge_exists(&turn, EdgeKind::ChildOf, &conversation)?);
+            if direct_conversation_binding {
+                assert!(vault.edge_exists(&message, EdgeKind::BelongsTo, &conversation)?);
+            }
+            // No matching direct edge may hide a deleted intermediate TURN or
+            // a deleted CONVERSATION still named by the membership bindings.
+            for thread in [turn, conversation] {
+                assert!(matches!(card_for(thread), Err(Error::InvalidConfig(_))));
+            }
+            assert_eq!(vault.get_raw(&message)?, message_before);
+            assert_eq!(crate::AttemptQueue::new(&vault).list()?, queue_before);
+        }
+    }
     Ok(())
 }
