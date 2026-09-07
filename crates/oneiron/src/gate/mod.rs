@@ -25,10 +25,6 @@ mod witness_message;
 mod tests;
 
 pub(crate) use self::breaker::undo_gate_breaker_in_txn;
-pub use self::breaker::{
-    GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS, GateBreakerRunProjection,
-    GateBreakerThresholds,
-};
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,

@@ -360,12 +360,10 @@ pub use crate::feedback::{
 };
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS,
-    GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
-    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
+    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, GateBreakerRunProjection, GateBreakerThresholds,
-    RetrievalFilter,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
 };
 pub use crate::genui::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
@@ -412,7 +410,12 @@ pub use crate::outbound::{
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
     unsupported_outbound_connector,
 };
-pub use crate::pipeline::{PipelineBuilder, ScoredEntity, Signal};
+pub use crate::pipeline::{
+    ActiveWorldSelection, MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PipelineBuilder, ResolvedWorldAuthority, ScoredEntity,
+    Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, decode_world_access_claim_value,
+    world_access_claim_body,
+};
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
