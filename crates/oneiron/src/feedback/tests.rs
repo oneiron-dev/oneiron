@@ -1332,14 +1332,8 @@ fn gate_outcomes_remain_authoritative() {
 
     // The same route, actor, and stored contact can send before opt-out.
     let mut allowed_transport = RecordingTransport::default();
-    let allowed = send_feedback(
-        &vault,
-        &preview,
-        &context,
-        &approval,
-        &mut allowed_transport,
-    )
-    .expect("send before opt-out");
+    let allowed = send_feedback(&vault, &preview, &context, &approval, &mut allowed_transport)
+        .expect("send before opt-out");
     assert_eq!(
         allowed.dispatch.outcome,
         OutboundDispatchOutcome::DeliveredToChannel
@@ -1391,10 +1385,7 @@ fn gate_outcomes_remain_authoritative() {
         Some("gate.pending.counterparty_opt_out")
     );
     assert_eq!(
-        receipt
-            .fields
-            .get("gate_receipt_reasons")
-            .map(String::as_str),
+        receipt.fields.get("gate_receipt_reasons").map(String::as_str),
         Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
     );
     assert!(!receipt.fields.contains_key("suppression"));

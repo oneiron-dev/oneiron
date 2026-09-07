@@ -1,6 +1,7 @@
 //! Actor lifecycle counterexamples and controls. These are base-mode laws.
 
 mod demotion_guards;
+mod timestamp_guards;
 
 use super::*;
 use crate::claim::{ClaimDemotionAction, ClaimDemotionRung, claim_demotion_rung};
