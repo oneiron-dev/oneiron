@@ -144,6 +144,7 @@ impl VoiceCascadeSession {
         if self.ended || !self.retrieval.is_open(handle) {
             return Ok(AsrUpdate::Ignored);
         }
+        event.validate()?;
         match event.kind {
             AsrEventKind::Partial => self
                 .retrieval
