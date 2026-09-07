@@ -38,14 +38,16 @@ use super::filters::{
 };
 use super::support::normalize_range;
 use super::trace::{
-    add_signal_score_components, filter_retrieval_trace_scores, retrieval_trace_candidate_set,
-    retrieval_trace_channel_record, retrieval_trace_fork_hash, retrieval_trace_fused_scores,
-    retrieval_trace_stage_record, retrieval_trace_top_scores, telemetry_score_breakdown,
+    RetrievalTraceForkEvidence, add_signal_score_components, filter_retrieval_trace_scores,
+    retrieval_trace_candidate_set, retrieval_trace_channel_record, retrieval_trace_fork_hash,
+    retrieval_trace_fused_scores, retrieval_trace_stage_record, retrieval_trace_top_scores,
+    telemetry_score_breakdown,
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PER_SCAN_CAP_FACTOR, PPR_DAMPING,
     PendingVectorEmbedding, PipelineOutput, RelMode, ScoredEntity,
 };
+use super::world_authority::resolve_active_world_authority;
 
 /// Detailed pipeline output for the context-pack path.
 ///
@@ -136,8 +138,26 @@ impl PipelineBuilder<'_> {
             let mut community_diversity = None;
             let mut community_trace_identity = None;
             let codebase_scope_active = self.has_codebase_scope_filter();
+            // ONE-1420: under `WorldScope::ActiveSet` the turn's world
+            // authority resolves ONCE here — inside this run's read
+            // transaction, at this run's clock — and every per-candidate scope
+            // check below borrows the result. Resolving before any channel
+            // runs also makes the fail-closed refusals (no selection, a
+            // selection outside the owner grant, a malformed authority row)
+            // land before the query does any scoring work.
+            let world_authority = resolve_active_world_authority(
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                self.active_world_selection.as_ref(),
+                self.execution_actor,
+                temporal_now,
+            )?;
             let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
-            let filter_config = corpus_filter.config(self, occurred_range, authority_filter);
+            let mut filter_config = corpus_filter.config(self, occurred_range, authority_filter);
+            filter_config.world_active_set = world_authority
+                .as_ref()
+                .map(|resolved| &resolved.active_set);
             // Ordinary text uses D19 widening; candidate-filtered text instead
             // applies D19 during bounded scoring and needs no corpus-sized probe.
             let mut claim_gate_widening_probe = ClaimStatusGateCache {
@@ -974,9 +994,16 @@ impl PipelineBuilder<'_> {
 
             // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
             // facet filter, before truncate, same read txn. A no-op under the
-            // default `WorldScope::All`.
+            // default `WorldScope::All`. ActiveSet reuses the authority already
+            // resolved for the per-candidate filters in this transaction.
             let before_world = scores.len();
-            apply_world_filter(&mut scores, &self.vault.store, &rtxn, self.world_scope)?;
+            apply_world_filter(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                self.world_scope,
+                filter_config.world_active_set,
+            )?;
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
@@ -1212,7 +1239,10 @@ impl PipelineBuilder<'_> {
                     explicit_time_dependent_now,
                     occurred_range,
                     rerank_query,
-                    &candidate_set,
+                    RetrievalTraceForkEvidence {
+                        candidate_set: &candidate_set,
+                        world_authority: world_authority.as_ref(),
+                    },
                 );
                 let fork_hash = if let Some(identity) = community_trace_identity {
                     use sha2::{Digest, Sha256};

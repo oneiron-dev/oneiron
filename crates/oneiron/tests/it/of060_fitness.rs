@@ -525,7 +525,15 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
         }
     }
 
-    let expected = BTreeMap::from([
+    assert_eq!(
+        actual,
+        f2_expected_raw_escape_hits(),
+        "OF-060 F2: surface raw escape-hatch references changed. New foreign/guest writes must go through a stamper; remove or intentionally update this pinned baseline."
+    );
+}
+
+fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
+    BTreeMap::from([
         (
             RawHit {
                 path: "crates/oneiron-napi/src/lib.rs".to_owned(),
@@ -607,6 +615,16 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
+        // BK/1815 (15c62bc2): resolve_booker_contact uses an approved atomic
+        // booking transaction, not a stamper bypass. Pin exactly one call.
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/api/booking/subject.rs".to_owned(),
+                ident: "with_write_txn".to_owned(),
+                line: "server.vault.with_write_txn(|txn| {".to_owned(),
+            },
+            1,
+        ),
         // MCP proposed-control-record write (ONE-1936). This is NOT a raw
         // write bypassing a stamper: the transaction wraps the write-verb
         // target guard and a stamped `batch_in().claim_candidate(...)`, which
@@ -670,12 +688,37 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             2,
         ),
-    ]);
+    ])
+}
 
-    assert_eq!(
-        actual, expected,
-        "OF-060 F2: surface raw escape-hatch references changed. New foreign/guest writes must go through a stamper; remove or intentionally update this pinned baseline."
-    );
+#[test]
+fn of060_f2_extra_booking_write_txn_is_not_pinned() {
+    let expected = f2_expected_raw_escape_hits();
+    let booking_path = "crates/oneiron-server/src/api/booking/subject.rs";
+    let approved_line = "server.vault.with_write_txn(|txn| {";
+    let approved_hits = raw_escape_hits(booking_path, &production_source(approved_line));
+    assert_eq!(approved_hits.len(), 1);
+    assert_eq!(expected.get(&approved_hits[0]), Some(&1));
+
+    // Even an identical second call exceeds the pin. A different line in the
+    // same file or the same line in another booking file must also fail F2.
+    for (rel, extra_line) in [
+        (booking_path, approved_line),
+        (booking_path, "server.vault.with_write_txn(|extra_txn| {"),
+        ("crates/oneiron-server/src/api/booking/extra.rs", approved_line),
+    ] {
+        assert!(production_file(rel) && f2_surface_path(rel));
+        let extra_hits = raw_escape_hits(rel, &production_source(extra_line));
+        assert_eq!(extra_hits.len(), 1);
+        let mut actual = expected.clone();
+        for hit in extra_hits {
+            *actual.entry(hit).or_default() += 1;
+        }
+        assert_ne!(
+            actual, expected,
+            "OF-060 F2: extra booking with_write_txn must fail: {rel}: {extra_line}"
+        );
+    }
 }
 
 fn f2_surface_path(rel: &str) -> bool {
@@ -776,6 +819,10 @@ fn of060_f3_core_does_not_import_gateway_or_server_code() {
             "gateway::",
         ] {
             for hit in find_substring_hits(&source, pattern) {
+                // Match path segments, not suffixes such as `api::` in `agent_api::`.
+                if hit > 0 && is_ident_byte(source.as_bytes()[hit - 1]) {
+                    continue;
+                }
                 violations.push(format!("{rel}:{}: {pattern}", line_number(&source, hit)));
             }
         }
