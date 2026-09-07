@@ -30,16 +30,14 @@ use super::telemetry::{
 use super::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport,
     AttemptQueueRetryReason, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
-    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES,
-    ManifestEntry, RetryAttempt, RetryOutcome, attempt_record_order,
+    CleanupAttemptLeases, EnqueueAttempt, EnqueueOutcome, InterveneAttempt, InterveneOutcome,
+    MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, RetryAttempt, RetryOutcome, attempt_record_order,
 };
 use super::validate::{
     ERR_MANIFEST_FULL, append_attempt_event, lease_claimed_record, validate_cleanup_leases_input,
-    validate_failure_reason, validate_intervention_actor, validate_kind, validate_lease_owner,
-    validate_manifest_entry, validate_optional_dedupe, validate_optional_dedupe_actor_ref,
-    validate_optional_failure_reason, validate_optional_intervention_note,
-    validate_optional_run_id, validate_transition_lease,
+    validate_intervention_actor, validate_kind, validate_lease_owner, validate_manifest_entry,
+    validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
+    validate_optional_intervention_note, validate_optional_run_id, validate_transition_lease,
 };
 
 const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
@@ -234,6 +232,7 @@ impl<'a> AttemptQueue<'a> {
             events: Vec::new(),
             manifest: Vec::new(),
             cancel_state: AttemptCancelState::default(),
+            result_ref: None,
         };
 
         let encoded = encode_record(&record)?;
@@ -588,83 +587,6 @@ impl<'a> AttemptQueue<'a> {
         Ok(ClaimOutcome::Claimed(record))
     }
 
-    /// Marks a leased attempt complete. Completing an already-completed attempt is an
-    /// idempotent success; all other states are rejected.
-    pub fn complete(&self, input: CompleteAttempt) -> Result<CompleteOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("complete", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Completed {
-                return Ok(CompleteOutcome::AlreadyCompleted(record));
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.complete_in_txn(&mut wtxn, input)?;
-        if matches!(outcome, CompleteOutcome::Completed(_)) {
-            wtxn.commit()?;
-        }
-        Ok(outcome)
-    }
-
-    /// Marks a leased attempt terminally failed. Failing an already-failed attempt is
-    /// an idempotent success; all other states are rejected.
-    pub fn fail(&self, input: FailAttempt) -> Result<FailOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("fail", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Failed {
-                return Ok(FailOutcome::AlreadyFailed(record));
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("fail", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "fail",
-                )?;
-                validate_failure_reason(&input.reason)?;
-                record.state = AttemptState::Failed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = Some(input.reason);
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(FailOutcome::Failed(record))
-            }
-            state => Err(invalid_transition("fail", state.as_str())),
-        }
-    }
-
     /// Retries a leased attempt by finalizing it and minting a fresh try.
     ///
     /// The leased source row becomes terminally [`AttemptState::Failed`] and is
@@ -737,6 +659,10 @@ impl<'a> AttemptQueue<'a> {
                 },
                 ..AttemptCancelState::default()
             },
+            // A retry is a NEW attempt: it has produced nothing yet, and the
+            // finalized source keeps sole ownership of the artifact its own
+            // try left behind.
+            result_ref: None,
         };
 
         // A `Failed` row must carry a reason, so an omitted retry cause
@@ -1007,6 +933,14 @@ impl<'a> AttemptQueue<'a> {
                 AttemptState::Cancelled => {
                     report.done += 1;
                 }
+                // Settled work, never a reclaim candidate: an abandoned row
+                // holds no lease to expire and cannot re-enter the ready
+                // index. It counts as done — nothing faulted — with its own
+                // sub-count so a stopped executor stays visible.
+                AttemptState::Abandoned => {
+                    report.done += 1;
+                    report.abandoned += 1;
+                }
             }
         }
         drop(rtxn);
@@ -1106,6 +1040,11 @@ impl<'a> AttemptQueue<'a> {
                     AttemptState::Cancelled => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
+                    }
+                    AttemptState::Abandoned => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.done += 1;
+                        report.abandoned += 1;
                     }
                 }
             }
