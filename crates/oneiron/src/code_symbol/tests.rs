@@ -325,7 +325,7 @@ fn rust_tree_sitter_symbol_graph_extracts_refs_and_contiguity_edges() -> Result<
 
 #[test]
 fn code_symbol_graph_persists_entities_refs_callers_and_ppr_neighbors() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let (_dir, mut vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xD1);
     let repo_ref = repo_ref();
     let graph = derive_code_symbol_graph_from_sources(
@@ -365,12 +365,60 @@ fn code_symbol_graph_persists_entities_refs_callers_and_ppr_neighbors() -> Resul
     assert_eq!(caller.len(), 1);
     assert_eq!(callers[0], caller[0].entity_id);
 
+    vault.set_edge_vad(
+        &caller[0].entity_id,
+        EdgeKind::Mentions,
+        &answer.entity_id,
+        crate::Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
     let neighbors = vault.code_symbol_ppr_neighbors(&id, "answer", 2, 8)?;
-    assert!(
-        neighbors
-            .iter()
-            .any(|neighbor| neighbor.id == caller[0].entity_id)
+    let baseline = neighbors
+        .iter()
+        .find(|row| row.id == caller[0].entity_id)
+        .expect("caller is reachable")
+        .score;
+    let bits = |rows: &[ScoredEntity]| {
+        rows.iter()
+            .map(|row| (row.id, row.score.to_bits()))
+            .collect::<Vec<_>>()
+    };
+    vault.config.ppr_vad_alpha = -0.0;
+    assert_eq!(
+        bits(&neighbors),
+        bits(&vault.code_symbol_ppr_neighbors(&id, "answer", 2, 8)?)
     );
+    vault.config.ppr_vad_alpha = 0.4;
+    let weighted = vault.code_symbol_ppr_neighbors(&id, "answer", 2, 8)?;
+    assert!(
+        weighted
+            .iter()
+            .find(|row| row.id == caller[0].entity_id)
+            .expect("caller is reachable")
+            .score
+            > baseline
+    );
+    assert_eq!(
+        bits(&weighted),
+        bits(&vault.code_symbol_ppr_neighbors(&id, "answer", 2, 8)?)
+    );
+    vault.config.ppr_vad_alpha = 0.0;
+    assert_eq!(
+        bits(&neighbors),
+        bits(&vault.code_symbol_ppr_neighbors(&id, "answer", 2, 8)?)
+    );
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        vault.config.ppr_vad_alpha = alpha;
+        for (name, limit) in [("answer", 8), ("answer", 0), ("missing", 8)] {
+            assert!(matches!(
+                vault.code_symbol_ppr_neighbors(&id, name, 2, limit),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+    }
     Ok(())
 }
 

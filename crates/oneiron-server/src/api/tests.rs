@@ -6,6 +6,8 @@ use serde_json::Map;
 use serde_json::Value;
 use tower::ServiceExt;
 
+mod mcp_source_gate;
+
 const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT: &str =
     include_str!("../../tests/fixtures/v1_core_openapi_contract.snapshot.json");
 const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH: &str = concat!(
@@ -1523,14 +1525,14 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         )
         .expect("seed MCP claim subject");
 
+    let mut args = mcp_propose_claim_args(actor_ref, subject_ref, "one-1222-propose-claim");
+    // The allow-path fixture needs an explicit public stamp: unstamped claims
+    // read sensitivity band 2, above the default tool_output permit's band 0 cap.
+    args["scope"] = json!({ "sensitivity": "public" });
+
     let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
-        mcp_call_request(
-            credential,
-            "mcp-write-allow",
-            "oneiron.edit",
-            mcp_propose_claim_args(actor_ref, subject_ref, "one-1222-propose-claim"),
-        ),
+        mcp_call_request(credential, "mcp-write-allow", "oneiron.edit", args),
     )
     .await;
 
@@ -1576,6 +1578,16 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         .expect("MCP write must persist a Gate decision");
     assert_eq!(decision.outcome, "allow");
     assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+    // Apply must agree with the recorded preflight allow, not leave a pending
+    // proposal behind after evaluating a different source/sensitivity input.
+    assert!(
+        server
+            .vault
+            .pending_gate_consents(10)
+            .expect("pending consent after MCP write")
+            .iter()
+            .all(|pending| pending.claim_id != *claim_id.as_bytes())
+    );
     assert_eq!(decision.actor_class, "human");
     assert_eq!(
         decision.actor_ref.as_deref(),

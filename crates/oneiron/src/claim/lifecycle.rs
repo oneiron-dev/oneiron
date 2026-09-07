@@ -442,17 +442,8 @@ impl Vault {
                 provenance: None,
             },
         ];
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
+        self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
         Ok(())
     }
 
@@ -642,17 +633,7 @@ impl Vault {
                 weight,
             });
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        )?;
+        crate::batch::ClaimMaterialization::apply_demotion(self, &mut wtxn, ops)?;
         wtxn.commit()?;
         Ok(next)
     }
@@ -723,6 +704,21 @@ impl Vault {
         body.valid_to = Some(now);
         let data = encode_claim_body(&body)?;
 
+        let ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: now.max(header.occurred_start),
+            },
+            learned_at: header.learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }];
+        let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
+
         let mut write_receipt = None;
         if consent_receipt.is_none() {
             let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
@@ -732,7 +728,12 @@ impl Vault {
                 id,
                 crate::gate::ClaimGateWrite {
                     body: &body,
-                    envelope: None,
+                    envelope: binding
+                        .as_ref()
+                        .map(crate::batch::ClaimMaterialization::envelope),
+                    // Retraction is a lifecycle transition on an existing
+                    // claim, not a candidate seeking Auto; nothing consults.
+                    auto_checker: None,
                     defer_metrics_until_commit: false,
                 },
                 &policy,
@@ -747,31 +748,42 @@ impl Vault {
             )?;
         }
 
-        let ops = vec![BatchOp::Put {
-            id: *id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: TimeRange {
-                start: header.occurred_start,
-                end: now.max(header.occurred_start),
-            },
-            learned_at: header.learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        }];
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        )?;
+        self.apply_lifecycle_materialization(wtxn, ops, binding, false)?;
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
+    }
+}
+
+impl Vault {
+    fn apply_lifecycle_materialization(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        ops: Vec<BatchOp>,
+        binding: Option<crate::batch::ClaimMaterialization>,
+        persist_pending: bool,
+    ) -> Result<()> {
+        if let Some(binding) = binding {
+            crate::batch::apply_owner_bound_claim_puts(
+                self,
+                wtxn,
+                ops,
+                vec![binding],
+                persist_pending,
+            )
+        } else {
+            // Legacy/raw claims have no host-authored actor authority. Keep the
+            // unattributed gate path; never infer authority from their evidence.
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                persist_pending,
+            )
+        }
     }
 }

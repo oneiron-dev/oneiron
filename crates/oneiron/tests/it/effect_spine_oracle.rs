@@ -1735,3 +1735,2450 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
         "a gate denial produces no connector execution"
     );
 }
+
+// ===== ONE-1891 (ES-09 production integration) — effective confidence as an
+// entity-resolution INPUT =====
+//
+// ADDITIVE ONLY. Nothing above this banner is edited: the ONE-1720 sites and
+// the ONE-1722 ES-09 legs keep every assert they were armed with. What this
+// section adds is the production reads ONE-1722 stopped short of — the
+// `provider.enrichment` write validator, the DISPOSABLE prior indexes, and the
+// ARCH-0024 candidate waterfall that ranks on `effective_confidence`.
+//
+// DEFAULT-FEATURE WRITE SURFACE. A `provider.enrichment` claim can be written
+// on the default feature set through exactly three doors — the targeted put,
+// the batch put, and the transaction-composable batch — and the validator
+// tests below drive all three. `Vault::put_replicated` is deliberately NOT a
+// fourth: both of its definitions are `pub(crate)` and feature-gated
+// (`sync` / `any(test, all(sync, test-hooks))`), i.e. an origin-validated
+// replay door for bytes a peer already authored, not a public write door.
+// `one1891_put_replicated_is_not_a_fourth_write_door` pins that by source, so
+// "three doors" cannot quietly become "three doors plus a hole".
+
+mod one1891 {
+    use super::{Vault, test_config};
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+    use oneiron::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+        EntityResolutionCandidate, EntityResolutionWaterfallDecision, TimeRange,
+    };
+    use rmpv::Value;
+
+    pub(super) const INGEST_SOURCE: &str = include_str!("../../src/ingest.rs");
+    pub(super) const CLAIM_CORE_TYPES_SOURCE: &str = include_str!("../../src/claim/core_types.rs");
+    pub(super) const PROVIDER_CONFIDENCE_SOURCE: &str =
+        include_str!("../../src/provider_confidence.rs");
+    pub(super) const PROVIDER_CONFIDENCE_INDEXES_SOURCE: &str =
+        include_str!("../../src/provider_confidence/indexes.rs");
+    pub(super) const PROVIDER_CONFIDENCE_MEMO_SOURCE: &str =
+        include_str!("../../src/provider_confidence/transaction_memo.rs");
+    pub(super) const BATCH_TXN_BUILDER_SOURCE: &str =
+        include_str!("../../src/batch/txn_builder.rs");
+    pub(super) const BATCH_BUILDER_SOURCE: &str = include_str!("../../src/batch/builder.rs");
+
+    /// A vault WITHOUT the default policy manifest, for the two legs whose
+    /// subject is a claim WRITE rather than the waterfall read: the Gate's
+    /// criticality ladder is ES-03/ONE-1752 scope, and letting it floor an
+    /// unrelated candidate write would prove nothing about ONE-1891. The
+    /// waterfall legs themselves run on the ordinary seeded `open_vault()` —
+    /// they write nothing, so there is nothing for a gate to decide.
+    pub(super) fn open_unseeded_vault() -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+        (dir, vault)
+    }
+
+    pub(super) fn at(ts: u64) -> TimeRange {
+        TimeRange { start: ts, end: ts }
+    }
+
+    /// A fixture id whose FIRST byte drives `EntityId`'s byte-lexicographic
+    /// order, so a test can pin which of two actors is "smallest" instead of
+    /// hoping.
+    pub(super) fn fixture_id(lead: u8) -> EntityId {
+        let mut bytes = [0x5a_u8; 16];
+        bytes[0] = lead;
+        EntityId::from_bytes(bytes).expect("fixture id")
+    }
+
+    pub(super) fn msgpack(value: &Value) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, value).expect("encode fixture body");
+        bytes
+    }
+
+    /// A plain PERSON with an opaque body — never a provider actor.
+    pub(super) fn put_person(vault: &Vault, lead: u8) -> EntityId {
+        let id = fixture_id(lead);
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, at(100), 100, b"one1891 person")
+            .expect("put person");
+        id
+    }
+
+    /// A PERSON carrying exactly the `provider_key` body the truth scan looks
+    /// for. Minting actors HERE — rather than letting `write_provider_prior`
+    /// mint them — is what lets these tests own the ids the shortcut rows are
+    /// supposed to be disposable about.
+    pub(super) fn put_provider_actor(vault: &Vault, lead: u8, provider: &str) -> EntityId {
+        let id = fixture_id(lead);
+        let body = msgpack(&Value::Map(vec![(
+            Value::from("provider_key"),
+            Value::from(provider),
+        )]));
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, at(100), 100, &body)
+            .expect("put provider actor");
+        id
+    }
+
+    /// The `provider.enrichment` value map: the attribution key plus whatever
+    /// payload keys the provider shipped alongside it.
+    pub(super) fn enrichment_value(provider: &str, siblings: &[(&str, &str)]) -> Value {
+        let mut entries = vec![(Value::from("provider"), Value::from(provider))];
+        for (key, value) in siblings {
+            entries.push((Value::from(*key), Value::from(*value)));
+        }
+        Value::Map(entries)
+    }
+
+    pub(super) fn enrichment_body(
+        subject: ClaimSubject,
+        value: Value,
+        confidence: f32,
+    ) -> ClaimBody {
+        let mut body = ClaimBody::new(
+            oneiron::PREDICATE_PROVIDER_ENRICHMENT,
+            subject,
+            value,
+            confidence,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.valid_from = Some(200);
+        body.source = Some(ClaimSource::Observed);
+        body
+    }
+
+    /// Writes one enrichment claim through the ordinary targeted put door.
+    pub(super) fn put_enrichment(
+        vault: &Vault,
+        lead: u8,
+        subject: EntityId,
+        provider: &str,
+        confidence: f32,
+    ) -> EntityId {
+        let id = fixture_id(lead);
+        let body = enrichment_body(
+            ClaimSubject::Entity(subject),
+            enrichment_value(provider, &[]),
+            confidence,
+        );
+        vault
+            .put_claim(&id, &body, at(200), 200)
+            .expect("put enrichment claim");
+        id
+    }
+
+    /// A subject entity plus its enrichment claim: one waterfall candidate.
+    pub(super) fn candidate(
+        vault: &Vault,
+        subject_lead: u8,
+        claim_lead: u8,
+        provider: &str,
+        confidence: f32,
+    ) -> EntityResolutionCandidate {
+        let subject = put_person(vault, subject_lead);
+        let confidence_claim_ref = put_enrichment(vault, claim_lead, subject, provider, confidence);
+        EntityResolutionCandidate {
+            subject,
+            confidence_claim_ref,
+        }
+    }
+
+    pub(super) fn write_prior(
+        vault: &Vault,
+        provider: &str,
+        prior: f32,
+        evidence: &str,
+    ) -> EntityId {
+        oneiron::provider_confidence::write_provider_prior(vault, provider, prior, evidence)
+            .expect("write provider prior")
+    }
+
+    pub(super) fn effective(vault: &Vault, claim: &EntityId) -> f32 {
+        oneiron::provider_confidence::effective_confidence(vault, claim).expect("effective")
+    }
+
+    pub(super) fn stored(vault: &Vault, claim: &EntityId) -> f32 {
+        oneiron::provider_confidence::stored_confidence(vault, claim).expect("stored")
+    }
+
+    pub(super) fn decide(
+        vault: &Vault,
+        candidates: &[EntityResolutionCandidate],
+        high_collision: bool,
+    ) -> EntityResolutionWaterfallDecision {
+        oneiron::evaluate_entity_resolution_waterfall(vault, candidates, high_collision)
+            .expect("waterfall")
+    }
+
+    pub(super) fn close(actual: f32, expected: f32) -> bool {
+        (actual - expected).abs() < 1e-6
+    }
+
+    /// `(PERSON entities, CLAIM entities)` — the two counts a read must never
+    /// move.
+    pub(super) fn counts(vault: &Vault) -> (u64, u64) {
+        (
+            vault
+                .count_entities_by_type(ENTITY_TYPE_PERSON)
+                .expect("person count"),
+            vault
+                .count_entities_by_type(ENTITY_TYPE_CLAIM)
+                .expect("claim count"),
+        )
+    }
+
+    pub(super) fn active_priors(vault: &Vault, provider: &str) -> usize {
+        oneiron::provider_confidence::count_active_prior_claims(vault, provider)
+            .expect("active prior count")
+    }
+
+    pub(super) fn superseded_priors(vault: &Vault, provider: &str) -> usize {
+        oneiron::provider_confidence::count_superseded_prior_claims(vault, provider)
+            .expect("superseded prior count")
+    }
+
+    pub(super) fn priors_with_evidence(vault: &Vault, provider: &str, evidence: &str) -> usize {
+        oneiron::provider_confidence::count_active_prior_claims_with_evidence(
+            vault, provider, evidence,
+        )
+        .expect("evidence-carrying prior count")
+    }
+
+    pub(super) fn index_presence(vault: &Vault, provider: &str) -> (bool, bool) {
+        oneiron::provider_confidence_index_presence(vault, provider).expect("index presence")
+    }
+
+    pub(super) fn clear_indexes(vault: &Vault, provider: &str) {
+        oneiron::clear_provider_confidence_indexes(vault, provider).expect("clear indexes");
+    }
+
+    pub(super) fn set_indexes(
+        vault: &Vault,
+        provider: &str,
+        actor_row: Option<&[u8]>,
+        prior_head_row: Option<&[u8]>,
+    ) {
+        oneiron::set_provider_confidence_index_raw(vault, provider, actor_row, prior_head_row)
+            .expect("set raw index rows");
+    }
+
+    /// Extracts `[start_marker, end_marker)` from a source file, for the
+    /// assertions whose subject is a property of the CODE — how many
+    /// transactions a function opens, which validator arm sits where. A
+    /// behavioural test cannot see either.
+    pub(super) fn source_slice<'a>(
+        source: &'a str,
+        start_marker: &str,
+        end_marker: &str,
+    ) -> &'a str {
+        let start = source
+            .find(start_marker)
+            .unwrap_or_else(|| panic!("start marker absent: {start_marker}"));
+        let rest = &source[start..];
+        let end = rest
+            .find(end_marker)
+            .unwrap_or_else(|| panic!("end marker absent: {end_marker}"));
+        &rest[..end]
+    }
+
+    pub(super) fn waterfall_body() -> &'static str {
+        source_slice(
+            INGEST_SOURCE,
+            "pub fn evaluate_entity_resolution_waterfall",
+            "\npub type IngestResult",
+        )
+    }
+}
+
+/// The three DEFAULT-FEATURE doors a `provider.enrichment` claim can be
+/// written through. The validator sits at the shared chokepoint
+/// (`validate_claim_body_and_decode`, reached from `apply_put` BEFORE the
+/// write gate), so all three must reject the same bytes for the same reason.
+mod one1891_doors {
+    use super::Vault;
+    use super::one1891::{at, enrichment_body, fixture_id};
+    use oneiron::{
+        ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
+        WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    use rmpv::Value;
+
+    #[derive(Clone, Copy, Debug)]
+    pub(super) enum WriteDoor {
+        TargetedPut,
+        BatchPut,
+        TransactionalBatch,
+    }
+
+    pub(super) const WRITE_DOORS: [WriteDoor; 3] = [
+        WriteDoor::TargetedPut,
+        WriteDoor::BatchPut,
+        WriteDoor::TransactionalBatch,
+    ];
+
+    impl WriteDoor {
+        pub(super) fn label(self) -> &'static str {
+            match self {
+                Self::TargetedPut => "put_claim",
+                Self::BatchPut => "batch().claim_candidate().commit()",
+                Self::TransactionalBatch => "batch_in().claim_candidate().apply()",
+            }
+        }
+    }
+
+    fn envelope(actor: EntityId) -> WriteEnvelope {
+        WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::Observed,
+            WriteProvenance::new(Value::from("one1891 enrichment fixture"))
+                .expect("fixture provenance"),
+            ClaimApprovalStatus::Approved,
+        )
+    }
+
+    /// Writes `value` under `provider.enrichment` through `door`, returning
+    /// whatever that door returns.
+    pub(super) fn write_enrichment_through(
+        vault: &Vault,
+        door: WriteDoor,
+        claim_lead: u8,
+        subject: ClaimSubject,
+        actor: EntityId,
+        value: Value,
+    ) -> oneiron::Result<()> {
+        let id = fixture_id(claim_lead);
+        match door {
+            WriteDoor::TargetedPut => {
+                vault.put_claim(&id, &enrichment_body(subject, value, 0.8), at(200), 200)
+            }
+            WriteDoor::BatchPut => vault
+                .batch()
+                .claim_candidate(
+                    &id,
+                    ClaimCandidate::new(
+                        oneiron::PREDICATE_PROVIDER_ENRICHMENT,
+                        subject,
+                        value,
+                        0.8,
+                    ),
+                    &envelope(actor),
+                    at(200),
+                    200,
+                )
+                .commit(),
+            WriteDoor::TransactionalBatch => vault.with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .claim_candidate(
+                        &id,
+                        ClaimCandidate::new(
+                            oneiron::PREDICATE_PROVIDER_ENRICHMENT,
+                            subject,
+                            value,
+                            0.8,
+                        ),
+                        &envelope(actor),
+                        at(200),
+                        200,
+                    )
+                    .apply(wtxn)
+            }),
+        }
+    }
+}
+
+// ── ARCH-0024: ranking, banding, routing ───────────────────────────────────
+
+/// The whole reason this leg exists: the candidate with the highest STORED
+/// confidence loses to the one with the highest EFFECTIVE confidence.
+///
+/// A stored 0.90 from a provider the vault has learned to trust at 0.50 reads
+/// 0.45; a stored 0.60 from a provider with no prior reads 0.60 and wins. A
+/// ranking that consulted `body.confidence` would pick the other one.
+#[test]
+fn one1891_waterfall_ranks_by_effective_confidence_not_stored_confidence() {
+    let (_dir, vault) = open_vault();
+    one1891::write_prior(
+        &vault,
+        "provider_discounted",
+        0.50,
+        "evidence:audit-2026-08",
+    );
+
+    let a = one1891::candidate(&vault, 0x31, 0x41, "provider_discounted", 0.90);
+    let b = one1891::candidate(&vault, 0x32, 0x42, "provider_untouched", 0.60);
+
+    let decision = one1891::decide(&vault, &[a, b], false);
+
+    assert_eq!(
+        decision.ranked.len(),
+        2,
+        "every candidate is scored and reported, winner or not"
+    );
+    assert_eq!(
+        decision.ranked[0].candidate, b,
+        "effective 0.60 must out-rank effective 0.45 despite the stored 0.90"
+    );
+    assert!(
+        one1891::close(decision.ranked[0].effective_confidence, 0.60),
+        "B reads its stored confidence under a neutral prior: {}",
+        decision.ranked[0].effective_confidence
+    );
+    assert!(
+        one1891::close(decision.ranked[1].effective_confidence, 0.45),
+        "A is discounted by its provider's 0.50 prior: {}",
+        decision.ranked[1].effective_confidence
+    );
+    assert_eq!(decision.selected, Some(b.subject));
+    assert!(one1891::close(
+        decision
+            .selected_effective_confidence
+            .expect("a non-provisional route reports its score"),
+        0.60
+    ));
+    assert_eq!(decision.route, oneiron::EntityResolutionRoute::SoftLinkLow);
+    assert!(
+        decision.requires_async_verification,
+        "the [0.50, 0.70) band always verifies asynchronously"
+    );
+
+    // read-TIME, exactly as ONE-1722 pinned it: scoring rewrites no stored row.
+    assert!(one1891::close(
+        one1891::stored(&vault, &a.confidence_claim_ref),
+        0.90
+    ));
+    assert!(one1891::close(
+        one1891::stored(&vault, &b.confidence_claim_ref),
+        0.60
+    ));
+}
+
+/// BOTH axes stay live inside the waterfall, not just the prior: under one
+/// shared prior the ranking still orders by stored confidence, and under one
+/// shared stored confidence it still orders by prior. A composition that had
+/// collapsed to either axis alone fails one of these two orderings.
+#[test]
+fn one1891_waterfall_keeps_both_confidence_axes_live() {
+    let (_dir, vault) = open_vault();
+    one1891::write_prior(&vault, "provider_axis_high", 0.80, "evidence:axis-high");
+    one1891::write_prior(&vault, "provider_axis_low", 0.40, "evidence:axis-low");
+
+    // Prior axis: same stored 0.90, different priors -> 0.72 vs 0.36.
+    let high = one1891::candidate(&vault, 0x21, 0x22, "provider_axis_high", 0.90);
+    let low = one1891::candidate(&vault, 0x23, 0x24, "provider_axis_low", 0.90);
+    let by_prior = one1891::decide(&vault, &[low, high], false);
+    assert_eq!(by_prior.ranked[0].candidate, high);
+    assert!(one1891::close(
+        by_prior.ranked[0].effective_confidence,
+        0.72
+    ));
+    assert!(one1891::close(
+        by_prior.ranked[1].effective_confidence,
+        0.36
+    ));
+
+    // Claim-confidence axis: same provider/prior, different stored values.
+    let strong = one1891::candidate(&vault, 0x25, 0x26, "provider_axis_high", 0.90);
+    let weak = one1891::candidate(&vault, 0x27, 0x28, "provider_axis_high", 0.50);
+    let by_stored = one1891::decide(&vault, &[weak, strong], false);
+    assert_eq!(by_stored.ranked[0].candidate, strong);
+    assert!(one1891::close(
+        by_stored.ranked[0].effective_confidence,
+        0.72
+    ));
+    assert!(one1891::close(
+        by_stored.ranked[1].effective_confidence,
+        0.40
+    ));
+
+    // Every stored byte is exactly what was written.
+    for (claim, expected) in [
+        (high.confidence_claim_ref, 0.90),
+        (low.confidence_claim_ref, 0.90),
+        (strong.confidence_claim_ref, 0.90),
+        (weak.confidence_claim_ref, 0.50),
+    ] {
+        assert!(
+            one1891::close(one1891::stored(&vault, &claim), expected),
+            "stored confidence must survive scoring unchanged"
+        );
+    }
+}
+
+/// Every band and every verification flag, including the one axis a hard link
+/// is allowed to care about: a high-collision mention is a confident score
+/// about a surface form many referents share, so it re-arms the async check.
+#[test]
+fn one1891_waterfall_band_flags_pin_every_route() {
+    let (_dir, vault) = open_vault();
+
+    let hard = one1891::candidate(&vault, 0x35, 0x45, "provider_hard", 0.95);
+    let hard_decision = one1891::decide(&vault, &[hard], false);
+    assert_eq!(
+        hard_decision.route,
+        oneiron::EntityResolutionRoute::HardLink
+    );
+    assert!(
+        !hard_decision.requires_async_verification,
+        ">= 0.90 over an unambiguous mention stands on its own"
+    );
+    let collided = one1891::decide(&vault, &[hard], true);
+    assert_eq!(collided.route, oneiron::EntityResolutionRoute::HardLink);
+    assert_eq!(collided.selected, Some(hard.subject));
+    assert!(
+        collided.requires_async_verification,
+        "a high-collision mention re-arms verification even at a hard link"
+    );
+
+    // The bands are closed below and open above, exactly at the boundaries.
+    for (subject_lead, claim_lead, provider, confidence, route, async_expected) in [
+        (
+            0x36,
+            0x46,
+            "provider_edge_090",
+            0.90,
+            oneiron::EntityResolutionRoute::HardLink,
+            false,
+        ),
+        (
+            0x37,
+            0x47,
+            "provider_edge_070",
+            0.70,
+            oneiron::EntityResolutionRoute::SoftLink,
+            true,
+        ),
+        (
+            0x38,
+            0x48,
+            "provider_edge_080",
+            0.80,
+            oneiron::EntityResolutionRoute::SoftLink,
+            true,
+        ),
+        (
+            0x39,
+            0x49,
+            "provider_edge_050",
+            0.50,
+            oneiron::EntityResolutionRoute::SoftLinkLow,
+            true,
+        ),
+    ] {
+        let c = one1891::candidate(&vault, subject_lead, claim_lead, provider, confidence);
+        let decision = one1891::decide(&vault, &[c], false);
+        assert_eq!(decision.route, route, "band at {confidence}");
+        assert_eq!(decision.selected, Some(c.subject), "band at {confidence}");
+        assert!(
+            one1891::close(
+                decision.selected_effective_confidence.expect("score"),
+                confidence
+            ),
+            "band at {confidence}"
+        );
+        assert_eq!(
+            decision.requires_async_verification, async_expected,
+            "async flag at {confidence}"
+        );
+    }
+}
+
+/// Below 0.50 — and with no candidates at all — the waterfall selects NOTHING,
+/// verifies nothing, and MINTS nothing. Provisional entities belong to whatever
+/// path creates them; this function's contract is that it does not quietly
+/// become that path.
+#[test]
+fn one1891_provisional_route_selects_nothing_and_mints_nothing() {
+    let (_dir, vault) = open_vault();
+    let weak = one1891::candidate(&vault, 0x3a, 0x4a, "provider_weak", 0.40);
+    let before = one1891::counts(&vault);
+
+    let decision = one1891::decide(&vault, &[weak], false);
+    assert_eq!(
+        decision.route,
+        oneiron::EntityResolutionRoute::ProvisionalEntity
+    );
+    assert_eq!(decision.selected, None);
+    assert_eq!(decision.selected_effective_confidence, None);
+    assert!(!decision.requires_async_verification);
+    assert_eq!(
+        decision.ranked.len(),
+        1,
+        "the candidate is still scored — it just does not win"
+    );
+    assert!(one1891::close(
+        decision.ranked[0].effective_confidence,
+        0.40
+    ));
+
+    let empty = one1891::decide(&vault, &[], false);
+    assert_eq!(
+        empty.route,
+        oneiron::EntityResolutionRoute::ProvisionalEntity
+    );
+    assert_eq!(empty.selected, None);
+    assert_eq!(empty.selected_effective_confidence, None);
+    assert!(!empty.requires_async_verification);
+    assert!(empty.ranked.is_empty());
+
+    // Even with the collision flag raised: there is no link to verify.
+    assert!(
+        !one1891::decide(&vault, &[weak], true).requires_async_verification,
+        "a provisional route verifies nothing"
+    );
+
+    assert_eq!(
+        one1891::counts(&vault),
+        before,
+        "a provisional decision creates no PERSON and no CLAIM"
+    );
+}
+
+/// A prior that drops the best candidate below the floor moves it out of every
+/// linking band: the composition routes, not the stored column.
+#[test]
+fn one1891_prior_can_demote_a_candidate_into_the_provisional_route() {
+    let (_dir, vault) = open_vault();
+    one1891::write_prior(&vault, "provider_distrusted", 0.40, "evidence:spotcheck");
+    let c = one1891::candidate(&vault, 0x3b, 0x4b, "provider_distrusted", 0.95);
+    let before = one1891::counts(&vault);
+
+    let decision = one1891::decide(&vault, &[c], false);
+    assert!(one1891::close(
+        decision.ranked[0].effective_confidence,
+        0.38
+    ));
+    assert_eq!(
+        decision.route,
+        oneiron::EntityResolutionRoute::ProvisionalEntity,
+        "a stored 0.95 from a 0.40 provider reads 0.38 and links to nothing"
+    );
+    assert_eq!(decision.selected, None);
+    assert_eq!(one1891::counts(&vault), before);
+}
+
+/// Two devices ranking the same candidate set must agree. Ties break on
+/// subject id then claim id — both total, both clock-free — so the ranking is
+/// a pure function of the set and NOT of the order it was handed in.
+#[test]
+fn one1891_ranking_is_a_deterministic_function_of_the_candidate_set() {
+    let (_dir, vault) = open_vault();
+    // Three candidates at the SAME effective confidence: 0.80 stored under a
+    // neutral prior, and 0.90 stored under a 0.888... prior would be fragile —
+    // identical stored values under one shared provider is the exact tie.
+    let first = one1891::candidate(&vault, 0x11, 0x12, "provider_tied", 0.80);
+    let second = one1891::candidate(&vault, 0x13, 0x14, "provider_tied", 0.80);
+    let third = one1891::candidate(&vault, 0x15, 0x16, "provider_tied", 0.80);
+
+    let ordered = one1891::decide(&vault, &[first, second, third], false);
+    let shuffled = one1891::decide(&vault, &[third, first, second], false);
+    let reversed = one1891::decide(&vault, &[third, second, first], false);
+
+    assert_eq!(
+        ordered.ranked, shuffled.ranked,
+        "input order must not shape the ranking"
+    );
+    assert_eq!(ordered.ranked, reversed.ranked);
+    assert_eq!(
+        ordered
+            .ranked
+            .iter()
+            .map(|scored| scored.candidate.subject)
+            .collect::<Vec<_>>(),
+        vec![first.subject, second.subject, third.subject],
+        "ties break on ascending subject id"
+    );
+    assert_eq!(ordered.selected, Some(first.subject));
+    assert_eq!(shuffled.selected, Some(first.subject));
+    assert_eq!(reversed.selected, Some(first.subject));
+}
+
+// ── The waterfall's own fail-closed inputs ─────────────────────────────────
+
+/// A candidate scored by a confidence claim about SOMEBODY ELSE is refused with
+/// the exact contract string, and nothing is written behind the refusal. Without
+/// this, a caller could borrow an unrelated provider's confidence to hard-link
+/// any subject it liked.
+#[test]
+fn one1891_candidate_claim_subject_mismatch_is_closed_with_no_write() {
+    let (_dir, vault) = open_vault();
+    let subject = one1891::put_person(&vault, 0x51);
+    let other = one1891::put_person(&vault, 0x52);
+    let claim = one1891::put_enrichment(&vault, 0x53, subject, "provider_mismatch", 0.95);
+    let before = one1891::counts(&vault);
+
+    let error = oneiron::evaluate_entity_resolution_waterfall(
+        &vault,
+        &[oneiron::EntityResolutionCandidate {
+            subject: other,
+            confidence_claim_ref: claim,
+        }],
+        false,
+    )
+    .expect_err("a borrowed confidence claim must not score a candidate");
+
+    assert_eq!(
+        error.to_string(),
+        oneiron::Error::InvalidClaimBody(
+            "waterfall candidate subject does not match confidence claim subject"
+        )
+        .to_string()
+    );
+    assert_eq!(
+        one1891::counts(&vault),
+        before,
+        "a refused waterfall writes nothing"
+    );
+}
+
+/// Closed history may not route a live mention. Rejected, proposed, superseded,
+/// retracted, and stale score claims all fail with the SAME typed string — no
+/// selection, no route, no write. (`Proposed` is included because
+/// surfaceability, not mere existence, is the admission test: an unreviewed
+/// claim must not link an identity while it waits.)
+#[test]
+fn one1891_unsurfaceable_score_claims_never_route_a_mention() {
+    let (_dir, vault) = open_vault();
+    let subject = one1891::put_person(&vault, 0x54);
+    let expected =
+        oneiron::Error::InvalidClaimBody("waterfall confidence claim is not active").to_string();
+
+    for (index, label) in ["rejected", "proposed", "superseded", "retracted", "stale"]
+        .into_iter()
+        .enumerate()
+    {
+        let claim_id = one1891::fixture_id(0x60 + u8::try_from(index).expect("small index"));
+        let mut body = one1891::enrichment_body(
+            oneiron::ClaimSubject::Entity(subject),
+            one1891::enrichment_value("provider_closed", &[]),
+            0.95,
+        );
+        match label {
+            "rejected" => body.approval = oneiron::ClaimApprovalStatus::Rejected,
+            "proposed" => body.approval = oneiron::ClaimApprovalStatus::Proposed,
+            "superseded" => body.lifecycle = oneiron::ClaimLifecycleStatus::Superseded,
+            "retracted" => body.lifecycle = oneiron::ClaimLifecycleStatus::Retracted,
+            _ => body.stale = true,
+        }
+        vault
+            .put_claim(&claim_id, &body, one1891::at(200), 200)
+            .unwrap_or_else(|error| panic!("store the {label} fixture: {error}"));
+
+        let before = one1891::counts(&vault);
+        let error = oneiron::evaluate_entity_resolution_waterfall(
+            &vault,
+            &[oneiron::EntityResolutionCandidate {
+                subject,
+                confidence_claim_ref: claim_id,
+            }],
+            false,
+        )
+        .expect_err("closed history must not route a mention");
+        assert_eq!(error.to_string(), expected, "{label} fixture");
+        assert_eq!(one1891::counts(&vault), before, "{label} fixture");
+    }
+}
+
+/// A candidate pointing at a claim that is not provider-attributed at all — or
+/// at no claim — is refused by the SAME validator the write door uses, rather
+/// than being scored on whatever confidence the body happened to carry.
+#[test]
+fn one1891_non_enrichment_and_missing_score_claims_are_refused() {
+    let (_dir, vault) = open_vault();
+    let subject = one1891::put_person(&vault, 0x55);
+
+    // A perfectly valid claim under a DIFFERENT predicate.
+    let foreign = one1891::fixture_id(0x56);
+    let mut body = oneiron::ClaimBody::new(
+        "profile.name",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from("Ada"),
+        0.95,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    body.valid_from = Some(200);
+    vault
+        .put_claim(&foreign, &body, one1891::at(200), 200)
+        .expect("store a non-provider claim");
+
+    let error = oneiron::evaluate_entity_resolution_waterfall(
+        &vault,
+        &[oneiron::EntityResolutionCandidate {
+            subject,
+            confidence_claim_ref: foreign,
+        }],
+        false,
+    )
+    .expect_err("a non-enrichment claim carries no provider to score with");
+    assert_eq!(
+        error.to_string(),
+        oneiron::Error::InvalidClaimBody("unknown provider enrichment predicate").to_string()
+    );
+
+    // And a dangling reference is EntityNotFound, never a silent 0.0.
+    let missing = oneiron::evaluate_entity_resolution_waterfall(
+        &vault,
+        &[oneiron::EntityResolutionCandidate {
+            subject,
+            confidence_claim_ref: one1891::fixture_id(0x57),
+        }],
+        false,
+    )
+    .expect_err("a dangling score claim is not a zero score");
+    assert_eq!(
+        missing.to_string(),
+        oneiron::Error::EntityNotFound.to_string()
+    );
+}
+
+// ── One transaction, not one per candidate ─────────────────────────────────
+
+/// STRUCTURAL: the waterfall opens EXACTLY ONE write transaction, around the
+/// whole candidate loop.
+///
+/// This cannot be observed from outside — a per-candidate transaction returns
+/// the same numbers — but it is the difference between one consistent snapshot
+/// and N snapshots a concurrent prior write can slide between, and (given
+/// `with_write_txn` takes the LMDB writer mutex first) between a scoring pass
+/// and a deadlock when a caller already holds the writer.
+#[test]
+fn one1891_waterfall_scores_every_candidate_in_one_write_transaction() {
+    let body = one1891::waterfall_body();
+
+    assert_eq!(
+        body.matches("with_write_txn").count(),
+        1,
+        "the waterfall must open exactly one transaction, not one per candidate"
+    );
+    let txn_at = body.find("with_write_txn").expect("the single transaction");
+    let loop_at = body
+        .find("for candidate in candidates")
+        .expect("the candidate loop");
+    assert!(
+        txn_at < loop_at,
+        "the loop must run INSIDE the transaction, not open one per iteration"
+    );
+    assert!(
+        body.contains("effective_confidence_in_txn"),
+        "scoring must compose inside the caller's transaction"
+    );
+    assert!(
+        !body.contains("provider_confidence::effective_confidence("),
+        "the transaction-opening read door would nest a writer per candidate"
+    );
+    assert!(
+        !body.contains("body.confidence"),
+        "ranking on the stored confidence is the exact bug this leg exists to \
+         prevent"
+    );
+    assert!(
+        !body.contains("read_txn"),
+        "a second, separate read snapshot would defeat the single-transaction \
+         guarantee"
+    );
+}
+
+/// STRUCTURAL: the memo belongs to the one waterfall transaction, not to
+/// individual candidates or to the vault. Its local unit tests count actual
+/// resolver invocations for interleaved positive and neutral providers.
+#[test]
+fn one1891_waterfall_reuses_one_provider_prior_memo_per_transaction() {
+    let body = one1891::waterfall_body();
+    let txn_at = body
+        .find("with_write_txn")
+        .expect("the scoring transaction");
+    let memo_at = body.find("let mut prior_memo =").expect("the local memo");
+    let loop_at = body
+        .find("for candidate in candidates")
+        .expect("the candidate loop");
+    assert_eq!(
+        body.matches("ProviderPriorMemo::default()").count(),
+        1,
+        "one memo must serve every candidate in this evaluation"
+    );
+    assert!(
+        txn_at < memo_at && memo_at < loop_at,
+        "create the memo inside the transaction but outside the candidate loop"
+    );
+    assert!(
+        body.contains("&mut prior_memo,"),
+        "each score must use that same transaction-local memo"
+    );
+
+    let scorer = one1891::source_slice(
+        one1891::PROVIDER_CONFIDENCE_SOURCE,
+        "pub(crate) fn effective_confidence_in_txn(",
+        "\n/// Reads the claim's stored confidence",
+    );
+    assert!(
+        scorer.contains("let prior = prior_memo") && scorer.contains(".resolve(provider,"),
+        "the composition must resolve priors through the memo, not beside it"
+    );
+    assert!(
+        scorer.contains("active_provider_prior_in_txn(vault, wtxn, provider)"),
+        "a memo miss must still use the same transaction's truth-fallback resolver"
+    );
+}
+
+/// STRUCTURAL: the ledger witness belongs to the scoring transaction, not
+/// to either per-candidate canonical-subject check.
+#[test]
+fn one1891_waterfall_reuses_one_zero_head_shell_witness_per_transaction() {
+    let body: String = one1891::waterfall_body()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    let txn_at = body
+        .find("with_write_txn")
+        .expect("the scoring transaction");
+    let witness_at = body
+        .find("letzero_head_shells=")
+        .expect("the transaction-local topology witness");
+    let loop_at = body
+        .find("forcandidateincandidates")
+        .expect("the candidate loop");
+    assert_eq!(body.matches("zero_head_split_shells_in_txn(").count(), 1);
+    assert!(
+        txn_at < witness_at && witness_at < loop_at,
+        "fold the zero-head-shell witness once inside the transaction, before the loop"
+    );
+    // Match both calls' arguments, ignoring whitespace and optional trailing commas.
+    let subject_calls: Vec<_> = body
+        .split_once("fncanonical_waterfall_subject_in_txn(")
+        .expect("the canonical subject helper")
+        .0
+        .split("canonical_waterfall_subject_in_txn(")
+        .skip(1)
+        .map(|call| {
+            call.split_once(')')
+                .expect("the subject call arguments")
+                .0
+                .trim_end_matches(',')
+        })
+        .collect();
+    assert_eq!(
+        subject_calls,
+        [
+            "vault,&*wtxn,&candidate.subject,&zero_head_shells",
+            "vault,&*wtxn,&id,&zero_head_shells",
+        ],
+        "candidate and claim subjects must share the transaction's witness"
+    );
+    let canonical = one1891::source_slice(
+        one1891::INGEST_SOURCE,
+        "fn canonical_waterfall_subject_in_txn(",
+        "\npub type IngestResult",
+    )
+    .chars()
+    .filter(|ch| !ch.is_whitespace())
+    .collect::<String>();
+    assert!(canonical.contains("entity_lifecycle_state_with_zero_head_shells_in_txn("));
+    assert!(canonical.contains("Some(zero_head_shells)"));
+    assert!(
+        !body.contains(".entity_lifecycle_state_in_txn("),
+        "the per-subject lifecycle door would fold the ledger again"
+    );
+}
+
+/// Both a neutral absence and a positive resolution expire with the scoring
+/// transaction. Later prior writes must rerank the next evaluation without
+/// rewriting enrichment CLAIMs or persisting an absence sentinel.
+#[test]
+fn one1891_waterfall_memo_does_not_outlive_its_transaction() {
+    let (_dir, vault) = open_vault();
+    let neutral = "provider_memo_neutral";
+    let positive = "provider_memo_positive";
+    one1891::write_prior(&vault, positive, 0.50, "evidence:memo-first");
+    let neutral_high = one1891::candidate(&vault, 0x11, 0x51, neutral, 0.80);
+    let neutral_low = one1891::candidate(&vault, 0x12, 0x52, neutral, 0.60);
+    let positive_high = one1891::candidate(&vault, 0x13, 0x53, positive, 0.90);
+    let positive_low = one1891::candidate(&vault, 0x14, 0x54, positive, 0.80);
+    let candidates = [neutral_low, positive_high, neutral_high, positive_low];
+    let before = one1891::counts(&vault);
+
+    let first = one1891::decide(&vault, &candidates, false);
+    assert_eq!(first.ranked.len(), candidates.len());
+    for (scored, (candidate, expected)) in first.ranked.iter().zip([
+        (neutral_high, 0.80),
+        (neutral_low, 0.60),
+        (positive_high, 0.45),
+        (positive_low, 0.40),
+    ]) {
+        assert_eq!(scored.candidate, candidate);
+        assert!(one1891::close(scored.effective_confidence, expected));
+    }
+    assert_eq!(first.selected, Some(neutral_high.subject));
+    assert_eq!(one1891::counts(&vault), before, "scoring mints nothing");
+    assert_eq!(
+        one1891::index_presence(&vault, neutral),
+        (false, false),
+        "reusing a neutral prior must not persist absence"
+    );
+
+    one1891::write_prior(&vault, neutral, 0.25, "evidence:memo-learned");
+    one1891::write_prior(&vault, positive, 1.0, "evidence:memo-updated");
+    let after_writes = one1891::counts(&vault);
+    let next = one1891::decide(&vault, &candidates, false);
+    assert_eq!(next.ranked.len(), candidates.len());
+    for (scored, (candidate, expected)) in next.ranked.iter().zip([
+        (positive_high, 0.90),
+        (positive_low, 0.80),
+        (neutral_high, 0.20),
+        (neutral_low, 0.15),
+    ]) {
+        assert_eq!(scored.candidate, candidate);
+        assert!(one1891::close(scored.effective_confidence, expected));
+    }
+    assert_eq!(next.selected, Some(positive_high.subject));
+    assert_eq!(one1891::counts(&vault), after_writes);
+    for (candidate, expected) in [
+        (neutral_high, 0.80),
+        (neutral_low, 0.60),
+        (positive_high, 0.90),
+        (positive_low, 0.80),
+    ] {
+        assert!(one1891::close(
+            one1891::stored(&vault, &candidate.confidence_claim_ref),
+            expected
+        ));
+    }
+}
+
+/// The admission door consumes the waterfall's ANSWER: the claim lands against
+/// the SELECTED subject — the effective-confidence winner — not the loudest
+/// stored number, and not a subject the caller picked for itself.
+#[test]
+fn one1891_admission_writes_against_the_waterfall_selected_subject() {
+    let (_dir, vault) = one1891::open_unseeded_vault();
+    one1891::write_prior(&vault, "provider_admit_discounted", 0.50, "evidence:audit");
+    let loud = one1891::candidate(&vault, 0x31, 0x41, "provider_admit_discounted", 0.90);
+    let winner = one1891::candidate(&vault, 0x32, 0x42, "provider_admit_plain", 0.60);
+
+    let decision = one1891::decide(&vault, &[loud, winner], false);
+    let selected = decision
+        .selected
+        .expect("a non-provisional decision selects a subject");
+    assert_eq!(selected, winner.subject);
+
+    let import_actor = one1891::put_person(&vault, 0x33);
+    let admitted_id = one1891::fixture_id(0x43);
+    oneiron::ingest::admit_imported_evidence_claim(
+        &vault,
+        &oneiron::ingest::NormalizedIngestClaim {
+            source_record_id: "one1891-turn-1".to_owned(),
+            predicate: "profile.name".to_owned(),
+            value: serde_json::Value::String("Ada".to_owned()),
+        },
+        oneiron::ingest::ImportedEvidenceAdmission::proposed(
+            oneiron::ingest::JSONL_TRANSCRIPT_SOURCE_ID,
+            admitted_id,
+            oneiron::ingest::ImportedEvidenceEntityResolution::subject(selected),
+            oneiron::WriteActor::new(import_actor, oneiron::EdgeActorClass::Human),
+            one1891::at(300),
+            300,
+        ),
+    )
+    .expect("admit against the selected subject");
+
+    let admitted = vault
+        .get_claim(&admitted_id)
+        .expect("read the admitted claim")
+        .expect("the admitted claim exists");
+    assert_eq!(
+        admitted.subject,
+        oneiron::ClaimSubject::Entity(winner.subject),
+        "the mention resolves to the effective-confidence winner"
+    );
+    assert_ne!(
+        admitted.subject,
+        oneiron::ClaimSubject::Entity(loud.subject),
+        "the stored-confidence leader must not collect the mention"
+    );
+}
+
+/// The facade's caller-asserted admit path is UNCHANGED by this wave: the
+/// waterfall has no production call site yet, and the admission door still
+/// takes the subject its caller resolved. Pinning it here keeps a later wave
+/// from quietly turning the door into a second resolver.
+#[test]
+fn one1891_admission_door_stays_caller_asserted() {
+    let resolution = one1891::source_slice(
+        one1891::INGEST_SOURCE,
+        "pub struct ImportedEvidenceEntityResolution",
+        "\n/// Write metadata",
+    );
+    assert!(
+        resolution.contains("pub subject: EntityId"),
+        "the admission door still takes an already-resolved subject"
+    );
+    assert!(
+        !resolution.contains("evaluate_entity_resolution_waterfall("),
+        "the admission door must not call the waterfall itself"
+    );
+    let admit = one1891::source_slice(
+        one1891::INGEST_SOURCE,
+        "pub fn admit_imported_evidence_claim_typed",
+        "\n/// Persists a normalized asset-text entity",
+    );
+    assert!(
+        !admit.contains("evaluate_entity_resolution_waterfall"),
+        "admission consumes a decision; it does not make one"
+    );
+    assert!(
+        admit.contains("ClaimSubject::Entity(admission.entity_resolution.subject)"),
+        "the admitted claim is subject-ed to exactly what the caller resolved"
+    );
+}
+
+// ── The write-time validator ───────────────────────────────────────────────
+
+/// A `provider.enrichment` claim whose attribution cannot be read is refused at
+/// WRITE time, on every default-feature door, with the exact typed reason.
+///
+/// This is what makes the read side's `provider_from_claim_body` total: the
+/// waterfall never has to decide what an unattributable enrichment claim is
+/// worth, because one cannot be stored.
+#[test]
+fn one1891_enrichment_validator_rejects_unattributable_bodies_on_every_door() {
+    let (_dir, vault) = one1891::open_unseeded_vault();
+    let actor = one1891::put_person(&vault, 0xa1);
+    let subject = one1891::put_person(&vault, 0xb1);
+    let oversized = "p".repeat(513);
+    let key_rule = "provider key must be trimmed, non-empty, and at most 512 bytes";
+
+    let cases: [(&str, rmpv::Value, &str); 7] = [
+        (
+            "non-map value",
+            rmpv::Value::from("clearbit"),
+            "provider-attributed claim value must be a map",
+        ),
+        (
+            "missing provider key",
+            rmpv::Value::Map(vec![(rmpv::Value::from("vendor"), rmpv::Value::from("x"))]),
+            "provider-attributed claim value is missing provider",
+        ),
+        (
+            "duplicate provider keys",
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("provider"), rmpv::Value::from("clearbit")),
+                (rmpv::Value::from("provider"), rmpv::Value::from("scraper")),
+            ]),
+            "provider-attributed claim value has duplicate provider keys",
+        ),
+        (
+            "non-string provider",
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("provider"),
+                rmpv::Value::from(7_u64),
+            )]),
+            "provider-attributed claim provider must be a string",
+        ),
+        (
+            "blank provider",
+            one1891::enrichment_value("", &[]),
+            key_rule,
+        ),
+        (
+            "untrimmed provider",
+            one1891::enrichment_value(" clearbit ", &[]),
+            key_rule,
+        ),
+        (
+            "oversized provider",
+            one1891::enrichment_value(oversized.as_str(), &[]),
+            key_rule,
+        ),
+    ];
+
+    let mut lead = 0x80_u8;
+    for (label, value, expected) in cases {
+        for door in one1891_doors::WRITE_DOORS {
+            let before = one1891::counts(&vault);
+            let error = one1891_doors::write_enrichment_through(
+                &vault,
+                door,
+                lead,
+                oneiron::ClaimSubject::Entity(subject),
+                actor,
+                value.clone(),
+            )
+            .expect_err("an unattributable enrichment claim must not persist");
+            assert_eq!(
+                error.to_string(),
+                oneiron::Error::InvalidClaimBody(expected).to_string(),
+                "{label} through {}",
+                door.label()
+            );
+            assert_eq!(
+                one1891::counts(&vault),
+                before,
+                "{label} through {} left bytes behind",
+                door.label()
+            );
+            lead += 1;
+        }
+    }
+}
+
+/// The enrichment claim must be ABOUT an entity. An edge-subject claim carries
+/// a provider but nothing the waterfall could ever select, so it is refused at
+/// write time rather than scored and then dropped.
+#[test]
+fn one1891_enrichment_validator_rejects_edge_subjects_on_every_door() {
+    let (_dir, vault) = one1891::open_unseeded_vault();
+    let actor = one1891::put_person(&vault, 0xa2);
+    let source = one1891::put_person(&vault, 0xb2);
+    let target = one1891::put_person(&vault, 0xb3);
+    let edge_subject = oneiron::ClaimSubject::Edge {
+        source,
+        kind: oneiron::EdgeKind::Mentions,
+        target,
+    };
+
+    for (lead, door) in (0xc0_u8..).zip(one1891_doors::WRITE_DOORS) {
+        let before = one1891::counts(&vault);
+        let error = one1891_doors::write_enrichment_through(
+            &vault,
+            door,
+            lead,
+            edge_subject,
+            actor,
+            one1891::enrichment_value("provider_edge", &[]),
+        )
+        .expect_err("an edge-subject enrichment claim must not persist");
+        assert_eq!(
+            error.to_string(),
+            oneiron::Error::InvalidClaimBody("provider enrichment subject must be an entity")
+                .to_string(),
+            "through {}",
+            door.label()
+        );
+        assert_eq!(one1891::counts(&vault), before, "through {}", door.label());
+    }
+}
+
+/// What the validator ACCEPTS, so "reject the malformed" cannot quietly become
+/// "reject everything": the minimal one-key attribution, and the same
+/// attribution carrying sibling payload keys the provider chose to ship. The
+/// value round-trips byte-for-byte and scores normally.
+#[test]
+fn one1891_enrichment_validator_accepts_minimal_and_sibling_bearing_bodies() {
+    let (_dir, vault) = one1891::open_unseeded_vault();
+    let actor = one1891::put_person(&vault, 0xa3);
+    let subject = one1891::put_person(&vault, 0xb4);
+
+    let shapes = [
+        ("minimal", one1891::enrichment_value("provider_accept", &[])),
+        (
+            "with sibling payload keys",
+            one1891::enrichment_value(
+                "provider_accept",
+                &[("title", "Staff Engineer"), ("company", "Example")],
+            ),
+        ),
+    ];
+
+    let mut lead = 0xd0_u8;
+    for (label, value) in shapes {
+        for door in one1891_doors::WRITE_DOORS {
+            one1891_doors::write_enrichment_through(
+                &vault,
+                door,
+                lead,
+                oneiron::ClaimSubject::Entity(subject),
+                actor,
+                value.clone(),
+            )
+            .unwrap_or_else(|error| {
+                panic!("{label} must persist through {}: {error}", door.label())
+            });
+            let id = one1891::fixture_id(lead);
+            let body = vault
+                .get_claim(&id)
+                .expect("read back")
+                .expect("the accepted claim persisted");
+            assert_eq!(body.value, value, "{label} round-trips unchanged");
+            assert!(
+                one1891::close(
+                    one1891::effective(&vault, &id),
+                    one1891::stored(&vault, &id)
+                ),
+                "{label} scores like any other enrichment claim — stored \
+                 confidence under this provider's neutral prior"
+            );
+            lead += 1;
+        }
+    }
+}
+
+/// The prior validator is UNCHANGED by the new arm beside it: the same
+/// acceptances, the same typed refusals, and `actor.confidence_prior` still
+/// reachable only through its owning door.
+#[test]
+fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
+    let (_dir, vault) = open_vault();
+
+    // Accepts, exactly as ONE-1722 armed it.
+    one1891::write_prior(&vault, "provider_prior_ok", 0.65, "evidence:initial");
+    assert_eq!(one1891::active_priors(&vault, "provider_prior_ok"), 1);
+    assert_eq!(
+        one1891::priors_with_evidence(&vault, "provider_prior_ok", "evidence:initial"),
+        1
+    );
+
+    // Refuses, with the same strings.
+    for (label, prior, evidence, expected) in [
+        (
+            "above one",
+            1.5_f32,
+            "evidence:x",
+            "provider confidence prior must be in 0..1",
+        ),
+        (
+            "below zero",
+            -0.1,
+            "evidence:x",
+            "provider confidence prior must be in 0..1",
+        ),
+        (
+            "not finite",
+            f32::NAN,
+            "evidence:x",
+            "provider confidence prior must be in 0..1",
+        ),
+        (
+            "bare number",
+            0.5,
+            "",
+            "provider confidence prior evidence must be non-empty",
+        ),
+    ] {
+        let error = oneiron::provider_confidence::write_provider_prior(
+            &vault,
+            "provider_prior_ok",
+            prior,
+            evidence,
+        )
+        .expect_err("the prior door stays fail-closed");
+        assert_eq!(
+            error.to_string(),
+            oneiron::Error::InvalidClaimBody(expected).to_string(),
+            "{label}"
+        );
+    }
+    assert_eq!(
+        one1891::active_priors(&vault, "provider_prior_ok"),
+        1,
+        "a refused prior write leaves the live head alone"
+    );
+
+    // The reserved namespace still holds: a generic claim write cannot plant a
+    // trust multiplier, whatever the enrichment arm now admits next to it.
+    let actor = one1891::put_provider_actor(&vault, 0xe1, "provider_prior_ok");
+    let mut body = oneiron::ClaimBody::new(
+        "actor.confidence_prior",
+        oneiron::ClaimSubject::Entity(actor),
+        rmpv::Value::F32(1.0),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    body.valid_from = Some(200);
+    let error = vault
+        .put_claim(&one1891::fixture_id(0xe2), &body, one1891::at(200), 200)
+        .expect_err("actor.* is reserved");
+    assert!(
+        matches!(&error, oneiron::Error::ReservedPredicate { .. }),
+        "expected a reserved-predicate refusal, got {error}"
+    );
+}
+
+/// STRUCTURAL: the enrichment arm sits exactly between the prior arm and the
+/// `actor_claims` arm, and every neighbour arm below it survives the
+/// insertion in its original order.
+///
+/// The chokepoint is one long `else if` chain, so an arm inserted in the wrong
+/// place does not fail loudly — it silently shadows or is shadowed. Order IS
+/// the semantics here.
+#[test]
+fn one1891_enrichment_arm_is_seated_without_disturbing_its_neighbours() {
+    let chain = one1891::source_slice(
+        one1891::CLAIM_CORE_TYPES_SOURCE,
+        "pub(crate) fn validate_claim_body_and_decode(",
+        "\npub(crate) fn validate_claim_body_bytes",
+    );
+
+    let prior_arm = chain
+        .find("is_actor_confidence_prior_claim_predicate")
+        .expect("the ONE-1722 prior arm");
+    let enrichment_arm = chain
+        .find("is_provider_enrichment_claim_predicate")
+        .expect("the ONE-1891 enrichment arm");
+    let actor_arm = chain
+        .find("actor_claims::is_actor_claim_predicate")
+        .expect("the actor-claims arm");
+    assert!(
+        prior_arm < enrichment_arm && enrichment_arm < actor_arm,
+        "the enrichment arm belongs between the prior arm and actor_claims"
+    );
+    assert_eq!(
+        chain
+            .matches("is_provider_enrichment_claim_predicate")
+            .count(),
+        1,
+        "a second enrichment arm would be unreachable and untested"
+    );
+    assert!(
+        chain.contains("validate_provider_enrichment_claim_structure(&body)?"),
+        "the arm must call the validator, not merely recognise the predicate"
+    );
+
+    // Every neighbour that used to follow still follows, in order.
+    let mut cursor = enrichment_arm;
+    for neighbour in [
+        "actor_claims::is_actor_claim_predicate",
+        "counterparty_contact::is_counterparty_contact_claim_predicate",
+        "commitment::is_commitment_claim_predicate",
+        "calendar::claims::is_calendar_claim_predicate",
+        "campaign::claims::is_campaign_pack_claim_predicate",
+        "comm::is_comm_claim_predicate",
+        "disclosure::is_disclosure_claim_predicate",
+        "delivery_window::is_delivery_window_claim_predicate",
+        "booking::config::is_booking_claim_predicate",
+        "voice_segment::is_voice_segment_claim_predicate",
+    ] {
+        let at = chain
+            .find(neighbour)
+            .unwrap_or_else(|| panic!("neighbour arm lost: {neighbour}"));
+        assert!(at > cursor, "neighbour arm reordered: {neighbour}");
+        cursor = at;
+    }
+}
+
+/// STRUCTURAL: `put_replicated` is not a fourth write door. Both definitions
+/// are `pub(crate)` and feature-gated, so the three doors exercised above are
+/// the whole default-feature write surface for an enrichment claim — and a
+/// replicated body still meets the same validator inside `apply_put`, so this
+/// is a statement about REACH, not about a bypass.
+#[test]
+fn one1891_put_replicated_is_not_a_fourth_write_door() {
+    for (label, source) in [
+        ("txn_builder", one1891::BATCH_TXN_BUILDER_SOURCE),
+        ("builder", one1891::BATCH_BUILDER_SOURCE),
+    ] {
+        assert!(
+            !source.contains("pub fn put_replicated"),
+            "{label}: put_replicated must never become public"
+        );
+        let Some(door_at) = source.find("fn put_replicated") else {
+            continue;
+        };
+        assert!(
+            source.contains("pub(crate) fn put_replicated"),
+            "{label}: the replay door must stay crate-private"
+        );
+        // The gate must sit on the door ITSELF, not merely somewhere in the
+        // file: nothing but the visibility keyword may separate them.
+        let gate_at = source[..door_at]
+            .rfind("#[cfg(")
+            .expect("a feature gate above the replay door");
+        assert!(
+            !source[gate_at..door_at].contains("fn "),
+            "{label}: the feature gate must sit on the replay door itself"
+        );
+    }
+}
+
+// ── The two DISPOSABLE shortcut rows ───────────────────────────────────────
+
+/// The shortcut rows are a cache over one truth, so deleting them may change
+/// COST and nothing else. The first touch after a clear is a COUNT — taken
+/// before any read could have rebuilt anything — and it is already correct.
+#[test]
+fn one1891_cleared_indexes_answer_from_truth_before_any_rebuild() {
+    let (_dir, vault) = open_vault();
+    let provider = "provider_rebuild";
+    one1891::write_prior(&vault, provider, 0.50, "evidence:rebuild");
+    let subject = one1891::put_person(&vault, 0x71);
+    let claim = one1891::put_enrichment(&vault, 0x72, subject, provider, 0.60);
+
+    let composed = one1891::effective(&vault, &claim);
+    assert!(one1891::close(composed, 0.30));
+    assert_eq!(one1891::index_presence(&vault, provider), (true, true));
+    let before = one1891::counts(&vault);
+
+    one1891::clear_indexes(&vault, provider);
+    assert_eq!(
+        one1891::index_presence(&vault, provider),
+        (false, false),
+        "the clear must actually remove both rows"
+    );
+
+    // FIRST touch after the clear, with nothing in between: the counts come
+    // from the full scan and are already right.
+    assert_eq!(one1891::active_priors(&vault, provider), 1);
+    assert_eq!(one1891::superseded_priors(&vault, provider), 0);
+    assert_eq!(
+        one1891::priors_with_evidence(&vault, provider, "evidence:rebuild"),
+        1
+    );
+    assert_eq!(
+        one1891::index_presence(&vault, provider),
+        (true, false),
+        "resolving the actor repairs the actor row and nothing else — the \
+         prior-head row is rebuilt by the read that needs it"
+    );
+
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), composed),
+        "the composed read is identical before and after the cache was lost"
+    );
+    assert_eq!(one1891::counts(&vault), before, "a rebuild mints nothing");
+}
+
+/// An upgraded vault has never written these rows. The first read rebuilds
+/// EXACTLY the two of them — no migration, no startup pass, no bulk sweep —
+/// and answers exactly what the pre-clear read answered.
+#[test]
+fn one1891_upgraded_vault_rebuilds_exactly_two_rows_on_first_read() {
+    let (_dir, vault) = open_vault();
+    let provider = "provider_upgrade";
+    one1891::write_prior(&vault, provider, 0.80, "evidence:upgrade");
+    let subject = one1891::put_person(&vault, 0x73);
+    let claim = one1891::put_enrichment(&vault, 0x74, subject, provider, 0.50);
+    let before_read = one1891::effective(&vault, &claim);
+
+    one1891::clear_indexes(&vault, provider);
+    assert_eq!(one1891::index_presence(&vault, provider), (false, false));
+    let before = one1891::counts(&vault);
+
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), before_read),
+        "a cold index answers exactly what a warm one did"
+    );
+    assert_eq!(
+        one1891::index_presence(&vault, provider),
+        (true, true),
+        "exactly the two rows reappear"
+    );
+    assert_eq!(
+        one1891::counts(&vault),
+        before,
+        "no PERSON and no CLAIM is created by a lazy rebuild"
+    );
+}
+
+/// Reading one provider rebuilds ONE provider's rows. There is no bulk pass
+/// hiding behind the lazy one.
+#[test]
+fn one1891_reading_one_provider_never_builds_another_providers_rows() {
+    let (_dir, vault) = open_vault();
+    one1891::write_prior(&vault, "provider_read", 0.50, "evidence:read");
+    // Truth for a second provider exists and is never asked about.
+    one1891::put_provider_actor(&vault, 0x75, "provider_unread");
+    let subject = one1891::put_person(&vault, 0x76);
+    let claim = one1891::put_enrichment(&vault, 0x77, subject, "provider_read", 0.80);
+    one1891::clear_indexes(&vault, "provider_read");
+
+    assert!(one1891::close(one1891::effective(&vault, &claim), 0.40));
+    assert_eq!(
+        one1891::index_presence(&vault, "provider_read"),
+        (true, true)
+    );
+    assert_eq!(
+        one1891::index_presence(&vault, "provider_unread"),
+        (false, false),
+        "an unrelated provider's rows must not be built by someone else's read"
+    );
+}
+
+/// A provider with no prior reads NEUTRAL — the stored confidence, unchanged —
+/// and the miss is never cached. A negative/absence sentinel would be a second
+/// thing that can go stale, invalidated by exactly the writes it exists to
+/// avoid reading.
+#[test]
+fn one1891_absent_prior_reads_neutral_and_caches_no_absence() {
+    let (_dir, vault) = open_vault();
+    let provider = "provider_neutral";
+    let subject = one1891::put_person(&vault, 0x78);
+    let claim = one1891::put_enrichment(&vault, 0x79, subject, provider, 0.70);
+
+    assert_eq!(one1891::index_presence(&vault, provider), (false, false));
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), 0.70),
+        "no prior means the neutral 1.0, i.e. the stored confidence"
+    );
+    assert_eq!(
+        one1891::index_presence(&vault, provider),
+        (false, false),
+        "absence is not cached"
+    );
+    assert_eq!(one1891::active_priors(&vault, provider), 0);
+    assert_eq!(
+        one1891::index_presence(&vault, provider),
+        (false, false),
+        "counting an unknown provider caches nothing either"
+    );
+    assert!(one1891::close(one1891::effective(&vault, &claim), 0.70));
+
+    // A prior learned LATER lands on the very next read: nothing was cached
+    // that would have to be invalidated first.
+    one1891::write_prior(&vault, provider, 0.50, "evidence:learned-later");
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), 0.35),
+        "0.70 stored x the newly learned 0.50 prior"
+    );
+    assert_eq!(
+        one1891::index_presence(&vault, provider),
+        (true, true),
+        "the prior write seats both shortcut rows"
+    );
+    assert!(
+        one1891::close(one1891::stored(&vault, &claim), 0.70),
+        "learning a prior never rewrites the stored column"
+    );
+}
+
+/// The provider whose shortcut rows the stale matrix corrupts.
+const ONE1891_STALE_PROVIDER: &str = "provider_stale";
+
+/// Everything a shortcut row could wrongly name, in one vault.
+struct One1891StaleFixture {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    /// The real provider actor: an active PERSON carrying the key.
+    actor: oneiron::EntityId,
+    /// The enrichment claim under test (stored 0.80, shell prior 0.30 -> 0.24).
+    claim: oneiron::EntityId,
+    shell_prior: oneiron::EntityId,
+    /// A prior that was superseded and is no longer a head.
+    superseded_prior: oneiron::EntityId,
+    /// An active actor and prior belonging to a DIFFERENT provider.
+    foreign_actor: oneiron::EntityId,
+    foreign_prior: oneiron::EntityId,
+    /// A former actor for this same provider, merged away into a survivor.
+    shell: oneiron::EntityId,
+}
+
+fn one1891_stale_fixture() -> One1891StaleFixture {
+    let (dir, vault) = open_vault();
+    let provider = ONE1891_STALE_PROVIDER;
+
+    let actor = one1891::put_provider_actor(&vault, 0x81, provider);
+    let superseded_prior = one1891::write_prior(&vault, provider, 0.40, "evidence:first");
+    one1891::write_prior(&vault, provider, 0.50, "evidence:second");
+
+    // A twin actor for the same provider, then merged away — the exact
+    // ARCH-0035 reconciliation, leaving a redirect shell that still carries
+    // the provider key in its body.
+    let shell = one1891::put_provider_actor(&vault, 0x82, provider);
+    one1891::set_indexes(&vault, provider, Some(shell.as_bytes()), None);
+    let shell_prior = one1891::write_prior(&vault, provider, 0.30, "evidence:shell");
+    let survivor = actor;
+    vault
+        .apply_identity_topology_op(
+            &oneiron::identity_topology::IdentityTopologyOp::Merge(
+                oneiron::identity_topology::MergeOp {
+                    sources: vec![shell],
+                    survivor,
+                    evidence: oneiron::identity_topology::IdentityOpEvidence {
+                        refs: Vec::new(),
+                        rationale: "one1891 stale-index fixture merge".to_owned(),
+                    },
+                    survivorship_plan: oneiron::identity_topology::SurvivorshipPlan::ReadThrough,
+                },
+            ),
+            &oneiron::identity_topology::IdentityOpWrite::auto(oneiron::ClaimSource::Inferred),
+            400,
+        )
+        .expect("apply the fixture merge");
+    assert_ne!(
+        vault
+            .entity_lifecycle_state(&shell)
+            .expect("shell lifecycle"),
+        oneiron::identity_topology::EntityLifecycleState::Active,
+        "the fixture shell must really be a redirect shell"
+    );
+
+    let foreign_actor = one1891::put_provider_actor(&vault, 0x84, "provider_stale_other");
+    let foreign_prior =
+        one1891::write_prior(&vault, "provider_stale_other", 0.10, "evidence:other");
+
+    let subject = one1891::put_person(&vault, 0x85);
+    let claim = one1891::put_enrichment(&vault, 0x86, subject, provider, 0.80);
+
+    One1891StaleFixture {
+        _dir: dir,
+        vault,
+        actor,
+        claim,
+        superseded_prior,
+        foreign_actor,
+        foreign_prior,
+        shell,
+        shell_prior,
+    }
+}
+
+/// NO FALSE ABSENCE. Whatever the two shortcut rows are made to say — nothing,
+/// nonsense, the wrong entity type, another provider's actor and prior, a
+/// superseded head, or a merged-away redirect shell — the composed read is the
+/// same number truth supports, no actor is minted to paper over it, and the
+/// rows come back valid.
+///
+/// A cache that could turn a stray byte into "this provider has no prior" would
+/// silently promote every one of that provider's claims to the neutral 1.0,
+/// which is the most dangerous direction this module can fail in.
+#[test]
+fn one1891_stale_index_rows_never_produce_a_false_absence() {
+    type StaleIndexCase<'a> = (&'a str, Option<&'a [u8]>, Option<&'a [u8]>);
+
+    let fixture = one1891_stale_fixture();
+    let vault = &fixture.vault;
+    let provider = ONE1891_STALE_PROVIDER;
+    let malformed_short: &[u8] = &[0x01, 0x02];
+    let malformed_long: &[u8] = &[0xff; 24];
+
+    let cases: [StaleIndexCase<'_>; 6] = [
+        ("both rows absent", None, None),
+        (
+            "malformed row lengths",
+            Some(malformed_short),
+            Some(malformed_long),
+        ),
+        (
+            "rows name the wrong entity types",
+            Some(fixture.claim.as_bytes()),
+            Some(fixture.actor.as_bytes()),
+        ),
+        (
+            "rows name another provider's actor and prior",
+            Some(fixture.foreign_actor.as_bytes()),
+            Some(fixture.foreign_prior.as_bytes()),
+        ),
+        (
+            "head row names a superseded prior",
+            Some(fixture.actor.as_bytes()),
+            Some(fixture.superseded_prior.as_bytes()),
+        ),
+        (
+            "rows name a merged-away redirect shell",
+            Some(fixture.shell.as_bytes()),
+            Some(fixture.shell.as_bytes()),
+        ),
+    ];
+
+    for (label, actor_row, head_row) in cases {
+        one1891::set_indexes(vault, provider, actor_row, head_row);
+        let before = one1891::counts(vault);
+
+        let composed = one1891::effective(vault, &fixture.claim);
+        assert!(
+            one1891::close(composed, 0.24),
+            "{label}: expected the shell-prior-supported 0.24, got {composed}"
+        );
+        let shell_prior = vault.get_claim(&fixture.shell_prior).unwrap().unwrap();
+        assert_eq!(
+            shell_prior.subject,
+            oneiron::ClaimSubject::Entity(fixture.shell)
+        );
+        assert!(one1891::close(
+            composed,
+            0.80 * shell_prior.value.as_f64().expect("numeric shell prior") as f32
+        ));
+        assert_eq!(
+            one1891::counts(vault),
+            before,
+            "{label}: a stale row must not mint a second actor"
+        );
+        assert_eq!(
+            one1891::index_presence(vault, provider),
+            (true, true),
+            "{label}: both rows are repaired by the read that noticed"
+        );
+        assert_eq!(
+            one1891::active_priors(vault, provider),
+            1,
+            "{label}: the actor row was repaired to the live actor"
+        );
+        assert_eq!(
+            one1891::superseded_priors(vault, provider),
+            1,
+            "{label}: history stays free and stays visible"
+        );
+        // Repairing one provider's rows never disturbs its neighbour's truth.
+        assert_eq!(
+            one1891::active_priors(vault, "provider_stale_other"),
+            1,
+            "{label}: the neighbouring provider keeps its own live prior"
+        );
+    }
+}
+
+/// Two twins for one provider, and the prior living on the LARGER-id twin.
+/// The composed read sweeps every twin, so the prior is found; the actor
+/// shortcut is repaired to the lexicographically SMALLEST twin, because
+/// "smallest" is a pure function of the set that two devices can agree on
+/// without consulting a clock either of them owns.
+///
+/// The asymmetry that pins which twin the row names is deliberate and is the
+/// documented ARCH-0035 bound: the actor-scoped COUNTS follow the shortcut,
+/// while the composed read sweeps every actor carrying the key. A twin is a
+/// forked belief history; the fix is a merge, not a wider count.
+#[test]
+fn one1891_cross_actor_priors_resolve_deterministically() {
+    let outcomes = std::iter::repeat_with(one1891_cross_actor_outcome)
+        .take(2)
+        .collect::<Vec<_>>();
+    assert!(
+        one1891::close(outcomes[0].0, 0.24),
+        "0.80 stored x 0.30 prior found on the other twin: {}",
+        outcomes[0].0
+    );
+    assert_eq!(
+        outcomes[0], outcomes[1],
+        "two identically-built vaults must agree exactly"
+    );
+}
+
+/// Builds the twin fixture and returns
+/// `(effective confidence, actor-scoped active priors, index presence)`.
+fn one1891_cross_actor_outcome() -> (f32, usize, (bool, bool)) {
+    let (_dir, vault) = open_vault();
+    let provider = "provider_twins";
+
+    // The FAR twin is minted first, so it is the one the prior lands on.
+    one1891::put_provider_actor(&vault, 0x22, provider);
+    one1891::write_prior(&vault, provider, 0.30, "evidence:far-twin");
+    assert_eq!(
+        one1891::active_priors(&vault, provider),
+        1,
+        "before the twin appears, the counts see the only actor there is"
+    );
+
+    // The NEAR twin appears later — a sync from another device, an extraction
+    // that did not recognise the existing actor — and is lexicographically
+    // smaller.
+    one1891::put_provider_actor(&vault, 0x11, provider);
+    let subject = one1891::put_person(&vault, 0x23);
+    let claim = one1891::put_enrichment(&vault, 0x24, subject, provider, 0.80);
+
+    // The cross-actor head is discovered on the next stale/miss, exactly as
+    // the module's staleness bound promises.
+    one1891::clear_indexes(&vault, provider);
+    let before = one1891::counts(&vault);
+    let composed = one1891::effective(&vault, &claim);
+    assert_eq!(
+        one1891::counts(&vault),
+        before,
+        "discovering a twin's prior mints nothing"
+    );
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), composed),
+        "the second read agrees with the first"
+    );
+
+    (
+        composed,
+        one1891::active_priors(&vault, provider),
+        one1891::index_presence(&vault, provider),
+    )
+}
+
+/// A prior written LOCALLY after a twin's becomes the cached head, and the
+/// twin's claim is kept rather than overwritten: the shortcut is a pointer into
+/// history, never a replacement for it.
+#[test]
+fn one1891_a_later_local_prior_becomes_the_cached_head() {
+    let (_dir, vault) = open_vault();
+    let provider = "provider_twins_later";
+
+    one1891::put_provider_actor(&vault, 0x2a, provider);
+    one1891::write_prior(&vault, provider, 0.30, "evidence:far-twin");
+    one1891::put_provider_actor(&vault, 0x1a, provider);
+    let subject = one1891::put_person(&vault, 0x2b);
+    let claim = one1891::put_enrichment(&vault, 0x2c, subject, provider, 0.80);
+
+    one1891::clear_indexes(&vault, provider);
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), 0.24),
+        "0.80 stored x the twin's 0.30 — all truth has to offer so far"
+    );
+
+    // That read repaired the actor row to the SMALLEST active twin, so the
+    // local write lands there and seats its own claim as the head in the same
+    // transaction.
+    let before = one1891::counts(&vault);
+    one1891::write_prior(&vault, provider, 0.60, "evidence:local");
+    assert!(
+        one1891::close(one1891::effective(&vault, &claim), 0.48),
+        "0.80 stored x the local 0.60 head"
+    );
+    assert_eq!(
+        one1891::active_priors(&vault, provider),
+        1,
+        "the shortcut actor carries exactly its own new head"
+    );
+    assert_eq!(
+        one1891::counts(&vault),
+        (before.0, before.1 + 1),
+        "history is appended to: no actor minted, no earlier prior removed"
+    );
+}
+
+/// STRUCTURAL: a structurally invalid CLAIM under the exact prior predicate is
+/// a TYPED ERROR, never a silent neutral.
+///
+/// `1.0` is a load-bearing trust multiplier, so "this vault holds a prior we
+/// cannot read" must not be reported as "this provider is fully trusted". The
+/// state is unreachable through any default-feature door — the write chokepoint
+/// validates `actor.confidence_prior` bodies, and `write_provider_prior` is the
+/// only local writer of that predicate — so the guarantee is pinned where it
+/// lives: in the code that would have to skip the claim to lose it.
+#[test]
+fn one1891_an_unreadable_prior_raises_instead_of_reading_neutral() {
+    let scan = one1891::source_slice(
+        one1891::PROVIDER_CONFIDENCE_INDEXES_SOURCE,
+        "fn active_priors_for_actor_in_txn",
+        "\n/// The newest active prior",
+    );
+    assert!(
+        scan.contains("validate_actor_confidence_prior_claim_structure(&body)?;"),
+        "a matching prior must be structurally validated, not assumed"
+    );
+    assert!(
+        scan.contains("\"active provider confidence prior must be in 0..1\""),
+        "an out-of-range prior value must raise its own typed reason"
+    );
+    assert!(
+        scan.contains(".ok_or(Error::InvalidClaimBody("),
+        "the unit-interval read must raise, never default"
+    );
+    for forbidden in [
+        "unwrap_or(1.0)",
+        "unwrap_or_default()",
+        ".ok();",
+        "is_err()",
+    ] {
+        assert!(
+            !scan.contains(forbidden),
+            "a broken prior must not be swallowed by `{forbidden}`"
+        );
+    }
+
+    // The reachability argument the assertion above stands on.
+    let chain = one1891::source_slice(
+        one1891::CLAIM_CORE_TYPES_SOURCE,
+        "pub(crate) fn validate_claim_body_and_decode(",
+        "\npub(crate) fn validate_claim_body_bytes",
+    );
+    assert!(
+        chain.contains("validate_actor_confidence_prior_claim_structure(&body)?"),
+        "the write chokepoint validates prior bodies, which is why the read \
+         path's raise is a belt-and-braces guarantee rather than a live branch"
+    );
+    assert_eq!(
+        [
+            one1891::PROVIDER_CONFIDENCE_SOURCE,
+            one1891::PROVIDER_CONFIDENCE_INDEXES_SOURCE,
+            one1891::PROVIDER_CONFIDENCE_MEMO_SOURCE,
+        ]
+        .iter()
+        .map(|source| source.matches("PREDICATE_ACTOR_CONFIDENCE_PRIOR,").count())
+        .sum::<usize>(),
+        1,
+        "exactly one writer may mint an actor.confidence_prior claim"
+    );
+}
+
+// Ruling A/B/C: authority is minted only from vetted evidence and canonical heads.
+mod one1891_ruling {
+    use super::{Vault, one1891 as f, open_vault};
+    use oneiron::identity_topology::{
+        EntityLifecycleState, IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SplitOp, SurvivorshipPlan,
+    };
+    use oneiron::{
+        ClaimSource, ClaimSubject, EntityId, EntityResolutionCandidate, EntityResolutionRoute,
+        Error,
+    };
+
+    fn merge(vault: &Vault, sources: Vec<EntityId>, survivor: EntityId) {
+        vault
+            .apply_identity_topology_op(
+                &IdentityTopologyOp::Merge(MergeOp {
+                    sources: sources.clone(),
+                    survivor,
+                    evidence: IdentityOpEvidence::default(),
+                    survivorship_plan: SurvivorshipPlan::ReadThrough,
+                }),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                400,
+            )
+            .expect("fixture merge");
+        for shell in sources {
+            assert_eq!(vault.resolve_entity(&shell).unwrap(), vec![survivor]);
+            assert_eq!(
+                vault.entity_lifecycle_state(&shell).unwrap(),
+                EntityLifecycleState::Merged
+            );
+        }
+    }
+
+    fn split(vault: &Vault, entity: EntityId, heads: Vec<EntityId>) {
+        vault
+            .apply_identity_topology_op(
+                &IdentityTopologyOp::Split(SplitOp {
+                    entity,
+                    heads,
+                    reassignment: Default::default(),
+                    evidence: IdentityOpEvidence::default(),
+                }),
+                &IdentityOpWrite::auto(ClaimSource::Inferred),
+                500,
+            )
+            .expect("fixture split");
+        assert_eq!(
+            vault.entity_lifecycle_state(&entity).unwrap(),
+            EntityLifecycleState::Split
+        );
+    }
+
+    fn assert_stranded<T: std::fmt::Debug>(result: oneiron::Result<T>) {
+        assert!(matches!(
+            result.expect_err("stranded prior must fail closed"),
+            Error::InvalidClaimBody("provider confidence prior stranded by merge")
+        ));
+    }
+
+    fn assert_noncanonical(vault: &Vault, candidate: EntityResolutionCandidate) {
+        let before = f::counts(vault);
+        assert!(matches!(
+            oneiron::evaluate_entity_resolution_waterfall(vault, &[candidate], false),
+            Err(Error::InvalidClaimBody(
+                "waterfall candidate subject is not a canonical active entity"
+            ))
+        ));
+        assert_eq!(f::counts(vault), before);
+    }
+
+    // The three stored-unvetted-evidence ruling tests live in
+    // src/provider_confidence/prior_projection_tests.rs::one1891_ruling.
+    // Their setup needs the existing crate-private put_replicated fixture door;
+    // the ordinary put_claim gate must continue rejecting these Auto writes.
+
+    #[test]
+    fn one1891_twin_merge_projects_newest_prior_and_keeps_cache_reads_scope_one() {
+        let (_dir, vault) = open_vault();
+        let provider = "provider_merge_twins";
+        let smaller = f::put_provider_actor(&vault, 0x11, provider);
+        let older = f::write_prior(&vault, provider, 0.70, "evidence:older");
+        let larger = f::put_provider_actor(&vault, 0x22, provider);
+        f::set_indexes(&vault, provider, Some(larger.as_bytes()), None);
+        let newer = f::write_prior(&vault, provider, 0.30, "evidence:newer");
+        let old_body = vault.get_claim(&older).unwrap().unwrap();
+        let new_body = vault.get_claim(&newer).unwrap().unwrap();
+        assert!((new_body.valid_from, newer) > (old_body.valid_from, older));
+        merge(&vault, vec![larger], smaller);
+        assert_eq!(
+            vault.get_claim(&newer).unwrap().unwrap().subject,
+            ClaimSubject::Entity(larger)
+        );
+        let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.80);
+        f::clear_indexes(&vault, provider);
+        let before = f::counts(&vault);
+        assert!(f::close(
+            f::effective(&vault, &candidate.confidence_claim_ref),
+            0.24
+        ));
+        assert_eq!(f::counts(&vault), before);
+        assert_eq!(f::index_presence(&vault, provider), (true, true));
+
+        // Keep only the valid shell-prior head. A full scan would repair the
+        // deliberately absent actor row, making this a behavioural scan witness.
+        f::set_indexes(&vault, provider, None, Some(newer.as_bytes()));
+        for _ in 0..2 {
+            assert!(f::close(
+                f::effective(&vault, &candidate.confidence_claim_ref),
+                0.24
+            ));
+            assert_eq!(f::index_presence(&vault, provider), (false, true));
+        }
+        let direct = f::write_prior(&vault, provider, 0.60, "evidence:survivor");
+        let direct_body = vault.get_claim(&direct).unwrap().unwrap();
+        assert_eq!(direct_body.subject, ClaimSubject::Entity(smaller));
+        assert!((direct_body.valid_from, direct) > (new_body.valid_from, newer));
+        f::set_indexes(&vault, provider, None, Some(newer.as_bytes()));
+        for _ in 0..2 {
+            assert!(f::close(
+                f::effective(&vault, &candidate.confidence_claim_ref),
+                0.48
+            ));
+            assert_eq!(f::index_presence(&vault, provider), (false, true));
+        }
+    }
+
+    #[test]
+    fn one1891_cross_key_strand_blocks_reads_and_mint_without_index_repair() {
+        let (_dir, vault) = open_vault();
+        let provider = "provider_stranded";
+        let actor = f::put_provider_actor(&vault, 0x11, provider);
+        let prior = f::write_prior(&vault, provider, 0.30, "evidence:stranded");
+        let foreign = f::put_provider_actor(&vault, 0x22, "provider_other");
+        merge(&vault, vec![actor], foreign);
+        let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.90);
+        for cached in [false, true] {
+            f::set_indexes(
+                &vault,
+                provider,
+                cached.then_some(actor.as_bytes()),
+                cached.then_some(prior.as_bytes()),
+            );
+            let before = f::counts(&vault);
+            let index_before = f::index_presence(&vault, provider);
+            assert_stranded(oneiron::provider_confidence::effective_confidence(
+                &vault,
+                &candidate.confidence_claim_ref,
+            ));
+            assert_stranded(oneiron::provider_confidence::write_provider_prior(
+                &vault,
+                provider,
+                0.50,
+                "evidence:no-fork",
+            ));
+            assert_eq!(f::counts(&vault), before);
+            assert_eq!(f::index_presence(&vault, provider), index_before);
+            assert_eq!(
+                vault.get_claim(&prior).unwrap().unwrap().subject,
+                ClaimSubject::Entity(actor)
+            );
+        }
+    }
+
+    #[test]
+    fn one1891_split_provider_priors_are_stranded_even_with_one_matching_head() {
+        for head_count in 0..=2 {
+            let (_dir, vault) = open_vault();
+            let provider = "provider_split";
+            let actor = f::put_provider_actor(&vault, 0x11, provider);
+            f::write_prior(&vault, provider, 0.30, "evidence:split");
+            let heads = (0..head_count)
+                .map(|i| f::put_provider_actor(&vault, 0x21 + i, provider))
+                .collect();
+            split(&vault, actor, heads);
+            let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.90);
+            f::clear_indexes(&vault, provider);
+            let before = f::counts(&vault);
+            assert_stranded(oneiron::provider_confidence::effective_confidence(
+                &vault,
+                &candidate.confidence_claim_ref,
+            ));
+            assert_stranded(oneiron::provider_confidence::write_provider_prior(
+                &vault,
+                provider,
+                0.50,
+                "evidence:no-fork",
+            ));
+            assert_eq!(f::counts(&vault), before);
+            assert_eq!(f::index_presence(&vault, provider), (false, false));
+        }
+    }
+
+    #[test]
+    fn one1891_merged_actor_without_priors_is_ignored_and_allows_mint() {
+        let (_dir, vault) = open_vault();
+        let provider = "provider_empty_shell";
+        let shell = f::put_provider_actor(&vault, 0x11, provider);
+        let foreign = f::put_provider_actor(&vault, 0x22, "provider_other");
+        merge(&vault, vec![shell], foreign);
+        let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.90);
+        assert!(f::close(
+            f::effective(&vault, &candidate.confidence_claim_ref),
+            0.90
+        ));
+        assert_eq!(f::index_presence(&vault, provider), (false, false));
+        assert_eq!(f::active_priors(&vault, provider), 0);
+        let before = f::counts(&vault);
+        let prior = f::write_prior(&vault, provider, 0.40, "evidence:fresh");
+        let ClaimSubject::Entity(actor) = vault.get_claim(&prior).unwrap().unwrap().subject else {
+            panic!("provider prior entity subject");
+        };
+        assert_ne!(actor, shell);
+        assert_ne!(actor, foreign);
+        assert_eq!(
+            vault.entity_lifecycle_state(&actor).unwrap(),
+            EntityLifecycleState::Active
+        );
+        assert_eq!(f::counts(&vault), (before.0 + 1, before.1 + 1));
+        assert!(f::close(
+            f::effective(&vault, &candidate.confidence_claim_ref),
+            0.36
+        ));
+    }
+
+    #[test]
+    fn one1891_waterfall_projects_both_subjects_and_never_selects_a_shell() {
+        let (_dir, vault) = open_vault();
+        let shell = f::candidate(&vault, 0x11, 0x41, "provider_canonical", 0.95);
+        let other_shell = f::put_person(&vault, 0x12);
+        let head = f::put_person(&vault, 0x31);
+        let unrelated = f::put_person(&vault, 0x32);
+        merge(&vault, vec![shell.subject, other_shell], head);
+        let before = f::counts(&vault);
+        for subject in [head, shell.subject, other_shell] {
+            let decision = f::decide(
+                &vault,
+                &[EntityResolutionCandidate { subject, ..shell }],
+                false,
+            );
+            assert_eq!(decision.claims_suppressed, 0);
+            assert_eq!(decision.selected, Some(head));
+            assert_eq!(decision.route, EntityResolutionRoute::HardLink);
+            assert_eq!(decision.ranked[0].candidate.subject, head);
+            assert_eq!(
+                decision.ranked[0].candidate.confidence_claim_ref,
+                shell.confidence_claim_ref
+            );
+        }
+        assert!(matches!(
+            oneiron::evaluate_entity_resolution_waterfall(
+                &vault,
+                &[EntityResolutionCandidate {
+                    subject: unrelated,
+                    ..shell
+                }],
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "waterfall candidate subject does not match confidence claim subject"
+            ))
+        ));
+        assert_eq!(
+            vault
+                .get_claim(&shell.confidence_claim_ref)
+                .unwrap()
+                .unwrap()
+                .subject,
+            ClaimSubject::Entity(shell.subject)
+        );
+        assert_eq!(f::counts(&vault), before);
+    }
+
+    #[test]
+    fn one1891_waterfall_rejects_missing_ambiguous_and_nonactive_heads() {
+        let (_dir, vault) = open_vault();
+        let candidate = f::candidate(&vault, 0x11, 0x41, "provider_heads", 0.95);
+        assert_noncanonical(
+            &vault,
+            EntityResolutionCandidate {
+                subject: f::fixture_id(0x77),
+                ..candidate
+            },
+        );
+        let head = f::put_person(&vault, 0x21);
+        merge(&vault, vec![candidate.subject], head);
+        vault.drop_redirect_projection().unwrap();
+        assert_noncanonical(&vault, candidate);
+        assert_noncanonical(
+            &vault,
+            EntityResolutionCandidate {
+                subject: head,
+                ..candidate
+            },
+        );
+        vault.rebuild_redirect_projection_from_edges().unwrap();
+        split(&vault, head, vec![]);
+        assert_noncanonical(&vault, candidate);
+
+        let (_dir2, ambiguous) = open_vault();
+        let candidate = f::candidate(&ambiguous, 0x11, 0x41, "provider_heads", 0.95);
+        let first = f::put_person(&ambiguous, 0x21);
+        let second = f::put_person(&ambiguous, 0x22);
+        split(&ambiguous, candidate.subject, vec![first, second]);
+        assert_noncanonical(&ambiguous, candidate);
+        assert_noncanonical(
+            &ambiguous,
+            EntityResolutionCandidate {
+                subject: first,
+                ..candidate
+            },
+        );
+    }
+
+    #[test]
+    fn one1891_waterfall_zero_head_witness_preserves_live_and_closed_subject_checks() {
+        let (_dir, vault) = open_vault();
+        let live = f::candidate(&vault, 0x11, 0x41, "provider_zero_head", 0.95);
+        let other = f::candidate(&vault, 0x12, 0x42, "provider_zero_head", 0.80);
+        let retired = f::candidate(&vault, 0x13, 0x43, "provider_zero_head", 0.99);
+        split(&vault, retired.subject, vec![]);
+        assert!(vault.resolve_entity(&retired.subject).unwrap().is_empty());
+        let before = f::counts(&vault);
+
+        for dropped in [false, true] {
+            if dropped {
+                vault.drop_redirect_projection().unwrap();
+                // With no redirect row or shell edge, only the ledger witness
+                // prevents this retired id from looking canonically Active.
+                assert_eq!(
+                    vault.resolve_entity(&retired.subject).unwrap(),
+                    vec![retired.subject]
+                );
+            }
+            let decision = f::decide(&vault, &[other, live], false);
+            assert_eq!(decision.claims_suppressed, 0);
+            assert_eq!(decision.ranked.len(), 2);
+            assert_eq!(decision.ranked[0].candidate, live);
+            assert_eq!(decision.ranked[1].candidate, other);
+            assert_eq!(decision.selected, Some(live.subject));
+            assert_eq!(decision.route, EntityResolutionRoute::HardLink);
+            assert!(f::close(decision.ranked[0].effective_confidence, 0.95));
+            assert!(f::close(decision.ranked[1].effective_confidence, 0.80));
+            assert_eq!(f::counts(&vault), before);
+
+            assert_noncanonical(&vault, retired);
+            // The candidate is Active here; its CLAIM subject must still be
+            // rejected as noncanonical, not merely as a subject mismatch.
+            assert_noncanonical(
+                &vault,
+                EntityResolutionCandidate {
+                    subject: live.subject,
+                    ..retired
+                },
+            );
+        }
+
+        let mut closed = vault
+            .get_claim(&live.confidence_claim_ref)
+            .unwrap()
+            .unwrap();
+        closed.lifecycle = oneiron::ClaimLifecycleStatus::Retracted;
+        vault
+            .put_claim(&live.confidence_claim_ref, &closed, f::at(200), 200)
+            .unwrap();
+        let before_closed_read = f::counts(&vault);
+        assert!(matches!(
+            oneiron::evaluate_entity_resolution_waterfall(&vault, &[other, live], false),
+            Err(Error::InvalidClaimBody(
+                "waterfall confidence claim is not active"
+            ))
+        ));
+        assert_eq!(f::counts(&vault), before_closed_read);
+        assert_eq!(
+            vault
+                .get_claim(&retired.confidence_claim_ref)
+                .unwrap()
+                .unwrap()
+                .subject,
+            ClaimSubject::Entity(retired.subject)
+        );
+    }
+
+    #[test]
+    fn one1891_canonical_ties_agree_on_two_devices_not_shell_order() {
+        let mut decisions = Vec::new();
+        for reverse in [false, true] {
+            let (_dir, vault) = open_vault();
+            let shell = f::candidate(&vault, 0x11, 0x41, "provider_tie", 0.80);
+            let head = f::put_person(&vault, 0x33);
+            let direct = f::candidate(&vault, 0x22, 0x42, "provider_tie", 0.80);
+            merge(&vault, vec![shell.subject], head);
+            let candidates = if reverse {
+                [direct, shell]
+            } else {
+                [shell, direct]
+            };
+            let decision = f::decide(&vault, &candidates, false);
+            assert_eq!(decision.selected, Some(direct.subject));
+            assert_eq!(
+                decision
+                    .ranked
+                    .iter()
+                    .map(|row| row.candidate.subject)
+                    .collect::<Vec<_>>(),
+                vec![direct.subject, head]
+            );
+            decisions.push(decision);
+        }
+        assert_eq!(decisions[0], decisions[1]);
+    }
+
+    #[test]
+    fn one1891_trust_gate_follows_structure_and_precedes_effective_confidence() {
+        let body = f::waterfall_body();
+        let structure = body
+            .find("validate_provider_enrichment_claim_structure(&body)?")
+            .unwrap();
+        let trust = body
+            .find("if !crate::claim::claim_consolidatable(&body)")
+            .unwrap();
+        let score = body.find("let effective_confidence =").unwrap();
+        assert!(structure < trust && trust < score);
+        let suppressed = &body[trust..score];
+        assert!(suppressed.contains("claims_suppressed += 1;"));
+        assert!(suppressed.contains("continue;"));
+    }
+
+    #[test]
+    fn one1891_other_shell_changes_wait_for_the_next_stale_or_miss() {
+        for stranded in [false, true] {
+            let (_dir, vault) = open_vault();
+            let provider = "provider_shell_bound";
+            let shell = f::put_provider_actor(&vault, 0x22, provider);
+            let cached_prior = f::write_prior(&vault, provider, 0.30, "evidence:cached-shell");
+            let head = f::put_provider_actor(&vault, 0x11, provider);
+            merge(&vault, vec![shell], head);
+            let candidate = f::candidate(&vault, 0x31, 0x41, provider, 0.80);
+            f::clear_indexes(&vault, provider);
+            assert!(f::close(
+                f::effective(&vault, &candidate.confidence_claim_ref),
+                0.24
+            ));
+
+            let other_shell = f::put_provider_actor(&vault, 0x23, provider);
+            f::set_indexes(&vault, provider, Some(other_shell.as_bytes()), None);
+            let other_prior = f::write_prior(&vault, provider, 0.20, "evidence:other-shell");
+            let old_body = vault.get_claim(&cached_prior).unwrap().unwrap();
+            let new_body = vault.get_claim(&other_prior).unwrap().unwrap();
+            assert!((new_body.valid_from, other_prior) > (old_body.valid_from, cached_prior));
+            let destination = if stranded {
+                f::put_provider_actor(&vault, 0x24, "provider_other")
+            } else {
+                head
+            };
+            merge(&vault, vec![other_shell], destination);
+            f::set_indexes(&vault, provider, None, Some(cached_prior.as_bytes()));
+            for _ in 0..2 {
+                assert!(f::close(
+                    f::effective(&vault, &candidate.confidence_claim_ref),
+                    0.24
+                ));
+                assert_eq!(f::index_presence(&vault, provider), (false, true));
+            }
+            f::clear_indexes(&vault, provider);
+            let result = oneiron::provider_confidence::effective_confidence(
+                &vault,
+                &candidate.confidence_claim_ref,
+            );
+            if stranded {
+                assert_stranded(result);
+            } else {
+                assert!(f::close(result.unwrap(), 0.16));
+            }
+        }
+    }
+}

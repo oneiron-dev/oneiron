@@ -388,6 +388,74 @@ pub fn seed_file_drop_machine_fixture(
     Ok(actor)
 }
 
+/// Authorizes one fixture actor's Imported calendar candidates at the
+/// unstamped sensitivity floor. This is separate from claim approval and
+/// leaves the default manifest, predicate axes, and actor ceilings intact.
+///
+/// Like `seed_file_drop_machine_fixture`, this only provisions test policy;
+/// callers still write every calendar claim through the public candidate door.
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn permit_imported_calendar_source_for_test(
+    vault: &crate::Vault,
+    actor: crate::EntityId,
+) -> crate::Result<()> {
+    use rmpv::Value;
+
+    let manifest = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.1")),
+        (Value::from("pack_id"), Value::from("calendar-ingest-test")),
+        (Value::from("pack_version"), Value::from("v1")),
+        (
+            Value::from("min_engine_version"),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        // Empty axes contribute no criticality/sensitivity overrides when
+        // composed with the seeded default policy.
+        (Value::from("defaults"), Value::Map(Vec::new())),
+        (Value::from("rules"), Value::Array(Vec::new())),
+        (Value::from("actor_ceilings"), Value::Array(Vec::new())),
+        (
+            Value::from("source_trust"),
+            Value::Map(vec![(
+                Value::from(crate::ClaimSource::Imported.as_str()),
+                Value::Map(vec![
+                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (
+                        Value::from("max_auto_sensitivity"),
+                        Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                    ),
+                    (Value::from("receipted"), Value::Boolean(true)),
+                    (Value::from("warned"), Value::Boolean(true)),
+                ]),
+            )]),
+        ),
+    ]);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &manifest)
+        .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
+    let id = crate::EntityId::now();
+    let at = 1_u64;
+    let mut raw = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + body.len());
+    raw.push(crate::registry::ENTITY_TYPE_POLICY_MANIFEST);
+    raw.extend_from_slice(&at.to_be_bytes());
+    raw.extend_from_slice(&at.to_be_bytes());
+    raw.extend_from_slice(&at.to_be_bytes());
+    raw.extend_from_slice(&body);
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.put(wtxn, id.as_bytes(), &raw)?;
+        vault.store.type_index.put(
+            wtxn,
+            &crate::store::Store::encode_type_key(
+                crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+                &id,
+            ),
+            &[],
+        )?;
+        Ok(())
+    })
+}
+
 /// KNOWN DEBT (ONE-1790 G4, LOW): the NOTE this authors is clocked by
 /// [`crate::memory::Memory::author_take`]'s own observation time
 /// (`unix_seconds_now()`), NOT by `request.arrived_at_ms`. A fallback NOTE

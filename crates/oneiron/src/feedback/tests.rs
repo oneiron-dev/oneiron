@@ -1366,6 +1366,8 @@ fn gate_outcomes_remain_authoritative() {
     let outcome = send_feedback(&vault, &preview, &context, &approval, &mut transport)
         .expect("a held dispatch is still an ordinary result");
 
+    // ONE-1752: approving the feedback bundle does not override the contact's
+    // opt-out. The default posture holds the send for a separate owner decision.
     assert_ne!(outcome.logical_send_ref, allowed.logical_send_ref);
     assert_eq!(outcome.dispatch.outcome, OutboundDispatchOutcome::Held);
     assert_eq!(outcome.dispatch.gate_outcome, "pending");
@@ -1393,6 +1395,24 @@ fn gate_outcomes_remain_authoritative() {
             .get("gate_receipt_reasons")
             .map(String::as_str),
         Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+    );
+    assert_eq!(
+        outcome.dispatch.gate_reason_codes,
+        vec!["gate.pending.counterparty_opt_out".to_owned()]
+    );
+    for reason in [
+        "gate.pending.counterparty_opt_out",
+        "counterparty_opt_out_unsubscribe",
+    ] {
+        assert!(
+            receipt.policy_trace.iter().any(|code| code == reason),
+            "the opt-out hold retains its receipt reason: {reason}"
+        );
+    }
+    assert!(!receipt.fields.contains_key("suppression_reason"));
+    assert!(
+        !receipt.fields.contains_key("intent_state"),
+        "the gate hold stops before dispatch ledger admission"
     );
     assert_eq!(outcome.transport_calls, 0);
     assert!(
