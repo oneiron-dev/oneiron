@@ -23,8 +23,6 @@ try {
   /* the selected row's chrome (owner 09-07): rounded is the default, the tuner's pick restores here */
   const vo = localStorage.getItem('oneiron-voice');
   if (vo === 'indent' || vo === 'mono' || vo === 'glyph') document.documentElement.setAttribute('data-voice', vo);
-  const pm = localStorage.getItem('oneiron-pane-mark');
-  if (pm === 'strip' || pm === 'stack') document.documentElement.setAttribute('data-pane-mark', pm);
   const vg = localStorage.getItem('oneiron-voice-ground');
   if (vg === 'none' || vg === 'hairline') document.documentElement.setAttribute('data-voice-ground', vg);
   const sc = localStorage.getItem('oneiron-select-chrome');
