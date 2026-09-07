@@ -2,7 +2,7 @@
 //!
 //! # This module assembles; it does not invent
 //!
-//! A workplace is a house mind plus one optional companion per principal,
+//! A workplace is a house mind plus one companion per principal,
 //! sharing one presence. Every part of that already exists as a generic rail:
 //! the house mind is a seeded `AGENT_DEF` row ([`crate::agent_def`]) anchored
 //! to the workspace `ORG` through [`crate::subject_model`], a companion is a
@@ -176,8 +176,8 @@ pub struct MemberGrantBundle {
     pub role: FederationGrantRole,
     /// Must be [`FederationGrantPreset::Member`].
     pub preset: FederationGrantPreset,
-    /// Mirrors [`CompanionBirthIntent::profile_grant_ref`] when a companion is
-    /// requested, and is `None` when one is not.
+    /// Must name the required [`CompanionBirthIntent::profile_grant_ref`].
+    /// `None` is rejected during intent validation.
     pub companion_profile_grant_ref: Option<EntityId>,
 }
 
@@ -283,7 +283,7 @@ pub struct MemberOnboardingIntent {
     pub work_facet_ref: EntityId,
     /// The minimum membership bundle.
     pub grant_bundle: MemberGrantBundle,
-    /// Optional companion birth.
+    /// Required quiz-named companion birth; `None` is rejected before writes.
     pub companion_birth: Option<CompanionBirthIntent>,
     /// Optional delegated mailbox.
     pub delegated_mailbox: Option<DelegatedMailboxOnboarding>,
@@ -299,17 +299,25 @@ impl MemberOnboardingIntent {
             "onboarding_id must be 1..=256 bytes and contain no NUL",
         )?;
         self.workspace.validate()?;
+        let companion = self.required_companion()?;
         self.validate_grant_bundle()?;
-        if let Some(companion) = &self.companion_birth {
-            validate_name(
-                &companion.display_name,
-                "companion display_name must be 1..=256 bytes and contain no NUL",
-            )?;
+        validate_name(
+            &companion.display_name,
+            "companion display_name must be 1..=256 bytes and contain no NUL",
+        )?;
+        if companion.display_name.trim().is_empty() {
+            return Err(invalid("companion display_name must not be blank"));
         }
         if let Some(mailbox) = &self.delegated_mailbox {
             mailbox.validate()?;
         }
         self.validate_minted_ids()
+    }
+
+    fn required_companion(&self) -> Result<&CompanionBirthIntent> {
+        self.companion_birth
+            .as_ref()
+            .ok_or_else(|| invalid("every onboarded principal requires a quiz-named companion"))
     }
 
     fn validate_grant_bundle(&self) -> Result<()> {
@@ -392,7 +400,7 @@ pub enum MemberOnboardingStep {
     ActorLinked,
     /// `(Member, Member)` federation grant written.
     MemberGranted,
-    /// Companion person/actor/facet/record/grant written, when requested.
+    /// Required companion person/actor/facet/record/grant written.
     CompanionBorn,
     /// Delegated mailbox identity written, when requested.
     MailboxBound,
@@ -677,10 +685,9 @@ impl Vault {
             MemberOnboardingStep::Validated => establish_workspace(self, intent, writer),
             MemberOnboardingStep::ActorLinked => link_member_actor(self, intent, writer),
             MemberOnboardingStep::MemberGranted => grant_member_bundle(self, intent, writer),
-            MemberOnboardingStep::CompanionBorn => match &intent.companion_birth {
-                Some(companion) => birth_companion(self, intent, companion, writer),
-                None => Ok(()),
-            },
+            MemberOnboardingStep::CompanionBorn => {
+                birth_companion(self, intent, intent.required_companion()?, writer)
+            }
             MemberOnboardingStep::MailboxBound => match &intent.delegated_mailbox {
                 Some(mailbox) => bind_delegated_mailbox(self, intent, mailbox, writer),
                 None => Ok(()),
@@ -754,9 +761,7 @@ impl Vault {
         };
 
         for row in rows {
-            if let Some(entry) = companion_entry(self, &preset, &row)? {
-                entries.push(entry);
-            }
+            entries.push(companion_entry(self, &preset, &row)?);
         }
         Ok(entries)
     }

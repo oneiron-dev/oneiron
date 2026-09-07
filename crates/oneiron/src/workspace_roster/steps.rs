@@ -385,12 +385,13 @@ pub(super) fn record_roster_member(
     intent: &MemberOnboardingIntent,
     writer: &WriteActor,
 ) -> Result<()> {
+    let companion = intent.required_companion()?;
     let row = RosterMemberRow {
         person_ref: intent.person_ref,
         actor_ref: intent.actor_ref,
-        companion_person_ref: intent.companion_birth.as_ref().map(|c| c.person_ref),
-        companion_actor_ref: intent.companion_birth.as_ref().map(|c| c.actor_ref),
-        companion_facet_ref: intent.companion_birth.as_ref().map(|c| c.work_facet_ref),
+        companion_person_ref: Some(companion.person_ref),
+        companion_actor_ref: Some(companion.actor_ref),
+        companion_facet_ref: Some(companion.work_facet_ref),
         identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
     };
     let key = roster_member_key(&intent.workspace.workspace_ref, &intent.person_ref);

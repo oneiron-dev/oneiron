@@ -214,11 +214,11 @@ pub(super) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
-    // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
+    crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
+    // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
     // reached only after that gate, so it does not re-validate the type byte.
-    //
     // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
     // sync replay — is structurally validated before any byte is staged.
     // Registered maintenance kinds with pinned body schemas get the same

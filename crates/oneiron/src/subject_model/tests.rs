@@ -12,6 +12,24 @@ use crate::temporal::TimeRange;
 use crate::test_util::{entity, open_test_vault_with, seed_agent_definition};
 
 pub(crate) mod authorization;
+mod head_admission;
+mod substrate_authorization;
+mod write_doors;
+
+fn put_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        vault.put_reserved_claim_in_txn(
+            txn,
+            id,
+            body,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+    })
+}
 
 fn ensure_actor_subject(
     vault: &Vault,
@@ -572,15 +590,7 @@ fn substrate_reader_refuses_generic_claims_with_invalid_value_or_subject() -> Re
             ClaimLifecycleStatus::Active,
         );
         body.source = Some(ClaimSource::Observed);
-        vault.put_claim(
-            &id,
-            &body,
-            TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-        )?;
+        put_subject_fixture(&vault, &id, &body)?;
         assert_eq!(
             vault
                 .person_substrate(&subject)
@@ -736,28 +746,12 @@ fn substrate_merged_conflicting_or_malformed_heads_fail_closed_atomically() -> R
             let mut body = vault.get_claim(&first)?.expect("substrate");
             body.subject = ClaimSubject::Entity(survivor);
             body.value = Value::from(value);
-            vault.put_claim(
-                &second,
-                &body,
-                TimeRange {
-                    start: 100,
-                    end: 100,
-                },
-                100,
-            )?;
+            put_subject_fixture(&vault, &second, &body)?;
             claims.push(second);
         } else {
             let mut body = vault.get_claim(&first)?.expect("substrate");
             body.value = Value::from("not-a-substrate");
-            vault.put_claim(
-                &first,
-                &body,
-                TimeRange {
-                    start: 100,
-                    end: 100,
-                },
-                100,
-            )?;
+            put_subject_fixture(&vault, &first, &body)?;
         }
         merge_substrate_person(&vault, absorbed, survivor)?;
         let before = claims
@@ -928,6 +922,75 @@ fn concurrent_onboarding_cannot_reanchor_the_same_house() -> Result<()> {
 }
 
 #[test]
+fn agreeing_same_stored_subject_heads_project_and_all_supersede() -> Result<()> {
+    for redirected in [false, true] {
+        let (_dir, vault) = test_vault();
+        let stored = seed(&vault, entity(0x73), ENTITY_TYPE_PERSON);
+        let survivor = seed(&vault, entity(0x74), ENTITY_TYPE_PERSON);
+        let ids = [entity(0x75), entity(0x76)];
+        for (id, approval) in ids
+            .into_iter()
+            .zip([ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved])
+        {
+            let mut body = subject_fact(
+                PREDICATE_PERSON_SUBSTRATE,
+                stored,
+                Value::from("model"),
+                writer(),
+                100,
+            );
+            body.approval = approval;
+            put_subject_fixture(&vault, &id, &body)?;
+        }
+        let queried = if redirected {
+            merge_substrate_person(&vault, stored, survivor)?;
+            survivor
+        } else {
+            stored
+        };
+        let before = ids
+            .iter()
+            .map(|id| vault.get(id))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(
+            vault.person_substrate(&queried)?,
+            Some(PersonSubstrate::Model)
+        );
+        let stored_claims = vault.claims_for_subject(&stored)?;
+        let queried_claims = vault.claims_for_subject(&queried)?;
+        ensure_model_person(&vault, queried, writer(), 400)?;
+        assert_eq!(vault.claims_for_subject(&stored)?, stored_claims);
+        assert_eq!(vault.claims_for_subject(&queried)?, queried_claims);
+        assert_eq!(
+            ids.iter()
+                .map(|id| vault.get(id))
+                .collect::<Result<Vec<_>>>()?,
+            before
+        );
+        let replacement =
+            vault.set_person_substrate(queried, PersonSubstrate::Meat, &writer(), 500)?;
+        for id in ids {
+            let body = vault.get_claim(&id)?.expect("historical head");
+            assert_eq!(body.subject, ClaimSubject::Entity(stored));
+            assert_eq!(body.value, Value::from("model"));
+            assert_eq!(body.evidence, Some(writer_evidence(writer())));
+            assert_eq!(body.lifecycle, ClaimLifecycleStatus::Superseded);
+            assert_eq!(body.valid_to, Some(500));
+            let superseders = vault
+                .edges_in(&id)?
+                .into_iter()
+                .filter(|edge| edge.kind == crate::edge::EdgeKind::Supersedes)
+                .collect::<Vec<_>>();
+            assert_eq!(superseders.len(), 1);
+            assert_eq!(superseders[0].target, replacement);
+        }
+        assert_eq!(vault.person_substrate(&stored)?, Some(PersonSubstrate::Meat));
+        assert_eq!(vault.person_substrate(&queried)?, Some(PersonSubstrate::Meat));
+    }
+    Ok(())
+}
+
+#[test]
 fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
     let (_dir, vault) = test_vault();
     let person = seed(&vault, entity(0x68), ENTITY_TYPE_PERSON);
@@ -939,16 +1002,13 @@ fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
             writer(),
             100,
         );
-        vault.put_claim(
-            &id,
-            &body,
-            TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-        )?;
+        put_subject_fixture(&vault, &id, &body)?;
     }
+    let history = vault.claims_for_subject(&person)?;
+    let before = history
+        .iter()
+        .map(|id| vault.get(id))
+        .collect::<Result<Vec<_>>>()?;
     assert_eq!(
         person_substrate(&vault, &person)
             .expect_err("ambiguous fact")
@@ -962,6 +1022,21 @@ fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
         ErrorKind::InvalidClaimBody
     );
 
+    assert_eq!(
+        set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 200)
+            .expect_err("conflicting heads cannot be superseded")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+    assert_eq!(vault.claims_for_subject(&person)?, history);
+    assert_eq!(
+        history
+            .iter()
+            .map(|id| vault.get(id))
+            .collect::<Result<Vec<_>>>()?,
+        before
+    );
+
     let other = seed(&vault, entity(0x6B), ENTITY_TYPE_PERSON);
     let body = subject_fact(
         PREDICATE_PERSON_SUBSTRATE,
@@ -970,15 +1045,7 @@ fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
         writer(),
         100,
     );
-    vault.put_claim(
-        &entity(0x6C),
-        &body,
-        TimeRange {
-            start: 100,
-            end: 100,
-        },
-        100,
-    )?;
+    put_subject_fixture(&vault, &entity(0x6C), &body)?;
     assert_eq!(
         person_substrate(&vault, &other)
             .expect_err("malformed fact")

@@ -223,13 +223,14 @@ pub(super) fn is_edge_reserved_predicate(predicate: &str) -> bool {
     predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
 }
 
-/// The reserved namespaces whose lifecycle the ENGINE drives (`skill.*`,
-/// `actor.*`), as opposed to `edge.*`, whose transitions must re-stamp
+/// The predicates whose lifecycle the ENGINE drives (`skill.*`, `actor.*`,
+/// and exactly `person.substrate`), unlike `edge.*`, whose transitions re-stamp
 /// provenance-derived edge state and therefore stay exclusively edge-owned.
 pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
     let namespace = predicate.split('.').next();
     namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
         || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
+        || predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE
 }
 
 fn valid_predicate_segment(segment: &str) -> bool {
