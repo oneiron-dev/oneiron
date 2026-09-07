@@ -33,6 +33,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateOutcome};
 use crate::linkedin_connector::LinkedInSeatPolicyAction;
+use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
 use crate::receipt::outbound_intent_receipt;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::Store;
@@ -59,6 +60,21 @@ struct FrozenOutboundPayload<'a> {
     /// byte-identical by reference rather than by re-rendering.
     #[serde(skip_serializing_if = "Option::is_none")]
     calendar_invite: Option<&'a CalendarInvitePayload>,
+    // The intent's display actor is not its gate principal. Freeze the actual
+    // authority and sender in the existing ledger payload, including an absent
+    // sender. Neither the gate audit nor the TASK stores this complete binding.
+    actor_class: &'a str,
+    actor_ref: Option<&'a str>,
+    actor_entity_ref: Option<String>,
+    channel_identity_ref: Option<String>,
+    counterparty_ref: Option<&'a str>,
+    has_opted_in: bool,
+    has_permission: bool,
+    // Preserve the caller's dial too: a manifest can map both values to the
+    // same effective risk, but that must not make different requests replayable.
+    requested_policy_risk: &'a str,
+    policy_risk: &'a str,
+    originating_session_ref: Option<&'a str>,
 }
 
 /// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
@@ -195,16 +211,44 @@ impl OutboundDispatchPipeline {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+        let idempotency_supported = !matches!(
+            verb_contract.retry_class,
+            OutboundRetryClass::NonIdempotentInterrupt
+        );
 
-        // ONE-1868 leg 2. Every shipping constructor (facade bridge, connector
-        // task executor, direct dispatch) leaves `channel_identity_ref` unset,
-        // so resolve it ONCE here — the pipeline all three funnel through —
-        // rather than at each call site. Absence is valid; ambiguity refuses
-        // before side effects. The opt-out verdict below still rests on
-        // `(counterparty, channel_class)` either way. The read
-        // txn is scoped to this block so none is open when the stages below
-        // take their write txns.
-        request.channel_identity_ref = {
+        // Find the logical attempt BEFORE consulting today's sender set. A
+        // stable ref is only a lookup key, never authority to replay a different
+        // request. The exact frozen binding is checked below and again by New
+        // at the chokepoint; Resume alone would skip that request check.
+        let ledger_identity_ref = request
+            .ledger_identity_ref
+            .as_deref()
+            .unwrap_or(&request.intent_ref);
+        let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
+        let replay = {
+            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+            read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
+        };
+        let invalid_replay = || {
+            OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
+                "outbound dispatch replay does not match its admitted binding",
+            ))
+        };
+        request.channel_identity_ref = if let Some(record) = replay.as_ref() {
+            let frozen: serde_json::Value =
+                serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
+            let sender = match frozen.get("channel_identity_ref") {
+                Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(value)) => {
+                    Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
+                }
+                _ => return Err(invalid_replay()),
+            };
+            if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
+                return Err(invalid_replay());
+            }
+            sender
+        } else {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
             enrich_dispatch_channel_identity(
                 &vault.store,
@@ -214,7 +258,6 @@ impl OutboundDispatchPipeline {
                 request.channel_identity_ref,
             )?
         };
-
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
         // The live claims are read once, here, at execute time. No schedule-time
         // window verdict is persisted or replayed.
@@ -283,6 +326,62 @@ impl OutboundDispatchPipeline {
                 .as_ref()
                 .is_none_or(|decision| matches!(decision.action, LinkedInSeatPolicyAction::Allow));
 
+        let payload = if admit_for_execution || replay.is_some() {
+            let mut hygiene_headers = BTreeMap::new();
+            inject_campaign_email_hygiene_headers(
+                &normalize_key(&request.intent.channel),
+                &mut hygiene_headers,
+                request.campaign_unsubscribe.as_ref(),
+            )?;
+            let payload = serde_json::to_vec(&FrozenOutboundPayload {
+                intent: &request.intent,
+                hygiene_headers,
+                calendar_invite: request.calendar_invite.as_ref(),
+                actor_class: &request.actor.actor_class,
+                actor_ref: request.actor.actor_ref.as_deref(),
+                actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
+                channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
+                counterparty_ref: request.counterparty_ref.as_deref(),
+                has_opted_in: request.gate.has_opted_in,
+                has_permission: request.gate.has_permission,
+                requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
+                policy_risk: policy_risk.as_str(),
+                originating_session_ref: request.originating_session_ref.as_deref(),
+            })
+            .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
+            if let Some(record) = replay.as_ref() {
+                if record.server != request.intent.channel
+                    || record.tool != verb_contract.kind
+                    || record.payload() != payload.as_slice()
+                    || record.idempotency_supported != idempotency_supported
+                    || !record.budget_accounting.budget_class.is_send()
+                    || record.resolved_endpoint.is_some()
+                    || record.authorization_binding.is_some()
+                    || record.capability_provenance().is_some()
+                {
+                    return Err(invalid_replay());
+                }
+                // New validates this only at admission. A facade retry must still
+                // name its bound actor, not borrow the original actor's authority.
+                if let Some((actor, actor_class)) = verified_actor {
+                    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+                    let entity_type = vault
+                        .get_entity_type_in_txn(&rtxn, &actor)?
+                        .ok_or(OutboundDispatchError::InvalidBoundActor)?;
+                    crate::provenance::validate_actor_class(entity_type, actor_class)?;
+                    if request.actor.actor_entity_ref != Some(actor)
+                        || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+                        || request.actor.actor_class != actor_class.gate_actor_class()
+                    {
+                        return Err(OutboundDispatchError::InvalidBoundActor);
+                    }
+                }
+            }
+            Some(payload)
+        } else {
+            None
+        };
+
         let mut engine_receipt_fields = BTreeMap::new();
         let mut engine_policy_trace = Vec::new();
         let linkedin_action = linkedin_decision.take().map(|decision| {
@@ -302,46 +401,15 @@ impl OutboundDispatchPipeline {
             outcome,
             execution,
         ) = if admit_for_execution {
-            // CA-05: the unsubscribe headers are derived ONCE, here, from the
-            // metadata this send is about to freeze — before the gate runs and
-            // long before any connector sees the call. A retry replays these
-            // bytes instead of re-deriving, which is what makes the headers
-            // byte-identical rather than merely equivalent.
-            let mut hygiene_headers = BTreeMap::new();
-            inject_campaign_email_hygiene_headers(
-                &normalize_key(&request.intent.channel),
-                &mut hygiene_headers,
-                request.campaign_unsubscribe.as_ref(),
-            )?;
-            let payload = serde_json::to_vec(&FrozenOutboundPayload {
-                intent: &request.intent,
-                hygiene_headers,
-                calendar_invite: request.calendar_invite.as_ref(),
-            })
-            .map_err(|_| {
-                OutboundDispatchError::Engine(Error::InvariantViolation(
-                    "outbound intent freeze failed",
-                ))
-            })?;
-            // The ledger/charge identity follows the stable logical-send ref
-            // when the caller supplies one, so fresh retries of the same logical
-            // send collapse onto one paid intent while `intent_ref` stays the
-            // sink-facing scheduled ref.
-            let ledger_identity_ref = request
-                .ledger_identity_ref
-                .as_deref()
-                .unwrap_or(&request.intent_ref);
-            let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
             let prepared = crate::outbound_chokepoint::PreparedEffect {
                 attempt_id,
                 call_seq: 0,
                 server: request.intent.channel.clone(),
                 tool: verb_contract.kind.clone(),
-                payload,
-                idempotency_supported: !matches!(
-                    verb_contract.retry_class,
-                    OutboundRetryClass::NonIdempotentInterrupt
-                ),
+                payload: payload.ok_or(Error::InvariantViolation(
+                    "admitted dispatch has no frozen payload",
+                ))?,
+                idempotency_supported,
                 resolved_endpoint: None,
                 gate: effect,
                 budget_class: crate::outbound_intent_ledger::BudgetClass::Send,

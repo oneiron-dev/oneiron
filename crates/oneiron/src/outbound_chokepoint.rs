@@ -21,8 +21,8 @@ use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentId, IntentLedgerError, IntentState, OutboundCallClass,
     OutboundCallRequest, OutboundSendOutcome, RecordedOutboundOutcome, abandon_record,
     begin_definite_non_delivery_retry, complete_record, derive_intent_id, force_sync,
-    hash_frozen_payload, insert_pending_in_txn, read_intent_record_in_txn,
-    record_definite_non_delivery,
+    hash_frozen_payload, insert_pending_in_txn, read_intent_for_attempt_in_txn,
+    read_intent_record_in_txn, record_definite_non_delivery,
 };
 
 /// Pre-execution fan-out admission. It sits ahead of everything below: a
@@ -38,6 +38,12 @@ mod fanout;
 pub(crate) use fanout::{FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutPlan};
 
 pub(crate) type OutboundEffectError = IntentLedgerError;
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static BEFORE_NEW_ADMISSION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Result of one replay-first effect execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,11 +152,38 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         OutboundEffectCommand::Resume(intent_id) => *intent_id,
     };
 
+    #[cfg(test)]
+    if matches!(&command, OutboundEffectCommand::New(_)) {
+        BEFORE_NEW_ADMISSION.with(|hook| {
+            if let Some(hook) = hook.take() {
+                hook();
+            }
+        });
+    }
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    let record = read_intent_record_in_txn(vault, &wtxn, &intent_id)?;
+    // Payload-derived ids alone are not unique logical calls. Resolve the
+    // attempt under the SAME writer lock as the gate, debit, and Pending insert.
+    let record = match &command {
+        OutboundEffectCommand::New(prepared) => {
+            read_intent_for_attempt_in_txn(vault, &wtxn, prepared.attempt_id, prepared.call_seq)?
+        }
+        OutboundEffectCommand::Resume(_) => read_intent_record_in_txn(vault, &wtxn, &intent_id)?,
+    };
     if let Some(record) = record {
         if let OutboundEffectCommand::New(prepared) = &command {
             validate_new_replay(&record, prepared)?;
+            if let Some((actor, actor_class)) = prepared.verified_actor {
+                let entity_type = vault
+                    .get_entity_type_in_txn(&wtxn, &actor)?
+                    .ok_or(IntentLedgerError::InvalidBoundActor)?;
+                crate::provenance::validate_actor_class(entity_type, actor_class)?;
+                if prepared.gate.provenance.actor_entity_ref != Some(actor)
+                    || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+                    || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
+                {
+                    return Err(IntentLedgerError::InvalidBoundActor);
+                }
+            }
         }
         drop(wtxn);
         force_sync(vault)?;
@@ -626,6 +659,10 @@ fn validate_new_replay(
     prepared: &PreparedEffect,
 ) -> Result<(), IntentLedgerError> {
     if record.id != prepared.intent_id()?
+        || record.attempt_id != prepared.attempt_id
+        || record.call_seq != prepared.call_seq
+        || record.idempotency_supported != prepared.idempotency_supported
+        || record.budget_accounting.budget_class != prepared.budget_class
         || record.server != prepared.server
         || record.tool != prepared.tool
         || record.payload_hash != prepared.payload_hash()
