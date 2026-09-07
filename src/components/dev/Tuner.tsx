@@ -326,8 +326,8 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   }, [])
   const setWork = React.useCallback((k: Work) => {
     setWorkState(k)
-    if (k === 'thread') document.documentElement.removeAttribute('data-work')
-    else document.documentElement.setAttribute('data-work', k)
+    if (k === 'thread') document.documentElement.removeAttribute('data-work-axis')
+    else document.documentElement.setAttribute('data-work-axis', k)
     try {
       if (k === 'thread') localStorage.removeItem('oneiron-work')
       else localStorage.setItem('oneiron-work', k)

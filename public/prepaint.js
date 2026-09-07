@@ -31,7 +31,7 @@ try {
   const rc = localStorage.getItem('oneiron-room-column');
   if (rc === 'center' || rc === 'dock') document.documentElement.setAttribute('data-room-column', rc);
   const wk = localStorage.getItem('oneiron-work');
-  if (wk === 'pane') document.documentElement.setAttribute('data-work', wk);
+  if (wk === 'pane') document.documentElement.setAttribute('data-work-axis', wk);
   const sc = localStorage.getItem('oneiron-select-chrome');
   if (sc === 'square' || sc === 'gutter' || sc === 'box') document.documentElement.setAttribute('data-select-chrome', sc);
 }
