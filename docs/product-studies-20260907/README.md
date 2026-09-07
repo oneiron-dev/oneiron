@@ -34,3 +34,7 @@ Squad and that Grok Bot lacks. The missing piece on our side is the chat door: a
 you can talk to, group chat as visible handoff, and set-up-by-conversation that opens the
 existing agent form beneath it. Finished work should keep landing in the inbox as a card, not
 as a speech bubble. Canon pages in oneiron-docs get minted only on the owner's go.
+
+## 09-08 addendum: prior art on concurrent sessions and subagents
+
+Raw Grok leg in `prior-art-concurrency-ui.md` (Paperclip, T3 Code, Cursor, Devin; the Codex, Claude Code and messenger sub-questions returned no claims block). Cross-cut: no product lists subagents as top-level rows; they live inside the parent session (T3 right-panel Agents surface, Cursor in-session cards, Devin subagent panel, Paperclip run cards). Sessions or threads are the top-level list, grouped by state (T3: pinned / active / snoozed / settled; Devin: kanban by status). Steering and stop go to the parent thread or run, never to a child.
