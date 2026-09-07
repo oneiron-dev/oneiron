@@ -42,9 +42,9 @@ import {
 /* the rail picker (owner 09-08, an option beside the roster column): the
    agents as rows under `agents`, the Slack shape — one sidebar, the room
    is ?with=. Hidden unless html[data-picker="rail"]. The bench fixture. */
-const RAIL_AGENTS: Array<{ key: 'eiri' | 'tory' | 'antevon' | 'house' | 'new'; ink?: 'eiri' | 'tory' | 'antevon'; name: string; live?: boolean; tip: string }> = [
-  { key: 'eiri', ink: 'eiri', name: 'eiri', live: true, tip: 'Eiri · drafting the COO intro' },
-  { key: 'tory', ink: 'tory', name: 'tory', live: true, tip: 'Tory · checking the supplier rumor' },
+const RAIL_AGENTS: Array<{ key: 'eiri' | 'tory' | 'antevon' | 'house' | 'new'; ink?: 'eiri' | 'tory' | 'antevon'; name: string; tip: string }> = [
+  { key: 'eiri', ink: 'eiri', name: 'eiri', tip: 'Eiri · open the room' },
+  { key: 'tory', ink: 'tory', name: 'tory', tip: 'Tory · open the room' },
   { key: 'antevon', ink: 'antevon', name: 'antevon', tip: 'Antevon · nights' },
   { key: 'house', name: 'the house', tip: 'the house · every agent and you in one room' },
   { key: 'new', name: '+ new agent', tip: 'a new agent · by conversation with Antevon' },
@@ -276,26 +276,36 @@ export function Rail() {
             </span>
             <span className="txt">agents</span>
           </Link>
-          <div className="agent-rows">
-            {RAIL_AGENTS.map((a) => (
-              <Link
-                key={a.key}
-                to="/app/agents"
-                search={{ with: a.key }}
-                className={onAgents && withKey === a.key ? 'active' : undefined}
-                title={a.tip}
-              >
-                <span className="ico" aria-hidden="true">
-                  {a.ink ? <span className="face mark" data-agent={a.ink} /> : <span className="rail-dash" />}
-                </span>
-                <span className={a.ink ? 'txt aname' : 'txt'} data-agent={a.ink}>
-                  {a.name}
-                </span>
-                {a.live ? <span className="live-dot" aria-hidden="true" /> : null}
-              </Link>
-            ))}
-          </div>
         </div>
+
+        {/* the rooms (owner 09-08): the places you talk — every agent's room,
+            the house, a new agent, and the channels' threads — one section
+            between the base and the lenses. Selection lives here; status
+            stays on the ground line, so no live dot on a row. */}
+        <Pack name="rooms" packs={packs}>
+          {RAIL_AGENTS.map((a) => (
+            <Link
+              key={a.key}
+              to="/app/agents"
+              search={{ with: a.key }}
+              className={onAgents && withKey === a.key ? 'active' : undefined}
+              title={a.tip}
+            >
+              <span className="ico" aria-hidden="true">
+                {a.ink ? <span className="face mark" data-agent={a.ink} /> : <span className="rail-dash" />}
+              </span>
+              <span className={a.ink ? 'txt aname' : 'txt'} data-agent={a.ink}>
+                {a.name}
+              </span>
+            </Link>
+          ))}
+          <Link to="/app/threads" title="threads">
+            <span className="ico" aria-hidden="true">
+              <IconThreads />
+            </span>
+            <span className="txt">threads</span>
+          </Link>
+        </Pack>
 
         <Pack name="crm" packs={packs}>
           <Link to="/app/pipeline" title="pipeline">
@@ -336,15 +346,6 @@ export function Rail() {
               <IconTasks />
             </span>
             <span className="txt">tasks</span>
-          </Link>
-        </Pack>
-
-        <Pack name="channels" packs={packs}>
-          <Link to="/app/threads" title="threads">
-            <span className="ico" aria-hidden="true">
-              <IconThreads />
-            </span>
-            <span className="txt">threads</span>
           </Link>
         </Pack>
 

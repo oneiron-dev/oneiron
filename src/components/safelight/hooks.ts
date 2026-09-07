@@ -99,7 +99,7 @@ export function useRailFold(railRef: React.RefObject<HTMLElement | null>) {
   return { folded, toggleFold }
 }
 
-export const PACKS = ['crm', 'office', 'channels', 'lenses'] as const
+export const PACKS = ['rooms', 'crm', 'office', 'channels', 'lenses'] as const
 export type PackName = (typeof PACKS)[number]
 
 /* ── pack-group disclosure (owner 07-07): default expanded · sticky

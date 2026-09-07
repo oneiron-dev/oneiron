@@ -293,21 +293,21 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
 
   /* the picker (owner 09-08): where the agent list lives */
   type Picker = 'well' | 'sidebar' | 'rail' | 'ground'
-  const [picker, setPickerState] = React.useState<Picker>('well')
+  const [picker, setPickerState] = React.useState<Picker>('rail')
   React.useEffect(() => {
     try {
       const v = localStorage.getItem('oneiron-picker')
-      if (v === 'sidebar' || v === 'rail' || v === 'ground') setPickerState(v)
+      if (v === 'well' || v === 'sidebar' || v === 'ground') setPickerState(v)
     } catch {
       /* default */
     }
   }, [])
   const setPicker = React.useCallback((k: Picker) => {
     setPickerState(k)
-    if (k === 'well') document.documentElement.removeAttribute('data-picker')
+    if (k === 'rail') document.documentElement.removeAttribute('data-picker')
     else document.documentElement.setAttribute('data-picker', k)
     try {
-      if (k === 'well') localStorage.removeItem('oneiron-picker')
+      if (k === 'rail') localStorage.removeItem('oneiron-picker')
       else localStorage.setItem('oneiron-picker', k)
     } catch {
       /* session only */
@@ -398,12 +398,12 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="t-sec">picker</div>
       <div className="t-acts">
-        {(['well', 'sidebar', 'rail', 'ground'] as const).map((k) => (
+        {(['rail', 'well', 'sidebar', 'ground'] as const).map((k) => (
           <button
             key={k}
             type="button"
             className={picker === k ? 'act on' : 'act'}
-            title={k === 'well' ? 'the roster as a well column beside the room (as built)' : k === 'sidebar' ? 'the roster belongs to the sheet: flush to its left edge, top to bottom (the Slack shape)' : k === 'rail' ? 'the agents as rows under `agents` in the rail · no second column' : 'the ground line is the picker: on this page a name at the bottom switches the room (his idea)'}
+            title={k === 'rail' ? 'the rooms section in the rail (the pick, 09-08)' : k === 'well' ? 'bench: the roster as a well column beside the room' : k === 'sidebar' ? 'bench: the roster flush to the sheet edge' : 'bench: the ground line as the picker on this page'}
             onClick={() => setPicker(k)}
           >
             {k}

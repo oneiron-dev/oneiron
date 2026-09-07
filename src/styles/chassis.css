@@ -104,6 +104,7 @@ html.rail-folded .rail .count {
 .rail .pack-fold svg { display: block; transition: transform 180ms ease-out; }
 /* folded packs stack close (owner 08-15): a folded pack gives back most
    of the group gap, so collapsed heads read as one quiet list */
+html.rg-rooms .rail [data-pack="rooms"],
 html.rg-crm .rail [data-pack="crm"],
 html.rg-office .rail [data-pack="office"],
 html.rg-channels .rail [data-pack="channels"],
@@ -120,10 +121,12 @@ html.rg-lenses .rail [data-pack="lenses"] { margin-bottom: -12px; }
   transition: opacity 180ms ease-out;
 }
 /* folded state lives on <html> (rg-*) so it restores pre-paint */
+html.rg-rooms .rail [data-pack="rooms"] .lenses,
 html.rg-crm .rail [data-pack="crm"] .lenses,
 html.rg-office .rail [data-pack="office"] .lenses,
 html.rg-channels .rail [data-pack="channels"] .lenses,
 html.rg-lenses .rail [data-pack="lenses"] .lenses { grid-template-rows: 0fr; }
+html.rg-rooms .rail [data-pack="rooms"] .lens-col,
 html.rg-crm .rail [data-pack="crm"] .lens-col,
 html.rg-office .rail [data-pack="office"] .lens-col,
 html.rg-channels .rail [data-pack="channels"] .lens-col,
@@ -608,16 +611,15 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
 *::-webkit-scrollbar-thumb:hover { background: var(--silver-4); background-clip: padding-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
 
-/* ── the rail picker (owner 09-08, html[data-picker="rail"]): the agents as
-   rows under `agents` — the Slack shape, one sidebar. Hidden otherwise. ── */
-.rail .agent-rows { display: none; }
-html[data-picker="rail"] .rail .agent-rows { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
-.rail .agent-rows a { padding-left: 8px; }
-.rail .agent-rows .face.mark { width: 16px; height: 16px; }
-.rail .agent-rows .rail-dash { display: block; width: 10px; height: 1px; background: var(--rule-strong); }
-.rail .agent-rows .txt.aname { color: var(--p-ink); }
-.rail .agent-rows .live-dot { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--silver-3); }
-html[data-picker="rail"] .rail .group:has(.agent-rows a.active) > a.agents-head.active { color: var(--silver-3); background: none; }
+/* ── the rooms pack (owner 09-08): the places you talk — every agent's room,
+   the house, a new agent, the channels' threads — one section between the
+   base and the lenses. Rows = face mark + name in ink. No status here: the
+   ground line is the one presence mark (the 08-15 rule, both auditors). ── */
+.rail [data-pack="rooms"] .face.mark { width: 16px; height: 16px; }
+.rail [data-pack="rooms"] .rail-dash { display: block; width: 10px; height: 1px; background: var(--rule-strong); }
+.rail [data-pack="rooms"] .txt.aname { color: var(--p-ink); }
+/* a room row picked = the base `agents` row stands down */
+.rail:has([data-pack="rooms"] a.active) a.agents-head.active { color: var(--silver-3); background: none; }
 
 /* ── the ground line as the picker (owner 09-08, html[data-picker="ground"]):
    on the agents page the line carries every agent, the house and a new
