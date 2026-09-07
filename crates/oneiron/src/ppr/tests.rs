@@ -4078,22 +4078,34 @@ fn ppr_community_indexed_view_tracks_supplied_transaction_not_latest_commit() ->
         // Abort must not install any reusable query state.
     }
     assert_eq!(query(&old_read)?.0, expected);
-    {
-        let txn = vault.store.env.read_txn()?;
-        assert_eq!(query(&txn)?.0, expected);
-    }
+    // LMDB permits only one active read transaction per thread with TLS enabled.
+    // Keep old_read on this thread and open fresh snapshots on scoped threads.
+    std::thread::scope(|scope| {
+        scope.spawn(|| -> Result<()> {
+            let txn = vault.store.env.read_txn()?;
+            assert_eq!(query(&txn)?.0, expected);
+            Ok(())
+        }).join().expect("post-abort reader panicked")
+    })?;
     {
         let mut txn = vault.store.env.write_txn()?;
         vault.store.replace_ppr_community_cache_in_txn(&mut txn, &replacement)?;
         txn.commit()?;
     }
     assert_eq!(query(&old_read)?.0, expected, "old read sees old same-version rows");
-    {
-        let txn = vault.store.env.read_txn()?;
-        assert_ne!(query(&txn)?.0, expected, "new read sees committed replacement");
-    }
-    vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
+    std::thread::scope(|scope| {
+        scope.spawn(|| -> Result<()> {
+            {
+                let txn = vault.store.env.read_txn()?;
+                assert_ne!(query(&txn)?.0, expected, "new read sees committed replacement");
+            }
+            // The mutation may open its own read transaction for validation.
+            vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
+            Ok(())
+        }).join().expect("post-commit reader and graph mutation panicked")
+    })?;
     assert_eq!(query(&old_read)?.0, expected, "old graph and metadata stay paired");
+    drop(old_read);
     {
         let txn = vault.store.env.read_txn()?;
         let (_, pending, _) = query(&txn)?;
