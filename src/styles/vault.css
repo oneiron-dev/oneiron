@@ -220,6 +220,28 @@ aside.inspector {
 
 .insp-actions { display: flex; gap: 14px; padding-top: 4px; }
 
+/* ── the selection (owner 09-07: bulk actions — normal table ops) ──
+   a small square at the row's left, faint until the hand or a selection
+   brings it up; the head's square selects every row shown. while anything
+   is selected the filters row becomes the selection line: the count and
+   the acts that apply. the outcome lands as ONE receipt line. ── */
+table.ledger .c-sel { width: 22px; padding-left: 4px; padding-right: 0; }
+.selbox {
+  display: inline-block; width: 12px; height: 12px; padding: 0;
+  border-radius: 3px; border: 1px solid var(--rule-strong); background: transparent;
+  vertical-align: middle; cursor: pointer; opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+thead .selbox { opacity: 0.55; }
+@media (hover: hover) { tbody tr:hover .selbox { opacity: 1; } }
+.selbox:focus-visible, .selbox.on, .selbox.some, tbody tr.selected .selbox, .ledger-wrap.has-sel .selbox { opacity: 1; }
+.selbox.on { background: var(--silver-2); border-color: var(--silver-2); }
+.selbox.some::after { content: ""; display: block; width: 6px; height: 2px; background: var(--silver-2); margin: 4px auto 0; }
+.selbar .meta-line { display: inline; color: var(--silver-1); margin-right: 2px; }
+.selbar .act { padding: 0; }
+.selbar .set { gap: 6px; }
+.filters .selreceipt { display: inline; margin-left: auto; color: var(--silver-3); }
+
 /* the claim is the content: below 1400px the ledger gives source + by back to
    the record (both live in the inspector) so the claim keeps ~30ch */
 @media (max-width: 1400px) {

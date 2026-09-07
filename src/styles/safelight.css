@@ -645,3 +645,22 @@ html[data-face-style="dream"] .face[data-agent="antevon"] { --face-day: url("/ar
 
 /* the focus ring is silver (owner 08-19) — red returns only when an act is armed */
 .act.armed:focus-visible, [data-danger].armed:focus-visible { outline-color: var(--safelight); }
+
+/* ── the selected row's chrome rides the tuner (owner 09-07: "the selector is
+   nice but the rounded border thing is kinda ai slop") — three to feel, he
+   picks: rounded (as built) · square (the well, no radius) · gutter (no fill,
+   a hair of ink at the row's left edge). the vault ledger, the roster, the
+   thread transcript and the inbox rows follow it together. ── */
+html[data-select-chrome="square"] table.ledger tr.selected td:first-child,
+html[data-select-chrome="square"] table.ledger tr.selected td:last-child,
+html[data-select-chrome="square"] .rrow.on,
+html[data-select-chrome="square"] .tx.sel,
+html[data-select-chrome="square"] .brow.sel .brow-line,
+html[data-select-chrome="square"] .w-row.sel { border-radius: 0; }
+html[data-select-chrome="gutter"] table.ledger tr.selected td { background: transparent; }
+html[data-select-chrome="gutter"] table.ledger tr.selected td:first-child { box-shadow: inset 2px 0 0 var(--silver-2); border-radius: 0; }
+html[data-select-chrome="gutter"] table.ledger tr.selected td:last-child { border-radius: 0; }
+html[data-select-chrome="gutter"] .rrow.on,
+html[data-select-chrome="gutter"] .tx.sel,
+html[data-select-chrome="gutter"] .brow.sel .brow-line,
+html[data-select-chrome="gutter"] .w-row.sel { background: transparent; box-shadow: inset 2px 0 0 var(--silver-2); border-radius: 0; }

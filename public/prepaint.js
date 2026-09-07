@@ -20,4 +20,7 @@ try {
   document.documentElement.setAttribute('data-roster-face', rf === 'portrait' || rf === 'mark' ? rf : 'none');
   const fs = localStorage.getItem('oneiron-face-style');
   if (fs === 'base' || fs === 'trink' || fs === 'dream') document.documentElement.setAttribute('data-face-style', fs);
+  /* the selected row's chrome (owner 09-07): rounded is the default, the tuner's pick restores here */
+  const sc = localStorage.getItem('oneiron-select-chrome');
+  if (sc === 'square' || sc === 'gutter') document.documentElement.setAttribute('data-select-chrome', sc);
 }
