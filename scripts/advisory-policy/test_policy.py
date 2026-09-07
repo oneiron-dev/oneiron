@@ -41,6 +41,9 @@ EXPECTED = {
     ("RUSTSEC-2025-0080", "unic-common", "0.9.0"),
     ("RUSTSEC-2025-0100", "unic-ucd-ident", "0.9.0"),
     ("RUSTSEC-2025-0098", "unic-ucd-version", "0.9.0"),
+    ("RUSTSEC-2026-0247", "bitmaps", "2.1.0"),
+    ("RUSTSEC-2026-0248", "im", "15.1.0"),
+    ("RUSTSEC-2026-0251", "sized-chunks", "0.6.5"),
 }
 
 
@@ -108,7 +111,7 @@ class PolicyTests(unittest.TestCase):
         entries = policy.validate_policy(self.data, self.lock, now)
         policy.validate_advisories(entries, self.database)
 
-    def test_authority_exact16_and_allowed(self):
+    def test_authority_exact19_and_allowed(self):
         self.assertEqual({(e["id"], e["package"], e["version"]) for e in self.data["entries"]}, EXPECTED)
         self.validate()
         # Also pin the real current lock, not the superseded baseline packet.
@@ -117,7 +120,7 @@ class PolicyTests(unittest.TestCase):
     def test_permanent_exceptions_preserved_and_no_new_ids(self):
         base = policy.validate_config(self.config)
         rendered = tomllib.loads(policy.accepted_config(self.config, self.data["entries"]))
-        self.assertEqual(rendered["advisories"]["ignore"][16:], base["advisories"]["ignore"])
+        self.assertEqual(rendered["advisories"]["ignore"][19:], base["advisories"]["ignore"])
         self.assertEqual({e["id"] for e in base["advisories"]["ignore"]}, policy.EXISTING_IDS)
         for section in ("graph", "licenses", "bans", "sources"):
             self.assertEqual(rendered[section], base[section])
@@ -224,6 +227,51 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(policy.PolicyError):
             self.validate()
 
+    def test_exact3_required_loro_chain_and_parent_changes_fail(self):
+        parents = {
+            "bitmaps": ["im@15.1.0", "sized-chunks@0.6.5"],
+            "im": ["loro-internal@1.13.9"],
+            "sized-chunks": ["im@15.1.0"],
+        }
+        self.assertEqual({e["package"]: e["parents"] for e in self.data["entries"][-3:]}, parents)
+        self.assertEqual(self.data["context"][1:], [
+            {"package": "loro", "version": "1.13.9", "dependency": "loro-internal 1.13.9"},
+            {"package": "loro-internal", "version": "1.13.9", "dependency": "im 15.1.0"},
+        ])
+        for name in ("loro", "loro-internal"):
+            for change in ("missing", "version", "source", "dependency"):
+                lock = deepcopy(self.lock)
+                node = next(p for p in lock["package"] if p["name"] == name)
+                if change == "missing":
+                    lock["package"].remove(node)
+                elif change == "version":
+                    node["version"] = "99.0.0"
+                elif change == "source":
+                    node["source"] = "git+https://example.invalid/fork"
+                else:
+                    node["dependencies"] = []
+                with self.subTest(package=name, change=change), self.assertRaises(policy.PolicyError):
+                    policy.validate_policy(self.data, lock, BEFORE)
+        for name, expected_parents in parents.items():
+            for parent in [None, *expected_parents]:
+                lock = deepcopy(self.lock)
+                if parent is None:
+                    lock["package"].append({"name": "new-parent", "version": "1.0.0", "dependencies": [name]})
+                else:
+                    node = next(p for p in lock["package"] if f"{p['name']}@{p['version']}" == parent)
+                    node["dependencies"] = [d for d in node["dependencies"] if d.split()[0] != name]
+                with self.subTest(package=name, parent=parent), self.assertRaises(policy.PolicyError):
+                    policy.validate_policy(self.data, lock, BEFORE)
+
+    def test_exact3_missing_from_stale_database_stay_blocked(self):
+        for entry in self.data["entries"][-3:]:
+            path = self.database / "crates" / entry["package"] / (entry["id"] + ".md")
+            path.unlink()
+            with self.subTest(id=entry["id"]), self.assertRaisesRegex(policy.PolicyError, "missing"):
+                self.validate()
+            write_advisory(self.database, entry)
+        self.validate()
+
     def test_empty_duplicate_and_ambiguous_database_fail(self):
         self.data["entries"][1] = self.data["entries"][0]
         with self.assertRaises(policy.PolicyError):
@@ -278,7 +326,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn("--target", command)
         self.final_config = Path(command[command.index("--config") + 1])
         config = tomllib.loads(self.final_config.read_text())
-        self.assertEqual(len(config["advisories"]["ignore"]), 20)
+        self.assertEqual(len(config["advisories"]["ignore"]), 23)
         self.assertEqual(config["advisories"]["yanked"], "deny")
         private = Path(config["advisories"]["db-path"])
         self.assertNotEqual(private, self.cache)
@@ -420,7 +468,7 @@ class EffectiveCommandTests(unittest.TestCase):
         return subprocess.run(command, cwd=self.work, capture_output=True, text=True,
                               env=dict(os.environ, CARGO_NET_OFFLINE="true", CARGO_TERM_COLOR="never"))
 
-    def test_raw_deny_blocks_but_exact16_and_old_exception_are_accepted(self):
+    def test_raw_deny_blocks_but_exact19_and_old_exception_are_accepted(self):
         raw = self.run_deny(accepted=False)
         self.assertNotEqual(raw.returncode, 0, raw.stdout + raw.stderr)
         self.assertIn("unmaintained", raw.stderr)

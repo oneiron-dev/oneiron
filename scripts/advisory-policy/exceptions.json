@@ -158,6 +158,31 @@
       "parents": [
         "unic-ucd-ident@0.9.0"
       ]
+    },
+    {
+      "id": "RUSTSEC-2026-0247",
+      "package": "bitmaps",
+      "version": "2.1.0",
+      "parents": [
+        "im@15.1.0",
+        "sized-chunks@0.6.5"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2026-0248",
+      "package": "im",
+      "version": "15.1.0",
+      "parents": [
+        "loro-internal@1.13.9"
+      ]
+    },
+    {
+      "id": "RUSTSEC-2026-0251",
+      "package": "sized-chunks",
+      "version": "0.6.5",
+      "parents": [
+        "im@15.1.0"
+      ]
     }
   ],
   "context": [
@@ -165,6 +190,16 @@
       "package": "tauri-utils",
       "version": "2.9.3",
       "dependency": "urlpattern 0.3.0"
+    },
+    {
+      "package": "loro",
+      "version": "1.13.9",
+      "dependency": "loro-internal 1.13.9"
+    },
+    {
+      "package": "loro-internal",
+      "version": "1.13.9",
+      "dependency": "im 15.1.0"
     }
   ]
 }

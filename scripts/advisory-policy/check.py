@@ -15,7 +15,9 @@ CARGO_DENY_VERSION = "0.19.4"
 EXPIRY = "2026-10-07T00:00:00Z"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 DB_URL = "https://github.com/rustsec/advisory-db"
-# The 2026-09-07 owner grant. Editing policy data cannot authorize another ID/version.
+# The 2026-09-07 owner grant plus exact3 standing-authority extension (19 total).
+# Future equivalents need inspected, explicit owner entries in this set AND policy data;
+# standing delegation is not a runtime blanket allow. See POSTWAVE.md.
 AUTHORIZED = {
     ("RUSTSEC-2024-0413", "atk", "0.18.2"),
     ("RUSTSEC-2024-0416", "atk-sys", "0.18.2"),
@@ -33,6 +35,9 @@ AUTHORIZED = {
     ("RUSTSEC-2025-0080", "unic-common", "0.9.0"),
     ("RUSTSEC-2025-0100", "unic-ucd-ident", "0.9.0"),
     ("RUSTSEC-2025-0098", "unic-ucd-version", "0.9.0"),
+    ("RUSTSEC-2026-0247", "bitmaps", "2.1.0"),
+    ("RUSTSEC-2026-0248", "im", "15.1.0"),
+    ("RUSTSEC-2026-0251", "sized-chunks", "0.6.5"),
 }
 # Separate pre-existing decisions; ONE-335 does not renew or broaden these.
 EXISTING_IDS = {
@@ -65,11 +70,11 @@ def validate_policy(policy, lock, now):
     if review["post_wave_at"] is not None:
         require(now < utc_time(review["post_wave_at"]), "post-wave review due; acceptance ended")
     entries = policy["entries"]
-    require(len(entries) == 16, "expected exactly 16 authorized maintenance risks")
+    require(len(entries) == 19, "expected exactly 19 authorized maintenance risks")
     require({(e["id"], e["package"], e["version"]) for e in entries} == AUTHORIZED,
             "entry identity/version is outside the exact owner grant")
-    require(len({e["id"] for e in entries}) == 16, "duplicate advisory ID")
-    require(len({e["package"] for e in entries}) == 16, "duplicate package")
+    require(len({e["id"] for e in entries}) == 19, "duplicate advisory ID")
+    require(len({e["package"] for e in entries}) == 19, "duplicate package")
     for entry in entries:
         name = entry["package"]
         require(entry["id"] not in EXISTING_IDS, "cannot replace a pre-existing exception")
@@ -201,11 +206,11 @@ def execute(root, offline=False):
             subprocess.run(["cargo", "deny", "--locked", "fetch", "--config", str(effective), "db"],
                            cwd=root, check=True)
         validate_advisories(entries, database_root(cache))
-        # Never leave the 16 broad ID ignores in deny.toml or a reusable output file.
+        # Never leave the 19 broad ID ignores in deny.toml or a reusable output file.
         effective.write_text(accepted_config(base, entries), encoding="utf-8")
         validate_policy(policy, lock, datetime.now(timezone.utc))
         require(lock_path.read_bytes() == lock_bytes, "Cargo.lock changed during policy validation")
-        print(f"ONE-335: 16 accepted maintenance risks, NOT fixed; expires {EXPIRY}; "
+        print(f"ONE-335: 19 accepted maintenance risks, NOT fixed; expires {EXPIRY}; "
               "review at post-wave discussion or expiry, whichever comes first; no automatic renewal.",
               file=sys.stderr, flush=True)
         result = subprocess.run(check_command(effective, offline), cwd=root, check=False)

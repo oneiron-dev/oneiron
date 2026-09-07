@@ -1,10 +1,14 @@
 # Exact maintenance-risk acceptance (ONE-335)
 
 These are **accepted maintenance risks, not fixes**. The 2026-09-07 owner grant
-covers only the 16 advisory ID / package / locked-version triples in
-`exceptions.json` and `check.py`'s `AUTHORIZED` set. No new vulnerability
-exception is granted. Required Linux support remains in the all-features,
-unfiltered dependency graph.
+and standing-authority extension cover only the **19** advisory ID / package /
+locked-version triples in `exceptions.json` and `check.py`'s `AUTHORIZED` set:
+the original 16 plus `bitmaps 2.1.0` / `RUSTSEC-2026-0247`, `im 15.1.0` /
+`RUSTSEC-2026-0248`, and `sized-chunks 0.6.5` / `RUSTSEC-2026-0251`.
+No new vulnerability exception is granted. Required Linux support remains in
+the all-features, unfiltered dependency graph. [POSTWAVE.md](POSTWAVE.md) banks
+the fresh evidence, required Loro chain, no-supported-safe-upgrade rationale,
+and standing delegation for post-wave review.
 
 ## Deadline and review
 
@@ -18,13 +22,21 @@ unfiltered dependency graph.
   detect an unrecorded meeting.
 - At that time, retire these acceptances and review the maintenance risks. A
   completed discussion is not permission to clear its timestamp or extend the
-  grant. **No automatic renewal.** A further exception needs new owner authority
-  and a separately reviewed policy change, not a date bump.
+  grant. **No automatic renewal.** Renewal or materially different risk needs
+  new owner authority and a separately reviewed policy change, not a date bump.
+- Within the unchanged window, the standing delegation lets the current ticket
+  owner add inspected equivalent informational-unmaintained cases without
+  per-ID owner/Board approval. Each needs an explicit ID/package/version entry
+  in code and data, exact dependency context, and a record of why no supported
+  safe upgrade is available. There is **no runtime blanket autoallow**; fresh unlisted
+  findings remain blocking until an explicit qualifying policy change is reviewed.
 - Re-evaluate on package/version/source changes, changed direct dependency
-  parents, the `tauri-utils -> urlpattern` context, or advisory classification /
-  affected-version changes. Package removal also blocks until the obsolete
-  exception is retired through review. Other relevant dependency changes must
-  be reviewed, even when they do not change the recorded direct-parent context.
+  parents, the `tauri-utils -> urlpattern` and
+  `loro 1.13.9 -> loro-internal 1.13.9 -> im 15.1.0` contexts, or advisory
+  classification / affected-version changes. Package removal also blocks until
+  the obsolete exception is retired through review. Other relevant dependency
+  changes must be reviewed, even when they do not change the recorded direct-parent
+  context.
 
 ## Effective command
 
@@ -37,10 +49,10 @@ python3 scripts/advisory-policy/check.py --offline
 ```
 
 The existing CI deny job runs the tests and the first command on manual
-`workflow_dispatch` runs. Only its job condition changes from `pull_request` to
-`workflow_dispatch`, so the checks are reachable under the existing manual-only
-workflow policy. Triggers, other jobs, and runner platforms are unchanged. It
-still checks advisories, licenses, bans, and sources.
+`workflow_dispatch` runs. Its matching job condition keeps the checks reachable
+under the existing manual-only workflow policy. This extension does not change
+workflows, triggers, job conditions, or runner platforms. The guard still checks
+advisories, licenses, bans, and sources.
 
 The wrapper:
 
@@ -54,7 +66,7 @@ The wrapper:
    `informational = "unmaintained"`, and unchanged all-versions affected scope
    qualify. Missing/duplicate/moved/malformed records, vulnerability classification,
    CVSS/alias/affected metadata, withdrawal, and version-range changes block.
-4. Adds only the 16 IDs to a **temporary** copy of `deny.toml` and invokes:
+4. Adds only the 19 IDs to a **temporary** copy of `deny.toml` and invokes:
    `cargo deny --locked check --disable-fetch --config <temporary-config>` without
    CLI lint-level overrides. Pinned cargo-deny 0.19.4 makes non-ignored vulnerability,
    unmaintained, notice, and unsound findings errors. Ignored IDs emit notes with
@@ -65,7 +77,7 @@ The wrapper:
    suppression occurs. The guard checks time and lockfile integrity again before
    and after the check, and removes the temporary configuration on exit.
 
-The permanent `deny.toml` deliberately does **not** contain these 16 ignores.
+The permanent `deny.toml` deliberately does **not** contain these 19 ignores.
 A plain `cargo deny check` remains stricter; it cannot accidentally use expired
 acceptances. Existing atomic-polyfill, bincode, smallstr, and rsa decisions are
 preserved separately and are not renewed by this grant. In particular, the
@@ -73,7 +85,7 @@ pre-existing rsa vulnerability exception is not a new ONE-335 waiver.
 
 ## Inspection and validation handoff
 
-Read-only inspection found installed `cargo-deny 0.19.4`. Its `--help`,
+Prior read-only inspection found installed `cargo-deny 0.19.4`. Its `--help`,
 `check --help`, `fetch --help`, and embedded config describe advisory exceptions
 as IDs with optional reasons, not package/version/classification/expiry guards.
 The local cache for the configured RustSec URL uses
@@ -82,23 +94,34 @@ along with the tool version. A changed layout/tool must fail, not skip tests.
 
 The current `Cargo.lock` was read, not recreated: SHA-256
 `1d31f3cdb3ac79e9fb610c8a76cb7349949caba096cb9a7918018ecfadc84ad6`.
-All 16 versions still match the grant; chacha20 is already 0.10.2. The old
-baseline packet's lock hash is not a required lockfile image.
+All 19 versions match the original grant and exact3 extension; chacha20 is
+already 0.10.2. The old baseline packet's lock hash is not a required lockfile
+image.
 
 Controller validation commands (not executed by the author):
 
 ```sh
 python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
-python3 scripts/advisory-policy/check.py --offline
-# When fresh network-backed validation is authorized (also the CI command):
+# Fresh network-backed validation when authorized (also the CI command):
 python3 scripts/advisory-policy/check.py
+# Optional cached diagnostic only; the old offline DB lacks the three new IDs:
+python3 scripts/advisory-policy/check.py --offline
 ```
+
+The old offline DB must fail for missing records; it cannot validate the exact3
+extension. Use a fresh DB for the later current-candidate validation. Do not
+skip missing advisories or loosen classification to make that old cache pass.
+The fresh disposition records prior-candidate evidence, not a successful check
+of this extension on the current candidate.
 
 A standard-library regression pins the manual-only trigger and the deny job's
 matching condition, with no upstream job dependency that could skip it. The
-existing 22 substantive tests are unchanged.
+original 23 tests and their assertions are retained, with count-sensitive
+expectations updated to 19 temporary / 23 effective exceptions. Two exact3
+regressions bring the total to 25: required Loro links and every direct-parent
+edge must stay intact, and missing new advisory records must fail closed.
 
-The deterministic suite includes all 16 exact entries, version/source/context
+The deterministic suite includes all 19 exact entries, version/source/context
 changes, extra/new/unlisted IDs, vulnerabilities, classification changes,
 expiry boundaries, earlier review, no renewal, command exit propagation, and
 private-config cleanup. Real cargo-deny tests create a temporary local Git
