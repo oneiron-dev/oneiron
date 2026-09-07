@@ -31,14 +31,13 @@ use super::telemetry::{
 use super::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport,
     AttemptQueueRetryReason, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
-    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES,
-    ManifestEntry, RetryAttempt, RetryOutcome, attempt_record_order,
+    CleanupAttemptLeases, EnqueueAttempt, EnqueueOutcome, InterveneAttempt, InterveneOutcome,
+    MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, RetryAttempt, RetryOutcome, attempt_record_order,
 };
 use super::validate::{
     ERR_MANIFEST_FULL, append_attempt_event, lease_claimed_record, validate_cleanup_leases_input,
-    validate_failure_reason, validate_intervention_actor, validate_kind, validate_lease_owner,
-    validate_manifest_entry, validate_optional_dedupe, validate_optional_failure_reason,
+    validate_intervention_actor, validate_kind, validate_lease_owner, validate_manifest_entry,
+    validate_optional_dedupe, validate_optional_failure_reason,
     validate_optional_intervention_note, validate_optional_run_id, validate_transition_lease,
 };
 
@@ -538,113 +537,6 @@ impl<'a> AttemptQueue<'a> {
             .put(wtxn, id.as_bytes(), &encoded)?;
 
         Ok(ClaimOutcome::Claimed(record))
-    }
-
-    /// Marks a leased attempt complete. Completing an already-completed attempt is an
-    /// idempotent success; all other states are rejected.
-    pub fn complete(&self, input: CompleteAttempt) -> Result<CompleteOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("complete", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Completed {
-                return Ok(CompleteOutcome::AlreadyCompleted(record));
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("complete", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "complete",
-                )?;
-                record.state = AttemptState::Completed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = None;
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(CompleteOutcome::Completed(record))
-            }
-            state => Err(invalid_transition("complete", state.as_str())),
-        }
-    }
-
-    /// Marks a leased attempt terminally failed. Failing an already-failed attempt is
-    /// an idempotent success; all other states are rejected.
-    pub fn fail(&self, input: FailAttempt) -> Result<FailOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("fail", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Failed {
-                return Ok(FailOutcome::AlreadyFailed(record));
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("fail", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "fail",
-                )?;
-                validate_failure_reason(&input.reason)?;
-                record.state = AttemptState::Failed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = Some(input.reason);
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(FailOutcome::Failed(record))
-            }
-            state => Err(invalid_transition("fail", state.as_str())),
-        }
     }
 
     /// Retries a leased attempt by finalizing it and minting a fresh try.

@@ -16,6 +16,7 @@ mod cancel;
 mod encoding;
 mod engine;
 mod result;
+mod settlement;
 mod telemetry;
 mod types;
 mod validate;

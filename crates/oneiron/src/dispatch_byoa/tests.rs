@@ -553,9 +553,9 @@ fn exhaust_capture_writes_one_artifact_version_and_is_idempotent() {
     assert_eq!(disposition, ByoaTerminalDisposition::Completed);
     assert_eq!(exhaust, sample_exhaust());
 
-    // Attaching a result does not settle the row; the worker still does.
-    assert_eq!(second.attempt.state, AttemptState::Leased);
-    let CompleteOutcome::Completed(completed) = AttemptQueue::new(&vault)
+    // Capture already settled the row; a matching generic completion is a no-op.
+    assert_eq!(second.attempt.state, AttemptState::Completed);
+    let CompleteOutcome::AlreadyCompleted(completed) = AttemptQueue::new(&vault)
         .complete(CompleteAttempt {
             id: attempt.id,
             lease_owner: "capture-worker".to_owned(),
@@ -564,7 +564,7 @@ fn exhaust_capture_writes_one_artifact_version_and_is_idempotent() {
         })
         .expect("complete")
     else {
-        panic!("expected a fresh completion");
+        panic!("capture must already have completed the attempt");
     };
     assert_eq!(
         completed.result_ref().map(AttemptResultRef::as_str),
@@ -1845,55 +1845,4 @@ fn old_exhaust_without_retained_fence_is_still_readable() {
     );
 }
 
-#[test]
-fn failed_and_cancelled_capture_keep_attachment_separate_from_settlement() {
-    use crate::attempt_queue::{FailAttempt, ForceAttemptCancel, ForceCancelAuthority};
-    for disposition in [
-        ByoaTerminalDisposition::Failed,
-        ByoaTerminalDisposition::Cancelled,
-    ] {
-        let (_dir, vault) = open_vault();
-        let mut dispatcher = dispatcher(&vault);
-        let attempt = dispatch_and_claim(
-            &vault,
-            &mut dispatcher,
-            ByoaConnectorSpec::CliSandbox(cli_spec()),
-            "worker",
-        );
-        let request = capture_request(&attempt, disposition);
-        let receipt = dispatcher
-            .capture_terminal_exhaust(request.clone())
-            .expect("capture");
-        assert_eq!(receipt.attempt.state, AttemptState::Leased);
-        let queue = AttemptQueue::new(&vault);
-        if disposition == ByoaTerminalDisposition::Failed {
-            queue
-                .fail(FailAttempt {
-                    id: attempt.id,
-                    lease_owner: "worker".to_owned(),
-                    attempt_count: attempt.attempt_count,
-                    reason: "executor fault".to_owned(),
-                    now: 31,
-                })
-                .expect("worker settlement");
-        } else {
-            queue
-                .force_cancel(ForceAttemptCancel {
-                    id: attempt.id,
-                    authority: ForceCancelAuthority::owner("owner").expect("test authority"),
-                    reason: Some("owner stopped the executor".to_owned()),
-                    now: 31,
-                })
-                .expect("authorized cancellation");
-        }
-        let before = custody_snapshot(&vault);
-        let retry = dispatcher
-            .capture_terminal_exhaust(request)
-            .expect("terminal recapture");
-        assert!(disposition_matches_state(disposition, retry.attempt.state));
-        assert_eq!(retry.result_ref, receipt.result_ref);
-        let wrong = capture_request(&attempt, ByoaTerminalDisposition::Completed);
-        assert!(dispatcher.capture_terminal_exhaust(wrong).is_err());
-        assert_eq!(custody_snapshot(&vault), before);
-    }
-}
+mod successor;

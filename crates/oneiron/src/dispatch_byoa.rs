@@ -42,7 +42,8 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::attempt_queue::{
     AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef,
-    AttemptState, EnqueueAttempt, EnqueueOutcome, SetAttemptResult,
+    AttemptState, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt,
+    FailOutcome, FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
     BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
@@ -536,6 +537,7 @@ const ERR_EXECUTION_SHAPE: &str = "execution does not match the persisted connec
 const ERR_EXECUTION_BUDGET: &str = "byoa execution requires a bounded budget";
 const ERR_EXECUTION_CHECKOUT: &str = "byoa execution requires a live matching checkout";
 const ERR_ARTIFACT_COLLISION: &str = "byoa exhaust artifact is not owned by this capture";
+const ERR_RUNTIME_ACTOR_COLLISION: &str = "byoa runtime actor is not the canonical identity";
 const ERR_CAPTURE_CONFLICT: &str = "byoa capture conflicts with the canonical result";
 const ERR_CHECKPOINT_FRONTIER: &str = "byoa checkpoint frontier entry is unbounded or unprintable";
 const ERR_ATTEMPT_MISSING: &str = "missing";
@@ -708,9 +710,9 @@ pub struct CaptureByoaExhaust {
     pub attempt_count: u32,
     pub disposition: ByoaTerminalDisposition,
     pub exhaust: ByoaExhaust,
-    /// Why the executor stopped. Required for
-    /// [`ByoaTerminalDisposition::Abandoned`], which cannot be recorded
-    /// without one; advisory for the others.
+    /// Why the executor stopped. Failed and abandoned captures use a default
+    /// when omitted; a supplied reason must satisfy the queue's reason bounds.
+    /// Advisory for the other dispositions.
     pub reason: Option<String>,
     pub now: u64,
 }
@@ -999,10 +1001,11 @@ where
 
     /// Folds a terminated executor's exhaust into one canonical artifact.
     ///
-    /// Artifact, actor, result reference, and abandonment commit in one write
-    /// transaction. Other dispositions only attach evidence; their worker still
-    /// settles the row. Retries never append another version. An abandoned
-    /// retry returns the first result, even if the new exhaust differs.
+    /// Artifact, actor, result reference, and terminal settlement commit in one
+    /// write transaction. Completed and failed captures require a leased row;
+    /// cancelled captures finish an accepted landing without force authority or
+    /// handoff. Retries never append another version. An abandoned retry returns
+    /// the first result, even if the new exhaust differs.
     ///
     /// # Errors
     ///
@@ -1044,10 +1047,11 @@ where
             start: request.now,
             end: request.now,
         };
-        let action = if request.disposition == ByoaTerminalDisposition::Abandoned {
-            "abandon"
-        } else {
-            "set_result"
+        let action = match request.disposition {
+            ByoaTerminalDisposition::Completed => "complete",
+            ByoaTerminalDisposition::Failed => "fail",
+            ByoaTerminalDisposition::Cancelled => "finish_landing",
+            ByoaTerminalDisposition::Abandoned => "abandon",
         };
         let queue = AttemptQueue::new(self.vault);
         let record = queue
@@ -1080,7 +1084,9 @@ where
                 .unwrap_or_else(|| bytes_to_hex_lower(request.attempt_id.as_bytes())),
         };
         if let Some(existing_ref) = record.result_ref.as_ref() {
-            if existing_ref != &result_ref {
+            // This build never commits a canonical capture on a running row.
+            // A generic result attachment cannot stand in for terminal custody.
+            if !record.state.is_terminal() || existing_ref != &result_ref {
                 return Err(invalid(ERR_CAPTURE_CONFLICT));
             }
             validate_canonical_capture(
@@ -1109,10 +1115,63 @@ where
         {
             return Err(invalid(ERR_ARTIFACT_COLLISION));
         }
-        // Run the queue's state, reason, and write-once gates before creating
-        // any artifact. Failure later in the closure rolls this back too.
-        let attempt = if envelope.disposition == ByoaTerminalDisposition::Abandoned {
-            match queue.abandon_in_txn(
+        // Attach and settle through the queue's existing fenced doors. No
+        // writer can interleave a different disposition, and any later failure
+        // rolls back the row, dedupe release, receipts, and artifact together.
+        queue.set_result_in_txn(
+            wtxn,
+            SetAttemptResult {
+                id: request.attempt_id,
+                lease_owner: envelope.lease_owner.clone(),
+                attempt_count: envelope.attempt_count,
+                result_ref: result_ref.clone(),
+                now: request.now,
+            },
+        )?;
+        let attempt = match envelope.disposition {
+            ByoaTerminalDisposition::Completed => match queue.complete_in_txn(
+                wtxn,
+                CompleteAttempt {
+                    id: request.attempt_id,
+                    lease_owner: envelope.lease_owner.clone(),
+                    attempt_count: envelope.attempt_count,
+                    now: request.now,
+                },
+            )? {
+                CompleteOutcome::Completed(attempt)
+                | CompleteOutcome::AlreadyCompleted(attempt) => attempt,
+            },
+            ByoaTerminalDisposition::Failed => match queue.fail_in_txn(
+                wtxn,
+                FailAttempt {
+                    id: request.attempt_id,
+                    lease_owner: envelope.lease_owner.clone(),
+                    attempt_count: envelope.attempt_count,
+                    reason: request
+                        .reason
+                        .unwrap_or_else(|| BYOA_DEFAULT_FAILURE_REASON.to_owned()),
+                    now: request.now,
+                },
+            )? {
+                FailOutcome::Failed(attempt) | FailOutcome::AlreadyFailed(attempt) => attempt,
+            },
+            ByoaTerminalDisposition::Cancelled => match queue.finish_landing_in_txn(
+                wtxn,
+                FinishAttemptLanding {
+                    id: request.attempt_id,
+                    lease_owner: envelope.lease_owner.clone(),
+                    attempt_count: envelope.attempt_count,
+                    hand_off: false,
+                    scheduled_at: None,
+                    now: request.now,
+                },
+            )? {
+                FinishLandingOutcome::Landed(attempt) => attempt,
+                FinishLandingOutcome::HandedOff { .. } => {
+                    return Err(invalid(ERR_CAPTURE_CONFLICT));
+                }
+            },
+            ByoaTerminalDisposition::Abandoned => match queue.abandon_in_txn(
                 wtxn,
                 AbandonAttempt {
                     id: request.attempt_id,
@@ -1128,18 +1187,7 @@ where
                 AbandonOutcome::Abandoned(attempt) | AbandonOutcome::AlreadyAbandoned(attempt) => {
                     attempt
                 }
-            }
-        } else {
-            queue.set_result_in_txn(
-                wtxn,
-                SetAttemptResult {
-                    id: request.attempt_id,
-                    lease_owner: envelope.lease_owner.clone(),
-                    attempt_count: envelope.attempt_count,
-                    result_ref: result_ref.clone(),
-                    now: request.now,
-                },
-            )?
+            },
         };
         let actor = ensure_byoa_runtime_actor(self.vault, wtxn, occurred, request.now)?;
         self.vault
@@ -1172,6 +1220,9 @@ where
         })
     }
 }
+
+/// Stamped on a failure whose caller supplied no reason.
+pub const BYOA_DEFAULT_FAILURE_REASON: &str = "foreign executor failed";
 
 /// Stamped on an abandonment whose caller supplied no reason.
 pub const BYOA_DEFAULT_ABANDON_REASON: &str = "foreign executor stopped without delivering";
@@ -1265,8 +1316,8 @@ fn byoa_runtime_actor() -> ByoaResult<WriteActor> {
 }
 
 /// Materializes the stable actor before the blob-version claim references it.
-/// PERSON admits the existing Agent class. Check and create share a transaction
-/// so concurrent first captures cannot overwrite an existing identity.
+/// Only the canonical PERSON body may own this id; admitting the Agent class
+/// alone does not establish runtime identity. Check and create share a transaction.
 fn ensure_byoa_runtime_actor(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1276,6 +1327,15 @@ fn ensure_byoa_runtime_actor(
     let actor = byoa_runtime_actor()?;
     if let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, &actor.entity_ref())? {
         crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
+        let raw = vault
+            .get_raw_in(wtxn, &actor.entity_ref())?
+            .ok_or_else(|| invalid(ERR_RUNTIME_ACTOR_COLLISION))?;
+        if entity_type != crate::registry::ENTITY_TYPE_PERSON
+            || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                != Some(BYOA_RUNTIME_ACTOR_DOMAIN)
+        {
+            return Err(invalid(ERR_RUNTIME_ACTOR_COLLISION));
+        }
     } else {
         vault
             .batch_in()
