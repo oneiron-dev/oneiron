@@ -7,6 +7,8 @@ use super::{BudgetDenied, BudgetLease, CallPurpose, LlmRequest, LlmUsage, ModelL
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
+mod settlement;
+
 pub const DEFAULT_BUDGET_RESERVE_UNITS: u64 = 8_000;
 
 pub const BUDGET_PLAN_PROMPT_TEMPLATE_ID: &str = "budget.plan.80";
@@ -449,77 +451,7 @@ impl BudgetGuard {
         lease: &BudgetLease,
         usage: &LlmUsage,
     ) -> Result<BudgetSettlement, BudgetDenied> {
-        let mut state = self.lock_state();
-        state.check_lease_provenance(lease)?;
-        let call_used_units = llm_usage_units(usage);
-        let absolute_used_units = state.used_units.saturating_add(call_used_units);
-        let mut settled = None;
-        {
-            let Some(record) = state.leases.get_mut(lease.id()) else {
-                return Err(BudgetDenied::LeaseInvalid);
-            };
-            match record.state {
-                LeaseState::Open => {
-                    record.state = LeaseState::Settled {
-                        absolute_used_units,
-                    };
-                    settled = Some(record.clone());
-                }
-                LeaseState::Settled { .. } => {}
-                LeaseState::Aborted => return Err(BudgetDenied::LeaseInvalid),
-            }
-        }
-        if let Some(record) = settled {
-            release_reservations_for_lease(&mut state, &record);
-            if record.metered {
-                state.used_units = absolute_used_units;
-                apply_usage_for_lease(&mut state, &record, call_used_units);
-            }
-        }
-        let ladder_events = state.fire_ladder_events();
-        let read = state.read();
-        Ok(BudgetSettlement {
-            read,
-            ladder_events,
-        })
-    }
-
-    pub fn settle_absolute(
-        &self,
-        lease: &BudgetLease,
-        absolute_used_units: u64,
-    ) -> Result<BudgetSettlement, BudgetDenied> {
-        let mut state = self.lock_state();
-        state.check_lease_provenance(lease)?;
-        let mut settled = None;
-        {
-            let Some(record) = state.leases.get_mut(lease.id()) else {
-                return Err(BudgetDenied::LeaseInvalid);
-            };
-            match record.state {
-                LeaseState::Open => {
-                    record.state = LeaseState::Settled {
-                        absolute_used_units,
-                    };
-                    settled = Some(record.clone());
-                }
-                LeaseState::Settled { .. } => {}
-                LeaseState::Aborted => return Err(BudgetDenied::LeaseInvalid),
-            }
-        }
-        if let Some(record) = settled {
-            release_reservations_for_lease(&mut state, &record);
-            if record.metered {
-                state.used_units = state.used_units.max(absolute_used_units);
-                apply_usage_for_lease(&mut state, &record, absolute_used_units);
-            }
-        }
-        let ladder_events = state.fire_ladder_events();
-        let read = state.read();
-        Ok(BudgetSettlement {
-            read,
-            ladder_events,
-        })
+        self.settle_usage(lease, llm_usage_units(usage))
     }
 
     pub fn abort(&self, lease: &BudgetLease) -> Result<BudgetSettlement, BudgetDenied> {
@@ -1093,11 +1025,7 @@ fn release_reservations_for_lease(state: &mut BudgetState, record: &LeaseRecord)
 /// the shared partition, so overshoot beyond the slice is recorded as shared
 /// spend and later admissions saturate-deny rather than any admitted call
 /// being killed.
-fn apply_usage_for_lease(
-    state: &mut BudgetState,
-    record: &LeaseRecord,
-    used_units: u64,
-) {
+fn apply_usage_for_lease(state: &mut BudgetState, record: &LeaseRecord, used_units: u64) {
     for &row_index in &record.matched_rows {
         if let Some(tally) = state.row_tallies.get_mut(usize::from(row_index)) {
             tally.used_units = tally.used_units.saturating_add(used_units);

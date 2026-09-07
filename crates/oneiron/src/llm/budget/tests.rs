@@ -1,4 +1,6 @@
 use super::*;
+
+mod request_usage;
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, LlmInputUsage, LlmMessage, LlmMessageRole,
     LlmOutputUsage, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
