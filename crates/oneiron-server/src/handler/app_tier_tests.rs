@@ -35,8 +35,11 @@ fn token() -> String {
 }
 
 fn bind(token: &str) -> Vec<u8> {
-    serde_json::to_vec(&json!({"requestId": 7, "method": "auth.bind", "params": {"token": token}}))
-        .unwrap()
+    crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        json!({"requestId": 7, "method": "auth.bind", "params": {"token": token}}),
+    )[1..]
+        .to_vec()
 }
 
 #[tokio::test]
@@ -70,7 +73,7 @@ async fn bind_is_once_only_and_does_not_change_sync_mode() {
     assert_eq!(state.window_sync_mode, WindowSyncMode::Unbound);
     let reply = rx.try_recv().unwrap();
     assert_eq!(reply[0], protocol::TAG_RPC);
-    let value: serde_json::Value = serde_json::from_slice(&reply[1..]).unwrap();
+    let value: serde_json::Value = crate::livequery::test_wire::reply(&[reply]);
     assert_eq!(value["requestId"], 7);
     assert_eq!(value["last"], true);
     assert!(value["result"].is_null());
@@ -123,7 +126,11 @@ async fn bound_revocation_stops_app_requests_but_does_not_rebind_sync() {
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
     handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx).unwrap();
     revoke_token_jti(server.vault(), JTI).unwrap();
-    let read = br#"{"requestId":8,"method":"hydrate","params":{"refs":[]}}"#;
+    let read = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
+    );
+    let read = &read[1..];
     assert!(matches!(
         handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx),
         Err(ProtocolError::RpcNoPrincipal)
@@ -138,10 +145,14 @@ async fn missing_actor_class_is_forbidden_and_not_a_human_fallback() {
     let mut state = state(protocol::APP_TIER_PROTOCOL_VERSION_VERSION);
     handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind(&token()), &tx).unwrap();
     rx.try_recv().unwrap();
-    let read = br#"{"requestId":8,"method":"hydrate","params":{"refs":[]}}"#;
+    let read = crate::livequery::test_wire::request(
+        protocol::TAG_RPC,
+        json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
+    );
+    let read = &read[1..];
     handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).unwrap();
     let reply = rx.try_recv().unwrap();
-    let value: serde_json::Value = serde_json::from_slice(&reply[1..]).unwrap();
+    let value: serde_json::Value = crate::livequery::test_wire::reply(&[reply]);
     assert_eq!(value["error"]["code"], "FORBIDDEN");
     assert_eq!(value["last"], true);
     assert!(value.get("result").is_none());
@@ -163,10 +174,14 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
             Some("agent")
         );
         rx.try_recv().unwrap();
-        let read = br#"{"requestId":8,"method":"hydrate","params":{"refs":[]}}"#;
+        let read = crate::livequery::test_wire::request(
+            protocol::TAG_RPC,
+            json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
+        );
+        let read = &read[1..];
         handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).unwrap();
         let frame = rx.try_recv().unwrap();
-        let reply: serde_json::Value = serde_json::from_slice(&frame[1..]).unwrap();
+        let reply: serde_json::Value = crate::livequery::test_wire::reply(&[frame]);
         assert_eq!(reply["requestId"], 8);
         assert_eq!(reply["last"], true);
         if scope == "core:read" {

@@ -68,18 +68,20 @@ async fn next(socket: &mut Socket) -> Message {
 }
 
 async fn send(socket: &mut Socket, tag: u8, value: Value) {
-    let mut bytes = vec![tag];
-    bytes.extend(serde_json::to_vec(&value).unwrap());
+    let bytes = test_wire::request(tag, value);
     socket.send(Message::Binary(bytes.into())).await.unwrap();
 }
 
 async fn app(socket: &mut Socket, tag: u8) -> Value {
+    let mut collector = test_wire::Collector::default();
     // One deadline bounds the whole wait, even if sync broadcasts keep arriving.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match socket.next().await.unwrap().unwrap() {
                 Message::Binary(bytes) if bytes[0] == tag => {
-                    return serde_json::from_slice(&bytes[1..]).unwrap();
+                    if let Some(value) = collector.feed(&bytes) {
+                        return value;
+                    }
                 }
                 Message::Binary(bytes) if !matches!(bytes[0], TAG_RPC | TAG_SUB) => {}
                 Message::Ping(_) | Message::Pong(_) => {}
@@ -178,7 +180,10 @@ async fn revoked_close(socket: &mut Socket) {
 
 fn assert_snapshot(value: &Value, id: u64, count: usize) {
     assert_eq!(value["subscriptionId"], id, "{value}");
-    assert_eq!(value["kind"], "snapshot", "{value}");
+    assert!(
+        matches!(value["kind"].as_str(), Some("snapshot" | "data")),
+        "{value}"
+    );
     assert_eq!(value["result"].as_array().unwrap().len(), count, "{value}");
     assert!(value.get("requestId").is_none());
     assert!(value.get("error").is_none());

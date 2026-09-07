@@ -910,10 +910,10 @@ async fn handle_connection(
     // revocation that should have stopped it.
     loop {
         let event = tokio::select! {
-            msg = transport.read_next() => ConnEvent::Inbound(msg),
+            msg = transport.read_next(), if direct_rx.is_empty() => ConnEvent::Inbound(msg),
             broadcast_result = subscriber.recv() => ConnEvent::Broadcast(broadcast_result),
             direct_msg = direct_rx.recv() => ConnEvent::Direct(direct_msg),
-            _ = app_tick.tick() => ConnEvent::AppDelivery,
+            _ = app_tick.tick(), if app_connection.has_active_subscriptions() => ConnEvent::AppDelivery,
         };
 
         let next_message = match event {
@@ -931,10 +931,12 @@ async fn handle_connection(
                             .await;
                         break;
                     }
-                    match app_connection.delivery() {
+                    match app_connection.broadcast_delivery() {
                         Ok(frames) => {
                             for frame in frames {
-                                let _ = direct_tx.send(frame);
+                                // Recipient/subscription routing is stripped only by the
+                                // matching socket. Never fan out a bare private app frame.
+                                let _ = server.broadcast_tx.send((0, frame));
                             }
                         }
                         Err(_) => break,
@@ -945,6 +947,28 @@ async fn handle_connection(
             ConnEvent::Broadcast(broadcast_result) => {
                 match broadcast_result {
                     Ok(Some(data)) => {
+                        if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
+                            let Some(frame) = app_connection.receive_broadcast(&data) else {
+                                continue;
+                            };
+                            let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
+                                break;
+                            };
+                            transport.app_jti = auth.jti().map(str::to_owned);
+                            let sent = transport.send_binary(frame).await;
+                            transport.app_jti = None;
+                            if !sent {
+                                break;
+                            }
+                            continue;
+                        }
+                        // Unrouted app payloads must never cross the shared fan-out.
+                        if matches!(
+                            data.first().copied(),
+                            Some(protocol::TAG_RPC | protocol::TAG_SUB)
+                        ) {
+                            continue;
+                        }
                         if should_forward_broadcast(protocol_version, &data)
                             && !transport.send_binary(data).await
                         {
@@ -953,6 +977,7 @@ async fn handle_connection(
                     }
                     Ok(None) => break,
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
+                        app_connection.replay_after_lag();
                         tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
                     }
                     Err(crate::broadcast::BroadcastError::TooManyLags) => {
@@ -1585,21 +1610,31 @@ fn handle_app_message_with_connection(
             let auth = CoreAuth::from_bind_token(&token, &server.config, server.vault().as_ref())
                 .map_err(|_| ProtocolError::RpcNoPrincipal)?;
             state.bound_auth = Some(auth);
-            let frame = crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?;
-            direct_tx
-                .send(frame)
-                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
+            {
+                direct_tx
+                    .send(frame)
+                    .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            }
             return Ok(());
         }
         let auth = require_bound_app_auth(server, state)?;
-        let frame = crate::livequery::bound_rpc(server.vault(), auth, request)?;
-        direct_tx
-            .send(frame)
-            .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+        let frames = if request.method == "ping" {
+            vec![crate::livequery::ping_result(
+                request.request_id,
+                request.params,
+            )?]
+        } else {
+            crate::livequery::bound_rpc(server.vault(), auth, request)?
+        };
+        for frame in frames {
+            direct_tx
+                .send(frame)
+                .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+        }
     } else {
         let auth = require_bound_app_auth(server, state)?;
-        let request = serde_json::from_slice(payload)
-            .map_err(|_| ProtocolError::InvalidPayload("invalid subscription request"))?;
+        let request = crate::livequery::decode_sub(payload)?;
         let connection =
             connection.ok_or(ProtocolError::InvalidPayload("subscription owner missing"))?;
         for frame in connection.control(auth, request)? {

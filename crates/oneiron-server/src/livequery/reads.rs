@@ -93,25 +93,36 @@ impl Read {
         Ok(match method {
             "hydrate" => {
                 let p: Hydrate = params(value)?;
+                if p.refs.len() > crate::api::CORE_MAX_LIST_LIMIT {
+                    return Err(AppError::bad_request(
+                        "too many hydration references",
+                        Some("refs"),
+                    ));
+                }
                 Self::Hydrate(p.refs)
             }
             "queryBm25" => {
                 let p: Query = params(value)?;
-                Self::Query(p.query, p.limit)
+                Self::Query(p.query, facade_limit(Some(p.limit), p.limit)?)
             }
             "neighbors" => {
-                let p: Neighbors = params(value)?;
+                let mut p: Neighbors = params(value)?;
+                p.opts.limit = facade_limit(Some(p.opts.limit), p.opts.limit)?;
                 Self::Neighbors(p.entity_ref, p.opts)
             }
             "pendingWrites" => {
                 let p: Limit = params(value)?;
-                Self::PendingWrites(p.limit)
+                Self::PendingWrites(facade_limit(Some(p.limit), p.limit)?)
             }
             "receipts" => {
                 let p: Receipts = params(value)?;
                 Self::Receipts(facade_limit(p.limit, 100)?)
             }
-            "claimList" => Self::ClaimList(params(value)?),
+            "claimList" => {
+                let mut filter: ClaimListFilter = params(value)?;
+                filter.limit = facade_limit(Some(filter.limit), filter.limit)?;
+                Self::ClaimList(filter)
+            }
             "claimHistory" => {
                 let p: History = params(value)?;
                 Self::ClaimHistory(p.claim_ref)

@@ -117,8 +117,8 @@ fn rpc(server: &SyncServer, auth: &CoreAuth, method: &str, params: Value) -> Val
         },
     )
     .unwrap();
-    assert_eq!(frame[0], TAG_RPC);
-    let reply: Value = serde_json::from_slice(&frame[1..]).unwrap();
+    assert_eq!(frame[0][0], TAG_RPC);
+    let reply = test_wire::reply(&frame);
     assert_eq!(reply["requestId"], 7);
     assert_eq!(reply["last"], true);
     reply
@@ -475,4 +475,191 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
         error_body(source.can_resume(&derived.cursor).unwrap_err())["code"],
         "UNAUTHORIZED"
     );
+}
+
+#[tokio::test]
+async fn receipt_limit_is_applied_after_actor_scoping() {
+    let (_dir, server) = server();
+    claim(&server);
+    server
+        .vault()
+        .memory(EntityId::from_hex(MACHINE).unwrap(), EdgeActorClass::System)
+        .claim_upsert(&ClaimInput {
+            id: None,
+            predicate: "profile.name".to_owned(),
+            subject_ref: MACHINE.to_owned(),
+            value: json!("Newer unrelated actor"),
+            confidence: 1.0,
+            source: "imported".to_owned(),
+            world_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(AT),
+            learned_at: Some(AT),
+            salience: None,
+        })
+        .unwrap();
+    let source = BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "fixture".into(),
+    );
+    let derived = source
+        .derive(
+            &ScopedView {
+                filter: Some(json!({"limit":1})),
+                ..Default::default()
+            },
+            Channel::Receipts,
+        )
+        .unwrap();
+    let rows = derived.value.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["actor_ref"], ACTOR);
+}
+
+#[tokio::test]
+async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
+    let (_dir, server) = server();
+    let memory = server
+        .vault()
+        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
+    let other_world = "66666666666666666666666666666666";
+    let make_id = |n: u64| {
+        let mut bytes = [0x71; 16];
+        bytes[8..].copy_from_slice(&n.to_be_bytes());
+        EntityId::from_bytes(bytes).unwrap()
+    };
+    for n in 0..1005 {
+        let subject = make_id(n);
+        server
+            .vault()
+            .put_entity(
+                &subject,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"name":"fixture subject"})).unwrap(),
+            )
+            .unwrap();
+        let id = if n % 3 == 0 {
+            subject
+        } else {
+            let id = make_id(2000 + n);
+            let receipt = memory
+                .claim_upsert(&ClaimInput {
+                    id: Some(id.to_hex()),
+                    predicate: if n % 3 == 1 {
+                        "view.other"
+                    } else {
+                        "view.target"
+                    }
+                    .into(),
+                    subject_ref: subject.to_hex(),
+                    value: json!("unrelated"),
+                    confidence: 1.0,
+                    source: "user_stated".into(),
+                    world_ref: (n % 3 == 2).then(|| other_world.into()),
+                    scope: None,
+                    valid_from: None,
+                    valid_to: None,
+                    occurred_at: Some(AT),
+                    learned_at: Some(AT),
+                    salience: None,
+                })
+                .unwrap();
+            assert_eq!(receipt.approval, "auto");
+            id
+        };
+        server
+            .vault()
+            .batch()
+            .text(&id, &[("body", "viewneedle viewneedle viewneedle")])
+            .commit()
+            .unwrap();
+    }
+    let mut expected = Vec::new();
+    for (n, subject, text) in [
+        (5000, ACTOR, "viewneedle"),
+        (
+            5001,
+            MACHINE,
+            "viewneedle extra words make this result less relevant",
+        ),
+    ] {
+        let id = make_id(n);
+        let receipt = memory
+            .claim_upsert(&ClaimInput {
+                id: Some(id.to_hex()),
+                predicate: "view.target".into(),
+                subject_ref: subject.into(),
+                value: json!(text),
+                confidence: 1.0,
+                source: "user_stated".into(),
+                world_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(AT),
+                learned_at: Some(AT),
+                salience: None,
+            })
+            .unwrap();
+        assert_eq!(receipt.approval, "auto");
+        server
+            .vault()
+            .batch()
+            .text(&id, &[("body", text)])
+            .commit()
+            .unwrap();
+        expected.push(receipt.claim_short_id);
+    }
+    // All 1,005 unrelated hits outrank both matches in the old pre-filter top-k.
+    let old = memory
+        .recall(
+            "viewneedle",
+            Effort::Minimal,
+            &RecallScope::default(),
+            1000,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(
+        !old.items
+            .iter()
+            .any(|item| expected.contains(&item.short_id))
+    );
+    let source = BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "scoped-top-k".into(),
+    );
+    for limit in [1, 2, 10] {
+        let derived = source
+            .derive(
+                &ScopedView {
+                    query: Some("viewneedle".into()),
+                    filter: Some(json!({"kind":"CLAIM", "predicate":"view.target", "limit":limit})),
+                    ..Default::default()
+                },
+                Channel::View,
+            )
+            .unwrap();
+        let rows = derived.value.as_array().unwrap();
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|row| row["short_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            expected
+                .iter()
+                .take(limit)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert!(rows.iter().all(|row| row["world"].is_null()));
+    }
 }

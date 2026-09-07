@@ -14,6 +14,9 @@
 //! Observer B callbacks check the event origin and skip bridge-tagged events
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
+mod app_reads;
+pub use app_reads::{scoped_subscription_pending, scoped_subscription_receipts};
+
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -140,7 +143,12 @@ impl Materializer {
         tees.push(Arc::downgrade(tee));
     }
 
-    fn notify_live_queries(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+    pub(crate) fn notify_live_queries(
+        &self,
+        path: &str,
+        diff: &MaterializedDiffSummary,
+        by: &OriginMark,
+    ) {
         let tees: Vec<_> = self
             .live_query_tees
             .lock()
@@ -385,6 +393,14 @@ pub fn register_observer_a(
     }))
 }
 
+/// Whether the destructive LMDB transaction of a local hard delete committed.
+/// Publication and purge are separate transactions; app invalidations must not
+/// infer purge completion from a missing header (headerless residue is legal).
+pub fn local_deletion_is_materialized(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    vault.local_hard_delete_marker_exists_in_txn(&txn, id)
+}
+
 /// Post-commit notification consumer. Implementations must not write to the
 /// observed Loro document or re-enter materialization from this callback.
 pub trait LiveQueryTee: Send + Sync {
@@ -499,9 +515,13 @@ fn subscribe_map_observer(
     subscription_doc.subscribe(
         &cid,
         Arc::new(move |event| {
-            if matches!(event.origin, BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN) {
-                // These paths bypass rematerialization. Defer the read until
-                // the owner loop runs, after the writer releases its locks.
+            if event.origin == DELETION_TOMBSTONE_ORIGIN {
+                // The owning LMDB transaction is still open. Publication owns
+                // its post-commit notification; never invalidate on this event.
+                return;
+            }
+            if event.origin == BRIDGE_ORIGIN {
+                // The bridge mirrors an already committed LMDB write.
                 materializer.notify_live_queries(
                     &format!("w:{window_key}/{}", live_query.0),
                     &MaterializedDiffSummary {

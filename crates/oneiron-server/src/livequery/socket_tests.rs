@@ -125,15 +125,17 @@ async fn next(socket: &mut Socket) -> Message {
         .unwrap()
 }
 async fn send(socket: &mut Socket, tag: u8, value: Value) {
-    let mut bytes = vec![tag];
-    bytes.extend(serde_json::to_vec(&value).unwrap());
+    let bytes = test_wire::request(tag, value);
     socket.send(Message::Binary(bytes.into())).await.unwrap();
 }
 async fn app(socket: &mut Socket, tag: u8) -> Value {
+    let mut collector = test_wire::Collector::default();
     loop {
         match next(socket).await {
             Message::Binary(bytes) if bytes[0] == tag => {
-                return serde_json::from_slice(&bytes[1..]).unwrap();
+                if let Some(value) = collector.feed(&bytes) {
+                    return value;
+                }
             }
             Message::Binary(bytes) if !matches!(bytes[0], TAG_RPC | TAG_SUB) => {}
             other => panic!("unexpected frame: {other:?}"),
@@ -263,12 +265,12 @@ async fn socket_drop_rebind_replays_all_subs_without_rpc_or_acked_duplicates() {
     open(&mut socket, 7, WORLD, seen["cursor"].clone()).await;
     let missed_a = app(&mut socket, TAG_SUB).await;
     assert_eq!(missed_a["result"], 2);
-    assert_eq!(missed_a["kind"], "snapshot");
+    assert_eq!(missed_a["kind"], "data");
     open(&mut socket, 8, WORLD_B, second).await;
     let missed_b = app(&mut socket, TAG_SUB).await;
     assert_eq!(missed_b["subscriptionId"], 8);
     assert_eq!(missed_b["result"], 3);
-    assert_eq!(missed_b["kind"], "snapshot");
+    assert_eq!(missed_b["kind"], "data");
     barrier(&mut socket).await;
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(100), socket.next())

@@ -22,6 +22,7 @@ struct Session {
 pub(crate) struct Hub {
     server: Weak<SyncServer>,
     sessions: Mutex<BTreeMap<String, Arc<Session>>>,
+    budget: Arc<super::budget::Budget>,
 }
 
 impl Hub {
@@ -39,6 +40,7 @@ impl Hub {
         let hub = Arc::new(Self {
             server: Arc::downgrade(server),
             sessions: Mutex::new(BTreeMap::new()),
+            budget: super::budget::Budget::new(super::budget::HUB_BYTES),
         });
         hubs.insert(key, Arc::downgrade(&hub));
         let worker = hub.clone();
@@ -103,12 +105,20 @@ impl Hub {
         }
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
         let document = oneiron::EntityId::now().to_hex();
-        let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::new(
+        let session_budget = super::budget::Budget::new(super::budget::SESSION_BYTES);
+        let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::with_budgets(
             self.server.clone(),
             auth.clone(),
             document.clone(),
+            session_budget.clone(),
+            self.budget.clone(),
         ));
-        let queries = Arc::new(LiveQueries::new(conn_id, source));
+        let queries = Arc::new(LiveQueries::with_budgets(
+            conn_id,
+            source,
+            session_budget,
+            self.budget.clone(),
+        ));
         let tee: Arc<dyn LiveQueryTee> = queries.clone();
         server
             .reassert_manager
@@ -131,7 +141,7 @@ impl Hub {
         document: String,
         source: Arc<dyn LiveQuerySource>,
     ) -> Arc<LiveQueries> {
-        let queries = Arc::new(LiveQueries::new(0, source));
+        let queries = Arc::new(LiveQueries::with_budget(0, source, self.budget.clone()));
         self.sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -218,7 +228,7 @@ impl Connection {
     fn frames(&mut self, pushes: Vec<Push>) -> Result<Vec<Vec<u8>>, ProtocolError> {
         let mut frames = Vec::new();
         for push in pushes {
-            frames.push(push.encode()?);
+            frames.extend(push.encode()?);
             let entry = self
                 .sent
                 .entry(push.subscription_id)
@@ -229,6 +239,36 @@ impl Connection {
             entry.1.insert(push.kind);
         }
         Ok(frames)
+    }
+
+    pub(crate) fn is_scoped_broadcast(data: &[u8]) -> bool {
+        super::routing::is_routed(data)
+    }
+
+    pub(crate) fn receive_broadcast(&self, data: &[u8]) -> Option<Vec<u8>> {
+        let (id, frame) = super::routing::addressed(data, self.conn_id)?;
+        let session = self.session.as_ref()?;
+        (self.active.contains(&id) && session.attached.load(Ordering::Acquire) == self.conn_id)
+            .then(|| frame.to_vec())
+    }
+
+    pub(crate) fn replay_after_lag(&mut self) {
+        self.sent.clear();
+    }
+
+    pub(crate) fn broadcast_delivery(&mut self) -> Result<Vec<Vec<u8>>, ProtocolError> {
+        self.delivery()?
+            .into_iter()
+            .map(|frame| {
+                let envelope: super::wire::Envelope<serde::de::IgnoredAny> =
+                    super::wire::decode(&frame[1..])?;
+                Ok(super::routing::wrap(self.conn_id, envelope.id, frame))
+            })
+            .collect()
+    }
+
+    pub(crate) fn has_active_subscriptions(&self) -> bool {
+        !self.active.is_empty()
     }
 
     pub(crate) fn delivery(&mut self) -> Result<Vec<Vec<u8>>, ProtocolError> {

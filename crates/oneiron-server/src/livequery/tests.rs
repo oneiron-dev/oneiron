@@ -88,14 +88,16 @@ fn empty_rpc_is_one_terminal_frame_and_ids_do_not_cross_talk() {
         .open(7, view(WORLD_A), Channel::View, None, None)
         .unwrap();
     let rpc = rpc_result(7, json!([])).unwrap();
-    assert_eq!(rpc[0], TAG_RPC);
-    let value: Value = serde_json::from_slice(&rpc[1..]).unwrap();
+    assert_eq!(rpc.len(), 1);
+    assert_eq!(rpc[0][0], TAG_RPC);
+    let value = test_wire::reply(&rpc);
     assert_eq!(value, json!({"requestId":7,"result":[],"last":true}));
     let sub = opened[0].encode().unwrap();
-    assert_eq!(sub[0], TAG_SUB);
-    let value: Value = serde_json::from_slice(&sub[1..]).unwrap();
-    assert_eq!(value["subscriptionId"], 7);
-    assert!(value.get("requestId").is_none());
+    assert_eq!(sub[0][0], TAG_SUB);
+    let value: wire::Envelope<serde::de::IgnoredAny> = wire::decode(&sub[0][1..]).unwrap();
+    assert_eq!(value.id, 7);
+    assert_eq!(value.kind, "sub.snapshot");
+    assert_eq!(opened[1].kind, "eose");
     tier.reconnect(2).unwrap();
     assert!(
         tier.open(
@@ -235,7 +237,7 @@ fn overflow_is_one_cursor_gap_and_reopen_is_explicit_full_state() {
         .unwrap();
     assert_eq!(
         resync.iter().map(|p| p.kind).collect::<Vec<_>>(),
-        ["gap", "snapshot"]
+        ["gap", "snapshot", "eose"]
     );
     assert_eq!(resync[1].result, Some(json!(9000)));
 }
