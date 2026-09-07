@@ -8,10 +8,10 @@
 //! Two things live beside the record because they are properties OF the record
 //! rather than of whichever adapter last touched it:
 //!
-//! - [`address`] — the channel key and the assignment address are VALUES,
+//! - `address` — the channel key and the assignment address are VALUES,
 //!   normalized once at construction, and [`AssignmentKey`] is the single
 //!   canonical inhabitant every uniqueness road compares.
-//! - [`custody`] — a `delegated_grant` row is a mailbox the product never
+//! - `custody` — a `delegated_grant` row is a mailbox the product never
 //!   minted. What makes such a row true is a live custody record that NAMES
 //!   THIS MAILBOX, so the proof carries the mailbox and only the engine can
 //!   mint one.
@@ -520,7 +520,7 @@ impl ChannelIdentity {
     ///
     /// So the misuse is made UNSPELLABLE instead. `SelfHeldShape` has no
     /// `DelegatedGrant` variant, so there is no argument left that would need
-    /// degrading. [`Self::requested_delegated`] — behind
+    /// degrading. `Self::requested_delegated` — behind
     /// [`Vault::provision_delegated_identity`], which mints a real custody
     /// proof — is the only delegated door.
     #[must_use]
@@ -1465,7 +1465,7 @@ impl Vault {
     ///
     /// Generic public entity puts for `ENTITY_TYPE_CHANNEL_IDENTITY` remain
     /// rejected with `MaintenanceKindNotWritable`; this method validates the
-    /// CID-1 body and runs [`admit_channel_identity_transition_in_txn`] before
+    /// CID-1 body and runs `admit_channel_identity_transition_in_txn` before
     /// writing.
     pub fn create_channel_identity(&self, id: &EntityId, identity: &ChannelIdentity) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;

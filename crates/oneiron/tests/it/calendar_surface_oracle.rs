@@ -23,26 +23,30 @@
 //!
 //! ## Normal criticality is not source permission
 //!
-//! `gate::default_policy_manifest()` gives `calendar.` normal criticality and
-//! sensitivity. It does not grant Imported source trust. A Human actor's
-//! Approved request still needs an explicit, actor-bound source permit.
+//! `gate::default_policy_manifest()` resolves criticality from an allow-list of
+//! predicate prefixes and defaults everything else to `critical`. `calendar.`
+//! carries its own prefix rule (`criticality: normal`, `sensitivity: normal`),
+//! so calendar writes need no criticality override. Imported source trust is
+//! a separate authorization: a Human actor's Approved request still needs an
+//! explicit, actor-bound source permit at the unchanged unstamped floor.
 //!
 //! [`calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest`]
-//! preserves the default policy and projects an explicitly permitted write.
-//! [`calendar_normal_criticality_does_not_grant_imported_source_permission`]
-//! pins the other side: without that permit, Imported + Approved pends only
-//! on source trust and writes no EVENT or claims. The tier-scoping property —
-//! claims stored as Proposed stay invisible on every read verb — remains
-//! pinned by [`calendar_surface_scopes_read_search_and_freebusy`].
+//! first pins source-trust rejection and rollback without a permit, then adds
+//! one beside the byte-unchanged default manifest and pins admitted read,
+//! search, and freebusy projections. [`calendar_imported_source_permit_is_actor_bound`]
+//! keeps missing and wrong-actor permits as negative controls for the same
+//! atomic batch a matching permit admits. The tier-scoping property — claims
+//! stored as Proposed stay invisible on every read verb even with source
+//! permission — remains pinned by [`calendar_surface_scopes_read_search_and_freebusy`].
 
 use crate::common::entity as test_id;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     CalendarInviteMethod, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
-    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    MEMORY_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
-    WriteProvenance, calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
+    ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, MEMORY_CODE_BAD_REQUEST,
+    Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
     memory::CALENDAR_INVITE_OUTBOUND_VERB, memory::CalendarFreebusyIntervalDto,
 };
 use rmpv::Value;
@@ -122,8 +126,9 @@ fn envelope(actor: EntityId, approval: ClaimApprovalStatus) -> WriteEnvelope {
 }
 
 /// Stores one calendar EVENT and its family through the ordinary claim
-/// candidate door at `approval`, against the default policy plus the fixture
-/// actor's explicit Imported source permit.
+/// candidate door at `approval`. Callers explicitly install their actor's
+/// Imported source permit beside the default policy; this helper grants no
+/// permission and leaves Proposed claims at their requested review status.
 fn store_calendar_event(
     vault: &Vault,
     actor: EntityId,
@@ -161,13 +166,12 @@ fn store_calendar_event(
     id
 }
 
+/// Creates a Human actor and facade without granting source permission.
 fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     let actor = test_id(ACTOR_SEED);
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
-    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(vault, actor)
-        .expect("authorize this CAL ingest actor's Imported source");
     (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 
@@ -195,59 +199,6 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
         .expect("read default manifest")
         .expect("default manifest exists");
     let (actor, facade) = actor_facade(&vault);
-    assert_eq!(
-        vault.get_raw(&default_manifest_id).expect("default policy"),
-        Some(default_manifest),
-        "the explicit Imported permit must not replace the default policy"
-    );
-
-    // The unchanged `calendar.` prefix rule resolves criticality `normal`.
-    // The separate source permit contributes no predicate axes or ceilings;
-    // approval alone does not authorize Imported provenance.
-    let busy = store_calendar_event(
-        &vault,
-        actor,
-        BUSY_SEED,
-        SECRET_NAME,
-        TimeRange {
-            start: 1_000,
-            end: 1_099,
-        },
-        "busy",
-        ClaimApprovalStatus::Approved,
-    );
-    let stored = vault
-        .get_claim(&claim_id(BUSY_SEED, 1))
-        .expect("claim row")
-        .expect("the claim-candidate door stored a row");
-    assert_eq!(stored.predicate, "calendar.time_kind");
-    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
-    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
-
-    // …and admitted claims project under the default predicate policy plus
-    // explicit source authorization. `blocks_time` comes from the admitted
-    // `calendar.time_kind` claim rather than the EVENT header, so a true here
-    // proves the gate let the claim through to the projector.
-    let view = facade
-        .calendar_read(&CalendarReadRequest {
-            event_ref: busy.to_hex(),
-        })
-        .expect("read")
-        .expect("an authorized calendar claim projects under the default predicate policy");
-    assert_eq!(view.event_ref, busy.to_hex());
-    assert!(view.blocks_time);
-    assert_eq!(view.start_utc, Some(1_000));
-    assert_eq!(view.end_utc, Some(1_099));
-}
-
-#[test]
-fn calendar_normal_criticality_does_not_grant_imported_source_permission() {
-    let (_dir, vault) = temp_vault();
-    let actor = test_id(ACTOR_SEED);
-    vault
-        .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
-        .expect("put actor");
-    let facade = vault.memory(actor, EdgeActorClass::Human);
     let busy = test_id(BUSY_SEED);
     let envelope = envelope(actor, ClaimApprovalStatus::Approved);
 
@@ -339,6 +290,91 @@ fn calendar_normal_criticality_does_not_grant_imported_source_permission() {
             .is_empty()
     );
     assert!(vault.connector_send_tasks().expect("tasks").is_empty());
+
+    // Only now authorize the same Human actor's Imported source, leaving the
+    // default manifest intact and the requested Approved status unchanged.
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+        .expect("authorize this CAL ingest actor's Imported source");
+    assert_eq!(
+        vault.get_raw(&default_manifest_id).expect("default policy"),
+        Some(default_manifest.clone()),
+        "the explicit Imported permit must not replace the default policy"
+    );
+
+    // The unchanged `calendar.` prefix rule resolves criticality `normal`.
+    // The separate source permit contributes no predicate axes or ceilings;
+    // approval alone does not authorize Imported provenance.
+    let busy = store_calendar_event(
+        &vault,
+        actor,
+        BUSY_SEED,
+        SECRET_NAME,
+        TimeRange {
+            start: 1_000,
+            end: 1_099,
+        },
+        "busy",
+        ClaimApprovalStatus::Approved,
+    );
+    let stored = vault
+        .get_claim(&claim_id(BUSY_SEED, 1))
+        .expect("claim row")
+        .expect("the claim-candidate door stored a row");
+    assert_eq!(stored.predicate, "calendar.time_kind");
+    assert_eq!(stored.lifecycle, oneiron::ClaimLifecycleStatus::Active);
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(stored.source, Some(ClaimSource::Imported));
+
+    // …and admitted claims project under the default predicate policy plus
+    // explicit source authorization. `blocks_time` comes from the admitted
+    // `calendar.time_kind` claim rather than the EVENT header, so a true here
+    // proves the gate let the claim through to the projector.
+    let view = facade
+        .calendar_read(&CalendarReadRequest {
+            event_ref: busy.to_hex(),
+        })
+        .expect("read")
+        .expect("an authorized calendar claim projects under the default predicate policy");
+    assert_eq!(view.event_ref, busy.to_hex());
+    assert!(view.blocks_time);
+    assert_eq!(view.start_utc, Some(1_000));
+    assert_eq!(view.end_utc, Some(1_099));
+
+    let found = facade
+        .calendar_search(&CalendarSearchRequest {
+            calendars: Vec::new(),
+            range: Some(CalendarRangeDto {
+                start: window().start,
+                end: window().end,
+            }),
+            text: None,
+            limit: 50,
+        })
+        .expect("search");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].event_ref, busy.to_hex());
+    assert!(found[0].blocks_time);
+    assert_eq!(
+        facade.calendar_freebusy(&[], window()).expect("freebusy"),
+        vec![CalendarFreebusyIntervalDto {
+            start_utc: 1_000,
+            end_utc: 1_100,
+        }]
+    );
+    assert_eq!(
+        oneiron::calendar::freebusy(&vault, &[], window()).expect("internal freebusy"),
+        vec![BusyInterval {
+            start_utc: 1_000,
+            end_utc: 1_100,
+            source: busy,
+        }]
+    );
+    assert!(vault.connector_send_tasks().expect("tasks").is_empty());
+    assert_eq!(
+        vault.get_raw(&default_manifest_id).expect("default policy"),
+        Some(default_manifest),
+        "calendar admission must leave the default manifest bytes unchanged"
+    );
 }
 
 /// Missing and wrong-actor permits reject the same atomic batch that a
@@ -351,11 +387,7 @@ fn calendar_imported_source_permit_is_actor_bound() {
         ("matching actor permit", Some(ACTOR_SEED)),
     ] {
         let (_dir, vault) = temp_vault();
-        let actor = test_id(ACTOR_SEED);
-        vault
-            .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
-            .expect("put actor");
-        let facade = vault.memory(actor, EdgeActorClass::Human);
+        let (actor, facade) = actor_facade(&vault);
         if let Some(seed) = permit_seed {
             let permitted_actor = test_id(seed);
             if permitted_actor != actor {
@@ -369,9 +401,11 @@ fn calendar_imported_source_permit_is_actor_bound() {
                     )
                     .expect("put the other permit holder");
             }
-            vault
-                .install_imported_source_permit_for_test(permitted_actor)
-                .expect("install the explicit actor-bound Imported permit");
+            oneiron::calendar::transcript::permit_imported_calendar_source_for_test(
+                &vault,
+                permitted_actor,
+            )
+            .expect("install the explicit actor-bound Imported permit");
         }
         let busy = test_id(BUSY_SEED);
         let claim = claim_id(BUSY_SEED, 1);
@@ -435,6 +469,18 @@ fn calendar_imported_source_permit_is_actor_bound() {
             })
             .expect("read");
         assert_eq!(read.is_some(), allowed, "{label}");
+        let found = facade
+            .calendar_search(&CalendarSearchRequest {
+                calendars: Vec::new(),
+                range: Some(CalendarRangeDto {
+                    start: window().start,
+                    end: window().end,
+                }),
+                text: None,
+                limit: 50,
+            })
+            .expect("search");
+        assert_eq!(found.len(), usize::from(allowed), "{label}");
         let external = facade.calendar_freebusy(&[], window()).expect("freebusy");
         let internal =
             oneiron::calendar::freebusy(&vault, &[], window()).expect("internal freebusy");
@@ -451,8 +497,7 @@ fn calendar_imported_source_permit_is_actor_bound() {
 fn calendar_surface_scopes_read_search_and_freebusy() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
-    vault
-        .install_imported_source_permit_for_test(actor)
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
         .expect("source permission must not promote Proposed claims");
 
     // Written `proposed` on purpose: this oracle scopes the verbs against a
@@ -661,8 +706,7 @@ fn calendar_invite_draft_is_cal_04s_verb_and_typed_five_field_payload() {
 fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
-    vault
-        .install_imported_source_permit_for_test(actor)
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
         .expect("permit this fixture actor's Imported calendar claims");
 
     // The pair the preflight used to refuse now resolves in the manifest, and
@@ -758,8 +802,7 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
 fn oneiron_calendar_invite_still_refuses_a_cold_invite() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
-    vault
-        .install_imported_source_permit_for_test(actor)
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
         .expect("permit this fixture actor's Imported calendar claims");
     // Everything a lawful invite needs EXCEPT a consent basis.
     let event_ref = store_calendar_event(

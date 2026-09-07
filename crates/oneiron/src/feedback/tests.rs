@@ -1371,35 +1371,12 @@ fn gate_outcomes_remain_authoritative() {
     assert_ne!(outcome.logical_send_ref, allowed.logical_send_ref);
     assert_eq!(outcome.dispatch.outcome, OutboundDispatchOutcome::Held);
     assert_eq!(outcome.dispatch.gate_outcome, "pending");
-    let receipt = &outcome.dispatch.receipt;
-    assert_eq!(receipt.outcome, "held");
-    assert_eq!(
-        receipt.fields.get("hold_reason").map(String::as_str),
-        Some("gate.pending.counterparty_opt_out")
-    );
-    assert!(!receipt.fields.contains_key("suppression"));
-    assert!(
-        receipt
-            .policy_trace
-            .contains(&"gate.pending.counterparty_opt_out".to_owned()),
-        "the opt-out pending arm fired over the same stored contact"
-    );
-    assert!(
-        receipt
-            .policy_trace
-            .contains(&"counterparty_opt_out_unsubscribe".to_owned())
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get("gate_receipt_reasons")
-            .map(String::as_str),
-        Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
-    );
     assert_eq!(
         outcome.dispatch.gate_reason_codes,
         vec!["gate.pending.counterparty_opt_out".to_owned()]
     );
+    let receipt = &outcome.dispatch.receipt;
+    assert_eq!(receipt.outcome, "held");
     for reason in [
         "gate.pending.counterparty_opt_out",
         "counterparty_opt_out_unsubscribe",
@@ -1409,6 +1386,18 @@ fn gate_outcomes_remain_authoritative() {
             "the opt-out hold retains its receipt reason: {reason}"
         );
     }
+    assert_eq!(
+        receipt.fields.get("hold_reason").map(String::as_str),
+        Some("gate.pending.counterparty_opt_out")
+    );
+    assert_eq!(
+        receipt
+            .fields
+            .get("gate_receipt_reasons")
+            .map(String::as_str),
+        Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+    );
+    assert!(!receipt.fields.contains_key("suppression"));
     assert!(!receipt.fields.contains_key("suppression_reason"));
     assert!(
         !receipt.fields.contains_key("intent_state"),
