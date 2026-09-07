@@ -2,6 +2,15 @@
 
 use std::path::PathBuf;
 
+pub use crate::ppr_community::PprCommunityConfig;
+
+/// Validates the opt-in community prior without relaxing its safety bounds.
+pub fn validate_ppr_community(config: &PprCommunityConfig) -> crate::error::Result<()> {
+    config
+        .validate()
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))
+}
+
 /// Production remains default-off, regardless of benchmark results.
 pub const PPR_VAD_ALPHA_DEFAULT: f32 = 0.0;
 /// Largest supported PPR VAD salience coefficient.
@@ -66,6 +75,8 @@ pub struct VaultConfig {
     /// Stored-edge VAD salience for PPR. Validated at query time in `0..=0.4`.
     /// Nonzero use requires the pinned BEAM recall and latency gate.
     pub ppr_vad_alpha: f32,
+    /// Default-off community prior for Uniform (`expand_ppr`) retrieval only.
+    pub ppr_community: PprCommunityConfig,
     /// Embedding vector dimension.
     pub dimensions: usize,
     /// MRL fast-lane prefix length (ONE-EMBED E3). When `Some(fd)`, the NSW
@@ -317,6 +328,7 @@ impl VaultConfig {
     pub fn device() -> Self {
         Self {
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
+            ppr_community: PprCommunityConfig::default(),
             dimensions: 1024,
             fast_dims: None,
             embedding_model: None,
@@ -336,6 +348,7 @@ impl VaultConfig {
     pub fn server() -> Self {
         Self {
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
+            ppr_community: PprCommunityConfig::default(),
             dimensions: 4096,
             fast_dims: None,
             embedding_model: None,
