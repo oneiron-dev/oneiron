@@ -268,6 +268,29 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* the closed work pane's mark: line · strip · stack (owner 09-08: "show me what you cook up") */
+  type PaneMark = 'line' | 'strip' | 'stack'
+  const [paneMark, setPaneMarkState] = React.useState<PaneMark>('line')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-pane-mark')
+      if (v === 'strip' || v === 'stack') setPaneMarkState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setPaneMark = React.useCallback((k: PaneMark) => {
+    setPaneMarkState(k)
+    if (k === 'line') document.documentElement.removeAttribute('data-pane-mark')
+    else document.documentElement.setAttribute('data-pane-mark', k)
+    try {
+      if (k === 'line') localStorage.removeItem('oneiron-pane-mark')
+      else localStorage.setItem('oneiron-pane-mark', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   /* the selected row's chrome (owner 09-07: the rounded well reads as slop; he picks by feel) */
   type SelChrome = 'rounded' | 'square' | 'gutter' | 'box'
   const [selChrome, setSelChromeState] = React.useState<SelChrome>('rounded')
@@ -396,6 +419,20 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             className={ground === k ? 'act on' : 'act'}
             title={k === 'none' ? 'position alone carries your turns' : k === 'well' ? 'a tinted zone under your turns · flat, 3px, no tail' : 'a hairline frame under your turns'}
             onClick={() => setGround(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">pane mark</div>
+      <div className="t-acts">
+        {(['line', 'strip', 'stack'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={paneMark === k ? 'act on' : 'act'}
+            title={k === 'line' ? 'one mono line at the top right: 2 running · 1 needs you ›' : k === 'strip' ? 'the pane’s own edge, a sliver of the well the full height, upright digits at its top' : 'the words with every letter upright, read top to bottom'}
+            onClick={() => setPaneMark(k)}
           >
             {k}
           </button>
