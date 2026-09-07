@@ -114,6 +114,196 @@ fn public_card_and_ladder_emit_the_same_verified_blocked_reports() -> Result<()>
     Ok(())
 }
 
+/// Reach each lifecycle state through queue verbs, never by rewriting a row.
+fn card_attempt_in_state(
+    vault: &Vault,
+    agent_ref: EntityId,
+    state: AttemptState,
+) -> Result<AttemptRecord> {
+    use crate::attempt_queue::{
+        AttemptInterventionKind, CompleteAttempt, CompleteOutcome, InterveneAttempt,
+    };
+
+    let queue = AttemptQueue::new(vault);
+    let dispatched = dispatch_attempt(vault, agent_ref, 10)?;
+    let current = match state {
+        AttemptState::Queued | AttemptState::Paused | AttemptState::Cancelled => dispatched,
+        AttemptState::Leased
+        | AttemptState::Completed
+        | AttemptState::Failed
+        | AttemptState::Scheduled
+        | AttemptState::Landing => claim(vault, dispatched.id, 20)?,
+    };
+    match state {
+        AttemptState::Queued | AttemptState::Leased => Ok(current),
+        AttemptState::Paused | AttemptState::Cancelled => {
+            let intervention = queue.intervene(InterveneAttempt {
+                id: current.id,
+                kind: if state == AttemptState::Paused {
+                    AttemptInterventionKind::Pause
+                } else {
+                    AttemptInterventionKind::Cancel
+                },
+                actor: LEASE_OWNER.to_owned(),
+                note: None,
+                now: 30,
+            })?;
+            Ok(intervention.record)
+        }
+        AttemptState::Completed => {
+            let CompleteOutcome::Completed(completed) = queue.complete(CompleteAttempt {
+                id: current.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: current.attempt_count,
+                now: 30,
+            })?
+            else {
+                panic!("expected a fresh completion");
+            };
+            Ok(completed)
+        }
+        AttemptState::Failed => {
+            let FailOutcome::Failed(failed) = queue.fail(FailAttempt {
+                id: current.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: current.attempt_count,
+                reason: "detector.stable_code".to_owned(),
+                now: 30,
+            })?
+            else {
+                panic!("expected a fresh failure");
+            };
+            Ok(failed)
+        }
+        AttemptState::Scheduled => {
+            let RetryOutcome::Retried(scheduled) = queue.retry(RetryAttempt {
+                id: current.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: current.attempt_count,
+                backoff_until: 40,
+                last_error: Some("detector.stable_code".to_owned()),
+                now: 30,
+            })?;
+            Ok(scheduled)
+        }
+        AttemptState::Landing => {
+            let LandingOutcome::Landing(landing) = queue.accept_landing(AcceptAttemptLanding {
+                id: current.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: current.attempt_count,
+                trigger: LandingTrigger::BudgetWarning,
+                status: None,
+                resume_point: None,
+                request_sequence: None,
+                now: 30,
+            })?
+            else {
+                panic!("expected a fresh landing");
+            };
+            Ok(landing)
+        }
+    }
+}
+
+#[test]
+fn public_card_requires_persisted_failed_state_for_every_class() -> Result<()> {
+    use crate::run_tree::RunTreeStatus;
+
+    for state in [
+        AttemptState::Queued,
+        AttemptState::Leased,
+        AttemptState::Paused,
+        AttemptState::Completed,
+        AttemptState::Failed,
+        AttemptState::Cancelled,
+        AttemptState::Scheduled,
+        AttemptState::Landing,
+    ] {
+        let (_dir, vault) = open_vault();
+        let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+        let current = card_attempt_in_state(&vault, agent_ref, state)?;
+        let queue = AttemptQueue::new(&vault);
+        assert_eq!(current.state, state);
+        assert_eq!(queue.get(current.id)?, Some(current.clone()));
+        let before = queue.list()?;
+        let original_tree = RunTreeAdapter::new(&vault).read_run(RUN_ID)?;
+        let mut tree = original_tree.clone();
+        // A Scheduled retry is rendered under its Failed source. That parent's
+        // state must not authorize a failure card for the still-scheduled child.
+        let node = if state == AttemptState::Scheduled {
+            assert_eq!(tree.roots[0].status, RunTreeStatus::Failed);
+            &mut tree.roots[0].children[0]
+        } else {
+            &mut tree.roots[0]
+        };
+        assert_eq!(node.attempt_id, bytes_to_hex_lower(current.id.as_bytes()));
+        if state == AttemptState::Failed {
+            assert_eq!(node.status, RunTreeStatus::Failed);
+        } else {
+            assert_ne!(node.status, RunTreeStatus::Failed);
+            node.status = RunTreeStatus::Failed;
+        }
+        let ordinal = NonZeroU16::new(if state == AttemptState::Scheduled {
+            2
+        } else {
+            1
+        })
+        .expect("positive ordinal");
+        let limit = DEFAULT_MAX_CONSECUTIVE_TRANSIENTS;
+        // The shared walker remains valid before fail; only the card door adds
+        // the persisted-state requirement, independent of the claimed class.
+        assert_eq!(
+            retry_lineage_walk(&queue, &current, limit)?,
+            RetryOrdinal::BelowLimit(ordinal)
+        );
+        for class in [
+            FailureClass::Transient,
+            FailureClass::Permanent,
+            FailureClass::Ambiguous,
+        ] {
+            let count = if class == FailureClass::Transient {
+                ordinal.get()
+            } else {
+                0
+            };
+            let result = surfaced_failure_card(
+                &vault,
+                SurfacedFailureCardInput {
+                    failure_class: class,
+                    consecutive_transients: count,
+                    pathology: None,
+                    retry_lineage_limit: limit,
+                    tree: tree.clone(),
+                    failing_attempt_id: current.id,
+                    pre_fail_checkpoint_ref: test_id(0x51),
+                    diagnosis: FailureDiagnosisState::NotRun,
+                    blocked_reports: Vec::new(),
+                    qa: HealerQaFeed {
+                        thread_ref: test_id(0x52).to_hex(),
+                        entries: Vec::new(),
+                    },
+                },
+            );
+            if state == AttemptState::Failed {
+                let card = result?;
+                assert_eq!(card.failure_class, class);
+                assert_eq!(card.consecutive_transients, count);
+                assert_eq!(card.pathology, None);
+                assert_eq!(card.diagram.tree, original_tree);
+            } else {
+                assert!(
+                    matches!(result, Err(Error::InvalidConfig(message))
+                        if message == "failure card lineage requires a stored Failed attempt"),
+                    "{state:?} must not produce a {class:?} failure card"
+                );
+            }
+        }
+        assert_eq!(queue.list()?, before, "card validation is read-only");
+        assert_eq!(RunTreeAdapter::new(&vault).read_run(RUN_ID)?, original_tree);
+    }
+    Ok(())
+}
+
 fn pathology_card_input(
     vault: &Vault,
     surface: &SurfacedFailure,
@@ -398,6 +588,23 @@ fn public_card_accepts_self_cycle_at_one_row_limit() -> Result<()> {
     repoint_retry_of(&vault, leased.id, Some(leased.id))?;
     let policy = policy_with(agent_ref, 1, FailureEscalationMode::Auto);
     let limit = policy.max_consecutive_transients;
+    let queue = AttemptQueue::new(&vault);
+    let current = queue.get(leased.id)?.expect("stored leased attempt");
+    assert_eq!(current.state, AttemptState::Leased);
+    assert_eq!(
+        retry_lineage_walk(&queue, &current, limit)?,
+        RetryOrdinal::Pathology(RetryLineagePathology::Cycle {
+            repeated_attempt_id: leased.id,
+        })
+    );
+    assert!(matches!(
+        retry_lineage_ordinal(&vault, leased.id, limit),
+        Err(Error::InvalidConfig(message))
+            if message == "failure card lineage requires a stored Failed attempt"
+    ));
+    assert_eq!(queue.get(leased.id)?, Some(current));
+    // Only the card helper rejects the leased row. The ladder must still walk
+    // it before failing it, then the public card must accept its real pathology.
     let outcome = FailureLadder::new(&vault)
         .handle_attempt_failure(failure_input(&leased, permanent(), 20), policy)?;
     let input = pathology_card_input(&vault, human_surface(&outcome), limit)?;

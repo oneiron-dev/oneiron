@@ -277,6 +277,8 @@ fn failed_agent_run(vault: &crate::Vault, agent_ref: EntityId) -> Result<(Attemp
     else {
         panic!("expected a terminal failure");
     };
+    assert_eq!(failed.state, crate::attempt_queue::AttemptState::Failed);
+    assert_eq!(queue.get(failed.id)?, Some(failed.clone()));
     let tree = crate::run_tree::RunTreeAdapter::new(vault).read_run("run-card-agent")?;
     Ok((failed.id, tree))
 }

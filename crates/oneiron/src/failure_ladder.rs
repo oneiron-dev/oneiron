@@ -329,6 +329,8 @@ fn retry_lineage_walk(
 }
 
 /// Revalidates a public card's ordinal and pathology through the policy walker.
+/// Requires a persisted Failed row here, not in the walker: the failure ladder
+/// walks its still-leased row before committing the fail transition.
 /// This is read-only and preserves the same threshold and every-link semantics.
 /// The caller must supply the same policy bound used by the failure ladder;
 /// this helper has no stored policy authority against which to verify it.
@@ -341,6 +343,11 @@ pub(crate) fn retry_lineage_ordinal(
     let current = queue.get(failing_attempt_id)?.ok_or_else(|| {
         Error::InvalidConfig("failure card lineage requires a stored failing attempt".to_owned())
     })?;
+    if current.state != crate::attempt_queue::AttemptState::Failed {
+        return Err(Error::InvalidConfig(
+            "failure card lineage requires a stored Failed attempt".to_owned(),
+        ));
+    }
     retry_lineage_walk(&queue, &current, limit)
 }
 

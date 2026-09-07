@@ -1613,6 +1613,9 @@ pub struct SurfacedFailureCard {
 /// Caller input for [`surfaced_failure_card`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfacedFailureCardInput {
+    /// Caller-trusted classification context from the failure ladder.
+    /// No typed classification is stored on the attempt; lineage and failure
+    /// prose cannot authenticate this class. This door checks consistency only.
     pub failure_class: FailureClass,
     pub consecutive_transients: u16,
     pub pathology: Option<RetryLineagePathology>,
@@ -1646,7 +1649,7 @@ pub struct SurfacedFailureCardInput {
 /// MESSAGE, when membership or authorship does not hold, when `occurred_at`
 /// disagrees with the message's `occurred_start`, when a permanent/ambiguous
 /// failure carries a nonzero transient count, when a transient count differs from
-/// the bounded ordinal, when the failing attempt is missing,
+/// the bounded ordinal, when the failing attempt is missing or not stored as Failed,
 /// when the optional pathology does not match the bounded lineage, when a present
 /// pathology does not carry the Ambiguous class, or when a diagnosed repair has
 /// noncanonical refs or mismatched agent/pre-fail checkpoint bindings.
