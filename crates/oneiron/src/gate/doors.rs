@@ -22,7 +22,9 @@ use crate::store::{
     checker_hold_receipt_reason,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope};
+use crate::write_envelope::{
+    WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, SourceLineage, WriteActor, WriteEnvelope,
+};
 
 use super::ceiling::PolicyApprovalCeiling;
 use super::confirm::{
@@ -322,7 +324,7 @@ fn check_claim_policy_for_write_with_record_inner(
             && let Some(checker) = auto_checker
             && let Some(source) = body.source.filter(|source| {
                 source.requires_explicit_auto_permit()
-                    || lineage.is_some_and(|lineage| lineage.requires_explicit_auto_permit())
+                    || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
         {
             let value_preview = auto_check_value_preview(&body.value);
