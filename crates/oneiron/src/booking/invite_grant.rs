@@ -583,7 +583,7 @@ pub fn enqueue_confirm_invite(
         now,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
-    .counterparty_ref(binding.recipient.clone())
+    .counterparty_ref(binding.recipient)
     .calendar_invite(payload.clone());
     vault
         .dispatch_outbound_intent(request, sink)
@@ -640,7 +640,7 @@ pub(crate) fn dispatch_confirm_booking_invite(
         sequence: receipt.calendar.sequence,
         organizer,
         attendees: vec![binding.recipient.clone()],
-        summary: binding.event_type.clone(),
+        summary: binding.event_type,
         starts_at_utc: occurrence.start,
         ends_at_utc: occurrence.end,
         tz_label: CONFIRM_INVITE_TZ_LABEL.to_owned(),

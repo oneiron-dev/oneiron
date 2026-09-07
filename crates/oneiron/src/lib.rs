@@ -21,6 +21,7 @@ pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod board_verb;
 pub mod booking;
+pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
@@ -187,6 +188,13 @@ pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
 };
+pub use crate::build_cache::{
+    ActionKey, ActionResult, ArtifactVersionRef, BUILD_CACHE_ACTION_DOMAIN_V1,
+    BUILD_CACHE_ACTION_KEY_LEN, BUILD_CACHE_ACTION_SCHEMA_VERSION_V1, BUILD_CACHE_KEY_PREFIX_V1,
+    BUILD_CACHE_SCHEMA_VERSION_V1, BuildAction, BuildCache, BuildCacheError, BuildCachePutOutcome,
+    BuildCacheResult, BuildInputRoot, BuildPlatform, CachedActionResult, DeclaredOutputPath,
+    ExtraInputDigest, FrozenBuildCommand,
+};
 pub use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarEventView, CalendarInviteConsentBasis,
     CalendarInviteMethod, CalendarInviteMimePart, CalendarInvitePayload, CalendarRangeDto,
@@ -213,6 +221,10 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
+};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
@@ -226,10 +238,6 @@ pub use crate::commitment_wake::{
     CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip, CommitmentWakeSkip,
     approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
-};
-pub use crate::comm::{
-    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
-    send_override_for_send,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,

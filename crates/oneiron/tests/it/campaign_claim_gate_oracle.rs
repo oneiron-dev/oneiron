@@ -3,7 +3,7 @@
 //! ONE-1772 (CA-01) public-surface oracle for the `comm.do_not_contact` gate leg.
 //!
 //! The in-crate unit tests in `src/campaign/claims/tests.rs` pin the gate
-//! decision itself. This file proves the same suppression through the SHIPPING
+//! decision itself. This file proves the default opt-out hold through the SHIPPING
 //! path only — `Vault::dispatch_outbound_intent` — using nothing but the public
 //! API, so a future refactor that keeps the internal helper honest while
 //! detaching it from the send pipeline still fails here.
@@ -18,10 +18,10 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result,
     TimeRange, Vault, VaultConfig, outbound::OutboundDeliveryWindowDecision,
     outbound::OutboundDispatchActor, outbound::OutboundDispatchGate,
-    outbound::OutboundDispatchRequest, outbound::OutboundDispatchResult,
-    outbound::OutboundExecutionOutcome, outbound::OutboundExecutionRequest,
-    outbound::OutboundExecutionSink, outbound::OutboundIntent, outbound::OutboundIntentDraft,
-    outbound::OutboundIntentTrigger,
+    outbound::OutboundDispatchOutcome, outbound::OutboundDispatchRequest,
+    outbound::OutboundDispatchResult, outbound::OutboundExecutionOutcome,
+    outbound::OutboundExecutionRequest, outbound::OutboundExecutionSink, outbound::OutboundIntent,
+    outbound::OutboundIntentDraft, outbound::OutboundIntentTrigger,
 };
 use rmpv::Value;
 
@@ -29,8 +29,8 @@ use rmpv::Value;
 const COUNTERPARTY: &str = "kenji@example.com";
 const CHANNEL: &str = "email";
 const VERB: &str = "send";
-/// Reason code the external-effect gate raises for a suppressed counterparty.
-const DENY_OPT_OUT: &str = "gate.deny.counterparty_opt_out";
+/// Default owner-decision hold for a suppressed counterparty (ONE-1752).
+const PENDING_OPT_OUT: &str = "gate.pending.counterparty_opt_out";
 
 #[derive(Default)]
 struct RecordingSink {
@@ -57,8 +57,8 @@ fn test_config() -> VaultConfig {
 /// Unseeded keeps the claim write door open without a policy fixture; the
 /// external-effect gate is then fail-closed, so a dispatch with no suppression
 /// lands on `gate.pending.external_effect_authority`. That is the control the
-/// deny arm is measured against: the do-not-contact denial must PREEMPT the
-/// fail-closed pending, exactly as the restrictive-wins law requires.
+/// opt-out arm is measured against: the do-not-contact owner-decision hold
+/// must preempt the ordinary authority pending, retaining its specific reason.
 fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
@@ -118,41 +118,64 @@ fn write_do_not_contact(
     vault.put_claim(id, &claim, TimeRange { start: 1, end: 1 }, 1)
 }
 
+fn assert_opt_out_hold(result: &OutboundDispatchResult) {
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(result.gate_outcome, "pending");
+    assert_eq!(result.gate_reason_codes, vec![PENDING_OPT_OUT.to_owned()]);
+    assert_eq!(result.receipt.outcome, "held");
+    for reason in [PENDING_OPT_OUT, "counterparty_opt_out_do_not_contact"] {
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .iter()
+                .any(|code| code == reason),
+            "the opt-out hold retains its receipt reason: {reason}"
+        );
+    }
+    assert_eq!(
+        result.receipt.fields.get("hold_reason").map(String::as_str),
+        Some(PENDING_OPT_OUT)
+    );
+    assert!(!result.receipt.fields.contains_key("suppression"));
+    assert!(!result.receipt.fields.contains_key("suppression_reason"));
+    assert!(
+        !result.receipt.fields.contains_key("intent_state"),
+        "the gate hold stops before dispatch ledger admission"
+    );
+}
+
 #[test]
-fn do_not_contact_denies_the_shipping_send_path() -> Result<()> {
+fn do_not_contact_holds_the_shipping_send_path() -> Result<()> {
     let (_dir, vault, person) = oracle_vault();
     let mut sink = RecordingSink::default();
 
-    // Control: no suppression, so the deny reason is absent.
+    // Control: no suppression, so only the ordinary authority pending fires.
     let control = dispatch(&vault, "intent:control", &mut sink);
+    assert_eq!(control.gate_outcome, "pending");
+    assert_eq!(
+        control.gate_reason_codes,
+        vec!["gate.pending.external_effect_authority".to_owned()]
+    );
     assert!(
         !control
             .gate_reason_codes
             .iter()
-            .any(|code| code == DENY_OPT_OUT),
-        "unsuppressed dispatch must not raise the opt-out deny: {:?}",
+            .any(|code| code == PENDING_OPT_OUT),
+        "unsuppressed dispatch must not raise the opt-out hold: {:?}",
         control.gate_reason_codes
     );
 
     write_do_not_contact(&vault, &test_id(0x74), person, Some(CHANNEL), VERB)?;
 
-    let denied = dispatch(&vault, "intent:suppressed", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert_eq!(denied.gate_reason_codes, vec![DENY_OPT_OUT.to_owned()]);
-    assert!(
-        denied
-            .receipt
-            .policy_trace
-            .contains(&DENY_OPT_OUT.to_owned()),
-        "the denial must reach the receipt: {:?}",
-        denied.receipt.policy_trace
-    );
-    assert_eq!(sink.calls, 0, "no suppressed send may reach the transport");
+    let held = dispatch(&vault, "intent:suppressed", &mut sink);
+    assert_opt_out_hold(&held);
+    assert_eq!(sink.calls, 0, "no held send may reach the transport");
     Ok(())
 }
 
 #[test]
-fn do_not_contact_scope_and_channel_bound_the_deny() -> Result<()> {
+fn do_not_contact_scope_and_channel_bound_the_hold() -> Result<()> {
     let (_dir, vault, person) = oracle_vault();
     let mut sink = RecordingSink::default();
 
@@ -163,7 +186,12 @@ fn do_not_contact_scope_and_channel_bound_the_deny() -> Result<()> {
         !other_channel
             .gate_reason_codes
             .iter()
-            .any(|code| code == DENY_OPT_OUT)
+            .any(|code| code == PENDING_OPT_OUT)
+    );
+    assert_eq!(other_channel.gate_outcome, "pending");
+    assert_eq!(
+        other_channel.gate_reason_codes,
+        vec!["gate.pending.external_effect_authority".to_owned()]
     );
 
     // Nor does one scoped to a verb this dispatch is not performing.
@@ -173,7 +201,12 @@ fn do_not_contact_scope_and_channel_bound_the_deny() -> Result<()> {
         !other_scope
             .gate_reason_codes
             .iter()
-            .any(|code| code == DENY_OPT_OUT)
+            .any(|code| code == PENDING_OPT_OUT)
+    );
+    assert_eq!(other_scope.gate_outcome, other_channel.gate_outcome);
+    assert_eq!(
+        other_scope.gate_reason_codes,
+        other_channel.gate_reason_codes
     );
 
     // The channel-wildcard, scope-wildcard row covers everything.
@@ -184,10 +217,9 @@ fn do_not_contact_scope_and_channel_bound_the_deny() -> Result<()> {
         None,
         DO_NOT_CONTACT_SCOPE_ALL,
     )?;
-    let denied = dispatch(&vault, "intent:wildcard", &mut sink);
-    assert_eq!(denied.gate_outcome, "deny");
-    assert_eq!(denied.gate_reason_codes, vec![DENY_OPT_OUT.to_owned()]);
-    assert_eq!(sink.calls, 0, "no suppressed send may reach the transport");
+    let held = dispatch(&vault, "intent:wildcard", &mut sink);
+    assert_opt_out_hold(&held);
+    assert_eq!(sink.calls, 0, "no held send may reach the transport");
     Ok(())
 }
 

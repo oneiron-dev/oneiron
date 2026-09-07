@@ -767,6 +767,10 @@ fn latest_hold_token(
 #[test]
 fn confirm_revalidates_after_new_busy_event() {
     let fixture = Fixture::open();
+    fixture
+        .vault
+        .install_imported_source_permit_for_test(fixture.actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let slot = slot_of(&fixture.offered_slots()[0]);
     let visitor = session(b"visitor-one");
     let hold = expect_held(
