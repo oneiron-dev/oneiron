@@ -38,6 +38,15 @@
 
 use rmpv::Value;
 
+mod validation;
+
+#[cfg(feature = "sync")]
+pub(crate) use validation::substrate_subject_pending;
+pub(crate) use validation::{
+    validate_person_substrate_claim_in_session, validate_person_substrate_claim_in_txn,
+    validate_person_substrate_claim_structure,
+};
+
 use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -106,10 +115,14 @@ impl Vault {
         write_actor_subject_anchor(self, anchor, *writer, learned_at)
     }
 
-    /// Resolves an anchor through the existing identity redirect projection.
-    pub fn actor_subject_anchor(&self, actor_ref: &EntityId) -> Result<Option<ActorSubjectAnchor>> {
+    /// Resolves an anchor eligible at caller time `at` through current identity redirects.
+    pub fn actor_subject_anchor(
+        &self,
+        actor_ref: &EntityId,
+        at: u64,
+    ) -> Result<Option<ActorSubjectAnchor>> {
         let rtxn = self.store.env.read_txn()?;
-        actor_subject_anchor_in_txn(self, &rtxn, actor_ref)
+        actor_subject_anchor_in_txn(self, &rtxn, actor_ref, at)
     }
 
     /// Records a PERSON's substrate using the checked claim door.
@@ -123,9 +136,13 @@ impl Vault {
         set_person_substrate(self, person_ref, substrate, *writer, learned_at)
     }
 
-    /// Reads the PERSON's active substrate, refusing malformed claims.
-    pub fn person_substrate(&self, person_ref: &EntityId) -> Result<Option<PersonSubstrate>> {
-        person_substrate(self, person_ref)
+    /// Reads the PERSON's substrate eligible at caller time `at`, refusing malformed claims.
+    pub fn person_substrate(
+        &self,
+        person_ref: &EntityId,
+        at: u64,
+    ) -> Result<Option<PersonSubstrate>> {
+        person_substrate(self, person_ref, at)
     }
 }
 
@@ -267,9 +284,13 @@ fn write_actor_subject_anchor(
 /// confidently wrong person onto every routed event, which is strictly worse
 /// than the honest "no determinate subject" that a caller already has to
 /// handle for plumbing. A zero-head split reads `None` for the same reason.
-pub fn actor_subject_anchor(vault: &Vault, actor_ref: &EntityId) -> Result<Option<EntityId>> {
+pub fn actor_subject_anchor(
+    vault: &Vault,
+    actor_ref: &EntityId,
+    at: u64,
+) -> Result<Option<EntityId>> {
     Ok(vault
-        .actor_subject_anchor(actor_ref)?
+        .actor_subject_anchor(actor_ref, at)?
         .map(|anchor| anchor.subject_ref))
 }
 
@@ -277,8 +298,10 @@ pub(crate) fn actor_subject_anchor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor_ref: &EntityId,
+    at: u64,
 ) -> Result<Option<ActorSubjectAnchor>> {
-    let Some(value) = single_subject_value(vault, txn, actor_ref, PREDICATE_ACTOR_SUBJECT_REF)? else {
+    let Some(value) = single_subject_value(vault, txn, actor_ref, PREDICATE_ACTOR_SUBJECT_REF, at)?
+    else {
         return Ok(None);
     };
     let stored = value
@@ -337,11 +360,7 @@ pub fn set_person_substrate(
     vault.with_write_txn(|wtxn| {
         validate_writer_in_txn(vault, wtxn, writer)?;
         vault.verify_owner_write_actor_in_txn(wtxn, &writer)?;
-        if vault.get_entity_type_in_txn(wtxn, &person_ref)? != Some(ENTITY_TYPE_PERSON) {
-            return Err(Error::InvalidClaimBody(
-                "person.substrate subject must be a PERSON",
-            ));
-        }
+        validation::require_person_in_txn(&vault.store, wtxn, &person_ref)?;
         write_head_in_txn(vault, wtxn, &claim_id, &body, at)
     })?;
     Ok(claim_id)
@@ -369,9 +388,9 @@ fn write_head_in_txn(
     };
     let occurred = TimeRange { start: at, end: at };
     let superseded = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
-        active_person_substrate_bodies_in_txn(vault, wtxn, &subject)?
+        active_person_substrate_bodies_in_txn(vault, wtxn, &subject, at)?
     } else {
-        active_bodies_in_txn(vault, wtxn, &subject, &body.predicate)?
+        active_bodies_in_txn(vault, wtxn, &subject, &body.predicate, at)?
     };
     vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?;
     for (head_id, head_body) in superseded {
@@ -417,11 +436,7 @@ pub(crate) fn ensure_model_person_in_txn(
     writer: WriteActor,
     at: u64,
 ) -> Result<()> {
-    if vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
-        return Err(Error::InvalidClaimBody(
-            "person.substrate subject must be a PERSON",
-        ));
-    }
+    validation::require_person_in_txn(&vault.store, txn, &person)?;
     validate_writer_in_txn(vault, txn, writer)?;
     ensure_fact_in_txn(
         vault,
@@ -449,12 +464,12 @@ fn ensure_fact_in_txn(
         ));
     };
     let prior = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
-        active_person_substrate_bodies_in_txn(vault, txn, &subject)?
+        active_person_substrate_bodies_in_txn(vault, txn, &subject, at)?
             .pop()
             .map(|(_, body)| body.value)
     } else {
-        let prior = single_subject_value(vault, txn, &subject, &body.predicate)?;
-        if prior.is_some() && actor_subject_anchor_in_txn(vault, txn, &subject)?.is_none() {
+        let prior = single_subject_value(vault, txn, &subject, &body.predicate, at)?;
+        if prior.is_some() && actor_subject_anchor_in_txn(vault, txn, &subject, at)?.is_none() {
             return Err(Error::InvalidClaimBody(
                 "actor.subject_ref requires one canonical subject",
             ));
@@ -498,9 +513,13 @@ fn subject_fact(
 
 /// The substrate recorded for `person_ref`, if any, through identity redirects.
 /// Ambiguous identities and malformed or competing active claims are refused.
-pub fn person_substrate(vault: &Vault, person_ref: &EntityId) -> Result<Option<PersonSubstrate>> {
+pub fn person_substrate(
+    vault: &Vault,
+    person_ref: &EntityId,
+    at: u64,
+) -> Result<Option<PersonSubstrate>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut heads = active_person_substrate_bodies_in_txn(vault, &rtxn, person_ref)?;
+    let mut heads = active_person_substrate_bodies_in_txn(vault, &rtxn, person_ref, at)?;
     let Some((_, body)) = heads.pop() else {
         return Ok(None);
     };
@@ -519,9 +538,11 @@ fn active_person_substrate_bodies_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: &EntityId,
+    at: u64,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
     if vault.get_entity_type_in_txn(txn, person_ref)? != Some(ENTITY_TYPE_PERSON) {
-        if active_bodies_in_txn(vault, txn, person_ref, PREDICATE_PERSON_SUBSTRATE)?.is_empty() {
+        if active_bodies_in_txn(vault, txn, person_ref, PREDICATE_PERSON_SUBSTRATE, at)?.is_empty()
+        {
             return Ok(Vec::new());
         }
         return Err(Error::InvalidClaimBody(
@@ -551,7 +572,7 @@ fn active_person_substrate_bodies_in_txn(
         // Validate every reached path, including an empty shell at the inverse
         // walk's depth bound: truncation must not hide a more distant claim.
         let resolved = vault.resolve_entity_in_txn(txn, &subject)?;
-        let bodies = active_bodies_in_txn(vault, txn, &subject, PREDICATE_PERSON_SUBSTRATE)?;
+        let bodies = active_bodies_in_txn(vault, txn, &subject, PREDICATE_PERSON_SUBSTRATE, at)?;
         if bodies.is_empty() {
             continue;
         }
@@ -571,13 +592,9 @@ fn active_person_substrate_bodies_in_txn(
             ));
         }
         for (_, body) in &bodies {
-            let substrate = body
-                .value
-                .as_str()
-                .and_then(PersonSubstrate::parse)
-                .ok_or(Error::InvalidClaimBody(
-                    "person.substrate must be meat or model",
-                ))?;
+            let substrate = body.value.as_str().and_then(PersonSubstrate::parse).ok_or(
+                Error::InvalidClaimBody("person.substrate must be meat or model"),
+            )?;
             // `subject` is the STORED identity, checked by active_bodies_in_txn.
             // Never replace it with `canonical`: equal values on absorbed and
             // survivor records are still two distinct historical assertions.
@@ -594,10 +611,12 @@ fn active_person_substrate_bodies_in_txn(
     Ok(heads)
 }
 
-fn admissible_subject_head(body: &ClaimBody, subject: &EntityId, predicate: &str) -> bool {
+fn admissible_subject_head(body: &ClaimBody, subject: &EntityId, predicate: &str, at: u64) -> bool {
     body.subject == ClaimSubject::Entity(*subject)
         && body.predicate == predicate
         && body.lifecycle == ClaimLifecycleStatus::Active
+        && body.valid_from.is_none_or(|start| start <= at)
+        && body.valid_to.is_none_or(|end| at < end)
         && matches!(
             body.approval,
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
@@ -612,12 +631,13 @@ fn active_bodies_in_txn(
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
     predicate: &str,
+    at: u64,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
     let mut heads = Vec::new();
     // Keep the generic reader's bounded, fail-closed scan rather than bypassing
     // its ceiling. Ignore stale claim_of edges whose body names another subject.
     vault.find_claim_for_subject_in_txn(txn, subject, |id, body| {
-        if admissible_subject_head(body, subject, predicate) {
+        if admissible_subject_head(body, subject, predicate, at) {
             heads.push((*id, body.clone()));
         }
         None::<()>
@@ -631,8 +651,9 @@ fn single_subject_value(
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
     predicate: &str,
+    at: u64,
 ) -> Result<Option<Value>> {
-    let mut heads = active_bodies_in_txn(vault, txn, subject, predicate)?;
+    let mut heads = active_bodies_in_txn(vault, txn, subject, predicate, at)?;
     let Some((_, body)) = heads.pop() else {
         return Ok(None);
     };
@@ -673,9 +694,11 @@ fn validate_anchor_entities_in_txn(
     actor: EntityId,
     subject: EntityId,
 ) -> Result<()> {
-    let kind = vault.get_entity_type_in_txn(txn, &actor)?.ok_or(Error::InvalidClaimBody(
-        "actor.subject_ref actor must exist",
-    ))?;
+    let kind = vault
+        .get_entity_type_in_txn(txn, &actor)?
+        .ok_or(Error::InvalidClaimBody(
+            "actor.subject_ref actor must exist",
+        ))?;
     let class = match kind {
         ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF => {
             crate::edge::EdgeActorClass::Agent

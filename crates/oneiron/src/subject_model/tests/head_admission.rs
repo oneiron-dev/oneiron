@@ -5,7 +5,7 @@ type Exclude = fn(&mut ClaimBody);
 
 /// Exercise both replacement and ensure-if-absent for both owned predicates.
 /// Excluded claims remain byte-identical, including validity and approval.
-fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
+pub(super) fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
     for predicate in [PREDICATE_PERSON_SUBSTRATE, PREDICATE_ACTOR_SUBJECT_REF] {
         for replacing in [false, true] {
             let (_dir, vault) = test_vault();
@@ -46,7 +46,7 @@ fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
             {
                 let txn = vault.store.env.read_txn()?;
                 assert_eq!(
-                    single_subject_value(&vault, &txn, &subject, predicate)?,
+                    single_subject_value(&vault, &txn, &subject, predicate, 200)?,
                     replacing.then_some(old_value)
                 );
             }
@@ -57,7 +57,7 @@ fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
                     ensure_model_person(&vault, subject, writer(), 200)?;
                 }
                 assert_eq!(
-                    person_substrate(&vault, &subject)?,
+                    person_substrate(&vault, &subject, 200)?,
                     Some(PersonSubstrate::Model)
                 );
             } else {
@@ -66,11 +66,14 @@ fn assert_excluded_history_survives(exclude: Exclude) -> Result<()> {
                 } else {
                     ensure_actor_subject(&vault, subject, next_person, writer(), 200)?;
                 }
-                assert_eq!(actor_subject_anchor(&vault, &subject)?, Some(next_person));
+                assert_eq!(
+                    actor_subject_anchor(&vault, &subject, 200)?,
+                    Some(next_person)
+                );
             }
             let txn = vault.store.env.read_txn()?;
             assert_eq!(
-                single_subject_value(&vault, &txn, &subject, predicate)?,
+                single_subject_value(&vault, &txn, &subject, predicate, 200)?,
                 Some(next_value)
             );
             drop(txn);
@@ -174,24 +177,27 @@ fn another_subjects_indexed_head_is_neither_read_nor_superseded() -> Result<()> 
             .commit()?;
         let txn = vault.store.env.read_txn()?;
         assert_eq!(
-            single_subject_value(&vault, &txn, &subject, predicate)?,
+            single_subject_value(&vault, &txn, &subject, predicate, 200)?,
             None
         );
         drop(txn);
         if predicate == PREDICATE_PERSON_SUBSTRATE {
             set_person_substrate(&vault, subject, PersonSubstrate::Model, writer(), 200)?;
             assert_eq!(
-                person_substrate(&vault, &first)?,
+                person_substrate(&vault, &first, 200)?,
                 Some(PersonSubstrate::Meat)
             );
             assert_eq!(
-                person_substrate(&vault, &subject)?,
+                person_substrate(&vault, &subject, 200)?,
                 Some(PersonSubstrate::Model)
             );
         } else {
             anchor_actor_subject(&vault, subject, other, writer(), 200)?;
-            assert_eq!(actor_subject_anchor(&vault, &entity(0x8B))?, Some(first));
-            assert_eq!(actor_subject_anchor(&vault, &subject)?, Some(other));
+            assert_eq!(
+                actor_subject_anchor(&vault, &entity(0x8B), 200)?,
+                Some(first)
+            );
+            assert_eq!(actor_subject_anchor(&vault, &subject, 200)?, Some(other));
         }
         assert_eq!(vault.get(&id)?, before);
         assert!(

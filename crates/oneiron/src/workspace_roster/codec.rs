@@ -17,13 +17,14 @@ use super::*;
 pub(super) fn house_mind_entry(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
+    at: u64,
 ) -> Result<WorkspaceRosterEntry> {
     let display_name = preset
         .house_display_name
         .clone()
         .unwrap_or_else(|| preset.venture_name.clone());
     let subject_ref =
-        actor_subject_anchor(vault, &preset.house_actor_ref)?.unwrap_or(preset.org_ref);
+        actor_subject_anchor(vault, &preset.house_actor_ref, at)?.unwrap_or(preset.org_ref);
     Ok(WorkspaceRosterEntry {
         workspace_ref: preset.workspace_ref.clone(),
         role: WorkspaceRosterRole::HouseMind,
@@ -42,6 +43,7 @@ pub(super) fn companion_entry(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
     row: &RosterMemberRow,
+    at: u64,
 ) -> Result<WorkspaceRosterEntry> {
     let (Some(actor_ref), Some(person_ref), Some(_)) = (
         row.companion_actor_ref,
@@ -60,7 +62,7 @@ pub(super) fn companion_entry(
                 .unwrap_or_else(|| definition.agent_id.clone())
         })
         .unwrap_or_default();
-    let subject_ref = actor_subject_anchor(vault, &actor_ref)?.unwrap_or(person_ref);
+    let subject_ref = actor_subject_anchor(vault, &actor_ref, at)?.unwrap_or(person_ref);
     Ok(WorkspaceRosterEntry {
         workspace_ref: preset.workspace_ref.clone(),
         role: WorkspaceRosterRole::PrincipalCompanion,

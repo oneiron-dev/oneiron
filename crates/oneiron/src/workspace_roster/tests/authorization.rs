@@ -405,12 +405,12 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
         let outcome = vault.onboard_workspace_member(intent.clone(), &admin)?;
         let companion = intent.companion_birth.as_ref().expect("required companion");
         assert_eq!(
-            person_substrate(&vault, &companion.person_ref)?,
+            person_substrate(&vault, &companion.person_ref, AT)?,
             Some(PersonSubstrate::Model)
         );
         assert_eq!(outcome.companion_person_ref, Some(companion.person_ref));
         assert_eq!(
-            actor_subject_anchor(&vault, &intent.actor_ref)?,
+            actor_subject_anchor(&vault, &intent.actor_ref, AT)?,
             Some(intent.person_ref)
         );
         assert_eq!(

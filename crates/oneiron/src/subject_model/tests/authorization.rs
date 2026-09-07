@@ -116,13 +116,13 @@ fn unauthorized_reanchor_preserves_the_active_head_and_history() -> Result<()> {
         WriteActor::new(entity(0x76), EdgeActorClass::Human),
     ] {
         assert!(anchor_actor_subject(&vault, actor, other, untrusted, 101).is_err());
-        assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(first));
+        assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));
         assert_eq!(vault.get_claim(&claim)?, before);
         assert_eq!(vault.claims_for_subject(&actor)?.len(), count);
     }
     // The same valid re-anchor still works for the bound human owner.
     anchor_actor_subject(&vault, actor, other, writer(), 102)?;
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(other));
+    assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(other));
     assert_ne!(vault.get_claim(&claim)?, before);
     Ok(())
 }
@@ -189,7 +189,7 @@ fn public_reanchor_observes_revocation_committed_after_preflight() -> Result<()>
         ErrorKind::ActorLacksClaimAuthority
     );
     assert_eq!(vault.get_claim(&claim)?, before);
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(first));
+    assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));
     assert_eq!(vault.claims_for_subject(&actor)?.len(), 1);
     drop(vault);
     drop(dir);
@@ -213,6 +213,6 @@ fn unrooted_anchor_uses_canonical_human_owner_semantics() -> Result<()> {
     .expect_err("System is not an owner capability");
     assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
     anchor_actor_subject(&vault, actor, person, writer(), 101)?;
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(person));
+    assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(person));
     Ok(())
 }

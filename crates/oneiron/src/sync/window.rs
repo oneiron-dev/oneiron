@@ -1032,6 +1032,7 @@ pub fn forward_rematerialize(
         .collect();
     let mut healed: Vec<EntityId> = Vec::new();
     let mut terminal_quarantines: Vec<EntityId> = Vec::new();
+    let mut pending_substrate_subjects = HashSet::new();
 
     let mut count = 0u32;
 
@@ -1487,8 +1488,12 @@ pub fn forward_rematerialize(
                 }
                 Ok(false) => {}
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
-                    let retryable_quota =
-                        matches!(err, Error::MaintenanceIngestQuotaExceeded { .. });
+                    let subject_pending = crate::subject_model::substrate_subject_pending(&err);
+                    if subject_pending {
+                        pending_substrate_subjects.insert(id);
+                    }
+                    let retryable = subject_pending
+                        || matches!(err, Error::MaintenanceIngestQuotaExceeded { .. });
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
                         vault,
                         window_key.as_str(),
@@ -1498,7 +1503,7 @@ pub fn forward_rematerialize(
                         blob,
                     ) {
                         entity_error = Some(q_err);
-                    } else if !retryable_quota {
+                    } else if !retryable {
                         terminal_quarantines.push(id);
                     }
                 }
@@ -1882,6 +1887,11 @@ pub fn forward_rematerialize(
         }
     });
 
+    // An edge outcome is not proof that its source claim's missing PERSON
+    // arrived. Keep that replay pending; a successful tombstone purge may
+    // still discharge it through `cleared`, with delete-safety precedence.
+    healed.retain(|id| !pending_substrate_subjects.contains(id));
+    terminal_quarantines.retain(|id| !pending_substrate_subjects.contains(id));
     if !purge_failures.is_empty()
         || !cleared.is_empty()
         || !healed.is_empty()

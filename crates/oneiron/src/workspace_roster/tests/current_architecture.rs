@@ -100,7 +100,7 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
     assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
     assert_eq!(journal.completed_at, None);
     // The unfinished companion is not published in the roster.
-    assert_eq!(vault.workspace_roster("antevon-slack")?.len(), 1);
+    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 1);
     let mut changed = intent;
     changed
         .delegated_mailbox
@@ -242,7 +242,7 @@ fn a_second_onboarding_id_cannot_replace_a_principals_companion() -> Result<()> 
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert!(vault.get_entity_type(&entity(0xD1))?.is_none());
     vault.onboard_workspace_member(intent, &writer(WRITER))?;
-    assert_eq!(vault.workspace_roster("antevon-slack")?.len(), 2);
+    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
     Ok(())
 }
 
@@ -252,7 +252,7 @@ fn owner_house_name_override_is_runtime_data() -> Result<()> {
     intent.workspace.house_display_name = Some("Owner named house".to_owned());
     vault.onboard_workspace_member(intent, &writer(WRITER))?;
     assert_eq!(
-        vault.workspace_roster("antevon-slack")?[0].display_name,
+        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
         "Owner named house"
     );
     Ok(())
@@ -268,7 +268,7 @@ fn minted_kind_collision_is_rejected_before_the_first_effect() -> Result<()> {
         .expect_err("maintenance grant id cannot alias a person");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
-    assert!(actor_subject_anchor(&vault, &intent.workspace.house_actor_ref)?.is_none());
+    assert!(actor_subject_anchor(&vault, &intent.workspace.house_actor_ref, AT)?.is_none());
     Ok(())
 }
 
@@ -341,7 +341,7 @@ fn house_name_can_be_owner_edited_without_rewriting_the_seed_or_replay() -> Resu
         &writer(WRITER),
     )?;
     assert_eq!(
-        vault.workspace_roster("antevon-slack")?[0].display_name,
+        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
         "Renamed house"
     );
     assert_eq!(
@@ -357,12 +357,12 @@ fn house_name_can_be_owner_edited_without_rewriting_the_seed_or_replay() -> Resu
         .expect_err("outsider cannot rename the house");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_eq!(
-        vault.workspace_roster("antevon-slack")?[0].display_name,
+        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
         "Renamed house"
     );
     vault.set_workspace_house_display_name("antevon-slack", None, &writer(WRITER))?;
     assert_eq!(
-        vault.workspace_roster("antevon-slack")?[0].display_name,
+        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
         "Antevon"
     );
     Ok(())
