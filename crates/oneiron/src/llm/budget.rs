@@ -450,6 +450,7 @@ impl BudgetGuard {
         usage: &LlmUsage,
     ) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
         let call_used_units = llm_usage_units(usage);
         let absolute_used_units = state.used_units.saturating_add(call_used_units);
         let mut settled = None;
@@ -489,6 +490,7 @@ impl BudgetGuard {
         absolute_used_units: u64,
     ) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
         let mut settled = None;
         {
             let Some(record) = state.leases.get_mut(lease.id()) else {
@@ -522,6 +524,7 @@ impl BudgetGuard {
 
     pub fn abort(&self, lease: &BudgetLease) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
         let mut aborted = None;
         {
             let Some(record) = state.leases.get_mut(lease.id()) else {
@@ -604,6 +607,7 @@ enum ReservePlan {
 
 #[derive(Debug)]
 struct BudgetState {
+    guard_identity: Arc<()>,
     attempt_id: String,
     limit_units: u64,
     reserve_units: u64,
@@ -664,6 +668,7 @@ impl BudgetState {
             })
             .collect();
         Self {
+            guard_identity: Arc::new(()),
             attempt_id,
             limit_units,
             reserve_units,
@@ -680,6 +685,14 @@ impl BudgetState {
             row_horizons,
             shared_used_units: 0,
             shared_reserved_units: 0,
+        }
+    }
+
+    fn check_lease_provenance(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
+        if Arc::ptr_eq(&self.guard_identity, &lease.guard_identity) {
+            Ok(())
+        } else {
+            Err(BudgetDenied::LeaseInvalid)
         }
     }
 
@@ -914,7 +927,7 @@ impl BudgetState {
     ) -> BudgetLease {
         self.next_lease_seq = self.next_lease_seq.saturating_add(1);
         let lease_id = format!("{}:{kind}:{}", self.attempt_id, self.next_lease_seq);
-        let lease = BudgetLease::issued(lease_id.clone());
+        let lease = BudgetLease::issued(lease_id.clone(), Arc::clone(&self.guard_identity));
         self.leases.insert(
             lease_id,
             LeaseRecord {
