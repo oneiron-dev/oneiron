@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use super::*;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityFulfillment, SelfHeldShape};
 use crate::edge::EdgeActorClass;
+use crate::receipt::{ReceiptRecord, SendReceiptOutcome, persist_send_receipt};
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
@@ -40,10 +43,40 @@ fn review_scope(request: &ChannelIdentityAutonomyRequest) -> GraduationScopeKey 
         counterparty_class: Some("known".to_owned()) }
 }
 
-fn review(vault: &Vault, scope: &GraduationScopeKey, n: u64, outcome: DraftReviewOutcome) -> EntityId {
-    vault.record_graduation_evidence(GraduationEvidence { scope: scope.clone(), outcome,
-        receipt_ref: format!("review:{n:03}"), occurred_at: n },
-        &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)).unwrap()
+fn review_receipt(scope: &GraduationScopeKey, at: u64, outcome: &DraftReviewOutcome) -> ReceiptRecord {
+    let (review_outcome, distance) = match outcome {
+        DraftReviewOutcome::ApprovedUntouched => ("approved_untouched", None),
+        DraftReviewOutcome::ApprovedAmended { edit_distance_millis } => ("approved_amended", Some(*edit_distance_millis)),
+        DraftReviewOutcome::Rejected => ("rejected", None),
+        DraftReviewOutcome::Undone => ("undone", None),
+    };
+    let mut fields = BTreeMap::from([
+        ("channel_identity_ref".to_owned(), scope.identity_ref.to_hex()),
+        ("relationship_context".to_owned(), scope.relationship_context.as_str().to_owned()),
+        ("verb_class".to_owned(), scope.verb_class.clone()),
+        ("review_outcome".to_owned(), review_outcome.to_owned()),
+    ]);
+    if let Some(class) = &scope.counterparty_class { fields.insert("counterparty_class".to_owned(), class.clone()); }
+    if let Some(distance) = distance { fields.insert("edit_distance_millis".to_owned(), distance.to_string()); }
+    ReceiptRecord { receipt_id: format!("outbound-review:{}", EntityId::now().to_hex()),
+        receipt_kind: ReceiptKind::Outbound, occurred_at: at, actor: Some(scope.actor_ref.to_hex()),
+        on_behalf_of: None, outcome: "failed".to_owned(), job_ref: None, trigger_ref: None,
+        policy_trace: Vec::new(), fields }
+}
+
+fn persist_review(vault: &Vault, scope: &GraduationScopeKey, at: u64, outcome: DraftReviewOutcome) -> GraduationEvidence {
+    let receipt = review_receipt(scope, at, &outcome);
+    let evidence = GraduationEvidence { scope: scope.clone(), outcome,
+        receipt_ref: receipt.receipt_id.clone(), occurred_at: at };
+    assert!(persist_send_receipt(vault, EntityId::now(), receipt, SendReceiptOutcome::Failed, false, None).unwrap());
+    evidence
+}
+
+fn review(vault: &Vault, scope: &GraduationScopeKey, n: u64, outcome: DraftReviewOutcome) -> String {
+    let evidence = persist_review(vault, scope, n, outcome);
+    let reference = evidence.receipt_ref.clone();
+    vault.record_graduation_evidence(evidence, &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)).unwrap();
+    reference
 }
 
 fn snapshot(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -125,12 +158,12 @@ fn twelve_untouched_offers_graduation() {
     let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::SendWithApproval);
     vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
     let scope = review_scope(&request);
-    for n in 1..12 { review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched); }
+    let mut evidence_refs: Vec<_> = (1..12).map(|n| review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched)).collect();
     assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
-    review(&vault, &scope, 12, DraftReviewOutcome::ApprovedUntouched);
+    evidence_refs.push(review(&vault, &scope, 12, DraftReviewOutcome::ApprovedUntouched));
     let before = vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().unwrap();
     assert_eq!(before.unchanged_streak, 12);
-    assert_eq!(before.evidence_refs, (1..=12).map(|n| format!("review:{n:03}")).collect::<Vec<_>>());
+    assert_eq!(before.evidence_refs, evidence_refs);
     assert_eq!(Some(before.proposed_envelope.clone()), request.action_envelope);
     drop(vault);
     let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
@@ -240,15 +273,20 @@ fn evidence_is_attributed_deduplicated_and_scope_isolated() {
     let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
     vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
     let scope = review_scope(&request);
-    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
-        receipt_ref: "one-review".to_owned(), occurred_at: 1 };
+    let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
     assert!(vault.record_graduation_evidence(evidence.clone(), &WriteActor::new(entity(9), EdgeActorClass::Agent)).is_err());
     let actor = WriteActor::new(scope.actor_ref, EdgeActorClass::Agent);
-    let first = vault.record_graduation_evidence(evidence.clone(), &actor).unwrap();
-    for _ in 0..12 { assert_eq!(vault.record_graduation_evidence(evidence.clone(), &actor).unwrap(), first); }
+    vault.record_graduation_evidence(evidence.clone(), &actor).unwrap();
+    let before = snapshot(&vault);
+    for _ in 0..12 { assert!(vault.record_graduation_evidence(evidence.clone(), &actor).is_err()); }
+    assert!(vault.record_graduation_evidence_as_owner(evidence, &owner).is_err());
+    assert_eq!(snapshot(&vault), before);
     assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
-    let mut other = scope.clone(); other.counterparty_class = Some("other".to_owned());
-    for n in 1..=12 { review(&vault, &other, n, DraftReviewOutcome::ApprovedUntouched); }
+    for class in [Some("other".to_owned()), None] {
+        let mut other = scope.clone(); other.counterparty_class = class;
+        for n in 1..=12 { review(&vault, &other, n, DraftReviewOutcome::ApprovedUntouched); }
+        assert!(vault.evaluate_graduation_offer(&other, 0, crate::unix_seconds_now()).unwrap().is_none());
+    }
     assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
 }
 
@@ -267,6 +305,9 @@ fn owner_write_signatures_require_authenticated_owner() {
     let _: fn(&Vault, ChannelIdentityActionEnvelope, &AuthenticatedOwner, u64) -> Result<EntityId> = Vault::put_channel_identity_action_envelope;
     let _: fn(&Vault, ChannelIdentityAutonomyMode, &AuthenticatedOwner, u64) -> Result<EntityId> = Vault::set_channel_identity_autonomy_mode;
     let _: fn(&Vault, &EntityId, &ChannelIdentityEffectCandidate) -> Result<bool> = Vault::authorize_and_consume_channel_identity_grant;
+    let _: fn(&Vault, &ChannelIdentityAutonomyRequest, &AuthenticatedOwner) -> Result<ChannelIdentityAutonomyState> = Vault::apply_channel_identity_autonomy;
+    let _: fn(&Vault, &ChannelIdentityAutonomyRequest, &AuthenticatedOwner) -> Result<ChannelIdentityAutonomyState> = Vault::verify_channel_identity_autonomy;
+    let _: fn(&Vault, GraduationEvidence, &AuthenticatedOwner) -> Result<EntityId> = Vault::record_graduation_evidence_as_owner;
 }
 
 
@@ -386,11 +427,172 @@ fn owner_review_exception_requires_authentication_and_preserves_attribution() {
     let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
     vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
     let scope = review_scope(&request);
-    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
-        receipt_ref: "owner-review".to_owned(), occurred_at: 1 };
+    let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
+    let reference = evidence.receipt_ref.clone();
     assert!(vault.record_graduation_evidence(evidence.clone(), &WriteActor::new(owner.actor(), EdgeActorClass::Human)).is_err());
-    vault.record_graduation_evidence_as_owner(evidence, &owner).unwrap();
+    vault.record_graduation_evidence_as_owner(evidence.clone(), &owner).unwrap();
+    let before = snapshot(&vault);
+    assert!(vault.record_graduation_evidence_as_owner(evidence.clone(), &owner).is_err());
+    assert!(vault.record_graduation_evidence(evidence, &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)).is_err());
+    assert_eq!(snapshot(&vault), before);
     let offer = vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap();
     assert_eq!(offer.scope.actor_ref, request.actor_ref);
-    assert_eq!(offer.evidence_refs, ["owner-review"]);
+    assert_eq!(offer.evidence_refs, [reference]);
+}
+
+
+fn assert_review_rejected(vault: &Vault, owner: &AuthenticatedOwner, evidence: &GraduationEvidence) {
+    let before = snapshot(vault);
+    let actor = WriteActor::new(evidence.scope.actor_ref, EdgeActorClass::Agent);
+    assert!(vault.record_graduation_evidence(evidence.clone(), &actor).is_err());
+    assert!(vault.record_graduation_evidence_as_owner(evidence.clone(), owner).is_err());
+    assert_eq!(snapshot(vault), before, "rejection must not change evidence or grants");
+}
+
+#[test]
+fn graduation_evidence_requires_a_persisted_review_for_both_writers() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    let receipt = review_receipt(&scope, 1, &DraftReviewOutcome::ApprovedUntouched);
+    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+        receipt_ref: receipt.receipt_id.clone(), occurred_at: receipt.occurred_at };
+    // A plausible review object and a caller-created agent attribution prove nothing.
+    assert_review_rejected(&vault, &owner, &evidence);
+    let (_other_dir, other) = open_test_vault_with(embedding_test_config());
+    persist_send_receipt(&other, EntityId::now(), receipt.clone(), SendReceiptOutcome::Failed, false, None).unwrap();
+    assert_review_rejected(&vault, &owner, &evidence);
+    assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+    persist_send_receipt(&vault, EntityId::now(), receipt, SendReceiptOutcome::Failed, false, None).unwrap();
+    vault.record_graduation_evidence(evidence, &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)).unwrap();
+    assert_eq!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap().unchanged_streak, 1);
+}
+
+#[test]
+fn graduation_evidence_binds_every_scope_axis_outcome_and_time() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    // A second live identity for the same actor passes identity admission but
+    // must not borrow the first identity's persisted review.
+    let mut other_identity = vault.get_channel_identity(&scope.identity_ref).unwrap().unwrap();
+    other_identity.address_or_handle = "other@example.test".to_owned();
+    vault.create_channel_identity(&entity(0x62), &other_identity).unwrap();
+    let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
+    for axis in 0..10 {
+        let mut wrong = evidence.clone();
+        match axis {
+            0 => wrong.scope.identity_ref = entity(0x62),
+            1 => wrong.scope.actor_ref = entity(0x72),
+            2 => wrong.scope.relationship_context = RelationshipContext::PersonalFriends,
+            3 => wrong.scope.verb_class = "mail.draft".to_owned(),
+            4 => wrong.scope.counterparty_class = Some("other".to_owned()),
+            5 => wrong.scope.counterparty_class = None,
+            6 => wrong.outcome = DraftReviewOutcome::ApprovedAmended { edit_distance_millis: 1 },
+            7 => wrong.outcome = DraftReviewOutcome::Rejected,
+            8 => wrong.outcome = DraftReviewOutcome::Undone,
+            _ => wrong.occurred_at = 2,
+        }
+        assert_review_rejected(&vault, &owner, &wrong);
+    }
+    let amended = persist_review(&vault, &scope, 2, DraftReviewOutcome::ApprovedAmended { edit_distance_millis: 25 });
+    for outcome in [DraftReviewOutcome::ApprovedUntouched, DraftReviewOutcome::ApprovedAmended { edit_distance_millis: 24 }] {
+        let mut wrong = amended.clone(); wrong.outcome = outcome;
+        assert_review_rejected(&vault, &owner, &wrong);
+    }
+    assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+    vault.record_graduation_evidence_as_owner(evidence.clone(), &owner).unwrap();
+    // A caller may not overwrite that approval with an invented correction.
+    let mut correction = evidence; correction.outcome = DraftReviewOutcome::Rejected;
+    assert_review_rejected(&vault, &owner, &correction);
+    vault.record_graduation_evidence_as_owner(amended, &owner).unwrap();
+    assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+}
+
+#[test]
+fn graduation_rejects_ineligible_and_incompletely_bound_receipts() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    for missing in ["channel_identity_ref", "relationship_context", "verb_class", "counterparty_class", "review_outcome"] {
+        let mut receipt = review_receipt(&scope, 1, &DraftReviewOutcome::ApprovedUntouched);
+        receipt.fields.remove(missing);
+        let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+            receipt_ref: receipt.receipt_id.clone(), occurred_at: 1 };
+        persist_send_receipt(&vault, EntityId::now(), receipt, SendReceiptOutcome::Failed, false, None).unwrap();
+        assert_review_rejected(&vault, &owner, &evidence);
+    }
+    for case in 0..6 {
+        let mut receipt = review_receipt(&scope, 1, &DraftReviewOutcome::ApprovedUntouched);
+        match case {
+            0 => { receipt.actor = None; receipt.on_behalf_of = Some(scope.actor_ref.to_hex()); }
+            1 => { receipt.actor = Some(owner.actor().to_hex()); receipt.on_behalf_of = Some(scope.actor_ref.to_hex()); }
+            2 => { receipt.fields.insert("review_outcome".to_owned(), "allow".to_owned()); }
+            3 => { receipt.fields.insert("edit_distance_millis".to_owned(), "0".to_owned()); }
+            4 => { receipt.fields.insert("edit_distance_millis".to_owned(), "invalid".to_owned()); }
+            _ => { receipt.fields.remove("review_outcome"); }
+        }
+        // Delivery is not evidence that a human approved a draft untouched.
+        receipt.outcome = "delivered_to_channel".to_owned();
+        let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+            receipt_ref: receipt.receipt_id.clone(), occurred_at: 1 };
+        persist_send_receipt(&vault, EntityId::now(), receipt, SendReceiptOutcome::Delivered, true, None).unwrap();
+        assert_review_rejected(&vault, &owner, &evidence);
+    }
+    for distance in [None, Some("bad"), Some("4294967296"), Some("-1")] {
+        let outcome = DraftReviewOutcome::ApprovedAmended { edit_distance_millis: 1 };
+        let mut receipt = review_receipt(&scope, 1, &outcome);
+        receipt.fields.remove("edit_distance_millis");
+        if let Some(distance) = distance { receipt.fields.insert("edit_distance_millis".to_owned(), distance.to_owned()); }
+        let evidence = GraduationEvidence { scope: scope.clone(), outcome,
+            receipt_ref: receipt.receipt_id.clone(), occurred_at: 1 };
+        persist_send_receipt(&vault, EntityId::now(), receipt, SendReceiptOutcome::Failed, false, None).unwrap();
+        assert_review_rejected(&vault, &owner, &evidence);
+    }
+    assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+}
+
+#[test]
+fn graduation_rejects_ambiguous_persisted_receipt_ids() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    let receipt = review_receipt(&scope, 1, &DraftReviewOutcome::ApprovedUntouched);
+    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+        receipt_ref: receipt.receipt_id.clone(), occurred_at: 1 };
+    persist_send_receipt(&vault, EntityId::now(), receipt.clone(), SendReceiptOutcome::Failed, false, None).unwrap();
+    let mut ambiguous = receipt;
+    // Even a conflicting actor/time/outcome cannot hide behind query filters.
+    ambiguous.actor = Some(entity(0x72).to_hex());
+    ambiguous.occurred_at = 2;
+    ambiguous.fields.insert("review_outcome".to_owned(), "rejected".to_owned());
+    persist_send_receipt(&vault, EntityId::now(), ambiguous, SendReceiptOutcome::Failed, false, None).unwrap();
+    assert_review_rejected(&vault, &owner, &evidence);
+    assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+}
+
+#[test]
+fn graduation_duplicate_admission_is_atomic_and_survives_reopen() {
+    let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
+    let barrier = std::sync::Barrier::new(8);
+    let accepted = std::thread::scope(|threads| {
+        let handles: Vec<_> = (0..8).map(|_| {
+            let vault = &vault; let evidence = &evidence; let barrier = &barrier;
+            threads.spawn(move || {
+                barrier.wait();
+                vault.record_graduation_evidence(evidence.clone(),
+                    &WriteActor::new(evidence.scope.actor_ref, EdgeActorClass::Agent)).is_ok()
+            })
+        }).collect();
+        handles.into_iter().map(|h| usize::from(h.join().unwrap())).sum::<usize>()
+    });
+    assert_eq!(accepted, 1);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    assert_review_rejected(&reopened, &owner, &evidence);
+    assert_eq!(reopened.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap().evidence_refs,
+        [evidence.receipt_ref]);
 }

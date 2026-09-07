@@ -442,15 +442,12 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
     validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
 
     let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if !matches!(version, Some(1 | 2)) {
+    if version != Some(ACCESS_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
     let principal_ref = decode_entity_ref(required_value(entries, KEY_PRINCIPAL_REF)?)?;
     let scope = decode_scope(required_value(entries, KEY_SCOPE)?)?;
-    if version == Some(1) && matches!(scope, AccessGrantScope::ChannelIdentity { .. }) {
-        return Err(invalid_grant());
-    }
     let capability = required_value(entries, KEY_CAPABILITY)?
         .as_str()
         .and_then(AccessGrantCapability::parse)

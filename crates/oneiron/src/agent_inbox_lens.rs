@@ -51,11 +51,11 @@ impl Vault {
         // scan cannot prove impact top-N, so reject instead of returning a
         // silently count-biased pile. The receipt substrate owns this cap.
         let cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN;
-        let receipts = self.receipts(ReceiptQuery::new(cap).with_kind(ReceiptKind::Outbound))?;
-        if receipts.len() == cap {
+        let scan = self.scan_receipts(ReceiptQuery::new(cap).with_kind(ReceiptKind::Outbound))?;
+        if !scan.complete {
             return Err(Error::InvalidConfig("inbox receipt scan is incomplete".to_owned()));
         }
-        project_approval_required(&receipts, query)
+        project_approval_required(&scan.records, query)
     }
 }
 

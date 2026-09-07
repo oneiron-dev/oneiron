@@ -69,7 +69,7 @@ fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
 }
 
 #[test]
-fn schema_v1_contact_grant_with_legacy_five_key_scope_decodes() -> Result<()> {
+fn schema_v1_contact_grant_with_five_key_scope_is_rejected() -> Result<()> {
     let grant = StandingOutboundGrant::from_grant_mint_intent(
         &intent(GrantMintIntentScope::Contact {
             contact_ref: "contact:legacy".to_owned(),
@@ -78,7 +78,7 @@ fn schema_v1_contact_grant_with_legacy_five_key_scope_decodes() -> Result<()> {
         vec![0xA5; 32],
         [0xB6; 32],
     )?;
-    let legacy_value = Value::Map(vec![
+    let mut legacy_value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(1_u64),
@@ -126,8 +126,15 @@ fn schema_v1_contact_grant_with_legacy_five_key_scope_decodes() -> Result<()> {
     rmpv::encode::write_value(&mut encoded, &legacy_value)
         .expect("encode legacy schema-v1 grant fixture");
 
-    // Discriminating: strict nine-key scope validation rejects this legacy
-    // on-disk row because it contains only the original five scope keys.
+    assert_eq!(decode_standing_outbound_grant_body(&encoded).unwrap_err().kind(),
+        crate::ErrorKind::InvalidOutboundGrantBody);
+    assert!(validate_standing_outbound_grant_body_bytes(&encoded).is_err());
+
+    // The version, not the pre-existing scope shape, causes the rejection.
+    let Value::Map(entries) = &mut legacy_value else { panic!("map"); };
+    entries[0].1 = Value::from(OUTBOUND_GRANT_SCHEMA_VERSION);
+    encoded.clear();
+    rmpv::encode::write_value(&mut encoded, &legacy_value).unwrap();
     assert_eq!(decode_standing_outbound_grant_body(&encoded)?, grant);
     Ok(())
 }
@@ -624,7 +631,7 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
 
 
 #[test]
-fn schema_v2_carries_every_landed_outbound_scope_and_v1_body() -> Result<()> {
+fn schema_v2_carries_every_outbound_scope_and_rejects_other_versions() -> Result<()> {
     use crate::test_util::entity;
     let scopes = [
         StandingOutboundGrantScope::Contact { contact_ref: "contact:1".to_owned() },
@@ -643,20 +650,21 @@ fn schema_v2_carries_every_landed_outbound_scope_and_v1_body() -> Result<()> {
         grant.scope = scope;
         let bytes = encode_standing_outbound_grant_body(&grant)?;
         assert_eq!(decode_standing_outbound_grant_body(&bytes)?, grant);
-        let mut legacy = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
-        let Value::Map(entries) = &mut legacy else { panic!("map"); };
+        let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
+        let Value::Map(entries) = value else { panic!("map"); };
         assert_eq!(entries[0].1, Value::from(2_u64));
-        entries[0].1 = Value::from(1_u64);
-        let mut legacy_bytes = Vec::new();
-        rmpv::encode::write_value(&mut legacy_bytes, &legacy).unwrap();
+        for version in [Value::from(0_u64), Value::from(1_u64), Value::from(3_u64),
+            Value::from(-1), Value::from("2"), Value::from(2.0), Value::Nil] {
+            let mut invalid = entries.clone();
+            invalid[0].1 = version;
+            let mut invalid_bytes = Vec::new();
+            rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
+            assert_eq!(decode_standing_outbound_grant_body(&invalid_bytes).unwrap_err().kind(),
+                crate::ErrorKind::InvalidOutboundGrantBody);
+            assert!(validate_standing_outbound_grant_body_bytes(&invalid_bytes).is_err());
+        }
         if matches!(grant.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }) {
-            assert!(decode_standing_outbound_grant_body(&legacy_bytes).is_err());
             assert!(!grant.scope.matches_effect("mail.send", "email", None, None));
-        } else {
-            assert_eq!(decode_standing_outbound_grant_body(&legacy_bytes)?, grant);
-            assert_eq!(encode_standing_outbound_grant_body(&decode_standing_outbound_grant_body(&legacy_bytes)?)?, bytes);
-            assert_eq!(legacy_bytes.len(), bytes.len());
-            assert_eq!(legacy_bytes.iter().zip(&bytes).filter(|(a, b)| a != b).count(), 1);
         }
     }
     Ok(())

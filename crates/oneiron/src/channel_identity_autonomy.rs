@@ -19,6 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_grant::{StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
     standing_outbound_grant_in_txn};
+use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::write_envelope::WriteActor;
 
 pub const CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION: u64 = 1;
@@ -649,8 +650,9 @@ fn scope_value(scope: &GraduationScopeKey) -> Result<Value> {
 }
 
 impl Vault {
-    /// Attributed, durable evidence. A receipt is counted at most once per scope;
-    /// an amended/rejected/undone correction may replace its earlier approval.
+    /// Attributed evidence of a persisted outbound review, never caller proof.
+    /// Duplicate receipts are rejected; corrections need their own review receipt.
+    /// `WriteActor` supplies attribution only, not review authentication.
     pub fn record_graduation_evidence(&self, evidence: GraduationEvidence, actor: &WriteActor) -> Result<EntityId> {
         if actor.entity_ref() != evidence.scope.actor_ref || actor.actor_class() != crate::edge::EdgeActorClass::Agent {
             return Err(invalid_autonomy());
@@ -671,6 +673,7 @@ impl Vault {
         let scope = scope_value(&evidence.scope)?;
         token(&evidence.receipt_ref)?;
         if evidence.occurred_at > crate::unix_seconds_now() { return Err(invalid_autonomy()); }
+        let (outcome, distance) = self.validate_graduation_review(&evidence)?;
         let mut txn = self.store.env.write_txn()?;
         if self.autonomy_identity_actor(&txn, evidence.scope.identity_ref)? != evidence.scope.actor_ref {
             return Err(invalid_autonomy());
@@ -679,22 +682,42 @@ impl Vault {
         let reference = address("evidence", &Value::Array(vec![scope, Value::from(evidence.receipt_ref.clone())]))?;
         let mut key = prefix;
         key.extend_from_slice(reference.as_bytes());
-        let (outcome, distance) = match evidence.outcome {
-            DraftReviewOutcome::ApprovedUntouched => ("approved_untouched", Value::Nil),
-            DraftReviewOutcome::ApprovedAmended { edit_distance_millis } => ("approved_amended", Value::from(edit_distance_millis)),
-            DraftReviewOutcome::Rejected => ("rejected", Value::Nil),
-            DraftReviewOutcome::Undone => ("undone", Value::Nil),
-        };
         let value = Value::Array(vec![Value::from(evidence.receipt_ref), Value::from(outcome), distance,
             id_value(evidence.scope.actor_ref), Value::from(owner_authenticated)]);
-        if self.store.vault_meta.get(&txn, &key)?.is_some() {
-            let (_, at, old) = self.autonomy_row(&txn, &key)?;
-            if old == value && at == evidence.occurred_at { return Ok(reference); }
-            if outcome == "approved_untouched" || evidence.occurred_at < at { return Err(invalid_autonomy()); }
-        }
+        if self.store.vault_meta.get(&txn, &key)?.is_some() { return Err(invalid_autonomy()); }
         self.write_autonomy_row(&mut txn, &key, writer, evidence.occurred_at, value)?;
         txn.commit()?;
         Ok(reference)
+    }
+
+    // A transport outcome alone is not a draft review. Eligible outbound rows
+    // carry an explicit review_outcome and the exact graduation scope fields.
+    // Resolve before opening the write txn: the receipt door owns its read txns
+    // and send audit receipts are append-only. No actor/time filter may hide an
+    // ambiguous receipt id; all durable outbound rows must remain visible.
+    fn validate_graduation_review(&self, evidence: &GraduationEvidence) -> Result<(&'static str, Value)> {
+        let receipts = self.receipts(ReceiptQuery::new(usize::MAX).with_kind(ReceiptKind::Outbound))?;
+        let mut matches = receipts.iter().filter(|r| r.receipt_id == evidence.receipt_ref);
+        let receipt = matches.next().ok_or_else(invalid_autonomy)?;
+        if matches.next().is_some() { return Err(invalid_autonomy()); }
+        let field = |key: &str| receipt.fields.get(key).map(String::as_str);
+        let (outcome, distance) = match &evidence.outcome {
+            DraftReviewOutcome::ApprovedUntouched => ("approved_untouched", None),
+            DraftReviewOutcome::ApprovedAmended { edit_distance_millis } => ("approved_amended", Some(*edit_distance_millis)),
+            DraftReviewOutcome::Rejected => ("rejected", None),
+            DraftReviewOutcome::Undone => ("undone", None),
+        };
+        if receipt.actor.as_deref() != Some(evidence.scope.actor_ref.to_hex().as_str())
+            || receipt.occurred_at != evidence.occurred_at
+            || field(crate::receipt::FIELD_TASK_REF).and_then(|v| EntityId::from_hex(v).ok()).is_none()
+            || field("channel_identity_ref") != Some(evidence.scope.identity_ref.to_hex().as_str())
+            || field("relationship_context") != Some(evidence.scope.relationship_context.as_str())
+            || field("verb_class") != Some(evidence.scope.verb_class.as_str())
+            || field("counterparty_class") != evidence.scope.counterparty_class.as_deref()
+            || field("review_outcome") != Some(outcome)
+            || field("edit_distance_millis") != distance.map(|d| d.to_string()).as_deref()
+        { return Err(invalid_autonomy()); }
+        Ok((outcome, distance.map_or(Value::Nil, Value::from)))
     }
 
     /// Pure evaluation: zero selects the pinned default of twelve. The proposal

@@ -499,8 +499,8 @@ fn shared_brief_grant() -> AccessGrant {
 }
 
 #[test]
-fn shared_brief_adds_only_v1_scope_and_capability() -> Result<()> {
-    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 1);
+fn shared_brief_preserves_scope_and_capability_in_schema_v2() -> Result<()> {
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
     let grant = shared_brief_grant();
     assert_eq!(grant.capability.as_str(), "brief.share.read");
     let bytes = encode_access_grant_body(&grant)?;
@@ -514,7 +514,7 @@ fn shared_brief_adds_only_v1_scope_and_capability() -> Result<()> {
         decode_access_grant_body(&encode_access_grant_body(&revoked)?)?,
         revoked
     );
-    // Independently authored v1 maps pin both pre-existing wire shapes.
+    // Independently authored v2 maps pin both pre-existing scope wire shapes.
     assert_eq!(
         encode_access_grant_body(&test_grant())?,
         grant_map(valid_entries())
@@ -626,7 +626,7 @@ fn shared_brief_codec_rejects_unknown_duplicate_and_malformed_scope() -> Result<
 
 
 #[test]
-fn schema_v2_carries_every_landed_access_scope_and_v1_body() -> Result<()> {
+fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<()> {
     let scopes = [
         AccessGrantScope::companion_profile(entity(0xB1), entity(0xC1)),
         AccessGrantScope::calendar(entity(0xB2), DisclosureRung::Titles),
@@ -640,20 +640,17 @@ fn schema_v2_carries_every_landed_access_scope_and_v1_body() -> Result<()> {
             status: AccessGrantStatus::Active, created_at: 42, revoked_at: None };
         let bytes = encode_access_grant_body(&grant)?;
         assert_eq!(decode_access_grant_body(&bytes)?, grant);
-        let mut legacy = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
-        let Value::Map(entries) = &mut legacy else { panic!("map"); };
+        let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
+        let Value::Map(entries) = value else { panic!("map"); };
         assert_eq!(entries[0].1, Value::from(2_u64));
-        entries[0].1 = Value::from(1_u64);
-        let legacy_bytes = encode_value(&legacy);
-        if matches!(grant.scope, AccessGrantScope::ChannelIdentity { .. }) {
-            assert!(decode_access_grant_body(&legacy_bytes).is_err());
-        } else {
-            assert_eq!(decode_access_grant_body(&legacy_bytes)?, grant);
-            // Only the schema byte changes. Every landed scope payload stays byte-identical.
-            let decoded = decode_access_grant_body(&legacy_bytes)?;
-            assert_eq!(encode_access_grant_body(&decoded)?, bytes);
-            assert_eq!(legacy_bytes.len(), bytes.len());
-            assert_eq!(legacy_bytes.iter().zip(&bytes).filter(|(a, b)| a != b).count(), 1);
+        for version in [Value::from(0_u64), Value::from(1_u64), Value::from(3_u64),
+            Value::from(-1), Value::from("2"), Value::from(2.0), Value::Nil] {
+            let mut invalid = entries.clone();
+            invalid[0].1 = version;
+            let invalid_bytes = grant_map(invalid);
+            assert_eq!(decode_access_grant_body(&invalid_bytes).unwrap_err().kind(),
+                ErrorKind::InvalidAccessGrantBody);
+            assert!(validate_access_grant_body_bytes(&invalid_bytes).is_err());
         }
     }
     Ok(())

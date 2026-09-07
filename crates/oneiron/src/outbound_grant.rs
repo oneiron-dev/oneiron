@@ -550,7 +550,7 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
     validate_keys(entries, &OUTBOUND_GRANT_TOP_LEVEL_KEYS)?;
 
     let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if !matches!(version, Some(1 | 2)) {
+    if version != Some(OUTBOUND_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
@@ -583,11 +583,6 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
         )?)?,
         read_frontier_hash: decode_hash32(required_value(entries, KEY_READ_FRONTIER_HASH)?)?,
     };
-    if version == Some(1)
-        && matches!(grant.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { .. })
-    {
-        return Err(invalid_grant());
-    }
     grant.validate()?;
     Ok(grant)
 }
