@@ -390,7 +390,7 @@ pub fn origin_repo_dir(vault: &Vault, repo_name: &str) -> Result<PathBuf> {
 /// A derived admission record — NOT an identity type and NOT a credential
 /// store.
 ///
-/// It is minted from the canonical [`DoorCredential`] when a capability slip is
+/// It is minted from the canonical `DoorCredential` when a capability slip is
 /// presented, and otherwise from the registered principal the transport already
 /// proved. There is no `DoorActor` anywhere in this surface: nothing here mints
 /// a second identity, and the stamp holds no token material.
@@ -675,7 +675,7 @@ pub struct ServeCommand {
 
 impl ServeCommand {
     /// Builds the one serve invocation: `git -c core.hooksPath=<door dir>
-    /// http-backend`, with the pinned git executable as argv[0].
+    /// http-backend`, with the pinned git executable as `argv[0]`.
     ///
     /// `core.hooksPath` travels in argv rather than the environment because it
     /// is a git config key; `git -c` gives it command-line precedence and
