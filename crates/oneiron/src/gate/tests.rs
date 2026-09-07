@@ -15552,8 +15552,8 @@ mod auto_checker {
         Ok(())
     }
 
-    /// Reuse the signed checker fixture, but permit the BENIGN declared source
-    /// for exactly one actor. Restricted history still needs this explicit row.
+    /// Reuse the signed checker fixture, but permit the restricted ToolOutput
+    /// lineage member for exactly one actor, not the benign Observed declaration.
     fn lineage_manifest(knob: Option<&str>, permit_actor: Option<EntityId>) -> Vec<u8> {
         let mut data = checker_manifest(knob.map(checker_entry).into_iter().collect());
         rewrite_policy_manifest_entries(&mut data, |entries| {
@@ -15687,6 +15687,13 @@ mod auto_checker {
                 ClaimSource::Observed,
                 "history never relabels the candidate"
             );
+            assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
+            let request =
+                crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
+            let crate::llm::ContentPart::Text { text } = &request.messages[1].content[0] else {
+                panic!("checker request must carry candidate text");
+            };
+            assert!(text.contains("\nsource: observed\nlineage: observed, tool_output\n"));
             assert_eq!(seen[0].actor_class, "agent");
             assert_eq!(seen[0].predicate, "profile.name");
             assert_eq!(seen[0].value_preview, "Ada Lovelace");
@@ -15734,6 +15741,76 @@ mod auto_checker {
             );
             assert_eq!(records[0].receipt_reasons, receipt_reasons);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn source_aware_checker_holds_tool_output_history_with_observed_declaration() -> Result<()> {
+        use crate::write_envelope::SourceLineage;
+
+        struct SourceAwareChecker {
+            calls: AtomicUsize,
+        }
+
+        impl AutoChecker for SourceAwareChecker {
+            fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+                let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+                if candidate.source == ClaimSource::ToolOutput
+                    || candidate
+                        .lineage
+                        .is_some_and(|lineage| lineage.contains(ClaimSource::ToolOutput))
+                {
+                    AutoCheckOutcome::Hold {
+                        reasons: vec![HOLD_REASON.to_owned()],
+                    }
+                } else {
+                    AutoCheckOutcome::Allow
+                }
+            }
+        }
+
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x22),
+            &lineage_manifest(
+                Some(CHECKER_REF),
+                Some(first_party_eiri_connector_actor_id()),
+            ),
+        )?;
+        let claim_id = test_id(0x33);
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let (candidate, envelope) = benign_source_lineage_parts(&vault, &body, true, false)?;
+        let checker = Arc::new(SourceAwareChecker {
+            calls: AtomicUsize::new(0),
+        });
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+        let error = commit_lineage_candidate(
+            &vault,
+            &claim_id,
+            candidate,
+            &envelope,
+            Some(&bounded_checker),
+        )
+        .expect_err("the checker must see the ToolOutput history behind Observed");
+        let (outcome, reasons) = gate_rejection_parts(error);
+        assert_eq!(outcome, "pending");
+        assert_eq!(reasons, ["gate.pending.checker"]);
+        assert_eq!(checker.calls.load(AtomicOrdering::Relaxed), 1);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+
+        // Pure Observed bypasses the gate's consult. Ask the host directly to
+        // prove it allows that same declaration when ToolOutput is absent.
+        let observed_lineage = SourceLineage::of(ClaimSource::Observed);
+        let observed = AutoCheckCandidate {
+            predicate: &body.predicate,
+            value_preview: "Ada Lovelace",
+            source: ClaimSource::Observed,
+            lineage: Some(&observed_lineage),
+            actor_class: "agent",
+            sensitivity_band: Some(0),
+        };
+        assert_eq!(checker.check(&observed), AutoCheckOutcome::Allow);
         Ok(())
     }
 
