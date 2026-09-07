@@ -240,6 +240,14 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(crate::vault_cleanup::cleanup_receipts(vault, query)?);
     }
 
+    // The OF-361 pre-extraction screen (ONE-1525): what the Dreamer declined
+    // to spend extraction budget on. Its own kind, own store, own field class
+    // — a budget estimate is not a gate ruling — and its own read txn, so like
+    // the Gate projectors above it runs before the shared `rtxn` below.
+    if query.includes_kind(ReceiptKind::Extraction) {
+        records.extend(crate::dreamer_prefilter::prefilter_receipts(vault, query)?);
+    }
+
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(channel_identity_lifecycle_receipts(vault, query)?);
     }

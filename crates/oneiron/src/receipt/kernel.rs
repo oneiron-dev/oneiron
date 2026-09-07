@@ -194,6 +194,52 @@ pub(crate) const FIELD_SKILL_EDIT_DISPOSITION: &str = "skill_edit_disposition";
 /// Comma-joined cited `source_messages` ids that no longer resolve, on a
 /// source-liveness refusal.
 pub(crate) const FIELD_SKILL_EDIT_MISSING_SOURCES: &str = "skill_edit_missing_sources";
+/// The OF-361 PRE-EXTRACTION field class (ONE-1525, ORF-2).
+///
+/// Unlike the escalation and skill-edit classes above, these keys do NOT need
+/// a projector discriminator: they ride [`ReceiptKind::Extraction`], which
+/// this class mints and `crate::dreamer_prefilter` is the only writer of. The
+/// names are therefore the plain ones — a reader of an extraction receipt is
+/// already in one family. They are `pub(crate)` for the same reason the
+/// classes above are: the projector lives in another module, and a second
+/// spelling of one key would make the family unjoinable with itself.
+///
+/// Which pre-extraction stage ruled (`dreamer_prefilter::PREFILTER_PHASE`).
+/// Reserved as the discriminator for a SECOND extraction-phase writer, so the
+/// kind never has to be split when one lands.
+pub(crate) const FIELD_PREFILTER_PHASE: &str = "phase";
+/// What the screen ruled: `pass` or `skip` on a turn row, `screened` on a
+/// round rollup. Also the receipt's `outcome`; this key keeps one name
+/// answering "what was ruled" across the whole class.
+pub(crate) const FIELD_PREFILTER_DECISION: &str = "decision";
+/// The turn's screening score, as a decimal numeral.
+///
+/// A numeral rather than a band: the whole point of a score is that a reader
+/// can compare it against the threshold that rejected it, and the receipt
+/// family's field ABI is string-valued.
+pub(crate) const FIELD_PREFILTER_SCORE: &str = "score";
+/// The threshold the score was ruled against — without it the score is a
+/// number with no verdict in it.
+pub(crate) const FIELD_PREFILTER_THRESHOLD: &str = "threshold";
+/// Prefix of the per-axis feature keys (`features.len`, `features.novelty`,
+/// …). Every input to the score travels with it, so a ruling can be
+/// recomputed rather than trusted.
+pub(crate) const FIELD_PREFILTER_FEATURE_PREFIX: &str = "features.";
+/// The planning round's `partition_round_hash`, lower hex — the join key
+/// between a skip row and the rollup that counted it.
+pub(crate) const FIELD_PREFILTER_ROUND: &str = "round";
+/// The screened TURN, lower hex.
+pub(crate) const FIELD_PREFILTER_TURN: &str = "turn";
+/// Rollup: how many turns the round screened.
+pub(crate) const FIELD_PREFILTER_SCANNED: &str = "scanned";
+/// Rollup: how many were kept for extraction.
+pub(crate) const FIELD_PREFILTER_PASSED: &str = "passed";
+/// Rollup: how many were screened out.
+pub(crate) const FIELD_PREFILTER_SKIPPED: &str = "skipped";
+/// Estimated prompt tokens NOT spent — per turn on a skip row, summed over the
+/// round on a rollup. The savings claim is on the receipt because a budget
+/// filter that could not show its savings would be asking to be believed.
+pub(crate) const FIELD_PREFILTER_TOKENS_SAVED: &str = "tokens_saved";
 pub(super) const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
 pub(super) const FIELD_ENGINE_REGISTER: &str = "engine_register";
 pub(super) const FIELD_CARE_REGISTER: &str = "care_register";
@@ -236,6 +282,18 @@ pub enum ReceiptKind {
     /// invariant it carries is bounded by [`MAX_RECEIPT_QUERY_SCAN`] exactly
     /// like every other projected kind.
     CommitmentLifecycle,
+    /// Pre-extraction screening receipt (OF-361, ONE-1525): what the Dreamer
+    /// declined to spend extraction budget on, why, and what that saved.
+    ///
+    /// It mints a kind rather than joining `Gate` — the precedent ONE-1762's
+    /// escalations and ONE-1449's skill-edit verdicts both took — because it
+    /// is not a gate decision. A gate rules on whether something MAY happen
+    /// and is answerable to policy; this rules on whether something is WORTH
+    /// doing and is answerable to a budget. Filing a budget estimate in the
+    /// gate ledger would make "what did the gate refuse" un-askable.
+    ///
+    /// Not emit-adjacent: nothing leaves the vault when a turn is screened.
+    Extraction,
 }
 
 impl ReceiptKind {
@@ -251,6 +309,7 @@ impl ReceiptKind {
             Self::ArtifactSettle => "artifact_settle",
             Self::ProposalOutcome => "proposal_outcome",
             Self::CommitmentLifecycle => "commitment_lifecycle",
+            Self::Extraction => "extraction",
         }
     }
 
@@ -266,6 +325,7 @@ impl ReceiptKind {
             "artifact_settle" => Some(Self::ArtifactSettle),
             "proposal_outcome" => Some(Self::ProposalOutcome),
             "commitment_lifecycle" => Some(Self::CommitmentLifecycle),
+            "extraction" => Some(Self::Extraction),
             _ => None,
         }
     }

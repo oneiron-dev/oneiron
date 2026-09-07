@@ -286,9 +286,9 @@ fn working_set_selects_only_new_admissible_turns() -> Result<()> {
     user_claim(&vault, "profile.name", 150); // claims never enter
 
     let watermark = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 100,
         last_turn_id: None,
+        ..ConsolidationWatermark::bootstrap()
     };
     let turns = scan_dirty_turns(&vault, scope, &watermark, 100)?;
     assert_eq!(turns.len(), 2, "only admissible post-watermark turns");
@@ -337,7 +337,6 @@ fn bootstrap_round_on_empty_vault() -> Result<()> {
 #[test]
 fn watermark_crash_replay_idempotent() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
     let scope = DreamerConsolidationScope::Micro;
     let conversation = seed_session(&vault, 0x23, 1);
     seed_turn(&vault, &conversation, "user", "hello", 10);
@@ -347,7 +346,7 @@ fn watermark_crash_replay_idempotent() -> Result<()> {
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
     assert_eq!(plans.len(), 1);
-    let outcomes = enqueue_partition_attempts(&store, scope, &plans, "run-1", 20)?;
+    let outcomes = enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 20)?;
     assert!(matches!(
         outcomes[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
@@ -358,8 +357,7 @@ fn watermark_crash_replay_idempotent() -> Result<()> {
     let watermark = read_watermark(&vault, scope)?;
     assert_eq!(watermark.last_learned_at, 0, "crash: watermark untouched");
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
-    let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
-    let outcomes = enqueue_partition_attempts(&store, scope, &plans, "run-1", 30)?;
+    let outcomes = enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 30)?;
     assert!(matches!(
         outcomes[0],
         EnqueueDreamerAttemptOutcome::Existing(_)
@@ -370,17 +368,15 @@ fn watermark_crash_replay_idempotent() -> Result<()> {
 #[test]
 fn partition_attempts_dedupe_advisory() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
     let scope = DreamerConsolidationScope::Micro;
     let conversation = seed_session(&vault, 0x24, 1);
     seed_turn(&vault, &conversation, "user", "text", 10);
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
-    let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
 
-    let first = enqueue_partition_attempts(&store, scope, &plans, "run-1", 20)?;
-    let second = enqueue_partition_attempts(&store, scope, &plans, "run-1", 21)?;
+    let first = enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 20)?;
+    let second = enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 21)?;
     assert!(matches!(
         first[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
@@ -395,7 +391,6 @@ fn partition_attempts_dedupe_advisory() -> Result<()> {
 #[test]
 fn offset_pager_never_authority() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
     let scope = DreamerConsolidationScope::Micro;
     let conversation = seed_session(&vault, 0x25, 1);
     seed_turn(&vault, &conversation, "user", "text", 10);
@@ -421,8 +416,9 @@ fn offset_pager_never_authority() -> Result<()> {
     let rescanned = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     assert_eq!(rescanned, turns, "stale cursor does not change selection");
     let replanned = plan_partitions(&vault, scope, &rescanned, &watermark)?;
-    let first = enqueue_partition_attempts(&store, scope, &replanned, "run-1", 20)?;
-    let second = enqueue_partition_attempts(&store, scope, &replanned, "run-1", 21)?;
+    assert_eq!(plans, replanned);
+    let first = enqueue_partition_attempts(&vault, scope, &rescanned, &watermark, "run-1", 20)?;
+    let second = enqueue_partition_attempts(&vault, scope, &rescanned, &watermark, "run-1", 21)?;
     assert!(matches!(
         first[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
@@ -531,9 +527,9 @@ fn watermark_v1_decodes_as_complete_second_boundary() -> Result<()> {
 fn watermark_v2_roundtrips_compound_position() -> Result<()> {
     let turn_id = ordered_turn_id(0x42, 7);
     let exact = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 900,
         last_turn_id: Some(turn_id),
+        ..ConsolidationWatermark::bootstrap()
     };
     assert_eq!(decode_watermark(&encode_watermark(&exact)?)?, exact);
     let boundary = ConsolidationWatermark::bootstrap();
@@ -765,9 +761,9 @@ fn resume_is_strictly_after_compound_key() -> Result<()> {
     let later_second = seed_turn(&vault, &conversation, "user", "later second", 901);
 
     let inside = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 900,
         last_turn_id: Some(same_second[1]),
+        ..ConsolidationWatermark::bootstrap()
     };
     assert_eq!(
         scan_dirty_turns(&vault, scope, &inside, usize::MAX)?
@@ -779,9 +775,9 @@ fn resume_is_strictly_after_compound_key() -> Result<()> {
     );
 
     let boundary = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 900,
         last_turn_id: None,
+        ..ConsolidationWatermark::bootstrap()
     };
     assert_eq!(
         scan_dirty_turns(&vault, scope, &boundary, usize::MAX)?
@@ -885,9 +881,9 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert_eq!(
         settled,
         ConsolidationWatermark {
-            schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: SECOND,
             last_turn_id: Some(seeded[DEFAULT_MESO_ROUND_TURN_CAP - 1]),
+            ..ConsolidationWatermark::bootstrap()
         },
         "the stored row is the exact within-second position"
     );
@@ -909,9 +905,9 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert_eq!(
         read_watermark(&vault, scope)?,
         ConsolidationWatermark {
-            schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: SECOND,
             last_turn_id: Some(seeded[total - 1]),
+            ..ConsolidationWatermark::bootstrap()
         }
     );
 
@@ -948,9 +944,9 @@ fn empty_matched_round_still_commits_close() -> Result<()> {
     assert_eq!(
         read_watermark(&vault, scope)?,
         ConsolidationWatermark {
-            schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: 900,
             last_turn_id: None,
+            ..ConsolidationWatermark::bootstrap()
         }
     );
     Ok(())
@@ -959,17 +955,16 @@ fn empty_matched_round_still_commits_close() -> Result<()> {
 #[test]
 fn same_second_partition_batches_have_distinct_advisory_dedupe() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
     let scope = DreamerConsolidationScope::Meso;
     let conversation = seed_session(&vault, 0x34, 1);
     seed_ordered_turns_at(&vault, &conversation, 0x48, 900, 6);
 
     // Two adjacent capped batches inside ONE second, same partition.
-    let watermark = read_watermark(&vault, scope)?;
-    let first_turns = scan_dirty_turns(&vault, scope, &watermark, 3)?;
-    let first = plan_partitions(&vault, scope, &first_turns, &watermark)?;
+    let first_watermark = read_watermark(&vault, scope)?;
+    let first_turns = scan_dirty_turns(&vault, scope, &first_watermark, 3)?;
+    let first = plan_partitions(&vault, scope, &first_turns, &first_watermark)?;
     assert!(matches!(
-        enqueue_partition_attempts(&store, scope, &first, "run-1", 20)?[0],
+        enqueue_partition_attempts(&vault, scope, &first_turns, &first_watermark, "run-1", 20)?[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
     ));
     advance_watermark_to_turn(&vault, scope, first_turns.last().expect("batch 1"))?;
@@ -987,14 +982,17 @@ fn same_second_partition_batches_have_distinct_advisory_dedupe() -> Result<()> {
         "two disjoint same-second batches never share an advisory key"
     );
     assert!(matches!(
-        enqueue_partition_attempts(&store, scope, &second, "run-1", 21)?[0],
+        enqueue_partition_attempts(&vault, scope, &second_turns, &watermark, "run-1", 21)?[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
     ));
 
     // Replaying either EXACT batch coalesces.
-    for (batch, now) in [(&first, 22), (&second, 23)] {
+    for (batch, watermark, now) in [
+        (&first_turns, &first_watermark, 22),
+        (&second_turns, &watermark, 23),
+    ] {
         assert!(matches!(
-            enqueue_partition_attempts(&store, scope, batch, "run-1", now)?[0],
+            enqueue_partition_attempts(&vault, scope, batch, watermark, "run-1", now)?[0],
             EnqueueDreamerAttemptOutcome::Existing(_)
         ));
     }
@@ -1016,26 +1014,18 @@ fn same_second_partition_batches_have_distinct_advisory_dedupe() -> Result<()> {
     // partial overlap) enqueue distinct advisory attempts. Re-consolidating
     // the overlap is best-effort cost — an attempt is identity, not a lock.
     let all = scan_dirty_turns(&vault, scope, &ConsolidationWatermark::bootstrap(), 6)?;
-    let superset = vec![ConsolidationPartitionPlan {
-        key: first[0].key,
-        turns: all[..4].to_vec(),
-        watermark_last_learned_at: 0,
-    }];
-    let overlap = vec![ConsolidationPartitionPlan {
-        key: first[0].key,
-        turns: all[2..5].to_vec(),
-        watermark_last_learned_at: 0,
-    }];
-    let superset_hash = partition_round_hash(&superset[0].turns);
-    let overlap_hash = partition_round_hash(&overlap[0].turns);
+    let superset = &all[..4];
+    let overlap = &all[2..5];
+    let superset_hash = partition_round_hash(superset);
+    let overlap_hash = partition_round_hash(overlap);
     assert_ne!(superset_hash, partition_round_hash(&first[0].turns));
     assert_ne!(superset_hash, overlap_hash);
     assert!(matches!(
-        enqueue_partition_attempts(&store, scope, &superset, "run-2", 24)?[0],
+        enqueue_partition_attempts(&vault, scope, superset, &first_watermark, "run-2", 24)?[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
     ));
     assert!(matches!(
-        enqueue_partition_attempts(&store, scope, &overlap, "run-2", 25)?[0],
+        enqueue_partition_attempts(&vault, scope, overlap, &first_watermark, "run-2", 25)?[0],
         EnqueueDreamerAttemptOutcome::Enqueued(_)
     ));
     Ok(())
@@ -1400,8 +1390,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
-    let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
-    enqueue_partition_attempts(&store, scope, &plans, "run-1", 20)?;
+    enqueue_partition_attempts(&vault, scope, &turns, &watermark, "run-1", 20)?;
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
         admitted,
@@ -1672,8 +1661,7 @@ fn admitted_attempt_fixture<'a>(
     }
     let watermark = read_watermark(vault, scope)?;
     let dirty = scan_dirty_turns(vault, scope, &watermark, 10)?;
-    let plans = plan_partitions(vault, scope, &dirty, &watermark)?;
-    enqueue_partition_attempts(store, scope, &plans, "run-1", 20)?;
+    enqueue_partition_attempts(vault, scope, &dirty, &watermark, "run-1", 20)?;
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
         admitted,
     )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {

@@ -65,6 +65,7 @@ pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;
+pub mod dreamer_prefilter;
 pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
@@ -284,6 +285,11 @@ pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
     ConsolidationExecutor, ConsolidationSink, plan_partitions, read_watermark, scan_dirty_turns,
+};
+pub use crate::dreamer_prefilter::{
+    NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,
+    PrefilterWeights, prefilter_turn, reopen_prefilter_rescan, screen_turn_inputs,
+    validate_prefilter_config,
 };
 #[cfg(feature = "sync")]
 pub use crate::dreamer_runner::DreamerAttemptProgressProducer;
