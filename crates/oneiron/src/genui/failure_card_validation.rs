@@ -3,12 +3,12 @@
 use crate::{
     Error, Result, Vault,
     attempt_queue::AttemptId,
-    batch::EntityMetadataHeader,
     edge::EdgeKind,
     entity_id::EntityId,
     failure_ladder::HealerRepairRoute,
     memory::sole_edge_target,
     registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN},
+    vault::{LiveEntityRow, live_entity_row_in_txn},
 };
 
 use super::parse_card_ref;
@@ -97,7 +97,8 @@ fn parse_repair_ref(field: &str, value: &str) -> Result<EntityId> {
     Ok(id)
 }
 
-/// Read sole canonical bindings in one snapshot before accepting any match.
+/// Read sole canonical bindings and container liveness in one snapshot before
+/// accepting any match. Deleted shells are not membership containers.
 /// A TURN's ChildOf and a MESSAGE's BelongsTo must agree when both exist.
 /// Either conversation binding can stand alone, as can direct PartOf membership.
 /// Only a TURN is the intermediate container in the two-hop path.
@@ -114,16 +115,15 @@ pub(super) fn require_thread_membership(
     let part_of = sole(&message_ref, EdgeKind::PartOf, "message")?;
     let belongs_to = sole(&message_ref, EdgeKind::BelongsTo, "message")?;
     let container_kind = |id: EntityId| -> Result<u8> {
-        let raw = vault
-            .store
-            .entities
-            .get(&txn, id.as_bytes())?
-            .ok_or_else(|| {
-                Error::InvalidConfig("healer qa membership container is missing".to_owned())
-            })?;
-        Ok(EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?
-            .entity_type)
+        match live_entity_row_in_txn(&vault.store, &txn, &id)? {
+            LiveEntityRow::Live { entity_type, .. } => Ok(entity_type),
+            LiveEntityRow::Absent => Err(Error::InvalidConfig(
+                "healer qa membership container is missing".to_owned(),
+            )),
+            LiveEntityRow::DeletedShell => Err(Error::InvalidConfig(
+                "healer qa membership container is deleted".to_owned(),
+            )),
+        }
     };
     if let Some(conversation) = belongs_to
         && container_kind(conversation)? != ENTITY_TYPE_CONVERSATION
