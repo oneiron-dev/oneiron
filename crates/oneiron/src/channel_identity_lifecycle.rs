@@ -3,8 +3,9 @@
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState,
-    decode_channel_identity_body, encode_channel_identity_body,
+    ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, IdentityTransition,
+    admit_channel_identity_transition_in_txn, decode_channel_identity_body,
+    encode_channel_identity_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -363,7 +364,12 @@ impl Vault {
                 ));
             }
         };
-        self.write_existing_channel_identity_in_txn(&mut wtxn, &input.identity_id, &next)?;
+        self.write_existing_channel_identity_in_txn(
+            &mut wtxn,
+            &input.identity_id,
+            &current,
+            &next,
+        )?;
 
         let receipt = self.append_channel_identity_lifecycle_receipt_in_txn(
             &mut wtxn,
@@ -430,7 +436,12 @@ impl Vault {
                     at,
                     None,
                 )?;
-                self.write_existing_channel_identity_in_txn(wtxn, &intent.identity_id, &next)?;
+                self.write_existing_channel_identity_in_txn(
+                    wtxn,
+                    &intent.identity_id,
+                    &current,
+                    &next,
+                )?;
                 Ok(AppliedLifecycle {
                     identity: Some(next),
                     outcome: ChannelIdentityState::PendingFulfillment.as_str(),
@@ -442,7 +453,12 @@ impl Vault {
             ChannelIdentityLifecycleIntent::Rotate(intent) => {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
                 let next = current.transition(ChannelIdentityState::Rotating, None, at, None)?;
-                self.write_existing_channel_identity_in_txn(wtxn, &intent.identity_id, &next)?;
+                self.write_existing_channel_identity_in_txn(
+                    wtxn,
+                    &intent.identity_id,
+                    &current,
+                    &next,
+                )?;
                 Ok(AppliedLifecycle {
                     identity: Some(next),
                     outcome: ChannelIdentityState::Rotating.as_str(),
@@ -455,16 +471,33 @@ impl Vault {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
                 let released =
                     current.transition(ChannelIdentityState::Released, None, at, None)?;
-                let next = released.transition(
-                    ChannelIdentityState::Quarantine,
-                    None,
-                    at,
-                    Some(intent.quarantine_until),
+                // A self-held release walks straight on into the never-recycle
+                // quarantine hold: we minted that address, so we keep holding
+                // it back. A DELEGATED release stops at Released and stays
+                // there. Quarantining someone else's mailbox is not a hold this
+                // product is entitled to take, and taking it would be the act
+                // that blocks the member's own re-consent — so the retirement
+                // stop the delegated machine offers is the one it takes.
+                let next = if released.is_delegated() {
+                    released
+                } else {
+                    released.transition(
+                        ChannelIdentityState::Quarantine,
+                        None,
+                        at,
+                        Some(intent.quarantine_until),
+                    )?
+                };
+                let outcome = next.state.as_str();
+                self.write_existing_channel_identity_in_txn(
+                    wtxn,
+                    &intent.identity_id,
+                    &current,
+                    &next,
                 )?;
-                self.write_existing_channel_identity_in_txn(wtxn, &intent.identity_id, &next)?;
                 Ok(AppliedLifecycle {
                     identity: Some(next),
-                    outcome: ChannelIdentityState::Quarantine.as_str(),
+                    outcome,
                     owner_visible_state: "identity_retiring",
                     outbound_closed: true,
                     identity_retiring: true,
@@ -472,10 +505,16 @@ impl Vault {
             }
             ChannelIdentityLifecycleIntent::RouteInbound(intent) => {
                 let current = self.read_channel_identity_in_txn(wtxn, &intent.identity_id)?;
+                // RELEASED is a retirement stop on BOTH machines — the only one
+                // a delegated row has — and the inbound router already routes
+                // it exactly as it routes QUARANTINE: still delivering, with
+                // outbound closed. Naming it here is what keeps this verb's
+                // answer and the router's answer to "what can this row do for a
+                // message arriving now" from disagreeing about the same row.
                 let (outcome, owner_visible_state, outbound_closed, identity_retiring) =
                     match current.state {
                         ChannelIdentityState::Tombstone => ("closed", "tombstone", true, false),
-                        ChannelIdentityState::Quarantine => {
+                        ChannelIdentityState::Released | ChannelIdentityState::Quarantine => {
                             ("routable", "identity_retiring", true, true)
                         }
                         _ => ("routable", "routable", false, false),
@@ -498,11 +537,15 @@ impl Vault {
         identity: &ChannelIdentity,
     ) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
-        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some()
-            || self.channel_identity_assignment_conflict_in_txn(wtxn, id, identity)?
-        {
+        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some() {
             return Err(Error::ChannelIdentityAlreadyExists);
         }
+        admit_channel_identity_transition_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            IdentityTransition::Birth { next: identity },
+        )?;
         self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, data)
     }
 
@@ -510,11 +553,18 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
+        prior: &ChannelIdentity,
         identity: &ChannelIdentity,
     ) -> Result<()> {
-        if self.channel_identity_assignment_conflict_in_txn(wtxn, id, identity)? {
-            return Err(Error::ChannelIdentityAlreadyExists);
-        }
+        admit_channel_identity_transition_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            IdentityTransition::Step {
+                prior,
+                next: identity,
+            },
+        )?;
         let data = encode_channel_identity_body(identity)?;
         self.apply_channel_identity_body(wtxn, id, identity.state_changed_at, data)
     }

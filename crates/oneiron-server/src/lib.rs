@@ -8,6 +8,10 @@
 //!
 //! The binary (`main.rs`) and the integration tests share this construction
 //! path: [`server::SyncServer::new`] + [`build_app`].
+//!
+//! [`managed`] adds a second, opt-in way to run that same path: as a
+//! supervised child process behind `--managed-by-hypnos`. Without the switch
+//! nothing in this crate behaves differently.
 
 mod api;
 mod auth;
@@ -18,6 +22,7 @@ pub mod config;
 pub mod error;
 mod handler;
 mod idempotency;
+pub mod managed;
 pub mod mcp;
 mod oauth_relay;
 pub mod projection;

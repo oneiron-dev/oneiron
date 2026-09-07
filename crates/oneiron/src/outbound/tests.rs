@@ -3371,8 +3371,11 @@ fn dispatch_pipeline_preserves_gate_hold_reason_when_window_also_holds()
     Ok(())
 }
 
+/// ONE-1752: an opted-out counterparty HOLDS the send for the owner instead of
+/// suppressing it. Nothing else about this path moved — the transport is still
+/// never reached, and the receipt still carries the opt-out reason trail.
 #[test]
-fn dispatch_pipeline_suppresses_gate_denied_without_executing()
+fn dispatch_pipeline_holds_gate_pending_opt_out_without_executing()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xD6);
@@ -3418,27 +3421,20 @@ fn dispatch_pipeline_suppresses_gate_denied_without_executing()
     let mut executor = RecordingExecutor::default();
     let result = vault.dispatch_outbound_intent(request, &mut executor)?;
 
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
     assert!(executor.calls.is_empty());
-    assert_eq!(result.gate_outcome, "deny");
-    assert_eq!(result.receipt.outcome, "suppressed");
+    assert_eq!(result.gate_outcome, "pending");
+    assert_eq!(result.receipt.outcome, "held");
     assert_eq!(
-        result.receipt.fields.get("suppression").map(String::as_str),
-        Some("counterparty_opt_out")
+        result.receipt.fields.get("hold_reason").map(String::as_str),
+        Some("gate.pending.counterparty_opt_out")
     );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("suppression_reason")
-            .map(String::as_str),
-        Some("counterparty_opt_out_unsubscribe")
-    );
+    assert!(!result.receipt.fields.contains_key("suppression"));
     assert!(
         result
             .receipt
             .policy_trace
-            .contains(&"gate.deny.counterparty_opt_out".to_owned())
+            .contains(&"gate.pending.counterparty_opt_out".to_owned())
     );
     assert!(
         result

@@ -31,7 +31,10 @@ use crate::consult_ladder::{
     LadderTerminalDisposition, LadderTerminalState, LadderTransition, LadderTransitionError,
     MagistrateCase, MagistrateOverturnRecord, MagistrateVerdict, StateAuthorship,
 };
-use crate::context_board::{TaskBoardStatus, TasksSection, task_is_acked, task_is_cancelled};
+use crate::context_board::{
+    TaskBoardStatus, TasksSection, ack_task_in_txn, cancel_task_in_txn, task_is_acked,
+    task_is_cancelled,
+};
 use crate::dreamer_runner::{
     DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
     decode_dreamer_attempt_payload,
@@ -58,11 +61,26 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 /// Test-side TASK census through the BOUNDED primitive. ONE-1873 removed
 /// the unpaged `entities_by_type` call from this file entirely, so nothing
 /// here reintroduces the read that hard-fails past 100k rows.
+///
+/// Authority facts share the TASK type byte (they ARE companion TASK rows, and
+/// that is how they replicate), so the census counts TASKS: what these tests
+/// ask about is how many tasks a verb minted, never how many rows carry the
+/// type. [`task_authority_fact_census`] counts the companions.
 fn task_entity_census(vault: &Vault) -> usize {
+    task_entity_census_by_role(vault, |role| role != Some(TaskRole::AuthorityFact))
+}
+
+fn task_authority_fact_census(vault: &Vault) -> usize {
+    task_entity_census_by_role(vault, |role| role == Some(TaskRole::AuthorityFact))
+}
+
+fn task_entity_census_by_role(vault: &Vault, keep: impl Fn(Option<TaskRole>) -> bool) -> usize {
     vault
         .entities_by_type_page(ENTITY_TYPE_TASK, None, TASK_PRESENCE_SCAN_CAP)
         .expect("task entities")
-        .len()
+        .into_iter()
+        .filter(|task_ref| keep(task_entity_role(vault, *task_ref).expect("task role")))
+        .count()
 }
 
 fn put_person(vault: &Vault, id: EntityId) {
@@ -3167,6 +3185,97 @@ fn role_only_task_cancel_by_foreign_granted_actor_proposes() {
     );
 }
 
+/// The owner proof a create mints is a REPLICATED companion row, not a
+/// node-local index: one role-6 TASK entity, reached from its subject by the
+/// ordinary structural `ScopedTo` edge. Both are things the entity/edge CRDT
+/// maps already carry, so the peer that materializes the task materializes the
+/// authority to cancel it.
+#[test]
+fn create_mints_the_owner_proof_as_a_scoped_companion_entity() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let created = vault
+        .memory(own, EdgeActorClass::Agent)
+        .tasks_create(&spec(120))
+        .expect("create task");
+    let task_ref = created.task_ref.expect("task ref");
+
+    assert_eq!(task_entity_census(&vault), 1);
+    assert_eq!(task_authority_fact_census(&vault), 1);
+    assert_eq!(
+        vault.task_authority_state(task_ref).expect("authority"),
+        Some(crate::task_authority::TaskAuthorityState {
+            owner_ref: own,
+            cancelled: false,
+            acked: false,
+        })
+    );
+    let proofs = vault
+        .edges_in(&task_ref)
+        .expect("inbound edges")
+        .into_iter()
+        .filter(|edge| edge.kind == crate::edge::EdgeKind::ScopedTo)
+        // An inbound edge names the OTHER endpoint: here, the fact scoped to
+        // this task.
+        .map(|edge| edge.target)
+        .filter(|fact_ref| {
+            task_entity_role(&vault, *fact_ref).expect("role") == Some(TaskRole::AuthorityFact)
+        })
+        .count();
+    assert_eq!(proofs, 1);
+    assert_eq!(attempts_for(&vault, task_ref).len(), 1);
+}
+
+/// Cancel-wins reaches the BOARD, not just the fold. A task carrying both an
+/// Acked and a Cancelled fact is off the active surface in EITHER order —
+/// there is no arrival order in which the acknowledgement wins.
+#[test]
+fn a_cancelled_task_leaves_the_board_even_when_also_acked() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let create = || {
+        facade
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+    let ack_first = create();
+    let cancel_first = create();
+
+    vault
+        .with_write_txn(|wtxn| {
+            ack_task_in_txn(&vault, wtxn, ack_first, own, 121)?;
+            cancel_task_in_txn(&vault, wtxn, ack_first, own, 122)?;
+            cancel_task_in_txn(&vault, wtxn, cancel_first, own, 121)?;
+            ack_task_in_txn(&vault, wtxn, cancel_first, own, 122)
+        })
+        .expect("append authority facts");
+
+    // Both TASK intents are gone from the surface. Their realizing jobs were
+    // never intervened here — the facts were appended directly — so they stay
+    // visible as the bare work they are, which is exactly the honesty the
+    // board owes: cancelling the INTENT never hides live work.
+    let section = facade.tasks_check().expect("check tasks");
+    assert_eq!(section.rows.iter().filter(|row| row.is_intent).count(), 0);
+    for task_ref in [ack_first, cancel_first] {
+        assert!(
+            !section.rows.iter().any(|row| row.id == task_ref.to_hex()),
+            "a cancelled task never renders as a row"
+        );
+        assert!(task_is_cancelled(&vault, task_ref).expect("cancel state"));
+        assert!(task_is_acked(&vault, task_ref).expect("ack state"));
+        assert_eq!(
+            facade
+                .tasks_expand(task_ref)
+                .expect_err("a cancelled task is off the surface")
+                .code,
+            crate::memory::MEMORY_CODE_NOT_FOUND
+        );
+    }
+}
+
 /// FIX A: a valid typed body can claim any `owner_ref`, so that field is
 /// never cancellation authority. The create-time owner record remains the
 /// sole proof even if trusted low-level storage rewrites the body.
@@ -3493,6 +3602,186 @@ fn malformed_task_body_does_not_poison_the_board() {
         0
     );
     assert_eq!(section.rows.len(), 1);
+}
+
+/// P2 F8 reaches the AUTHORITY-fact read, not just the typed body: an owner
+/// FORK on one task — two distinct Owner facts, which any peer can replicate
+/// onto any TASK id — takes exactly THAT row off the board and leaves the rest
+/// of the page rendering. Nothing about the fork is softened where it binds:
+/// the authority lens still refuses to pick an owner, so the direct-cancel
+/// door keeps failing closed on that one task while `tasks.check` survives.
+#[test]
+fn a_forked_owner_companion_does_not_poison_the_board() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let create = || {
+        facade
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+    let forked = create();
+    let healthy = create();
+    // A second Owner fact naming a DIFFERENT owner, minted through the engine
+    // door that replication also writes through: this is the shape a peer's
+    // conflicting proof arrives in.
+    let intruder = EntityId::from_bytes([0xF7; 16]).expect("intruder id");
+    vault
+        .with_write_txn(|wtxn| {
+            crate::task_authority::put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                crate::task_authority::TaskAuthorityFact {
+                    task_ref: forked,
+                    kind: crate::task_authority::TaskAuthorityFactKind::Owner,
+                    actor_ref: intruder,
+                    occurred_at: 121,
+                },
+            )
+            .map(|_fact_ref| ())
+        })
+        .expect("append the forked owner proof");
+
+    assert!(matches!(
+        vault.task_authority_state(forked),
+        Err(crate::error::Error::InvariantViolation(
+            "task authority owner fork"
+        ))
+    ));
+
+    let section = facade.tasks_check().expect("check tasks survives the fork");
+
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == healthy.to_hex())
+            .count(),
+        1
+    );
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == forked.to_hex())
+            .count(),
+        0
+    );
+    // P2 F7: the skipped row's realizing job re-emits as the bare work it is,
+    // rather than vanishing with the row it can no longer fold under.
+    let orphaned = attempts_for(&vault, forked);
+    assert_eq!(orphaned.len(), 1);
+    let orphaned_job = attempt_hex(orphaned[0].id);
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == orphaned_job && !row.is_intent)
+            .count(),
+        1
+    );
+    assert_eq!(section.rows.len(), 2);
+    // The by-id door agrees with the scan on the poisoned task: hidden here
+    // too, never answered with bits the fold could not verify.
+    assert_eq!(
+        task_presence_for_id(&vault, forked).expect("by-id door survives the fork"),
+        None
+    );
+}
+
+/// P2 F8 for a MALFORMED authority-fact row: the edge is the index and the
+/// body is the claim, so a fact reachable from a task it does not name is
+/// refused by the fold — and any peer can ship that edge. The refusal hides
+/// exactly one row; the task whose proof was re-pointed still renders and
+/// still proves its own owner.
+#[test]
+fn a_malformed_authority_fact_row_does_not_poison_the_board() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let create = || {
+        facade
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+    let poisoned = create();
+    let healthy = create();
+    let proof = vault
+        .edges_in(&healthy)
+        .expect("inbound edges")
+        .into_iter()
+        .find(|edge| {
+            edge.kind == crate::edge::EdgeKind::ScopedTo
+                && task_entity_role(&vault, edge.target).expect("role")
+                    == Some(TaskRole::AuthorityFact)
+        })
+        .expect("the create minted an owner proof")
+        .target;
+    // Scoping `healthy`'s proof to `poisoned` as well makes `poisoned`'s fact
+    // set unreadable without touching the proof `healthy` really carries.
+    vault
+        .batch()
+        .edge(&proof, crate::edge::EdgeKind::ScopedTo, &poisoned, 0.7)
+        .commit()
+        .expect("re-point the proof at another task");
+
+    assert!(matches!(
+        vault.task_authority_state(poisoned),
+        Err(crate::error::Error::InvalidTaskBody(
+            "task authority fact subject"
+        ))
+    ));
+    assert_eq!(
+        vault
+            .task_authority_state(healthy)
+            .expect("the re-pointed proof still names its own subject"),
+        Some(crate::task_authority::TaskAuthorityState {
+            owner_ref: own,
+            cancelled: false,
+            acked: false,
+        })
+    );
+
+    let section = facade
+        .tasks_check()
+        .expect("check tasks survives the poison");
+
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == healthy.to_hex())
+            .count(),
+        1
+    );
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == poisoned.to_hex())
+            .count(),
+        0
+    );
+    let orphaned = attempts_for(&vault, poisoned);
+    assert_eq!(orphaned.len(), 1);
+    let orphaned_job = attempt_hex(orphaned[0].id);
+    assert_eq!(
+        section
+            .rows
+            .iter()
+            .filter(|row| row.id == orphaned_job && !row.is_intent)
+            .count(),
+        1
+    );
+    assert_eq!(section.rows.len(), 2);
+    assert_eq!(
+        task_presence_for_id(&vault, poisoned).expect("by-id door survives the poison"),
+        None
+    );
 }
 
 // ── ONE-1888: consult ladder, routing, magistrate ───────────────────
@@ -5800,6 +6089,11 @@ fn unreachable_human_assignee_rolls_the_whole_create_back() {
         0,
         "the TASK write rolls back with its follow-up cursor"
     );
+    assert_eq!(
+        task_authority_fact_census(&vault),
+        0,
+        "the owner proof rolls back with the task it proves"
+    );
     assert!(
         crate::human_task::human_followup_records(&vault)
             .expect("cursors")
@@ -6358,15 +6652,23 @@ fn tasks_check_pages_across_multiple_vault_pages() {
         calls >= 3,
         "page size 2 over 5 tasks must page at least three times: {calls}"
     );
-    assert_eq!(scan.scanned_task_entities, 5);
+    // Each create mints its Owner authority fact as a companion TASK row, so
+    // the type index holds two rows per task. The walk is over ROWS; only the
+    // five tasks project as intents.
+    assert_eq!(scan.scanned_task_entities, 10);
     assert!(scan.source_exhausted);
     let flat: Vec<EntityId> = scan.pages.iter().flatten().copied().collect();
-    assert_eq!(flat, created);
+    let scanned_tasks: Vec<EntityId> = flat
+        .iter()
+        .copied()
+        .filter(|id| created.contains(id))
+        .collect();
+    assert_eq!(scanned_tasks, created);
     assert!(flat.windows(2).all(|pair| pair[0] < pair[1]));
 
     let snapshot = task_presence_with_limits(&vault, 2, 64).expect("paged presence");
     assert!(snapshot.source_exhausted);
-    assert_eq!(snapshot.scanned_task_entities, 5);
+    assert_eq!(snapshot.scanned_task_entities, 10);
     let ids: std::collections::BTreeSet<&str> = snapshot
         .intents
         .iter()
@@ -6385,8 +6687,11 @@ fn tasks_check_scan_cap_reports_honest_additive_overflow() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
     created_task_refs(&facade, 5);
 
-    let snapshot = task_presence_with_limits(&vault, 2, 3).expect("scan-capped presence");
-    assert_eq!(snapshot.scanned_task_entities, 3);
+    // Six inspected ROWS are three tasks and the three Owner facts minted
+    // beside them; two tasks stay beyond the cap.
+    let snapshot = task_presence_with_limits(&vault, 2, 6).expect("scan-capped presence");
+    assert_eq!(snapshot.scanned_task_entities, 6);
+    assert_eq!(snapshot.intents.len(), 3);
     assert!(!snapshot.source_exhausted);
 
     let section = TasksSection::render_with_cap(
@@ -6656,7 +6961,7 @@ fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
 
     // Missing owner whose id sorts BEFORE every created TASK. UUIDv7
     // task ids carry a non-zero timestamp prefix; a near-zero id is
-    // strictly earlier. After a 2-row prefix scan the cursor is
+    // strictly earlier. After a 4-row prefix scan the cursor sits at or past
     // created[1], so this owner is ≤ cursor and therefore proven
     // absent from the scanned prefix.
     let mut prefix_bytes = [0_u8; 16];
@@ -6683,12 +6988,13 @@ fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
     };
     let dangling_job_id = attempt_hex(attempt.id);
 
-    // page_size=2, scan_cap=2 → inspect created[0..2]; cursor=created[1];
-    // source_exhausted=false because created[2] remains beyond the cap.
-    let snapshot = task_presence_with_limits(&vault, 2, 2).expect("truncated presence");
+    // page_size=2, scan_cap=4 → inspect created[0..2] and the Owner fact each
+    // one minted; the cursor lands past created[1]; source_exhausted=false
+    // because created[2] remains beyond the cap.
+    let snapshot = task_presence_with_limits(&vault, 2, 4).expect("truncated presence");
 
     assert!(!snapshot.source_exhausted);
-    assert_eq!(snapshot.scanned_task_entities, 2);
+    assert_eq!(snapshot.scanned_task_entities, 4);
     assert_eq!(snapshot.intents.len(), 2);
     assert_eq!(
         snapshot
@@ -6740,10 +7046,11 @@ fn filtered_rows_still_consume_the_scan_budget() {
         .tasks_cancel(TaskCancelTarget::Task(created[0]))
         .expect("cancel the first task");
 
-    let snapshot = task_presence_with_limits(&vault, 1, 2).expect("scan-capped presence");
+    let snapshot = task_presence_with_limits(&vault, 1, 4).expect("scan-capped presence");
 
-    assert_eq!(snapshot.scanned_task_entities, 2);
-    // Two ids inspected, one of them cancelled — one row survives.
+    assert_eq!(snapshot.scanned_task_entities, 4);
+    // Four ids inspected — two tasks and the two Owner facts beside them —
+    // and one of the tasks is cancelled, so one row survives.
     assert_eq!(snapshot.intents.len(), 1);
     assert_eq!(snapshot.intents[0].id, created[1].to_hex());
     assert!(!snapshot.source_exhausted);

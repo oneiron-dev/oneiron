@@ -4525,3 +4525,86 @@ fn claim_access_factor_override_is_a_bounded_live_claim_seam() {
         assert!(access_factor_override_valid(good), "{good}");
     }
 }
+
+// ---- GATE-13: Dreamer-write isolation taxonomy ----
+
+/// The classifier is the whole taxonomy: prefix-anchored, persona-first, and
+/// silent on everything else. Every prefix in both pinned tables gets a
+/// witness, and each near-miss below is a string that would match if the
+/// tables were read as substrings or as dot-less stems.
+#[test]
+fn classifier_table() {
+    for (predicate, expected) in [
+        ("companion.expression", DreamerIsolationClass::PersonaCore),
+        ("eiri.persona.voice", DreamerIsolationClass::PersonaCore),
+        ("core.identity.name", DreamerIsolationClass::PersonaCore),
+        ("core.opinion.food", DreamerIsolationClass::MirroringProne),
+        ("core.belief.justice", DreamerIsolationClass::MirroringProne),
+        ("core.value.privacy", DreamerIsolationClass::MirroringProne),
+        ("affect.trigger", DreamerIsolationClass::MirroringProne),
+    ] {
+        assert_eq!(
+            dreamer_isolation_class(predicate),
+            Some(expected),
+            "{predicate}"
+        );
+    }
+
+    // The two landed predicates the classes are named for, read off their own
+    // constants rather than re-spelled, so a rename cannot desync the tables
+    // from the predicates they govern.
+    assert_eq!(
+        dreamer_isolation_class(PREDICATE_COMPANION_EXPRESSION),
+        Some(DreamerIsolationClass::PersonaCore)
+    );
+    assert_eq!(
+        dreamer_isolation_class(crate::affect::AFFECT_TRIGGER_PREDICATE),
+        Some(DreamerIsolationClass::MirroringProne)
+    );
+
+    // Persona-core is tested first, so a predicate carried by BOTH tables can
+    // only resolve one way. No pinned prefix pair overlaps today, so the
+    // property is asserted over the tables themselves: whichever prefix
+    // extends the other, the witness built from it must classify persona-core.
+    for persona in PERSONA_CORE_PREFIXES {
+        for mirroring in MIRRORING_PRONE_PREFIXES {
+            let overlap = if persona.starts_with(mirroring) {
+                format!("{persona}head")
+            } else if mirroring.starts_with(persona) {
+                format!("{mirroring}head")
+            } else {
+                continue;
+            };
+            assert_eq!(
+                dreamer_isolation_class(&overlap),
+                Some(DreamerIsolationClass::PersonaCore),
+                "{overlap}"
+            );
+        }
+    }
+
+    // Anchored at the FRONT: a mirroring-prone prefix appearing later in a
+    // persona-core predicate does not pull it out of its class.
+    assert_eq!(
+        dreamer_isolation_class("companion.affect.tone"),
+        Some(DreamerIsolationClass::PersonaCore)
+    );
+
+    // Non-matching predicates stay unclassified. Each of these shares a stem
+    // with a table entry and must still fall through: the trailing dot is part
+    // of the prefix.
+    for predicate in [
+        "profile.name",
+        "core.conflict.open",
+        "companion",
+        "companionship.tone",
+        "eiri.personality.voice",
+        "core.identityx.name",
+        "core.values.list",
+        "affect",
+        "affections.note",
+        "core.opinionated.take",
+    ] {
+        assert_eq!(dreamer_isolation_class(predicate), None, "{predicate}");
+    }
+}
