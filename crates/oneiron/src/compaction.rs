@@ -380,7 +380,6 @@ fn entity_type_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> R
     Ok(Some(header.entity_type))
 }
 
-
 /// `vault_meta` key prefix for TURN → SESSION membership rows (DREAM-008,
 /// ONE-1250): suffix = 16-byte TURN id, value = 16-byte SESSION id. Its own
 /// keyspace, so no existing record shape or version changes.

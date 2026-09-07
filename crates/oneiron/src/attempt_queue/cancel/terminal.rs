@@ -181,7 +181,7 @@ impl AttemptQueue<'_> {
         let mut record = decode_record(&raw_record, input.id)?;
         match record.state {
             AttemptState::Cancelled => return Ok(ForceCancelOutcome::AlreadyCancelled(record)),
-            AttemptState::Completed | AttemptState::Failed => {
+            AttemptState::Completed | AttemptState::Failed | AttemptState::Abandoned => {
                 return Ok(ForceCancelOutcome::AlreadySettled(record));
             }
             _ => {}
@@ -528,5 +528,6 @@ fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64
             },
             ..AttemptCancelState::default()
         },
+        result_ref: None,
     }
 }

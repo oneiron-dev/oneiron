@@ -491,6 +491,12 @@ pub enum SurfaceEventHandoffState {
     Completed,
     Failed,
     Cancelled,
+    /// The executor stopped carrying the handoff without delivering and
+    /// without anyone stopping it. Its own token rather than a fold onto
+    /// `Failed` (nothing reported a fault) or `Cancelled` (nobody asked): a
+    /// caller polling this surface is owed the true reason its event never
+    /// landed.
+    Abandoned,
 }
 
 impl SurfaceEventHandoffState {
@@ -506,6 +512,7 @@ impl SurfaceEventHandoffState {
             AttemptState::Completed => Self::Completed,
             AttemptState::Failed => Self::Failed,
             AttemptState::Cancelled => Self::Cancelled,
+            AttemptState::Abandoned => Self::Abandoned,
         }
     }
 
@@ -519,6 +526,7 @@ impl SurfaceEventHandoffState {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::Abandoned => "abandoned",
         }
     }
 }
