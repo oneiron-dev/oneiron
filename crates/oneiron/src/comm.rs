@@ -2761,7 +2761,7 @@ pub fn mint_send_override(
 }
 
 /// The override covering one send, if any. Thin transaction-opening wrapper
-/// over [`send_override_for_send_in_txn`].
+/// over `send_override_for_send_in_txn`.
 pub fn send_override_for_send(
     vault: &Vault,
     party: &str,

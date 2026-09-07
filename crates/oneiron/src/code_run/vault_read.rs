@@ -3188,11 +3188,7 @@ mod tests {
 
         let batch = adapter
             .hydrate_many(CoreBatchShortIdHydrateRequest {
-                refs: vec![
-                    admitted_ref,
-                    denied_ref.clone(),
-                    missing_ref.to_owned(),
-                ],
+                refs: vec![admitted_ref, denied_ref.clone(), missing_ref.to_owned()],
                 view: None,
             })
             .expect("batch hydrate");

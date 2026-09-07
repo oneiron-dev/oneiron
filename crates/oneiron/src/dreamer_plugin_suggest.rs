@@ -277,10 +277,10 @@ impl PackCatalog for TestPackCatalog {
 ///
 /// # Errors
 ///
-/// [`PluginSectionError::ManifestCodec`] when the candidate's manifest does
-/// not canonically encode. The blueprint sketched an infallible signature;
-/// the encode genuinely can fail, and returning the error is the only
-/// spelling that neither panics nor invents a key from partial bytes.
+/// [`crate::context_board::PluginSectionError::ManifestCodec`] when the
+/// candidate's manifest does not canonically encode. The blueprint sketched an
+/// infallible signature; the encode genuinely can fail, and returning the error
+/// is the only spelling that neither panics nor invents a key from partial bytes.
 pub fn plugin_suggestion_key(
     notice: &WorkflowPatternNotice,
     candidate: &PackCandidate,
@@ -423,8 +423,9 @@ pub enum PluginSuggestionDisposition {
 ///
 /// # Errors
 ///
-/// Storage errors, catalog errors, and any [`PluginSectionError`] the
-/// ONE-1706 proposal door raises for a manifest that fails validation.
+/// Storage errors, catalog errors, and any
+/// [`crate::context_board::PluginSectionError`] the ONE-1706 proposal door
+/// raises for a manifest that fails validation.
 pub fn run_plugin_suggestion_job<C: PackCatalog + ?Sized>(
     vault: &Vault,
     catalog: &C,

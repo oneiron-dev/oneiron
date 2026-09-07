@@ -730,11 +730,15 @@ mod tests {
             Err(err) => err,
         };
 
+        // Clap shows help when a required subcommand has no arguments. This
+        // must still be a failing parse, not a successful `--help` exit.
         assert_eq!(
             err.kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
             "bare `api` must not resolve to another command"
         );
+        assert!(err.use_stderr());
+        assert_eq!(err.exit_code(), 2);
     }
 
     /// Mirrors the server-side grammar rule: an owner-grade token is never

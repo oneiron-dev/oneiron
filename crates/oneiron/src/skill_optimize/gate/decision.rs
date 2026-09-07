@@ -52,7 +52,7 @@ pub fn score_gate_skill_edit_with_scorer(
 ///
 /// The wake is named by its scheduler identity, not by a string: the label is
 /// derived from `attempt`'s durable queue row through the one resolver the
-/// drafting door also uses ([`super::proven_cycle`]). A caller that cannot show
+/// drafting door also uses (`super::proven_cycle`). A caller that cannot show
 /// a real attempt cannot name a cycle at all, which is what makes K a bound on
 /// one REAL wake rather than on whoever spells a fresh label. Presenting an
 /// attempt whose cycle differs from the proposal's birth stamp is the lawful

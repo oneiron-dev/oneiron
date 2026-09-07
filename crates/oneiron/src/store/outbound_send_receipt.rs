@@ -148,7 +148,10 @@ impl Store {
             .prefix_iter(&rtxn, SEND_RECEIPT_AUDIT_KEY_PREFIX)?
         {
             let (key, value) = row?;
-            rows.push((send_receipt_audit_task_id_from_key(&key)?, value.into_owned()));
+            rows.push((
+                send_receipt_audit_task_id_from_key(&key)?,
+                value.into_owned(),
+            ));
         }
         Ok(rows)
     }

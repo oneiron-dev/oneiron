@@ -1794,79 +1794,76 @@ fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
 
     let learned_at = 1_772_000_000;
     let window_key = WindowKey::from_timestamp(learned_at);
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"converge-secret",
+        )
+        .commit()?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
-    for attempt in 0..3 {
-        let (_dir, vault) = open_test_vault();
-        let id = EntityId::now();
-        vault
-            .batch()
-            .put(
-                &id,
-                1,
-                test_time_range(learned_at, learned_at),
-                learned_at,
-                b"converge-secret",
-            )
-            .commit()?;
+    // The bare barrier did not order the header read before the erase commit;
+    // Linux could take the FULLY-MISSING path on every retry. The existing
+    // post-header-read rendezvous forces the HEADERFUL path while the eraser
+    // holds LMDB's write lock. Its commit then releases tombstone publication
+    // followed by GDPR soft-erase and purge, both of which find no local scope.
+    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+        crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        Ok(())
+    })?;
+    let dt_marker = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?
+        .expect("the rendezvous must construct the raced-to-nothing branch");
 
-        // GdprDelete races the tombstone-LESS full-scope erase that
-        // `BatchOp::Delete` performs (`deindex_entity`): the delete reads
-        // E's header, the racer erases the whole scope, and the delete's
-        // purge txn finds nothing.
-        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
-            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
-            Ok(())
-        })?;
+    // Origin RACED-TO-NOTHING: no false audit, but the convergent CRDT
+    // tombstone + exactly one d:/q: propagation pair survive. gdpr_delete
+    // pinned wire byte = 3.
+    assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
+    assert!(vault.get_raw(&id)?.is_none());
+    assert!(vault.get_vector(&id)?.is_none());
+    let origin_doc = window::load_window_from_state(&vault, "origin", &window_key)?;
+    assert!(
+        map_contains_binary(&origin_doc.get_map("tombstones"), id.to_hex().as_str()),
+        "the raced GdprDelete must still publish a convergent CRDT tombstone"
+    );
 
-        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
-            // Scheduling miss: the deleter probed after the commit and took
-            // the FULLY-MISSING strict-noop path. Verify, then retry.
-            assert_eq!(outcome, DeleteEntityOutcome::missing());
-            assert_no_erasure_audit_artifacts(&vault)?;
-            assert!(
-                attempt < 2,
-                "raced branch was never constructed in 3 attempts"
-            );
-            continue;
-        };
+    // A fresh peer still holds E; applying the origin window must
+    // converge it away (the dropped-GDPR-delete net the anti-(A)
+    // invariant guarantees).
+    let (_peer_dir, peer) = open_test_vault();
+    peer.batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"converge-secret",
+        )
+        .commit()?;
+    peer.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert!(
+        peer.get_raw(&id)?.is_some(),
+        "peer fixture must hold E before convergence"
+    );
+    assert!(peer.get_vector(&id)?.is_some());
+    assert_eq!(peer.search_vector(&[0.1, 0.2, 0.3, 0.4], 10)?.len(), 1);
 
-        // Origin RACED-TO-NOTHING: no false audit, but the convergent CRDT
-        // tombstone + exactly one d:/q: propagation pair survive. gdpr_delete
-        // pinned wire byte = 3.
-        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
-        let origin_doc = window::load_window_from_state(&vault, "origin", &window_key)?;
-        assert!(
-            map_contains_binary(&origin_doc.get_map("tombstones"), id.to_hex().as_str()),
-            "the raced GdprDelete must still publish a convergent CRDT tombstone"
-        );
-
-        // A fresh peer still holds E; applying the origin window must
-        // converge it away (the dropped-GDPR-delete net the anti-(A)
-        // invariant guarantees).
-        let (_peer_dir, peer) = open_test_vault();
-        peer.batch()
-            .put(
-                &id,
-                1,
-                test_time_range(learned_at, learned_at),
-                learned_at,
-                b"converge-secret",
-            )
-            .commit()?;
-        assert!(
-            peer.get_raw(&id)?.is_some(),
-            "peer fixture must hold E before convergence"
-        );
-
-        let materializer = Materializer::new();
-        window::forward_rematerialize(&peer, &origin_doc, &materializer, &window_key)?;
-        assert!(
-            peer.get_raw(&id)?.is_none(),
-            "applying the origin window to the peer must purge E (convergence net)"
-        );
-        return Ok(());
-    }
-    unreachable!("the attempt loop either returns or panics");
+    let materializer = Materializer::new();
+    window::forward_rematerialize(&peer, &origin_doc, &materializer, &window_key)?;
+    assert!(
+        peer.get_raw(&id)?.is_none(),
+        "applying the origin window to the peer must purge E (convergence net)"
+    );
+    assert!(peer.get_vector(&id)?.is_none());
+    assert!(peer.search_vector(&[0.1, 0.2, 0.3, 0.4], 10)?.is_empty());
+    assert_eq!(redaction_audit_receipts(&peer)?.len(), 1);
+    assert_eq!(hard_erase_sweep_rows(&peer)?.len(), 1);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════

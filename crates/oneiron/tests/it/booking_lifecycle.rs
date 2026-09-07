@@ -108,6 +108,8 @@ impl Fixture {
         vault
             .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"booking actor")
             .expect("put actor");
+        oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+            .expect("authorize this CAL ingest actor's Imported source");
         let page = test_id(PAGE_SEED);
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
@@ -767,6 +769,10 @@ fn latest_hold_token(
 #[test]
 fn confirm_revalidates_after_new_busy_event() {
     let fixture = Fixture::open();
+    fixture
+        .vault
+        .install_imported_source_permit_for_test(fixture.actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let slot = slot_of(&fixture.offered_slots()[0]);
     let visitor = session(b"visitor-one");
     let hold = expect_held(

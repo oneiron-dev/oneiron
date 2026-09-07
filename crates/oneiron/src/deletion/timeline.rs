@@ -11,7 +11,8 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
 use super::tombstone::{
-    decode_tombstone_value, pending_tombstone_key, window_label_from_timestamp,
+    archive_tombstone_key, decode_tombstone_value, pending_tombstone_key,
+    window_label_from_timestamp,
 };
 
 /// Stable deletion reason surfaced by short-id hydrate.
@@ -310,7 +311,7 @@ impl Vault {
         let decoded = decode_tombstone_value(value);
         HydratedShortIdDeletion {
             source,
-            reason: decoded.reason.map(Self::hydrate_deletion_reason),
+            reason: decoded.reason.and_then(Self::hydrate_deletion_reason),
             deleted_at: (decoded.deleted_at != 0).then_some(decoded.deleted_at),
             request_id: decoded
                 .request_id
@@ -319,22 +320,38 @@ impl Vault {
         }
     }
 
+    /// Names a decoded wire reason in the short-id hydrate vocabulary.
+    ///
+    /// `None` means "a reason this surface has no name for". Today that is
+    /// exactly `archived_by_cleanup` (ONE-1931), and it is UNREACHABLE in
+    /// practice: the archive door publishes no CRDT tombstone and writes no
+    /// `pt:` marker, so neither source this function is fed from can ever
+    /// carry wire byte 5. The arm exists so the mapping stays TOTAL over the
+    /// wire vocabulary rather than panicking or lying if some future writer
+    /// does reach it.
+    ///
+    /// The archive reason is deliberately NOT added to
+    /// [`HydratedShortIdDeletionReason`]: that enum is not
+    /// `#[non_exhaustive]` and is matched exhaustively outside this crate
+    /// (`oneiron-server/src/api/core.rs`), which is outside this ticket's
+    /// claim. Archive metadata is served by [`Vault::archived_entity`].
     fn hydrate_deletion_reason(
         reason: crate::deletion::TombstoneReason,
-    ) -> HydratedShortIdDeletionReason {
+    ) -> Option<HydratedShortIdDeletionReason> {
         match reason {
             crate::deletion::TombstoneReason::UserDelete => {
-                HydratedShortIdDeletionReason::UserDelete
+                Some(HydratedShortIdDeletionReason::UserDelete)
             }
             crate::deletion::TombstoneReason::UserHardDelete => {
-                HydratedShortIdDeletionReason::UserHardDelete
+                Some(HydratedShortIdDeletionReason::UserHardDelete)
             }
             crate::deletion::TombstoneReason::GdprDelete => {
-                HydratedShortIdDeletionReason::GdprDelete
+                Some(HydratedShortIdDeletionReason::GdprDelete)
             }
             crate::deletion::TombstoneReason::PolicyDelete => {
-                HydratedShortIdDeletionReason::PolicyDelete
+                Some(HydratedShortIdDeletionReason::PolicyDelete)
             }
+            crate::deletion::TombstoneReason::ArchivedByCleanup => None,
         }
     }
 
@@ -363,12 +380,27 @@ impl Store {
     ///
     /// PRESENCE only: liveness never needs the tombstone's reason, timestamp
     /// or request id, so no tombstone value is decoded here.
+    ///
+    /// ONE-1931 adds a THIRD source, checked first because it is the cheapest
+    /// and the most local: the GLOBAL `ac:` cleanup-archive marker. An
+    /// archived row is a 25 B shell exactly like a `user_delete` shell, so a
+    /// liveness predicate that could not see the archive marker would hand
+    /// retrieval a body-less PERSON reading as live. Presence-only fits this
+    /// function's existing contract exactly — the archive REASON is served by
+    /// [`crate::Vault::archived_entity`], not from here.
     pub(crate) fn entity_deletion_present_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         learned_at: u64,
     ) -> Result<bool> {
+        if self
+            .sync_state
+            .get(txn, archive_tombstone_key(id).as_str())?
+            .is_some()
+        {
+            return Ok(true);
+        }
         let window_label = window_label_from_timestamp(learned_at);
         let pending_key = pending_tombstone_key(&window_label, id);
         if self.sync_state.get(txn, pending_key.as_str())?.is_some() {

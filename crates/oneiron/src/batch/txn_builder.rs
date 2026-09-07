@@ -357,6 +357,7 @@ impl<'a> TxnBatchBuilder<'a> {
     /// for the engine's provenance unit (`edge.provenance` Claims). Full
     /// structural body validation (D18) still applies at apply time — the
     /// door bypasses nothing except the reserved-namespace rejection.
+    #[cfg(test)]
     pub(crate) fn put_reserved_claim(
         mut self,
         id: &EntityId,
