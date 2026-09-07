@@ -31,8 +31,9 @@
 //! Nothing in this module knows a provider, a model id, a prompt, or a
 //! persona: the backend trait is the whole seam, exactly as
 //! [`crate::rerank::Reranker`] and `LlmBackend` are.
-
-use std::collections::HashMap;
+//!
+//! Effort-dialed, actor-scoped retrieval with execution quality diagnostics.
+//! Quality is metadata; channel scores, admission, and backend caps are unchanged.
 
 use crate::claim::{ScopedRead, decode_claim_body};
 use crate::entity_id::EntityId;
@@ -40,13 +41,19 @@ use crate::error::{Error, Result};
 use crate::llm::BudgetLease;
 use crate::memory::{Effort, MEMORY_CODE_LEASE_REQUIRED};
 use crate::pipeline::ScoredEntity;
-use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn};
+use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn_with_diagnostics};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::RerankCandidate;
+use crate::retrieval_quality::{
+    RetrievalDiagnostics, RetrievalQualityReport, classify_retrieval_quality,
+};
+use crate::store::RetrievalSignal;
 use crate::vault::Vault;
 
+mod accumulation;
 mod session_scope;
 mod spend;
+use accumulation::DepthAccumulator;
 pub use session_scope::{SessionScope, narrow_to_session_scope};
 pub use spend::{RetrievalError, RetrievalResult};
 
@@ -179,6 +186,10 @@ pub struct DepthSearchResult {
     /// tier that ran no backend reports `0`, and a caller can therefore read
     /// this as "what this call really cost", not "what it was allowed to".
     pub tokens_used: u64,
+    /// Attempted and completed channels from this execution, not from hit counts.
+    pub retrieval_diagnostics: RetrievalDiagnostics,
+    /// Shared presentation metadata. Does not alter engine or backend ranking.
+    pub retrieval_quality: RetrievalQualityReport,
 }
 
 /// A backend result carrying what producing it actually cost.
@@ -404,17 +415,19 @@ fn run_direct_channel(
     match &request.probe {
         SearchProbe::Text { query } => {
             acc.mark(SIGNAL_TEXT);
-            // No extra RetrievalFilter: inherit the actor's authority floor.
-            // SessionScope is separate, conjunctive narrowing below.
+            acc.attempt(RetrievalSignal::Text);
             let hits = scoped.search_text(query, request.channel_limit(scoped, true)?, None)?;
             acc.merge(request.narrow_hits(scoped, hits)?);
+            acc.complete(RetrievalSignal::Text);
             acc.record_query(query.clone());
         }
         SearchProbe::Vector { embedding, .. } => {
             acc.mark(SIGNAL_VECTOR);
+            acc.attempt(RetrievalSignal::Vector);
             let hits =
                 scoped.search_vector(embedding, request.channel_limit(scoped, false)?, None)?;
             acc.merge(request.narrow_hits(scoped, hits)?);
+            acc.complete(RetrievalSignal::Vector);
             // No query recorded: a float vector is not a string a later
             // channel could compare against, and `signals_used` is where a
             // dense channel is reported.
@@ -442,8 +455,10 @@ fn run_subquery_channels(
         // variants all collapse onto the direct query runs no subquery
         // channel, and must not claim the signal.
         acc.mark(SIGNAL_SUBQUERIES);
+        acc.attempt(RetrievalSignal::Text);
         let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
         acc.merge(request.narrow_hits(scoped, hits)?);
+        acc.complete(RetrievalSignal::Text);
         acc.record_query(subquery);
     }
     Ok(())
@@ -469,12 +484,13 @@ fn run_graph_expansion(
         return Ok(());
     }
     acc.mark(SIGNAL_PPR);
+    acc.attempt(RetrievalSignal::Ppr);
     let vault = scoped.vault();
     let rtxn = vault.store.env.read_txn()?;
     // Graph candidates must inherit the same retrieval floor as direct hits;
     // actor readability alone does not enforce entity-type and numeric limits.
     let visibility = scoped.retrieval_visibility_in(&rtxn, None)?;
-    let expanded = ppr_query_scoped_in_txn(
+    let expanded = ppr_query_scoped_in_txn_with_diagnostics(
         &vault.store,
         &rtxn,
         &seeds,
@@ -485,7 +501,9 @@ fn run_graph_expansion(
         &visibility,
     )?;
     drop(rtxn);
-    acc.merge(request.narrow_hits(scoped, expanded)?);
+    acc.retrieval_diagnostics.ppr_cache = Some(expanded.cache);
+    acc.merge(request.narrow_hits(scoped, expanded.scores)?);
+    acc.complete(RetrievalSignal::Ppr);
     Ok(())
 }
 
@@ -514,8 +532,10 @@ fn run_deep_rounds(
             return Ok(());
         }
         for subquery in round {
+            acc.attempt(RetrievalSignal::Text);
             let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
             acc.merge(request.narrow_hits(scoped, hits)?);
+            acc.complete(RetrievalSignal::Text);
             acc.record_query(subquery);
         }
     }
@@ -538,6 +558,7 @@ fn run_deep_rerank(
     if acc.order.is_empty() {
         return Ok(());
     }
+    acc.attempt(RetrievalSignal::Rerank);
     let bodies = acc.candidate_claim_bodies(scoped)?;
     let candidates = acc.rerank_candidates(&bodies);
     let token_budget = request.remaining_token_budget(acc.tokens_used)?;
@@ -557,146 +578,8 @@ fn run_deep_rerank(
         .into());
     }
     acc.reorder_by(&scored.value);
+    acc.complete(RetrievalSignal::Rerank);
     Ok(())
-}
-
-/// Ordered, deduplicated merge of every channel a read ran.
-#[derive(Default)]
-struct DepthAccumulator {
-    /// Entity ids in first-seen order; the read's ranking before any rerank.
-    order: Vec<EntityId>,
-    /// Best engine score seen for each id, across channels.
-    scores: HashMap<EntityId, f32>,
-    signals: Vec<String>,
-    queries_run: Vec<String>,
-    candidates_scanned: u64,
-    tokens_used: u64,
-    backend_used: bool,
-}
-
-impl DepthAccumulator {
-    fn merge(&mut self, hits: Vec<ScoredEntity>) {
-        self.candidates_scanned = self.candidates_scanned.saturating_add(hits.len() as u64);
-        for hit in hits {
-            match self.scores.get_mut(&hit.id) {
-                Some(existing) => *existing = existing.max(hit.score),
-                None => {
-                    self.scores.insert(hit.id, hit.score);
-                    self.order.push(hit.id);
-                }
-            }
-        }
-    }
-
-    /// Fuse channel scores before truncation; stable ties keep first-seen order.
-    fn fuse(&mut self) {
-        self.order
-            .sort_by(|left, right| self.scores[right].total_cmp(&self.scores[left]));
-    }
-
-    fn mark(&mut self, signal: &str) {
-        if !self.signals.iter().any(|seen| seen == signal) {
-            self.signals.push(signal.to_owned());
-        }
-    }
-
-    fn record_query(&mut self, query: String) {
-        self.queries_run.push(query);
-    }
-
-    fn already_ran(&self, query: &str) -> bool {
-        self.queries_run.iter().any(|seen| seen == query)
-    }
-
-    fn charge_backend(&mut self, signal: &str, tokens_used: u64) {
-        self.backend_used = true;
-        self.mark(signal);
-        self.tokens_used = self.tokens_used.saturating_add(tokens_used);
-    }
-
-    /// The engine's own cap on a backend round: blank and repeated queries
-    /// drop out, and at most [`DEEP_QUERIES_PER_ROUND`] survive.
-    fn admissible_round_queries(&self, proposed: Vec<String>) -> Vec<String> {
-        let mut round: Vec<String> = Vec::new();
-        for candidate in proposed {
-            if round.len() == DEEP_QUERIES_PER_ROUND {
-                break;
-            }
-            let candidate = candidate.trim().to_owned();
-            if candidate.is_empty() || self.already_ran(&candidate) || round.contains(&candidate) {
-                continue;
-            }
-            round.push(candidate);
-        }
-        round
-    }
-
-    /// Decoded claim bodies for the candidate set, read through the same
-    /// actor-keyed door the hits came from, so a rerank cannot see a body the
-    /// ranking itself was not allowed to.
-    fn candidate_claim_bodies(
-        &self,
-        scoped: &ScopedRead<'_>,
-    ) -> Result<Vec<Option<crate::claim::ClaimBody>>> {
-        let mut bodies = Vec::with_capacity(self.order.len());
-        for id in &self.order {
-            let decoded = match scoped.get_entity_parts(id)? {
-                Some((ENTITY_TYPE_CLAIM, _, body)) => Some(decode_claim_body(&body, true)?),
-                _ => None,
-            };
-            bodies.push(decoded);
-        }
-        Ok(bodies)
-    }
-
-    fn rerank_candidates<'a>(
-        &self,
-        bodies: &'a [Option<crate::claim::ClaimBody>],
-    ) -> Vec<RerankCandidate<'a>> {
-        self.order
-            .iter()
-            .zip(bodies)
-            .enumerate()
-            .map(|(index, (id, claim))| RerankCandidate {
-                id: *id,
-                score: self.scores.get(id).copied().unwrap_or_default(),
-                rank: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                claim: claim.as_ref(),
-            })
-            .collect()
-    }
-
-    /// Reorders the ranking by backend score, highest first, keeping the
-    /// engine's own order among ties. Engine scores are untouched.
-    fn reorder_by(&mut self, backend_scores: &[f32]) {
-        let mut ranked: Vec<(usize, EntityId)> = self.order.iter().copied().enumerate().collect();
-        ranked.sort_by(|left, right| {
-            backend_scores[right.0]
-                .total_cmp(&backend_scores[left.0])
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        self.order = ranked.into_iter().map(|(_, id)| id).collect();
-    }
-
-    fn finish(self, limit: usize) -> DepthSearchResult {
-        let hits = self
-            .order
-            .iter()
-            .take(limit)
-            .map(|id| ScoredEntity {
-                id: *id,
-                score: self.scores.get(id).copied().unwrap_or_default(),
-            })
-            .collect();
-        DepthSearchResult {
-            hits,
-            queries_run: self.queries_run,
-            signals_used: self.signals,
-            candidates_scanned: self.candidates_scanned,
-            backend_used: self.backend_used,
-            tokens_used: self.tokens_used,
-        }
-    }
 }
 
 #[cfg(test)]

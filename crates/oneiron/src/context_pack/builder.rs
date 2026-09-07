@@ -233,6 +233,7 @@ impl UnfinalizedContextPack<'_> {
         .ok()
         .flatten();
         RetrievalWithTelemetry {
+            retrieval_quality: pack.retrieval_quality.clone(),
             value: pack,
             run_id: telemetry_run_id,
         }
@@ -282,6 +283,7 @@ impl UnfinalizedContextPack<'_> {
             return Err(error);
         }
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: self.value.retrieval_quality.clone(),
             value: self.value,
             run_id: telemetry_run_id,
         })
@@ -719,6 +721,7 @@ impl<'a> ContextPackBuilder<'a> {
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         )?;
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: run.pack.retrieval_quality.clone(),
             value: run.pack,
             run_id: telemetry_run_id,
         })
@@ -800,6 +803,7 @@ impl<'a> ContextPackBuilder<'a> {
         let result = (|| {
             let total_in_scope = pipeline_output.total_in_scope;
             let pipeline_empty_reason = pipeline_output.empty_reason;
+            let retrieval_quality = pipeline_output.retrieval_quality;
             let pipeline_signals = pipeline_output.signals;
             let scored = pipeline_output.scores;
             validate_scored_candidates(&scored)?;
@@ -1030,10 +1034,16 @@ impl<'a> ContextPackBuilder<'a> {
                 items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
                 items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
             };
-            let empty = empty_context(pack_is_empty, &stats, pipeline_empty_reason);
+            let empty = empty_context(
+                pack_is_empty,
+                &stats,
+                pipeline_empty_reason,
+                &retrieval_quality,
+            );
 
             Ok(ContextPackRun {
                 pack: ContextPack {
+                    retrieval_quality,
                     results,
                     neighbors,
                     stats,
@@ -1059,6 +1069,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub fn run_serialized_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<u8>>> {
         let serialized = self.run_serialized_with_stats()?;
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: serialized.retrieval_quality,
             value: serialized.value.bytes,
             run_id: serialized.run_id,
         })
@@ -1089,6 +1100,7 @@ impl<'a> ContextPackBuilder<'a> {
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
         )?;
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: run.pack.retrieval_quality,
             value: SerializedContextPack {
                 bytes,
                 stats: telemetry.stats,

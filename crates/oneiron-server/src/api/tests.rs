@@ -1,5 +1,6 @@
 use super::*;
 
+mod depth_quality;
 mod depth_spend;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -469,6 +470,7 @@ fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
 
 fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPack {
     oneiron::ContextPack {
+        retrieval_quality: Default::default(),
         results: (0..result_count)
             .map(|index| {
                 let id = seeded_test_entity_id(0x0012_6400 + index as u128);
@@ -2455,7 +2457,7 @@ fn v1_core_openapi_contract_snapshot_matches_fixture() {
                 "securitySchemes": spec["components"]["securitySchemes"].clone(),
             },
         }),
-        V1_CORE_OPENAPI_CONTRACT_SNAPSHOT,
+        &retrieval_quality_openapi_snapshot(),
         V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH,
         "v1 core OpenAPI contract",
     );
@@ -2904,7 +2906,7 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
 
     assert_json_snapshot(
         Value::Array(exchanges),
-        V1_CORE_SUCCESS_CONTRACT_SNAPSHOT,
+        &retrieval_quality_success_snapshot(),
         V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH,
         "v1 core success contract",
     );
@@ -14640,7 +14642,9 @@ async fn memory_reason_defaults_to_standard_and_answers_from_the_evidence() {
             "confidence",
             "gaps",
             "reasoning",
-            "tokensUsed"
+            "tokensUsed",
+            "quality",
+            "confidenceAdjustment"
         ]),
         "exact camelCase response contract: {body:?}"
     );
@@ -15011,4 +15015,216 @@ fn generated_openapi_publishes_exactly_one_retrieval_depth_vocabulary() {
         json!([{ "CoreBearer": [] }]),
         "the reasoning route must require bearer auth as the single scheme"
     );
+}
+
+fn retrieval_quality_schema_properties() -> Value {
+    json!({
+        "quality": {"type": ["string", "null"]},
+        "degradation": {"type": ["array", "null"], "items": {"type": "string"}},
+        "confidenceAdjustment": {"type": ["number", "null"], "format": "float"}
+    })
+}
+
+// Keep the frozen pre-extension fixtures intact. The in-memory expectation adds
+// only these pinned fields; all existing fields, scores, and authority shapes
+// are still compared against the original snapshots.
+fn retrieval_quality_openapi_snapshot() -> String {
+    let mut expected: Value =
+        serde_json::from_str(V1_CORE_OPENAPI_CONTRACT_SNAPSHOT).expect("OpenAPI fixture");
+    for name in ["ResponseMeta", "CoreContextPackResponse"] {
+        let properties = expected["components"]["schemas"][name]["properties"]
+            .as_object_mut()
+            .expect("schema properties");
+        properties.extend(
+            retrieval_quality_schema_properties()
+                .as_object()
+                .expect("quality properties")
+                .clone(),
+        );
+    }
+    depth_quality::extend_depth_error_contract(&mut expected);
+    serde_json::to_string(&expected).expect("extended OpenAPI expectation")
+}
+
+fn retrieval_quality_success_snapshot() -> String {
+    let mut expected: Value =
+        serde_json::from_str(V1_CORE_SUCCESS_CONTRACT_SNAPSHOT).expect("success fixture");
+    for exchange in expected.as_array_mut().expect("exchanges") {
+        if !matches!(
+            exchange["name"].as_str(),
+            Some("core_context_pack" | "core_context_pack_v4")
+        ) {
+            continue;
+        }
+        let body = &mut exchange["response"]["body"];
+        body["quality"] = json!("passthrough");
+        body["confidenceAdjustment"] = json!(-0.35);
+        if let Some(empty) = body.get_mut("empty") {
+            empty["retrievalQuality"] = json!({
+                "quality": "passthrough", "confidenceAdjustment": -0.35,
+            });
+        }
+    }
+    serde_json::to_string(&expected).expect("extended success expectation")
+}
+
+#[test]
+fn retrieval_quality_response_meta_is_additive_and_keeps_eq_and_wire_numbers() {
+    use oneiron::retrieval_quality::{
+        PprCacheOutcome, RetrievalDiagnostics, classify_retrieval_quality,
+    };
+    use oneiron::store::RetrievalSignal;
+
+    fn requires_eq<T: Eq>(_: &T) {}
+
+    let old = PaginatedResponse::new(vec![json!({"id": "unchanged"})], None, ResponseMeta::none());
+    assert_eq!(
+        serde_json::to_value(&old).expect("old envelope"),
+        json!({
+            "items": [{"id": "unchanged"}], "meta": {"total": 0, "countMode": "none"}
+        })
+    );
+    let report = classify_retrieval_quality(&RetrievalDiagnostics {
+        attempted: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        succeeded: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        ppr_cache: Some(PprCacheOutcome::Miss),
+        ..Default::default()
+    });
+    let meta = ResponseMeta::estimate(4).with_quality(&report);
+    requires_eq(&meta);
+    requires_eq(&old);
+    assert_eq!(meta, meta.clone());
+    let wire = serde_json::to_value(meta).expect("quality meta");
+    assert_eq!(
+        wire,
+        json!({
+            "total": 4, "countMode": "estimate", "quality": "degraded",
+            "degradation": ["ppr_cache_miss"], "confidenceAdjustment": -0.15
+        })
+    );
+}
+
+#[test]
+fn retrieval_quality_openapi_fields_are_optional_and_use_decimal_number_schema() {
+    let spec = generated_spec();
+    let expected = retrieval_quality_schema_properties();
+    for name in ["ResponseMeta", "CoreContextPackResponse"] {
+        let schema = openapi_component_schema(&spec, name);
+        for field in ["quality", "degradation", "confidenceAdjustment"] {
+            assert_eq!(
+                openapi_schema_contract(&schema["properties"][field]),
+                expected[field]
+            );
+            assert!(
+                !schema["required"]
+                    .as_array()
+                    .expect("required fields")
+                    .contains(&Value::from(field))
+            );
+        }
+        assert!(schema["properties"].get("confidence_adjustment").is_none());
+    }
+}
+
+#[tokio::test]
+async fn retrieval_quality_raw_empty_search_uses_completed_operation_not_hit_count() {
+    let (_dir, server) = test_server();
+    let text = search_text(
+        HeaderMap::new(),
+        State(server.clone()),
+        Ok(Query(TextSearchQuery {
+            query: "absentqualitytoken".to_owned(),
+            limit: 10,
+            view: Some(View::Standard),
+            count_mode: CountMode::Estimate,
+            depth: oneiron::Effort::Minimal,
+        })),
+    )
+    .await
+    .expect("text search");
+    let mut query = vec!["0"; oneiron::VaultConfig::device().dimensions];
+    query[0] = "1";
+    let vector = search_vector(
+        HeaderMap::new(),
+        State(server),
+        Ok(Query(VectorSearchQuery {
+            query: query.join(","),
+            limit: 10,
+            view: Some(View::Standard),
+            count_mode: CountMode::None,
+            depth: oneiron::Effort::Minimal,
+            query_text: None,
+        })),
+    )
+    .await
+    .expect("vector search");
+    for response in [text.0, vector.0] {
+        assert!(response.items.is_empty());
+        let wire = serde_json::to_value(response).expect("search JSON");
+        assert_eq!(wire["meta"]["quality"], "passthrough");
+        assert_eq!(wire["meta"]["confidenceAdjustment"], -0.35);
+        assert!(wire["meta"].get("degradation").is_none());
+        assert!(wire["meta"].get("confidence_adjustment").is_none());
+    }
+}
+
+#[tokio::test]
+async fn retrieval_quality_context_route_carries_report_on_empty_response() {
+    let (_dir, server) = test_server();
+    let (status, body) = route_json(
+        server,
+        json_request(
+            "POST",
+            "/v1/core/context-pack",
+            json!({
+                "query": "absentqualitytoken", "limit": 10
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["results"], json!([]));
+    assert_eq!(body["quality"], "passthrough");
+    assert_eq!(body["confidenceAdjustment"], -0.35);
+    assert!(body.get("degradation").is_none());
+    assert_eq!(
+        body["empty"]["retrievalQuality"]["quality"],
+        body["quality"]
+    );
+    assert_eq!(
+        body["empty"]["retrievalQuality"]["confidenceAdjustment"],
+        -0.35
+    );
+    assert_eq!(body["empty"]["reason"], "no_data");
+}
+
+#[test]
+fn retrieval_quality_server_scope_projection_preserves_degradation() {
+    use oneiron::retrieval_quality::{
+        PprCacheOutcome, RetrievalDiagnostics, classify_retrieval_quality,
+    };
+    use oneiron::store::RetrievalSignal;
+
+    let mut pack = synthetic_context_pack(1);
+    pack.retrieval_quality = classify_retrieval_quality(&RetrievalDiagnostics {
+        attempted: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        succeeded: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        ppr_cache: Some(PprCacheOutcome::Miss),
+        ..Default::default()
+    });
+    let report = pack.retrieval_quality.clone();
+    pack.results.clear();
+    scrub_context_pack_visible_stats(&mut pack);
+    assert_eq!(pack.retrieval_quality, report);
+    assert_eq!(
+        pack.empty.as_ref().expect("scoped empty").retrieval_quality,
+        report
+    );
+    let (_dir, server) = test_server();
+    let evidence = core_context_pack_evidence(&server.vault, None).expect("empty evidence");
+    let response = core_context_pack_response(pack, evidence, None, None, None, None);
+    let wire = serde_json::to_value(response).expect("context JSON");
+    assert_eq!(wire["quality"], "degraded");
+    assert_eq!(wire["degradation"], json!(["ppr_cache_miss"]));
+    assert_eq!(wire["confidenceAdjustment"], -0.15);
 }

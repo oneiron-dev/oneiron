@@ -150,6 +150,7 @@ fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> Contex
 #[test]
 fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![
             board_entity(0x41, ENTITY_TYPE_TURN, 0.25, "tn41"),
             board_entity(0x21, ENTITY_TYPE_CLAIM, 0.50, "cl21"),
@@ -246,6 +247,7 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
 #[test]
 fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![
             board_entity(0x51, ENTITY_TYPE_ASSET, 0.9, "as15"),
             board_entity(0x52, ENTITY_TYPE_ASSET_TEXT, 0.8, "tx10"),
@@ -4347,4 +4349,122 @@ fn a_raw_pack_carries_no_token_accounting_to_drive_a_threshold() -> Result<()> {
         "only the serialized product carries real accounting"
     );
     Ok(())
+}
+
+#[test]
+fn retrieval_quality_context_empty_and_serialized_wrappers_keep_report() -> Result<()> {
+    use crate::retrieval_quality::RetrievalQuality;
+
+    let (_dir, vault) = open_test_vault();
+    let build = || {
+        vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .search_text("absent", 10)
+    };
+    let output = build().run_with_telemetry()?;
+    let pack = output.value;
+    assert!(pack.results.is_empty());
+    assert_eq!(pack.retrieval_quality, output.retrieval_quality);
+    assert_eq!(pack.retrieval_quality.quality, RetrievalQuality::Degraded);
+    let empty = pack.empty.as_ref().expect("empty context");
+    assert_eq!(empty.reason, EmptyReason::NoData);
+    assert_eq!(empty.retrieval_quality, pack.retrieval_quality);
+    let row = vault
+        .retrieval_run(output.run_id.expect("id"))?
+        .expect("row");
+    assert_eq!(row.quality, Some(pack.retrieval_quality.quality));
+    assert_eq!(row.degradation, pack.retrieval_quality.degradation);
+    let serialized = build().run_serialized_with_telemetry()?;
+    assert_eq!(serialized.retrieval_quality, pack.retrieval_quality);
+    let with_stats = build().run_serialized_with_stats()?;
+    assert_eq!(with_stats.retrieval_quality, pack.retrieval_quality);
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_no_data_reason_is_independent_of_full_or_degraded_execution() {
+    use crate::retrieval_quality::{
+        PprCacheOutcome, RetrievalDiagnostics, RetrievalQuality, classify_retrieval_quality,
+    };
+    use crate::store::RetrievalSignal;
+
+    let signals = vec![
+        RetrievalSignal::Vector,
+        RetrievalSignal::Text,
+        RetrievalSignal::Phonetic,
+        RetrievalSignal::Temporal,
+        RetrievalSignal::Ppr,
+    ];
+    for (cache, quality) in [
+        (PprCacheOutcome::Hit, RetrievalQuality::Full),
+        (PprCacheOutcome::Miss, RetrievalQuality::Degraded),
+    ] {
+        let report = classify_retrieval_quality(&RetrievalDiagnostics {
+            attempted: signals.clone(),
+            succeeded: signals.clone(),
+            ppr_cache: Some(cache),
+            ..Default::default()
+        });
+        let stats = empty_pack_stats();
+        let empty =
+            super::empty_pack::empty_context(true, &stats, Some(EmptyReason::NoData), &report)
+                .expect("no-data context");
+        assert_eq!(empty.reason, EmptyReason::NoData);
+        assert_eq!(empty.retrieval_quality.quality, quality);
+        assert_eq!(empty.retrieval_quality, report);
+        let wire = serde_json::to_value(&empty).expect("empty JSON");
+        assert_eq!(wire["reason"], "no_data");
+        assert!(wire["retrievalQuality"]["confidenceAdjustment"].is_number());
+        let round_trip: EmptyContext = serde_json::from_value(wire).expect("decode empty JSON");
+        assert_eq!(round_trip, empty);
+    }
+}
+
+#[test]
+fn retrieval_quality_projection_to_empty_keeps_original_execution_report() -> Result<()> {
+    use crate::retrieval_quality::{
+        PprCacheOutcome, RetrievalDiagnostics, classify_retrieval_quality,
+    };
+    use crate::store::RetrievalSignal;
+
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    put_claim_text_entity(&vault, &id, "quality", "test.quality", "value")?;
+    let mut pack = vault.context_pack().search_text("quality", 10).run()?;
+    assert!(!pack.results.is_empty());
+    pack.retrieval_quality = classify_retrieval_quality(&RetrievalDiagnostics {
+        attempted: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        succeeded: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        ppr_cache: Some(PprCacheOutcome::Miss),
+        ..Default::default()
+    });
+    let report = pack.retrieval_quality.clone();
+    pack.results.clear();
+    pack.neighbors.clear();
+    refresh_projected_empty_context(&mut pack);
+    let empty = pack.empty.as_ref().expect("projected empty");
+    assert_eq!(empty.reason, EmptyReason::FilterMatchedNone);
+    assert_eq!(empty.retrieval_quality, report);
+    assert_eq!(pack.retrieval_quality, report);
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_old_empty_context_defaults_to_passthrough() {
+    use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalQuality};
+
+    let old = serde_json::json!({
+        "reason": "no_data", "totalInScope": 0, "hint": "test hint",
+    });
+    let empty: EmptyContext = serde_json::from_value(old).expect("old empty context");
+    assert_eq!(
+        empty.retrieval_quality.quality,
+        RetrievalQuality::Passthrough
+    );
+    assert!(empty.retrieval_quality.degradation.is_empty());
+    assert_eq!(
+        empty.retrieval_quality.confidence_adjustment,
+        ConfidenceAdjustment::PASSTHROUGH
+    );
 }

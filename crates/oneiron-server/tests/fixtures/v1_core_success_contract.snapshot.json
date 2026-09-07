@@ -68,7 +68,7 @@
             "id": "7e000000000000000000000012210001",
             "kind": "TURN",
             "label": "blue hallway contractneedle",
-            "score": 0.4305950999259949,
+            "score": 1.0,
             "spkr": "user",
             "txt": "blue hallway contractneedle",
             "type": 1,
@@ -101,6 +101,7 @@
     },
     "response": {
       "body": {
+        "confidenceAdjustment": -0.35,
         "evidence": {
           "result_ids": [
             "7e000000000000000000000012210001"
@@ -124,6 +125,7 @@
           "telemetry_persisted": true
         },
         "neighbors": [],
+        "quality": "passthrough",
         "results": [
           {
             "content_hash": "de",
@@ -199,6 +201,7 @@
     },
     "response": {
       "body": {
+        "confidenceAdjustment": -0.35,
         "context_version": "v4",
         "disclosure": {
           "clamped_out": 1,
@@ -215,6 +218,10 @@
         "empty": {
           "hint": "Try removing filters or widening the world, type, or time scope",
           "reason": "filter_matched_none",
+          "retrievalQuality": {
+            "confidenceAdjustment": -0.35,
+            "quality": "passthrough"
+          },
           "totalInScope": 0
         },
         "evidence": {
@@ -263,6 +270,7 @@
           "version": "v4"
         },
         "neighbors": [],
+        "quality": "passthrough",
         "results": [],
         "session_rag": {
           "last_result_ids": [],

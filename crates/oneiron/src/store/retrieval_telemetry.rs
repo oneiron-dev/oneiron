@@ -14,6 +14,9 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
 use crate::pipeline::Signal;
+use crate::retrieval_quality::{
+    ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
+};
 
 use super::*;
 
@@ -372,6 +375,12 @@ pub struct RetrievalRunRecord {
     pub empty_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<RetrievalTrace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<RetrievalQuality>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradation: Vec<RetrievalDegradation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_adjustment: Option<ConfidenceAdjustment>,
 }
 
 impl RetrievalRunRecord {
@@ -404,7 +413,17 @@ impl RetrievalRunRecord {
             claims_suppressed,
             empty_reason,
             trace: None,
+            quality: None,
+            degradation: Vec::new(),
+            confidence_adjustment: None,
         }
+    }
+
+    pub(crate) fn with_quality(mut self, report: &RetrievalQualityReport) -> Self {
+        self.quality = Some(report.quality);
+        self.degradation = report.degradation.clone();
+        self.confidence_adjustment = Some(report.confidence_adjustment);
+        self
     }
 
     pub(crate) fn with_trace(mut self, trace: Option<RetrievalTrace>) -> Self {

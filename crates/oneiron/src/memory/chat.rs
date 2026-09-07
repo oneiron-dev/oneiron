@@ -445,6 +445,7 @@ impl Memory<'_> {
                     total_candidates,
                     claims_returned,
                     deep_pending: None,
+                    ..RetrievalMeta::default()
                 },
                 pack_version: MEMORY_PACK_VERSION,
                 rendered,
@@ -553,6 +554,7 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
     }
     let resolved = results.len();
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results,
         neighbors: Vec::new(),
         stats: PackStats {

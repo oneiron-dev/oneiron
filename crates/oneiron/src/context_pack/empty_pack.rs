@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use crate::pipeline::Signal;
+use crate::retrieval_quality::RetrievalQualityReport;
 use crate::serialize::SerializedPackTelemetry;
 use crate::store::RetrievalSignal;
 
@@ -23,6 +24,8 @@ pub enum EmptyReason {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmptyContext {
+    #[serde(default)]
+    pub retrieval_quality: RetrievalQualityReport,
     pub reason: EmptyReason,
     pub total_in_scope: usize,
     pub hint: String,
@@ -112,6 +115,7 @@ pub fn refresh_projected_empty_context(pack: &mut ContextPack) {
         empty_hint(reason)
     };
     pack.empty = Some(EmptyContext {
+        retrieval_quality: pack.retrieval_quality.clone(),
         reason,
         total_in_scope: pack.stats.candidates_considered,
         hint: hint.to_owned(),
@@ -154,6 +158,7 @@ pub(super) fn empty_context(
     pack_is_empty: bool,
     stats: &PackStats,
     pipeline_reason: Option<EmptyReason>,
+    retrieval_quality: &RetrievalQualityReport,
 ) -> Option<EmptyContext> {
     if !pack_is_empty {
         return None;
@@ -166,6 +171,7 @@ pub(super) fn empty_context(
     };
 
     Some(EmptyContext {
+        retrieval_quality: retrieval_quality.clone(),
         reason,
         total_in_scope: stats.candidates_considered,
         hint: empty_hint(reason).to_owned(),

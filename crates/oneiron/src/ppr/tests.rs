@@ -4458,3 +4458,183 @@ fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn retrieval_quality_ppr_cache_miss_hit_preserve_score_only_results() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(0x71);
+    let target = entity(0x72);
+    vault.put_edge(&seed, EdgeKind::BelongsTo, &target, 1.0)?;
+    let cold = {
+        let txn = vault.store.env.read_txn()?;
+        let cold = ppr_query_in_txn_with_diagnostics(
+            &vault.store,
+            &txn,
+            &[seed],
+            3,
+            0.15,
+            0.0,
+            SeedWeighting::Uniform,
+        )?;
+        assert_eq!(cold.cache, PprCacheOutcome::Miss);
+        assert!(cold.deferred_cache_write.is_some());
+        let score_only = ppr_query_in_txn(&vault.store, &txn, &[seed], 3, 0.15)?;
+        assert_eq!(score_bits(&cold.scores), score_bits(&score_only));
+        cold
+    };
+    flush_deferred_ppr_cache_writes(
+        &vault.store,
+        &[cold.deferred_cache_write.expect("cold cache write")],
+    )?;
+    let txn = vault.store.env.read_txn()?;
+    let warm = ppr_query_in_txn_with_diagnostics(
+        &vault.store,
+        &txn,
+        &[seed],
+        3,
+        0.15,
+        0.0,
+        SeedWeighting::Uniform,
+    )?;
+    assert_eq!(warm.cache, PprCacheOutcome::Hit);
+    assert!(warm.deferred_cache_write.is_none());
+    assert_eq!(score_bits(&warm.scores), score_bits(&cold.scores));
+    let (legacy_scores, legacy_write) = ppr_query_in_txn_with_vad_deferred_cache(
+        &vault.store,
+        &txn,
+        &[seed],
+        3,
+        0.15,
+        0.0,
+        SeedWeighting::Uniform,
+    )?;
+    assert_eq!(score_bits(&legacy_scores), score_bits(&warm.scores));
+    assert!(legacy_write.is_none());
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_ppr_disabled_is_not_a_cache_miss() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(0x73);
+    let target = entity(0x74);
+    vault.put_edge(&seed, EdgeKind::BelongsTo, &target, 1.0)?;
+    let txn = vault.store.env.read_txn()?;
+    let empty = ppr_query_in_txn_with_diagnostics(
+        &vault.store,
+        &txn,
+        &[],
+        3,
+        0.15,
+        0.0,
+        SeedWeighting::Uniform,
+    )?;
+    assert_eq!(empty.cache, PprCacheOutcome::Disabled);
+    assert!(empty.scores.is_empty());
+    assert!(empty.deferred_cache_write.is_none());
+    for denied in [DeniedNodes::new(&[]), DeniedNodes::new(&[seed])] {
+        let scoped = ppr_query_scoped_in_txn_with_diagnostics(
+            &vault.store,
+            &txn,
+            &[seed],
+            3,
+            0.15,
+            0.0,
+            SeedWeighting::Uniform,
+            &denied,
+        )?;
+        let score_only = ppr_query_scoped_in_txn(
+            &vault.store,
+            &txn,
+            &[seed],
+            3,
+            0.15,
+            0.0,
+            SeedWeighting::Uniform,
+            &denied,
+        )?;
+        assert_eq!(scoped.cache, PprCacheOutcome::Disabled);
+        assert!(scoped.deferred_cache_write.is_none());
+        assert_eq!(score_bits(&scoped.scores), score_bits(&score_only));
+    }
+    assert_eq!(vault.store.ppr_cache.len(&txn)?, 0);
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_ppr_empty_cached_scores_still_report_hit() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(0x75);
+    plant_cache_row(
+        &vault,
+        &[seed],
+        1,
+        0.15,
+        SeedWeighting::Uniform,
+        crate::unix_seconds_now(),
+        &[],
+    )?;
+    let txn = vault.store.env.read_txn()?;
+    let result = ppr_query_in_txn_with_diagnostics(
+        &vault.store,
+        &txn,
+        &[seed],
+        1,
+        0.15,
+        0.0,
+        SeedWeighting::Uniform,
+    )?;
+    assert_eq!(result.cache, PprCacheOutcome::Hit);
+    assert!(result.scores.is_empty());
+    assert!(result.deferred_cache_write.is_none());
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_cached_empty_ppr_yields_full_no_data_context() -> Result<()> {
+    use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalQuality};
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(0x76);
+    // A servable zero-score cache row exercises completion independently of
+    // candidate presence. Vault open still seeds AGENT_DEF records at time 0;
+    // keep the temporal window (including adaptive widening) far from them.
+    plant_cache_row(
+        &vault,
+        &[seed],
+        1,
+        0.15,
+        SeedWeighting::Specificity,
+        crate::unix_seconds_now(),
+        &[],
+    )?;
+    let output = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .search_text("absent", 10)
+        .search_phonetic(&[])
+        .search_temporal(4_000_000_000, 4_000_000_001, 10)
+        .search_ppr(&[seed], 1)
+        .with_temporal_now(4_000_000_001)
+        .run_with_telemetry()?;
+    assert!(output.value.results.is_empty());
+    assert!(output.value.neighbors.is_empty());
+    assert_eq!(output.retrieval_quality.quality, RetrievalQuality::Full);
+    assert!(output.retrieval_quality.degradation.is_empty());
+    assert_eq!(
+        output.retrieval_quality.confidence_adjustment,
+        ConfidenceAdjustment::FULL
+    );
+    assert_eq!(output.value.retrieval_quality, output.retrieval_quality);
+    let empty = output.value.empty.as_ref().expect("no-data context");
+    assert_eq!(empty.reason, crate::context_pack::EmptyReason::NoData);
+    assert_eq!(empty.retrieval_quality, output.retrieval_quality);
+    let row = vault
+        .retrieval_run(output.run_id.expect("id"))?
+        .expect("row");
+    assert_eq!(row.quality, Some(RetrievalQuality::Full));
+    assert_eq!(row.empty_reason.as_deref(), Some("NoData"));
+    Ok(())
+}
+
+mod quality_integration;

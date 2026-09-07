@@ -21,6 +21,7 @@ use crate::registry::{
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
+use crate::retrieval_quality::RetrievalQualityReport;
 use crate::store::{RetrievalRunId, RetrievalSignal, Store};
 use crate::temporal::TemporalAnchorMode;
 
@@ -213,6 +214,7 @@ pub(super) struct ClaimStatusGateCache {
 }
 
 pub(crate) struct PipelineOutput {
+    pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
@@ -226,6 +228,8 @@ pub(crate) struct PipelineOutput {
 
 #[derive(Debug, Clone)]
 pub struct RetrievalWithTelemetry<T> {
+    /// Execution quality; independent of result counts and scores.
+    pub retrieval_quality: RetrievalQualityReport,
     pub value: T,
     pub run_id: Option<RetrievalRunId>,
 }
@@ -238,6 +242,8 @@ pub struct PendingVectorEmbedding {
 
 #[derive(Debug, Clone)]
 pub struct RetrievalWithPendingVectors<T> {
+    /// Execution quality; pending embedding state does not imply a timeout.
+    pub retrieval_quality: RetrievalQualityReport,
     pub value: T,
     pub pending_vector_ids: Vec<EntityId>,
     pub pending_vectors: Vec<PendingVectorEmbedding>,
@@ -737,6 +743,8 @@ pub enum DreamerWorkingSetStopReason {
 /// Budget-capped page of retrieval candidates for Dreamer ingress.
 #[derive(Debug, Clone)]
 pub struct DreamerWorkingSet {
+    /// Execution quality of the retrieval that supplied this bounded page.
+    pub retrieval_quality: RetrievalQualityReport,
     pub cursor: DreamerWorkingSetCursor,
     pub next_cursor: Option<DreamerWorkingSetCursor>,
     pub budget: DreamerWorkingSetBudget,

@@ -1070,6 +1070,13 @@ impl Vault {
             limit,
         );
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: crate::retrieval_quality::classify_retrieval_quality(
+                &crate::retrieval_quality::RetrievalDiagnostics {
+                    attempted: vec![RetrievalSignal::Vector],
+                    succeeded: vec![RetrievalSignal::Vector],
+                    ..Default::default()
+                },
+            ),
             value: results,
             run_id,
         })
@@ -1586,6 +1593,13 @@ impl Vault {
             limit,
         );
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: crate::retrieval_quality::classify_retrieval_quality(
+                &crate::retrieval_quality::RetrievalDiagnostics {
+                    attempted: vec![RetrievalSignal::Text],
+                    succeeded: vec![RetrievalSignal::Text],
+                    ..Default::default()
+                },
+            ),
             value: results.scores,
             run_id,
         })

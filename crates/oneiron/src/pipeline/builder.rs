@@ -649,6 +649,7 @@ impl<'a> PipelineBuilder<'a> {
     pub fn run_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         let output = self.run_for_pack()?;
         Ok(RetrievalWithTelemetry {
+            retrieval_quality: output.retrieval_quality,
             value: output.scores,
             run_id: output.telemetry_run_id,
         })
@@ -681,6 +682,7 @@ impl<'a> PipelineBuilder<'a> {
             )?;
         }
         Ok(RetrievalWithPendingVectors {
+            retrieval_quality: output.retrieval_quality,
             value: output.scores,
             pending_vector_ids,
             pending_vectors: output.pending_vectors,
@@ -703,6 +705,7 @@ impl<'a> PipelineBuilder<'a> {
         let remaining = budget.max_items().saturating_sub(cursor.offset());
         if remaining == 0 {
             return Ok(DreamerWorkingSet {
+                retrieval_quality: Default::default(),
                 cursor,
                 next_cursor: None,
                 budget,
@@ -740,6 +743,7 @@ impl<'a> PipelineBuilder<'a> {
             .then(|| DreamerWorkingSetCursor::from_offset(next_offset));
 
         Ok(DreamerWorkingSet {
+            retrieval_quality: output.retrieval_quality,
             cursor,
             next_cursor,
             budget,

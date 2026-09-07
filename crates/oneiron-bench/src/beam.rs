@@ -4893,6 +4893,7 @@ neighbors:
         };
         let pack = BudgetedContextPack {
             raw: ContextPack {
+                retrieval_quality: Default::default(),
                 results: Vec::new(),
                 neighbors: Vec::new(),
                 stats: PackStats {

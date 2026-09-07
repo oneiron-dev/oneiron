@@ -1927,6 +1927,7 @@ fn scrub_context_pack_visible_stats(pack: &mut ContextPack) {
             empty.total_in_scope = 0;
         } else {
             pack.empty = Some(EmptyContext {
+                retrieval_quality: pack.retrieval_quality.clone(),
                 reason: EmptyReason::FilterMatchedNone,
                 total_in_scope: 0,
                 hint: "Try removing filters or widening the world, type, or time scope".to_owned(),

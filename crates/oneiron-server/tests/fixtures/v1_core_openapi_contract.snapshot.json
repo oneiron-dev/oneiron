@@ -2092,9 +2092,25 @@
       },
       "CoreContextPackResponse": {
         "properties": {
+          "confidenceAdjustment": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "context_version": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "degradation": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
               "null"
             ]
           },
@@ -2141,6 +2157,12 @@
               "$ref": "#/components/schemas/CoreContextEntity"
             },
             "type": "array"
+          },
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "results": {
             "items": {
@@ -3389,6 +3411,9 @@
               }
             ]
           },
+          "gate_breaker_paused": {
+            "type": "boolean"
+          },
           "job_id": {
             "type": "string"
           },
@@ -3724,8 +3749,30 @@
       },
       "ResponseMeta": {
         "properties": {
+          "confidenceAdjustment": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "countMode": {
             "$ref": "#/components/schemas/CountMode"
+          },
+          "degradation": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "total": {
             "format": "int64",
