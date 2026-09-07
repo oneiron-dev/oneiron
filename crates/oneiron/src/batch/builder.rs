@@ -45,7 +45,7 @@ pub(crate) enum BatchOp {
         allow_maintenance: bool,
         /// D17 reserved-namespace gate for type-0 (CLAIM) bodies. `false` on
         /// every public path; crate-private owner doors (including
-        /// [`TxnBatchBuilder::put_reserved_claim`] and the Vault skill-claim
+        /// owner-controlled claim puts and the Vault skill-claim
         /// door) plus sync replay set it.
         allow_reserved_predicate: bool,
         /// Narrow ONE-1736 inlet for an imported SKILL body accepted by the
