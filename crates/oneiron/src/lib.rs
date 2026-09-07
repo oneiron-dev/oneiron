@@ -145,6 +145,7 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod slim;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -225,6 +226,10 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
+};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
@@ -238,10 +243,6 @@ pub use crate::commitment_wake::{
     CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip, CommitmentWakeSkip,
     approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
-};
-pub use crate::comm::{
-    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
-    send_override_for_send,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
@@ -374,6 +375,10 @@ pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
 pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
+pub use crate::slim::{
+    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,
+    SlimResidue, VaultResidency,
+};
 pub use crate::store::{
     RetrievalRunId, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
