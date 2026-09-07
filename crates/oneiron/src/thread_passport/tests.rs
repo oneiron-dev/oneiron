@@ -612,140 +612,59 @@ fn thread_pin_carries_the_canonical_ref_into_selection() {
 
 // ─── alias corruption ───────────────────────────────────────────────────
 
-/// Writes a raw alias row, bypassing the typed door so a corrupt graph can be
-/// staged. Production code has no path that produces these.
-fn write_raw_alias(vault: &Vault, identity_ref: EntityId, from: &str, to: &str) {
-    let mut body = ClaimBody::new(
-        PREDICATE_THREAD_ALIAS,
-        ClaimSubject::Entity(identity_ref),
-        encode_alias_value(identity_ref, from, to, OBSERVED_AT),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    body.source = Some(ClaimSource::Observed);
-    vault
-        .with_write_txn(|wtxn| {
-            vault.put_claim_in_txn(
-                wtxn,
-                &EntityId::now(),
-                &body,
-                TimeRange {
-                    start: OBSERVED_AT,
-                    end: OBSERVED_AT,
-                },
-                OBSERVED_AT,
-            )
-        })
-        .expect("raw alias write");
-}
-
 #[test]
 fn alias_cycle_rejected() {
-    let (_dir, vault) = test_vault();
-    let identity = entity(0x61);
-    seed_identity(&vault, identity, "agent@example.com");
-
-    let root = vault
-        .record_thread_passport(input(identity, "<root@x>", OBSERVED_AT))
-        .expect("root passport");
-    let looped = root.canonical_thread_ref;
-    write_raw_alias(&vault, identity, &looped, "mail:v1:bb");
-    write_raw_alias(&vault, identity, "mail:v1:bb", &looped);
-
-    // Every read door refuses; none of them loops.
+    // The shared write validator now rejects cycles before storage. The
+    // resolver still defends against an internally malformed map.
+    let root = mid("root@x").minted_thread_ref();
+    let other = mid("other@x").minted_thread_ref();
+    let edges = BTreeMap::from([(root.clone(), other.clone()), (other, root.clone())]);
     assert_matches!(
-        vault.canonical_thread_ref(&looped),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
+        resolve_thread_alias(&edges, &root),
+        Err(Error::CorruptedIndex(_))
     );
+    let self_alias = BTreeMap::from([(root.clone(), root.clone())]);
     assert_matches!(
-        vault.sticky_thread_mask("mail:v1:bb", None),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
-    );
-    assert_matches!(
-        vault.thread_passports(&looped),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
-    );
-    // Writing refuses too, as soon as a reference reaches the cycle.
-    assert_matches!(
-        vault.record_thread_passport(
-            input(identity, "<later@x>", OBSERVED_AT + 1).with_in_reply_to(mid("<root@x>"))
-        ),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
-    );
-    // Replaying the trapped message refuses rather than answering a thread it
-    // cannot resolve.
-    assert_matches!(
-        vault.record_thread_passport(input(identity, "<root@x>", OBSERVED_AT)),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
-    );
-    // A message that never touches the cycle is unaffected: corruption fails
-    // the reads that depend on it, not the whole module.
-    let untouched = vault
-        .record_thread_passport(input(identity, "<elsewhere@x>", OBSERVED_AT + 2))
-        .expect("an unrelated thread still lands");
-    assert_eq!(
-        untouched.canonical_thread_ref,
-        mid("elsewhere@x").minted_thread_ref()
-    );
-
-    // A self-alias is the degenerate cycle and fails the same way.
-    let (_dir2, other) = test_vault();
-    seed_identity(&other, identity, "agent@example.com");
-    write_raw_alias(&other, identity, "mail:v1:cc", "mail:v1:cc");
-    assert_matches!(
-        other.canonical_thread_ref("mail:v1:cc"),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
+        resolve_thread_alias(&self_alias, &root),
+        Err(Error::CorruptedIndex(_))
     );
 }
 
 #[test]
-fn overlong_alias_chain_and_forks_are_rejected() {
+fn long_evidenced_alias_chains_converge_without_an_availability_cliff() {
     let (_dir, vault) = test_vault();
     let identity = entity(0x61);
     seed_identity(&vault, identity, "agent@example.com");
-
-    // An acyclic chain one hop past the bound still fails typed.
-    for hop in 0..=MAX_THREAD_ALIAS_HOPS {
-        write_raw_alias(
-            &vault,
-            identity,
-            &format!("mail:v1:h{hop:04}"),
-            &format!("mail:v1:h{:04}", hop + 1),
+    let mut messages: Vec<_> = (0..MAX_THREAD_ALIAS_HOPS + 2)
+        .map(|n| mid(&format!("root-{n}@x")))
+        .collect();
+    messages.sort_by_key(CanonicalMessageId::minted_thread_ref);
+    for message in &messages {
+        vault
+            .record_thread_passport(ThreadPassportInput::new(
+                identity,
+                entity(0xA9),
+                message.clone(),
+                OBSERVED_AT,
+            ))
+            .unwrap();
+    }
+    for pair in messages.windows(2).rev() {
+        vault
+            .record_thread_passport(
+                input(identity, &format!("bridge-{}", pair[0]), OBSERVED_AT + 1)
+                    .with_references(pair.to_vec()),
+            )
+            .unwrap();
+    }
+    for message in &messages {
+        assert_eq!(
+            vault
+                .canonical_thread_ref(&message.minted_thread_ref())
+                .unwrap(),
+            messages[0].minted_thread_ref()
         );
     }
-    assert_matches!(
-        vault.canonical_thread_ref("mail:v1:h0000"),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
-    );
-    // A short chain inside the bound still resolves to its fixed point.
-    assert_eq!(
-        vault
-            .canonical_thread_ref(&format!("mail:v1:h{MAX_THREAD_ALIAS_HOPS:04}"))
-            .expect("tail resolves"),
-        format!("mail:v1:h{:04}", MAX_THREAD_ALIAS_HOPS + 1)
-    );
-
-    let (_dir2, forked) = test_vault();
-    seed_identity(&forked, identity, "agent@example.com");
-    write_raw_alias(&forked, identity, "mail:v1:aa", "mail:v1:bb");
-    write_raw_alias(&forked, identity, "mail:v1:aa", "mail:v1:cc");
-    assert_matches!(
-        forked.canonical_thread_ref("mail:v1:aa"),
-        Err(err) if err.kind() == ErrorKind::CorruptedIndex
-    );
-
-    // A duplicated, AGREEING alias row is not a fork.
-    let (_dir3, duplicated) = test_vault();
-    seed_identity(&duplicated, identity, "agent@example.com");
-    write_raw_alias(&duplicated, identity, "mail:v1:aa", "mail:v1:bb");
-    write_raw_alias(&duplicated, identity, "mail:v1:aa", "mail:v1:bb");
-    assert_eq!(
-        duplicated
-            .canonical_thread_ref("mail:v1:aa")
-            .expect("agreeing duplicate resolves"),
-        "mail:v1:bb"
-    );
 }
 
 #[test]
@@ -811,8 +730,8 @@ fn thread_membership_joins_the_canonical_thread_through_comm() {
     );
     assert_eq!(
         crate::comm::count_active_thread_member_claims(&vault, &aliased, party)
-            .expect("no membership on the aliased-away root"),
-        0
+            .expect("the alias addresses the same logical membership"),
+        1
     );
 }
 
@@ -966,3 +885,6 @@ fn second_identity_first_write_reuses_the_thread_a_message_already_joined() {
         StickyMaskDecision::Keep(ThreadMask::new(first_identity, entity(0xA9)))
     );
 }
+
+#[path = "regressions.rs"]
+mod regressions;

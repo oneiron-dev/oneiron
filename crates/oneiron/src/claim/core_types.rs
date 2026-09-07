@@ -585,6 +585,8 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_coreference_share_consent_claim_structure(&body)?;
     } else if body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM {
         crate::identity_topology::validate_distinct_from_claim_structure(&body)?;
+    } else if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+        crate::thread_passport::validate_thread_claim_structure(&body)?;
     } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {

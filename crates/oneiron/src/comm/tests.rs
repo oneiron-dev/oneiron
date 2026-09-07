@@ -2450,16 +2450,22 @@ fn pass_index_drops_consumed_gates_and_advances_thread_boundary() {
         party_ref: party,
         thread_ref: "thread-index".to_owned(),
     };
-    assert_eq!(index.latest_thread_transition(&membership), None);
+    assert_eq!(
+        index.latest_thread_transition(&membership, &BTreeMap::new()),
+        None
+    );
     index.apply_committed(ProjectorIndexDelta {
         consumed_gate_ids: Vec::new(),
-        projected_thread_transition: Some((membership.clone(), 50)),
+        projected_thread_transition: Some((membership.clone(), (50, false))),
     });
     index.apply_committed(ProjectorIndexDelta {
         consumed_gate_ids: Vec::new(),
-        projected_thread_transition: Some((membership.clone(), 30)),
+        projected_thread_transition: Some((membership.clone(), (30, false))),
     });
-    assert_eq!(index.latest_thread_transition(&membership), Some(50));
+    assert_eq!(
+        index.latest_thread_transition(&membership, &BTreeMap::new()),
+        Some(50)
+    );
 }
 
 #[test]
@@ -2629,7 +2635,7 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
     let delta_a = project_event(&vault, join_id, &index_a)?;
     assert_eq!(
         delta_a.projected_thread_transition,
-        Some((key.clone(), 200)),
+        Some((key.clone(), (200, false))),
     );
     index_a.apply_committed(delta_a);
     assert_eq!(members(&vault)?, 1);
@@ -2639,7 +2645,7 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
     let delta_b = project_event(&vault, join_id, &index_b)?;
     assert_eq!(
         delta_b.projected_thread_transition,
-        Some((key.clone(), 200)),
+        Some((key.clone(), (200, false))),
         "a peer-committed snapshotted join is still a boundary for this pass"
     );
     index_b.apply_committed(delta_b);
@@ -2653,7 +2659,10 @@ fn peer_projected_join_still_bounds_this_pass_stale_leave() -> CommResult<()> {
     // A sees the leave already projected and cannot repair it — with the
     // boundary folded in everywhere, nothing needs repairing.
     let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
-    assert_eq!(delta_a_leave.projected_thread_transition, Some((key, 150)));
+    assert_eq!(
+        delta_a_leave.projected_thread_transition,
+        Some((key, (150, true)))
+    );
     assert_eq!(members(&vault)?, 1);
 
     // A fresh full pass has no pending events and the latest-wins outcome
@@ -2688,14 +2697,14 @@ fn peer_projected_leave_still_bounds_this_pass_stale_join() -> CommResult<()> {
     let delta_a = project_event(&vault, leave_id, &index_a)?;
     assert_eq!(
         delta_a.projected_thread_transition,
-        Some((key.clone(), 300)),
+        Some((key.clone(), (300, true))),
     );
 
     // B re-reads the leave as projected and folds the 300 boundary in...
     let delta_b = project_event(&vault, leave_id, &index_b)?;
     assert_eq!(
         delta_b.projected_thread_transition,
-        Some((key, 300)),
+        Some((key, (300, true))),
         "a peer-committed snapshotted leave is still a boundary for this pass"
     );
     index_b.apply_committed(delta_b);
@@ -2801,7 +2810,7 @@ fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() 
     let delta_a_leave = project_event(&vault, leave_id, &index_a)?;
     assert_eq!(
         delta_a_leave.projected_thread_transition,
-        Some((key.clone(), 300))
+        Some((key.clone(), (300, true)))
     );
     index_a.apply_committed(delta_a_leave);
 
@@ -2819,7 +2828,7 @@ fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() 
     let delta_b_join = project_event(&vault, join_id, &index_b)?;
     assert_eq!(
         delta_b_join.projected_thread_transition,
-        Some((key.clone(), 300)),
+        Some((key.clone(), (300, true))),
         "the retried join folds the peer-committed later leave into this pass"
     );
     index_b.apply_committed(delta_b_join);
@@ -2831,7 +2840,10 @@ fn peer_projected_later_leave_bounds_retried_earlier_join_after_party_arrival() 
 
     // B reaching the leave's own id only re-confirms that boundary.
     let delta_b_leave = project_event(&vault, leave_id, &index_b)?;
-    assert_eq!(delta_b_leave.projected_thread_transition, Some((key, 300)));
+    assert_eq!(
+        delta_b_leave.projected_thread_transition,
+        Some((key, (300, true)))
+    );
     index_b.apply_committed(delta_b_leave);
     assert_eq!(
         comm_record_family_scans() - scans_before,
@@ -3507,3 +3519,6 @@ fn descriptor_rows_are_complete_and_pinned() {
     // Pure data: calling it twice is the same answer and touches no vault.
     assert_eq!(claim_class_descriptors(), rows);
 }
+
+#[path = "thread_alias_tests.rs"]
+mod thread_alias_tests;
