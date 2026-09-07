@@ -219,13 +219,23 @@ pub(crate) fn verify_frozen_effect_in(
         ));
     }
     verify_plan_in(vault, txn, &item.plan)?;
+    // Recovery has no caller-supplied verified actor. The frozen gate principal
+    // must still be the human owner; the intent's display actor alone is not it.
+    let owner = item.plan.request.owner_ref.to_hex();
+    if value["actor_class"].as_str() != Some(crate::edge::EdgeActorClass::Human.gate_actor_class())
+        || value["actor_ref"].as_str() != Some(owner.as_str())
+        || value["actor_entity_ref"].as_str() != Some(owner.as_str())
+        || value["counterparty_ref"].as_str() != Some(item.plan.recipient.as_str())
+    {
+        return Err(refused("frozen emergency effect has a different gate binding"));
+    }
     if crate::booking::lifecycle::emergency_current_revision_in(
         vault,
         txn,
         item.calendar.event_ref,
     )? != *expected
         || (lane != "pick" && item.picked.is_some())
-        || value["actor"].as_str() != Some(item.plan.request.owner_ref.to_hex().as_str())
+        || value["actor"].as_str() != Some(owner.as_str())
         || value["target"].as_str() != Some(item.plan.recipient.as_str())
     {
         return Err(refused("emergency effect is superseded or misbound"));

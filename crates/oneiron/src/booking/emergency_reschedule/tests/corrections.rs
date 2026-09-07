@@ -308,6 +308,61 @@ fn memory_error_taxonomy_preserves_storage_state_and_typed_boundary_errors() {
 }
 
 #[test]
+fn verified_effect_admission_requires_the_same_gate_principal() {
+    use crate::outbound::{
+        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
+        OutboundDispatchGate, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
+        OutboundIntentTrigger,
+    };
+
+    let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);
+    let owner = plan.request.owner_ref;
+    for axis in ["actor_class", "actor_ref", "actor_entity_ref"] {
+        let mut actor = OutboundDispatchActor {
+            actor_class: crate::edge::EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_ref: Some(owner.to_hex()),
+            actor_entity_ref: Some(owner),
+        };
+        match axis {
+            "actor_class" => actor.actor_class = "agent".to_owned(),
+            "actor_ref" => actor.actor_ref = Some(id(0x66).to_hex()),
+            "actor_entity_ref" => actor.actor_entity_ref = None,
+            _ => unreachable!(),
+        }
+        // A fresh attempt must reject the mismatch, not freeze a binding that
+        // only fails when a later live retry compares it to the verified owner.
+        let intent_ref = format!("intent:emergency-actor-binding:{axis}");
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new(owner.to_hex(), "send", "email", plan.recipient.clone())
+                .idempotency_key(intent_ref.clone()),
+            OutboundIntentTrigger::agent_immediate("emergency-actor-binding"),
+        );
+        let dispatch = OutboundDispatchRequest::new(
+            format!("outbound:{intent_ref}"),
+            intent_ref,
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            NOW,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+        let before = (meta(&vault), entities(&vault));
+        let mut sink = spy(&vault, &plan);
+        assert!(matches!(
+            vault.dispatch_outbound_intent_with_verified_actor(
+                dispatch,
+                &mut sink,
+                owner,
+                crate::edge::EdgeActorClass::Human,
+            ),
+            Err(OutboundDispatchError::InvalidBoundActor)
+        ));
+        assert!(sink.calls.is_empty(), "{axis}");
+        assert_eq!((meta(&vault), entities(&vault)), before, "{axis}");
+    }
+}
+
+#[test]
 fn verified_effect_chokepoint_rejects_deleted_owner_even_on_frozen_pick_retry() {
     for picked in [false, true] {
         let (_dir, vault, _, plan) = executable(EmergencyActionPolicy::Cancel);

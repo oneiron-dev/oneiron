@@ -4,8 +4,9 @@ use crate::outbound_chokepoint::{
 };
 use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::{
-    BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentLedgerRecord, IntentState,
-    OutboundCallRequest, OutboundSendOutcome, insert_pending_in_txn, read_intent_record,
+    BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentLedgerError, IntentLedgerRecord,
+    IntentState, OutboundCallRequest, OutboundSendOutcome, insert_pending_in_txn,
+    read_intent_for_attempt_in_txn, read_intent_record,
 };
 
 #[derive(Default)]
@@ -34,6 +35,57 @@ fn persist_pending(vault: &Vault, request: OutboundCallRequest) -> IntentLedgerR
     let mut txn = vault.store.env.write_txn().unwrap();
     insert_pending_in_txn(vault, &mut txn, &record).unwrap();
     txn.commit().unwrap();
+    record
+}
+
+// Deliberate storage corruption, not a second admission. Replace the row AND
+// its unique attempt pointer atomically so Resume reaches the emergency verifier
+// with a valid ledger hash/backlink. A completed checkpoint is left completed,
+// even when its damaged outbound row is reconstructed as Pending.
+fn reconstruct_pending_payload(
+    vault: &Vault,
+    admitted: &IntentLedgerRecord,
+    bytes: Vec<u8>,
+) -> IntentLedgerRecord {
+    let record = IntentLedgerRecord::pending(
+        OutboundCallRequest::new(
+            admitted.attempt_id,
+            admitted.call_seq,
+            &admitted.server,
+            &admitted.tool,
+            bytes,
+            admitted.created_ms,
+        ),
+        admitted.idempotency_supported,
+        admitted.budget_accounting.clone(),
+    )
+    .unwrap();
+    let mut txn = vault.store.env.write_txn().unwrap();
+    assert_eq!(
+        read_intent_for_attempt_in_txn(vault, &txn, admitted.attempt_id, admitted.call_seq)
+            .unwrap(),
+        Some(admitted.clone())
+    );
+    assert!(matches!(
+        insert_pending_in_txn(vault, &mut txn, &record),
+        Err(IntentLedgerError::InvalidRecord(
+            "outbound attempt already has an admitted binding"
+        ))
+    ));
+    let mut row_key = b"outbound:intent_ledger:v2:".to_vec();
+    row_key.extend_from_slice(&admitted.id);
+    let mut attempt_key = b"outbound:intent_attempt:v1:".to_vec();
+    attempt_key.extend_from_slice(admitted.attempt_id.as_bytes());
+    attempt_key.extend_from_slice(&admitted.call_seq.to_be_bytes());
+    for key in [row_key, attempt_key] {
+        assert!(vault.store.vault_meta.delete(&mut txn, &key).unwrap());
+    }
+    insert_pending_in_txn(vault, &mut txn, &record).unwrap();
+    txn.commit().unwrap();
+    assert_eq!(
+        read_intent_record(vault, &record.id).unwrap(),
+        Some(record.clone())
+    );
     record
 }
 
@@ -79,7 +131,7 @@ fn malformed_emergency_recovery_bytes_never_reach_transport() {
             });
             assert!(execute(&vault, &plan, &mut sink, NOW).is_err());
         }
-        let pending = emergency_records(&vault)
+        let mut pending = emergency_records(&vault)
             .into_iter()
             .find(|record| {
                 record.state
@@ -91,41 +143,48 @@ fn malformed_emergency_recovery_bytes_never_reach_transport() {
             })
             .unwrap();
         let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
-        for bytes in [
+        let mut malformed = vec![
             b"{not JSON".to_vec(),
             b"{}".to_vec(),
             br#"{"idempotency_key":"ordinary"}"#.to_vec(),
+        ];
+        let frozen: serde_json::Value = serde_json::from_slice(pending.payload()).unwrap();
+        for (field, value) in [
+            ("actor_class", serde_json::json!("agent")),
+            ("actor_ref", serde_json::json!(id(0x66).to_hex())),
+            ("actor_entity_ref", serde_json::Value::Null),
+            ("counterparty_ref", serde_json::json!("other@example.test")),
         ] {
-            // Keep the trusted attempt identity but reconstruct frozen bytes
-            // with a valid ledger hash. The JSON verifier, not ledger decoding,
-            // must stop this call at the final transport boundary.
-            let corrupt = persist_pending(
-                &vault,
-                OutboundCallRequest::new(
-                    pending.attempt_id,
-                    pending.call_seq,
-                    &pending.server,
-                    &pending.tool,
-                    bytes,
-                    NOW,
-                ),
-            );
+            let mut misbound = frozen.clone();
+            misbound[field] = value;
+            malformed.push(serde_json::to_vec(&misbound).unwrap());
+            let mut missing = frozen.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            malformed.push(serde_json::to_vec(&missing).unwrap());
+        }
+        for bytes in malformed {
+            let corrupt = reconstruct_pending_payload(&vault, &pending, bytes);
+            let before = (meta(&vault), entities(&vault));
             let mut transport = FrozenSpy::default();
-            assert!(
+            assert!(matches!(
                 execute_outbound_effect(
                     &vault,
                     &authority,
                     OutboundEffectCommand::Resume(corrupt.id),
                     NOW + 2,
                     &mut transport,
-                )
-                .is_err()
-            );
+                ),
+                Err(IntentLedgerError::InvalidInput(
+                    "emergency effect authority or revision is no longer current"
+                ))
+            ));
             assert!(transport.0.is_empty());
             assert_eq!(
                 read_intent_record(&vault, &corrupt.id).unwrap().unwrap(),
                 corrupt
             );
+            assert_eq!((meta(&vault), entities(&vault)), before);
+            pending = corrupt;
         }
         assert_pending_event(&vault, plan.booking.calendar.event_ref, lane != "completed");
     }

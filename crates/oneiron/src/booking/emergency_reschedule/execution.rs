@@ -120,7 +120,12 @@ pub(super) fn dispatch_item_effect(
         format!("outbound:{intent_ref}"),
         intent_ref,
         intent,
-        OutboundDispatchActor::agent(owner),
+        // The gate principal is the verified human owner, not the agent trigger.
+        OutboundDispatchActor {
+            actor_class: crate::edge::EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_ref: Some(owner.to_hex()),
+            actor_entity_ref: Some(owner),
+        },
         OutboundDispatchGate::allow_when_policy_grants(),
         now_utc,
         OutboundDeliveryWindowDecision::DeliverNow,
