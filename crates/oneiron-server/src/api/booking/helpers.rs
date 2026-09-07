@@ -26,16 +26,6 @@ pub(super) fn domain_digest(domain: &[u8], material: &[u8]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-pub(super) fn hex_lower(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        out.push(char::from(DIGITS[usize::from(byte & 0x0F)]));
-    }
-    out
-}
-
 pub(super) fn now_secs() -> Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
