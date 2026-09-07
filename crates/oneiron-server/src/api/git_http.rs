@@ -85,6 +85,10 @@ const GIT_HTTP_CHALLENGE: &str = "Bearer realm=\"oneiron-origin\"";
 /// the producer blocks instead of accumulating a body.
 const GIT_HTTP_STREAM_CHUNKS: usize = 4;
 
+// Status reports only; fetch packs continue to stream without this bound.
+const GIT_HTTP_MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+const GIT_HTTP_MAX_HELD_CHUNKS: usize = 4096;
+
 /// The two smart-HTTP services, and the only two this origin serves.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GitService {
@@ -141,7 +145,23 @@ pub(crate) async fn git_info_refs(
         Err(response) => return *response,
     };
     let name = repo_name(&repo).to_owned();
-    let request = smart_http::ServeRequest {
+    let request = advertisement_request(&name, service, remote_user(&auth));
+    run_serve(server, name, request, Body::empty()).await
+}
+
+/// The advertisement invocation this route hands to the serving plane.
+///
+/// Built as a value so the one property that matters can be asserted without a
+/// transport around it: this is the request shape
+/// [`smart_http::ServeRequest::is_ref_advertisement`] recognizes, and therefore
+/// the one the publication projection gates. An advertisement the gate does not
+/// recognize would be a ref list nobody projected.
+fn advertisement_request(
+    name: &str,
+    service: GitService,
+    remote_user: Option<String>,
+) -> smart_http::ServeRequest {
+    smart_http::ServeRequest {
         method: "GET".to_owned(),
         path_info: format!("/{name}.git/info/refs"),
         // The CANONICAL spelling of the service the gate just authorized, never
@@ -151,11 +171,15 @@ pub(crate) async fn git_info_refs(
         content_type: None,
         content_length: None,
         content_encoding: None,
-        git_protocol: header_value(&headers, "git-protocol"),
-        remote_user: remote_user(&auth),
+        // The client's `Git-Protocol` is read and not forwarded. Protocol v2
+        // moves the ref list out of this response and into an `ls-refs` command
+        // inside the RPC body, where the publication projection cannot reach
+        // it; declining the version is what keeps "every advertised ref is a
+        // published ref" true. A stock client falls back on its own.
+        git_protocol: None,
+        remote_user,
         remote_addr: None,
-    };
-    run_serve(server, name, request, Body::empty()).await
+    }
 }
 
 /// `POST /git/{repo}/git-upload-pack` — fetch/clone negotiation, streamed.
@@ -203,7 +227,10 @@ async fn serve_rpc(
         content_length: header_value(&headers, CONTENT_LENGTH.as_str())
             .and_then(|value| value.parse::<u64>().ok()),
         content_encoding: header_value(&headers, CONTENT_ENCODING.as_str()),
-        git_protocol: header_value(&headers, "git-protocol"),
+        // Pinned for the same reason the advertisement pins it: an exchange
+        // whose advertisement spoke v0 and whose RPC speaks v2 is not one
+        // conversation.
+        git_protocol: None,
         remote_user: remote_user(&auth),
         remote_addr: None,
     };
@@ -342,6 +369,8 @@ async fn run_serve(
     request: smart_http::ServeRequest,
     body: Body,
 ) -> Response {
+    // A push is held until its landing is journaled; everything else streams.
+    let held = request.is_receive_pack();
     let (request_tx, request_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
     let (head_tx, head_rx) = oneshot::channel::<ResponseHead>();
     let (response_tx, response_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
@@ -361,22 +390,268 @@ async fn run_serve(
     let worker = tokio::task::spawn_blocking(move || {
         let mut reader = ChannelReader::new(request_rx);
         let mut sink = ChannelSink::new(head_tx, response_tx);
+        // CoreAuth's validated principal_ref travels unchanged. The existing
+        // serve path persists landed admission and observed outcome evidence;
+        // this bridge supplies neither a claim id nor an alternate credential.
         smart_http::serve(
             server.vault(),
             &repo,
             &request,
-            smart_http::DoorSeam::default(),
+            smart_http::DoorSeam::Landed,
             &mut reader,
             &mut sink,
         )
     });
 
+    if held {
+        return held_response(head_rx, response_rx, worker).await;
+    }
     match head_rx.await {
-        // The backend answered. The worker keeps streaming the body and, for a
-        // push, journals the landing after the last byte leaves.
+        // The backend answered, and a fetch's answer is the pack itself: it
+        // streams out as it is produced and is never held.
         Ok(head) => streaming_response(head, response_rx),
         Err(_) => serve_failure(worker.await),
     }
+}
+
+/// Holds a push's response until its landing is journaled.
+///
+/// A fetch's response is a pack and must never be buffered. A push's response
+/// is git's own status report — a handful of pkt-lines, bounded by the number
+/// of refs the push named — while the pack it answers has already streamed IN.
+/// Holding it costs nothing and buys the one thing a push needs: the client is
+/// told the push succeeded only after the publication protocol says it did.
+///
+/// Streaming the report first and journaling afterwards is what made a refused
+/// publication indistinguishable from a landed one. The client saw `ok`, the
+/// origin recorded nothing, and the ref the client believed it had pushed was
+/// never advertised.
+async fn held_response(
+    head: oneshot::Receiver<ResponseHead>,
+    mut chunks: mpsc::Receiver<Bytes>,
+    worker: tokio::task::JoinHandle<oneiron::Result<smart_http::ServeReport>>,
+) -> Response {
+    let head = head.await.ok();
+    let mut body = Vec::new();
+    let mut bytes = 0usize;
+    let mut exceeded = false;
+    // Keep draining after overflow: dropping the receiver or waiting first can
+    // strand the blocking producer before it journals the effects already made.
+    while let Some(chunk) = chunks.recv().await {
+        if !exceeded {
+            if chunk.len() > GIT_HTTP_MAX_HELD_BYTES.saturating_sub(bytes)
+                || body.len() >= GIT_HTTP_MAX_HELD_CHUNKS
+            {
+                exceeded = true;
+                body.clear();
+            } else {
+                bytes += chunk.len();
+                body.push(chunk);
+            }
+        }
+    }
+    let joined = worker.await;
+    if exceeded {
+        return text_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "git status response exceeded its limit; ref effects may be partial; retry to recover",
+        );
+    }
+    landed_response(head, body, joined)
+}
+
+/// The response a held push produces, decided by the landing rather than by the
+/// backend.
+///
+/// `git receive-pack` reports on what IT did — it moved refs and migrated the
+/// objects — and it has no opinion about the publication protocol that runs
+/// after it. When that protocol refuses (an availability proof that failed, a
+/// compare-and-swap another writer won), the push did not land, and the only
+/// honest answer is a failure the client surfaces rather than the backend's
+/// `ok`.
+fn landed_response(
+    head: Option<ResponseHead>,
+    body: Vec<Bytes>,
+    joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
+) -> Response {
+    let report = match joined {
+        Ok(Ok(report)) => report,
+        refused => return serve_failure(refused),
+    };
+    let Some((status, mut headers)) = head else {
+        return text_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git smart-http produced no response",
+        );
+    };
+    let body = concat_chunks(body);
+    let body = if report.ref_results.is_empty() {
+        body
+    } else {
+        let Some(rewritten) = rewrite_receive_pack_status(&body, &report.ref_results) else {
+            return text_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "git per-ref status is unavailable; ref effects may be partial; retry to recover",
+            );
+        };
+        // The pkt-line lengths changed. A backend Content-Length is no longer valid.
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str()));
+        Bytes::from(rewritten)
+    };
+    let mut response = Response::new(Body::from(body));
+    apply_response_head(&mut response, status, headers);
+    response
+}
+
+// Reframe Git report-status and report-status-v2, with or without side-band-64k.
+// Channel 1 may split a nested pkt-line anywhere, including its length header.
+fn rewrite_receive_pack_status(
+    body: &[u8],
+    results: &[smart_http::ReceivePackRefResult],
+) -> Option<Vec<u8>> {
+    if body.len() > GIT_HTTP_MAX_HELD_BYTES
+        || results.is_empty()
+        || results.len() > smart_http::ORIGIN_MAX_REF_UPDATES
+    {
+        return None;
+    }
+    let mut probe = body;
+    let first = status_packet(&mut probe)?;
+    let sideband = first
+        .first()
+        .is_some_and(|channel| matches!(channel, 1..=3));
+    let mut data = Vec::new();
+    if sideband {
+        let mut input = body;
+        while !input.is_empty() {
+            let packet = status_packet(&mut input)?;
+            match packet.split_first() {
+                Some((1, payload)) => data.extend_from_slice(payload),
+                Some((2, _)) | None => {}
+                // Channel 3 is fatal, even with a complete status and published refs.
+                Some((3, _)) => return None,
+                _ => return None,
+            }
+        }
+    } else {
+        data.extend_from_slice(body);
+    }
+    let mut input = data.as_slice();
+    if status_packet(&mut input)? != b"unpack ok\n" {
+        return None;
+    }
+    let mut rewritten = Vec::new();
+    append_status_packet(&mut rewritten, b"unpack ok\n")?;
+    let mut seen = vec![false; results.len()];
+    let mut suppress_options = true;
+    let mut flushed = false;
+    while !input.is_empty() {
+        let packet = status_packet(&mut input)?;
+        if packet.is_empty() {
+            if !input.is_empty() {
+                return None;
+            }
+            append_status_packet(&mut rewritten, packet)?;
+            flushed = true;
+            break;
+        }
+        let accepted = packet.strip_prefix(b"ok ");
+        let refused = packet.strip_prefix(b"ng ");
+        if let Some(tail) = accepted.or(refused) {
+            let text = std::str::from_utf8(tail).ok()?.strip_suffix('\n')?;
+            let name = if refused.is_some() {
+                text.split_once(' ')?.0
+            } else {
+                text
+            };
+            let index = results.iter().position(|result| result.name == name)?;
+            if std::mem::replace(&mut seen[index], true) {
+                return None;
+            }
+            let status = results[index].status;
+            suppress_options =
+                refused.is_some() || status != smart_http::ReceivePackRefStatus::Published;
+            let reason = match status {
+                smart_http::ReceivePackRefStatus::Pending => {
+                    Some("publication pending; ref effects may exist")
+                }
+                smart_http::ReceivePackRefStatus::Superseded => {
+                    Some("observed ref effect was superseded")
+                }
+                smart_http::ReceivePackRefStatus::NotApplied => Some("ref was not applied"),
+                smart_http::ReceivePackRefStatus::Published if refused.is_some() => {
+                    Some("backend refused ref update")
+                }
+                smart_http::ReceivePackRefStatus::Published => None,
+            };
+            if let Some(reason) = reason {
+                append_status_packet(&mut rewritten, format!("ng {name} {reason}\n").as_bytes())?;
+            } else {
+                append_status_packet(&mut rewritten, packet)?;
+            }
+        } else if packet.starts_with(b"option ") {
+            if !suppress_options {
+                append_status_packet(&mut rewritten, packet)?;
+            }
+        } else {
+            return None;
+        }
+    }
+    if !flushed || seen.iter().any(|seen| !seen) {
+        return None;
+    }
+    if !sideband {
+        return Some(rewritten);
+    }
+    let mut framed = Vec::new();
+    for chunk in rewritten.chunks(65515) {
+        let mut payload = Vec::with_capacity(chunk.len() + 1);
+        payload.push(1);
+        payload.extend_from_slice(chunk);
+        append_status_packet(&mut framed, &payload)?;
+    }
+    append_status_packet(&mut framed, &[])?;
+    Some(framed)
+}
+
+fn status_packet<'a>(input: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let header = std::str::from_utf8(input.get(..4)?).ok()?;
+    let len = usize::from_str_radix(header, 16).ok()?;
+    if len == 0 {
+        *input = &input[4..];
+        return Some(&[]);
+    }
+    if !(4..=65520).contains(&len) || len > input.len() {
+        return None;
+    }
+    let payload = &input[4..len];
+    *input = &input[len..];
+    Some(payload)
+}
+
+fn append_status_packet(output: &mut Vec<u8>, payload: &[u8]) -> Option<()> {
+    if payload.len().checked_add(4)? > GIT_HTTP_MAX_HELD_BYTES.saturating_sub(output.len()) {
+        return None;
+    }
+    if payload.is_empty() {
+        output.extend_from_slice(b"0000");
+    } else {
+        if payload.len() > 65516 {
+            return None;
+        }
+        output.extend_from_slice(format!("{:04x}", payload.len() + 4).as_bytes());
+        output.extend_from_slice(payload);
+    }
+    (output.len() <= GIT_HTTP_MAX_HELD_BYTES).then_some(())
+}
+
+fn concat_chunks(chunks: Vec<Bytes>) -> Bytes {
+    let total = chunks.iter().map(Bytes::len).sum();
+    let mut buffer = Vec::with_capacity(total);
+    for chunk in chunks {
+        buffer.extend_from_slice(&chunk);
+    }
+    Bytes::from(buffer)
 }
 
 type ResponseHead = (u16, Vec<(String, String)>);
@@ -384,12 +659,38 @@ type ResponseHead = (u16, Vec<(String, String)>);
 fn serve_failure(
     joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
 ) -> Response {
-    let message = match joined {
-        Ok(Ok(_)) => "git smart-http produced no response".to_owned(),
-        Ok(Err(error)) => error.to_string(),
-        Err(_) => "git smart-http worker did not complete".to_owned(),
+    if let Ok(Err(error)) = &joined {
+        tracing::warn!(error = %error, "git smart-http worker failed");
+    }
+    let (status, message) = match joined {
+        Ok(Ok(_)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git smart-http produced no response".to_owned(),
+        ),
+        Ok(Err(oneiron::Error::ReceivePackLandingRefused { .. })) => (
+            StatusCode::CONFLICT,
+            "git publication refused; ref effects may be partial".to_owned(),
+        ),
+        Ok(Err(oneiron::Error::ConcurrentWrite(_) | oneiron::Error::RepoMutationFailed(_))) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "git publication is pending; ref effects may be partial; retry to recover".to_owned(),
+        ),
+        Ok(Err(_)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git request could not complete; ref effects may be partial".to_owned(),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git smart-http worker did not complete".to_owned(),
+        ),
     };
-    text_response(StatusCode::INTERNAL_SERVER_ERROR, &message)
+    let mut response = text_response(status, &message);
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        response
+            .headers_mut()
+            .insert("retry-after", HeaderValue::from_static("1"));
+    }
+    response
 }
 
 /// Wraps the backend's own status and headers around a body that is still
@@ -404,6 +705,13 @@ fn streaming_response(head: ResponseHead, chunks: mpsc::Receiver<Bytes>) -> Resp
             .map(|chunk| (Ok::<Bytes, io::Error>(chunk), chunks))
     });
     let mut response = Response::new(Body::from_stream(stream));
+    apply_response_head(&mut response, status, headers);
+    response
+}
+
+/// Puts the backend's own status and headers on a response, whatever the body
+/// turned out to be.
+fn apply_response_head(response: &mut Response, status: u16, headers: Vec<(String, String)>) {
     *response.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
     for (name, value) in headers {
         let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
@@ -414,7 +722,6 @@ fn streaming_response(head: ResponseHead, chunks: mpsc::Receiver<Bytes>) -> Resp
         };
         response.headers_mut().append(name, value);
     }
-    response
 }
 
 /// The request body, as a blocking reader over the async stream.
@@ -630,6 +937,237 @@ mod tests {
         assert_eq!(remote_user(&auth).as_deref(), Some(pusher.as_str()));
     }
 
+    fn stock_git(root: &std::path::Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .expect("stock Git starts");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn git_http_stock_git_authenticated_publication_roundtrip() {
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = Arc::new(
+            oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open vault"),
+        );
+        let config = secret_config();
+        let pusher = principal();
+        let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
+        let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let url = format!(
+            "http://{}/git/demo.git",
+            listener.local_addr().expect("address")
+        );
+        let routes = git_http_routes().with_state(server);
+        let serving = tokio::spawn(async move {
+            axum::serve(listener, routes).await.expect("serve");
+        });
+        let checked = tokio::task::spawn_blocking(move || {
+            let source = tempfile::tempdir().expect("source");
+            stock_git(source.path(), &["init", "--initial-branch=main"]);
+            std::fs::write(
+                source.path().join("README.md"),
+                "public repository content\n",
+            )
+            .expect("readme");
+            stock_git(source.path(), &["add", "README.md"]);
+            stock_git(
+                source.path(),
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-m",
+                    "initial",
+                ],
+            );
+            let oid = stock_git(source.path(), &["rev-parse", "HEAD"]);
+            let root = smart_http::origin_serving_root(&vault).expect("serving root");
+            stock_git(
+                &root,
+                &[
+                    "clone",
+                    "--bare",
+                    source.path().to_str().expect("source path"),
+                    "demo.git",
+                ],
+            );
+            let repo_dir = root.join("demo.git");
+            let auth = format!("http.extraHeader=Authorization: Bearer {token}");
+            let unpublished = stock_git(source.path(), &["-c", &auth, "ls-remote", &url]);
+            assert!(
+                !unpublished.contains("refs/heads/main") && !unpublished.contains("\tHEAD"),
+                "raw main and HEAD are not advertisement authority"
+            );
+            stock_git(&repo_dir, &["update-ref", "-d", "refs/heads/main"]);
+            // No fixture attribution and no serve_with_provenance call. This is
+            // CoreAuth -> run_serve -> serve -> landed door -> durable producer.
+            stock_git(
+                source.path(),
+                &["-c", &auth, "push", &url, "refs/heads/main"],
+            );
+            let rows: Vec<_> = vault
+                .origin_publication_ids(None)
+                .expect("publication ids")
+                .into_iter()
+                .map(|id| {
+                    vault
+                        .origin_publication(id)
+                        .expect("publication")
+                        .expect("durable publication")
+                })
+                .collect();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].actor_id.to_hex(), pusher);
+            assert_eq!(
+                rows[0].status,
+                oneiron::origin::publication::OriginPublicationStatus::Published
+            );
+            let evidence = vault
+                .get_claim(&rows[0].provenance_claim_id)
+                .expect("source")
+                .expect("durable claim");
+            assert_eq!(evidence.predicate, "repo.receive_pack_outcome");
+            assert_eq!(
+                evidence.lifecycle,
+                oneiron::claim::ClaimLifecycleStatus::Active
+            );
+            let fields = evidence.value.as_map().expect("outcome fields");
+            let field = |key: &str| {
+                fields
+                    .iter()
+                    .find(|(name, _)| name.as_str() == Some(key))
+                    .map(|(_, value)| value)
+                    .expect("evidence field")
+            };
+            assert_eq!(field("actor_id").as_str(), Some(pusher.as_str()));
+            assert_eq!(
+                field("repo_id").as_str(),
+                Some(rows[0].repo_id.to_hex().as_str())
+            );
+            assert_eq!(field("scan").as_str(), Some("clean"));
+            let operation =
+                oneiron::EntityId::from_hex(field("operation_id").as_str().expect("operation id"))
+                    .expect("entity id");
+            let admission = vault
+                .get_claim(&operation)
+                .expect("admission")
+                .expect("durable admission");
+            assert_eq!(admission.predicate, "repo.receive_pack_admission");
+            let admission_fields = admission.value.as_map().expect("admission fields");
+            assert!(admission_fields.contains(&(
+                rmpv::Value::from("credential_presented"),
+                rmpv::Value::from(false)
+            )));
+            assert!(admission_fields.contains(&(
+                rmpv::Value::from("method"),
+                rmpv::Value::from("bearer+registered-principal")
+            )));
+            let refs = stock_git(source.path(), &["-c", &auth, "ls-remote", &url]);
+            assert!(refs.contains(&format!("{oid}\trefs/heads/main")));
+            let clone = tempfile::tempdir().expect("client");
+            stock_git(clone.path(), &["-c", &auth, "clone", &url, "checkout"]);
+            assert_eq!(
+                std::fs::read_to_string(clone.path().join("checkout/README.md")).expect("checkout"),
+                "public repository content\n"
+            );
+            assert_eq!(
+                vault
+                    .origin_publication_ids(None)
+                    .expect("publication ids")
+                    .len(),
+                1
+            );
+
+            // The server has not silently switched to the explicit no-op seam.
+            std::fs::write(
+                source.path().join("secret.txt"),
+                "TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+            )
+            .expect("scan fixture");
+            stock_git(source.path(), &["add", "secret.txt"]);
+            stock_git(
+                source.path(),
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-m",
+                    "refused scan fixture",
+                ],
+            );
+            let refused = std::process::Command::new("git")
+                .current_dir(source.path())
+                .args(["-c", &auth, "push", &url, "refs/heads/main"])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .expect("push starts");
+            assert!(
+                !refused.status.success(),
+                "the landed scan refuses the secret fixture"
+            );
+            assert_eq!(stock_git(&repo_dir, &["rev-parse", "refs/heads/main"]), oid);
+            assert_eq!(
+                vault
+                    .origin_publication_ids(None)
+                    .expect("publication ids")
+                    .len(),
+                1
+            );
+        })
+        .await;
+        serving.abort();
+        checked.expect("authenticated stock Git path");
+    }
+
+    #[tokio::test]
+    async fn git_http_missing_push_auth_is_rejected_before_repository_or_git() {
+        use tower::ServiceExt;
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = Arc::new(
+            oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault"),
+        );
+        let config = secret_config();
+        let no_principal = scoped_token(&config, "core:write", None);
+        let server = Arc::new(SyncServer::new(vault, config).expect("server"));
+        for (token, expected) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (Some(no_principal), StatusCode::FORBIDDEN),
+        ] {
+            let mut request = axum::http::Request::builder()
+                .method("POST")
+                .uri("/git/missing.git/git-receive-pack");
+            if let Some(token) = token {
+                request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+            }
+            let response = git_http_routes()
+                .with_state(Arc::clone(&server))
+                .oneshot(request.body(Body::from("not a pack")).expect("request"))
+                .await
+                .expect("response");
+            assert_eq!(
+                response.status(),
+                expected,
+                "auth refuses before repository resolution"
+            );
+        }
+    }
+
     #[test]
     fn git_http_read_only_bearer_cannot_reach_receive_pack() {
         let config = secret_config();
@@ -702,6 +1240,369 @@ mod tests {
         assert_eq!(
             ServiceRefusal::Unsupported.response().status(),
             StatusCode::FORBIDDEN
+        );
+    }
+
+    // -- the publication-gated push and advertisement ----------------------
+
+    fn receive_pack_head() -> ResponseHead {
+        (
+            200,
+            vec![(
+                CONTENT_TYPE.as_str().to_owned(),
+                "application/x-git-receive-pack-result".to_owned(),
+            )],
+        )
+    }
+
+    /// The status report `git receive-pack` produces for a push it accepted.
+    fn receive_pack_report() -> Vec<Bytes> {
+        vec![Bytes::from_static(
+            b"000eunpack ok\n0019ok refs/heads/main\n0000",
+        )]
+    }
+
+    fn landed_report() -> smart_http::ServeReport {
+        smart_http::ServeReport {
+            status: 200,
+            admission: None,
+            door: smart_http::DoorWindowReport {
+                verdict: smart_http::DoorWindowVerdict::Clean,
+                ref_updates: Vec::new(),
+                lfs_pointers: Vec::new(),
+                quarantine_path: None,
+            },
+            outcome: None,
+            landing: None,
+            ref_results: Vec::new(),
+        }
+    }
+
+    fn status_body(lines: &[&str]) -> Vec<u8> {
+        let mut body = Vec::new();
+        append_status_packet(&mut body, b"unpack ok\n").expect("unpack");
+        for line in lines {
+            append_status_packet(&mut body, line.as_bytes()).expect("status");
+        }
+        append_status_packet(&mut body, &[]).expect("flush");
+        body
+    }
+
+    fn partial_ref_results() -> Vec<smart_http::ReceivePackRefResult> {
+        use smart_http::{ReceivePackRefResult, ReceivePackRefStatus};
+        vec![
+            ReceivePackRefResult {
+                name: "refs/heads/first".to_owned(),
+                status: ReceivePackRefStatus::Published,
+            },
+            ReceivePackRefResult {
+                name: "refs/heads/second".to_owned(),
+                status: ReceivePackRefStatus::Pending,
+            },
+            ReceivePackRefResult {
+                name: "refs/heads/third".to_owned(),
+                status: ReceivePackRefStatus::NotApplied,
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn git_http_partial_push_keeps_each_ref_status_and_removes_stale_length() {
+        let mut report = landed_report();
+        report.ref_results = partial_ref_results();
+        let body = status_body(&[
+            "ok refs/heads/first\n",
+            "ok refs/heads/second\n",
+            "option new-oid 1111111111111111111111111111111111111111\n",
+            "ng refs/heads/third internal /private/vault/data.mdb\n",
+        ]);
+        let (status, mut headers) = receive_pack_head();
+        headers.push(("Content-Length".to_owned(), body.len().to_string()));
+        let response = landed_response(
+            Some((status, headers)),
+            vec![Bytes::from(body)],
+            Ok(Ok(report)),
+        );
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(CONTENT_LENGTH).is_none());
+        let actual = axum::body::to_bytes(response.into_body(), GIT_HTTP_MAX_HELD_BYTES)
+            .await
+            .expect("body");
+        assert_eq!(
+            actual.as_ref(),
+            status_body(&[
+                "ok refs/heads/first\n",
+                "ng refs/heads/second publication pending; ref effects may exist\n",
+                "ng refs/heads/third ref was not applied\n",
+            ])
+        );
+    }
+
+    #[test]
+    fn git_http_partial_status_handles_split_sideband_and_rejects_missing_or_duplicate_refs() {
+        let results = partial_ref_results();
+        let raw = status_body(&[
+            "ok refs/heads/first\n",
+            "ok refs/heads/second\n",
+            "ng refs/heads/third refused\n",
+        ]);
+        let mut framed = Vec::new();
+        append_status_packet(&mut framed, b"\x02progress\n").expect("progress");
+        for byte in &raw {
+            append_status_packet(&mut framed, &[1, *byte]).expect("split status");
+        }
+        append_status_packet(&mut framed, &[]).expect("flush");
+        let rewritten = rewrite_receive_pack_status(&framed, &results).expect("sideband status");
+        let mut input = rewritten.as_slice();
+        let packet = status_packet(&mut input).expect("channel one");
+        assert_eq!(packet.first(), Some(&1));
+        assert_eq!(
+            &packet[1..],
+            rewrite_receive_pack_status(&raw, &results).expect("plain status")
+        );
+        assert_eq!(status_packet(&mut input), Some(&b""[..]));
+        assert!(input.is_empty());
+        for invalid in [
+            status_body(&["ok refs/heads/first\n"]),
+            status_body(&[
+                "ok refs/heads/first\n",
+                "ok refs/heads/first\n",
+                "ok refs/heads/third\n",
+            ]),
+            status_body(&[
+                "ok refs/heads/first\n",
+                "ok refs/heads/second\n",
+                "ok refs/heads/other\n",
+            ]),
+            raw[..raw.len() - 4].to_vec(),
+        ] {
+            assert!(rewrite_receive_pack_status(&invalid, &results).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn git_http_fatal_sideband_rejects_complete_published_status() {
+        let mut report = landed_report();
+        report.ref_results = vec![smart_http::ReceivePackRefResult {
+            name: "refs/heads/main".to_owned(),
+            status: smart_http::ReceivePackRefStatus::Published,
+        }];
+        let mut payload = vec![1];
+        payload.extend_from_slice(&status_body(&["ok refs/heads/main\n"]));
+        let mut framed = Vec::new();
+        append_status_packet(&mut framed, b"\x02progress\n").expect("progress");
+        append_status_packet(&mut framed, &payload).expect("complete channel one status");
+
+        let mut progress_only = framed.clone();
+        append_status_packet(&mut progress_only, &[]).expect("flush");
+        let mut expected = Vec::new();
+        append_status_packet(&mut expected, &payload).expect("status");
+        append_status_packet(&mut expected, &[]).expect("flush");
+        assert_eq!(
+            rewrite_receive_pack_status(&progress_only, &report.ref_results),
+            Some(expected),
+            "channel two progress is omitted without changing the published status"
+        );
+
+        append_status_packet(&mut framed, b"\x03fatal: /private/vault/data.mdb secret\n")
+            .expect("fatal");
+        append_status_packet(&mut framed, &[]).expect("flush");
+        assert!(rewrite_receive_pack_status(&framed, &report.ref_results).is_none());
+        let response = landed_response(
+            Some(receive_pack_head()),
+            vec![Bytes::from(framed)],
+            Ok(Ok(report)),
+        );
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), GIT_HTTP_MAX_HELD_BYTES)
+            .await
+            .expect("body");
+        assert_eq!(
+            body.as_ref(),
+            b"git per-ref status is unavailable; ref effects may be partial; retry to recover"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_http_held_response_bounds_bytes_and_chunks_but_drains_to_worker_completion() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for (chunk, count) in [
+            (
+                Bytes::from(vec![b'x'; 8192]),
+                GIT_HTTP_MAX_HELD_BYTES / 8192 + 2,
+            ),
+            (Bytes::new(), GIT_HTTP_MAX_HELD_CHUNKS + 2),
+        ] {
+            let (head_tx, head_rx) = oneshot::channel();
+            let (chunks_tx, chunks_rx) = mpsc::channel(1);
+            let completed = Arc::new(AtomicBool::new(false));
+            let worker_completed = Arc::clone(&completed);
+            let worker = tokio::task::spawn_blocking(move || {
+                head_tx.send(receive_pack_head()).expect("head");
+                for _ in 0..count {
+                    chunks_tx
+                        .blocking_send(chunk.clone())
+                        .expect("reader keeps draining");
+                }
+                drop(chunks_tx);
+                worker_completed.store(true, Ordering::SeqCst);
+                Ok(landed_report())
+            });
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                held_response(head_rx, chunks_rx, worker),
+            )
+            .await
+            .expect("no bounded-channel deadlock");
+            assert!(completed.load(Ordering::SeqCst));
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .expect("body");
+            assert_eq!(body.as_ref(), b"git status response exceeded its limit; ref effects may be partial; retry to recover");
+        }
+    }
+
+    #[tokio::test]
+    async fn git_http_internal_failure_text_never_reaches_the_client() {
+        for error in [
+            oneiron::Error::ReceivePackLandingRefused {
+                reason: "/private/vault/data.mdb secret".to_owned(),
+            },
+            oneiron::Error::ConcurrentWrite("/private/vault/data.mdb secret"),
+            oneiron::Error::RepoMutationFailed("/private/vault/data.mdb secret".to_owned()),
+            oneiron::Error::InvariantViolation("/private/vault/data.mdb secret"),
+        ] {
+            let response = serve_failure(Ok(Err(error)));
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .expect("public body");
+            let text = std::str::from_utf8(&body).expect("text");
+            assert!(!text.contains("/private"));
+            assert!(!text.contains("data.mdb"));
+            assert!(!text.contains("secret"));
+            assert!(text.contains("ref effects may be partial"));
+        }
+    }
+
+    /// A push whose publication was refused is a refused push, never an `ok`.
+    ///
+    /// `git receive-pack` reports on what it did; the publication protocol runs
+    /// after it and can still refuse. Handing the backend's `ok` to the client
+    /// in that case is the one failure mode this route must not have: the
+    /// client would record a push the origin will never advertise.
+    #[test]
+    fn git_http_rejects_publication_failure() {
+        let refused = landed_response(
+            Some(receive_pack_head()),
+            receive_pack_report(),
+            Ok(Err(oneiron::Error::ReceivePackLandingRefused {
+                reason: "publication conflicted".to_owned(),
+            })),
+        );
+        assert_eq!(
+            refused.status(),
+            StatusCode::CONFLICT,
+            "a refused publication is not a successful push"
+        );
+        assert_ne!(
+            refused
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/x-git-receive-pack-result"),
+            "the backend's own success report never reaches the client"
+        );
+
+        let uncertain = landed_response(
+            Some(receive_pack_head()),
+            receive_pack_report(),
+            Ok(Err(oneiron::Error::ConcurrentWrite(
+                "origin CAS effect is uncertain",
+            ))),
+        );
+        assert_eq!(uncertain.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            uncertain.headers().get("retry-after").expect("retry hint"),
+            "1"
+        );
+
+        let landed = landed_response(
+            Some(receive_pack_head()),
+            receive_pack_report(),
+            Ok(Ok(landed_report())),
+        );
+        assert_eq!(
+            landed.status(),
+            StatusCode::OK,
+            "a push whose publication landed answers exactly as the backend did"
+        );
+        assert_eq!(
+            landed
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/x-git-receive-pack-result")
+        );
+    }
+
+    /// A push that produced no response at all is not silently successful.
+    #[test]
+    fn git_http_push_without_a_backend_response_is_a_failure() {
+        let orphaned = landed_response(None, Vec::new(), Ok(Ok(landed_report())));
+        assert_eq!(orphaned.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// The advertisement this route asks for is the one the projection gates.
+    #[test]
+    fn git_http_advertisement_is_projection_gated() {
+        let request = advertisement_request("demo", GitService::UploadPack, None);
+        assert!(
+            request.is_ref_advertisement(),
+            "the serving plane must recognize this as the ref advertisement, \
+             because that recognition is what engages the publication projection"
+        );
+        assert_eq!(request.query_string, "service=git-upload-pack");
+        assert!(
+            request.git_protocol.is_none(),
+            "protocol v2 would move the ref list where the projection cannot reach it"
+        );
+
+        let push = advertisement_request("demo", GitService::ReceivePack, Some("actor".to_owned()));
+        assert!(
+            push.is_ref_advertisement(),
+            "a push's advertisement is gated exactly as a fetch's is"
+        );
+        assert_eq!(push.query_string, "service=git-receive-pack");
+        assert_eq!(push.remote_user.as_deref(), Some("actor"));
+    }
+
+    /// A held push is the only held response.
+    #[test]
+    fn git_http_only_a_push_is_held_for_its_landing() {
+        assert!(
+            !advertisement_request("demo", GitService::UploadPack, None).is_receive_pack(),
+            "an advertisement streams"
+        );
+        let push = smart_http::ServeRequest {
+            method: "POST".to_owned(),
+            path_info: "/demo.git/git-receive-pack".to_owned(),
+            query_string: String::new(),
+            content_type: None,
+            content_length: None,
+            content_encoding: None,
+            git_protocol: None,
+            remote_user: Some("actor".to_owned()),
+            remote_addr: None,
+        };
+        assert!(push.is_receive_pack(), "a push is held for its landing");
+        let fetch = smart_http::ServeRequest {
+            path_info: "/demo.git/git-upload-pack".to_owned(),
+            ..push
+        };
+        assert!(
+            !fetch.is_receive_pack(),
+            "a pack is never buffered to be inspected"
         );
     }
 }

@@ -12,6 +12,8 @@ use crate::temporal::TimeRange;
 
 fn test_config() -> VaultConfig {
     VaultConfig {
+        ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
+        ppr_community: crate::config::PprCommunityConfig::default(),
         map_size: 32 * 1024 * 1024,
         dimensions: 4,
         fast_dims: None,
