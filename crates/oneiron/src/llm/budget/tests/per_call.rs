@@ -169,7 +169,7 @@ fn guard_and_lease_clones_share_settlement_and_abort_authority() {
     assert_eq!(meter_snapshot(&guard), settled);
 
     let second = clone.admit().unwrap().lease;
-    guard.settle_absolute(&second.clone(), 12).unwrap();
+    guard.settle_absolute(&second, 12).unwrap();
     clone.settle_per_call(&second, &usage(90, 9)).unwrap();
     assert_eq!(guard.read().used_units, 12);
     let third = guard.admit().unwrap().lease;
@@ -182,8 +182,10 @@ fn guard_and_lease_clones_share_settlement_and_abort_authority() {
         "absolute usage is still a watermark"
     );
 
-    let aborted = clone.admit().unwrap().lease;
-    guard.abort(&aborted.clone()).unwrap();
+    let original = clone.admit().unwrap().lease;
+    let aborted = original.clone();
+    drop(original);
+    guard.abort(&aborted).unwrap();
     let after_abort = meter_snapshot(&guard);
     clone.abort(&aborted).unwrap();
     assert_eq!(meter_snapshot(&guard), after_abort);
@@ -377,10 +379,10 @@ fn explicit_local_continuation_stays_unmetered() {
     );
     assert_eq!(meter_snapshot(&guard), snapshot);
     let before = guard.read();
-    guard
-        .clone()
-        .settle_per_call(&local.lease, &usage(3, 4))
-        .unwrap();
+    let cloned_guard = guard.clone();
+    drop(guard);
+    let guard = cloned_guard;
+    guard.settle_per_call(&local.lease, &usage(3, 4)).unwrap();
     assert_eq!(guard.read(), before);
     guard.settle_per_call(&metered.lease, &usage(3, 4)).unwrap();
     assert_eq!(guard.read().used_units, 7);
