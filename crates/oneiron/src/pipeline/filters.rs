@@ -421,6 +421,11 @@ pub(super) fn apply_filters(
     let mut filtered = Vec::with_capacity(scores.len());
 
     for scored in scores.iter().copied() {
+        if let Some(filter) = filters.candidate_filter
+            && !filter(store, rtxn, &scored.id)?
+        {
+            continue;
+        }
         let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
             continue;
         };
@@ -474,6 +479,19 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     metadata_cache: &mut EntityMetadataCache,
     claim_gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if let Some(filter) = filters.candidate_filter
+        && !filter(store, rtxn, id)?
+    {
+        return Ok(false);
+    }
+    // Scoped text scans can visit the whole corpus. Do not memoize that corpus.
+    let mut local_metadata = EntityMetadataCache::default();
+    let mut local_gate = ClaimStatusGateCache::default();
+    let (metadata_cache, claim_gate) = if filters.candidate_filter.is_some() {
+        (&mut local_metadata, &mut local_gate)
+    } else {
+        (metadata_cache, claim_gate)
+    };
     let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
         return Ok(false);
     };

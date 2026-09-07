@@ -13,7 +13,7 @@ use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, encode_short_id_forward_key,
     parse_short_id_value,
 };
-use crate::config::VaultConfig;
+use crate::config::{HostingPrivacyPosture, VaultConfig, VaultPrivacyConfig};
 use crate::deletion::HydratedShortIdDeletion;
 use crate::deletion::HydratedShortIdDeletionSource;
 use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind, parse_strict_edge_record};
@@ -148,6 +148,12 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    /// Posture/custody pairing this handle was opened under, retained from the
+    /// validated config so the honest read-only description below cannot drift
+    /// from what the opener actually accepted. Private: callers read it through
+    /// [`Vault::privacy_posture`], [`Vault::privacy_posture_label`], and
+    /// [`Vault::is_host_readable`], never as raw state.
+    privacy: VaultPrivacyConfig,
     /// `false` only when `Vault::open` ran with
     /// `skip_text_index_manifest_check = true` against a populated index.
     /// In that state the on-disk postings may have been written under a
@@ -157,6 +163,11 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
+    /// state mutex and nothing else: the fixed-order drop transaction and the
+    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
+    /// outbound callback, no timer handle and no second connection owner.
+    pub(crate) slim: crate::slim::SlimController,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a
@@ -175,6 +186,11 @@ pub struct Vault {
 
 /// Config preconditions every opener checks before the environment is mapped.
 fn validate_open_config(config: &VaultConfig) -> Result<()> {
+    // FIRST, before any other gate and before any opener reaches `Store::open`:
+    // an unsupported posture/custody pairing must never bring a storage
+    // environment into existence. Every door (`open`, `open_existing`,
+    // `open_seeded`, and the test-only ABI opener) funnels through here.
+    config.privacy.validate()?;
     if config.dimensions == 0 {
         return Err(Error::InvalidConfig(
             "dimensions must be greater than zero".to_owned(),
@@ -483,11 +499,18 @@ impl Vault {
             wtxn.commit()?;
         }
 
+        // Cloned before `config` moves into the handle: the retained copy is
+        // the pairing `validate_open_config` already accepted.
+        let privacy = config.privacy.clone();
         let vault = Self {
             store,
             config,
             analyzer,
+            privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            // Every vault opens FULL; only an explicit ctl-driven shed parks
+            // it, and only an inbound resume unparks it.
+            slim: crate::slim::SlimController::default(),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
@@ -499,6 +522,29 @@ impl Vault {
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         Ok(vault)
+    }
+
+    /// Deployment posture this vault was opened under.
+    ///
+    /// Read-only and honest: it reports the posture the opener validated, and
+    /// there is no posture that claims a hosting operator cannot read a vault
+    /// it stores.
+    #[must_use]
+    pub fn privacy_posture(&self) -> HostingPrivacyPosture {
+        self.privacy.posture
+    }
+
+    /// Short description of who holds the key for this vault:
+    /// `host-readable` when hosted, `owner-held-key` when self-hosted locally.
+    #[must_use]
+    pub fn privacy_posture_label(&self) -> &'static str {
+        self.privacy.honest_label()
+    }
+
+    /// True when a hosting operator can read this vault's contents.
+    #[must_use]
+    pub fn is_host_readable(&self) -> bool {
+        self.privacy.host_readable()
     }
 
     /// Registers the production window manager as the live-window delete
@@ -1640,6 +1686,8 @@ impl Vault {
     ///
     /// The transaction commits on `Ok(())` return and rolls back on `Err`.
     /// Used by the sync layer to atomically write entity data + pending-mirror markers.
+    /// As with [`Self::try_with_write_txn`], VAD postcommit errors are returned
+    /// after the approval is durable, not as a rollback of the closure.
     pub fn with_write_txn<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
@@ -1651,17 +1699,30 @@ impl Vault {
     /// callers to return their own error type.
     ///
     /// The transaction commits on `Ok` return and rolls back on `Err`.
+    /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
+    /// consolidation after commit. A postcommit error retains Approved; retry
+    /// [`Self::consolidate_claim_vad_now`] to finish that work.
     pub fn try_with_write_txn<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let result = {
+        let (result, pending_vad_ids) = {
             let _active_write_txn = crate::store::active_write_txn_guard();
-            f(&mut wtxn)?
+            let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
+            let result = f(&mut wtxn)?;
+            (result, vad_scope.finish())
         };
+        let approved_vad_ids =
+            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit().map_err(Error::from)?;
+        // Approval is durable now. The canonical consolidator opens its own
+        // writer; its failure is returned without rolling back Approved.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.consolidate_claim_vad_now(&id, now)?;
+        }
         Ok(result)
     }
 

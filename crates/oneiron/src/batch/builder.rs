@@ -9,10 +9,11 @@ use rmpv::Value;
 use crate::Vault;
 use crate::affect::Vad;
 use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
-use crate::claim::{PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
+use crate::claim::{ClaimApprovalStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
 use crate::edge::{EdgeKind, EdgeProvenanceFlags};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::BoundedAutoChecker;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -780,10 +781,38 @@ impl<'a> BatchBuilder<'a> {
     /// transaction, so a later validation failure cannot leave an orphan
     /// receipt behind.
     ///
+    /// Approved bound Dreamer consents then run canonical VAD consolidation
+    /// after commit. A population error is returned with the batch retained;
+    /// retry [`Vault::consolidate_claim_vad`] on the approved member ids.
+    ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
     pub fn commit(self) -> Result<()> {
+        self.commit_inner(None, |_| Ok(()))
+    }
+
+    /// Promotion's checker-aware terminal owns the transaction so a preflight
+    /// refusal commits only its actual receipt through the ordinary batch path.
+    /// The checker runs once, before any batch writes. Promotion's `after_apply`
+    /// performs supersession and checks claim presence and Auto approval in the
+    /// same transaction as the claim. Errors during batch apply or `after_apply`
+    /// roll back those writes and their allow receipts. Full landed verification
+    /// of predicate, source, and taint runs after commit; its failures cannot
+    /// roll back the committed transaction.
+    pub(crate) fn commit_with_checker_and_then(
+        self,
+        checker: &BoundedAutoChecker,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(Some(checker), after_apply)
+    }
+
+    fn commit_inner(
+        self,
+        checker: Option<&BoundedAutoChecker>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         if let Some(err) = self.validation_error {
             return Err(err);
         }
@@ -804,6 +833,7 @@ impl<'a> BatchBuilder<'a> {
             &mut wtxn,
             &mut staged_gate_decisions,
             &mut preflight_gate_decision_ids,
+            checker,
         ) {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
@@ -814,6 +844,9 @@ impl<'a> BatchBuilder<'a> {
             }
             return Err(err);
         }
+
+        let pending_vad_ids =
+            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
 
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
@@ -829,9 +862,20 @@ impl<'a> BatchBuilder<'a> {
             ApplyOpsGateMode::new(false, true)
                 .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
         )?;
+        after_apply(&mut wtxn)?;
+        let approved_vad_ids = self
+            .vault
+            .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
             decision.record_metrics();
+        }
+        // The canonical wrapper starts a separate write transaction. Never run
+        // it during apply or preflight, and never turn a population error into
+        // success merely because the approval is already durable.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.vault.consolidate_claim_vad_now(&id, now)?;
         }
         Ok(())
     }
@@ -849,6 +893,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
         EntityId,
         VecDeque<Option<crate::store::GateDecisionId>>,
     >,
+    checker: Option<&BoundedAutoChecker>,
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
@@ -905,6 +950,10 @@ pub(super) fn preflight_gate_decisions_in_txn(
                     crate::gate::ClaimGateWrite {
                         body: &body,
                         envelope: Some(envelope),
+                        // Ordinary batch preflight: no checker is injected on
+                        // this door, so an Auto verdict here is the engine's
+                        // own and nothing consults a host.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -949,6 +998,9 @@ pub(super) fn preflight_gate_decisions_in_txn(
                             crate::gate::ClaimGateWrite {
                                 body: &body,
                                 envelope: None,
+                                // Envelope-less local claim put: no Dreamer
+                                // authorship to consult about.
+                                auto_checker: None,
                                 defer_metrics_until_commit: true,
                             },
                             &policy,
@@ -979,6 +1031,12 @@ pub(super) fn preflight_gate_decisions_in_txn(
                     crate::gate::ClaimGateWrite {
                         body: &body,
                         envelope: Some(envelope),
+                        // Only promotion injects here, and only an Auto
+                        // request needs a second opinion. The gate still owns
+                        // the knob + Dreamer + source + ordinary-Allow test.
+                        // Phase-2 apply always passes None: no double consult.
+                        auto_checker: checker
+                            .filter(|_| body.approval == ClaimApprovalStatus::Auto),
                         defer_metrics_until_commit: true,
                     },
                     &policy,

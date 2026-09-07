@@ -508,6 +508,7 @@ pub enum ErrorKind {
     VaultCleanupArchiveMarkerUndecodable,
     VaultCleanupProposalNotFound,
     VaultCleanupWakeTriggerRejected,
+    VaultRead,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -2310,6 +2311,11 @@ pub enum Error {
         /// The refused trigger's name.
         trigger: &'static str,
     },
+    /// A deployment-independent vault-read operation failed (ONE-1433). The
+    /// typed taxonomy lives in `code_run::vault_read` and deliberately does not
+    /// embed this type, which would make both errors recursive.
+    #[error(transparent)]
+    VaultRead(#[from] crate::code_run::vault_read::VaultReadError),
 }
 
 impl From<CompactionPacketError> for Error {
@@ -2674,6 +2680,7 @@ impl Error {
             Self::VaultCleanupWakeTriggerRejected { .. } => {
                 ErrorKind::VaultCleanupWakeTriggerRejected
             }
+            Self::VaultRead(_) => ErrorKind::VaultRead,
         }
     }
 
