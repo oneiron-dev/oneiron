@@ -790,9 +790,12 @@ impl<'a> BatchBuilder<'a> {
 
     /// Promotion's checker-aware terminal owns the transaction so a preflight
     /// refusal commits only its actual receipt through the ordinary batch path.
-    /// The checker runs once, before any batch writes. `after_apply` composes
-    /// supersession and landed verification in the SAME transaction as the
-    /// claim; any later error rolls back those writes and their allow receipts.
+    /// The checker runs once, before any batch writes. Promotion's `after_apply`
+    /// performs supersession and checks claim presence and Auto approval in the
+    /// same transaction as the claim. Errors during batch apply or `after_apply`
+    /// roll back those writes and their allow receipts. Full landed verification
+    /// of predicate, source, and taint runs after commit; its failures cannot
+    /// roll back the committed transaction.
     pub(crate) fn commit_with_checker_and_then(
         self,
         checker: &BoundedAutoChecker,
