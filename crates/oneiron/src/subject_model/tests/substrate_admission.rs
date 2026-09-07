@@ -4,7 +4,7 @@ use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 #[derive(Clone, Copy, Debug)]
-enum AdmissionDoor {
+pub(super) enum AdmissionDoor {
     ReservedTyped,
     ReservedBatch,
     ReplicatedBatch,
@@ -12,7 +12,7 @@ enum AdmissionDoor {
     ReplicatedTxn,
 }
 
-const DOORS: &[AdmissionDoor] = &[
+pub(super) const DOORS: &[AdmissionDoor] = &[
     AdmissionDoor::ReservedTyped,
     AdmissionDoor::ReservedBatch,
     AdmissionDoor::ReplicatedBatch,
@@ -20,7 +20,12 @@ const DOORS: &[AdmissionDoor] = &[
     AdmissionDoor::ReplicatedTxn,
 ];
 
-fn admit(vault: &Vault, door: AdmissionDoor, id: &EntityId, body: &ClaimBody) -> Result<()> {
+pub(super) fn admit(
+    vault: &Vault,
+    door: AdmissionDoor,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
     let data = encode_claim_body(body)?;
     let occurred = TimeRange {
         start: 100,

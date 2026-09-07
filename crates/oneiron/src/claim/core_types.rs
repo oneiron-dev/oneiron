@@ -596,6 +596,8 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
+    } else if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
+        crate::subject_model::validate_actor_subject_claim_structure(&body)?;
     } else if body.predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE {
         crate::subject_model::validate_person_substrate_claim_structure(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {

@@ -237,7 +237,7 @@ pub(super) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
-        crate::subject_model::validate_person_substrate_claim_in_txn(store, wtxn, &body)?;
+        crate::subject_model::validate_subject_model_claim_in_txn(store, wtxn, &body)?;
         crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {

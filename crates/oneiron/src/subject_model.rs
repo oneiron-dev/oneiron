@@ -41,10 +41,10 @@ use rmpv::Value;
 mod validation;
 
 #[cfg(feature = "sync")]
-pub(crate) use validation::substrate_subject_pending;
+pub(crate) use validation::subject_model_dependency_pending;
 pub(crate) use validation::{
-    validate_person_substrate_claim_in_session, validate_person_substrate_claim_in_txn,
-    validate_person_substrate_claim_structure,
+    validate_actor_subject_claim_structure, validate_person_substrate_claim_structure,
+    validate_subject_model_claim_in_session, validate_subject_model_claim_in_txn,
 };
 
 use crate::Vault;
@@ -310,6 +310,7 @@ pub(crate) fn actor_subject_anchor_in_txn(
         .ok_or(Error::InvalidClaimBody(
             "actor.subject_ref must be an entity reference",
         ))?;
+    validate_anchor_entities_in_txn(vault, txn, *actor_ref, stored)?;
     let subject_kind = SubjectKind::from_entity_type(vault.get_entity_type_in_txn(txn, &stored)?)?;
     let heads = vault.resolve_entity_in_txn(txn, &stored)?;
     let [head] = heads.as_slice() else {
@@ -320,6 +321,7 @@ pub(crate) fn actor_subject_anchor_in_txn(
             "actor.subject_ref redirect kind mismatch",
         ));
     }
+    validate_anchor_entities_in_txn(vault, txn, *actor_ref, *head)?;
     Ok(Some(ActorSubjectAnchor {
         actor_ref: *actor_ref,
         subject_ref: *head,
@@ -388,14 +390,13 @@ fn write_head_in_txn(
     };
     let occurred = TimeRange { start: at, end: at };
     let superseded = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
-        active_person_substrate_bodies_in_txn(vault, wtxn, &subject, at)?
+        person_substrate_bodies_in_txn(vault, wtxn, &subject, at, true)?
     } else {
-        active_bodies_in_txn(vault, wtxn, &subject, &body.predicate, at)?
+        replacement_heads_in_txn(vault, wtxn, &subject, &body.predicate, at)?
     };
     vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?;
-    for (head_id, head_body) in superseded {
-        let now = at.max(head_body.valid_from.unwrap_or(0));
-        vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, now)?;
+    for (head_id, _) in superseded {
+        vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, at)?;
     }
     Ok(())
 }
@@ -464,7 +465,7 @@ fn ensure_fact_in_txn(
         ));
     };
     let prior = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
-        active_person_substrate_bodies_in_txn(vault, txn, &subject, at)?
+        person_substrate_bodies_in_txn(vault, txn, &subject, at, false)?
             .pop()
             .map(|(_, body)| body.value)
     } else {
@@ -519,7 +520,7 @@ pub fn person_substrate(
     at: u64,
 ) -> Result<Option<PersonSubstrate>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut heads = active_person_substrate_bodies_in_txn(vault, &rtxn, person_ref, at)?;
+    let mut heads = person_substrate_bodies_in_txn(vault, &rtxn, person_ref, at, false)?;
     let Some((_, body)) = heads.pop() else {
         return Ok(None);
     };
@@ -534,11 +535,12 @@ pub fn person_substrate(
 
 /// Reads the canonical person's claims without moving their historical subjects.
 /// The same snapshot supplies both the read and the superseding write's old head.
-fn active_person_substrate_bodies_in_txn(
+fn person_substrate_bodies_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: &EntityId,
     at: u64,
+    replacing: bool,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
     if vault.get_entity_type_in_txn(txn, person_ref)? != Some(ENTITY_TYPE_PERSON) {
         if active_bodies_in_txn(vault, txn, person_ref, PREDICATE_PERSON_SUBSTRATE, at)?.is_empty()
@@ -572,7 +574,11 @@ fn active_person_substrate_bodies_in_txn(
         // Validate every reached path, including an empty shell at the inverse
         // walk's depth bound: truncation must not hide a more distant claim.
         let resolved = vault.resolve_entity_in_txn(txn, &subject)?;
-        let bodies = active_bodies_in_txn(vault, txn, &subject, PREDICATE_PERSON_SUBSTRATE, at)?;
+        let bodies = if replacing {
+            replacement_heads_in_txn(vault, txn, &subject, PREDICATE_PERSON_SUBSTRATE, at)?
+        } else {
+            active_bodies_in_txn(vault, txn, &subject, PREDICATE_PERSON_SUBSTRATE, at)?
+        };
         if bodies.is_empty() {
             continue;
         }
@@ -611,12 +617,9 @@ fn active_person_substrate_bodies_in_txn(
     Ok(heads)
 }
 
-fn admissible_subject_head(body: &ClaimBody, subject: &EntityId, predicate: &str, at: u64) -> bool {
+fn admissible_subject_fact(body: &ClaimBody, subject: &EntityId, predicate: &str) -> bool {
     body.subject == ClaimSubject::Entity(*subject)
         && body.predicate == predicate
-        && body.lifecycle == ClaimLifecycleStatus::Active
-        && body.valid_from.is_none_or(|start| start <= at)
-        && body.valid_to.is_none_or(|end| at < end)
         && matches!(
             body.approval,
             ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
@@ -624,6 +627,56 @@ fn admissible_subject_head(body: &ClaimBody, subject: &EntityId, predicate: &str
         && body.world.is_none()
         && body.rel.is_none()
         && body.scope.is_none()
+}
+
+fn readable_subject_lifecycle(body: &ClaimBody) -> bool {
+    body.lifecycle == ClaimLifecycleStatus::Active
+        || (body.lifecycle == ClaimLifecycleStatus::Superseded && body.valid_to.is_some())
+}
+
+fn readable_subject_fact(body: &ClaimBody, subject: &EntityId, predicate: &str, at: u64) -> bool {
+    admissible_subject_fact(body, subject, predicate)
+        && readable_subject_lifecycle(body)
+        && body.valid_from.is_none_or(|start| start <= at)
+        && body.valid_to.is_none_or(|end| at < end)
+}
+
+/// An unbounded write can close active facts valid at `at`, but cannot
+/// overwrite retained history or overlap a later fact. Check under the writer
+/// lock before staging anything, including ensure-if-absent writes.
+fn replacement_heads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    predicate: &str,
+    at: u64,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
+    let mut heads = Vec::new();
+    let mut overlap = false;
+    vault.find_claim_for_subject_in_txn(txn, subject, |id, body| {
+        if admissible_subject_fact(body, subject, predicate)
+            && readable_subject_lifecycle(body)
+            // Empty and already-expired intervals do not overlap [at, infinity).
+            && body
+                .valid_to
+                .is_none_or(|end| end > at && end > body.valid_from.unwrap_or(0))
+        {
+            if body.lifecycle == ClaimLifecycleStatus::Active
+                && body.valid_from.is_none_or(|start| start <= at)
+            {
+                heads.push((*id, body.clone()));
+            } else {
+                overlap = true;
+            }
+        }
+        None::<()>
+    })?;
+    if overlap {
+        return Err(Error::InvalidClaimBody(
+            "subject model write overlaps retained or future history",
+        ));
+    }
+    Ok(heads)
 }
 
 fn active_bodies_in_txn(
@@ -637,7 +690,7 @@ fn active_bodies_in_txn(
     // Keep the generic reader's bounded, fail-closed scan rather than bypassing
     // its ceiling. Ignore stale claim_of edges whose body names another subject.
     vault.find_claim_for_subject_in_txn(txn, subject, |id, body| {
-        if admissible_subject_head(body, subject, predicate, at) {
+        if readable_subject_fact(body, subject, predicate, at) {
             heads.push((*id, body.clone()));
         }
         None::<()>
@@ -694,32 +747,7 @@ fn validate_anchor_entities_in_txn(
     actor: EntityId,
     subject: EntityId,
 ) -> Result<()> {
-    let kind = vault
-        .get_entity_type_in_txn(txn, &actor)?
-        .ok_or(Error::InvalidClaimBody(
-            "actor.subject_ref actor must exist",
-        ))?;
-    let class = match kind {
-        ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF => {
-            crate::edge::EdgeActorClass::Agent
-        }
-        crate::registry::ENTITY_TYPE_MACHINE => crate::edge::EdgeActorClass::System,
-        _ => {
-            return Err(Error::InvalidClaimBody(
-                "actor.subject_ref actor must be authority-bearing",
-            ));
-        }
-    };
-    crate::provenance::validate_actor_class(kind, class)?;
-    if !matches!(
-        vault.get_entity_type_in_txn(txn, &subject)?,
-        Some(ENTITY_TYPE_PERSON) | Some(ENTITY_TYPE_ORG)
-    ) {
-        return Err(Error::InvalidClaimBody(
-            "actor.subject_ref subject must be a PERSON or ORG",
-        ));
-    }
-    Ok(())
+    validation::require_anchor_entities_in_txn(&vault.store, txn, &actor, &subject)
 }
 
 #[cfg(test)]
