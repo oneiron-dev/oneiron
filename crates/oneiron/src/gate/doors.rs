@@ -1048,7 +1048,7 @@ pub(crate) fn standing_outbound_grant_binding_parts(
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
 }
 
-fn gate_decision_matches_pending_candidate(
+pub(super) fn gate_decision_matches_pending_candidate(
     record: &GateDecisionRecord,
     expected: &GateDecisionRecord,
 ) -> bool {
