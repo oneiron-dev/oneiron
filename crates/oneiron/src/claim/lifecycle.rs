@@ -633,17 +633,7 @@ impl Vault {
                 weight,
             });
         }
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            ops,
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        )?;
+        crate::batch::ClaimMaterialization::apply_demotion(self, &mut wtxn, ops)?;
         wtxn.commit()?;
         Ok(next)
     }
