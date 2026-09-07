@@ -263,9 +263,10 @@ fn promote_one(
         if let Some(old_id) = candidate.supersedes.as_ref() {
             vault.supersede_claim_in_txn(wtxn, &candidate.claim_id, old_id, run.now_ms)?;
         }
-        // No approval queues (§4/§9): a phase-2 or landed-verification failure
-        // rolls back claim, supersession, and allow receipt together. Checker
-        // refusals never reach this callback: the batch preflight commits only
+        // No approval queues (§4/§9): failures during phase-2 apply, supersession,
+        // or this in-transaction presence/Auto-approval check roll back the claim,
+        // supersession, and allow receipt together. Checker refusals never reach
+        // this callback: the batch preflight commits only
         // their actual rejection receipt, with no claim or pending-consent row.
         // The already-stored answer TURN never shared this transaction.
         let landed =
@@ -312,8 +313,9 @@ fn promote_one(
         return Err(format!("gated write rejected: {error}"));
     }
 
-    // 5. Landed verification (Hermes gate 9c): re-read and match, else the
-    // candidate is rejected and the caller must not complete the attempt.
+    // 5. Post-commit landed verification (Hermes gate 9c): re-read and check
+    // predicate, source, and taint. A failure cannot roll back the committed
+    // writes; it rejects the candidate, and the caller must not complete the attempt.
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
 }
 
