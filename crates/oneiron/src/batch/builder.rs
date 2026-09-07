@@ -781,6 +781,10 @@ impl<'a> BatchBuilder<'a> {
     /// transaction, so a later validation failure cannot leave an orphan
     /// receipt behind.
     ///
+    /// Approved bound Dreamer consents then run canonical VAD consolidation
+    /// after commit. A population error is returned with the batch retained;
+    /// retry [`Vault::consolidate_claim_vad`] on the approved member ids.
+    ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
@@ -841,6 +845,17 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
+        // ONE-1453: the verdicts the preflight above already recorded for the
+        // local claims whose ORIGINAL gate event the burst breaker booked.
+        // Phase 2 enforces them instead of asking the gate again, so one write
+        // debits the breaker exactly once and a demotion computed in phase 1
+        // reaches the body that lands. `staged_gate_decisions` itself is
+        // retained unchanged for post-commit metric emission.
+        let staged_claim_gate = staged_claim_gate_outcomes(&staged_gate_decisions);
+
+        let pending_vad_ids =
+            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, &wtxn, &self.ops)?;
+
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
@@ -853,12 +868,23 @@ impl<'a> BatchBuilder<'a> {
             self.ops,
             text_index_trusted,
             ApplyOpsGateMode::new(false, true)
-                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                .with_staged_claim_gate(staged_claim_gate),
         )?;
         after_apply(&mut wtxn)?;
+        let approved_vad_ids = self
+            .vault
+            .resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
             decision.record_metrics();
+        }
+        // The canonical wrapper starts a separate write transaction. Never run
+        // it during apply or preflight, and never turn a population error into
+        // success merely because the approval is already durable.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.vault.consolidate_claim_vad_now(&id, now)?;
         }
         Ok(())
     }
@@ -974,7 +1000,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             {
                 let result =
                     crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                        crate::gate::check_claim_policy_for_write_with_record(
+                        crate::gate::check_claim_policy_for_write_as_original_event(
                             store,
                             wtxn,
                             id,
@@ -1007,7 +1033,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 ..
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate).clone().into_claim_body(envelope);
-                let result = crate::gate::check_claim_policy_for_write_with_record(
+                let result = crate::gate::check_claim_policy_for_write_as_original_event(
                     store,
                     wtxn,
                     id,
@@ -1050,53 +1076,5 @@ pub(super) fn preflight_gate_decisions_in_txn(
         )?;
     }
 
-    Ok(())
-}
-
-/// Books ONE preflight-eligible write's gate decision and, on a refusal,
-/// preserves exactly its denial receipt while discarding the transaction's
-/// earlier allow receipts.
-///
-/// Shared by both preflight shapes — one decision per Put/ClaimCandidate op,
-/// and one per instance inside a `CommitmentGapDecay` op — so a lapse denial
-/// survives rollback through the same path every other local CLAIM write uses.
-fn stage_preflight_decision(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    eligible_id: &EntityId,
-    recorded_decision: Option<crate::gate::RecordedClaimGateDecision>,
-    result: Result<()>,
-    staged_decisions: &mut Vec<crate::gate::RecordedClaimGateDecision>,
-    preflight_gate_decision_ids: &mut HashMap<
-        EntityId,
-        VecDeque<Option<crate::store::GateDecisionId>>,
-    >,
-) -> Result<()> {
-    let decision_id = recorded_decision
-        .as_ref()
-        .map(crate::gate::RecordedClaimGateDecision::decision_id);
-    if let Some(decision) = recorded_decision {
-        staged_decisions.push(decision);
-    }
-    // Keep one FIFO slot for every preflight-eligible operation. A None
-    // slot prevents an earlier non-receipt claim sharing this id from
-    // consuming a later claim's receipt identity.
-    preflight_gate_decision_ids
-        .entry(*eligible_id)
-        .or_default()
-        .push_back(decision_id);
-    if let Err(err) = result {
-        let preserved_denial_id = staged_decisions
-            .last()
-            .filter(|decision| decision.outcome() != "allow")
-            .map(crate::gate::RecordedClaimGateDecision::decision_id);
-        for decision in staged_decisions.iter() {
-            if Some(decision.decision_id()) != preserved_denial_id {
-                store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
-            }
-        }
-        staged_decisions.retain(|decision| Some(decision.decision_id()) == preserved_denial_id);
-        return Err(err);
-    }
     Ok(())
 }

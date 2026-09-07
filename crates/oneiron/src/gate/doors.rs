@@ -1,13 +1,18 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+mod breaker_staging;
+mod dreamer_run;
+
+pub(super) use dreamer_run::dreamer_run_id_from_write_envelope;
+use dreamer_run::pending_consent_dreamer_run_id;
+
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass, claim_sensitivity_band,
+    ClaimApprovalStatus, ClaimBody, DreamerIsolationClass, claim_sensitivity_band,
     dreamer_isolation_class,
 };
 use crate::compaction::turn_session_membership_in_txn;
 use crate::dreamer_consolidation::decode_consolidation_evidence;
-use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -22,7 +27,15 @@ use crate::store::{
     checker_hold_receipt_reason,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope};
+use crate::write_envelope::{
+    SourceLineage, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope,
+};
+use breaker_staging::GateBreakerAccounting;
+pub(super) use breaker_staging::check_claim_policy_for_write_with_owner_bundle_replay;
+pub(crate) use breaker_staging::{
+    RecordedClaimGateDecision, apply_staged_claim_gate_in_txn,
+    check_claim_policy_for_write_as_original_event,
+};
 
 use super::ceiling::PolicyApprovalCeiling;
 use super::confirm::{
@@ -30,9 +43,7 @@ use super::confirm::{
     critical_claim_can_land_auto_with_confirm,
 };
 use super::constants::{
-    DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY, DREAMER_PROVENANCE_RUNNER_KEY,
-    DREAMER_PROVENANCE_SURFACE_KEY, LOCAL_WRITE_ACTOR_CLASS, LOCAL_WRITE_ACTOR_ENTITY_REF,
-    POLICY_SCHEMA_VERSION,
+    LOCAL_WRITE_ACTOR_CLASS, LOCAL_WRITE_ACTOR_ENTITY_REF, POLICY_SCHEMA_VERSION,
 };
 use super::decision::{GateDecision, GateOutcome, GateReasonCode, record_gate_decision_metrics};
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
@@ -83,6 +94,11 @@ pub(crate) fn check_claim_policy_for_write(
         &mut recorded_decision,
         None,
         operation_effect_body,
+        // A pre-check door DISCARDS its receipt, so it cannot carry a
+        // breaker demotion into the write that materializes the body. The
+        // ordinary batch preflight books that event instead; counting it here
+        // too would debit one write twice.
+        GateBreakerAccounting::Exempt,
     )
 }
 
@@ -118,6 +134,9 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         // The batch/replay claim door only ever carries PERSISTED candidates,
         // so it never opens the synthetic-operation mode.
         false,
+        // Phase-2 materialization replays an identity the preflight already
+        // booked. Re-counting it would debit the breaker twice for one write.
+        GateBreakerAccounting::Exempt,
     )
 }
 
@@ -141,6 +160,12 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         None,
         // Every caller of the record seam writes a persisted candidate.
         false,
+        // Exempt by default. A door earns breaker accounting by being able to
+        // CARRY the demotion into the body it materializes, and this seam's
+        // callers — claim lifecycle transitions, the session-bundle merge, the
+        // commitment gap-decay preflight — materialize through paths that
+        // consume no staged verdict.
+        GateBreakerAccounting::Exempt,
     )
 }
 
@@ -158,6 +183,7 @@ fn check_claim_policy_for_write_with_record_inner(
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
     preflight_decision_id: Option<GateDecisionId>,
     operation_effect_body: bool,
+    breaker_accounting: GateBreakerAccounting,
 ) -> Result<()> {
     let ClaimGateWrite {
         body,
@@ -196,6 +222,11 @@ fn check_claim_policy_for_write_with_record_inner(
     // unchanged — and every persisted Dreamer claim candidate, on every
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
+    // ONE-1453 keys its rows on the SAME run id the pending-consent path
+    // carries. The detection above already restricts it to an `Agent` actor
+    // on a Dreamer run surface, so an owner-interactive write is outside the
+    // breaker even when a caller supplies run-shaped metadata.
+    let breaker_run_id = dreamer_run_id.clone();
     let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
     let precommit_denial = if dreamer_candidate {
         dreamer_precommit_denial(store, &*wtxn, body)
@@ -312,6 +343,8 @@ fn check_claim_policy_for_write_with_record_inner(
         // the inbox classifies on.
         //
         // ONE-1314 widens this source check to source OR lineage.
+        // This only selects a checker consult; authorization still checks
+        // each restricted lineage member's own permit above and below.
         let mut checker_receipt_reasons: Vec<String> = Vec::new();
         if decision.outcome() == GateOutcome::Allow
             && !attach_critical_confirm
@@ -320,7 +353,7 @@ fn check_claim_policy_for_write_with_record_inner(
             && let Some(checker) = auto_checker
             && let Some(source) = body.source.filter(|source| {
                 source.requires_explicit_auto_permit()
-                    || envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit)
+                    || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
         {
             let value_preview = auto_check_value_preview(&body.value);
@@ -328,6 +361,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 predicate: &body.predicate,
                 value_preview: &value_preview,
                 source,
+                lineage,
                 actor_class: &input.actor.actor_class,
                 sensitivity_band: claim_sensitivity_band(body),
             };
@@ -369,6 +403,28 @@ fn check_claim_policy_for_write_with_record_inner(
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
         let created_at = crate::unix_seconds_now();
+
+        let breaker = breaker_staging::OriginalBreakerEvent {
+            accounting: breaker_accounting,
+            record_decision: mode.record_decision,
+            run_id: breaker_run_id.as_deref(),
+            input: &input,
+            policy,
+            binding: &binding,
+            body,
+            attach_critical_confirm,
+            created_at,
+        }
+        .apply(store, wtxn, &mut decision)?;
+        let breaker_demoted = breaker
+            .as_ref()
+            .is_some_and(|applied| applied.breaker_demoted);
+        let effective_approval = if breaker_demoted {
+            ClaimApprovalStatus::Proposed
+        } else {
+            body.approval
+        };
+
         let mut decision_record = GateDecisionRecord {
             version: 0,
             decision_id,
@@ -410,6 +466,10 @@ fn check_claim_policy_for_write_with_record_inner(
             let recorded = RecordedClaimGateDecision {
                 record: decision_record.clone(),
                 decision: decision.clone(),
+                breaker_demoted,
+                breaker_undo: breaker
+                    .as_ref()
+                    .and_then(|applied| applied.breaker_undo.clone()),
             };
             if !defer_metrics_until_commit {
                 recorded.record_metrics();
@@ -419,7 +479,7 @@ fn check_claim_policy_for_write_with_record_inner(
 
         if mode.persist_pending_consent
             && ((decision.outcome() == GateOutcome::Pending
-                && body.approval == ClaimApprovalStatus::Proposed)
+                && effective_approval == ClaimApprovalStatus::Proposed)
                 || (attach_critical_confirm && body.approval == ClaimApprovalStatus::Auto))
         {
             let pending_decision = if mode.record_decision {
@@ -455,7 +515,23 @@ fn check_claim_policy_for_write_with_record_inner(
                 } else {
                     pending_decision.reason_codes
                 },
-                dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
+                dreamer_run_id: if breaker_demoted {
+                    // Breaker accounting already required and validated a
+                    // nonempty run id for this write, so failing to recover it
+                    // here is an invariant error rather than `None`. The
+                    // landed derivation cannot be reused: it narrows on the
+                    // body's own `Proposed` stamp, and a demoted body still
+                    // reads `Auto` until `batch` re-encodes it.
+                    Some(
+                        envelope
+                            .and_then(dreamer_run_id_from_write_envelope)
+                            .ok_or(Error::InvariantViolation(
+                                "breaker-demoted pending consent lost its dreamer run id",
+                            ))?,
+                    )
+                } else {
+                    pending_consent_dreamer_run_id(envelope, body)
+                },
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // This is the sole reopening transition: a successful local
@@ -472,7 +548,7 @@ fn check_claim_policy_for_write_with_record_inner(
             wtxn,
             id,
             &decision,
-            body.approval,
+            effective_approval,
             &binding,
             GateWriteMode {
                 resolve_pending: mode.resolve_pending && !attach_critical_confirm,
@@ -538,29 +614,6 @@ pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) defer_metrics_until_commit: bool,
 }
 
-pub(crate) struct RecordedClaimGateDecision {
-    record: GateDecisionRecord,
-    decision: GateDecision,
-}
-
-impl RecordedClaimGateDecision {
-    pub(crate) fn decision_id(&self) -> GateDecisionId {
-        self.record.decision_id
-    }
-
-    pub(crate) fn outcome(&self) -> &str {
-        &self.record.outcome
-    }
-
-    pub(crate) fn record_metrics(&self) {
-        record_gate_decision_metrics(&self.decision);
-    }
-
-    pub(crate) fn into_record(self) -> GateDecisionRecord {
-        self.record
-    }
-}
-
 pub(crate) fn check_reserved_claim_policy(
     body: &ClaimBody,
     envelope: Option<&WriteEnvelope>,
@@ -611,19 +664,6 @@ pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn pending_consent_dreamer_run_id(
-    envelope: Option<&WriteEnvelope>,
-    body: &ClaimBody,
-) -> Option<String> {
-    if body.approval != ClaimApprovalStatus::Proposed || body.source != Some(ClaimSource::Generated)
-    {
-        return None;
-    }
-
-    let envelope = envelope?;
-    dreamer_run_id_from_write_envelope(envelope)
 }
 
 /// Runs the GATE-12 pre-commit checks for one Dreamer-authored candidate,
@@ -779,48 +819,6 @@ fn live_entity_row_has_type(
         live_entity_row_in_txn(store, txn, id),
         Ok(LiveEntityRow::Live { entity_type: found, .. }) if found == entity_type
     )
-}
-
-/// The Dreamer run this write is authored by, if any.
-///
-/// Authorship is a property of the WRITE, read off provenance and
-/// SOURCE-AGNOSTIC: `Agent` actor class, the Dreamer run surface/runner
-/// marker, and a non-empty run id. `envelope.source()` is the computed
-/// evidence meet — epistemic taint derived FROM the candidate's evidence —
-/// so a truthful `ToolOutput` or `Observed` meet says how well the claim is
-/// known, never who wrote it, and must not disable the deny-first GATE-12
-/// floor. Source narrowing answers the other question, owner-review
-/// grouping, and lives solely in `pending_consent_dreamer_run_id`.
-pub(super) fn dreamer_run_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<String> {
-    if envelope.actor().actor_class() != EdgeActorClass::Agent {
-        return None;
-    }
-    dreamer_run_id_from_provenance(envelope.provenance().value())
-}
-
-fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    if !entries.iter().any(|(key, value)| {
-        key.as_str().is_some_and(|key| {
-            key == DREAMER_PROVENANCE_RUNNER_KEY || key == DREAMER_PROVENANCE_SURFACE_KEY
-        }) && value.as_str() == Some(DREAMER_RUNNER_ATTEMPT_KIND)
-    }) {
-        return None;
-    }
-
-    [DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY]
-        .into_iter()
-        .find_map(|run_key| {
-            entries.iter().find_map(|(key, value)| {
-                if key.as_str() != Some(run_key) {
-                    return None;
-                }
-                let run_id = value.as_str()?.trim();
-                (!run_id.is_empty()).then(|| run_id.to_owned())
-            })
-        })
 }
 
 pub(crate) fn check_edge_provenance_claim_policy(
@@ -1043,7 +1041,7 @@ pub(crate) fn standing_outbound_grant_binding_parts(
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
 }
 
-fn gate_decision_matches_pending_candidate(
+pub(super) fn gate_decision_matches_pending_candidate(
     record: &GateDecisionRecord,
     expected: &GateDecisionRecord,
 ) -> bool {

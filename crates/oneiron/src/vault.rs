@@ -13,7 +13,7 @@ use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, encode_short_id_forward_key,
     parse_short_id_value,
 };
-use crate::config::VaultConfig;
+use crate::config::{HostingPrivacyPosture, VaultConfig, VaultPrivacyConfig};
 use crate::deletion::HydratedShortIdDeletion;
 use crate::deletion::HydratedShortIdDeletionSource;
 use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind, parse_strict_edge_record};
@@ -148,6 +148,12 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    /// Posture/custody pairing this handle was opened under, retained from the
+    /// validated config so the honest read-only description below cannot drift
+    /// from what the opener actually accepted. Private: callers read it through
+    /// [`Vault::privacy_posture`], [`Vault::privacy_posture_label`], and
+    /// [`Vault::is_host_readable`], never as raw state.
+    privacy: VaultPrivacyConfig,
     /// `false` only when `Vault::open` ran with
     /// `skip_text_index_manifest_check = true` against a populated index.
     /// In that state the on-disk postings may have been written under a
@@ -157,6 +163,11 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
+    /// state mutex and nothing else: the fixed-order drop transaction and the
+    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
+    /// outbound callback, no timer handle and no second connection owner.
+    pub(crate) slim: crate::slim::SlimController,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a
@@ -175,6 +186,11 @@ pub struct Vault {
 
 /// Config preconditions every opener checks before the environment is mapped.
 fn validate_open_config(config: &VaultConfig) -> Result<()> {
+    // FIRST, before any other gate and before any opener reaches `Store::open`:
+    // an unsupported posture/custody pairing must never bring a storage
+    // environment into existence. Every door (`open`, `open_existing`,
+    // `open_seeded`, and the test-only ABI opener) funnels through here.
+    config.privacy.validate()?;
     if config.dimensions == 0 {
         return Err(Error::InvalidConfig(
             "dimensions must be greater than zero".to_owned(),
@@ -278,6 +294,110 @@ impl Vault {
         Self::open_seeded(path, config, DefaultPolicySeedMode::TestUnseeded)
     }
 
+    /// Adds one actor-bound Imported source permit to a stock default manifest.
+    /// TEST-SUPPORT ONLY: the cap is the unstamped sensitivity floor, with the
+    /// required receipt/warning flags. Every other policy field stays unchanged.
+    /// Claims still use the normal write gate; this grants no review approval,
+    /// actor ceiling, source relabeling, or raw storage access.
+    ///
+    /// Refuses a missing or already customized default manifest rather than
+    /// replacing caller policy. Other installed manifests remain in the fold.
+    /// `Vault::open` never calls this, even when `test-support` is enabled.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn install_imported_source_permit_for_test(&self, actor: EntityId) -> Result<()> {
+        use crate::batch::{BatchOp, apply_ops};
+        use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
+        use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+        use rmpv::Value;
+
+        let id = crate::gate::default_policy_manifest_id()?;
+        let default = crate::gate::default_policy_manifest();
+        let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
+            .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
+        let Value::Map(entries) = &mut manifest else {
+            return Err(Error::InvariantViolation(
+                "default test policy is not a map",
+            ));
+        };
+        let Some(Value::Map(rows)) = entries
+            .iter_mut()
+            .find_map(|(key, value)| (key.as_str() == Some("source_trust")).then_some(value))
+        else {
+            return Err(Error::InvariantViolation(
+                "default test policy has no source trust",
+            ));
+        };
+        if rows
+            .iter()
+            .any(|(key, _)| key.as_str() == Some(ClaimSource::Imported.as_str()))
+        {
+            return Err(Error::InvariantViolation(
+                "default test policy already covers Imported",
+            ));
+        }
+        rows.push((
+            Value::from(ClaimSource::Imported.as_str()),
+            Value::Map(vec![
+                (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                (
+                    Value::from("max_auto_sensitivity"),
+                    Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (Value::from("receipted"), Value::Boolean(true)),
+                (Value::from("warned"), Value::Boolean(true)),
+            ]),
+        ));
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &manifest)
+            .map_err(|_| Error::InvariantViolation("encode Imported test policy"))?;
+
+        self.with_write_txn(|wtxn| {
+            let raw =
+                self.store
+                    .entities
+                    .get(wtxn, id.as_bytes())?
+                    .ok_or(Error::InvariantViolation(
+                        "test permit requires a seeded default policy",
+                    ))?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("test policy header"))?;
+            if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+                || raw[ENTITY_METADATA_HEADER_LEN..] != default
+            {
+                return Err(Error::InvariantViolation(
+                    "test permit requires an unchanged default policy",
+                ));
+            }
+            // The test-only capability is confined to this fixed manifest Put.
+            // Use the existing maintenance install path, not raw database writes
+            // or replicated replay. Index maintenance and structural checks run.
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                vec![BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    learned_at: header.learned_at,
+                    data,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                true,
+                true,
+            )
+        })
+    }
+
     fn open_seeded(
         path: impl AsRef<Path>,
         config: VaultConfig,
@@ -379,11 +499,18 @@ impl Vault {
             wtxn.commit()?;
         }
 
+        // Cloned before `config` moves into the handle: the retained copy is
+        // the pairing `validate_open_config` already accepted.
+        let privacy = config.privacy.clone();
         let vault = Self {
             store,
             config,
             analyzer,
+            privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            // Every vault opens FULL; only an explicit ctl-driven shed parks
+            // it, and only an inbound resume unparks it.
+            slim: crate::slim::SlimController::default(),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
@@ -395,6 +522,29 @@ impl Vault {
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         Ok(vault)
+    }
+
+    /// Deployment posture this vault was opened under.
+    ///
+    /// Read-only and honest: it reports the posture the opener validated, and
+    /// there is no posture that claims a hosting operator cannot read a vault
+    /// it stores.
+    #[must_use]
+    pub fn privacy_posture(&self) -> HostingPrivacyPosture {
+        self.privacy.posture
+    }
+
+    /// Short description of who holds the key for this vault:
+    /// `host-readable` when hosted, `owner-held-key` when self-hosted locally.
+    #[must_use]
+    pub fn privacy_posture_label(&self) -> &'static str {
+        self.privacy.honest_label()
+    }
+
+    /// True when a hosting operator can read this vault's contents.
+    #[must_use]
+    pub fn is_host_readable(&self) -> bool {
+        self.privacy.host_readable()
     }
 
     /// Registers the production window manager as the live-window delete
@@ -659,6 +809,9 @@ impl Vault {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
 
+        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(None);
+        }
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
     }
 
@@ -685,6 +838,9 @@ impl Vault {
     /// Retrieves a vector for an entity.
     pub fn get_vector(&self, id: &EntityId) -> Result<Option<Vec<f32>>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::vault_cleanup::is_archived_in_txn(&self.store, &rtxn, id)? {
+            return Ok(None);
+        }
         let Some(bytes) = self.store.vectors.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
@@ -1530,6 +1686,8 @@ impl Vault {
     ///
     /// The transaction commits on `Ok(())` return and rolls back on `Err`.
     /// Used by the sync layer to atomically write entity data + pending-mirror markers.
+    /// As with [`Self::try_with_write_txn`], VAD postcommit errors are returned
+    /// after the approval is durable, not as a rollback of the closure.
     pub fn with_write_txn<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
@@ -1541,17 +1699,30 @@ impl Vault {
     /// callers to return their own error type.
     ///
     /// The transaction commits on `Ok` return and rolls back on `Err`.
+    /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
+    /// consolidation after commit. A postcommit error retains Approved; retry
+    /// [`Self::consolidate_claim_vad_now`] to finish that work.
     pub fn try_with_write_txn<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let result = {
+        let (result, pending_vad_ids) = {
             let _active_write_txn = crate::store::active_write_txn_guard();
-            f(&mut wtxn)?
+            let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
+            let result = f(&mut wtxn)?;
+            (result, vad_scope.finish())
         };
+        let approved_vad_ids =
+            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
         wtxn.commit().map_err(Error::from)?;
+        // Approval is durable now. The canonical consolidator opens its own
+        // writer; its failure is returned without rolling back Approved.
+        let now = crate::unix_seconds_now();
+        for id in approved_vad_ids {
+            self.consolidate_claim_vad_now(&id, now)?;
+        }
         Ok(result)
     }
 
@@ -1833,6 +2004,15 @@ impl Vault {
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        if self.archive_tombstone_in_txn(&rtxn, &id)?.is_some() {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type,
+                learned_at,
+                deletion: None,
+                body: None,
+            }));
+        }
         drop(rtxn);
 
         if body.is_empty()
@@ -1858,6 +2038,12 @@ impl Vault {
 
     /// Returns true when an entity row is a soft-delete shell, not a live
     /// zero-byte payload.
+    ///
+    /// An ARCHIVED row (ONE-1931) answers `true` here as well: the archive is
+    /// a soft tombstone, and the shell it leaves behind is the same 25 B
+    /// shell `user_delete` leaves. Which of the two it is — and therefore
+    /// whether [`Self::restore_archived`] will undo it — is
+    /// [`Self::archived_entity`]'s question, not this one's.
     pub fn is_deleted_shell(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
@@ -1865,6 +2051,12 @@ impl Vault {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // Checked inside the SAME read txn as the row, and before the
+        // window-doc path below, exactly as `entity_deletion_present_in_txn`
+        // orders its own three sources.
+        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(true);
+        }
         if raw.len() != ENTITY_METADATA_HEADER_LEN {
             return Ok(false);
         }
@@ -3146,8 +3338,12 @@ pub(crate) fn live_entity_row_in_txn(
         return Ok(LiveEntityRow::Absent);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if raw.len() == ENTITY_METADATA_HEADER_LEN
-        && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?
+    if store
+        .sync_state
+        .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
+        .is_some()
+        || (raw.len() == ENTITY_METADATA_HEADER_LEN
+            && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?)
     {
         return Ok(LiveEntityRow::DeletedShell);
     }

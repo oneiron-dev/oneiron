@@ -1080,6 +1080,58 @@ impl Vault {
         claim_id: &EntityId,
         now: u64,
     ) -> Result<ClaimVadConsolidation> {
+        self.consolidate_claim_vad_now(claim_id, now)
+    }
+
+    /// Snapshot only explicit approvals of parked Dreamer members. The write
+    /// gate still owns consent binding and admission; this never grants trust.
+    pub(crate) fn pending_dreamer_vad_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        approval: ClaimApprovalStatus,
+    ) -> Result<bool> {
+        if approval != ClaimApprovalStatus::Approved {
+            return Ok(false);
+        }
+        Ok(self
+            .store
+            .pending_gate_consent_in_txn(txn, id)?
+            .is_some_and(|pending| pending.dreamer_run_id.is_some()))
+    }
+
+    /// Call after successful apply, but before commit, on snapshotted members.
+    /// A batch can overwrite or delete an earlier op, so only its final Approved
+    /// body with redeemed consent schedules postcommit work. Do not substitute
+    /// the consolidatable predicate here: canonical failures must stay loud.
+    pub(crate) fn resolved_dreamer_vad_approvals_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pending_ids: impl IntoIterator<Item = EntityId>,
+    ) -> Result<Vec<EntityId>> {
+        let mut approved = BTreeSet::new();
+        for id in pending_ids {
+            if self.store.pending_gate_consent_in_txn(txn, &id)?.is_none()
+                && self
+                    .get_claim_in_txn(txn, &id)?
+                    .is_some_and(|body| body.approval == ClaimApprovalStatus::Approved)
+            {
+                approved.insert(id);
+            }
+        }
+        Ok(approved.into_iter().collect())
+    }
+
+    /// Synchronous entry to the canonical claim VAD transaction.
+    ///
+    /// Call only after any enclosing write transaction has committed. Retrying
+    /// with unchanged evidence reuses the active reappraisal state. Admission
+    /// errors, including clear-on-decline, are identical to the async entry.
+    pub fn consolidate_claim_vad_now(
+        &self,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
         self.consolidate_claim_vad_in_txn(claim_id, now)
     }
 

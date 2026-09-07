@@ -201,12 +201,8 @@ fn collect_pull_candidates(
                         // bounds admission work across ALL symbols and slots,
                         // not merely the number of notes eventually retained.
                         examined_values.set(examined_values.get() + 1);
-                        if !payload_visible_in_txn(
-                            &vault.store,
-                            rtxn,
-                            scoped_read,
-                            value.payload,
-                        )? {
+                        if !payload_visible_in_txn(&vault.store, rtxn, scoped_read, value.payload)?
+                        {
                             continue;
                         }
                         candidate_notes.push((scored.score, scored.id, name.clone(), value));
@@ -233,7 +229,7 @@ fn collect_pull_candidates(
 /// 1. validate seeds / threshold / limit;
 /// 2. ONE `RoTxn`: seeds must be live `CODE_SYMBOL`s, then the ACTOR-SCOPED,
 ///    compute-only PPR entry at [`CODE_MEMORY_PPR_DEPTH`], alpha `0.15`,
-///    [`SeedWeighting::Specificity`] (`lambda_for_kind(Blocks) == None` keeps
+///    `SeedWeighting::Specificity` (`lambda_for_kind(Blocks) == None` keeps
 ///    readiness edges out of the walk). SCOPE BEFORE MASS: this `ScopedRead`
 ///    is the walk's node-visibility gate, so a seed the actor cannot read
 ///    carries no seed mass and no hop is taken through a node it cannot read
@@ -266,12 +262,13 @@ fn collect_pull_candidates(
 /// pull return fewer notes than the snapshot it ranked actually holds, with no
 /// lower-ranked note ever collected to take the empty place. The in-transaction
 /// predicate is the SAME admission `get_entity_parts` applies (see
-/// [`payload_visible_in_txn`]), so coherence costs no scope.
+/// `payload_visible_in_txn`), so coherence costs no scope.
 pub fn pull_code_memory(
     vault: &Vault,
     scoped_read: &ScopedRead<'_>,
     request: CodeMemoryPullRequest,
 ) -> Result<CodeMemoryPullResult> {
+    crate::config::validate_ppr_vad_alpha(vault.config.ppr_vad_alpha)?;
     if request.seed_symbols.is_empty() {
         return Err(Error::CodeMemoryInvalidAnchor {
             reason: "pull requires at least one CODE_SYMBOL seed",
@@ -310,6 +307,7 @@ pub fn pull_code_memory(
         &request.seed_symbols,
         CODE_MEMORY_PPR_DEPTH,
         CODE_MEMORY_PPR_ALPHA,
+        vault.config.ppr_vad_alpha,
         SeedWeighting::Specificity,
         scoped_read,
     )?;
@@ -447,4 +445,3 @@ pub fn register_always_on_contract(
     }
     write_always_on(store, txn, &contract)
 }
-

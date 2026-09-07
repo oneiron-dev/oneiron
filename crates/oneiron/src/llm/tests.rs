@@ -671,6 +671,7 @@ fn auto_check_candidate() -> AutoCheckCandidateOwned {
         predicate: "profile.name".to_owned(),
         value_preview: "Ada".to_owned(),
         source: ClaimSource::Generated,
+        lineage: Some(SourceLineage::of(ClaimSource::Generated)),
         actor_class: "agent".to_owned(),
         sensitivity_band: Some(0),
     }

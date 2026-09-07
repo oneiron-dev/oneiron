@@ -968,3 +968,5 @@ fn partial_remote_completion_is_logged_when_local_batch_fails() -> Result<()> {
     );
     Ok(())
 }
+
+mod payload;

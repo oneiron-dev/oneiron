@@ -11,7 +11,7 @@
 //!   ([`VAULT_LFS_OBJECT_KEY_PREFIX`], [`VAULT_LFS_REF_KEY_PREFIX`]). No new
 //!   entity type byte, no new named database, no new public storage primitive,
 //!   no dependency;
-//! * asset ids are deterministic through [`entity_id_from_hash_material`] over
+//! * asset ids are deterministic through `entity_id_from_hash_material` over
 //!   an LFS-only domain, so an LFS asset id can never collide with a
 //!   blob-artifact or codebase asset id even for byte-identical content.
 //!
@@ -135,9 +135,7 @@ impl LfsOid {
     /// path, because a mis-parsed object id would address the wrong bytes.
     pub fn parse_hex(value: &str) -> Result<Self> {
         if value.len() != VAULT_LFS_OID_HEX_LEN {
-            return Err(Error::InvalidLfsObject(
-                "lfs oid must be 64 hex characters",
-            ));
+            return Err(Error::InvalidLfsObject("lfs oid must be 64 hex characters"));
         }
         let mut bytes = [0_u8; VAULT_LFS_OID_LEN];
         for (slot, pair) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
