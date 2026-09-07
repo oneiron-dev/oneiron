@@ -474,3 +474,11 @@ html[data-work="pane"] .rpane.open {
 .pause-btn:hover, .pause-btn:focus-visible { color: var(--silver-1); border-color: var(--silver-3); }
 .pause-btn:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; }
 .pause-btn[aria-pressed="true"] { color: var(--silver-1); background: var(--bg-well); }
+
+/* ── the column's place (owner 09-08, "we are getting a bit empty"; Claude and
+   ChatGPT center the conversation, html[data-room-column]): left = as built ·
+   center = the column centers in the space beside the pane, and in the whole
+   room while the pane is closed (the ChatGPT rule; the mark keeps the corner)
+   · dock = the pane sits beside the column at the left, the air stays right ── */
+html[data-room-column="center"] .room-main { margin: 0 auto; }
+html[data-room-column="center"] .rpane.open, html[data-room-column="dock"] .rpane.open { margin-left: 0; }
