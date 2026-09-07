@@ -397,6 +397,16 @@ impl crate::outbound::OutboundExecutionSink for EffectSpy<'_> {
                 value["idempotency_key"].as_str() == Some(request.intent_ref)
             })
             .expect("intent is logged before this external effect");
+        let binding: serde_json::Value = serde_json::from_slice(frozen.payload()).unwrap();
+        let owner = self.plan.request.owner_ref.to_hex();
+        assert_eq!(binding["actor_class"], "human");
+        for field in ["actor", "actor_ref", "actor_entity_ref"] {
+            assert_eq!(binding[field].as_str(), Some(owner.as_str()), "{field}");
+        }
+        assert_eq!(
+            binding["counterparty_ref"].as_str(),
+            Some(self.plan.recipient.as_str())
+        );
         if let Some(part) = &request.calendar_invite {
             assert_eq!(
                 part.ics,

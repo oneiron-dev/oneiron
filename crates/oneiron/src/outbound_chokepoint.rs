@@ -167,6 +167,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
                 .get_entity_type_in_txn(&wtxn, &actor)?
                 .ok_or(IntentLedgerError::InvalidBoundActor)?;
             crate::provenance::validate_actor_class(entity_type, actor_class)?;
+            if prepared.gate.provenance.actor_entity_ref != Some(actor)
+                || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+                || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
+            {
+                return Err(IntentLedgerError::InvalidBoundActor);
+            }
         }
         verify_booking_effect(vault, &wtxn, prepared.attempt_id, &prepared.payload)?;
     }
@@ -181,18 +187,6 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if let Some(record) = record {
         if let OutboundEffectCommand::New(prepared) = &command {
             validate_new_replay(&record, prepared)?;
-            if let Some((actor, actor_class)) = prepared.verified_actor {
-                let entity_type = vault
-                    .get_entity_type_in_txn(&wtxn, &actor)?
-                    .ok_or(IntentLedgerError::InvalidBoundActor)?;
-                crate::provenance::validate_actor_class(entity_type, actor_class)?;
-                if prepared.gate.provenance.actor_entity_ref != Some(actor)
-                    || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
-                    || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
-                {
-                    return Err(IntentLedgerError::InvalidBoundActor);
-                }
-            }
         }
         drop(wtxn);
         force_sync(vault)?;
