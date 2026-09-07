@@ -34,6 +34,40 @@ use crate::vault::Vault;
 /// live passport claims are the synced truth.
 pub const CALENDAR_PASSPORT_INDEX_PREFIX: &[u8] = b"calendar.passport.v1:";
 
+pub(crate) fn live_passports_for_event_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
+    let mut values = Vec::new();
+    for id in vault.claims_for_subject_in_txn(txn, event)? {
+        if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && body.predicate == PREDICATE_CALENDAR_PASSPORT
+        {
+            values.push((id, decode_passport_value(&body.value)?));
+        }
+    }
+    Ok(values)
+}
+
+pub(crate) fn live_passport_for_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+    system: &str,
+    uid: &str,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    let mut matching = live_passports_for_event_in_txn(vault, txn, event)?
+        .into_iter()
+        .filter(|(_, value)| value.system == system && value.uid == uid);
+    let found = matching.next();
+    if matching.next().is_some() {
+        return Err(ingest("competing live calendar passports"));
+    }
+    Ok(found)
+}
+
 /// The per-`(system × UID)` diff verdict for one feed row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PassportDecision {

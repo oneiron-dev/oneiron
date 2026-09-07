@@ -116,6 +116,36 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     Ok(ParsedIcsFeed { events })
 }
 
+/// Extracts one invitation's actual organizer using the existing ICS parser.
+pub(crate) fn invite_organizer(input: &[u8]) -> Result<String, CalendarError> {
+    let text = std::str::from_utf8(input).map_err(|_| ics_parse("invite is not UTF-8"))?;
+    let calendar = icalendar::parser::read_calendar(text).map_err(|message| ics_parse(&message))?;
+    let mut events = calendar
+        .components
+        .iter()
+        .filter(|component| component.name.as_str() == "VEVENT");
+    let event = events
+        .next()
+        .ok_or_else(|| ics_parse("invite has no VEVENT"))?;
+    if events.next().is_some() {
+        return Err(ics_parse("invite has competing VEVENTs"));
+    }
+    let organizer = event
+        .find_prop("ORGANIZER")
+        .ok_or_else(|| ics_parse("invite has no organizer"))?
+        .val
+        .as_str()
+        .trim();
+    let organizer = organizer
+        .strip_prefix("mailto:")
+        .or_else(|| organizer.strip_prefix("MAILTO:"))
+        .unwrap_or(organizer);
+    if organizer.is_empty() {
+        return Err(ics_parse("invite has an empty organizer"));
+    }
+    Ok(organizer.to_owned())
+}
+
 /// Parses one VEVENT parser component into the calendar-owned row.
 fn parse_vevent(
     component: &icalendar::parser::Component<'_>,

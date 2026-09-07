@@ -161,6 +161,21 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    if let OutboundEffectCommand::New(prepared) = &command {
+        if let Some((actor, actor_class)) = prepared.verified_actor {
+            let entity_type = vault
+                .get_entity_type_in_txn(&wtxn, &actor)?
+                .ok_or(IntentLedgerError::InvalidBoundActor)?;
+            crate::provenance::validate_actor_class(entity_type, actor_class)?;
+            if prepared.gate.provenance.actor_entity_ref != Some(actor)
+                || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+                || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
+            {
+                return Err(IntentLedgerError::InvalidBoundActor);
+            }
+        }
+        verify_booking_effect(vault, &wtxn, prepared.attempt_id, &prepared.payload)?;
+    }
     // Payload-derived ids alone are not unique logical calls. Resolve the
     // attempt under the SAME writer lock as the gate, debit, and Pending insert.
     let record = match &command {
@@ -172,18 +187,6 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if let Some(record) = record {
         if let OutboundEffectCommand::New(prepared) = &command {
             validate_new_replay(&record, prepared)?;
-            if let Some((actor, actor_class)) = prepared.verified_actor {
-                let entity_type = vault
-                    .get_entity_type_in_txn(&wtxn, &actor)?
-                    .ok_or(IntentLedgerError::InvalidBoundActor)?;
-                crate::provenance::validate_actor_class(entity_type, actor_class)?;
-                if prepared.gate.provenance.actor_entity_ref != Some(actor)
-                    || prepared.gate.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
-                    || prepared.gate.actor.actor_class != actor_class.gate_actor_class()
-                {
-                    return Err(IntentLedgerError::InvalidBoundActor);
-                }
-            }
         }
         drop(wtxn);
         force_sync(vault)?;
@@ -199,13 +202,6 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             "outbound resume target is missing",
         ));
     };
-
-    if let Some((actor, actor_class)) = prepared.verified_actor {
-        let entity_type = vault
-            .get_entity_type_in_txn(&wtxn, &actor)?
-            .ok_or(IntentLedgerError::InvalidBoundActor)?;
-        crate::provenance::validate_actor_class(entity_type, actor_class)?;
-    }
 
     // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
     // frozen bytes must carry a payload this lane can vouch for: C7's exact
@@ -467,6 +463,28 @@ fn replay_record<T: OutboundTransport>(
     }
 }
 
+fn verify_booking_effect(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    bytes: &[u8],
+) -> Result<(), IntentLedgerError> {
+    crate::booking::emergency_reschedule::verify_frozen_effect_in(vault, txn, attempt, bytes)
+        .map_err(|error| {
+            let error = crate::memory::booking_error(error);
+            if let Some(denial) = error.gate_denial_error() {
+                return IntentLedgerError::Engine(denial);
+            }
+            if error.code == crate::memory::MEMORY_CODE_FORBIDDEN {
+                IntentLedgerError::InvalidBoundActor
+            } else {
+                IntentLedgerError::InvalidInput(
+                    "emergency effect authority or revision is no longer current",
+                )
+            }
+        })
+}
+
 fn send_pending<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -610,6 +628,10 @@ fn send_pending_with_gate<T: OutboundTransport>(
         record
     };
     let call = FrozenOutboundCall::from_record(&record);
+    {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
+    }
     let outcome = transport.send(&call);
     match outcome {
         OutboundSendOutcome::Acked => {
