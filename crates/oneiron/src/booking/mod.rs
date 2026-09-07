@@ -13,6 +13,7 @@ pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod disclosure_rung;
+pub mod invite_grant;
 pub mod lifecycle;
 pub mod solver;
 #[cfg(test)]
@@ -43,6 +44,11 @@ pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,
     RungProjection, SurfaceClass, TitledEventRow, default_disclosure_rung, project_at_rung,
     project_calendar_grant,
+};
+pub use invite_grant::{
+    BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
+    booking_page_grant_covers_recipient, booking_page_invites_authorizes, enqueue_confirm_invite,
+    mint_publish_page_invite_grant,
 };
 pub use lifecycle::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,

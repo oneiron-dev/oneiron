@@ -170,6 +170,12 @@ fn check_claim_policy_for_write_with_record_inner(
         validate_write_envelope(envelope)?;
     }
 
+    // ONE-1314: the write's OWN history, read once here and consulted by both
+    // auto-permit decisions this door makes (the evaluator's source-trust
+    // pend below, and the ceiling check at the end). An envelope-less local
+    // write has no history to read and keeps its exact prior verdict.
+    let lineage_requires_auto_permit = envelope_lineage_requires_auto_permit(envelope);
+
     // GATE-12: Dreamer authorship is detected exactly once, here, and the
     // provenance handle carries it into the evaluator input below. Pre-commit
     // validation asks whether the CLAIM IS VALID, not whether the author is
@@ -248,7 +254,7 @@ fn check_claim_policy_for_write_with_record_inner(
         // Deny aborts the caller's batch op before any claim-side write lands.
         let mut decision = match precommit_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
-            None => policy.evaluate_gate(&input),
+            None => policy.evaluate_gate_with_lineage(&input, lineage_requires_auto_permit),
         };
         // GATE-13: persona-core and mirroring-prone predicates are isolated
         // for the DREAMER path only, and only AFTER the validity pass above.
@@ -309,9 +315,9 @@ fn check_claim_policy_for_write_with_record_inner(
             && dreamer_candidate
             && policy.auto_checker().is_some()
             && let Some(checker) = auto_checker
-            && let Some(source) = body
-                .source
-                .filter(|source| source.requires_explicit_auto_permit())
+            && let Some(source) = body.source.filter(|source| {
+                source.requires_explicit_auto_permit() || lineage_requires_auto_permit
+            })
         {
             let value_preview = auto_check_value_preview(&body.value);
             let candidate = AutoCheckCandidate {
@@ -480,7 +486,12 @@ fn check_claim_policy_for_write_with_record_inner(
     }
 
     let actor_ref = write_envelope_actor_ref(envelope);
-    check_claim_source_trust(body, actor_ref.as_deref(), policy)
+    check_claim_source_trust(
+        body,
+        actor_ref.as_deref(),
+        policy,
+        lineage_requires_auto_permit,
+    )
 }
 
 /// The bounded claim-value prefix an auto-check candidate carries (ONE-1296).
@@ -504,6 +515,13 @@ fn auto_check_value_preview(value: &Value) -> String {
 /// never rides an actor-bound permit.
 fn write_envelope_actor_ref(envelope: Option<&WriteEnvelope>) -> Option<String> {
     envelope.map(|envelope| envelope.actor().entity_ref().to_hex())
+}
+
+/// ONE-1314: whether the write's observed lineage requires an explicit auto
+/// permit. An envelope-less write declares no history, so it answers `false`
+/// and keeps the pre-lineage verdict exactly.
+fn envelope_lineage_requires_auto_permit(envelope: Option<&WriteEnvelope>) -> bool {
+    envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -557,7 +575,14 @@ pub(crate) fn check_reserved_claim_policy(
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     let actor_ref = write_envelope_actor_ref(envelope);
-    check_claim_source_trust(body, actor_ref.as_deref(), policy)
+    // Envelope-bearing local write path (the batch reserved-predicate door),
+    // so it reads the same two axes the main write door reads.
+    check_claim_source_trust(
+        body,
+        actor_ref.as_deref(),
+        policy,
+        envelope_lineage_requires_auto_permit(envelope),
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -848,7 +873,9 @@ pub(crate) fn check_edge_provenance_claim_policy(
     }
 
     let actor_ref = record.actor_entity_ref.to_hex();
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
+    // Edge-provenance claims arrive with no write envelope, so there is no
+    // observed lineage to read: declared-source only, exactly as before.
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
 }
 
 // The claim-door assembler takes the full axis tuple one call site at a time

@@ -4068,6 +4068,122 @@ fn checker_hold_reasons_render_into_reasons_the_ledger_accepts() {
     assert_eq!(checker_hold_receipt_reason(""), None);
 }
 
+/// The merged validator accepts both receipt families in the same ledger,
+/// including a mixed reason list, on append and on decode after reopening.
+/// This pins codec vocabulary, not which override a writer may select; the
+/// gate's source-specific override tests still require exactly one source.
+#[test]
+fn checker_and_comm_send_override_receipts_coexist_in_the_ledger() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    // The legacy helper removes the default policy manifest. Reopen now to
+    // capture the reseeded_after_loss receipt before appending our fixtures.
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let initial_records = vault.store.gate_decisions(usize::MAX)?;
+    let checker_reason =
+        checker_hold_receipt_reason("checker: hedged verdict").expect("checker prose renders");
+    let mut records = Vec::new();
+    for (index, (outcome, reason, receipt_reasons)) in [
+        (
+            "pending",
+            "gate.pending.checker",
+            vec![checker_reason.clone()],
+        ),
+        (
+            "allow",
+            "gate.allow",
+            vec!["comm_send_override_standing".to_owned()],
+        ),
+        (
+            "allow",
+            "gate.allow",
+            vec!["comm_send_override_one_shot".to_owned()],
+        ),
+        (
+            "pending",
+            "gate.pending.checker",
+            vec![
+                checker_reason,
+                "comm_send_override_standing".to_owned(),
+                "comm_send_override_one_shot".to_owned(),
+            ],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut record = gate_decision(synthetic_gate_decision_id(0x6B, index as u64), 3, None);
+        record.outcome = outcome.to_owned();
+        record.reason_codes = vec![reason.to_owned()];
+        record.receipt_reasons = receipt_reasons;
+        assert_eq!(
+            decode_gate_decision(&encode_gate_decision(&record)?)?,
+            record
+        );
+        records.push(record);
+    }
+    append_gate_decisions(&vault, &records)?;
+    drop(vault);
+
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    let ledger = reopened.store.gate_decisions(usize::MAX)?;
+    assert_eq!(ledger.len(), initial_records.len() + records.len());
+    for record in initial_records.iter().chain(&records) {
+        assert!(ledger.contains(record));
+        assert_eq!(
+            gate_decision_primary(&reopened, record.decision_id)?.as_ref(),
+            Some(record)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn checker_and_comm_send_override_receipts_keep_charset_and_length_bounds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    for (index, prefix) in ["checker_", "comm_send_override_"].into_iter().enumerate() {
+        let mut record = gate_decision(synthetic_gate_decision_id(0x6C, index as u64), 3, None);
+        let boundary = format!("{prefix}{}", "a".repeat(128 - prefix.len()));
+        record.receipt_reasons = vec![boundary.clone()];
+        vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &record))?;
+        assert_eq!(
+            gate_decision_primary(&vault, record.decision_id)?,
+            Some(record.clone())
+        );
+        for reason in [
+            format!("{boundary}a"),
+            format!("{prefix}Uppercase"),
+            format!("{prefix}two words"),
+            format!("{prefix}punctuation.dot"),
+            format!("{prefix}é"),
+            "unknown_receipt_family".to_owned(),
+            String::new(),
+        ] {
+            let invalid = GateDecisionRecord {
+                decision_id: synthetic_gate_decision_id(0x6D, index as u64),
+                receipt_reasons: vec![reason.clone()],
+                ..record.clone()
+            };
+            assert!(
+                matches!(
+                    decode_gate_decision(&encode_gate_decision(&invalid)?),
+                    Err(Error::CorruptedIndex("gate decision ledger"))
+                ),
+                "decode must reject {reason:?}"
+            );
+            let appended = vault
+                .with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &invalid));
+            assert!(
+                matches!(appended, Err(Error::CorruptedIndex("gate decision ledger"))),
+                "append must reject {reason:?}"
+            );
+            assert!(gate_decision_primary(&vault, invalid.decision_id)?.is_none());
+        }
+    }
+    assert_eq!(vault.store.gate_decisions(20)?.len(), 2);
+    Ok(())
+}
+
 #[test]
 fn gate_notice_accepts_what_the_in_crate_writers_produce() {
     // The owner-plane writer: plane only, no versioned document behind it.

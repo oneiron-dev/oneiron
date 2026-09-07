@@ -275,6 +275,16 @@ pub struct AttemptRecord {
     pub task_ref: Option<String>,
     pub run_id: Option<String>,
     pub dedupe_key: Option<String>,
+    /// Optional actor scope of `dedupe_key`, so two actors sharing one client
+    /// key occupy disjoint index entries.
+    ///
+    /// Key-gated and additive: it is persisted only alongside a `dedupe_key`
+    /// (a row without a key is always actorless), and rows written before it
+    /// existed decode as `None` under the unchanged record version. It is the
+    /// scope terminal cleanup and retry-index transfer derive their key from,
+    /// so neither has to consult a caller's state or decode a TASK payload.
+    #[serde(default)]
+    pub dedupe_actor_ref: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(default)]

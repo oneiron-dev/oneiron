@@ -8,6 +8,18 @@ const CALENDAR_TZ_UTC: &str = "UTC";
 /// Maximum number of budget rows on one key (and compiled caps on one charter).
 pub const CONNECTOR_KEY_MAX_BUDGET_ROWS: usize = 16;
 
+/// Upper bound on a stored custody `secret_ref` and on a catalog name. Both
+/// ride inside `vault_meta` keys (the catalog name index) or are resolved
+/// against one, so they must stay bounded; the value matches the settlement
+/// event-ref cap so every caller-supplied identifier in this module has one
+/// length rule.
+pub(super) const CONNECTOR_KEY_NAME_MAX_LEN: usize = 128;
+
+/// Upper bound on the verbs one catalog entry may advertise. The list is
+/// DESCRIPTIVE only — classification is entry-wide — so this exists purely to
+/// keep the encoded body bounded.
+pub(super) const CONNECTOR_CATALOG_MAX_VERBS: usize = 64;
+
 /// ConnectorKeyRecord lifecycle status.
 ///
 /// v1 reachable states: `Active ⇄ Suspended`, `→ Revoked` (terminal).
@@ -280,6 +292,135 @@ pub struct PendingConnectorCharter {
     pub proposed_at: u64,
 }
 
+/// How one catalogued connector's calls are classified for effector
+/// budgeting (ARCH-0054: *"the Send class applies to counterparty
+/// communications only, and scoped-MCP tool calls are unbudgeted by
+/// default"*).
+///
+/// The classification is ENTRY-WIDE by construction: there is deliberately no
+/// per-verb parameter, so a mixed-verb connector registered as
+/// `CounterpartyComm` budgets its read-only calls as sends too. Over-budgeting
+/// is the safe direction — under-budgeting a counterparty send is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConnectorCallClass {
+    /// Communication with a counterparty: the only class that debits `Sends`.
+    CounterpartyComm,
+    /// Retrieval with no counterparty-visible effect; unbudgeted for `Sends`.
+    ReadOnly,
+    /// Scoped-MCP tool calls; unbudgeted for `Sends` per ARCH-0054 canon.
+    ScopedMcp,
+}
+
+impl ConnectorCallClass {
+    /// Returns the pinned on-disk class string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CounterpartyComm => "counterparty_comm",
+            Self::ReadOnly => "read_only",
+            Self::ScopedMcp => "scoped_mcp",
+        }
+    }
+
+    /// Parses a pinned on-disk class string.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "counterparty_comm" => Some(Self::CounterpartyComm),
+            "read_only" => Some(Self::ReadOnly),
+            "scoped_mcp" => Some(Self::ScopedMcp),
+            _ => None,
+        }
+    }
+
+    /// Whether a call through this connector debits the `Sends` dimension.
+    /// True for `CounterpartyComm` and nothing else.
+    #[must_use]
+    pub const fn debits_sends(self) -> bool {
+        matches!(self, Self::CounterpartyComm)
+    }
+}
+
+/// The engine-catalog entry embedded on a connector key: what the connector
+/// IS, so the engine can find it, describe it, and classify its calls.
+///
+/// Embedded on the key record rather than filed under its own entity type —
+/// a catalogued connector and its governing key are one registration.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConnectorCatalogEntry {
+    /// Engine-catalog name, stored normalized and unique per vault ACROSS
+    /// HISTORY (removal never frees it).
+    pub name: String,
+    /// The connector this entry describes; MUST equal the key's `connector`.
+    pub connector: String,
+    /// One-line human summary; searched case-insensitively.
+    pub summary: String,
+    /// Verbs the connector advertises. Descriptive only: budget
+    /// classification is entry-wide, never per-verb.
+    pub verbs: Vec<String>,
+    pub call_class: ConnectorCallClass,
+    /// Stamped by the registration door from its `registered_at` parameter,
+    /// never from caller-supplied entry state.
+    pub registered_at: u64,
+}
+
+impl ConnectorCatalogEntry {
+    /// Structural validation shared by encode, decode, and registration.
+    pub fn validate(&self) -> Result<()> {
+        validate_catalog_name(&self.name)?;
+        validate_connector_token(&self.connector)?;
+        if self.summary.trim().is_empty() {
+            return Err(invalid_body("catalog summary must not be blank"));
+        }
+        if self.summary.as_bytes().contains(&0) {
+            return Err(invalid_body("catalog summary must not contain NUL"));
+        }
+        if self.verbs.len() > CONNECTOR_CATALOG_MAX_VERBS {
+            return Err(invalid_body("too many catalog verbs"));
+        }
+        for verb in &self.verbs {
+            if verb.trim().is_empty() {
+                return Err(invalid_body("catalog verb must not be blank"));
+            }
+            if verb.as_bytes().contains(&0) {
+                return Err(invalid_body("catalog verb must not contain NUL"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The key half of a composed [`crate::Vault::register_connector`] call: what
+/// the catalogued connector's governing key should be minted as. The status is
+/// not a parameter — a composed registration always mints an Active,
+/// charter-free, generation-0 key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectorKeySpec {
+    /// Same string space as the catalog entry's `connector`; normalized by
+    /// the door before the uniqueness check.
+    pub connector: String,
+    /// `None` = any actor on this connector.
+    pub actor_entity_ref: Option<EntityId>,
+    pub budgets: Vec<EffectorBudget>,
+    /// Custody record NAME minted by SECRET-01 (ONE-1919), resolved
+    /// pre-write. Value-less by construction: this names a record, it never
+    /// carries the secret.
+    pub secret_ref: Option<String>,
+}
+
+impl ConnectorKeySpec {
+    /// An unbudgeted, custody-free key spec for `connector`.
+    #[must_use]
+    pub fn new(connector: impl Into<String>) -> Self {
+        Self {
+            connector: connector.into(),
+            actor_entity_ref: None,
+            budgets: Vec::new(),
+            secret_ref: None,
+        }
+    }
+}
+
 /// Vault-resident connector-key registry record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorKeyRecord {
@@ -302,6 +443,19 @@ pub struct ConnectorKeyRecord {
     pub charter: Option<ConnectorCharterBlock>,
     /// GOV-10 fills; GOV-01 encodes Nil.
     pub pending_charter: Option<PendingConnectorCharter>,
+    /// The custody record NAME this key currently authenticates with (SECRET-01,
+    /// ONE-1919). VALUE-LESS by construction: the key names a custody record,
+    /// it never carries, reads, or copies the secret value. `None` = a key
+    /// registered before/without a custody reference.
+    pub secret_ref: Option<String>,
+    /// Rotation counter: `0` is the as-registered generation. Every
+    /// [`crate::Vault::rotate_connector_key`] bumps it and appends the matching
+    /// generation-log row. Legacy bodies decode as `0`.
+    pub key_generation: u32,
+    /// Engine-catalog entry. `None` = an UNCLASSIFIED key: it has no route,
+    /// so the executor keeps the ARCH-0054 default (scoped-MCP tool calls
+    /// unbudgeted). Only the composed registration door mints one.
+    pub catalog: Option<ConnectorCatalogEntry>,
 }
 
 impl ConnectorKeyRecord {
@@ -324,6 +478,9 @@ impl ConnectorKeyRecord {
             suspended_reason: None,
             charter: None,
             pending_charter: None,
+            secret_ref: None,
+            key_generation: 0,
+            catalog: None,
         }
     }
 
@@ -373,6 +530,19 @@ impl ConnectorKeyRecord {
                 return Err(invalid_body("pending charter text must not be blank"));
             }
             validate_compiled_policy(&pending.compiled)?;
+        }
+        if let Some(secret_ref) = self.secret_ref.as_deref() {
+            validate_secret_ref(secret_ref)?;
+        }
+        if let Some(catalog) = self.catalog.as_ref() {
+            catalog.validate()?;
+            // The entry describes the connector this key governs. A divergent
+            // pair would route callers through a key that does not govern the
+            // connector they asked for, so it fails closed at every
+            // encode/decode — including a replicated or imported body.
+            if catalog.connector != self.connector {
+                return Err(invalid_body("catalog connector must match the key"));
+            }
         }
         Ok(())
     }
@@ -561,6 +731,43 @@ pub(super) fn validate_connector_token(connector: &str) -> Result<()> {
     // for every encode/decode, including replicated or imported bodies.
     if connector != normalize_connector_key(connector) {
         return Err(invalid_body("connector must be stored normalized"));
+    }
+    Ok(())
+}
+
+/// A custody reference is a NAME in SECRET-01's name space (ONE-1919), which
+/// keeps names verbatim — so this deliberately does NOT normalize. It only
+/// bounds the string and keeps it index-safe; whether the name RESOLVES is a
+/// live-vault question the write doors answer inside their transaction.
+pub(super) fn validate_secret_ref(secret_ref: &str) -> Result<()> {
+    if secret_ref.trim().is_empty() {
+        return Err(invalid_body("secret_ref must not be blank"));
+    }
+    if secret_ref.len() > CONNECTOR_KEY_NAME_MAX_LEN {
+        return Err(invalid_body("secret_ref too long"));
+    }
+    if secret_ref.as_bytes().contains(&0) {
+        return Err(invalid_body("secret_ref must not contain NUL"));
+    }
+    Ok(())
+}
+
+/// The catalog name obeys the same stored-form == index-form invariant as the
+/// connector token: the permanent name index and every lookup derive from
+/// `normalize_connector_key`, so a non-canonical stored name would exist but
+/// never resolve.
+pub(super) fn validate_catalog_name(name: &str) -> Result<()> {
+    if normalize_connector_key(name).is_empty() {
+        return Err(invalid_body("catalog name must not be blank"));
+    }
+    if name.as_bytes().contains(&0) {
+        return Err(invalid_body("catalog name must not contain NUL"));
+    }
+    if name.len() > CONNECTOR_KEY_NAME_MAX_LEN {
+        return Err(invalid_body("catalog name too long"));
+    }
+    if name != normalize_connector_key(name) {
+        return Err(invalid_body("catalog name must be stored normalized"));
     }
     Ok(())
 }

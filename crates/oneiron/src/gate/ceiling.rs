@@ -408,12 +408,20 @@ impl SourceTrustCeiling {
 /// answer: an actor-bound row is invisible to every other actor, so the source
 /// falls back to its default posture (default-deny for the classes whose
 /// `requires_explicit_auto_permit` is true).
+///
+/// ONE-1314: `lineage_requires_auto_permit` is the SECOND axis. The declared
+/// label answers for the declaration; the lineage answers for the history the
+/// write actually has. The two are OR-combined fail-closed at every consult
+/// below, so a write whose history carries a class needing an explicit permit
+/// must clear the same explicit permit its label would have needed. Callers
+/// with no envelope in scope pass `false` and keep their exact prior verdict.
 pub(super) fn check_source_trust(
     source: Option<ClaimSource>,
     approval: ClaimApprovalStatus,
     sensitivity: Option<u8>,
     actor_ref: Option<&str>,
     ceiling: &SourceTrustCeiling,
+    lineage_requires_auto_permit: bool,
 ) -> Result<()> {
     if approval != ClaimApprovalStatus::Auto {
         return Ok(());
@@ -440,7 +448,7 @@ pub(super) fn check_source_trust(
     let row = match ceiling.row(source) {
         Some(row) if row.binds_actor(actor_ref) => row,
         _ => {
-            if source.requires_explicit_auto_permit() {
+            if source.requires_explicit_auto_permit() || lineage_requires_auto_permit {
                 return Err(Error::SourceNotTrustedForAuto {
                     claim_source: source.as_str(),
                 });
@@ -461,7 +469,9 @@ pub(super) fn check_source_trust(
         });
     }
 
-    if source.requires_explicit_auto_permit() && (!row.receipted || !row.warned) {
+    if (source.requires_explicit_auto_permit() || lineage_requires_auto_permit)
+        && (!row.receipted || !row.warned)
+    {
         return Err(Error::SourceNotTrustedForAuto {
             claim_source: source.as_str(),
         });

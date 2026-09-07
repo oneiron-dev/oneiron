@@ -1221,6 +1221,8 @@ pub(super) fn valid_gate_receipt_reason(reason: &str) -> bool {
     // Accepted receipt-reason prefix FAMILIES (everything else is rejected):
     // counterparty_* (OF-347 contact/consent), connector_key_* and
     // effector_budget_* (OF-277 GOV-01 status wall / budget exhaustion),
+    // comm_send_override_* (ONE-1752 comm.send_override decision source;
+    // blueprint SPINE-COMM/ONE-1752 Leg 4 item 8),
     // charter_* (GOV-10 drift / never-list), checker_* (ONE-1296 host
     // auto-check hold). The charset and length rules below apply to every
     // family.
@@ -1235,6 +1237,7 @@ pub(super) fn valid_gate_receipt_reason(reason: &str) -> bool {
         && (reason.starts_with("counterparty_")
             || reason.starts_with("connector_key_")
             || reason.starts_with("effector_budget_")
+            || reason.starts_with("comm_send_override_")
             || reason.starts_with("charter_")
             || reason.starts_with(GATE_RECEIPT_REASON_CHECKER_PREFIX))
         && reason
