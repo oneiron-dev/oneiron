@@ -231,7 +231,7 @@ fn linkedin_employment_stored_source_identity_mismatch_is_not_laundered() -> Tes
                         person,
                         EdgeKind::EmployedBy,
                         actor.entity_ref(),
-                    ))
+                    ));
                 }
                 "actor" => {
                     let Value::Map(fields) = &mut body.value else {
