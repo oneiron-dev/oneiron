@@ -9,7 +9,7 @@ use super::*;
 use crate::VaultConfig;
 use crate::agent_def::{AgentCeiling, AgentScope};
 use crate::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
-use crate::claim::ClaimSubject;
+use crate::claim::{ClaimSubject, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DreamerAdmissionOutcome,
     DreamerMilestoneClaim, DreamerMilestoneKind, decode_dreamer_attempt_payload,
@@ -92,7 +92,18 @@ fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
 /// Minimal valid policy manifest (mirrors the gate-test fixture shape) with
 /// caller-supplied `actor_ceilings` rows.
 fn put_policy_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Result<()> {
-    let manifest = Value::Map(vec![
+    put_policy_manifest_with_generated_actor(vault, seed, actor_rows, None)
+}
+
+/// Milestone fixtures opt in only their Dreamer writer; other fixtures keep
+/// their original policy without a Generated source-trust grant.
+fn put_policy_manifest_with_generated_actor(
+    vault: &Vault,
+    seed: u8,
+    actor_rows: Vec<Value>,
+    generated_actor: Option<EntityId>,
+) -> Result<()> {
+    let mut entries = vec![
         (Value::from("schema_version"), Value::from("1.1")),
         (Value::from("pack_id"), Value::from("agent-dispatch-test")),
         (Value::from("pack_version"), Value::from("v1")),
@@ -109,7 +120,28 @@ fn put_policy_manifest(vault: &Vault, seed: u8, actor_rows: Vec<Value>) -> Resul
         ),
         (Value::from("rules"), Value::Array(Vec::new())),
         (Value::from("actor_ceilings"), Value::Array(actor_rows)),
-    ]);
+    ];
+    if let Some(actor) = generated_actor {
+        // Generated + Approved bookkeeping needs an explicit auto permit.
+        // These candidates stamp no sensitivity: cap exactly at the unstamped
+        // floor, and bind the permit to this writer rather than every actor.
+        entries.push((
+            Value::from("source_trust"),
+            Value::Map(vec![(
+                Value::from(crate::claim::ClaimSource::Generated.as_str()),
+                Value::Map(vec![
+                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (
+                        Value::from("max_auto_sensitivity"),
+                        Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                    ),
+                    (Value::from("receipted"), Value::Boolean(true)),
+                    (Value::from("warned"), Value::Boolean(true)),
+                ]),
+            )]),
+        ));
+    }
+    let manifest = Value::Map(entries);
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode manifest");
 
@@ -453,9 +485,15 @@ fn snapshot_survives_definition_update() -> Result<()> {
 #[test]
 fn dispatch_survives_checkpoint_resume() -> Result<()> {
     let (dir, vault) = open_vault();
-    // Loaded manifest (the B1 masking-AC callout): system-class writes get an
-    // Auto row so the Dreamer-envelope milestone can land Approved and index.
-    put_policy_manifest(&vault, 0x0D, vec![actor_ceiling_row("system", "auto")])?;
+    // Loaded manifest (the B1 masking-AC callout): grant the system ceiling
+    // and this Dreamer writer's Generated source so milestones land Approved.
+    let dreamer_actor = test_id(0x2A);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x0D,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x67);
     let def = custom_agent("1.0.0");
@@ -473,7 +511,6 @@ fn dispatch_survives_checkpoint_resume() -> Result<()> {
 
     // The system/Dreamer bookkeeping envelope: a MACHINE actor, class System,
     // with the agent attribution carried in the provenance payload (B1 (a)).
-    let dreamer_actor = test_id(0x2A);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     // The milestone subject is the attempt id itself (pinned); anchor an entity at
     // those bytes so the claim door's subject-existence check passes.
@@ -703,7 +740,13 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
 #[test]
 fn milestone_attribution_cannot_be_forged() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x0F, vec![actor_ceiling_row("system", "auto")])?;
+    let dreamer_actor = test_id(0x2B);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x0F,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x4B);
     let def = custom_agent("1.0.0");
@@ -715,7 +758,6 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     };
     let attempt_id = status.attempt.id;
 
-    let dreamer_actor = test_id(0x2B);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(
@@ -916,13 +958,15 @@ fn write_milestone_claim(
 #[test]
 fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(
+    let dreamer_actor = test_id(0x2D);
+    put_policy_manifest_with_generated_actor(
         &vault,
         0x10,
         vec![
             actor_ceiling_row("system", "auto"),
             actor_ceiling_row("agent", "auto"),
         ],
+        Some(dreamer_actor),
     )?;
 
     let def_id = test_id(0x4C);
@@ -936,7 +980,6 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    let dreamer_actor = test_id(0x2D);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
@@ -1093,7 +1136,13 @@ fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
 #[test]
 fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x14, vec![actor_ceiling_row("system", "auto")])?;
+    let dreamer_actor = test_id(0x3A);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x14,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x4D);
     vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
@@ -1105,7 +1154,6 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    let dreamer_actor = test_id(0x3A);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
@@ -1150,9 +1198,14 @@ fn milestone_forgery_rejected_through_backfill() -> Result<()> {
 #[test]
 fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x12, vec![actor_ceiling_row("system", "auto")])?;
-
     let dreamer_actor = test_id(0x3B);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x12,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
+
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     // An attempt id that exists on some other device only.
     let foreign_attempt = crate::attempt_queue::AttemptId::now();
@@ -1197,7 +1250,13 @@ fn milestone_with_absent_attempt_row_does_not_index() -> Result<()> {
 #[test]
 fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let (_dir, vault) = open_vault();
-    put_policy_manifest(&vault, 0x13, vec![actor_ceiling_row("system", "auto")])?;
+    let dreamer_actor = test_id(0x3C);
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x13,
+        vec![actor_ceiling_row("system", "auto")],
+        Some(dreamer_actor),
+    )?;
 
     let def_id = test_id(0x4E);
     vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
@@ -1209,7 +1268,6 @@ fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
     let attempt_id = status.attempt.id;
     let agent_id = status.input.definition.agent_id;
 
-    let dreamer_actor = test_id(0x3C);
     vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
     let subject = EntityId::from_bytes(*attempt_id.as_bytes())?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"attempt anchor")?;
@@ -2486,5 +2544,271 @@ fn spawn_context_can_only_narrow_and_rides_the_payload_unresolved() -> Result<()
         .expect_err("a widening descriptor is refused");
     assert_eq!(refused.kind(), ErrorKind::InvalidAgentDispatchInput);
     assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    Ok(())
+}
+
+// ── ONE-1887 healer slot ────────────────────────────────────────────────────
+//
+// Three of these six are CONTINGENT on the landed reference-context seam
+// (ONE-1887 §5). This base exposes none — `context_spec` is a projection
+// DESCRIPTOR and `context_from` admits only settled sibling TASK results — so
+// the `AgentDef` arm refuses instead of smuggling case material through
+// `dedupe_key`, `run_id`, a briefing string, or a parallel payload. Each
+// contingent test therefore pins the refusal AND the absence of any leak.
+
+/// This module's healer-slot source, read for the force-cancel proof.
+const AGENT_DISPATCH_HEALER_SOURCE: &str = include_str!("../agent_dispatch.rs");
+
+fn healer_case_fixture(failing: AttemptId, agent: EntityId) -> HealerCase {
+    HealerCase {
+        case_ref: crate::failure_ladder::failure_case_ref(failing),
+        scope: crate::failure_ladder::FailureScope {
+            agent_ref: agent.to_hex(),
+            skill_ref: None,
+        },
+        failure_class: crate::failure_ladder::FailureClass::Permanent,
+        failing_attempt_id: failing,
+        task_ref: None,
+        evidence_ref: test_id(0x53).to_hex(),
+        blocked_reports: Vec::new(),
+        pre_fail_checkpoint_ref: test_id(0x51).to_hex(),
+        qa_thread_ref: test_id(0x52).to_hex(),
+        consecutive_transients: 0,
+    }
+}
+
+/// A dispatched failing attempt plus the case minted from it.
+fn failing_case(vault: &Vault) -> Result<(EntityId, AttemptId, HealerCase)> {
+    let agent = put_row(vault, 0x37, "oneiron.agent.failing", AgentCeiling::Proposed)?;
+    let failing = dispatched(AgentDispatcher::new(vault).dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("run-heal".to_owned()),
+        now: 10,
+    })?)
+    .attempt
+    .id;
+    Ok((agent, failing, healer_case_fixture(failing, agent)))
+}
+
+fn heal(slot: HealerSlot, case: HealerCase, now: u64) -> DispatchHealer {
+    DispatchHealer {
+        slot,
+        case,
+        run_id: Some("run-heal".to_owned()),
+        now,
+    }
+}
+
+#[test]
+fn reserved_healer_slot_does_not_enqueue() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, _failing, case) = failing_case(&vault)?;
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+
+    let outcome = AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
+        HealerSlot::Reserved,
+        case.clone(),
+        20,
+    ))?;
+
+    assert_eq!(outcome, HealerSlotOutcome::Reserved { case });
+    assert_eq!(
+        queue.list()?,
+        before,
+        "a reserved slot mutates no queue state at all"
+    );
+    Ok(())
+}
+
+#[test]
+fn configured_healer_is_child_of_failing_attempt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+
+    // CONTINGENT: with the seam absent the arm refuses, so the only honest
+    // assertion is that NO row was minted under the failing attempt at all.
+    let error = AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case,
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
+
+    assert_eq!(queue.list()?, before);
+    for row in queue.list()? {
+        let parent = decode_dreamer_attempt_payload(&row.payload)
+            .ok()
+            .and_then(|payload| payload.parent_attempt);
+        assert_ne!(parent, Some(failing), "no healer child was enqueued");
+    }
+    Ok(())
+}
+
+#[test]
+fn configured_healer_dedupe_is_case_scoped() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+
+    // The dedupe a configured spawn would use is the deterministic case key,
+    // re-derivable from the failing attempt and distinct from the card key.
+    assert_eq!(
+        case.case_ref,
+        crate::failure_ladder::failure_case_ref(failing)
+    );
+    assert_ne!(
+        case.case_ref,
+        crate::failure_ladder::failure_card_ref(failing)
+    );
+
+    AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case.clone(),
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+
+    // CONTINGENT: until the seam lands, the case key must appear NOWHERE — not
+    // as a dedupe key, not as a run id, not inside any payload.
+    for row in AttemptQueue::new(&vault).list()? {
+        assert_ne!(row.dedupe_key.as_deref(), Some(case.case_ref.as_str()));
+        assert_ne!(row.run_id.as_deref(), Some(case.case_ref.as_str()));
+        assert!(!String::from_utf8_lossy(&row.payload).contains(case.case_ref.as_str()));
+    }
+    Ok(())
+}
+
+#[test]
+fn healer_context_is_reference_only() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, _failing, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+
+    // Every carried value is a lowercase-hex ref or a typed scalar. There is no
+    // inline prompt, transcript, repair patch, or operator note to smuggle.
+    for value in [
+        &case.case_ref,
+        &case.evidence_ref,
+        &case.pre_fail_checkpoint_ref,
+        &case.qa_thread_ref,
+        &case.scope.agent_ref,
+    ] {
+        assert_eq!(value.len(), 32, "{value} is not a 16-byte hex ref");
+        assert!(
+            value
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "{value} is not lowercase hex"
+        );
+    }
+
+    // CONTINGENT: and none of it reaches a queue row, because the arm refuses.
+    let payloads_before: Vec<Vec<u8>> = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .map(|row| row.payload)
+        .collect();
+    AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case,
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+    let payloads_after: Vec<Vec<u8>> = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .map(|row| row.payload)
+        .collect();
+    assert_eq!(payloads_before, payloads_after);
+    Ok(())
+}
+
+#[test]
+fn healer_spawn_cannot_force_cancel_attempt() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, failing, case) = failing_case(&vault)?;
+    let queue = AttemptQueue::new(&vault);
+    let crate::attempt_queue::ClaimOutcome::Claimed(claimed) =
+        queue.claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "healer-fixture-worker".to_owned(),
+            now: 15,
+        })?
+    else {
+        panic!("expected a claim");
+    };
+    assert_eq!(claimed.id, failing);
+
+    AgentDispatcher::new(&vault).dispatch_healer_slot(heal(HealerSlot::Reserved, case, 20))?;
+
+    // The still-running failing attempt keeps its lease and its whole
+    // graceful-cancel lifecycle: a healer asking it to land must go through
+    // ONE-1896's public soft request API, separately.
+    let row = queue.get(failing)?.expect("failing row");
+    assert_eq!(row.state, AttemptState::Leased);
+    assert_eq!(row.cancellation(), None);
+    assert!(row.cancel_receipts().is_empty());
+    assert_eq!(row.cancel_pressure().requests, 0);
+    for banned in ["force_cancel", "ForceAttemptCancel", "ForceCancel"] {
+        assert!(
+            !AGENT_DISPATCH_HEALER_SOURCE.contains(banned),
+            "no healer path may reach {banned}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn configured_healer_above_propose_only_is_rejected() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_agent, _failing, case) = failing_case(&vault)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+
+    // The live stored ceiling binds, never the frozen payload snapshot.
+    let auto_healer = put_row(
+        &vault,
+        0x38,
+        "oneiron.agent.healer.auto",
+        AgentCeiling::Auto,
+    )?;
+    let error = dispatcher
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: auto_healer.to_hex(),
+            },
+            case.clone(),
+            20,
+        ))
+        .expect_err("an above-propose-only healer is refused");
+    assert_eq!(error.kind(), ErrorKind::AgentNotDispatchable);
+
+    // A propose-only healer clears the ceiling gate and stops only at the
+    // deferred reference-context seam.
+    let propose_healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    let error = dispatcher
+        .dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: propose_healer.to_hex(),
+            },
+            case,
+            20,
+        ))
+        .expect_err("the configured arm is deferred with the reference-context seam");
+    assert_eq!(error.kind(), ErrorKind::InvalidAgentDispatchInput);
     Ok(())
 }

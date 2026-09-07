@@ -15,6 +15,8 @@ use rmpv::Value;
 
 fn test_config() -> VaultConfig {
     VaultConfig {
+        ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
+        ppr_community: crate::config::PprCommunityConfig::default(),
         map_size: 16 * 1024 * 1024,
         dimensions: 4,
         fast_dims: None,
@@ -30,6 +32,7 @@ fn test_config() -> VaultConfig {
         skip_text_index_manifest_check: false,
         off_record_enabled: true,
         off_record_overlay_budget_bytes: crate::config::DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
+        privacy: crate::config::VaultPrivacyConfig::default(),
     }
 }
 

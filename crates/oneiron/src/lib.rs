@@ -16,11 +16,13 @@ pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod attempt_queue;
 pub mod authority;
+pub mod autoreason_campaign;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod board_verb;
 pub mod booking;
+pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
@@ -55,15 +57,18 @@ pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
+pub mod corpus;
 pub mod counterparty_contact;
 pub(crate) mod credential_door;
 pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
 pub mod disclosure;
+pub mod dispatch_byoa;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;
+pub mod dreamer_prefilter;
 pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
@@ -78,7 +83,10 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod failure_ladder;
+pub mod fanout_auto;
 pub mod federation;
+pub mod feedback;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
@@ -98,6 +106,7 @@ pub mod lens;
 pub(crate) mod limits;
 pub mod linear_sync;
 pub mod linkedin_connector;
+pub mod linkedin_lead_preload;
 pub mod llm;
 pub mod maintain;
 pub mod memory;
@@ -114,6 +123,7 @@ pub mod persona_snapshot;
 pub mod pipeline;
 pub mod policy_model;
 pub(crate) mod ppr;
+pub mod ppr_community;
 pub mod prompt;
 pub mod provenance;
 pub mod provider_confidence;
@@ -129,6 +139,7 @@ pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod secret_manifest;
+pub mod secret_rotation;
 pub mod secret_snapshot;
 pub mod self_heal;
 pub mod serialize;
@@ -142,8 +153,10 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod slim;
 pub mod speculative;
 pub mod store;
+pub mod subject_model;
 pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
@@ -154,7 +167,10 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
+pub mod vault_cleanup;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_cascade;
 pub mod voice_identity;
 pub mod voice_segment;
 pub mod wave_orchestration;
@@ -170,12 +186,28 @@ pub mod write_envelope;
 // module tree.
 pub use crate::access_grant::AccessGrant;
 pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use crate::agent_def::{
+    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
+    MemoryProfile,
+};
+pub use crate::agent_dispatch::{DispatchHealer, HealerSlot, HealerSlotOutcome};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
 };
 pub use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, InterveneAttempt,
+};
+pub use crate::autoreason_campaign::{
+    AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
+    CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
+    CampaignComparisonReport, CampaignConfig, CampaignCorpusFilter, CampaignCost,
+    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
+    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
+    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment,
+    CampaignTournamentConfig, CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD,
+    EXPERIMENT_VERDICT_KEEP, ExperimentVerdict, build_campaign_held_out_decision,
+    build_campaign_split_report, compare_campaign, merge_campaign_arm_report,
 };
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
@@ -184,6 +216,13 @@ pub use crate::batch::BatchBuilder;
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
+};
+pub use crate::build_cache::{
+    ActionKey, ActionResult, ArtifactVersionRef, BUILD_CACHE_ACTION_DOMAIN_V1,
+    BUILD_CACHE_ACTION_KEY_LEN, BUILD_CACHE_ACTION_SCHEMA_VERSION_V1, BUILD_CACHE_KEY_PREFIX_V1,
+    BUILD_CACHE_SCHEMA_VERSION_V1, BuildAction, BuildCache, BuildCacheError, BuildCachePutOutcome,
+    BuildCacheResult, BuildInputRoot, BuildPlatform, CachedActionResult, DeclaredOutputPath,
+    ExtraInputDigest, FrozenBuildCommand,
 };
 pub use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarEventView, CalendarInviteConsentBasis,
@@ -211,6 +250,10 @@ pub use crate::codebase::{
     CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
     CodebaseSnapshot, RepoRef,
 };
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
+};
 pub use crate::commitment::FulfillmentSource;
 pub use crate::commitment_lifecycle::{
     BriefFulfillmentReport, CommitmentCloseResult, FULFILLMENT_PROPOSAL_SCHEMA_VERSION,
@@ -226,8 +269,13 @@ pub use crate::commitment_wake::{
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
 };
 pub use crate::compaction::{
-    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
-    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionBackend, CompactionBackendRegistry,
+    CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
+    CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
+    CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
+    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
+    decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
@@ -235,10 +283,16 @@ pub use crate::companion::{
     CompanionScopeResolutionSource, CompanionSubject, CompanionTaskKind, EndCompanionRelationship,
     EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
-pub use crate::config::{HnswConfig, VaultConfig};
+pub use crate::config::{
+    HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
+    VaultPrivacyConfig,
+};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
+};
+pub use crate::corpus::{
+    CLAIM_SCOPE_CORPUS_ID_KEY, CorpusId, CorpusScope, corpus_id_from_scope, scope_with_corpus_id,
 };
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
@@ -250,14 +304,20 @@ pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
     ConsolidationExecutor, ConsolidationSink, plan_partitions, read_watermark, scan_dirty_turns,
 };
+pub use crate::dreamer_prefilter::{
+    NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,
+    PrefilterWeights, prefilter_turn, reopen_prefilter_rescan, screen_turn_inputs,
+    validate_prefilter_config,
+};
 #[cfg(feature = "sync")]
 pub use crate::dreamer_runner::DreamerAttemptProgressProducer;
 pub use crate::dreamer_runner::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-    DreamerAdmittedAttempt, DreamerBudgetReserveOutcome, DreamerClaimAuthoringStrategy,
-    DreamerConsolidationScope, DreamerHomeNodeCandidate, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, ReserveDreamerBudget,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerBudgetReserveOutcome,
+    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
 };
 pub use crate::dreamer_wake::{
     DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -275,13 +335,44 @@ pub use crate::entity_id::{EntityId, parse_presentation_id};
 pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
+pub use crate::failure_ladder::{
+    DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, FailureClass, FailureEscalationMode, FailureLadder,
+    FailureLadderOutcome, FailureScope, FailureScopePolicy, HealerCase, HealerRepairRoute,
+    RetryLineagePathology, SurfacedFailure,
+};
 pub use crate::federation::FederationGrantScope;
+pub use crate::feedback::{
+    FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
+    FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_DAG_MAX_HOPS,
+    FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
+    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_MECHANISM_MAX_BYTES,
+    FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
+    FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_REF_MAX_BYTES,
+    FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS, FeedbackApproval,
+    FeedbackApprovalScope, FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot,
+    FeedbackDagHop, FeedbackError, FeedbackExportOutcome, FeedbackHealerDiagnosis,
+    FeedbackHnswSnapshot, FeedbackPlatform, FeedbackPreview, FeedbackRedactionError,
+    FeedbackRedactor, FeedbackSendContext, FeedbackSendOutcome, FeedbackSendRoute,
+    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, PassThroughFeedbackRedactor,
+    decode_feedback_bundle, encode_feedback_bundle, export_feedback_bundle, feedback_approval_card,
+    feedback_approval_component_id, feedback_approval_disclosure, feedback_bundle_digest,
+    feedback_content_ref, feedback_dispatch_request, feedback_logical_send_ref,
+    prepare_feedback_preview, send_feedback, validate_feedback_approval,
+};
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
     CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
     GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
+};
+pub use crate::genui::{
+    FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
+    SurfacedFailureCard,
+};
+pub use crate::ingest::{
+    EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
+    ScoredEntityResolutionCandidate, evaluate_entity_resolution_waterfall,
 };
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
@@ -293,13 +384,15 @@ pub use crate::linear_sync::{
     TaskIssueLink, TaskMirrorSnapshot, WaveResult, linear_operation_id,
 };
 pub use crate::llm::{
+    AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
+    AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend,
     LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
     LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
     PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError, TierPrecedence,
-    UnsupportedCapability,
+    UnsupportedCapability, auto_check_llm_request,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
@@ -318,7 +411,23 @@ pub use crate::outbound::{
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
     unsupported_outbound_connector,
 };
-pub use crate::pipeline::{PipelineBuilder, ScoredEntity, Signal};
+pub use crate::pipeline::{
+    ActiveWorldSelection, MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PipelineBuilder, ResolvedWorldAuthority, ScoredEntity,
+    Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, decode_world_access_claim_value,
+    world_access_claim_body,
+};
+pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+// The provider-confidence shortcut rows are a DISPOSABLE cache with no
+// production control surface — reads repair them and the prior writer moves
+// them, and that is the whole contract. These three seams exist only so the
+// ES-09 oracle can stage cleared/stale index states without `vault_meta`
+// becoming public, so they are compiled out of the default-feature API.
+#[cfg(feature = "test-support")]
+pub use crate::provider_confidence::{
+    clear_provider_confidence_indexes, provider_confidence_index_presence,
+    set_provider_confidence_index_raw,
+};
 pub use crate::psych_profile::{
     PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
 };
@@ -342,6 +451,10 @@ pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
 pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
+pub use crate::slim::{
+    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,
+    SlimResidue, VaultResidency,
+};
 pub use crate::store::{
     RetrievalRunId, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
@@ -362,9 +475,22 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
 // public `doctor`, `text_index_status`, and `as_actor` return them directly
 // or through the doctor report's `pub` fields, and `vault` is not `pub`.
+//
+// ONE-1441: the single-writer lease names ride the same rule. `vault` is a
+// private module, so the SDK backend that OWNS a lease value and compares the
+// contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+    ActorBound, HydratedShortId, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE,
+    Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultWriterLease,
+};
+pub use crate::vault_cleanup::{
+    ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
+    CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal, CleanupRunReport,
+    MACHINE_MINTED_CLAIM_SOURCES, VAULT_CLEANUP_POSTURE_KEY, accept_cleanup_proposal,
+    cleanup_digests, cleanup_posture, cleanup_proposal, cleanup_proposals,
+    is_vault_cleanup_receipt, reject_cleanup_proposal, run_vault_cleanup, scan_cleanup_candidates,
+    set_cleanup_posture, zero_live_members,
 };
 pub use crate::web_fetch::{
     CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,
@@ -379,7 +505,9 @@ pub use crate::wave_orchestration::{
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
     blocked_by_edge_write,
 };
-pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+pub use crate::write_envelope::{
+    ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     #[cfg(test)]
@@ -476,6 +604,54 @@ pub(crate) mod test_util {
              pick a byte outside PINNED_ID_BYTES or construct the pinned id explicitly"
         );
         EntityId::from_bytes([seed; 16]).expect("non-pinned seed byte forms a valid entity id")
+    }
+
+    /// Seeds a minimal, VALID AGENT_DEF entity at `id` and returns it.
+    ///
+    /// Centralized because an AGENT_DEF body is validated on write: the
+    /// obvious `put_entity(id, ENTITY_TYPE_AGENT_DEF, b"fixture")` is rejected
+    /// with `InvalidAgentDefBody`, so every test needing "an actor that is a
+    /// real agent" would otherwise grow its own copy of this constructor.
+    pub(crate) fn seed_agent_definition(vault: &Vault, id: EntityId, label: &str) -> EntityId {
+        use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+        use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+        use rmpv::Value;
+
+        let def = AgentDefinition::new(
+            format!("{label}-{}", id.to_hex()),
+            "test_util agent fixture",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            AgentScope::All,
+            AgentCeiling::Proposed,
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::Imported,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![(Value::from("fixture"), Value::from(label))]),
+            None,
+            true,
+            None,
+        );
+        vault
+            .put_agent_definition(
+                &id,
+                &def,
+                TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .expect("seed agent definition");
+        id
     }
 
     /// Raw stored-entity record: the 25-byte metadata header (type byte,

@@ -49,6 +49,11 @@
 //! 1` by reschedule and cancel. [`BookingError`] wraps calendar failures
 //! opaquely; no `CalendarError` variant is matched or restated here.
 
+#[path = "lifecycle_public.rs"]
+mod public_authority;
+use public_authority::booking_writer_with_publication;
+
+
 use rand_core::{OsRng, RngCore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -59,6 +64,7 @@ use crate::attempt_queue::{
 };
 use crate::booking::config::ClaimClassDescriptorRow;
 use crate::booking::constraint::validate_visitor_tz;
+use crate::booking::invite_grant::{NoConfirmInviteSink, dispatch_confirm_booking_invite};
 use crate::booking::{
     ActiveHoldSource, BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle,
     SolveRequest, SolveResult,
@@ -75,6 +81,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
+use crate::outbound::OutboundExecutionSink;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
@@ -603,6 +610,10 @@ pub enum BookingVerbReceipt {
 pub struct BookingLifecycleAttempt {
     pub request: BookingVerbRequest,
     pub requested_at: u64,
+    /// Server-derived public snapshot. Persisted so delayed consumers cannot
+    /// lose the requirement to recheck publication in their writer.
+    #[serde(default)]
+    pub public_authority: Option<crate::booking::publication::PublicBookingAuthority>,
 }
 
 // -------------------------------------------------------------------------
@@ -628,12 +639,32 @@ pub fn enqueue_booking_verb(
     request: BookingVerbRequest,
     now_utc: u64,
 ) -> Result<AttemptId, BookingError> {
+    enqueue_booking_verb_with_publication(vault, request, now_utc, None)
+}
+
+/// Enqueue with a public-authority restriction that survives queue delay.
+/// The writer, not this supplied snapshot, decides whether authority is live.
+pub fn enqueue_booking_verb_with_publication(
+    vault: &Vault,
+    request: BookingVerbRequest,
+    now_utc: u64,
+    public_authority: Option<crate::booking::publication::PublicBookingAuthority>,
+) -> Result<AttemptId, BookingError> {
     validate_request(&request)?;
     let attempt = BookingLifecycleAttempt {
         request,
         requested_at: now_utc,
+        public_authority,
     };
-    let dedupe_key = attempt.request.idempotency_key().map(str::to_owned);
+    let public_scope = attempt.public_authority.as_ref().map(encode_row).transpose()?;
+    let dedupe_key = match public_scope {
+        Some(snapshot) => attempt.request.idempotency_key().map(|key| {
+            format!("public:{}:{key}", blake3::hash(&snapshot).to_hex())
+        }),
+        // Namespace both arms: a caller's literal key may otherwise equal
+        // a public key and coalesce onto an unrestricted queued attempt.
+        None => attempt.request.idempotency_key().map(|key| format!("private:{key}")),
+    };
     let payload = encode_row(&attempt)?;
 
     let outcome = AttemptQueue::new(vault)
@@ -807,7 +838,12 @@ where
         Some(oracle) => oracle,
         None => &UnresolvedPageOracle,
     };
-    execute_booking_lifecycle_attempt(vault, oracle, &attempt, now_utc)
+    // No invite dispatch context: the consumer seam that owns the
+    // server-authenticated actor and the real connector sink supplies both
+    // trailing arguments, and a turn without them confirms exactly as before.
+    execute_booking_lifecycle_attempt::<NoConfirmInviteSink>(
+        vault, oracle, &attempt, now_utc, None, None,
+    )
 }
 
 /// Completes or fails the attempt row, whatever the transition returned.
@@ -906,22 +942,32 @@ impl SlotOracle for UnresolvedPageOracle {
 /// Dispatches one decoded attempt.
 ///
 /// Called only by the home-node consumer while it owns serialization.
-pub(crate) fn execute_booking_lifecycle_attempt(
+///
+/// `invite_actor` and `invite_sink` are the BK-03 confirm-invite context and
+/// ride here as explicit trailing arguments rather than on [`ConfirmSpec`]:
+/// the spec is `Serialize`/`Deserialize` wire data, a sink is not
+/// serializable, and an actor field on the wire would be caller-asserted
+/// identity. `None` on either leaves every verb's behavior unchanged.
+pub(crate) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     attempt: &BookingLifecycleAttempt,
     now_utc: u64,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
 ) -> Result<BookingVerbReceipt, BookingError> {
     match &attempt.request {
         BookingVerbRequest::Hold(spec) => {
-            execute_hold(vault, spec, now_utc).map(BookingVerbReceipt::Held)
+            execute_hold(vault, spec, now_utc, attempt.public_authority.as_ref()).map(BookingVerbReceipt::Held)
         }
-        BookingVerbRequest::Confirm(spec) => execute_confirm(vault, oracle, spec, now_utc),
+        BookingVerbRequest::Confirm(spec) => {
+            execute_confirm(vault, oracle, spec, now_utc, invite_actor, invite_sink, attempt.public_authority.as_ref())
+        }
         BookingVerbRequest::Reschedule(spec) => {
-            execute_reschedule(vault, oracle, spec, now_utc).map(BookingVerbReceipt::Rescheduled)
+            execute_reschedule(vault, oracle, spec, now_utc, attempt.public_authority.as_ref()).map(BookingVerbReceipt::Rescheduled)
         }
         BookingVerbRequest::Cancel(spec) => {
-            execute_cancel(vault, spec, now_utc).map(BookingVerbReceipt::Cancelled)
+            execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref()).map(BookingVerbReceipt::Cancelled)
         }
     }
 }
@@ -976,6 +1022,7 @@ pub(crate) fn execute_hold(
     vault: &Vault,
     spec: &HoldSpec,
     now_utc: u64,
+    public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<HoldReceipt, BookingError> {
     let (expires_at, checkout_lease_hash) =
         resolve_hold_expiry(vault, &spec.session_key, &spec.lease, now_utc)?;
@@ -993,7 +1040,9 @@ pub(crate) fn execute_hold(
     };
     let key = hold_key(&spec.session_key);
     let encoded = encode_row(&row)?;
-    booking_writer(vault, |wtxn| put_meta(vault, wtxn, &key, &encoded))?;
+    booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Hold(spec.clone()), now_utc, |wtxn| {
+        put_meta(vault, wtxn, &key, &encoded)
+    })?;
     Ok(HoldReceipt {
         token,
         slot: spec.slot,
@@ -1012,13 +1061,16 @@ pub(crate) fn execute_hold(
 /// [`BookingError::InvalidConstraint`] when the hold is absent, dead, or bound
 /// to another session; [`BookingError::SlotOracle`] on store or calendar
 /// failures.
-pub(crate) fn execute_confirm(
+pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     spec: &ConfirmSpec,
     now_utc: u64,
+    invite_actor: Option<EntityId>,
+    invite_sink: Option<&mut S>,
+    public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingVerbReceipt, BookingError> {
-    let decided = booking_writer(vault, |wtxn| {
+    let decided = booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Confirm(spec.clone()), now_utc, |wtxn| {
         confirm_in_writer(vault, oracle, spec, wtxn, now_utc)
     })?;
     match decided {
@@ -1032,6 +1084,24 @@ pub(crate) fn execute_confirm(
             // and nesting one inside this writer would deadlock LMDB.
             index_passport_uid(vault, &receipt.calendar.uid, &receipt.calendar.event_ref)
                 .map_err(calendar_wrap)?;
+            // BK-03 (ONE-1814): with a live booking-page grant this confirm
+            // carries ONE `calendar.invite` REQUEST through the ordinary
+            // outbound door. It runs here for the same reason the UID index
+            // does — the writer has returned, and dispatch opens its own
+            // transactions, which nesting would deadlock.
+            //
+            // A dispatch failure MUST NOT fail the confirm: the EVENT, the
+            // four booking claims, the sequence-0 passport, the revision
+            // tokens, and the durable receipt are already committed, so
+            // erroring here would fail a booking that exists and re-mint a
+            // second cancel token on the retry. The absence of the
+            // intent-ledger record is the observable, and nothing retries: a
+            // second REQUEST would threaten the once-minted UID law. A replay
+            // resolves to the intent the first pass recorded rather than
+            // enqueueing another.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink) {
+                let _ = dispatch_confirm_booking_invite(vault, actor, &receipt, sink, now_utc);
+            }
             Ok(BookingVerbReceipt::Confirmed(receipt))
         }
     }
@@ -1162,8 +1232,9 @@ pub(crate) fn execute_reschedule(
     oracle: &dyn SlotOracle,
     spec: &RescheduleSpec,
     now_utc: u64,
+    public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<RevisionReceipt, BookingError> {
-    booking_writer(vault, |wtxn| {
+    booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Reschedule(spec.clone()), now_utc, |wtxn| {
         let event_ref =
             resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Reschedule)?;
         let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
@@ -1259,8 +1330,9 @@ pub(crate) fn execute_cancel(
     vault: &Vault,
     spec: &CancelSpec,
     now_utc: u64,
+    public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<RevisionReceipt, BookingError> {
-    booking_writer(vault, |wtxn| {
+    booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Cancel(spec.clone()), now_utc, |wtxn| {
         let event_ref =
             resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Cancel)?;
         // Keyed by the BOOKING, so every credential that can cancel it lands on
@@ -2533,7 +2605,7 @@ mod tests {
     fn raw_bearer_tokens_never_enter_vault_meta() {
         let (_dir, vault) = open_vault();
         let session = SessionKey::derive(b"session-one");
-        let receipt = execute_hold(&vault, &hold_spec(session), NOW).expect("hold");
+        let receipt = execute_hold(&vault, &hold_spec(session), NOW, None).expect("hold");
         let (lease, _) = issue_checkout_lease(&vault, &session, 600, NOW).expect("lease");
 
         let stored = all_meta_bytes(&vault);
@@ -2559,7 +2631,7 @@ mod tests {
     fn hold_rows_key_on_the_session_and_never_on_the_token() {
         let (_dir, vault) = open_vault();
         let session = SessionKey::derive(b"session-one");
-        let receipt = execute_hold(&vault, &hold_spec(session), NOW).expect("hold");
+        let receipt = execute_hold(&vault, &hold_spec(session), NOW, None).expect("hold");
 
         let rtxn = read_txn(&vault).expect("read txn");
         let key = hold_key(&session);

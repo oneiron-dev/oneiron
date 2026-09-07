@@ -523,7 +523,7 @@ impl Memory<'_> {
 /// caller could two-step retype an entity (hard delete, then recreate
 /// under a different type), and a migration re-run could resurrect data
 /// the user erased.
-pub(super) fn hard_deleted_refusal(id: &EntityId) -> MemoryError {
+pub(crate) fn hard_deleted_refusal(id: &EntityId) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
         format!(

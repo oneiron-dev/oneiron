@@ -347,6 +347,7 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
+    InvalidLfsObject,
     InvalidNoteBody,
     InvalidWitnessMessageBody,
     InvalidAnchor,
@@ -470,6 +471,8 @@ pub enum ErrorKind {
     SecretLeasePathRefused,
     SecretLeaseReceiptWriteFailed,
     InvalidSecretLeaseBody,
+    InvalidSecretRotationBody,
+    TaintedArtifactStale,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,
@@ -502,6 +505,11 @@ pub enum ErrorKind {
     GitHttpServeFailed,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    VaultCleanupRestoreNotArchived,
+    VaultCleanupArchiveMarkerUndecodable,
+    VaultCleanupProposalNotFound,
+    VaultCleanupWakeTriggerRejected,
+    VaultRead,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -1100,6 +1108,15 @@ pub enum Error {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// A Git-LFS object did not match what the client declared about it: a
+    /// malformed object id, or a body whose SHA-256 or length disagrees with
+    /// the declared oid/size. Nothing was written.
+    ///
+    /// Corruption of an ALREADY STORED body is deliberately NOT this variant —
+    /// that is [`Error::CorruptedIndex`], because "you sent the wrong bytes"
+    /// and "this vault is holding the wrong bytes" are different facts.
+    #[error("invalid LFS object: {0}")]
+    InvalidLfsObject(&'static str),
     /// A NOTE entity body failed the pinned three-key ABI validation
     /// (`crate::note::NOTE_BODY_KEYS`). Nothing was written.
     #[error("invalid NOTE body: {0}")]
@@ -2059,6 +2076,19 @@ pub enum Error {
     /// validation (SECRET-02).
     #[error("invalid secret lease body: {0}")]
     InvalidSecretLeaseBody(&'static str),
+    /// A rotation-receipt row or a stored taint-ref list failed structural
+    /// validation (SECRET-04, ONE-1922).
+    #[error("invalid secret rotation body: {0}")]
+    InvalidSecretRotationBody(&'static str),
+    /// A publish was refused because the artifact is secret-tainted by a
+    /// record that has since ROTATED or been REVOKED (ARCH-0069 S7,
+    /// read-time invalidation). A dial, not a wall: the resolved policy key
+    /// `secret.taint.allow_stale_publish` permits the publish anyway, and
+    /// the pointer row is stamped when it does.
+    #[error(
+        "artifact `{artifact}` is secret-tainted by a rotated or revoked record; publish refused (set secret.taint.allow_stale_publish to override)"
+    )]
+    TaintedArtifactStale { artifact: String },
     /// A guest tier that must run isolated has no microVM backend available
     /// (CODE-01 — the fail-closed release path; never a silent no-sandbox run).
     #[error("no microVM backend is available for guest tier `{tier}`")]
@@ -2247,6 +2277,53 @@ pub enum Error {
         /// The publication rejection class.
         reason: String,
     },
+    /// [`crate::Vault::restore_archived`] was called on an entity that
+    /// carries no `archived_by_cleanup` marker (ONE-1931).
+    ///
+    /// The restore door is scoped to cleanup archives ALONE, and this is the
+    /// refusal that keeps it there: a `user_delete` shell, a hard-purged id
+    /// and a live row all land here, so the door can never become a general
+    /// un-delete for tombstones the owner or a regulator asked for.
+    #[error("restore refused: {entity} carries no archived_by_cleanup marker")]
+    VaultCleanupRestoreNotArchived {
+        /// Lowercase hex entity id.
+        entity: String,
+    },
+    /// A cleanup-archive marker exists for the entity but its bytes are not
+    /// an `archived_by_cleanup` tombstone value (ONE-1931).
+    ///
+    /// Fail-closed, matching the tombstone decode law it borrows: a marker
+    /// the engine cannot read as an archive is never treated as one, so a
+    /// corrupt row refuses the restore instead of reviving a shell on a guess.
+    #[error("cleanup archive marker for {entity} is not readable as an archive: {reason}")]
+    VaultCleanupArchiveMarkerUndecodable {
+        /// Lowercase hex entity id.
+        entity: String,
+        /// Why the marker could not be read as an archive.
+        reason: &'static str,
+    },
+    /// No cleanup proposal exists under the given id (ONE-1931). An accept or
+    /// reject of an already-resolved proposal lands here rather than silently
+    /// doing nothing.
+    #[error("vault cleanup proposal {proposal} not found")]
+    VaultCleanupProposalNotFound {
+        /// Lowercase hex proposal id.
+        proposal: String,
+    },
+    /// The vault-cleanup cron was registered on a wake it does not run on
+    /// (ONE-1931). ARCH-0073 puts the cleanup pass on the TIMER wake (Macro
+    /// scope); registering it on a compaction/session-end/event wake would
+    /// make an interactive turn pay for a maintenance scan.
+    #[error("vault cleanup registers on the timer wake only, not {trigger}")]
+    VaultCleanupWakeTriggerRejected {
+        /// The refused trigger's name.
+        trigger: &'static str,
+    },
+    /// A deployment-independent vault-read operation failed (ONE-1433). The
+    /// typed taxonomy lives in `code_run::vault_read` and deliberately does not
+    /// embed this type, which would make both errors recursive.
+    #[error(transparent)]
+    VaultRead(#[from] crate::code_run::vault_read::VaultReadError),
 }
 
 impl From<CompactionPacketError> for Error {
@@ -2410,6 +2487,7 @@ impl Error {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidNoteBody(_) => ErrorKind::InvalidNoteBody,
             Self::InvalidWitnessMessageBody(_) => ErrorKind::InvalidWitnessMessageBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
@@ -2554,6 +2632,8 @@ impl Error {
             Self::SecretLeasePathConflict { .. } => ErrorKind::SecretLeasePathConflict,
             Self::SecretLeasePathRefused { .. } => ErrorKind::SecretLeasePathRefused,
             Self::SecretLeaseReceiptWriteFailed(_) => ErrorKind::SecretLeaseReceiptWriteFailed,
+            Self::InvalidSecretRotationBody(_) => ErrorKind::InvalidSecretRotationBody,
+            Self::TaintedArtifactStale { .. } => ErrorKind::TaintedArtifactStale,
             Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
             Self::MicroVmBackendError { .. } => ErrorKind::MicroVmBackendError,
@@ -2599,6 +2679,17 @@ impl Error {
             Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
+            Self::VaultCleanupRestoreNotArchived { .. } => {
+                ErrorKind::VaultCleanupRestoreNotArchived
+            }
+            Self::VaultCleanupArchiveMarkerUndecodable { .. } => {
+                ErrorKind::VaultCleanupArchiveMarkerUndecodable
+            }
+            Self::VaultCleanupProposalNotFound { .. } => ErrorKind::VaultCleanupProposalNotFound,
+            Self::VaultCleanupWakeTriggerRejected { .. } => {
+                ErrorKind::VaultCleanupWakeTriggerRejected
+            }
+            Self::VaultRead(_) => ErrorKind::VaultRead,
         }
     }
 

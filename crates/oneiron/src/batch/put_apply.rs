@@ -1,5 +1,7 @@
 use super::*;
 
+use super::agent_definition_create::validate_local_agent_definition_create;
+
 use std::collections::BTreeSet;
 
 use heed::RwTxn;
@@ -184,9 +186,11 @@ pub(super) fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    staged_claim_gate: Option<&StagedClaimGateOutcome>,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    crate::booking::publication::guard_publication_put(store, wtxn, id, entity_type, data)?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
     // at a live overlay member's id would publish the room into base, so it
@@ -298,7 +302,25 @@ pub(super) fn apply_put(
             let policy = write_policy.ok_or(Error::InvariantViolation(
                 "local claim write policy snapshot missing",
             ))?;
-            if allow_reserved_predicate {
+            if let Some(staged) = staged_claim_gate {
+                // Enforce this operation's preflight verdict without a second debit.
+                crate::gate::apply_staged_claim_gate_in_txn(
+                    store,
+                    wtxn,
+                    &id,
+                    &body,
+                    write_envelope,
+                    policy,
+                    staged,
+                    crate::gate::GateWriteMode {
+                        record_decision: record_gate_decisions,
+                        persist_pending_consent: persist_gate_pending_consent,
+                        resolve_pending: true,
+                        can_resolve_pending_consent,
+                        include_source_in_gate_input,
+                    },
+                )?;
+            } else if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
             } else if let Some(write_envelope) = write_envelope {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
@@ -538,6 +560,9 @@ pub(super) fn apply_put(
         None
     };
     let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
+    let breaker_demoted_claim_body =
+        super::gate_staging::demote_claim_body(staged_claim_gate, &mut decoded_claim_body)?;
+    let data = breaker_demoted_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
@@ -724,35 +749,7 @@ pub(super) fn apply_put(
             .ok_or(Error::InvariantViolation(
                 "validated AGENT_DEF record missing",
             ))?;
-        if let Some(parent) = created.forked_from {
-            if parent == id {
-                return Err(Error::InvalidAgentDefBody(
-                    "forkedFrom cannot name the fork itself",
-                ));
-            }
-            let parent_raw =
-                store
-                    .entities
-                    .get(wtxn, parent.as_bytes())?
-                    .ok_or(Error::InvalidAgentDefBody(
-                        "forkedFrom parent must exist as a type-17 AGENT_DEF",
-                    ))?;
-            let parent_header = EntityMetadataHeader::parse(&parent_raw)
-                .ok_or(Error::CorruptedIndex("entity header"))?;
-            if parent_header.entity_type != ENTITY_TYPE_AGENT_DEF {
-                return Err(Error::InvalidAgentDefBody(
-                    "forkedFrom parent must exist as a type-17 AGENT_DEF",
-                ));
-            }
-            let parent_definition = crate::agent_def::decode_agent_definition(
-                &parent_raw[ENTITY_METADATA_HEADER_LEN..],
-            )?;
-            if created.ceiling.widens_beyond(parent_definition.ceiling) {
-                return Err(Error::InvalidAgentDefBody(
-                    "forked agent ceiling cannot widen beyond its parent row ceiling",
-                ));
-            }
-        }
+        validate_local_agent_definition_create(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()
@@ -949,6 +946,51 @@ pub(super) fn stage_entity_index_rows(
         store
             .temporal_long_intervals()
             .put(wtxn, &long_interval_key, &occurred_start_value)?;
+    }
+    Ok(())
+}
+
+/// Removes exactly the rows [`stage_entity_index_rows`] stages, for a caller
+/// holding that write's own `occurred`/`learned_at` stamps.
+///
+/// PAIRED with the staging writer and reading the same stamps back, so the two
+/// cannot drift: every conditional key a put can own — the occurred-end and
+/// long-interval siblings — is decided here by the same predicate over the same
+/// range. A caller that removed an entity row and left these behind would leave
+/// every time-range walk answering with a dead id, and a rebuild under a new
+/// stamp would ADD a key rather than move one, letting repeated drop/rebuild
+/// cycles crowd a candidate buffer with one id's stale timestamps.
+pub(crate) fn delete_entity_index_rows(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    let type_key = Store::encode_type_key(entity_type, id);
+    store.type_index().delete(wtxn, &type_key)?;
+
+    let occurred_start_key = Store::encode_temporal_key(occurred.start, id);
+    store
+        .temporal_occurred_start()
+        .delete(wtxn, &occurred_start_key)?;
+
+    if occurred.start != occurred.end {
+        let occurred_end_key = Store::encode_temporal_key(occurred.end, id);
+        store
+            .temporal_occurred_end()
+            .delete(wtxn, &occurred_end_key)?;
+    }
+
+    let learned_key = Store::encode_temporal_key(learned_at, id);
+    store.temporal_learned().delete(wtxn, &learned_key)?;
+
+    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
+        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
+        store
+            .temporal_long_intervals()
+            .delete(wtxn, &long_interval_key)?;
     }
     Ok(())
 }

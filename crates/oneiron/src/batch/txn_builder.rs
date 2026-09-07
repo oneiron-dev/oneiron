@@ -357,6 +357,7 @@ impl<'a> TxnBatchBuilder<'a> {
     /// for the engine's provenance unit (`edge.provenance` Claims). Full
     /// structural body validation (D18) still applies at apply time — the
     /// door bypasses nothing except the reserved-namespace rejection.
+    #[cfg(test)]
     pub(crate) fn put_reserved_claim(
         mut self,
         id: &EntityId,
@@ -548,6 +549,10 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Applies all queued operations to the given write transaction without committing.
     ///
+    /// Within [`Vault::with_write_txn`] or [`Vault::try_with_write_txn`], explicit
+    /// Dreamer approvals queue canonical VAD work for the owner after commit.
+    /// A postcommit failure retains Approved and is returned by that owner.
+    ///
     /// Note: operations are staged eagerly into `wtxn`. If this returns an
     /// error, earlier writes may already be present in the transaction, so
     /// callers must abort the transaction (drop without committing) to discard
@@ -574,6 +579,11 @@ impl<'a> TxnBatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
+        let pending_vad_ids = if super::vad_postcommit::has_vad_postcommit_owner(self.vault, wtxn) {
+            super::vad_postcommit::pending_dreamer_vad_approvals(self.vault, wtxn, &self.ops)?
+        } else {
+            Vec::new()
+        };
         apply_ops_with_origin(
             &self.vault.store,
             &self.vault.config,
@@ -583,6 +593,10 @@ impl<'a> TxnBatchBuilder<'a> {
             text_index_trusted,
             gate_mode,
             self.origin,
-        )
+        )?;
+        // Queue only after admitted apply. The owner checks the final body and
+        // redeemed consent after ALL of its batches, then commits before VAD.
+        super::vad_postcommit::queue_dreamer_vad_approvals(self.vault, wtxn, pending_vad_ids);
+        Ok(())
     }
 }

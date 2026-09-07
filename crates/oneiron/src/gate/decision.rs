@@ -2,6 +2,7 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 
 use super::input::ExternalEffectGateContext;
@@ -215,6 +216,30 @@ pub(crate) enum GateReasonCode {
     /// deliberate transformation, so one cycle is refused outright rather
     /// than parked for review.
     DenyPersonaSingleCycle,
+    /// ONE-1752 (ARCH-0057 §3.1): the counterparty is opted out, no
+    /// `comm.send_override` covers this send, and the resolved
+    /// `comm_opt_out_posture` is `escalate`. The send is HELD for the owner
+    /// rather than denied to them: suppression is the counterparty's word about
+    /// the counterparty, and the owner's own instrument may not refuse the
+    /// owner outright. [`Self::DenyCounterpartyOptOut`] keeps its position,
+    /// token and metric class for decode compatibility and is no longer emitted
+    /// on the owner path. New reason codes append after this entry.
+    PendingCounterpartyOptOut,
+    /// ONE-1296: the manifest's auto checker HELD an otherwise-Auto Dreamer
+    /// write. The ceiling falls to Proposed and the checker's own reasons ride
+    /// the receipt beside this code.
+    PendingChecker,
+    /// ONE-1296: the auto checker could not answer — unavailable, panicked,
+    /// past its deadline, out of budget, or malformed. Fail-closed is the same
+    /// answer as a hold, spelled differently so an owner can tell "the checker
+    /// said no" from "nothing checked".
+    PendingCheckerUnavailable,
+    /// ONE-1453: the per-actor burst breaker converted a would-be-`Auto`
+    /// agent-run write into owner review. Velocity, not authority — the claim
+    /// is preserved and joins the run's existing consent bundle, so this is a
+    /// pend and never a denial. An event already pending for another cause
+    /// keeps its own reason set and does not gain this one.
+    PendingActorBurstBreaker,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -257,6 +282,10 @@ impl GateReasonCode {
             Self::PendingPersonaIsolation => "gate.pending.persona_isolation",
             Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
             Self::DenyPersonaSingleCycle => "gate.deny.dreamer_precommit.persona_single_cycle",
+            Self::PendingCounterpartyOptOut => "gate.pending.counterparty_opt_out",
+            Self::PendingChecker => "gate.pending.checker",
+            Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
+            Self::PendingActorBurstBreaker => "gate.pending.actor_burst_breaker",
         }
     }
 
@@ -276,7 +305,12 @@ impl GateReasonCode {
             Self::PendingExternalEffectAuthority | Self::PendingConnectorKeyUnregistered => {
                 GateMetricReasonClass::ExternalEffectAuthority
             }
-            Self::DenyCounterpartyOptOut => GateMetricReasonClass::CounterpartyOptOut,
+            // The consequence moved from deny to pending-escalation; the METRIC
+            // class did not. Both reason codes count as one opt-out class so
+            // dashboards keep their series across the cutover.
+            Self::DenyCounterpartyOptOut | Self::PendingCounterpartyOptOut => {
+                GateMetricReasonClass::CounterpartyOptOut
+            }
             Self::DenyEffectorBudgetExhausted | Self::DenyConnectorKeySuspended => {
                 GateMetricReasonClass::EffectorBudget
             }
@@ -303,6 +337,18 @@ impl GateReasonCode {
                 GateMetricReasonClass::CriticalityFloor
             }
             Self::DenyPersonaSingleCycle => GateMetricReasonClass::DreamerPrecommit,
+            // ONE-1296 meters where it acts: the checker is only ever asked
+            // about a source that `requires_explicit_auto_permit`, so a hold
+            // is the explicit-auto-permit question answered by the host
+            // instead of by a manifest row. No new metric class, so the
+            // counter width is unchanged.
+            Self::PendingChecker | Self::PendingCheckerUnavailable => {
+                GateMetricReasonClass::SourceTrust
+            }
+            // ONE-1453 rides the actor-level pending class it already belongs
+            // to: the breaker is an actor ceiling that velocity lowered. No
+            // new metric class, index, or counter width.
+            Self::PendingActorBurstBreaker => GateMetricReasonClass::ActorCeiling,
         }
     }
 }
@@ -369,6 +415,13 @@ impl GateDecision {
     }
 }
 
+/// The receipt vocabulary one external effect contributes, in source order.
+///
+/// Three chained sources, each contributing at most one token: the opt-out
+/// reason, the first-touch class, and — ONE-1752 — the `comm.send_override`
+/// head hydration matched for this send. The override token records the
+/// DECISION SOURCE of an opt-out fall-through; it is never both scopes, because
+/// the match itself is one variant.
 pub(super) fn external_effect_receipt_reasons(
     effect: &ExternalEffectGateContext,
 ) -> impl Iterator<Item = &'static str> {
@@ -380,6 +433,11 @@ pub(super) fn external_effect_receipt_reasons(
                 .counterparty_first_touch
                 .map(CounterpartyFirstTouch::receipt_reason),
         )
+        .chain(match effect.counterparty_send_override {
+            Some(SendOverrideMatch::Standing) => Some("comm_send_override_standing"),
+            Some(SendOverrideMatch::OneShot) => Some("comm_send_override_one_shot"),
+            None => None,
+        })
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

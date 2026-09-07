@@ -30,16 +30,14 @@ use super::telemetry::{
 use super::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport,
     AttemptQueueRetryReason, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome,
-    FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES,
-    ManifestEntry, RetryAttempt, RetryOutcome, attempt_record_order,
+    CleanupAttemptLeases, EnqueueAttempt, EnqueueOutcome, InterveneAttempt, InterveneOutcome,
+    MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, RetryAttempt, RetryOutcome, attempt_record_order,
 };
 use super::validate::{
     ERR_MANIFEST_FULL, append_attempt_event, lease_claimed_record, validate_cleanup_leases_input,
-    validate_failure_reason, validate_intervention_actor, validate_kind, validate_lease_owner,
-    validate_manifest_entry, validate_optional_dedupe, validate_optional_dedupe_actor_ref,
-    validate_optional_failure_reason, validate_optional_intervention_note,
-    validate_optional_run_id, validate_transition_lease,
+    validate_intervention_actor, validate_kind, validate_lease_owner, validate_manifest_entry,
+    validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
+    validate_optional_intervention_note, validate_optional_run_id, validate_transition_lease,
 };
 
 const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
@@ -52,6 +50,16 @@ const ERR_DEDUPE_ACTOR_MISMATCH: &str = "dedupe index points at a different acto
 pub(super) const RETRY_REASON_UNSPECIFIED: &str = "retry";
 const CLAIM_KIND_WRITE_RETRY_LIMIT: usize = 3;
 const DREAMER_RUN_ROOT_CLIMB_LIMIT: usize = 64;
+/// Point reads one [`AttemptQueue::retry_chain_depth`] walk may spend. A
+/// lineage this long is already past every backoff ceiling that reads it, so
+/// the depth saturates here instead of letting a walk grow with the row set.
+pub(super) const RETRY_CHAIN_DEPTH_LIMIT: u32 = 1_024;
+/// A `retry_of` link naming a row this queue does not hold.
+pub(super) const ERR_RETRY_CHAIN_MISSING_ROW: &str = "retry chain names a missing attempt";
+/// A `retry_of` link returning to a row already on the walk.
+pub(super) const ERR_RETRY_CHAIN_CYCLE: &str = "retry chain cycles";
+/// A `retry_of` link naming an existing row that is not a try of this attempt.
+pub(super) const ERR_RETRY_CHAIN_MISMATCH: &str = "retry chain links unrelated attempts";
 
 #[derive(Debug, Default)]
 struct ClaimKindReadScan {
@@ -224,6 +232,7 @@ impl<'a> AttemptQueue<'a> {
             events: Vec::new(),
             manifest: Vec::new(),
             cancel_state: AttemptCancelState::default(),
+            result_ref: None,
         };
 
         let encoded = encode_record(&record)?;
@@ -578,113 +587,6 @@ impl<'a> AttemptQueue<'a> {
         Ok(ClaimOutcome::Claimed(record))
     }
 
-    /// Marks a leased attempt complete. Completing an already-completed attempt is an
-    /// idempotent success; all other states are rejected.
-    pub fn complete(&self, input: CompleteAttempt) -> Result<CompleteOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("complete", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Completed {
-                return Ok(CompleteOutcome::AlreadyCompleted(record));
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("complete", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "complete",
-                )?;
-                record.state = AttemptState::Completed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = None;
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(CompleteOutcome::Completed(record))
-            }
-            state => Err(invalid_transition("complete", state.as_str())),
-        }
-    }
-
-    /// Marks a leased attempt terminally failed. Failing an already-failed attempt is
-    /// an idempotent success; all other states are rejected.
-    pub fn fail(&self, input: FailAttempt) -> Result<FailOutcome> {
-        {
-            let rtxn = self.store.env.read_txn()?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, input.id.as_bytes())?
-            else {
-                return Err(invalid_transition("fail", "missing"));
-            };
-            let record = decode_record(&raw_record, input.id)?;
-            if record.state == AttemptState::Failed {
-                return Ok(FailOutcome::AlreadyFailed(record));
-            }
-        }
-
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("fail", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "fail",
-                )?;
-                validate_failure_reason(&input.reason)?;
-                record.state = AttemptState::Failed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = Some(input.reason);
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(FailOutcome::Failed(record))
-            }
-            state => Err(invalid_transition("fail", state.as_str())),
-        }
-    }
-
     /// Retries a leased attempt by finalizing it and minting a fresh try.
     ///
     /// The leased source row becomes terminally [`AttemptState::Failed`] and is
@@ -696,7 +598,19 @@ impl<'a> AttemptQueue<'a> {
     /// source nor an orphan retry.
     pub fn retry(&self, input: RetryAttempt) -> Result<RetryOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let outcome = self.retry_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Retries inside a caller-owned transaction, including both rows and all
+    /// index moves. The caller must abort the transaction on error.
+    pub(crate) fn retry_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+    ) -> Result<RetryOutcome> {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
         let mut source = decode_record(&raw_record, input.id)?;
@@ -745,6 +659,10 @@ impl<'a> AttemptQueue<'a> {
                 },
                 ..AttemptCancelState::default()
             },
+            // A retry is a NEW attempt: it has produced nothing yet, and the
+            // finalized source keeps sole ownership of the artifact its own
+            // try left behind.
+            result_ref: None,
         };
 
         // A `Failed` row must carry a reason, so an omitted retry cause
@@ -763,20 +681,20 @@ impl<'a> AttemptQueue<'a> {
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, source.id.as_bytes(), &encoded_source)?;
+            .put(wtxn, source.id.as_bytes(), &encoded_source)?;
         let encoded_next = encode_record(&next)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, next.id.as_bytes(), &encoded_next)?;
+            .put(wtxn, next.id.as_bytes(), &encoded_next)?;
 
         // The source was leased, so it holds no ready entry to retire; only the
         // new row enters the ready index, at its own scheduled instant.
         let ready_key = ready_key(ready_at(&next), next.id);
         self.store
             .attempt_ready
-            .put(&mut wtxn, &ready_key, next.id.as_bytes())?;
+            .put(wtxn, &ready_key, next.id.as_bytes())?;
         self.store.put_attempt_run_index_in_txn(
-            &mut wtxn,
+            wtxn,
             next.run_id.as_deref(),
             next.id.as_bytes(),
         )?;
@@ -785,16 +703,15 @@ impl<'a> AttemptQueue<'a> {
         // index, so the entry moves off the now-terminal source. The chain
         // stays in ONE key family: an actor-scoped chain keeps its v2 entry, a
         // pre-1876 actorless chain keeps its v1 entry until it drains.
-        self.delete_dedupe_entry_for_record(&mut wtxn, &source)?;
+        self.delete_dedupe_entry_for_record(wtxn, &source)?;
         if let Some(dedupe_key) = next.dedupe_key.as_deref() {
             let keys =
                 DedupeIndexKeys::new(&next.kind, next.dedupe_actor_ref.as_deref(), dedupe_key);
             self.store
                 .attempt_dedupe
-                .put(&mut wtxn, &keys.primary[..], next.id.as_bytes())?;
+                .put(wtxn, &keys.primary[..], next.id.as_bytes())?;
         }
 
-        wtxn.commit()?;
         Ok(RetryOutcome::Retried(next))
     }
 
@@ -1016,6 +933,14 @@ impl<'a> AttemptQueue<'a> {
                 AttemptState::Cancelled => {
                     report.done += 1;
                 }
+                // Settled work, never a reclaim candidate: an abandoned row
+                // holds no lease to expire and cannot re-enter the ready
+                // index. It counts as done — nothing faulted — with its own
+                // sub-count so a stopped executor stays visible.
+                AttemptState::Abandoned => {
+                    report.done += 1;
+                    report.abandoned += 1;
+                }
             }
         }
         drop(rtxn);
@@ -1116,6 +1041,11 @@ impl<'a> AttemptQueue<'a> {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                     }
+                    AttemptState::Abandoned => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.done += 1;
+                        report.abandoned += 1;
+                    }
                 }
             }
             wtxn.commit()?;
@@ -1133,6 +1063,72 @@ impl<'a> AttemptQueue<'a> {
             return Ok(None);
         };
         decode_record(&raw, id).map(Some)
+    }
+
+    /// Counts the retries that precede `id` by walking its `retry_of` lineage.
+    ///
+    /// A first try is depth 0 and every `retry_of` hop adds one. [`Self::retry`]
+    /// mints a NEW row whose `attempt_count` restarts at zero, so the lineage
+    /// is the only honest logical retry counter: a caller spacing retries must
+    /// read the depth here rather than infer one from a per-row lease counter.
+    ///
+    /// Missing rows, cycles, and content-inconsistent hops encountered during
+    /// the bounded walk fail CLOSED with [`Error::InvalidAttemptQueueRecord`],
+    /// never a silently short depth that would collapse a long backoff onto
+    /// its first rung. Every visited hop compares six fields: `kind`, `payload`,
+    /// `task_ref`, `run_id`, `dedupe_key`, and `dedupe_actor_ref`. This checks
+    /// content consistency, not general chain uniqueness: unrelated rows with
+    /// identical values for all six fields are indistinguishable. To distinguish
+    /// independent roots, they must differ on at least one of these fields.
+    /// The durable connector satisfies this prerequisite with a unique
+    /// `task_ref` per independent root.
+    ///
+    /// The walk reads the initial row plus at most `RETRY_CHAIN_DEPTH_LIMIT`
+    /// (1,024) parent rows. Hop depth saturates at 1,024, so a legitimately vast
+    /// lineage is bounded work rather than an error. All rows read one snapshot,
+    /// so a concurrent retry cannot make the walk observe half of two different
+    /// chains.
+    pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut visited = HashSet::from([id]);
+        let mut child = self.retry_chain_record_in_txn(&rtxn, id)?;
+        let mut depth = 0_u32;
+        while let Some(parent_id) = child.retry_of {
+            // A revisit is a CYCLE before it is anything else: a row already on
+            // the walk trivially matches itself on identity, so the field
+            // compare below could never be the one to stop an endless loop.
+            if !visited.insert(parent_id) {
+                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE));
+            }
+            let parent = self.retry_chain_record_in_txn(&rtxn, parent_id)?;
+            if !retries_the_same_attempt(&child, &parent) {
+                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH));
+            }
+            depth = depth.saturating_add(1);
+            if depth >= RETRY_CHAIN_DEPTH_LIMIT {
+                return Ok(RETRY_CHAIN_DEPTH_LIMIT);
+            }
+            child = parent;
+        }
+        Ok(depth)
+    }
+
+    /// One row of the lineage walk: it must exist, or the chain is broken.
+    ///
+    /// Yields the whole decoded record, not just its link, so the hop that
+    /// follows can check parent-child identity within the same one read and
+    /// one decode this walk already spends per visited row.
+    fn retry_chain_record_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<AttemptRecord> {
+        let Some(raw) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RETRY_CHAIN_MISSING_ROW,
+            ));
+        };
+        decode_record(&raw, id)
     }
 
     /// Reads an attempt by id inside a caller-owned write transaction.
@@ -1405,6 +1401,25 @@ impl<'a> AttemptQueue<'a> {
 
 fn mark_rechecked_candidate_not_running(report: &mut AttemptQueueCleanupReport) {
     report.running = report.running.saturating_sub(1);
+}
+
+/// Whether a `retry_of` link joins two tries of the SAME attempt.
+///
+/// Both writers of that link — [`AttemptQueue::retry`] and the landing
+/// successor in [`super::cancel`] — copy exactly these six fields verbatim
+/// from the source row to the row that supersedes it, so a hop differing on
+/// any of them is corruption by construction rather than a lineage. Nothing
+/// else in the row is comparable: state, lease, counters, timestamps and the
+/// event/manifest/cancel logs are all EXPECTED to diverge between a finalized
+/// source and its fresh successor, which is why the link cannot be checked by
+/// record equality.
+fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
+    child.kind == parent.kind
+        && child.payload == parent.payload
+        && child.task_ref == parent.task_ref
+        && child.run_id == parent.run_id
+        && child.dedupe_key == parent.dedupe_key
+        && child.dedupe_actor_ref == parent.dedupe_actor_ref
 }
 
 /// Resolves the OF-193 Dreamer root for one stamped run id using the durable

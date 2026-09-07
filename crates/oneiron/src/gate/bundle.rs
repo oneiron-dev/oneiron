@@ -24,10 +24,12 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
+use super::breaker::clear_gate_breaker_rows_for_run_in_txn;
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision,
+    check_claim_policy_for_write_with_owner_bundle_replay,
     check_claim_policy_for_write_with_record, claim_consent_binding_parts, claim_gate_input,
     edge_actor_class_str, enforce_gate_decision,
 };
@@ -62,9 +64,8 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
 
-/// Bound on the pending-consent rows one bundle projection reads. Membership
-/// is deterministic under it: the scan is ordered, so review and resolve
-/// select the same rows and a truncated group binds the same digest.
+/// Bound on the pending-consent rows one bundle projection accepts. Read one
+/// extra row and reject overflow rather than clear a run with omitted members.
 const GATE_BUNDLE_PENDING_SCAN_LIMIT: usize = 10_000;
 
 impl Vault {
@@ -134,6 +135,9 @@ impl Vault {
                     ClaimGateWrite {
                         body: &body,
                         envelope: Some(&envelope),
+                        // Bundle merge is an owner-resolution path, not an
+                        // agent-class Dreamer write; it never consults.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -280,6 +284,15 @@ impl Vault {
     /// [`Error::GateConsentStale`] for digest or binding drift,
     /// [`Error::GateWriteRejected`] for a member the live gate refuses, and
     /// [`Error::CorruptedIndex`] for an unreadable pending row.
+    ///
+    /// Approve runs canonical claim VAD consolidation after the consent commit.
+    /// A VAD error is returned with all Approved writes and receipts durable;
+    /// earlier members may be populated and later members not yet attempted.
+    /// Retry [`Vault::consolidate_claim_vad`] on the approved member ids. With
+    /// unchanged evidence it reuses the active state. The bundle door is closed
+    /// and its retry returns [`Error::EntityNotFound`], not success. Decline does
+    /// not consolidate; annotation/reappraisal predicates are never exempted
+    /// from the canonical rejection when approved.
     pub fn resolve_gate_consent_bundle(
         &self,
         owner: &AuthenticatedOwner,
@@ -302,6 +315,20 @@ impl Vault {
                     claim_id: members[0].member.claim_id,
                 });
             }
+
+            // ONE-1453: the ONE door that clears a durable burst-breaker trip.
+            // It runs AFTER the digest and staleness checks above and BEFORE
+            // any member transition below: clear-before-replay is required,
+            // clear-before-validation is forbidden. Both actions clear the
+            // whole run, not only the actor that first tripped, so the next
+            // original agent write on this run starts a fresh row under the
+            // then-live valid-or-default threshold. Any later failure in this
+            // transaction — a refused replay, a decline transition, the
+            // receipt append, the commit — rolls these deletes back with
+            // everything else and leaves the run paused and the bundle
+            // pending. The owner's bundle action IS the resume receipt; there
+            // is no separate resume verb.
+            clear_gate_breaker_rows_for_run_in_txn(&self.store, wtxn, dreamer_run_id)?;
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
             let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
@@ -465,6 +492,13 @@ impl Vault {
         for decision in recorded_decisions {
             decision.record_metrics();
         }
+        // These ids are the Dreamer members actually approved in the committed
+        // transaction. The canonical consolidator must open a separate writer.
+        if action == GateConsentBundleAction::Approve {
+            for claim_id in &receipt.member_claim_ids {
+                self.consolidate_claim_vad_now(claim_id, now)?;
+            }
+        }
         Ok(receipt)
     }
 
@@ -518,7 +552,10 @@ fn check_session_bundle_actor_policy(
         enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
     let actor_ref = actor.entity_ref().to_hex();
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
+    // Read-only review over already-proposed bodies. Bundle MERGE builds its
+    // own trivial-lineage envelope above, so there is no observed history for
+    // this door to read: declared-source only, exactly as before.
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, None)
 }
 
 /// One bundle member paired with the hash of the LIVE claim body the digest
@@ -563,7 +600,13 @@ fn gate_consent_bundle_members_in_txn(
     let mut members = Vec::new();
     let mut seen_decisions = BTreeSet::new();
     let mut seen_claims = BTreeSet::new();
-    for record in store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT)? {
+    let records = store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT + 1)?;
+    if records.len() > GATE_BUNDLE_PENDING_SCAN_LIMIT {
+        return Err(Error::InvalidClaimBody(
+            "gate consent bundle scan limit exceeded",
+        ));
+    }
+    for record in records {
         if record.dreamer_run_id.as_deref() != Some(dreamer_run_id) {
             continue;
         }
@@ -676,13 +719,21 @@ fn replay_gate_consent_bundle_member(
         body.approval,
     );
     let mut recorded_decision = None;
-    let gate_result = check_claim_policy_for_write_with_record(
+    // ONE-1453: the owner-bundle-replay seam. An owner resolving this bundle
+    // is authorizing exactly these writes, so the replay neither counts
+    // against nor is demoted by the run's burst budget. The exemption is a
+    // private function on this internal path — no public argument, no
+    // callable bypass.
+    let gate_result = check_claim_policy_for_write_with_owner_bundle_replay(
         &vault.store,
         wtxn,
         id,
         ClaimGateWrite {
             body,
             envelope: Some(&envelope),
+            // Consent-bundle resolution replays an owner's decision; there is
+            // no fresh Auto verdict for a checker to weigh in on.
+            auto_checker: None,
             defer_metrics_until_commit: true,
         },
         policy,

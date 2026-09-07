@@ -26,9 +26,8 @@ use oneiron::calendar::query::read_event;
 use oneiron::calendar::{CalendarError, CalendarPassportDirection, CalendarPassportValue};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    DreamerHomeNodeCandidate, DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault,
-    VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EntityId, TimeRange, Vault, VaultConfig,
     booking::BOOKING_BOOKER_CONTACT_PREDICATE, booking::BOOKING_EVENT_TYPE_REF_PREDICATE,
     booking::BOOKING_LIFECYCLE_ATTEMPT_KIND, booking::BOOKING_LIFECYCLE_PREDICATES,
     booking::BOOKING_PASSPORT_SYSTEM, booking::BOOKING_SOURCE_PAGE_PREDICATE,
@@ -51,6 +50,9 @@ use oneiron::{
 };
 use rmpv::Value;
 
+mod busy_event;
+use busy_event::store_busy_event;
+
 /// `2026-03-02T00:00:00Z`, a Monday well clear of any northern DST transition.
 const MONDAY: u64 = 1_772_409_600;
 /// Request time: 08:00Z that Monday.
@@ -64,15 +66,6 @@ const BUSY_SEED: u8 = 0x61;
 const HOME_NODE_ID: u64 = 9;
 
 const BOOKER_EMAIL: &str = "visitor@example.test";
-
-/// Fixture claim ids are keyed `(0xB2, seed, index)` so none can alias a generic
-/// `entity(seed)` id.
-fn claim_id(seed: u8, index: u8) -> EntityId {
-    let mut bytes = [0xB2_u8; 16];
-    bytes[1] = seed;
-    bytes[2] = index;
-    EntityId::from_bytes(bytes).expect("fixture claim id")
-}
 
 const fn at(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
@@ -102,6 +95,17 @@ struct Fixture {
 
 impl Fixture {
     fn open() -> Self {
+        let fixture = Self::open_without_imported_source_permit();
+        oneiron::calendar::transcript::permit_imported_calendar_source_for_test(
+            &fixture.vault,
+            fixture.actor,
+        )
+        .expect("authorize this CAL ingest actor's Imported source");
+        fixture
+    }
+
+    /// Source-trust oracles must install only the permit their case specifies.
+    fn open_without_imported_source_permit() -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
         let actor = test_id(ACTOR_SEED);
@@ -395,42 +399,6 @@ fn book(fixture: &Fixture, session_key: SessionKey, slot: TimeRange) -> ConfirmR
             )
             .expect("confirm"),
     )
-}
-
-/// One busy calendar EVENT over `occupied`, written through the ordinary
-/// claim-candidate door exactly as CAL's ingest would.
-fn store_busy_event(fixture: &Fixture, seed: u8, occupied: TimeRange) {
-    let id = test_id(seed);
-    fixture
-        .vault
-        .put_entity(&id, ENTITY_TYPE_EVENT, occupied, 1, b"busy elsewhere")
-        .expect("put busy event");
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(fixture.actor, EdgeActorClass::Human),
-        ClaimSource::Imported,
-        WriteProvenance::new(Value::from("one-1813-oracle")).expect("provenance"),
-        ClaimApprovalStatus::Approved,
-    );
-    fixture
-        .vault
-        .batch()
-        .claim_candidate(
-            &claim_id(seed, 0),
-            ClaimCandidate::new(
-                "calendar.time_kind",
-                ClaimSubject::Entity(id),
-                Value::Map(vec![
-                    (Value::from("kind"), Value::from("absolute")),
-                    (Value::from("busy_transparency"), Value::from("busy")),
-                ]),
-                1.0,
-            ),
-            &envelope,
-            at(1),
-            1,
-        )
-        .commit()
-        .expect("busy claim commits");
 }
 
 // -------------------------------------------------------------------------
@@ -767,6 +735,10 @@ fn latest_hold_token(
 #[test]
 fn confirm_revalidates_after_new_busy_event() {
     let fixture = Fixture::open();
+    fixture
+        .vault
+        .install_imported_source_permit_for_test(fixture.actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let slot = slot_of(&fixture.offered_slots()[0]);
     let visitor = session(b"visitor-one");
     let hold = expect_held(
@@ -786,7 +758,8 @@ fn confirm_revalidates_after_new_busy_event() {
             start: slot.start,
             end: slot.end - 1,
         },
-    );
+    )
+    .expect("busy claim commits under the fixture actor's Imported permit");
 
     let before = fixture.event_count();
     let alternatives = expect_slot_taken(
@@ -1732,6 +1705,21 @@ fn booking_lifecycle_validator_is_exact() {
 #[test]
 fn booking_lifecycle_descriptor_rows_are_complete() {
     let rows = booking_claim_class_descriptors();
+    // The family is the exact union of lifecycle facts and both configuration
+    // predicates. Compare every row so missing, duplicate, and extra rows fail.
+    let mut expected_predicates = BOOKING_LIFECYCLE_PREDICATES.to_vec();
+    expected_predicates.extend([
+        oneiron::booking::BOOKING_EVENT_TYPE_PREDICATE,
+        oneiron::booking::BOOKING_PUBLIC_PAGE_PREDICATE,
+    ]);
+    expected_predicates.sort_unstable();
+    let mut actual_predicates: Vec<_> = rows.iter().map(|row| row.predicate).collect();
+    actual_predicates.sort_unstable();
+    assert_eq!(
+        actual_predicates, expected_predicates,
+        "one row per exact predicate in the whole booking family"
+    );
+
     for predicate in BOOKING_LIFECYCLE_PREDICATES {
         let row = rows
             .iter()
@@ -1742,30 +1730,27 @@ fn booking_lifecycle_descriptor_rows_are_complete() {
             row.projector_only,
             "only the engine writes a lifecycle fact"
         );
+        assert!(
+            !row.enforcement,
+            "no lifecycle row claims enforcement a runtime would have to apply"
+        );
     }
-    // ONE-1823's configuration row is still there: the family table is the
-    // union, not a replacement.
-    assert!(
-        rows.iter()
-            .any(|row| row.predicate == oneiron::booking::BOOKING_EVENT_TYPE_PREDICATE)
-    );
-    assert_eq!(
-        rows.len(),
-        BOOKING_LIFECYCLE_PREDICATES.len() + 1,
-        "one row per exact predicate in the whole booking family"
-    );
+
+    let public_page = rows
+        .iter()
+        .find(|row| row.predicate == oneiron::booking::BOOKING_PUBLIC_PAGE_PREDICATE)
+        .expect("the public-page configuration has a descriptor row");
+    assert_eq!(public_page.write_class, "human_ruled");
+    assert!(public_page.enforcement);
+    assert!(public_page.restrictive);
+    assert!(!public_page.projector_only);
+
     for row in &rows {
         assert!(
             ["recorded", "human_ruled", "ordinary"].contains(&row.write_class),
             "write_class is restricted to the three ratified classes"
         );
     }
-    // And there is still no descriptor runtime to register them with: the rows
-    // are pure data a caller reads, not a registry a writer consults.
-    assert!(
-        rows.iter().all(|row| !row.enforcement),
-        "no lifecycle row claims enforcement a runtime would have to apply"
-    );
 }
 
 /// Decodes the single live claim value for a predicate.

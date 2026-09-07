@@ -1,21 +1,27 @@
+mod scoped_settlement;
+
 use super::encoding::{
     DEDUPE_DOMAIN_V1, DEDUPE_INDEX_KEY_LEN, decode_ready_key, dedupe_index_key,
     dedupe_index_key_v2, encode_record, legacy_dedupe_index_key, ready_at, ready_key,
 };
-use super::engine::RETRY_REASON_UNSPECIFIED;
+use super::engine::{
+    ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW,
+    RETRY_CHAIN_DEPTH_LIMIT, RETRY_REASON_UNSPECIFIED,
+};
 use super::telemetry::emit_attempt_queue_cleanup_span;
 use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
 use super::validate::{
-    CancelReceiptDraft, ERR_CANCEL_ACTOR_IS_RUNTIME, ERR_CANCEL_NO_STANDING,
-    ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN, ERR_CANCEL_RECEIPT_MISSING_GROUNDS,
-    ERR_CANCEL_RECEIPT_MISSING_REASON, ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF,
-    ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT, ERR_CANCEL_RECEIPT_MISSING_TRIGGER,
-    ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPTS_FULL, ERR_DEDUPE_ACTOR_WITHOUT_KEY,
-    ERR_FAILURE_REASON_EMPTY, ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LANDING_RECORD_MISPLACED,
-    ERR_LANDING_WITHOUT_LEASE, ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL,
-    ERR_MANIFEST_REFERENCE_EMPTY, ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG,
-    ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG, ERR_RUN_ID_TOO_LONG,
-    MAX_FAILURE_REASON_LEN, MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN,
+    CancelReceiptDraft, ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT,
+    ERR_CANCEL_ACTOR_IS_RUNTIME, ERR_CANCEL_NO_STANDING, ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN,
+    ERR_CANCEL_RECEIPT_MISSING_GROUNDS, ERR_CANCEL_RECEIPT_MISSING_REASON,
+    ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF, ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT,
+    ERR_CANCEL_RECEIPT_MISSING_TRIGGER, ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPTS_FULL,
+    ERR_DEDUPE_ACTOR_WITHOUT_KEY, ERR_FAILURE_REASON_EMPTY, ERR_HANDOFF_WITHOUT_RESUME_POINT,
+    ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITHOUT_LEASE, ERR_LEASE_TIMEOUT_ZERO,
+    ERR_MANIFEST_FULL, ERR_MANIFEST_REFERENCE_EMPTY, ERR_MANIFEST_REFERENCE_HAS_AT,
+    ERR_MANIFEST_REFERENCE_TOO_LONG, ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG,
+    ERR_RESULT_REF_REBOUND, ERR_RUN_ID_TOO_LONG, MAX_FAILURE_REASON_LEN,
+    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RESULT_REF_LEN, MAX_RUN_ID_LEN,
     append_cancel_receipt,
 };
 use super::*;
@@ -1394,6 +1400,310 @@ fn attempt_queue_retry_chain_keeps_every_try_independently_queryable() -> Result
         run.iter().map(|record| record.id).collect::<Vec<_>>(),
         chain
     );
+
+    Ok(())
+}
+
+/// A stable id for rows written straight into storage below.
+fn synthetic_attempt_id(index: u32) -> AttemptId {
+    let mut bytes = [0_u8; 16];
+    bytes[..4].copy_from_slice(&index.to_be_bytes());
+    // Never the all-zero key, which no minted id can be either.
+    bytes[15] = 0x79;
+    AttemptId::from_bytes(&bytes).expect("synthetic id")
+}
+
+/// Writes attempt rows past the state machine, in one transaction.
+///
+/// Nothing this queue offers can mint a cycle or a dangling `retry_of`, so a
+/// test of what happens when storage carries one has to write the rows itself.
+fn put_raw_attempts(vault: &Vault, records: &[AttemptRecord]) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    for record in records {
+        let encoded = encode_record(record)?;
+        vault
+            .store
+            .attempt_records
+            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+    }
+    wtxn.commit()?;
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_counts_the_lineage_not_the_lease() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:depth"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+    // A first try is depth 0: nothing precedes it.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    let mut chain = vec![root.id];
+    let mut now = 20;
+    for expected_depth in 1..4_u32 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some("retryable".to_owned()),
+            now: now + 1,
+        })?;
+        // The fresh row restarts the lease fence at zero while the lineage
+        // keeps counting: that gap is exactly why depth is read from
+        // `retry_of` and never from `attempt_count`.
+        assert_eq!(claimed.attempt_count, 1);
+        assert_eq!(next.attempt_count, 0);
+        assert_eq!(queue.retry_chain_depth(next.id)?, expected_depth);
+        chain.push(next.id);
+        now += 10;
+    }
+
+    // Each ancestor keeps its own depth — the walk is per row, not per chain.
+    for (index, id) in chain.iter().enumerate() {
+        let expected = u32::try_from(index).expect("a four-row chain fits");
+        assert_eq!(queue.retry_chain_depth(*id)?, expected);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_saturates_at_the_bounded_limit() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:bound"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // A lineage longer than any backoff curve could ever read. The walk stops
+    // spending point reads at the limit and reports it, rather than growing
+    // with the row set — a bound, not an error.
+    let mut rows = Vec::new();
+    let mut template = root.clone();
+    let mut parent = root.id;
+    for index in 0..RETRY_CHAIN_DEPTH_LIMIT + 6 {
+        template.id = synthetic_attempt_id(index);
+        template.retry_of = Some(parent);
+        parent = template.id;
+        rows.push(template.clone());
+    }
+    put_raw_attempts(&vault, &rows)?;
+
+    assert_eq!(queue.retry_chain_depth(parent)?, RETRY_CHAIN_DEPTH_LIMIT);
+    // A short lineage inside that same store is still counted exactly.
+    assert_eq!(queue.retry_chain_depth(synthetic_attempt_id(0))?, 1);
+    assert_eq!(queue.retry_chain_depth(synthetic_attempt_id(3))?, 4);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:corrupt"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // A link naming a row this queue does not hold. Counting it as the end of
+    // the chain would silently restart a caller's backoff at its first rung.
+    let orphan_id = synthetic_attempt_id(1);
+    let mut orphan = root.clone();
+    orphan.id = orphan_id;
+    orphan.retry_of = Some(synthetic_attempt_id(404));
+    put_raw_attempts(&vault, &[orphan])?;
+    assert!(matches!(
+        queue.retry_chain_depth(orphan_id).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW)
+    ));
+    // An id this queue never held at all is that same broken read.
+    assert!(matches!(
+        queue
+            .retry_chain_depth(synthetic_attempt_id(404))
+            .unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW)
+    ));
+
+    // A lineage that returns to a row already on the walk.
+    let first_id = synthetic_attempt_id(2);
+    let second_id = synthetic_attempt_id(3);
+    let mut first = root.clone();
+    first.id = first_id;
+    first.retry_of = Some(second_id);
+    let mut second = root.clone();
+    second.id = second_id;
+    second.retry_of = Some(first_id);
+    put_raw_attempts(&vault, &[first, second])?;
+    assert!(matches!(
+        queue.retry_chain_depth(first_id).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE)
+    ));
+
+    // A row naming ITSELF is the shortest cycle there is.
+    let selfish_id = synthetic_attempt_id(4);
+    let mut selfish = root.clone();
+    selfish.id = selfish_id;
+    selfish.retry_of = Some(selfish_id);
+    put_raw_attempts(&vault, &[selfish])?;
+    assert!(matches!(
+        queue.retry_chain_depth(selfish_id).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE)
+    ));
+
+    // None of it reached the honest row beside them.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_fails_closed_on_a_cross_chain_link() -> Result<()> {
+    type AttemptMutation = fn(&mut AttemptRecord);
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:cross"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // One case per field both `retry_of` writers copy verbatim from a source
+    // row to the row superseding it. Each parent is otherwise a perfect clone
+    // of its child, so the single mutated field is the only thing the walk can
+    // be rejecting — a link naming an EXISTING but unrelated attempt.
+    let cases: [(&str, AttemptMutation); 6] = [
+        ("kind", |record| record.kind = "dreamer_runner".to_owned()),
+        ("payload", |record| {
+            record.payload = b"payload-of-another-attempt".to_vec();
+        }),
+        ("task_ref", |record| {
+            record.task_ref = Some("task:other".to_owned());
+        }),
+        ("run_id", |record| {
+            record.run_id = Some("run-other".to_owned());
+        }),
+        ("dedupe_key", |record| {
+            record.dedupe_key = Some("turn:other".to_owned());
+        }),
+        // Same dedupe key, different scope: two actors sharing one client key
+        // hold disjoint attempts, so a link across them is no lineage either.
+        ("dedupe_actor_ref", |record| {
+            record.dedupe_actor_ref = Some("actor:other".to_owned());
+        }),
+    ];
+
+    for (index, (field, mutate)) in cases.into_iter().enumerate() {
+        let step = u32::try_from(index).expect("six cases fit") * 2;
+        let mut parent = root.clone();
+        parent.id = synthetic_attempt_id(step + 10);
+        mutate(&mut parent);
+        let child_id = synthetic_attempt_id(step + 11);
+        let mut child = root.clone();
+        child.id = child_id;
+        child.retry_of = Some(parent.id);
+        put_raw_attempts(&vault, &[parent, child])?;
+
+        // Counting this hop would hand the caller a backoff rung measured on
+        // somebody else's history, so it is corruption, not a short chain.
+        let err = queue.retry_chain_depth(child_id).expect_err(field);
+        assert!(
+            matches!(
+                err,
+                Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+            ),
+            "a differing {field} must fail closed, got {err:?}"
+        );
+    }
+
+    // None of it reached the honest row beside them.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_counts_real_successors_but_not_a_deep_cross_link() -> Result<()>
+{
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:deep"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // ANTI-OVER-MATCH: a genuine successor differs from its source on state,
+    // lease owner, lease counter, timestamps and the stamped failure reason.
+    // The identity check must ignore every one of those and still count.
+    let mut now = 20;
+    let mut head = root.id;
+    for expected_depth in 1..4_u32 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some("retryable".to_owned()),
+            now: now + 1,
+        })?;
+        assert_eq!(queue.retry_chain_depth(next.id)?, expected_depth);
+        head = next.id;
+        now += 10;
+    }
+    assert_eq!(queue.retry_chain_depth(head)?, 3);
+
+    // A cross-chain link buried DEEP in an otherwise honest lineage: three
+    // truthful hops, then one that leaves the attempt entirely. Validating
+    // only the first hop would have counted the whole chain.
+    let foreign_id = synthetic_attempt_id(20);
+    let mut foreign = root.clone();
+    foreign.id = foreign_id;
+    foreign.run_id = Some("run-foreign".to_owned());
+    let mut rows = vec![foreign];
+    let mut parent = foreign_id;
+    for index in 0..4_u32 {
+        let mut row = root.clone();
+        row.id = synthetic_attempt_id(21 + index);
+        row.retry_of = Some(parent);
+        parent = row.id;
+        rows.push(row);
+    }
+    put_raw_attempts(&vault, &rows)?;
+
+    assert!(matches!(
+        queue.retry_chain_depth(parent).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+    ));
+    // The honest lineage beside it still counts exactly.
+    assert_eq!(queue.retry_chain_depth(head)?, 3);
 
     Ok(())
 }
@@ -3022,6 +3332,7 @@ mod one_1695_tests {
             events: Vec::new(),
             manifest: Vec::new(),
             cancel_state: AttemptCancelState::default(),
+            result_ref: None,
         }
     }
 
@@ -4880,4 +5191,482 @@ fn the_a2a_projection_carries_the_whole_durable_resume_point() -> Result<()> {
         "the successor carries the whole point across the handoff"
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ONE-1904: the cross-executor terminal contract
+// ---------------------------------------------------------------------------
+
+fn claimed(queue: &AttemptQueue<'_>, kind: &str, owner: &str) -> Result<AttemptRecord> {
+    queue.enqueue(enqueue(kind, None, 10))?;
+    let ClaimOutcome::Claimed(record) = queue.claim(ClaimAttempt {
+        lease_owner: owner.to_owned(),
+        now: 11,
+    })?
+    else {
+        panic!("the enqueued row must be claimable");
+    };
+    Ok(record)
+}
+
+fn result_ref(value: &str) -> AttemptResultRef {
+    AttemptResultRef::new(value).expect("valid result reference")
+}
+
+#[test]
+fn abandon_requires_a_lease_a_reason_and_a_result_reference() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let claim = claimed(&queue, "byoa", "worker-a")?;
+
+    // The lease fence is the same one complete/fail use: a stranger and a
+    // stale generation are both refused, and neither writes anything.
+    assert_invalid_transition(
+        queue
+            .abandon(AbandonAttempt {
+                id: claim.id,
+                lease_owner: "worker-b".to_owned(),
+                attempt_count: claim.attempt_count,
+                result_ref: result_ref("blob-artifact:aa@1"),
+                reason: "stopped".to_owned(),
+                now: 12,
+            })
+            .expect_err("another worker may not abandon this row"),
+        "abandon",
+        "leased_by_other",
+    );
+    assert_invalid_transition(
+        queue
+            .abandon(AbandonAttempt {
+                id: claim.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: claim.attempt_count + 1,
+                result_ref: result_ref("blob-artifact:aa@1"),
+                reason: "stopped".to_owned(),
+                now: 12,
+            })
+            .expect_err("a stale lease generation may not abandon this row"),
+        "abandon",
+        "stale_attempt",
+    );
+
+    // An empty reason is refused at the door, and an empty reference cannot
+    // even be constructed.
+    let err = queue
+        .abandon(AbandonAttempt {
+            id: claim.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claim.attempt_count,
+            result_ref: result_ref("blob-artifact:aa@1"),
+            reason: String::new(),
+            now: 12,
+        })
+        .expect_err("an abandonment must say why it stopped");
+    assert!(matches!(
+        err,
+        Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY)
+    ));
+    assert!(
+        AttemptResultRef::new("").is_err(),
+        "an empty result reference names nothing and must not exist"
+    );
+
+    // Nothing above moved the row.
+    assert_eq!(
+        queue.get(claim.id)?.expect("row").state,
+        AttemptState::Leased
+    );
+    Ok(())
+}
+
+#[test]
+fn abandon_is_terminal_idempotent_and_leaves_the_ready_and_dedupe_indexes() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(_) = queue.enqueue(enqueue("byoa", Some("turn:byoa"), 10))? else {
+        panic!("expected a fresh enqueue");
+    };
+    let ClaimOutcome::Claimed(claim) = queue.claim(ClaimAttempt {
+        lease_owner: "worker-a".to_owned(),
+        now: 11,
+    })?
+    else {
+        panic!("expected a claim");
+    };
+
+    let input = AbandonAttempt {
+        id: claim.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claim.attempt_count,
+        result_ref: result_ref("blob-artifact:aa@1"),
+        reason: "executor stopped without delivering".to_owned(),
+        now: 12,
+    };
+    let AbandonOutcome::Abandoned(abandoned) = queue.abandon(input.clone())? else {
+        panic!("expected a fresh abandonment");
+    };
+    assert_eq!(abandoned.state, AttemptState::Abandoned);
+    assert_eq!(abandoned.lease_owner, None);
+    assert_eq!(
+        abandoned.result_ref().map(AttemptResultRef::as_str),
+        Some("blob-artifact:aa@1")
+    );
+    assert_eq!(
+        abandoned.last_error.as_deref(),
+        Some("executor stopped without delivering")
+    );
+    assert!(abandoned.state.is_terminal());
+    assert!(!abandoned.state.is_running());
+
+    // Idempotent: a retried abandonment is a success that changes nothing,
+    // and it does not need the lease it no longer holds.
+    let AbandonOutcome::AlreadyAbandoned(again) = queue.abandon(AbandonAttempt {
+        lease_owner: "someone-else".to_owned(),
+        now: 99,
+        ..input
+    })?
+    else {
+        panic!("a second abandonment must report the settled row");
+    };
+    assert_eq!(again, abandoned, "idempotence must not rewrite the row");
+
+    // Settled work is out of the pending accounting and never re-enters the
+    // ready index, however long cleanup runs.
+    let report = queue.cleanup_leases(CleanupAttemptLeases {
+        now: 1_000,
+        lease_timeout_secs: 10,
+    })?;
+    assert_eq!(report.pending, 0, "an abandoned row is not pending work");
+    assert_eq!(report.running, 0);
+    assert_eq!(report.failed, 0, "abandoned is not failed");
+    assert_eq!(report.done, 1);
+    assert_eq!(report.abandoned, 1);
+    assert_eq!(report.stale_requeued, 0);
+    assert_eq!(
+        queue.get(claim.id)?.expect("row").state,
+        AttemptState::Abandoned,
+        "cleanup must never resurrect a settled row"
+    );
+
+    // The advisory dedupe claim is released, so the next dispatch mints a
+    // fresh try instead of being handed the stopped one.
+    let EnqueueOutcome::Enqueued(fresh) = queue.enqueue(enqueue("byoa", Some("turn:byoa"), 20))?
+    else {
+        panic!("a settled row must not hold its dedupe key");
+    };
+    assert_ne!(fresh.id, claim.id);
+    Ok(())
+}
+
+/// Abandoning a landing row must clear the landing record it leaves behind:
+/// the placement rule refuses a landing record on a terminal row, so a row
+/// written otherwise would be undecodable on the very next read.
+#[test]
+fn abandon_from_landing_clears_landing_and_round_trips() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let leased = leased_attempt(&queue, "turn:landing-abandon")?;
+    queue.request_cancel(soft_request(leased.id, "peer-1", CancelStanding::PeerAgent))?;
+    let landing = accept_landing_at(&queue, &leased, LandingTrigger::CancelRequest, 13)?;
+    assert!(landing.landing().is_some(), "the landing row carries one");
+
+    let AbandonOutcome::Abandoned(abandoned) = queue.abandon(AbandonAttempt {
+        id: leased.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: landing.attempt_count,
+        result_ref: result_ref("blob-artifact:aa@1"),
+        reason: "executor stopped without delivering".to_owned(),
+        now: 14,
+    })?
+    else {
+        panic!("a landing row that stopped without delivering is abandonable");
+    };
+    assert_eq!(abandoned.state, AttemptState::Abandoned);
+    assert!(
+        abandoned.landing().is_none(),
+        "a settled row keeps no live landing pointer"
+    );
+
+    // The persisted row decodes, and decodes the SAME way twice: the codec is
+    // the door every later read and every cleanup scan goes through.
+    let reread = queue.get(leased.id)?.expect("abandoned row");
+    assert_eq!(reread.state, AttemptState::Abandoned);
+    assert!(reread.landing().is_none());
+    assert_eq!(reread, abandoned);
+    assert_eq!(queue.get(leased.id)?.expect("abandoned row"), reread);
+
+    // The landing itself is not lost: its receipt still names what happened.
+    assert!(
+        reread
+            .cancel_receipts()
+            .iter()
+            .any(|receipt| receipt.kind == AttemptCancelReceiptKind::LandingAccepted),
+        "the receipt history still records the landing"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_settled_row_refuses_every_further_transition() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let claim = claimed(&queue, "byoa", "worker-a")?;
+    let AbandonOutcome::Abandoned(abandoned) = queue.abandon(AbandonAttempt {
+        id: claim.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claim.attempt_count,
+        result_ref: result_ref("blob-artifact:aa@1"),
+        reason: "stopped".to_owned(),
+        now: 12,
+    })?
+    else {
+        panic!("expected a fresh abandonment");
+    };
+
+    assert_invalid_transition(
+        queue
+            .complete(CompleteAttempt {
+                id: abandoned.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: abandoned.attempt_count,
+                now: 13,
+            })
+            .expect_err("an abandoned row never completes"),
+        "complete",
+        "abandoned",
+    );
+    assert_invalid_transition(
+        queue
+            .fail(FailAttempt {
+                id: abandoned.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: abandoned.attempt_count,
+                reason: "late".to_owned(),
+                now: 13,
+            })
+            .expect_err("an abandoned row never fails"),
+        "fail",
+        "abandoned",
+    );
+    assert_invalid_transition(
+        queue
+            .retry(RetryAttempt {
+                id: abandoned.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: abandoned.attempt_count,
+                backoff_until: 30,
+                last_error: None,
+                now: 13,
+            })
+            .expect_err("an abandoned row never retries"),
+        "retry",
+        "abandoned",
+    );
+    assert_invalid_transition(
+        queue
+            .intervene(InterveneAttempt {
+                id: abandoned.id,
+                kind: AttemptInterventionKind::Cancel,
+                actor: "dashboard".to_owned(),
+                note: None,
+                now: 13,
+            })
+            .expect_err("an abandoned row cannot be cancelled after the fact"),
+        "cancel",
+        "abandoned",
+    );
+
+    // The soft-cancel rung reports it as settled rather than as pre-lease
+    // work: something WAS carrying this row, and it stopped.
+    let CancelRequestOutcome::AlreadySettled(settled) =
+        queue.request_cancel(RequestAttemptCancel {
+            id: abandoned.id,
+            actor: "owner".to_owned(),
+            standing: CancelStanding::Authority,
+            trigger: LandingTrigger::CancelRequest,
+            reason: None,
+            now: 13,
+        })?
+    else {
+        panic!("a cancel request against a settled row is settled");
+    };
+    assert_eq!(settled.state, AttemptState::Abandoned);
+    Ok(())
+}
+
+#[test]
+fn set_result_is_fenced_write_once_and_idempotent() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let claim = claimed(&queue, "byoa", "worker-a")?;
+
+    assert_invalid_transition(
+        queue
+            .set_result(SetAttemptResult {
+                id: claim.id,
+                lease_owner: "worker-b".to_owned(),
+                attempt_count: claim.attempt_count,
+                result_ref: result_ref("blob-artifact:aa@1"),
+                now: 12,
+            })
+            .expect_err("another worker may not speak for this row"),
+        "set_result",
+        "leased_by_other",
+    );
+
+    let attached = queue.set_result(SetAttemptResult {
+        id: claim.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claim.attempt_count,
+        result_ref: result_ref("blob-artifact:aa@1"),
+        now: 12,
+    })?;
+    assert_eq!(
+        attached.result_ref().map(AttemptResultRef::as_str),
+        Some("blob-artifact:aa@1")
+    );
+    assert_eq!(
+        attached.state,
+        AttemptState::Leased,
+        "naming a result does not settle the row"
+    );
+
+    // Idempotent for the same reference.
+    let again = queue.set_result(SetAttemptResult {
+        id: claim.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claim.attempt_count,
+        result_ref: result_ref("blob-artifact:aa@1"),
+        now: 13,
+    })?;
+    assert_eq!(again.result_ref, attached.result_ref);
+
+    // Write-once for a different one: a published artifact is never silently
+    // repointed at another.
+    let err = queue
+        .set_result(SetAttemptResult {
+            id: claim.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claim.attempt_count,
+            result_ref: result_ref("blob-artifact:bb@1"),
+            now: 14,
+        })
+        .expect_err("a result reference is write-once");
+    assert!(matches!(
+        err,
+        Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_REBOUND)
+    ));
+
+    // The reference survives settling, so a completed row still names its
+    // output.
+    let CompleteOutcome::Completed(completed) = queue.complete(CompleteAttempt {
+        id: claim.id,
+        lease_owner: "worker-a".to_owned(),
+        attempt_count: claim.attempt_count,
+        now: 15,
+    })?
+    else {
+        panic!("expected a fresh completion");
+    };
+    assert_eq!(
+        completed.result_ref().map(AttemptResultRef::as_str),
+        Some("blob-artifact:aa@1")
+    );
+    Ok(())
+}
+
+#[test]
+fn abandoned_state_index_is_appended_and_old_rows_still_decode() -> Result<()> {
+    // T6a: the wire index of every pre-existing state is unchanged, so a row
+    // written before `Abandoned` existed reads back as the same state.
+    let states = [
+        (AttemptState::Queued, "queued"),
+        (AttemptState::Leased, "leased"),
+        (AttemptState::Paused, "paused"),
+        (AttemptState::Completed, "completed"),
+        (AttemptState::Failed, "failed"),
+        (AttemptState::Cancelled, "cancelled"),
+        (AttemptState::Scheduled, "scheduled"),
+        (AttemptState::Landing, "landing"),
+        (AttemptState::Abandoned, "abandoned"),
+    ];
+    for (index, (state, label)) in states.iter().enumerate() {
+        let encoded = rmp_serde::to_vec_named(state).expect("encode state");
+        let decoded: AttemptState = rmp_serde::from_slice(&encoded).expect("decode state");
+        assert_eq!(decoded, *state);
+        assert_eq!(state.as_str(), *label);
+        // Abandoned is LAST, so it cannot have taken an index an older row
+        // already wrote.
+        if *state == AttemptState::Abandoned {
+            assert_eq!(index, states.len() - 1);
+        }
+    }
+
+    // T6b: a row written without the `result_ref` key decodes as `None`,
+    // through the real decode door with all its validators.
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(row) = queue.enqueue(enqueue("legacy", None, 10))? else {
+        panic!("expected an enqueue");
+    };
+    let stored = queue.get(row.id)?.expect("row");
+    assert_eq!(stored.result_ref, None);
+
+    // T6c: a round trip through the real encoder preserves an attached
+    // reference exactly.
+    let mut with_result = stored;
+    with_result.result_ref = Some(result_ref("blob-artifact:cc@9"));
+    let encoded = encode_record(&with_result)?;
+    let decoded = decode_record(&encoded, with_result.id)?;
+    assert_eq!(decoded, with_result);
+    Ok(())
+}
+
+#[test]
+fn a_malformed_abandoned_row_fails_closed_on_decode() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(row) = queue.enqueue(enqueue("byoa", None, 10))? else {
+        panic!("expected an enqueue");
+    };
+    let mut record = queue.get(row.id)?.expect("row");
+    record.state = AttemptState::Abandoned;
+    record.last_error = Some("stopped".to_owned());
+
+    // No result reference: the stop would not be auditable.
+    let encoded = encode_record(&record)?;
+    let err = decode_record(&encoded, record.id).expect_err("an abandonment needs its artifact");
+    assert!(matches!(
+        err,
+        Error::InvalidAttemptQueueRecord(ERR_ABANDONED_WITHOUT_RESULT)
+    ));
+
+    // No reason: the stop would not be explainable.
+    record.result_ref = Some(result_ref("blob-artifact:dd@1"));
+    record.last_error = None;
+    let encoded = encode_record(&record)?;
+    let err = decode_record(&encoded, record.id).expect_err("an abandonment needs its reason");
+    assert!(matches!(
+        err,
+        Error::InvalidAttemptQueueRecord(ERR_ABANDONED_WITHOUT_REASON)
+    ));
+
+    // A lease owner: a settled row holds no lease.
+    record.last_error = Some("stopped".to_owned());
+    record.lease_owner = Some("worker-a".to_owned());
+    let encoded = encode_record(&record)?;
+    assert!(
+        decode_record(&encoded, record.id).is_err(),
+        "a terminal row must not carry a lease owner"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_result_reference_must_be_resolvable() {
+    assert!(AttemptResultRef::new("").is_err());
+    assert!(AttemptResultRef::new("with\nnewline").is_err());
+    assert!(AttemptResultRef::new("a".repeat(MAX_RESULT_REF_LEN + 1)).is_err());
+    let ok = AttemptResultRef::new("a".repeat(MAX_RESULT_REF_LEN)).expect("bounded reference");
+    assert_eq!(ok.as_str().len(), MAX_RESULT_REF_LEN);
 }

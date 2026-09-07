@@ -8,6 +8,10 @@
 //!
 //! The binary (`main.rs`) and the integration tests share this construction
 //! path: [`server::SyncServer::new`] + [`build_app`].
+//!
+//! [`managed`] adds a second, opt-in way to run that same path: as a
+//! supervised child process behind `--managed-by-hypnos`. Without the switch
+//! nothing in this crate behaves differently.
 
 mod api;
 mod auth;
@@ -18,6 +22,8 @@ pub mod config;
 pub mod error;
 mod handler;
 mod idempotency;
+mod livequery;
+pub mod managed;
 pub mod mcp;
 mod oauth_relay;
 pub mod projection;
@@ -26,6 +32,18 @@ pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
+// Process-local driver attachment only; this adds no HTTP/MCP route.
+// The stream/output owner still has to supply production serve prerequisites.
+#[cfg(unix)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "private voice bindings are host-injected; no provider factory in this daemon"
+    )
+)]
+#[doc(hidden)]
+pub mod voice_host;
 
 use std::sync::Arc;
 

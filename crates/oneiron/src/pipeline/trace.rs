@@ -7,6 +7,7 @@ use crate::analyzer::AnalyzerChannel;
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
+use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::fusion;
@@ -20,10 +21,11 @@ use crate::temporal::TemporalAnchorMode;
 use super::builder::PipelineBuilder;
 use super::filters::pipeline_candidate_matches_filters_and_gate;
 use super::types::{
-    ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, COSINE_GHOST_VECTOR_THRESHOLD, ClaimStatusGateCache,
-    DEFAULT_RECENCY_HALF_LIFE_DAYS, EntityMetadataCache, FacetMode, PPR_DAMPING,
-    PipelineFilterConfig, RECENCY_DECAY_TAU_SECS, RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
-    RETRIEVAL_TRACE_RRF_K, RelMode, ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig, WorldScope,
+    ALPHA_BASE, ALPHA_RANGE, ALPHA_TAU_SECS, ActiveWorldSelection, COSINE_GHOST_VECTOR_THRESHOLD,
+    ClaimStatusGateCache, DEFAULT_RECENCY_HALF_LIFE_DAYS, EntityMetadataCache, FacetMode,
+    PPR_DAMPING, PipelineFilterConfig, RECENCY_DECAY_TAU_SECS,
+    RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE, RETRIEVAL_TRACE_RRF_K, RelMode, ResolvedWorldAuthority,
+    ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
 };
 
 pub(super) fn add_signal_score_components(
@@ -174,6 +176,12 @@ fn retrieval_score_breakdown(
         .collect()
 }
 
+/// Evidence captured under the retrieval transaction; hashing never rescans claims.
+pub(super) struct RetrievalTraceForkEvidence<'a> {
+    pub(super) candidate_set: &'a [[u8; ENTITY_ID_LEN]],
+    pub(super) world_authority: Option<&'a ResolvedWorldAuthority>,
+}
+
 pub(super) fn retrieval_trace_fork_hash(
     builder: &PipelineBuilder<'_>,
     bm25_config: &Bm25Config,
@@ -181,7 +189,7 @@ pub(super) fn retrieval_trace_fork_hash(
     explicit_time_dependent_now_secs: Option<u64>,
     resolved_occurred_range: Option<(u64, u64)>,
     rerank_query: Option<&str>,
-    candidate_set: &[[u8; ENTITY_ID_LEN]],
+    evidence: RetrievalTraceForkEvidence<'_>,
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v1");
@@ -196,6 +204,10 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
+    fork_hash_f32(
+        &mut hasher,
+        crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+    );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
     fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
@@ -213,7 +225,14 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_opt_str(&mut hasher, builder.project_id_filter.as_deref());
     fork_hash_facet_filter(&mut hasher, builder.facet_filter);
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
-    fork_hash_world_scope(&mut hasher, builder.world_scope);
+    fork_hash_world_scope(
+        &mut hasher,
+        builder.world_scope,
+        builder.active_world_selection.as_ref(),
+        evidence.world_authority,
+    );
+    fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
+    fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
@@ -221,7 +240,7 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
     fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
-    fork_hash_candidate_set(&mut hasher, candidate_set);
+    fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
 
     hasher.finalize().into()
 }
@@ -279,6 +298,29 @@ fn fork_hash_rerank(
     fork_hash_str(hasher, reranker.id());
     fork_hash_u64(hasher, options.top_n as u64);
     fork_hash_str(hasher, effective_query.unwrap_or_default());
+}
+
+fn fork_hash_authority_filter(
+    hasher: &mut Sha256,
+    filter: Option<&crate::gate::ResolvedRetrievalFilter>,
+) {
+    let Some(filter) = filter else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_bool(hasher, filter.deny_all);
+    fork_hash_bool(hasher, filter.entity_types.is_some());
+    if let Some(types) = &filter.entity_types {
+        fork_hash_len(hasher, types.len());
+        for kind in types {
+            fork_hash_u8(hasher, *kind);
+        }
+    }
+    fork_hash_u8(hasher, filter.max_sensitivity_band);
+    fork_hash_bool(hasher, filter.include_stale);
+    fork_hash_f32(hasher, filter.min_confidence);
+    fork_hash_f32(hasher, filter.min_salience);
 }
 
 fn fork_hash_vector_query(
@@ -446,7 +488,18 @@ fn fork_hash_relationship_filter(hasher: &mut Sha256, filter: Option<(EntityId, 
     );
 }
 
-fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
+/// ONE-1420 ActiveSet segment: hash the per-turn selection plus the authority
+/// and claim provenance captured by the run's single resolution.
+///
+/// "Use my stored default" remains distinct from an explicit selection, and
+/// changes to the resolved default or its authority claims fork the key even
+/// when the candidate set is unchanged. Sets and claim ids use canonical order.
+fn fork_hash_world_scope(
+    hasher: &mut Sha256,
+    scope: WorldScope,
+    selection: Option<&ActiveWorldSelection>,
+    authority: Option<&ResolvedWorldAuthority>,
+) {
     match scope {
         WorldScope::All => fork_hash_str(hasher, "all"),
         WorldScope::Base => fork_hash_str(hasher, "base"),
@@ -457,6 +510,78 @@ fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
         WorldScope::WorldSet(scope_key) => {
             fork_hash_str(hasher, "world_set");
             fork_hash_raw_bytes(hasher, &scope_key);
+        }
+        WorldScope::ActiveSet => {
+            fork_hash_str(hasher, "active_set");
+            let Some(selection) = selection else {
+                fork_hash_bool(hasher, false);
+                return;
+            };
+            fork_hash_bool(hasher, true);
+            fork_hash_raw_bytes(hasher, selection.agent_ref.as_bytes());
+            if let Some(selected) = selection.selected.as_ref() {
+                fork_hash_bool(hasher, true);
+                fork_hash_world_authority_set(hasher, selected);
+            } else {
+                fork_hash_bool(hasher, false);
+            }
+            fork_hash_world_authority(hasher, authority);
+        }
+    }
+}
+
+fn fork_hash_world_authority(hasher: &mut Sha256, authority: Option<&ResolvedWorldAuthority>) {
+    let Some(authority) = authority else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_world_authority_set(hasher, &authority.allowed_set);
+    fork_hash_world_authority_set(hasher, &authority.default_subset);
+    fork_hash_world_authority_set(hasher, &authority.active_set);
+
+    let mut allowed_claim_ids = authority.allowed_claim_ids.clone();
+    allowed_claim_ids.sort_unstable();
+    fork_hash_len(hasher, allowed_claim_ids.len());
+    for claim_id in allowed_claim_ids {
+        fork_hash_raw_bytes(hasher, claim_id.as_bytes());
+    }
+    if let Some(claim_id) = authority.default_claim_id {
+        fork_hash_bool(hasher, true);
+        fork_hash_raw_bytes(hasher, claim_id.as_bytes());
+    } else {
+        fork_hash_bool(hasher, false);
+    }
+}
+
+fn fork_hash_world_authority_set(hasher: &mut Sha256, set: &WorldAuthoritySet) {
+    fork_hash_bool(hasher, set.include_base());
+    fork_hash_len(hasher, set.worlds().len());
+    for world in set.worlds() {
+        fork_hash_raw_bytes(hasher, world.as_bytes());
+    }
+}
+
+/// Query validation still rejects empty AnyOf before channel work. Hashing only
+/// normalizes ordering/duplicates; it neither admits nor repairs invalid input.
+fn fork_hash_corpus_scope(hasher: &mut Sha256, scope: &CorpusScope) {
+    fork_hash_str(hasher, "corpus_scope");
+    match scope {
+        CorpusScope::All => fork_hash_str(hasher, "all"),
+        CorpusScope::Unscoped => fork_hash_str(hasher, "unscoped"),
+        CorpusScope::Corpus(id) => {
+            fork_hash_str(hasher, "corpus");
+            fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+        }
+        CorpusScope::AnyOf(ids) => {
+            fork_hash_str(hasher, "any_of");
+            let mut ids = ids.clone();
+            ids.sort_unstable();
+            ids.dedup();
+            fork_hash_len(hasher, ids.len());
+            for id in ids {
+                fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+            }
         }
     }
 }
@@ -618,6 +743,13 @@ pub(super) fn filter_retrieval_trace_scores(
             rtxn,
             &scored.id,
             filters,
+            metadata_cache,
+            claim_gate,
+        )? && super::authority::candidate_allowed(
+            filters.authority_filter,
+            store,
+            rtxn,
+            &scored.id,
             metadata_cache,
             claim_gate,
         )? {

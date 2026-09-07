@@ -13,7 +13,10 @@ pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod disclosure_rung;
+pub mod invite_grant;
 pub mod lifecycle;
+pub mod public_lens;
+pub mod publication;
 pub mod solver;
 #[cfg(test)]
 mod tests;
@@ -44,6 +47,11 @@ pub use disclosure_rung::{
     RungProjection, SurfaceClass, TitledEventRow, default_disclosure_rung, project_at_rung,
     project_calendar_grant,
 };
+pub use invite_grant::{
+    BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
+    booking_page_grant_covers_recipient, booking_page_invites_authorizes, enqueue_confirm_invite,
+    mint_publish_page_invite_grant,
+};
 pub use lifecycle::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
     BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM,
@@ -58,6 +66,16 @@ pub use lifecycle::{
     booking_claim_class_descriptors, enqueue_booking_verb, is_booking_family_claim_predicate,
     is_booking_lifecycle_claim_predicate, issue_checkout_lease, run_booking_lifecycle_once,
     token_page_ref, validate_booking_family_claim,
+};
+pub use public_lens::{
+    BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard,
+    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, ThemeTokens,
+    validate_booking_page_model, bounded_public_slots,
+};
+pub use publication::{
+    BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,
+    PublicBookingAvailability, decode_public_booking_page_value, encode_public_booking_page_value,
+    load_public_booking_page, booking_config_hash, resolve_public_booking_token,
 };
 pub use solver::{
     ActiveHoldSource, BookingCountBucket, BookingCounts, BookingSolver, NoActiveHolds, slot_mask,
