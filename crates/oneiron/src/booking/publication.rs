@@ -3,10 +3,11 @@
 //! `booking.public_page` is a single-cardinality claim on the existing page.
 //! Publish/update uses `Memory::claim_upsert` (or `commit`); revoke uses the same
 //! write with `published = false`, or `claim_retract`. Claim validity is the
-//! capability's half-open lifetime. No index, grant inference, or allowlist is
+//! publication's half-open lifetime. No index, grant inference, or allowlist is
 //! publication authority. Theme and human copy are supplied by the owner.
 
 use std::io::Cursor;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +85,9 @@ pub struct BookingPagePublication {
     pub published: bool,
     pub owner_display: String,
     pub event_types: Vec<EventTypeCard>,
+    /// Exact scheduling content approved by this owner write, keyed by card key.
+    /// Never emitted in the public render model.
+    pub event_config_hashes: BTreeMap<String, String>,
     pub constraint_field: ConstraintFieldConfig,
     pub theme: ThemeTokens,
     pub initial_availability: PublicBookingAvailability,
@@ -97,7 +101,18 @@ impl BookingPagePublication {
         if self.owner_display.trim().is_empty() || self.event_types.is_empty() {
             return Err("public booking requires owner display and event cards");
         }
+        crate::booking::public_lens::validate_presentation_fields(
+            &self.owner_display, &self.event_types, &self.constraint_field, &self.theme,
+        ).map_err(|_| "public booking presentation exceeds lens bounds")?;
+        if self.event_config_hashes.len() != self.event_types.len() {
+            return Err("public booking must bind every event configuration");
+        }
         for (index, event) in self.event_types.iter().enumerate() {
+            if !self.event_config_hashes.get(&event.key.0).is_some_and(|hash| {
+                hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            }) {
+                return Err("public booking configuration hash must be a BLAKE3 digest");
+            }
             if event.key.0.trim().is_empty()
                 || event.key.0.len() > 64
                 || event.title.trim().is_empty()
@@ -192,7 +207,8 @@ fn publication_owner(body: &ClaimBody) -> Option<EntityId> {
 }
 
 /// Resolve one genuinely live publication. An absent, stale, proposed, revoked,
-/// expired, malformed, owner-unbound, or ambiguous publication is not public.
+/// expired, malformed, or owner-unbound publication is not public.
+/// The owner transaction records the exact current head; no history fallback.
 /// The read boundary validates again: replayed bytes are not a writer promise.
 pub fn load_public_booking_page(
     vault: &Vault,
@@ -200,63 +216,74 @@ pub fn load_public_booking_page(
     now: u64,
 ) -> Result<Option<BookingPagePublication>> {
     let rtxn = vault.store.env.read_txn()?;
-    if !crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &page_ref)?.is_live() {
+    load_public_booking_page_in_txn(vault, &rtxn, page_ref, now)
+}
+
+pub(crate) fn load_public_booking_page_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<BookingPagePublication>> {
+    if !crate::vault::live_entity_row_in_txn(&vault.store, rtxn, &page_ref)?.is_live() {
         return Ok(None);
     }
-    let mut publication = None;
-    let mut active_count = 0;
-    for id in vault.claims_for_subject_in_txn(&rtxn, &page_ref)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
-            continue;
-        };
-        if body.predicate != BOOKING_PUBLIC_PAGE_PREDICATE
-            || body.subject != ClaimSubject::Entity(page_ref)
-            || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
-        {
-            continue;
-        }
-        // Never select an older allow around a concurrent deny or pending head.
-        active_count += 1;
-        if active_count > 1 {
-            return Ok(None);
-        }
-        if !claim_surfaceable(&body)
-            || validate_public_booking_page_claim(&body).is_err()
-            || body.valid_from.is_none_or(|start| now < start)
-            || body.valid_to.is_none_or(|end| now >= end)
-        {
-            return Ok(None);
-        }
-        let Some(owner) = publication_owner(&body) else {
-            return Ok(None);
-        };
-        if crate::memory::verify_public_booking_owner_in_txn(vault, &rtxn, owner).is_err() {
-            return Ok(None);
-        }
-        let value = decode_public_booking_page_value(&body.value)?;
-        if !value.published {
-            return Ok(None);
-        }
-        for card in &value.event_types {
-            let config = match crate::booking::config::load_event_type_config_in_txn(
-                vault, &rtxn, page_ref, &card.key,
-            ) {
-                Ok(config) => config,
-                Err(BookingError::InvalidConfig(_)) => return Ok(None),
-                Err(_) => {
-                    return Err(Error::InvalidConfig(
-                        "public booking configuration read failed".to_owned(),
-                    ));
-                }
-            };
-            if u32::from(config.duration_min) != card.duration_min {
-                return Ok(None);
-            }
-        }
-        publication = Some(value);
+    let token = crate::booking::PublicBookingPageToken::for_page(page_ref);
+    let Some((indexed_page, id)) = indexed_publication(vault, rtxn, &token.0)? else {
+        return Ok(None);
+    };
+    if indexed_page != page_ref {
+        return Ok(None);
     }
-    Ok(publication)
+    let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+        return Ok(None);
+    };
+    if body.predicate != BOOKING_PUBLIC_PAGE_PREDICATE
+        || body.subject != ClaimSubject::Entity(page_ref)
+        || !claim_surfaceable(&body)
+        || validate_public_booking_page_claim(&body).is_err()
+        || body.valid_from.is_none_or(|start| now < start)
+        || body.valid_to.is_none_or(|end| now >= end)
+    {
+        return Ok(None);
+    }
+    let Some(owner) = publication_owner(&body) else {
+        return Ok(None);
+    };
+    if crate::memory::verify_public_booking_owner_in_txn(vault, rtxn, owner).is_err() {
+        return Ok(None);
+    }
+    let value = decode_public_booking_page_value(&body.value)?;
+    if !value.published {
+        return Ok(None);
+    }
+    for card in &value.event_types {
+        let config = match crate::booking::config::load_event_type_config_in_txn(
+            vault, rtxn, page_ref, &card.key,
+        ) {
+            Ok(config) => config,
+            Err(BookingError::InvalidConfig(_)) => return Ok(None),
+            Err(_) => {
+                return Err(Error::InvalidConfig(
+                    "public booking configuration read failed".to_owned(),
+                ));
+            }
+        };
+        if u32::from(config.duration_min) != card.duration_min
+            || value.event_config_hashes.get(&card.key.0) != Some(&booking_config_hash(&config)?)
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(value))
 }
+
+mod mutation;
+pub use mutation::PublicBookingAuthority;
+mod write_index;
+pub(crate) use write_index::{guard_publication_put, index_publication_in_txn};
+pub use write_index::{booking_config_hash, resolve_public_booking_token};
+use write_index::indexed_publication;
 
 #[cfg(test)]
 mod tests;

@@ -5,6 +5,29 @@ use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::edge::EdgeActorClass;
 use crate::{EntityId, Vault};
 
+// These keys are staged and removed inside the owner transaction. They are
+// never committed or accepted from replay. Generic byte and candidate doors
+// cannot mint a publication by copying write-envelope evidence.
+pub(crate) fn publication_write_key(id: EntityId) -> Vec<u8> {
+    let mut key = b"booking.public_write.in_txn/".to_vec();
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+pub(crate) fn stage_publication_write(
+    vault: &Vault, txn: &mut heed::RwTxn<'_>, id: EntityId,
+) -> crate::Result<()> {
+    vault.store.vault_meta.put(txn, &publication_write_key(id), b"owner")?;
+    Ok(())
+}
+
+pub(crate) fn finish_publication_write(
+    vault: &Vault, txn: &mut heed::RwTxn<'_>, id: EntityId,
+) -> crate::Result<()> {
+    vault.store.vault_meta.delete(txn, &publication_write_key(id))?;
+    Ok(())
+}
+
 pub(crate) fn verify_public_booking_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

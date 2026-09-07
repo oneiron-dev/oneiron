@@ -114,7 +114,7 @@ fn event_body(name: &str) -> Vec<u8> {
 }
 
 /// One calendar EVENT and its `calendar.*` family, written through the ordinary
-/// claim-candidate door at `approval`, exactly as CAL's ingest would.
+/// claim-candidate door with Auto so preflight can match the actor's Imported permit.
 fn store_event(
     vault: &Vault,
     actor: EntityId,
@@ -138,7 +138,7 @@ fn store_event(
         WriteActor::new(actor, EdgeActorClass::Human),
         ClaimSource::Imported,
         WriteProvenance::new(Value::from("one-1823-oracle")).expect("provenance"),
-        ClaimApprovalStatus::Approved,
+        ClaimApprovalStatus::Auto,
     );
     let mut family = vec![
         ("calendar.origin", Value::from("imported")),
@@ -404,6 +404,9 @@ fn seed_busy_hour(vault: &Vault, actor: EntityId) {
 fn eight_step_pipeline_order_oracle() {
     let (_dir, vault) = temp_vault();
     let actor = booking_actor(&vault);
+    vault
+        .install_imported_source_permit_for_test(actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let page = booking_page(&vault);
     seed_busy_hour(&vault, actor);
 
@@ -521,6 +524,9 @@ fn eight_step_pipeline_order_oracle() {
 fn busy_union_is_consumed_without_status_refilter() {
     let (_dir, vault) = temp_vault();
     let actor = booking_actor(&vault);
+    vault
+        .install_imported_source_permit_for_test(actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let page = booking_page(&vault);
 
     // Busy, transparent, and cancelled occurrences all sit in the same hour.
@@ -899,6 +905,9 @@ fn solve_work_is_bounded_by_the_horizon_not_the_request() {
 fn a_busy_interval_at_the_horizon_edge_still_buffers_the_last_candidate() {
     let (_dir, vault) = temp_vault();
     let actor = booking_actor(&vault);
+    vault
+        .install_imported_source_permit_for_test(actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let page = booking_page(&vault);
     let config = oracle_config();
 
@@ -947,6 +956,9 @@ fn a_busy_interval_at_the_horizon_edge_still_buffers_the_last_candidate() {
 fn an_empty_calendar_selector_binding_is_a_wiring_defect() {
     let (_dir, vault) = temp_vault();
     let actor = booking_actor(&vault);
+    vault
+        .install_imported_source_permit_for_test(actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let page = booking_page(&vault);
     seed_busy_hour(&vault, actor);
 
@@ -1123,6 +1135,9 @@ fn booking_event_type_index_uses_canonical_prefix() {
 fn slot_mask_contains_no_calendar_or_event_detail() {
     let (_dir, vault) = temp_vault();
     let actor = booking_actor(&vault);
+    vault
+        .install_imported_source_permit_for_test(actor)
+        .expect("permit this fixture actor's Imported calendar claims");
     let page = booking_page(&vault);
     seed_busy_hour(&vault, actor);
 

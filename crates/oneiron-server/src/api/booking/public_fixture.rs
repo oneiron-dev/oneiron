@@ -95,32 +95,7 @@ impl Fixture {
                 b"fixture booking page",
             )
             .expect("page");
-        let config = EventTypeConfig {
-            key: EventTypeKey("intro".to_owned()),
-            duration_min: 30,
-            slot_step_min: 30,
-            pre_buffer_min: 0,
-            post_buffer_min: 0,
-            min_notice_secs: 0,
-            booking_window_secs: 7 * 86_400,
-            daily_cap: None,
-            weekly_cap: None,
-            routing: RoutingMode::Either,
-            hosts: vec![HostAvailabilityConfig {
-                host_ref: id(0x73),
-                calendar_refs: vec![id(0x74)],
-                host_tz: "UTC".to_owned(),
-                working_hours: (0..7)
-                    .map(|weekday| WeeklyWallWindow {
-                        weekday,
-                        start_minute: 0,
-                        end_minute: 1_440,
-                    })
-                    .collect(),
-                preferred_hours: Vec::new(),
-            }],
-            flex_windows: Vec::new(),
-        };
+        let config = fixture_config();
         let value = encode_event_type_claim_value(&BookingEventTypeClaimValue {
             schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
             page_ref: page,
@@ -232,6 +207,35 @@ impl Fixture {
     }
 }
 
+fn fixture_config() -> EventTypeConfig {
+    EventTypeConfig {
+    key: EventTypeKey("intro".to_owned()),
+    duration_min: 30,
+    slot_step_min: 30,
+    pre_buffer_min: 0,
+    post_buffer_min: 0,
+    min_notice_secs: 0,
+    booking_window_secs: 7 * 86_400,
+    daily_cap: None,
+    weekly_cap: None,
+    routing: RoutingMode::Either,
+    hosts: vec![HostAvailabilityConfig {
+        host_ref: id(0x73),
+        calendar_refs: vec![id(0x74)],
+        host_tz: "UTC".to_owned(),
+        working_hours: (0..7)
+            .map(|weekday| WeeklyWallWindow {
+                weekday,
+                start_minute: 0,
+                end_minute: 1_440,
+            })
+            .collect(),
+        preferred_hours: Vec::new(),
+    }],
+    flex_windows: Vec::new(),
+}
+}
+
 pub(super) fn publication_input(
     page: EntityId,
     published: bool,
@@ -241,6 +245,7 @@ pub(super) fn publication_input(
     let publication = BookingPagePublication {
         schema_version: BOOKING_PUBLIC_PAGE_SCHEMA_VERSION,
         published,
+        event_config_hashes: [("intro".to_owned(), oneiron::booking::booking_config_hash(&fixture_config()).expect("hash"))].into(),
         owner_display: "Fixture host".to_owned(),
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
