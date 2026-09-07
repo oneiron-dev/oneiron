@@ -8,6 +8,7 @@ use crate::llm::{
     BudgetExhaustionPolicy, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable, CallPurpose,
 };
 
+use super::breaker::{GATE_BREAKER_POLICY_KEY, GateBreakerThresholds};
 use super::ceiling::{
     ActorCeiling, DelegationGrantRecord, OwnerRowAction, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack, PolicyRule,
@@ -55,6 +56,11 @@ pub(super) struct DecodedPolicyManifest {
     /// names one.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    /// ONE-1453: this manifest's burst-breaker candidate. `None` covers both
+    /// an absent key and a malformed override — a malformed override
+    /// contributes NO candidate to the cross-manifest fold and never makes the
+    /// manifest itself malformed.
+    pub(super) actor_burst_breaker: Option<GateBreakerThresholds>,
     pub(super) unsupported_schema: bool,
     pub(super) engine_version_floor: bool,
     pub(super) unknown_axis_seen: bool,
@@ -97,6 +103,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | GATE_BREAKER_POLICY_KEY
         ) {
             return None;
         }
@@ -213,6 +220,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let actor_burst_breaker = super::breaker::decode_gate_breaker_override(&entries);
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -241,6 +249,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        actor_burst_breaker,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

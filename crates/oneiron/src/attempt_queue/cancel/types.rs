@@ -168,7 +168,7 @@ impl ForceCancelGrounds {
 /// declared themselves the authority and chosen the actor the terminal receipt
 /// names. The hard rung is therefore reachable only from a path that has
 /// ALREADY verified the owner against durable ownership provenance
-/// ([`Self::owner`], used by the verified `tasks.cancel.force` door) or from a
+/// (`Self::owner`, used by the verified `tasks.cancel.force` door) or from a
 /// runtime ground the runtime itself establishes (lease expiry, criticality).
 ///
 /// Public callers keep the whole soft rung — request, reject, land — and the
