@@ -147,7 +147,9 @@ fn connector_key_codec_rejects_an_unsupported_version() -> Result<()> {
         .iter_mut()
         .find(|(key, _)| key.as_str() == Some("schema_version"))
         .expect("schema_version key");
-    *schema_version = rmpv::Value::from(3);
+    // One past the current ceiling, expressed against the const so a future
+    // additive bump cannot silently turn this into a no-op assertion.
+    *schema_version = rmpv::Value::from(CONNECTOR_KEY_SCHEMA_VERSION + 1);
     let mut unsupported_body = Vec::new();
     rmpv::encode::write_value(&mut unsupported_body, &value).expect("encode unsupported fixture");
 
@@ -2601,4 +2603,871 @@ fn charter_never_list_modes_are_distinct() {
         "line",
         "send"
     ));
+}
+
+// --- ONE-1886 registration lifecycle (pre-live-transport) ---------------------
+
+/// A custody record whose value is a distinctive fixture: no connector-key
+/// path may ever surface these bytes.
+const CUSTODY_VALUE_FIXTURE: &[u8] = b"custody-value-never-read-here";
+
+fn register_test_secret(vault: &Vault, name: &str) -> Result<EntityId> {
+    vault.register_secret(crate::secret_custody::SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: name.to_owned(),
+        class: crate::secret_custody::CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: CUSTODY_VALUE_FIXTURE.to_vec(),
+        status: crate::secret_custody::SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
+    })
+}
+
+fn catalog_entry(name: &str, connector: &str) -> ConnectorCatalogEntry {
+    ConnectorCatalogEntry {
+        name: name.to_owned(),
+        connector: connector.to_owned(),
+        summary: "Herald's outbound workspace".to_owned(),
+        verbs: vec!["send".to_owned()],
+        call_class: ConnectorCallClass::CounterpartyComm,
+        // Deliberately stale: the registration door overwrites it.
+        registered_at: 7,
+    }
+}
+
+fn connector_key_op_reasons(vault: &Vault) -> Result<Vec<String>> {
+    let receipts = vault.receipts(ReceiptQuery::new(50).with_kind(ReceiptKind::Gate))?;
+    Ok(receipts
+        .iter()
+        .flat_map(|receipt| receipt.policy_trace.iter())
+        .filter(|reason| reason.starts_with("gate.connector_key."))
+        .cloned()
+        .collect())
+}
+
+fn catalog_name_index_row(vault: &Vault, name: &str) -> Result<Option<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .vault_meta
+        .get(&rtxn, &connector_catalog_name_index_key(name))?
+        .map(|bytes| bytes.to_vec()))
+}
+
+fn send_admit_row_count(vault: &Vault, id: &EntityId) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let prefix = connector_key_send_admit_key(id, "");
+    let mut count = 0;
+    for entry in vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
+        entry?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[test]
+fn secret_ref_round_trip_additive() -> Result<()> {
+    let record = ConnectorKeyRecord {
+        secret_ref: Some("slack/bot_token".to_owned()),
+        key_generation: 7,
+        catalog: Some(ConnectorCatalogEntry {
+            registered_at: 1_000,
+            ..catalog_entry("herald_slack", "slack")
+        }),
+        ..ConnectorKeyRecord::active("slack", None, all_dimension_budgets(), 1_000)
+    };
+    let encoded = encode_connector_key_body(&record)?;
+    assert_eq!(decode_connector_key_body(&encoded)?, record);
+
+    // The append is POSITIONAL: positions 0-10 are byte-identical to the
+    // pinned v1/v2 key set, and the three new keys sit at 11-13.
+    assert_eq!(
+        CONNECTOR_KEY_BODY_KEYS[..11],
+        [
+            "schema_version",
+            "connector",
+            "actor_entity_ref",
+            "status",
+            "budgets",
+            "registered_at",
+            "status_changed_at",
+            "suspended_reason",
+            "charter",
+            "pending_charter",
+            "suggested_budgets",
+        ]
+    );
+    let mut cursor = std::io::Cursor::new(encoded);
+    let value = rmpv::decode::read_value(&mut cursor).expect("decode body");
+    let rmpv::Value::Map(entries) = &value else {
+        panic!("connector key body must be a map");
+    };
+    let keys: Vec<&str> = entries
+        .iter()
+        .map(|(key, _)| key.as_str().expect("string key"))
+        .collect();
+    assert_eq!(keys, CONNECTOR_KEY_BODY_KEYS.to_vec());
+
+    // A stored 11-key legacy body decodes at the pre-live-transport defaults
+    // and is otherwise unchanged — no bulk rewrite, no re-versioning.
+    let legacy = ConnectorKeyRecord::active("peer_link", None, Vec::new(), 1_000);
+    let encoded = encode_connector_key_body(&legacy)?;
+    let mut cursor = std::io::Cursor::new(encoded);
+    let mut value = rmpv::decode::read_value(&mut cursor).expect("decode fixture");
+    let rmpv::Value::Map(entries) = &mut value else {
+        panic!("connector key body must be a map");
+    };
+    let (_, schema_version) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("schema_version"))
+        .expect("schema_version key");
+    *schema_version = rmpv::Value::from(2);
+    entries.retain(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            Some("secret_ref" | "key_generation" | "catalog")
+        )
+    });
+    assert_eq!(entries.len(), 11);
+    let mut old_body = Vec::new();
+    rmpv::encode::write_value(&mut old_body, &value).expect("encode v2 fixture");
+
+    let decoded = decode_connector_key_body(&old_body)?;
+    assert_eq!(decoded.secret_ref, None);
+    assert_eq!(decoded.key_generation, 0);
+    assert_eq!(decoded.catalog, None);
+    assert_eq!(decoded, legacy);
+    Ok(())
+}
+
+#[test]
+fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+
+    // Legacy door.
+    let id = test_id(0x21);
+    assert!(matches!(
+        vault.register_connector_key(
+            &id,
+            ConnectorKeyRecord {
+                secret_ref: Some("missing_secret".to_owned()),
+                ..ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000)
+            },
+        ),
+        Err(Error::InvalidConnectorKeyBody(
+            "secret_ref does not resolve"
+        ))
+    ));
+    assert!(vault.get_connector_key(&id)?.is_none());
+    assert!(vault.connector_key_for("slack", None)?.is_none());
+
+    // Composed door: the SAME shared in-txn core, so the same ruled error.
+    assert!(matches!(
+        vault.register_connector(
+            catalog_entry("herald_slack", "slack"),
+            ConnectorKeySpec {
+                secret_ref: Some("missing_secret".to_owned()),
+                ..ConnectorKeySpec::new("slack")
+            },
+            1_000,
+        ),
+        Err(Error::InvalidConnectorKeyBody(
+            "secret_ref does not resolve"
+        ))
+    ));
+    // Nothing persisted: no key, no reserved name, no receipt.
+    assert!(vault.describe_connector("herald_slack")?.is_none());
+    assert!(catalog_name_index_row(&vault, "herald_slack")?.is_none());
+    assert_eq!(connector_key_op_receipt_count(&vault)?, 0);
+
+    // With the custody record live, both doors accept the same reference.
+    register_test_secret(&vault, "live_secret")?;
+    let registered = vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord {
+            secret_ref: Some("live_secret".to_owned()),
+            ..ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000)
+        },
+    )?;
+    assert_eq!(registered.secret_ref.as_deref(), Some("live_secret"));
+    let (composed_id, composed) = vault.register_connector(
+        catalog_entry("herald_line", "line"),
+        ConnectorKeySpec {
+            secret_ref: Some("live_secret".to_owned()),
+            ..ConnectorKeySpec::new("line")
+        },
+        1_001,
+    )?;
+    assert_eq!(composed.secret_ref.as_deref(), Some("live_secret"));
+    assert!(vault.get_connector_key(&composed_id)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn register_connector_is_atomic() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    register_test_secret(&vault, "slack_token")?;
+
+    // Hyphen/underscore are the same registration; the entry's stale
+    // `registered_at` is overwritten by the parameter.
+    let (id, record) = vault.register_connector(
+        catalog_entry("My-Connector", "My-Connector"),
+        ConnectorKeySpec {
+            secret_ref: Some("slack_token".to_owned()),
+            ..ConnectorKeySpec::new("my_connector")
+        },
+        1_000,
+    )?;
+    let stored = vault.get_connector_key(&id)?.expect("stored key");
+    assert_eq!(stored, record);
+    assert_eq!(stored.connector, "my_connector");
+    assert_eq!(stored.key_generation, 0);
+    assert_eq!(stored.secret_ref.as_deref(), Some("slack_token"));
+    let entry = stored.catalog.expect("catalog embedded on the key");
+    assert_eq!(entry.name, "my_connector");
+    assert_eq!(entry.connector, "my_connector");
+    assert_eq!(entry.registered_at, 1_000, "the parameter dates the entry");
+
+    // Permanent name index + generation-0 log row, both in the same commit.
+    assert_eq!(
+        catalog_name_index_row(&vault, "my_connector")?.as_deref(),
+        Some(id.as_bytes().as_slice())
+    );
+    assert_eq!(
+        vault
+            .connector_key_generation(&id, 0)?
+            .expect("generation 0"),
+        ConnectorKeyGeneration {
+            generation: 0,
+            secret_ref: Some("slack_token".to_owned()),
+            rotated_at: 1_000,
+        }
+    );
+    assert_eq!(
+        connector_key_op_reasons(&vault)?,
+        vec!["gate.connector_key.register".to_owned()]
+    );
+
+    // The name is taken across vault history.
+    assert!(matches!(
+        vault.register_connector(
+            catalog_entry("my-connector", "other"),
+            ConnectorKeySpec::new("other"),
+            1_010,
+        ),
+        Err(Error::ConnectorKeyAlreadyExists)
+    ));
+
+    // Blank / NUL names fail pre-write.
+    for bad in ["   ", "bad\u{0}name"] {
+        assert!(matches!(
+            vault.register_connector(
+                catalog_entry(bad, "line"),
+                ConnectorKeySpec::new("line"),
+                1_011,
+            ),
+            Err(Error::InvalidConnectorKeyBody(_))
+        ));
+    }
+    assert!(vault.connector_key_for("line", None)?.is_none());
+
+    // A forced leg failure (the tuple is already governed) reserves NOTHING.
+    assert!(matches!(
+        vault.register_connector(
+            catalog_entry("second_name", "my_connector"),
+            ConnectorKeySpec::new("my_connector"),
+            1_020,
+        ),
+        Err(Error::ConnectorKeyAlreadyExists)
+    ));
+    assert!(catalog_name_index_row(&vault, "second_name")?.is_none());
+    assert!(vault.describe_connector("second_name")?.is_none());
+
+    // Legacy door: a carried catalog is rejected pre-write; catalog-free
+    // registration still succeeds at generation 0.
+    let legacy_id = test_id(0x31);
+    assert!(matches!(
+        vault.register_connector_key(
+            &legacy_id,
+            ConnectorKeyRecord {
+                catalog: Some(catalog_entry("legacy", "line")),
+                ..ConnectorKeyRecord::active("line", None, Vec::new(), 1_030)
+            },
+        ),
+        Err(Error::InvalidConnectorKeyBody(
+            "catalog requires composed registration"
+        ))
+    ));
+    assert!(vault.get_connector_key(&legacy_id)?.is_none());
+    assert!(catalog_name_index_row(&vault, "legacy")?.is_none());
+
+    let legacy = vault.register_connector_key(
+        &legacy_id,
+        ConnectorKeyRecord::active("line", None, Vec::new(), 1_030),
+    )?;
+    assert!(legacy.catalog.is_none());
+    assert_eq!(legacy.key_generation, 0);
+    assert!(vault.connector_key_generation(&legacy_id, 0)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn rotate_connector_key_receipted_and_value_free() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    register_test_secret(&vault, "token_v1")?;
+    register_test_secret(&vault, "token_v2")?;
+
+    let (id, _) = vault.register_connector(
+        catalog_entry("herald_slack", "slack"),
+        ConnectorKeySpec {
+            secret_ref: Some("token_v1".to_owned()),
+            ..ConnectorKeySpec::new("slack")
+        },
+        1_000,
+    )?;
+    assert_eq!(
+        vault
+            .connector_key_generation(&id, 0)?
+            .expect("generation 0 is point-readable at registration")
+            .secret_ref
+            .as_deref(),
+        Some("token_v1")
+    );
+
+    let rotated = vault.rotate_connector_key(&id, "token_v2", 2_000)?;
+    assert_eq!(rotated.secret_ref.as_deref(), Some("token_v2"));
+    assert_eq!(rotated.key_generation, 1);
+    assert_eq!(vault.get_connector_key(&id)?.expect("stored key"), rotated);
+    assert_eq!(
+        vault
+            .connector_key_generation(&id, 1)?
+            .expect("generation 1"),
+        ConnectorKeyGeneration {
+            generation: 1,
+            secret_ref: Some("token_v2".to_owned()),
+            rotated_at: 2_000,
+        }
+    );
+    assert_eq!(
+        connector_key_op_reasons(&vault)?
+            .iter()
+            .filter(|reason| *reason == "gate.connector_key.rotate")
+            .count(),
+        1
+    );
+
+    // Value-free: the key names a custody record, and no rotation surface
+    // carries the value bytes.
+    let leaked = format!("{rotated:?}");
+    assert!(!leaked.contains(std::str::from_utf8(CUSTODY_VALUE_FIXTURE).expect("utf8 fixture")));
+
+    // An unresolved reference is a ruled error and writes nothing.
+    assert!(matches!(
+        vault.rotate_connector_key(&id, "ghost_token", 3_000),
+        Err(Error::InvalidConnectorKeyBody(
+            "secret_ref does not resolve"
+        ))
+    ));
+    assert_eq!(vault.get_connector_key(&id)?.expect("stored key"), rotated);
+    assert!(vault.connector_key_generation(&id, 2)?.is_none());
+
+    // A record that predates the generation log (a v1/v2 body decodes at
+    // generation 0 with no log row) backfills its CURRENT generation on the
+    // first rotation, so 0 AND 1 stay point-readable.
+    let legacy_id = test_id(0x41);
+    vault.register_connector_key(
+        &legacy_id,
+        ConnectorKeyRecord::active("line", None, Vec::new(), 1_500),
+    )?;
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, &connector_key_generation_key(&legacy_id, 0))?;
+        wtxn.commit()?;
+    }
+    assert!(
+        vault.connector_key_generation(&legacy_id, 0)?.is_none(),
+        "fixture: the record now looks pre-log"
+    );
+
+    let rotated_legacy = vault.rotate_connector_key(&legacy_id, "token_v2", 2_500)?;
+    assert_eq!(rotated_legacy.key_generation, 1);
+    assert_eq!(
+        vault
+            .connector_key_generation(&legacy_id, 0)?
+            .expect("generation 0 backfilled"),
+        ConnectorKeyGeneration {
+            generation: 0,
+            secret_ref: None,
+            rotated_at: 1_500,
+        }
+    );
+    assert_eq!(
+        vault
+            .connector_key_generation(&legacy_id, 1)?
+            .expect("generation 1")
+            .secret_ref
+            .as_deref(),
+        Some("token_v2")
+    );
+
+    // A terminal key does not rotate.
+    vault.revoke_connector_key(&legacy_id, 3_500)?;
+    assert!(matches!(
+        vault.rotate_connector_key(&legacy_id, "token_v1", 3_600),
+        Err(Error::InvalidConnectorKeyBody(
+            "cannot rotate a revoked key"
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
+fn remove_connector_key_is_revoke_plus_permanent_catalog_history() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (id, _) = vault.register_connector(
+        catalog_entry("herald_slack", "slack"),
+        ConnectorKeySpec::new("slack"),
+        1_000,
+    )?;
+
+    let removed = vault.remove_connector_key(&id, 2_000)?;
+    assert_eq!(removed.status, ConnectorKeyStatus::Revoked);
+    assert_eq!(removed.status_changed_at, Some(2_000));
+
+    let ops = connector_key_op_reasons(&vault)?;
+    assert_eq!(
+        ops.iter()
+            .filter(|reason| *reason == "gate.connector_key.remove")
+            .count(),
+        1,
+        "removal appends exactly one remove record"
+    );
+    assert!(
+        !ops.iter()
+            .any(|reason| reason == "gate.connector_key.revoke"),
+        "removal is its own op, never a revoke"
+    );
+
+    // The name-index row survives: the catalog keeps HISTORY.
+    assert_eq!(
+        catalog_name_index_row(&vault, "herald_slack")?.as_deref(),
+        Some(id.as_bytes().as_slice())
+    );
+    assert!(
+        vault.search_connector_catalog("herald")?.is_empty(),
+        "the discovery lens is live-only"
+    );
+    assert!(vault.route_connector_call("herald_slack")?.is_none());
+    let described = vault
+        .describe_connector("herald_slack")?
+        .expect("the history lens resolves a removed connector");
+    assert_eq!(described.status, ConnectorKeyStatus::Revoked);
+    assert_eq!(described.key_ref, id);
+
+    // The name can never be recycled onto a different connector.
+    assert!(matches!(
+        vault.register_connector(
+            catalog_entry("herald_slack", "line"),
+            ConnectorKeySpec::new("line"),
+            3_000,
+        ),
+        Err(Error::ConnectorKeyAlreadyExists)
+    ));
+
+    // Removing an already-terminal key inherits the illegal-transition error.
+    assert!(matches!(
+        vault.remove_connector_key(&id, 4_000),
+        Err(Error::InvalidConnectorKeyBody("illegal status transition"))
+    ));
+
+    // The public revoke path still appends its own revoke record.
+    let other = test_id(0x51);
+    vault.register_connector_key(
+        &other,
+        ConnectorKeyRecord::active("email", None, Vec::new(), 1_000),
+    )?;
+    vault.revoke_connector_key(&other, 5_000)?;
+    let ops = connector_key_op_reasons(&vault)?;
+    assert_eq!(
+        ops.iter()
+            .filter(|reason| *reason == "gate.connector_key.revoke")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn catalog_meta_verbs() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    register_test_secret(&vault, "slack_token")?;
+    let (slack_id, _) = vault.register_connector(
+        ConnectorCatalogEntry {
+            summary: "Talks to the Slack WORKSPACE".to_owned(),
+            verbs: vec!["send".to_owned(), "read".to_owned()],
+            ..catalog_entry("herald_slack", "slack")
+        },
+        ConnectorKeySpec {
+            secret_ref: Some("slack_token".to_owned()),
+            ..ConnectorKeySpec::new("slack")
+        },
+        1_000,
+    )?;
+    vault.register_connector(
+        ConnectorCatalogEntry {
+            summary: "Read-only market feed".to_owned(),
+            call_class: ConnectorCallClass::ReadOnly,
+            ..catalog_entry("market_feed", "market")
+        },
+        ConnectorKeySpec::new("market"),
+        1_001,
+    )?;
+
+    // A hyphenated query finds the underscored name.
+    let hits = vault.search_connector_catalog("herald-slack")?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].name, "herald_slack");
+    // The summary matches case-insensitively.
+    let hits = vault.search_connector_catalog("workspace")?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].name, "herald_slack");
+    // A blank query lists the live catalog.
+    assert_eq!(vault.search_connector_catalog("")?.len(), 2);
+    assert!(vault.search_connector_catalog("nothing_here")?.is_empty());
+
+    // describe: the entry plus VALUE-LESS key metadata.
+    let described = vault
+        .describe_connector("Herald-Slack")?
+        .expect("describe normalizes its query");
+    assert_eq!(described.key_ref, slack_id);
+    assert_eq!(described.connector, "slack");
+    assert_eq!(described.status, ConnectorKeyStatus::Active);
+    assert_eq!(described.secret_ref.as_deref(), Some("slack_token"));
+    assert_eq!(described.key_generation, 0);
+    assert_eq!(described.registered_at, 1_000);
+    assert!(described.budgeted_as_sends);
+    assert!(
+        !format!("{described:?}")
+            .contains(std::str::from_utf8(CUSTODY_VALUE_FIXTURE).expect("utf8 fixture"))
+    );
+
+    // route: entry-wide classification, no verb parameter.
+    let route = vault.route_connector_call("herald_slack")?.expect("route");
+    assert_eq!(route.key_ref, slack_id);
+    assert_eq!(route.call_class, ConnectorCallClass::CounterpartyComm);
+    assert!(route.budgeted_as_sends);
+    assert_eq!(route.verbs, vec!["send".to_owned(), "read".to_owned()]);
+    assert!(
+        !vault
+            .route_connector_call("market_feed")?
+            .expect("route")
+            .budgeted_as_sends
+    );
+
+    // After removal the execution lens closes but history stays open.
+    vault.remove_connector_key(&slack_id, 2_000)?;
+    assert!(vault.route_connector_call("herald_slack")?.is_none());
+    assert_eq!(
+        vault
+            .describe_connector("herald_slack")?
+            .expect("history")
+            .status,
+        ConnectorKeyStatus::Revoked
+    );
+
+    // An unknown name has no lens at all.
+    assert!(vault.describe_connector("nobody")?.is_none());
+    assert!(vault.route_connector_call("nobody")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn budget_rider_send_is_counterparty_only() -> Result<()> {
+    // ARCH-0054: the Send class is counterparty communications ONLY.
+    assert!(ConnectorCallClass::CounterpartyComm.debits_sends());
+    assert!(!ConnectorCallClass::ReadOnly.debits_sends());
+    assert!(!ConnectorCallClass::ScopedMcp.debits_sends());
+    for class in [
+        ConnectorCallClass::CounterpartyComm,
+        ConnectorCallClass::ReadOnly,
+        ConnectorCallClass::ScopedMcp,
+    ] {
+        assert_eq!(ConnectorCallClass::parse(class.as_str()), Some(class));
+    }
+    assert!(ConnectorCallClass::parse("send").is_none());
+
+    let (_tmp, vault) = temp_vault();
+    // A mixed-verb counterparty connector budgets its read-only verbs as
+    // sends too: the classification is entry-wide, and over-budgeting is the
+    // safe direction.
+    vault.register_connector(
+        ConnectorCatalogEntry {
+            verbs: vec!["send".to_owned(), "search".to_owned()],
+            ..catalog_entry("herald_slack", "slack")
+        },
+        ConnectorKeySpec::new("slack"),
+        1_000,
+    )?;
+    let route = vault.route_connector_call("herald_slack")?.expect("route");
+    assert!(route.budgeted_as_sends);
+    assert_eq!(route.verbs.len(), 2, "no verb narrows the classification");
+
+    // A scoped-MCP connector stays unbudgeted for Sends.
+    vault.register_connector(
+        ConnectorCatalogEntry {
+            call_class: ConnectorCallClass::ScopedMcp,
+            ..catalog_entry("mcp_tools", "mcp")
+        },
+        ConnectorKeySpec::new("mcp"),
+        1_001,
+    )?;
+    assert!(
+        !vault
+            .route_connector_call("mcp_tools")?
+            .expect("route")
+            .budgeted_as_sends
+    );
+
+    // UNCLASSIFIED is unbudgeted: a catalog-free key has no route, so the
+    // executor keeps the canon default. This says nothing about the
+    // production scoped-MCP path, which is still wired to the existing
+    // charger — that rewire is a named follow-on.
+    let legacy_id = test_id(0x61);
+    vault.register_connector_key(
+        &legacy_id,
+        ConnectorKeyRecord::active("line", None, Vec::new(), 1_002),
+    )?;
+    assert!(
+        vault
+            .get_connector_key(&legacy_id)?
+            .expect("stored key")
+            .catalog
+            .is_none()
+    );
+    assert!(vault.route_connector_call("line")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn retried_send_debits_once() -> Result<()> {
+    const FROZEN: u64 = 90_000;
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x71);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active(
+            "peer",
+            None,
+            vec![EffectorBudget::sends(
+                5,
+                EffectorBudgetWindow::Rolling { duration_s: 3_600 },
+                EffectorBudgetOnExhaust::Refuse,
+            )],
+            1_000,
+        ),
+    )?;
+
+    let ConnectorKeySendAdmission::Admitted(charge) =
+        vault.admit_connector_key_send_at(&id, "peer", "task:alpha", FROZEN)?
+    else {
+        panic!("the first eligible call for a logical send admits");
+    };
+    assert_eq!(charge.sends_debit, 1);
+    assert_eq!(charge.matched_rows, vec![0]);
+    assert_eq!(
+        dispatch_usage_row(&vault, &id, 0)?.entries,
+        vec![(FROZEN, 1)]
+    );
+    assert_eq!(send_admit_row_count(&vault, &id)?, 1);
+
+    // The same logical send again — whatever shape the attempt layer's retry
+    // took — debits nothing.
+    let ConnectorKeySendAdmission::Replayed(echo) =
+        vault.admit_connector_key_send_at(&id, "peer", "task:alpha", FROZEN + 5)?
+    else {
+        panic!("a retried logical send replays");
+    };
+    assert_eq!(echo.sends_debit, 0);
+    assert!(echo.matched_rows.is_empty());
+    assert!(echo.ladder_events.is_empty());
+    assert_eq!(echo.read.rows[0].used, 1);
+    assert_eq!(
+        dispatch_usage_row(&vault, &id, 0)?.entries,
+        vec![(FROZEN, 1)],
+        "a replay writes no usage entry"
+    );
+    assert_eq!(send_admit_row_count(&vault, &id)?, 1);
+
+    // A DIFFERENT logical send admits independently.
+    let ConnectorKeySendAdmission::Admitted(second) =
+        vault.admit_connector_key_send_at(&id, "peer", "task:beta", FROZEN + 10)?
+    else {
+        panic!("a distinct logical send admits");
+    };
+    assert_eq!(second.sends_debit, 1);
+    assert_eq!(
+        dispatch_usage_row(&vault, &id, 0)?.entries,
+        vec![(FROZEN, 1), (FROZEN + 10, 1)]
+    );
+    assert_eq!(send_admit_row_count(&vault, &id)?, 2);
+    Ok(())
+}
+
+#[test]
+fn logical_send_ref_is_validated() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x81);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer", None, vec![EffectorBudget::rate(3, 60)], 1_000),
+    )?;
+
+    let too_long = "x".repeat(129);
+    for (bad, reason) in [
+        ("   ", "logical_send_ref must not be blank"),
+        (too_long.as_str(), "logical_send_ref too long"),
+        ("task\u{0}alpha", "logical_send_ref must not contain NUL"),
+    ] {
+        assert!(matches!(
+            vault.admit_connector_key_send_at(&id, "peer", bad, 1_000),
+            Err(Error::InvalidConnectorKeyBody(actual)) if actual == reason
+        ));
+    }
+    // Rejected BEFORE any charge or dedupe write.
+    assert!(dispatch_usage_row(&vault, &id, 0)?.entries.is_empty());
+    assert_eq!(send_admit_row_count(&vault, &id)?, 0);
+
+    // The effect channel is checked on the same pre-write pass.
+    assert!(matches!(
+        vault.admit_connector_key_send_at(&id, "  ", "task:alpha", 1_000),
+        Err(Error::InvalidConnectorKeyBody(
+            "effect channel must not be blank"
+        ))
+    ));
+    assert_eq!(send_admit_row_count(&vault, &id)?, 0);
+
+    // A ref at exactly the cap is fine.
+    let at_cap = "y".repeat(128);
+    assert!(matches!(
+        vault.admit_connector_key_send_at(&id, "peer", &at_cap, 1_000)?,
+        ConnectorKeySendAdmission::Admitted(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn refusal_does_not_poison_replay() -> Result<()> {
+    const FROZEN: u64 = 120_000;
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0x91);
+    let mut row = EffectorBudget::sends(
+        1,
+        EffectorBudgetWindow::Rolling { duration_s: 60 },
+        EffectorBudgetOnExhaust::Suspend,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("peer_send", None, vec![row], 1_000),
+    )?;
+
+    assert!(matches!(
+        vault.admit_connector_key_send_at(&id, "peer", "task:one", FROZEN)?,
+        ConnectorKeySendAdmission::Admitted(_)
+    ));
+
+    // The next logical send exhausts the hard cap: refused, key suspended,
+    // receipted — and NO admission row is written.
+    let ConnectorKeySendAdmission::Refused {
+        reason,
+        row_index,
+        suspended,
+        charge,
+    } = vault.admit_connector_key_send_at(&id, "peer", "task:two", FROZEN + 1)?
+    else {
+        panic!("an exhausted send refuses");
+    };
+    assert_eq!(reason, "budget_exhausted:row:0");
+    assert_eq!(row_index, Some(0));
+    assert!(suspended);
+    assert_eq!(charge.expect("evaluated meter").sends_debit, 0);
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("stored key").status,
+        ConnectorKeyStatus::Suspended
+    );
+    assert!(
+        connector_key_op_reasons(&vault)?
+            .iter()
+            .any(|reason| reason == "gate.connector_key.dispatch_suspend")
+    );
+    assert_eq!(send_admit_row_count(&vault, &id)?, 1);
+
+    // A suspended key refuses inertly.
+    let ConnectorKeySendAdmission::Refused {
+        reason,
+        row_index,
+        suspended,
+        charge,
+    } = vault.admit_connector_key_send_at(&id, "peer", "task:two", FROZEN + 2)?
+    else {
+        panic!("a suspended key refuses");
+    };
+    assert_eq!(reason, "connector_key_not_active");
+    assert_eq!(row_index, None);
+    assert!(!suspended);
+    assert!(charge.is_none());
+    assert_eq!(send_admit_row_count(&vault, &id)?, 1);
+
+    // After resume and a window rollover the SAME ref admits — the refusals
+    // never consumed it — and only then replays.
+    vault.resume_connector_key(&id, FROZEN + 3)?;
+    let ConnectorKeySendAdmission::Admitted(charge) =
+        vault.admit_connector_key_send_at(&id, "peer", "task:two", FROZEN + 61)?
+    else {
+        panic!("the rolled window admits the same logical send");
+    };
+    assert_eq!(charge.sends_debit, 1);
+    assert_eq!(send_admit_row_count(&vault, &id)?, 2);
+    assert!(matches!(
+        vault.admit_connector_key_send_at(&id, "peer", "task:two", FROZEN + 62)?,
+        ConnectorKeySendAdmission::Replayed(_)
+    ));
+
+    // A Refuse-policy row leaves the key state inert on refusal.
+    let refuse_id = test_id(0x92);
+    let mut row = EffectorBudget::sends(
+        1,
+        EffectorBudgetWindow::Rolling { duration_s: 60 },
+        EffectorBudgetOnExhaust::Refuse,
+    );
+    row.channel_class = Some("peer".to_owned());
+    vault.register_connector_key(
+        &refuse_id,
+        ConnectorKeyRecord::active("peer_refuse", None, vec![row], 1_000),
+    )?;
+    vault.admit_connector_key_send_at(&refuse_id, "peer", "task:a", FROZEN)?;
+    let ConnectorKeySendAdmission::Refused { suspended, .. } =
+        vault.admit_connector_key_send_at(&refuse_id, "peer", "task:b", FROZEN + 1)?
+    else {
+        panic!("an exhausted send refuses");
+    };
+    assert!(!suspended);
+    assert_eq!(
+        vault
+            .get_connector_key(&refuse_id)?
+            .expect("stored key")
+            .status,
+        ConnectorKeyStatus::Active
+    );
+    assert_eq!(send_admit_row_count(&vault, &refuse_id)?, 1);
+    Ok(())
 }

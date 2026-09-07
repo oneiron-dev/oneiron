@@ -6,3 +6,4 @@
 //! additive `pub mod ...;` line when its file exists.
 
 pub mod smart_http;
+pub mod lfs;

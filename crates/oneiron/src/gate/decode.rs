@@ -18,8 +18,8 @@ use super::constants::{
     BUDGET_POLICY_ACTOR_KEY, BUDGET_POLICY_CAP_KEY, BUDGET_POLICY_FLOOR_KEY,
     BUDGET_POLICY_PURPOSE_KEY, GRANT_BUDGET_KEY, GRANT_EFFECTOR_KEY, GRANT_RECEIPT_REQUIRED_KEY,
     GRANT_SCOPE_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
-    POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
-    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
+    POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
@@ -33,6 +33,7 @@ use super::constants::{
     SOURCE_TRUST_WARNED_KEY,
 };
 use super::grants::PolicyScopedGrant;
+use super::resolution::CommOptOutPosture;
 
 pub(super) struct DecodedPolicyManifest {
     pub(super) pack: PolicyPack,
@@ -49,6 +50,7 @@ pub(super) struct DecodedPolicyManifest {
     pub(super) owner_policy_patterns_dropped: bool,
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    pub(super) comm_opt_out_posture: Option<CommOptOutPosture>,
     /// The opaque host checker ref (ONE-1296), absent unless the manifest
     /// names one.
     pub(super) auto_checker: Option<String>,
@@ -92,6 +94,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
                 | POLICY_SIGNATURE_KEY
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
+                | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
         ) {
@@ -186,6 +189,15 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
     };
+    // Parsed exactly like its `on_budget_exhausted` sibling, and failing the
+    // same way: an unrecognized token drops the WHOLE manifest, which sets
+    // `malformed_manifest_seen` and fails the gate closed. A posture nobody can
+    // read must never resolve to the permissive pole by silent default.
+    let comm_opt_out_posture = match single_map_value(&entries, POLICY_COMM_OPT_OUT_POSTURE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_comm_opt_out_posture(value)?),
+    };
     // ONE-1296: the checker ref is a SELECTOR the host resolves, so decode
     // asks only that it be one non-blank, bounded string. A duplicate row is
     // the same ambiguity `on_budget_exhausted` refuses, and a blank or
@@ -226,6 +238,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         owner_policy_patterns_dropped,
         signatures,
         on_budget_exhausted,
+        comm_opt_out_posture,
         auto_checker,
         budget_policy,
         unsupported_schema,
@@ -531,6 +544,16 @@ fn parse_budget_exhaustion_policy(value: &Value) -> Option<BudgetExhaustionPolic
             }
         },
         MapValue::Duplicate => None,
+    }
+}
+
+/// Exact inverse of [`CommOptOutPosture::as_str`]. A plain token and nothing
+/// else: the posture is a two-valued dial, not a shape with sub-keys.
+fn parse_comm_opt_out_posture(value: &Value) -> Option<CommOptOutPosture> {
+    match value.as_str()? {
+        "escalate" => Some(CommOptOutPosture::Escalate),
+        "allow_with_receipt" => Some(CommOptOutPosture::AllowWithReceipt),
+        _ => None,
     }
 }
 

@@ -13,6 +13,7 @@ use super::cancel::{
     LandingTrigger, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_LANDING_RESERVE_PERCENT,
     MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS,
 };
+use super::encoding::MAX_DEDUPE_ACTOR_REF_LEN;
 use super::telemetry::invalid_transition;
 use super::types::{
     AttemptEvent, AttemptInterventionKind, AttemptRecord, AttemptState, CleanupAttemptLeases,
@@ -42,6 +43,10 @@ const ERR_EMPTY_KIND: &str = "kind must not be empty";
 const ERR_KIND_TOO_LONG: &str = "kind exceeds 128 bytes";
 const ERR_DEDUPE_KEY_EMPTY: &str = "dedupe key must not be empty";
 const ERR_DEDUPE_KEY_TOO_LONG: &str = "dedupe key exceeds 512 bytes";
+const ERR_DEDUPE_ACTOR_REF_EMPTY: &str = "dedupe actor ref must not be empty";
+const ERR_DEDUPE_ACTOR_REF_TOO_LONG: &str = "dedupe actor ref exceeds 128 bytes";
+pub(super) const ERR_DEDUPE_ACTOR_WITHOUT_KEY: &str =
+    "attempt with actor scope must carry a dedupe key";
 pub(super) const ERR_FAILURE_REASON_EMPTY: &str = "failure reason must not be empty";
 const ERR_FAILURE_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
 const ERR_LEASE_OWNER_EMPTY: &str = "lease owner must not be empty";
@@ -128,6 +133,26 @@ pub(super) fn validate_optional_dedupe(dedupe_key: Option<&str>) -> Result<()> {
         }
         if dedupe_key.len() > MAX_DEDUPE_KEY_LEN {
             return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_KEY_TOO_LONG));
+        }
+    }
+    Ok(())
+}
+
+/// Guards the optional actor scope of a dedupe key, at the same doors the kind
+/// and the key itself are guarded.
+///
+/// The bound matters twice: it keeps a scope out of the index that the v2
+/// length prefix could not describe, and it keeps one caller from spending
+/// another's key space on an unbounded segment.
+pub(super) fn validate_optional_dedupe_actor_ref(actor_ref: Option<&str>) -> Result<()> {
+    if let Some(actor_ref) = actor_ref {
+        if actor_ref.is_empty() {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_REF_EMPTY));
+        }
+        if actor_ref.len() > MAX_DEDUPE_ACTOR_REF_LEN {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_ACTOR_REF_TOO_LONG,
+            ));
         }
     }
     Ok(())
