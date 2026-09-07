@@ -9,6 +9,10 @@ use crate::retrieval_quality::{
 };
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
+mod spend_tests;
+
+type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
 fn request<'a>(probe: SearchProbe, effort: Effort) -> DepthSearchRequest<'a> {
     DepthSearchRequest {
         probe,
@@ -46,7 +50,7 @@ fn score_bits(hits: &[ScoredEntity]) -> Vec<(EntityId, u32)> {
 }
 
 #[test]
-fn retrieval_quality_depth_minimal_records_completed_empty_channels() -> Result<()> {
+fn retrieval_quality_depth_minimal_records_completed_empty_channels() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
     for (probe, signal) in [
@@ -85,7 +89,7 @@ fn retrieval_quality_depth_minimal_records_completed_empty_channels() -> Result<
 }
 
 #[test]
-fn retrieval_quality_depth_minimal_preserves_direct_score_bits_and_order() -> Result<()> {
+fn retrieval_quality_depth_minimal_preserves_direct_score_bits_and_order() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let first = put_text(&vault, 0x61, "qualitydepth qualitydepth")?;
     let second = put_text(&vault, 0x62, "qualitydepth other")?;
@@ -110,7 +114,7 @@ fn retrieval_quality_depth_minimal_preserves_direct_score_bits_and_order() -> Re
 }
 
 #[test]
-fn retrieval_quality_depth_standard_uses_real_disabled_ppr_without_false_miss() -> Result<()> {
+fn retrieval_quality_depth_standard_uses_real_disabled_ppr_without_false_miss() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let seed = put_text(&vault, 0x63, "qualitydepth")?;
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
@@ -159,7 +163,7 @@ fn retrieval_quality_depth_standard_uses_real_disabled_ppr_without_false_miss() 
 }
 
 #[test]
-fn retrieval_quality_depth_empty_standard_does_not_invent_graph_or_full_completion() -> Result<()> {
+fn retrieval_quality_depth_empty_standard_does_not_invent_graph_or_full_completion() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
     let result = scoped.search_with_effort(&request(
@@ -201,7 +205,7 @@ impl DeepSearchBackend for ReverseBackend {
         _already_run: &[String],
         _max_queries: usize,
         lease: &BudgetLease,
-    ) -> Result<BackendSpend<Vec<String>>> {
+    ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         assert_eq!(lease.id(), self.lease_id);
         self.decompose_calls.fetch_add(1, Ordering::SeqCst);
         Ok(BackendSpend {
@@ -215,7 +219,7 @@ impl DeepSearchBackend for ReverseBackend {
         _query: &str,
         candidates: &[RerankCandidate<'_>],
         lease: &BudgetLease,
-    ) -> Result<BackendSpend<Vec<f32>>> {
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         assert_eq!(lease.id(), self.lease_id);
         self.rerank_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(only) = self.only_candidate {
@@ -230,7 +234,7 @@ impl DeepSearchBackend for ReverseBackend {
 }
 
 #[test]
-fn retrieval_quality_depth_deep_tracks_rerank_without_rewriting_engine_scores() -> Result<()> {
+fn retrieval_quality_depth_deep_tracks_rerank_without_rewriting_engine_scores() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     put_text(&vault, 0x64, "qualitydepth qualitydepth")?;
     put_text(&vault, 0x65, "qualitydepth other")?;
@@ -279,7 +283,7 @@ fn retrieval_quality_depth_deep_tracks_rerank_without_rewriting_engine_scores() 
 }
 
 #[test]
-fn retrieval_quality_depth_session_narrows_before_backend_and_diagnostics() -> Result<()> {
+fn retrieval_quality_depth_session_narrows_before_backend_and_diagnostics() -> TestResult {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let included = put_text(&vault, 0x66, "qualitydepth")?;
     put_text(&vault, 0x67, "qualitydepth qualitydepth")?;
@@ -366,6 +370,7 @@ fn retrieval_quality_depth_deep_still_refuses_missing_lease_before_channels() {
         .search_with_effort(&text_request(Effort::Deep))
         .unwrap_err();
     assert!(error.to_string().contains(MEMORY_CODE_LEASE_REQUIRED));
+    assert_eq!(error.tokens_used, 0);
 }
 
 #[test]

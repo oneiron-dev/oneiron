@@ -18,8 +18,10 @@ use crate::vault::Vault;
 
 mod accumulation;
 mod session_scope;
+mod spend;
 use accumulation::DepthAccumulator;
 pub use session_scope::{SessionScope, narrow_to_session_scope};
+pub use spend::{RetrievalError, RetrievalResult};
 
 /// Deterministic subqueries a [`Effort::Standard`] text pass may run,
 /// INCLUDING the caller's own query. Four is the whole fan-out: the tier's
@@ -183,7 +185,9 @@ impl<T> BackendSpend<T> {
 /// text or persona enters this crate. The engine calls these methods under its
 /// own caps and truncates whatever comes back, so an implementation is free to
 /// be sloppy about limits without widening the read. Both calls receive the
-/// same admitted lease that pays for this read.
+/// same admitted lease that pays for this read. On failure, report any tokens
+/// this call consumed in [`RetrievalError`]; a plain engine error converts to
+/// zero usage only. The host, not the backend, settles the shared lease.
 pub trait DeepSearchBackend: Send + Sync {
     /// Proposes follow-up queries for one deep round.
     ///
@@ -198,7 +202,7 @@ pub trait DeepSearchBackend: Send + Sync {
         already_run: &[String],
         max_queries: usize,
         lease: &BudgetLease,
-    ) -> Result<BackendSpend<Vec<String>>>;
+    ) -> RetrievalResult<BackendSpend<Vec<String>>>;
 
     /// Cross-encoder scoring over the merged candidate set.
     ///
@@ -211,7 +215,7 @@ pub trait DeepSearchBackend: Send + Sync {
         query: &str,
         candidates: &[RerankCandidate<'_>],
         lease: &BudgetLease,
-    ) -> Result<BackendSpend<Vec<f32>>>;
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>>;
 }
 
 /// The `short_id:hash` reference for an entity, or its hex id when the entity
@@ -295,7 +299,7 @@ fn is_stopword(token: &str) -> bool {
 pub(crate) fn execute(
     scoped: &ScopedRead<'_>,
     request: &DepthSearchRequest<'_>,
-) -> Result<DepthSearchResult> {
+) -> RetrievalResult<DepthSearchResult> {
     validate(request)?;
     let mut acc = DepthAccumulator::default();
     run_direct_channel(scoped, request, &mut acc)?;
@@ -316,8 +320,14 @@ pub(crate) fn execute(
         .backend
         .ok_or_else(|| Error::InvalidConfig("deep retrieval requires a backend".to_owned()))?;
     let query = deep_query(request)?.to_owned();
-    run_deep_rounds(scoped, request, backend, &query, &mut acc)?;
-    run_deep_rerank(scoped, request, backend, &query, &mut acc)?;
+    run_deep_rounds(scoped, request, backend, &query, &mut acc)
+        .and_then(|()| run_deep_rerank(scoped, request, backend, &query, &mut acc))
+        .map_err(|mut failure| {
+            // Successful calls were charged before later fallible work. A
+            // failed backend call reports only its own additional spend.
+            failure.tokens_used = failure.tokens_used.saturating_add(acc.tokens_used);
+            failure
+        })?;
     Ok(acc.finish(request.limit))
 }
 
@@ -455,7 +465,7 @@ fn run_deep_rounds(
     backend: &dyn DeepSearchBackend,
     query: &str,
     acc: &mut DepthAccumulator,
-) -> Result<()> {
+) -> RetrievalResult<()> {
     for _ in 0..DEEP_MAX_ROUNDS {
         let proposed = backend.decompose(
             query,
@@ -491,7 +501,7 @@ fn run_deep_rerank(
     backend: &dyn DeepSearchBackend,
     query: &str,
     acc: &mut DepthAccumulator,
-) -> Result<()> {
+) -> RetrievalResult<()> {
     if acc.order.is_empty() {
         return Ok(());
     }
@@ -507,7 +517,8 @@ fn run_deep_rerank(
     if scored.value.len() != acc.order.len() {
         return Err(Error::InvalidConfig(
             "deep rerank backend returned one score per candidate".to_owned(),
-        ));
+        )
+        .into());
     }
     acc.reorder_by(&scored.value);
     acc.complete(RetrievalSignal::Rerank);
@@ -516,10 +527,11 @@ fn run_deep_rerank(
 
 impl ScopedRead<'_> {
     /// Execute the requested effort through this actor-keyed read lane.
+    /// Errors retain actual reported spend; settle it just as on success.
     pub fn search_with_effort(
         &self,
         request: &DepthSearchRequest<'_>,
-    ) -> Result<DepthSearchResult> {
+    ) -> RetrievalResult<DepthSearchResult> {
         execute(self, request)
     }
 }

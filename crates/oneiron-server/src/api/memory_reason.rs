@@ -8,8 +8,8 @@ use axum::response::Json;
 use oneiron::claim::ScopedRead;
 use oneiron::llm::BudgetLease;
 use oneiron::retrieval_depth::{
-    BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, SearchProbe,
-    SessionScope, short_ref_or_hex,
+    BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, RetrievalResult,
+    SearchProbe, SessionScope, short_ref_or_hex,
 };
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use oneiron::{Effort, EntityId, ScoredEntity};
@@ -238,12 +238,13 @@ pub(crate) struct MemoryReasonComposition {
 /// Host-injected deep reasoning: the deep search seam plus composition.
 pub(crate) trait MemoryReasonBackend: DeepSearchBackend {
     /// Composes one answer from the retrieved evidence, under the lease the
-    /// budget guard minted for this read.
+    /// budget guard minted for this read. Errors report this call's spent
+    /// tokens, just like the deep search methods; the host settles the total.
     fn compose(
         &self,
         request: &MemoryReasonComposeRequest<'_>,
         lease: &BudgetLease,
-    ) -> oneiron::Result<BackendSpend<MemoryReasonComposition>>;
+    ) -> RetrievalResult<BackendSpend<MemoryReasonComposition>>;
 }
 
 /// Maps an engine refusal from the depth executor onto the wire.
@@ -335,29 +336,38 @@ pub(crate) async fn companion_memory_reason(
         lease: admission.as_ref().map(DeepAdmission::lease),
         backend: admission.as_ref().map(DeepAdmission::search_backend),
     };
-    let retrieved = scoped_read
-        .search_with_effort(&depth_request)
-        .map_err(depth_search_error)?;
-    let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
-
-    let answered = answer_from(
-        &request,
-        &query,
-        token_budget,
-        &evidence,
-        admission.as_ref(),
-    )?;
-    let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
-    if let Some(admission) = admission.as_ref() {
-        admission.settle(tokens_used);
+    let result = (|| {
+        let retrieved = scoped_read.search_with_effort(&depth_request);
+        if let Some(admission) = admission.as_ref() {
+            admission.record_usage(retrieved.as_ref().map_or_else(
+                |failure| failure.tokens_used,
+                |retrieved| retrieved.tokens_used,
+            ));
+        }
+        let retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
+        let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
+        let answered = answer_from(
+            &request,
+            &query,
+            token_budget,
+            &evidence,
+            admission.as_ref(),
+        )?;
+        let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
+        Ok(Json(reason_response(
+            request.depth,
+            &retrieved,
+            answered,
+            tokens_used,
+        )))
+    })();
+    // The closure contains every fallible step after retrieval starts. Even
+    // projection or composition errors must settle the usage already recorded.
+    match admission.as_ref() {
+        Some(admission) => admission.finish(result),
+        None => result,
     }
-
-    Ok(Json(reason_response(
-        request.depth,
-        &retrieved,
-        answered,
-        tokens_used,
-    )))
+    .map_err(Into::into)
 }
 
 /// Project the engine report without inferring execution health from answer gaps.
@@ -579,23 +589,24 @@ fn compose_read(
     evidence: &[MemoryReasonEvidence],
     admission: &DeepAdmission,
 ) -> Result<AnsweredRead, ApiError> {
-    let composed = admission
-        .host
-        .backend
-        .compose(
-            &MemoryReasonComposeRequest {
-                question: query,
-                depth: request.depth,
-                format: request.format,
-                token_budget,
-                evidence,
-            },
-            admission.lease(),
-        )
-        .map_err(|error| {
-            tracing::error!(error = %error, "memory reason composition failed");
-            ApiError::internal_server_error("memory reason composition failed")
-        })?;
+    let composed = admission.host.backend.compose(
+        &MemoryReasonComposeRequest {
+            question: query,
+            depth: request.depth,
+            format: request.format,
+            token_budget,
+            evidence,
+        },
+        admission.lease(),
+    );
+    admission.record_usage(composed.as_ref().map_or_else(
+        |failure| failure.tokens_used,
+        |composed| composed.tokens_used,
+    ));
+    let composed = composed.map_err(|failure| {
+        tracing::error!(error = %failure.error, "memory reason composition failed");
+        ApiError::internal_server_error("memory reason composition failed")
+    })?;
     let tokens_used = composed.tokens_used;
     let composed = composed.value;
 

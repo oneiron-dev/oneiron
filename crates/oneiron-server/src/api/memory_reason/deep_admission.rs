@@ -34,6 +34,7 @@ pub(crate) struct DeepAdmission {
     pub(super) host: Arc<DeepRetrievalHost>,
     admission: BudgetAdmission,
     finalized: Cell<bool>,
+    tokens_used: Cell<u64>,
 }
 
 impl DeepAdmission {
@@ -46,27 +47,47 @@ impl DeepAdmission {
         self.host.backend.as_ref()
     }
 
-    /// Settles the lease against what the read ACTUALLY spent.
-    ///
-    /// Each read adds its own usage once and releases its reservation.
-    pub(crate) fn settle(&self, tokens_used: u64) {
-        if let Err(error) = self
-            .host
-            .guard
-            .settle_usage(&self.admission.lease, tokens_used)
-        {
-            tracing::warn!(?error, "deep retrieval lease settlement failed");
-        } else {
-            self.finalized.set(true);
+    /// Records each stage's reported usage before any later fallible work.
+    pub(crate) fn record_usage(&self, tokens_used: u64) {
+        self.tokens_used
+            .set(self.tokens_used.get().saturating_add(tokens_used));
+    }
+
+    /// Settles successful reads, and failed reads that consumed tokens, before
+    /// returning either result. A zero-use failure is left for Drop to abort.
+    pub(crate) fn finish<T>(&self, result: Result<T, ApiError>) -> Result<T, ApiError> {
+        if result.is_ok() || self.tokens_used.get() != 0 {
+            self.settle()?;
         }
+        result
+    }
+
+    /// Adds this read's actual usage once and releases its reservation.
+    /// Settlement failure blocks the response, including an otherwise usable
+    /// answer; it must not be reduced to a warning and a successful read.
+    pub(crate) fn settle(&self) -> Result<(), ApiError> {
+        self.host
+            .guard
+            .settle_usage(&self.admission.lease, self.tokens_used.get())
+            .map_err(|error| {
+                tracing::warn!(?error, "deep retrieval lease settlement failed");
+                ApiError::deep_retrieval_unavailable()
+            })?;
+        self.finalized.set(true);
+        Ok(())
     }
 }
 
 impl Drop for DeepAdmission {
     fn drop(&mut self) {
-        if !self.finalized.get()
-            && let Err(error) = self.host.guard.abort(self.lease())
-        {
+        if self.finalized.get() {
+            return;
+        }
+        // Never erase recorded spend with an abort, even during unwinding or
+        // a failed explicit settlement. Settlement is idempotent.
+        if self.tokens_used.get() != 0 {
+            let _ = self.settle(); // Already logged; Drop cannot return an error.
+        } else if let Err(error) = self.host.guard.abort(self.lease()) {
             tracing::warn!(?error, "deep retrieval lease abort failed");
         }
     }
@@ -102,5 +123,9 @@ pub(crate) fn admit_deep_retrieval(
         host,
         admission,
         finalized: Cell::new(false),
+        tokens_used: Cell::new(0),
     }))
 }
+
+#[cfg(test)]
+mod tests;

@@ -345,13 +345,18 @@ fn run_depth_search(
         lease: admission.map(DeepAdmission::lease),
         backend: admission.map(DeepAdmission::search_backend),
     };
-    let result = scoped_read
-        .search_with_effort(&request)
-        .map_err(depth_search_error)?;
+    let result = scoped_read.search_with_effort(&request);
     if let Some(admission) = admission {
-        admission.settle(result.tokens_used);
+        admission.record_usage(result.as_ref().map_or_else(
+            |failure| failure.tokens_used,
+            |retrieved| retrieved.tokens_used,
+        ));
     }
-    Ok(result)
+    let result = result.map_err(|failure| depth_search_error(failure.error));
+    match admission {
+        Some(admission) => admission.finish(result),
+        None => result,
+    }
 }
 
 pub(crate) fn search_fetch_limit(count_mode: CountMode, page_limit: usize) -> usize {

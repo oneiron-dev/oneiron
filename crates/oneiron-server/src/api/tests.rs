@@ -1,6 +1,7 @@
 use super::*;
 
 mod depth_quality;
+mod depth_spend;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;

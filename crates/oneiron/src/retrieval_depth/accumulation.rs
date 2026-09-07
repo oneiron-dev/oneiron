@@ -12,7 +12,7 @@ pub(super) struct DepthAccumulator {
     signals: Vec<String>,
     pub(super) queries_run: Vec<String>,
     candidates_scanned: u64,
-    tokens_used: u64,
+    pub(super) tokens_used: u64,
     backend_used: bool,
     pub(super) retrieval_diagnostics: RetrievalDiagnostics,
 }

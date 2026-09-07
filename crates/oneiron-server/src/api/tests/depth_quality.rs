@@ -4,7 +4,7 @@ use crate::api::memory_reason::{
 };
 use oneiron::llm::{BudgetExhaustionPolicy, BudgetGuard, BudgetLease};
 use oneiron::rerank::RerankCandidate;
-use oneiron::retrieval_depth::{BackendSpend, DeepSearchBackend};
+use oneiron::retrieval_depth::{BackendSpend, DeepSearchBackend, RetrievalResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The immutable pre-depth fixture still pins every old error shape. Only the
@@ -171,7 +171,7 @@ impl DeepSearchBackend for DecliningBackend {
         _already_run: &[String],
         _max_queries: usize,
         lease: &BudgetLease,
-    ) -> oneiron::Result<BackendSpend<Vec<String>>> {
+    ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         assert!(!lease.id().is_empty());
         Ok(BackendSpend {
             value: Vec::new(),
@@ -183,7 +183,7 @@ impl DeepSearchBackend for DecliningBackend {
         _query: &str,
         candidates: &[RerankCandidate<'_>],
         lease: &BudgetLease,
-    ) -> oneiron::Result<BackendSpend<Vec<f32>>> {
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         assert!(!lease.id().is_empty());
         Ok(BackendSpend {
             value: vec![1.0; candidates.len()],
@@ -197,7 +197,7 @@ impl MemoryReasonBackend for DecliningBackend {
         &self,
         request: &MemoryReasonComposeRequest<'_>,
         lease: &BudgetLease,
-    ) -> oneiron::Result<BackendSpend<MemoryReasonComposition>> {
+    ) -> RetrievalResult<BackendSpend<MemoryReasonComposition>> {
         assert!(!lease.id().is_empty());
         assert!(!request.evidence.is_empty());
         self.composed.fetch_add(1, Ordering::SeqCst);
