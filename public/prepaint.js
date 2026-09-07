@@ -30,6 +30,7 @@ try {
   if (pk === 'well' || pk === 'sidebar' || pk === 'ground') document.documentElement.setAttribute('data-picker', pk);
   const rc = localStorage.getItem('oneiron-room-column');
   if (rc === 'center' || rc === 'dock') document.documentElement.setAttribute('data-room-column', rc);
+  if (localStorage.getItem('oneiron-my-turn') === 'stack') document.documentElement.setAttribute('data-my-turn', 'stack');
   const wk = localStorage.getItem('oneiron-work');
   if (wk === 'pane') document.documentElement.setAttribute('data-work-axis', wk);
   const sc = localStorage.getItem('oneiron-select-chrome');

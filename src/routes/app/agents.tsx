@@ -267,7 +267,11 @@ type Msg = {
      the replies under a trunk message, depth one (owner 09-08) */
   replyTo?: { id: string; span?: string }
   replies?: Msg[]
+  /* reactions (owner 09-08): a glyph and who put it there. agents react too;
+     a 👀 from an agent is "seen", cheaper than a message (OF-372) */
+  reacts?: Array<{ glyph: string; by: Who[] }>
 }
+const GLYPHS = ['👍', '❤️', '👀', '✅', '🙏', '✨']
 type RoomKey = AgentKey | 'house' | string
 
 const THREADS: Record<AgentKey | 'house', Msg[]> = {
@@ -285,7 +289,7 @@ const THREADS: Record<AgentKey | 'house', Msg[]> = {
     { id: 't2q', who: 'o', at: '11:40', text: 'Why so low?', replyTo: { id: 't1', span: '0.41' } },
     { id: 't2a', who: 'tory', at: '11:42', text: 'One source, and it is second-hand. The floor for a critical claim is two, so it stays a proposal until a second one lands.' },
     { id: 't3', who: 'o', at: '12:30', text: 'Anything in the Kansai freight filings on Hokuei?' },
-    { id: 't4', who: 'tory', at: '12:48', text: 'Read them. Four claims written, none waited.', replyTo: { id: 't3' }, card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · every one cleared the floor', doors: [{ label: 'receipt', tip: 'run rx_9033 · sources read, claims written, cost', href: '#' }] } },
+    { id: 't4', who: 'tory', at: '12:48', text: 'Read them. Four claims written, none waited.', replyTo: { id: 't3' }, reacts: [{ glyph: '✅', by: ['o'] }], card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · every one cleared the floor', doors: [{ label: 'receipt', tip: 'run rx_9033 · sources read, claims written, cost', href: '#' }] } },
     { id: 't5', who: 'tory', at: '13:26', live: true, text: 'Checking the supplier rumor against the filings now. Two filings open so far; neither of them says consolidation.' },
   ],
   antevon: [
@@ -296,10 +300,10 @@ const THREADS: Record<AgentKey | 'house', Msg[]> = {
     { id: 'a5', who: 'antevon', at: '14:05', text: 'Answered #ops on the pilot timeline and cited the scope note.', card: { kind: 'door', title: 'Slack #ops · the pilot timeline', line: 'answered because it was addressed · cites cl_9f21', doors: [{ label: 'the thread', tip: 'slack #ops · the answer in place', to: '/app/threads' }] } },
   ],
   house: [
-    { id: 'h1', who: 'o', at: '09:02', text: 'Hokuei want to move the pilot start. Tory, anything in the filings? Eiri, hold the COO intro until we know.' },
+    { id: 'h1', who: 'o', at: '09:02', text: 'Hokuei want to move the pilot start. Tory, anything in the filings? Eiri, hold the COO intro until we know.', reacts: [{ glyph: '👀', by: ['tory', 'eiri'] }] },
     { id: 'h2', who: 'antevon', at: '09:03', handoff: { to: 'tory', what: 'the Kansai freight filings, anything on Hokuei' } },
     { id: 'h3', who: 'antevon', at: '09:03', handoff: { to: 'eiri', what: 'hold the COO intro · draft only' } },
-    { id: 'h4', who: 'tory', at: '12:48', text: 'Read the Kansai filings. Nothing on Hokuei moving; four claims on freight terms.', replyTo: { id: 'h1' }, card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · none waited', doors: [{ label: 'receipt', tip: 'run rx_9033', href: '#' }] }, replies: [
+    { id: 'h4', who: 'tory', at: '12:48', text: 'Read the Kansai filings. Nothing on Hokuei moving; four claims on freight terms.', replyTo: { id: 'h1' }, card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · none waited', doors: [{ label: 'receipt', tip: 'run rx_9033', href: '#' }] }, reacts: [{ glyph: '👍', by: ['o'] }], replies: [
       { id: 'h4r1', who: 'o', at: '12:50', text: 'Any freight terms that bite us?' },
       { id: 'h4r2', who: 'tory', at: '12:52', text: 'Two. A 30-day settlement clause and a fuel surcharge cap. Both are on the claims.', replyTo: { id: 'h4r1', span: 'bite us' } },
     ] },
@@ -391,6 +395,16 @@ function IconThread() {
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 13V4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v4.6a1.5 1.5 0 0 1-1.5 1.5H6z" />
       <path d="M6 6.2h4M6 8.2h2.5" />
+    </svg>
+  )
+}
+function IconReact() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="7" cy="9" r="5.5" />
+      <path d="M4.8 10.4a2.9 2.9 0 0 0 4.4 0" />
+      <path d="M5.3 7.6h.01M8.7 7.6h.01" strokeWidth="1.8" />
+      <path d="M13 1.8v3.6M11.2 3.6h3.6" />
     </svg>
   )
 }
@@ -543,6 +557,8 @@ function Agents() {
   const [alsoRoom, setAlsoRoom] = React.useState(false)
   /* the message a strip travelled to lights up for a beat */
   const [lit, setLit] = React.useState<string | null>(null)
+  /* the glyph row open on one message */
+  const [picking, setPicking] = React.useState<string | null>(null)
   const roomRef = React.useRef<HTMLElement>(null)
   const tinputRef = React.useRef<HTMLInputElement>(null)
   const { sel, raise: raiseSel, clear: clearSel } = useSelTools(roomRef, { min: 2 })
@@ -698,6 +714,21 @@ function Agents() {
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     setLit(id)
     setTimeout(() => setLit((l) => (l === id ? null : l)), 1400)
+    cue('press')
+  }
+  /* a reaction toggles: yours joins the glyph's pill or leaves it */
+  const toggleReact = (id: string, glyph: string) => {
+    const flip = (m: Msg): Msg => {
+      if (m.id !== id) return m
+      const list = (m.reacts ?? []).map((r) => ({ ...r, by: [...r.by] }))
+      const hit = list.find((r) => r.glyph === glyph)
+      if (!hit) list.push({ glyph, by: ['o'] })
+      else if (hit.by.includes('o')) hit.by = hit.by.filter((w) => w !== 'o')
+      else hit.by.push('o')
+      return { ...m, reacts: list.filter((r) => r.by.length) }
+    }
+    setThreads((t) => ({ ...t, [room]: (t[room] ?? []).map((m) => ({ ...flip(m), replies: m.replies?.map(flip) })) }))
+    setPicking(null)
     cue('press')
   }
 
@@ -929,10 +960,14 @@ function Agents() {
     }
     const n = m.replies?.length ?? 0
     return (
-      <div key={m.id} data-id={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && !mine && head ? 'head' : '', lit === m.id ? 'lit' : ''].filter(Boolean).join(' ')}>
-        {house && !mine ? (
+      <div key={m.id} data-id={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && head ? 'head' : '', lit === m.id ? 'lit' : ''].filter(Boolean).join(' ')}>
+        {house ? (
           <span className="rwho">
-            {head ? (
+            {head && mine ? (
+              <span className="rme" title="you">
+                you
+              </span>
+            ) : head ? (
               <>
                 <Face c={who?.creature ?? 'none'} size={20} alt={who?.fixture?.creature.alt} />
                 <span className="aname" data-agent={m.who} title={NAMES[m.who as AgentKey]}>
@@ -957,6 +992,23 @@ function Agents() {
           {m.replyTo ? renderStrip(m.replyTo) : null}
           {m.text ? <span className="rtext">{m.text}</span> : null}
           {m.card ? renderCard(m.card, c) : null}
+          {m.reacts?.length ? (
+            <span className="rreacts">
+              {m.reacts.map((r) => (
+                <button
+                  key={r.glyph}
+                  type="button"
+                  className={r.by.includes('o') ? 'rpill mine' : 'rpill'}
+                  title={r.by.map((w) => (w === 'o' ? 'you' : NAMES[w])).join(', ')}
+                  aria-pressed={r.by.includes('o')}
+                  onClick={(e) => { markCued(e); toggleReact(m.id, r.glyph) }}
+                >
+                  <span className="g">{r.glyph}</span>
+                  <span className="n">{r.by.length}</span>
+                </button>
+              ))}
+            </span>
+          ) : null}
           {where === 'trunk' && n ? (
             <button type="button" className="door rthread" title="the thread under this message · open it beside the room" onClick={openThreadOn}>
               {n} {n === 1 ? 'reply' : 'replies'} · {m.replies![n - 1].at}
@@ -969,6 +1021,18 @@ function Agents() {
           </span>
           {acts ? (
             <span className="racts">
+              {picking === m.id ? (
+                <span className="rpick" role="group" aria-label="react">
+                  {GLYPHS.map((g) => (
+                    <button key={g} type="button" title={g} onClick={(e) => { markCued(e); toggleReact(m.id, g) }}>
+                      {g}
+                    </button>
+                  ))}
+                </span>
+              ) : null}
+              <button type="button" className="gact" title="react · a glyph on this message" aria-label="react" aria-expanded={picking === m.id} onClick={(e) => { markCued(e); setPicking((p) => (p === m.id ? null : m.id)); cue('toggle') }}>
+                <IconReact />
+              </button>
               <button type="button" className="gact" title="reply · the pointer carries this message" aria-label="reply" onClick={replyTo}>
                 <IconReply />
               </button>
