@@ -32,6 +32,17 @@ pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
+// No production backend/prompt/budget owner is constructed by this daemon yet.
+// Keep the integration private and inert until that owner supplies the bindings.
+#[cfg(unix)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "private voice bindings are host-injected; no provider factory in this daemon"
+    )
+)]
+mod voice_host;
 
 use std::sync::Arc;
 
