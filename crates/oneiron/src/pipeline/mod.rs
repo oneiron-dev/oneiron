@@ -3,6 +3,7 @@ mod budget;
 mod builder;
 mod channels;
 mod execution;
+mod execution_binding;
 mod filters;
 mod support;
 mod trace;

@@ -117,27 +117,6 @@ impl<'a> PipelineBuilder<'a> {
         }
     }
 
-    pub(crate) fn for_execution(
-        vault: &'a Vault,
-        execution: &crate::code_run::HostSelfDispatcher<'_>,
-    ) -> Result<Self> {
-        if !std::ptr::eq(execution.store_identity(), &vault.store) {
-            return Err(Error::InvalidConfig(
-                "query execution capability belongs to a different vault".to_owned(),
-            ));
-        }
-        // A canonical pipeline cannot stand in for a session's composed read
-        // view or its route validation. Do not shed that boundary here.
-        if execution.session_ref().is_some() {
-            return Err(Error::InvalidConfig(
-                "query execution capability requires a canonical run".to_owned(),
-            ));
-        }
-        let mut query = Self::new(vault);
-        query.execution_actor = Some(execution.actor());
-        Ok(query)
-    }
-
     /// Routes this run's retrieval-run registration through a live room's
     /// door (ONE-1728 K10). Additive: retrieval scoring, filters, and every
     /// base reader stay exactly as they were.
