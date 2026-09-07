@@ -70,7 +70,7 @@ impl TinyExtractor {
                 response_format: ResponseFormat::Json { schema: json!({
                     "type": "object", "additionalProperties": false,
                     "required": ["entity_labels", "salient_terms"],
-                    "properties": {"entity_labels": list.clone(), "salient_terms": list}
+                    "properties": {"entity_labels": list, "salient_terms": list}
                 }) },
                 locality: self.locality,
             },
