@@ -106,7 +106,10 @@ mod open_gates;
 mod outbound_send_receipt;
 mod pending_embedding;
 mod pending_gate_consent;
+mod ppr_community;
+mod ppr_community_indexed;
 mod retrieval_telemetry;
+mod send_receipt_audit;
 mod short_id_alias;
 mod structural_kind_registry;
 

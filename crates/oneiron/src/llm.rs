@@ -50,6 +50,7 @@ use crate::claim::ClaimSource;
 use crate::edit_distance::routing::{RoutingScopeKey, WeightHint, routing_weight_hint};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
+use crate::write_envelope::SourceLineage;
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;
@@ -993,7 +994,11 @@ const AUTO_CHECK_DETERMINISTIC_FALLBACK: &str = "fail_closed_to_proposed";
 pub struct AutoCheckCandidate<'a> {
     pub predicate: &'a str,
     pub value_preview: &'a str,
+    /// The claim's declared source, independent of its history.
     pub source: ClaimSource,
+    /// Source classes in the write's history, or `None` without an envelope.
+    /// Restricted members can trigger this consult even for a benign declaration.
+    pub lineage: Option<&'a SourceLineage>,
     pub actor_class: &'a str,
     pub sensitivity_band: Option<u8>,
 }
@@ -1007,7 +1012,10 @@ pub struct AutoCheckCandidate<'a> {
 pub struct AutoCheckCandidateOwned {
     pub predicate: String,
     pub value_preview: String,
+    /// The claim's declared source, independent of its history.
     pub source: ClaimSource,
+    /// Source classes in the write's history, or `None` without an envelope.
+    pub lineage: Option<SourceLineage>,
     pub actor_class: String,
     pub sensitivity_band: Option<u8>,
 }
@@ -1020,6 +1028,7 @@ impl AutoCheckCandidateOwned {
             predicate: &self.predicate,
             value_preview: &self.value_preview,
             source: self.source,
+            lineage: self.lineage.as_ref(),
             actor_class: &self.actor_class,
             sensitivity_band: self.sensitivity_band,
         }
@@ -1032,6 +1041,7 @@ impl From<&AutoCheckCandidate<'_>> for AutoCheckCandidateOwned {
             predicate: candidate.predicate.to_owned(),
             value_preview: candidate.value_preview.to_owned(),
             source: candidate.source,
+            lineage: candidate.lineage.cloned(),
             actor_class: candidate.actor_class.to_owned(),
             sensitivity_band: candidate.sensitivity_band,
         }
@@ -1270,14 +1280,23 @@ fn auto_check_verdict_schema() -> JsonValue {
 }
 
 fn auto_check_candidate_text(candidate: &AutoCheckCandidate<'_>) -> String {
+    let lineage = match candidate.lineage {
+        Some(lineage) => lineage
+            .iter()
+            .map(ClaimSource::as_str)
+            .collect::<Vec<_>>()
+            .join(", "),
+        None => "unavailable".to_owned(),
+    };
     let sensitivity_band = match candidate.sensitivity_band {
         Some(band) => band.to_string(),
         None => "unstamped".to_owned(),
     };
     format!(
-        "predicate: {}\nsource: {}\nactor_class: {}\nsensitivity_band: {}\nvalue_preview: {}",
+        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nvalue_preview: {}",
         candidate.predicate,
         candidate.source.as_str(),
+        lineage,
         candidate.actor_class,
         sensitivity_band,
         candidate.value_preview,

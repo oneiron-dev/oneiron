@@ -42,6 +42,35 @@
 //! structurally usable, and compares it to an expected ref ONLY when the
 //! caller supplies one. Producing packets (the host cutting a forked
 //! compaction) is out of scope here.
+//!
+//! # Two disjoint facets, one module (RT-05, ONE-1687)
+//!
+//! Everything above is the DOOR: admission of a packet a host cut OUT of
+//! process. Everything below [`CompactionBackend`] is the DRIVER: in-engine
+//! context-window compaction — the pluggable cheap backend seam, the margin
+//! law, the background-swap state machine, and the epoch-summary mint. The
+//! two facets share this module and the `session_ref` / watermark vocabulary
+//! and nothing else: the door validates a foreign judgment, the driver
+//! produces a local one.
+//!
+//! The driver owns no scheduler, thread, timer or heartbeat (ARCH-0026 /
+//! CROSS-ARCH-0022 / ARCH-0046). It is a state machine plus arithmetic; the
+//! host supplies the runtime and calls [`CompactionDriver::observe_serialized_pack`]
+//! after every serialized assembly.
+
+mod driver;
+mod epoch;
+
+pub use driver::{
+    CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
+    CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
+    CompactionWatermark, CompactionWindowMessage, MarginLaw, SwapPlan,
+};
+pub use epoch::{
+    EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL,
+    EPOCH_SUMMARY_MAX_DERIVED_EDGES, EpochSummaryBody, decode_epoch_summary_body,
+    encode_epoch_summary_body,
+};
 
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;

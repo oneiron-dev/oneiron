@@ -722,7 +722,7 @@ mod tests {
 
         assert_eq!(
             err.kind(),
-            clap::error::ErrorKind::MissingSubcommand,
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
             "bare `api` must not resolve to another command"
         );
     }

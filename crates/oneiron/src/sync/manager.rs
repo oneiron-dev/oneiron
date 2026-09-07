@@ -435,6 +435,77 @@ impl WindowManager {
         true
     }
 
+    /// SLIM (ONE-1933 / OF-447) concrete sync drop producer: a two-phase
+    /// graceful unload across the WHOLE registry.
+    ///
+    /// 1. Hold the registry mutex and preflight every registered window. If
+    ///    any window still has an external `Arc` holder, return the existing
+    ///    [`Error::WindowBusy`] information BEFORE persisting or removing any
+    ///    registry entry — a busy window refuses the shed for all of them.
+    /// 2. Still under the pinned `registry → materializer` lock order, call
+    ///    [`LoadedWindow::persist_state`] for every window. If any persist
+    ///    fails, remove NONE: every window stays registered and observed.
+    /// 3. Only after every persist succeeds, take the registry, release the
+    ///    mutex, drop the windows and prune the issued-handle weak lists.
+    ///
+    /// Never [`discard_window`](Self::discard_window): its no-persist
+    /// semantics are for known-stale imports and would durably lose live doc
+    /// state. Never drops [`outbound`](Self::outbound) — the `OutboundSink` is
+    /// connection-state residue and stays attached. The ordinary
+    /// [`open_window`](Self::open_window) path is the lazy rebuild and stays
+    /// byte-for-byte authoritative for recovery ordering.
+    ///
+    /// `estimated_reclaimed_bytes` is the summed encoded snapshot length: a
+    /// lower-bound proxy for the freed heap (chiefly Loro op history), never
+    /// an RSS-delta predictor.
+    pub(crate) fn drop_rebuildable_windows(&self) -> Result<crate::slim::HeapDropReport> {
+        let mut registry = self.lock_registry();
+
+        // Phase 1 — preflight EVERY window before any mutation, so a refusal
+        // is a pure no-op the caller can retry (ONE-1150 semantics, widened
+        // from one key to the whole registry).
+        for (key, window) in registry.iter() {
+            let outstanding_handles = Arc::strong_count(window) - 1;
+            if outstanding_handles > 0 {
+                return Err(Error::WindowBusy {
+                    window_key: key.to_string(),
+                    outstanding_handles,
+                });
+            }
+        }
+
+        // Phase 2 — persist every window while observers still cover its doc.
+        // A failure here returns with the registry untouched.
+        let mut estimated_reclaimed_bytes = 0_u64;
+        for window in registry.values() {
+            let state = window.persist_state(&self.vault)?;
+            estimated_reclaimed_bytes =
+                estimated_reclaimed_bytes.saturating_add(state.len() as u64);
+        }
+
+        // Phase 3 — deregister everything at once and drop the docs outside
+        // the registry lock.
+        let dropped = std::mem::take(&mut *registry);
+        drop(registry);
+        let sync_windows = dropped.len() as u64;
+        let keys: Vec<WindowKey> = dropped.keys().cloned().collect();
+        drop(dropped);
+        for key in &keys {
+            self.prune_issued_handles_for_key(key);
+        }
+
+        tracing::debug!(
+            sync_windows,
+            estimated_reclaimed_bytes,
+            "slim: persisted and deregistered every live window"
+        );
+        Ok(crate::slim::HeapDropReport {
+            sync_windows,
+            estimated_reclaimed_bytes,
+            ..crate::slim::HeapDropReport::default()
+        })
+    }
+
     /// Acquires the registry lock, recovering from poisoning (mirrors
     /// [`Materializer::lock`]): registry entries are only mutated after a
     /// fully successful open/unload, so a panicked holder cannot leave a
@@ -589,3 +660,129 @@ mod test_hooks {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod slim_drop_tests {
+    use super::*;
+    use crate::test_util::{embedding_test_config, open_test_vault_with};
+
+    fn fixture() -> (tempfile::TempDir, Arc<WindowManager>) {
+        let (dir, vault) = open_test_vault_with(embedding_test_config());
+        let manager = Arc::new(WindowManager::new(
+            Arc::new(vault),
+            Arc::new(Materializer::new()),
+            "slim-fixture",
+        ));
+        (dir, manager)
+    }
+
+    #[test]
+    fn sync_drop_is_atomic_across_windows() -> Result<()> {
+        let (_dir, manager) = fixture();
+        let keys = [
+            WindowKey::new("2026-01"),
+            WindowKey::new("2026-02"),
+            WindowKey::new("2026-03"),
+        ];
+        let windows = keys
+            .iter()
+            .map(|key| manager.open_window(key))
+            .collect::<Result<Vec<_>>>()?;
+        let weak: Vec<_> = windows.iter().map(Arc::downgrade).collect();
+        // Make the busy entry LAST in this registry's stable iteration order,
+        // so a persist-as-you-go implementation cannot pass by failing first.
+        let busy_key = manager.lock_registry().keys().last().unwrap().clone();
+        let busy = manager.window(&busy_key).unwrap();
+        drop(windows);
+        let revision = manager.vault.store.env.info().last_txn_id;
+        assert!(matches!(
+            manager.drop_rebuildable_windows(),
+            Err(Error::WindowBusy {
+                outstanding_handles: 1,
+                ..
+            })
+        ));
+        assert_eq!(
+            manager.vault.store.env.info().last_txn_id,
+            revision,
+            "preflight before ANY persist"
+        );
+        assert_eq!(manager.loaded_keys().len(), 3);
+        assert!(weak.iter().all(|window| window.upgrade().is_some()));
+        drop(busy);
+        let report = manager.drop_rebuildable_windows()?;
+        assert_eq!(report.sync_windows, 3);
+        assert!(report.estimated_reclaimed_bytes > 0);
+        assert!(manager.loaded_keys().is_empty());
+        assert!(weak.iter().all(|window| window.upgrade().is_none()));
+        assert!(manager.issued_handles.lock().unwrap().is_empty());
+        assert_eq!(
+            manager.drop_rebuildable_windows()?,
+            crate::slim::HeapDropReport::default()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sync_persist_failure_keeps_all_windows_registered_and_observed() -> Result<()> {
+        let (_dir, manager) = fixture();
+        let keys = [WindowKey::new("2026-01"), WindowKey::new("2026-02")];
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        manager.outbound().attach(sender);
+        let windows = keys
+            .iter()
+            .map(|key| manager.open_window(key))
+            .collect::<Result<Vec<_>>>()?;
+        let weak: Vec<_> = windows.iter().map(Arc::downgrade).collect();
+        drop(windows);
+        // Fail the LAST persist after another window has already persisted.
+        // Registry iteration is stable while no entries are added/removed.
+        let fail_key = manager.lock_registry().keys().last().unwrap().clone();
+        let corrupt_key = format!("u:w:{fail_key}:ffffffff");
+        manager.vault.with_write_txn(|txn| {
+            manager
+                .vault
+                .store
+                .sync_state
+                .put(txn, &corrupt_key, b"not a loro update")?;
+            Ok(())
+        })?;
+        let revision = manager.vault.store.env.info().last_txn_id;
+        assert!(manager.drop_rebuildable_windows().is_err());
+        assert!(manager.vault.store.env.info().last_txn_id > revision);
+        assert_eq!(manager.loaded_keys().len(), 2);
+        for (key, weak) in keys.iter().zip(&weak) {
+            let window = manager.window(key).expect("still registered");
+            assert!(Arc::ptr_eq(&window, &weak.upgrade().unwrap()));
+            window
+                .doc
+                .get_map("slim_fixture")
+                .insert("after_failure", "observed")
+                .unwrap();
+            window.doc.commit();
+        }
+        assert!(
+            receiver.try_recv().is_ok(),
+            "Observer A and outbound sink survive failure"
+        );
+        manager.vault.with_write_txn(|txn| {
+            manager.vault.store.sync_state.delete(txn, &corrupt_key)?;
+            Ok(())
+        })?;
+        assert_eq!(manager.drop_rebuildable_windows()?.sync_windows, 2);
+        assert!(weak.iter().all(|window| window.upgrade().is_none()));
+        let reopened = manager.open_window(&keys[0])?;
+        while receiver.try_recv().is_ok() {}
+        reopened
+            .doc
+            .get_map("slim_fixture")
+            .insert("after_rebuild", "connected")
+            .unwrap();
+        reopened.doc.commit();
+        assert!(
+            receiver.try_recv().is_ok(),
+            "shed must not detach the connection sink"
+        );
+        Ok(())
+    }
+}

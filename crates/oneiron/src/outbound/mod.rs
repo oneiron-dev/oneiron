@@ -13,6 +13,7 @@ mod executor;
 mod intent;
 mod manifests;
 mod receipt_fields;
+mod retry_audit;
 mod window_door;
 
 #[cfg(test)]
