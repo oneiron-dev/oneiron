@@ -91,7 +91,7 @@ async fn queued_public_hold_loses_authority_before_the_lifecycle_writer() {
     struct EmptyOracle;
     impl SlotOracle for EmptyOracle {
         fn solve(&self, _: &SolveRequest) -> Result<SolveResult, BookingError> {
-            Ok(SolveResult { slots: Vec::new(), flex_used: false })
+            Ok(SolveResult { slots: Vec::new(), flex_used: false, host_bindings: Vec::new() })
         }
     }
     let fixture = Fixture::new();

@@ -80,10 +80,10 @@ pub(super) fn solve(
                 let oneiron::booking::RungProjection::Slots(mask) = oneiron::booking::bounded_public_slots(
                     oneiron::booking::slot_mask(&solve_request, solved),
                 ).map_err(booking_error)? else { return Err(public::public_booking_not_found()); };
-                solved = SolveResult { slots: mask.slots, flex_used: mask.flex_used };
+                solved = SolveResult { slots: mask.slots, flex_used: mask.flex_used, host_bindings: Vec::new() };
             }
             recheck(server, public_authority)?;
-            let SolveResult { slots, flex_used } = solved;
+            let SolveResult { slots, flex_used, .. } = solved;
             let response = BookingOperationResponse::Availability { slots, flex_used };
             remember_response(server, page_ref, &input, public_authority, &response)?;
             Ok(response)

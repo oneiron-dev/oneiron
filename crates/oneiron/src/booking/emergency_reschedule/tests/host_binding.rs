@@ -520,7 +520,8 @@ fn ordinary_reschedule_rechecks_only_confirmation_bound_hosts() {
                     constraint: None,
                     idempotency_key: None
                 },
-                NOW
+                NOW,
+                None
             )
             .is_err()
         );
