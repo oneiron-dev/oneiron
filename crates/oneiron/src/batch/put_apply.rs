@@ -530,10 +530,7 @@ pub(super) fn apply_put(
     // before short-id planning hashes it and before the old-record comparison
     // decides whether the body changed, so nothing downstream ever sees the
     // discarded counters.
-    let data = match task_body_without_streaks.as_deref() {
-        Some(stripped) => stripped,
-        None => data,
-    };
+    let data = task_body_without_streaks.as_deref().unwrap_or(data);
     // A sync replay deliberately bypasses the local claim gate. If it changes
     // a claim with a persisted critical-confirm attachment, that attachment
     // binds the old body and cannot authorize the new one. Delete it in this
