@@ -2099,6 +2099,16 @@ fn materialize_entity_blob_in_txn(
         return Ok(false);
     }
 
+    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+        return super::diagnostic_ingest::ingest_diagnostic_in_txn(
+            vault,
+            wtxn,
+            &id,
+            blob,
+            lease_vault_id,
+        );
+    }
+
     // ONE-1134 + ONE-1140: REDACTION_AUDIT replay door. Receipts
     // are immutable audit records (contracts.ts `redactionAuditReceipt`;
     // ARCH-0023b audit/guardrail stream class: quarantine divergence, never

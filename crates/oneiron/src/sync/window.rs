@@ -1163,7 +1163,7 @@ pub fn forward_rematerialize(
             }
 
             // Track the local record for most ids: byte-identical →
-            // idempotent skip (return). Three kinds make this decision later
+            // idempotent skip (return). Immutable kinds make this decision later
             // inside their own replay door instead: REDACTION_AUDIT receipts
             // (inside the same write txn as their lease verification and
             // replicated put, so a stale long-lived `rtxn` cannot hide a
@@ -1177,11 +1177,13 @@ pub fn forward_rematerialize(
             // a tombstone-first replay left a `dt:` marker behind would
             // otherwise keep that false delete marker forever, and the
             // hard-erase sweep would later scrub append-only authority
-            // evidence for an id it believes was erased).
+            // evidence for an id it believes was erased). Diagnostics validate
+            // canonical bytes, address and occurrence before their in-txn echo check.
             let byte_compare_in_door = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_REDACTION_AUDIT
                     | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
                     | ENTITY_TYPE_AUTHORITY_LOG
             );
             if !byte_compare_in_door {
@@ -1289,7 +1291,17 @@ pub fn forward_rematerialize(
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
+            let result = if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
+                vault.with_write_txn(|wtxn| {
+                    super::diagnostic_ingest::ingest_diagnostic_in_txn(
+                        vault,
+                        wtxn,
+                        &id,
+                        blob,
+                        lease_vault_id,
+                    )
+                })
+            } else if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
                 #[cfg(any(test, feature = "test-hooks"))]
                 if let Err(err) = test_hooks::run_receipt_revocation_race(vault) {
                     entity_error = Some(err);

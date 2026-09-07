@@ -50,6 +50,12 @@ use crate::temporal::TimeRange;
 
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
+mod admission;
+use admission::validate_detector_id;
+pub(crate) use admission::validate_diagnostic_event_admission;
+mod consent_detector;
+pub use consent_detector::ConsentDeniedDetector;
+
 mod repair;
 
 pub(crate) use repair::validate_repair_proposal;
@@ -66,11 +72,11 @@ pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
 /// The pinned, ordered DIAGNOSTIC body key set.
 ///
 /// The order here IS the canonical encode order, and the set is CLOSED: decode
-/// rejects an unknown key, a missing key, or a duplicate key. Growing this
-/// array is a schema change and needs [`DIAGNOSTIC_SCHEMA_VERSION`] to move
-/// with it.
-pub const DIAGNOSTIC_BODY_KEYS: [&str; 16] = [
+/// rejects an unknown key, a missing key, a duplicate key, or reordered keys.
+/// This pre-release schema changes in place; no legacy body grammar is admitted.
+pub const DIAGNOSTIC_BODY_KEYS: [&str; 17] = [
     "schema_version",
+    "detector_id",
     "event_class",
     "actor_class",
     "actor_ref",
@@ -314,6 +320,9 @@ pub struct DiagnosticReplayCoordinate {
 /// it is a rumour, and encode rejects it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiagnosticEvent {
+    /// Stable detector token, persisted to bind the body to its content address.
+    /// Must match the emitting detector's identity.
+    pub detector_id: String,
     /// Closed event class.
     pub event_class: DiagnosticEventClass,
     /// Actor class that owns the failure, in the Gate vocabulary.
@@ -390,7 +399,7 @@ pub struct DiagnosticWorkingSet<'a> {
 pub trait DeterministicDetector: Send + Sync {
     /// Stable identity, folded into every derived event id.
     fn detector_id(&self) -> &'static str;
-    /// Draft events for this working set.
+    /// Draft events whose `detector_id` must match this detector's identity.
     fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent>;
 }
 
@@ -419,6 +428,9 @@ pub fn run_deterministic_detectors(
         let detector_id = detector.detector_id();
         validate_token(detector_id, "detector id is not a bounded token")?;
         for event in detector.detect(input) {
+            if event.detector_id != detector_id {
+                return Err(invalid_diagnostic("draft detector identity mismatch"));
+            }
             let body = encode_diagnostic_event_body(&event)?;
             let id = diagnostic_event_id(detector_id, &body);
             staged.push((id, body, event));
@@ -469,7 +481,10 @@ pub fn diagnostic_event_id(detector_id: &str, canonical_body: &[u8]) -> EntityId
     })
 }
 
-/// Canonicalizes and encodes one DIAGNOSTIC body.
+/// Canonicalizes and encodes one DIAGNOSTIC body from a raw draft.
+///
+/// The untrusted leaf is raw author text, even when it looks escaped. Decoded
+/// events already contain stored leaves and use the internal stored-body encoder.
 ///
 /// Canonicalization is what makes determinism a property of the DATA rather
 /// than of detector discipline: invariant values are rebuilt into one normal
@@ -477,14 +492,32 @@ pub fn diagnostic_event_id(detector_id: &str, canonical_body: &[u8]) -> EntityId
 /// escaped. Two detectors that mean the same thing therefore emit the same
 /// bytes and the same id.
 pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> {
-    validate_actor_class(&event.actor_class)?;
-    validate_validity(event.valid_from, event.valid_to)?;
-    let run_ref = canonical_optional_ref(event.replay.run_ref.as_deref())?;
-    let checkpoint_ref = canonical_optional_ref(event.replay.checkpoint_ref.as_deref())?;
     let untrusted_detail = match event.untrusted_detail.as_deref() {
         Some(raw) => Value::from(canonical_untrusted_detail(raw)?),
         None => Value::Nil,
     };
+    encode_body_with_detail(event, untrusted_detail)
+}
+
+/// Re-encode a decoded body without escaping its terminal stored leaf again.
+fn encode_stored_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> {
+    let untrusted_detail = match event.untrusted_detail.as_deref() {
+        Some(stored) => {
+            validate_untrusted_detail(stored)?;
+            Value::from(stored)
+        }
+        None => Value::Nil,
+    };
+    encode_body_with_detail(event, untrusted_detail)
+}
+
+/// Both encoding doors share the same canonical field grammar and key order.
+fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> Result<Vec<u8>> {
+    validate_detector_id(&event.detector_id)?;
+    validate_actor_class(&event.actor_class)?;
+    validate_validity(event.valid_from, event.valid_to)?;
+    let run_ref = canonical_optional_ref(event.replay.run_ref.as_deref())?;
+    let checkpoint_ref = canonical_optional_ref(event.replay.checkpoint_ref.as_deref())?;
 
     let mut evidence_refs = event.evidence_refs.clone();
     evidence_refs.sort_unstable();
@@ -496,6 +529,7 @@ pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> 
 
     let values = [
         Value::from(DIAGNOSTIC_SCHEMA_VERSION),
+        Value::from(event.detector_id.as_str()),
         Value::from(event.event_class.as_str()),
         Value::from(event.actor_class.as_str()),
         event
@@ -552,6 +586,8 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
         return Err(invalid_diagnostic("unsupported schema version"));
     }
 
+    let detector_id = required_str(entries, "detector_id")?;
+    validate_detector_id(detector_id)?;
     let event_class = DiagnosticEventClass::from_wire(required_str(entries, "event_class")?)
         .ok_or_else(|| invalid_diagnostic("unknown event class"))?;
     let source = DiagnosticSourceKind::from_wire(required_str(entries, "source")?)
@@ -580,6 +616,7 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     };
 
     Ok(DiagnosticEvent {
+        detector_id: detector_id.to_owned(),
         event_class,
         actor_class,
         actor_ref: decode_optional_entity_ref(required(entries, "actor_ref")?)?,
@@ -600,9 +637,14 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     })
 }
 
-/// Fail-closed body validation for the DIAGNOSTIC write door.
-pub(crate) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<()> {
-    decode_diagnostic_event_body(bytes).map(|_| ())
+/// Validate exact canonical bytes, not just decoded MessagePack values.
+/// Alternate markers and other byte aliases must not acquire distinct addresses.
+pub(crate) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
+    let event = decode_diagnostic_event_body(bytes)?;
+    if encode_stored_diagnostic_event_body(&event)?.as_slice() != bytes {
+        return Err(invalid_diagnostic("body is not canonically encoded"));
+    }
+    Ok(event)
 }
 
 impl Vault {
@@ -622,7 +664,8 @@ impl Vault {
         let learned_at = crate::unix_seconds_now();
         let occurred = TimeRange {
             start: event.valid_from,
-            end: event.valid_to.unwrap_or(event.valid_from),
+            // Missing valid_to is still valid, not an instantaneous occurrence.
+            end: event.valid_to.unwrap_or(u64::MAX),
         };
         self.with_write_txn(|wtxn| {
             apply_ops(
@@ -706,13 +749,16 @@ fn validate_validity(valid_from: u64, valid_to: Option<u64>) -> Result<()> {
 
 fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
     let mut seen = [false; DIAGNOSTIC_BODY_KEYS.len()];
-    for (key, _) in entries {
+    for (position, (key, _)) in entries.iter().enumerate() {
         let key = decode_str(key, "body keys must be strings")?;
         let Some(index) = DIAGNOSTIC_BODY_KEYS.iter().position(|known| *known == key) else {
             return Err(invalid_diagnostic("unknown body key"));
         };
         if seen[index] {
             return Err(invalid_diagnostic("duplicate body key"));
+        }
+        if index != position {
+            return Err(invalid_diagnostic("body keys are out of canonical order"));
         }
         seen[index] = true;
     }
@@ -748,6 +794,9 @@ fn entity_ref_value(entity: &EntityId) -> Value {
 
 fn decode_entity_ref(value: &Value) -> Result<EntityId> {
     let hex = decode_str(value, "entity ref must be a hex string")?;
+    if hex.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err(invalid_diagnostic("entity ref must be lowercase hex"));
+    }
     EntityId::from_hex(hex).map_err(|_| invalid_diagnostic("malformed entity ref"))
 }
 
@@ -976,11 +1025,11 @@ fn canonical_invariant_map(
 /// These are the INVISIBLE ones: soft hyphen, the Arabic letter mark, the
 /// Mongolian vowel separator, the zero-width space/joiner family, the line and
 /// paragraph separators, the bidirectional embedding/override/isolate controls,
-/// the deprecated format characters, the byte-order mark, and the interlinear
-/// annotation marks. Each is a way to make one string RENDER as a different
+/// the deprecated format characters, the byte-order mark, the interlinear
+/// annotation marks, and Unicode tag controls. Each is a way to make one string RENDER as a different
 /// string, which is exactly the trick an untrusted detail leaf would be used
 /// for if it were allowed to carry them.
-const FORBIDDEN_TEXT_RANGES: [(char, char); 9] = [
+const FORBIDDEN_TEXT_RANGES: [(char, char); 11] = [
     ('\u{00AD}', '\u{00AD}'),
     ('\u{061C}', '\u{061C}'),
     ('\u{180E}', '\u{180E}'),
@@ -990,6 +1039,8 @@ const FORBIDDEN_TEXT_RANGES: [(char, char); 9] = [
     ('\u{2060}', '\u{206F}'),
     ('\u{FEFF}', '\u{FEFF}'),
     ('\u{FFF9}', '\u{FFFB}'),
+    ('\u{E0001}', '\u{E0001}'),
+    ('\u{E0020}', '\u{E007F}'),
 ];
 
 /// Whether `scalar` is control or invisible-format data.
@@ -1008,9 +1059,9 @@ fn is_forbidden_text_scalar(scalar: char) -> bool {
 /// Renders `raw` as a control-free canonical leaf.
 ///
 /// Every forbidden scalar becomes a VISIBLE `\u{XXXX}` escape and a literal
-/// backslash becomes `\\`, so the escaping is unambiguous to read. The output
-/// is always itself canonical, which makes escaping idempotent: a leaf that
-/// survives a decode and re-encode does not grow a second layer of backslashes.
+/// backslash becomes `\\`, including in text that already looks escaped.
+/// Thus a raw control and the literal text of its escape keep distinct bodies.
+/// Stored leaves are re-encoded by a separate door, never escaped twice.
 fn escape_untrusted_detail(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for scalar in raw.chars() {
@@ -1053,29 +1104,35 @@ fn is_canonical_untrusted_detail(text: &str) -> bool {
     true
 }
 
-/// End offset of the `\u{HEX}` escape starting at `start`, if it is well formed.
+/// End offset only for the writer's exact rendering of a forbidden scalar.
 fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
     if bytes.get(start + 2) != Some(&b'{') {
         return None;
     }
     let mut cursor = start + 3;
-    let mut digits = 0_usize;
     while bytes.get(cursor).is_some_and(u8::is_ascii_hexdigit) {
         cursor += 1;
-        digits += 1;
     }
-    if digits == 0 || digits > 6 || bytes.get(cursor) != Some(&b'}') {
+    let digits = cursor - (start + 3);
+    if !(4..=6).contains(&digits) || bytes.get(cursor) != Some(&b'}') {
+        return None;
+    }
+    let hex = std::str::from_utf8(&bytes[start + 3..cursor]).ok()?;
+    let code = u32::from_str_radix(hex, 16).ok()?;
+    let scalar = char::from_u32(code)?;
+    if !is_forbidden_text_scalar(scalar) || hex != format!("{code:04X}") {
         return None;
     }
     Some(cursor + 1)
 }
 
+/// Escape raw author text unconditionally; already-escaped text is still raw.
 fn canonical_untrusted_detail(raw: &str) -> Result<String> {
-    let canonical = if is_canonical_untrusted_detail(raw) {
-        raw.to_owned()
-    } else {
-        escape_untrusted_detail(raw)
-    };
+    // Escaping cannot shrink the input, so reject oversize text before allocation.
+    if raw.len() > MAX_UNTRUSTED_DETAIL_LEN {
+        return Err(invalid_diagnostic("untrusted_detail is too long"));
+    }
+    let canonical = escape_untrusted_detail(raw);
     validate_untrusted_detail(&canonical)?;
     Ok(canonical)
 }

@@ -1,5 +1,9 @@
 use std::collections::BTreeMap;
 
+#[path = "admission_tests.rs"]
+mod admission_tests;
+#[path = "canonical_tests.rs"]
+mod canonical_tests;
 #[path = "repair/tests.rs"]
 mod repair_tests;
 
@@ -45,6 +49,7 @@ fn observation(seed: u8, observed_at: u64) -> DiagnosticObservation {
 /// property of the OBSERVATION rather than of the detector's mood.
 fn event_for(scope_ref: &str, observation: &DiagnosticObservation) -> DiagnosticEvent {
     DiagnosticEvent {
+        detector_id: "test.stub_detector".to_owned(),
         event_class: DiagnosticEventClass::TestFailure,
         actor_class: "system".to_owned(),
         actor_ref: Some(observation.source_ref),
@@ -97,7 +102,8 @@ impl DeterministicDetector for DoubleDetector {
         let Some(first) = input.observations.first() else {
             return Vec::new();
         };
-        let draft = event_for(input.scope_ref, first);
+        let mut draft = event_for(input.scope_ref, first);
+        draft.detector_id = self.detector_id().to_owned();
         vec![draft.clone(), draft]
     }
 }
@@ -232,10 +238,13 @@ fn deterministic_detection() -> Result<()> {
         // else, so it re-derives from the stored bytes alone. Folding the
         // detector id in is what keeps two detectors that observe the same
         // fact from overwriting each other's finding.
-        let stub_id = diagnostic_event_id("test.stub_detector", &left);
-        let double_id = diagnostic_event_id("test.double_detector", &left);
-        assert_ne!(stub_id, double_id, "detector identity separates ids");
-        assert!(*id == stub_id || *id == double_id, "id derives from body");
+        let event = decode_diagnostic_event_body(&left)?;
+        assert_eq!(*id, diagnostic_event_id(&event.detector_id, &left));
+        assert_ne!(
+            *id,
+            diagnostic_event_id("another.detector", &left),
+            "detector identity separates ids"
+        );
     }
     Ok(())
 }
@@ -320,8 +329,9 @@ fn no_repair_side_effect() -> Result<()> {
 #[test]
 fn public_byte_69_put_rejected() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let id = seed_id(4);
-    let body = encode_diagnostic_event_body(&sample_event())?;
+    let event = sample_event();
+    let body = encode_diagnostic_event_body(&event)?;
+    let id = diagnostic_event_id(&event.detector_id, &body);
 
     let err = vault
         .put_entity(&id, ENTITY_TYPE_DIAGNOSTIC, at(1_000), 1_001, &body)
@@ -500,17 +510,15 @@ fn diagnostic_body_decode_fail_closed() {
     assert_rejected(&[0xC0], "a nil body");
 }
 
-/// The untrusted leaf is escaped ONCE: a canonical leaf that survives a decode
-/// and is re-encoded does not grow a second layer of backslashes, so a stored
-/// diagnostic keeps its content address across a read/write round trip.
+/// A stored leaf is terminal: its internal re-encode must keep the content address.
 #[test]
-fn untrusted_detail_escaping_is_idempotent() {
+fn stored_untrusted_leaf_is_terminal() {
     let mut event = sample_event();
     event.untrusted_detail = Some("tab\there and a \\ slash".to_owned());
     let once = encode_diagnostic_event_body(&event).expect("first encode");
     let decoded = decode_diagnostic_event_body(&once).expect("first decode");
-    let twice = encode_diagnostic_event_body(&decoded).expect("second encode");
-    assert_eq!(once, twice, "escaping must be idempotent");
+    let twice = encode_stored_diagnostic_event_body(&decoded).expect("stored re-encode");
+    assert_eq!(once, twice, "the stored body must be a fixed point");
 
     let detail = decoded.untrusted_detail.expect("detail survives");
     assert!(!detail.contains('\t'), "the raw tab is gone");
@@ -600,7 +608,7 @@ fn actor_class_vocabulary_tracks_the_gate() {
     assert_eq!(DIAGNOSTIC_ACTOR_CLASSES.len(), gate.len());
 }
 
-/// Every wire spelling round-trips, and the key set stays the pinned 16.
+/// Every wire spelling round-trips, and the key set stays the pinned 17.
 #[test]
 fn closed_vocabularies_round_trip() {
     for class in DiagnosticEventClass::all() {
@@ -627,7 +635,7 @@ fn closed_vocabularies_round_trip() {
         assert_eq!(parsed, Some(level));
     }
 
-    assert_eq!(DIAGNOSTIC_BODY_KEYS.len(), 16);
+    assert_eq!(DIAGNOSTIC_BODY_KEYS.len(), 17);
     let mut unique: Vec<&str> = DIAGNOSTIC_BODY_KEYS.to_vec();
     unique.sort_unstable();
     unique.dedup();

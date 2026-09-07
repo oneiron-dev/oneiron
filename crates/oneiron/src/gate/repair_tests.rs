@@ -39,6 +39,7 @@ fn proposal() -> RepairProposal {
 
 fn diagnostic() -> DiagnosticEvent {
     DiagnosticEvent {
+        detector_id: "test.retrieval_detector".to_owned(),
         event_class: DiagnosticEventClass::RetrievalMiss,
         actor_class: "human".to_owned(),
         actor_ref: Some(test_id(0x64)),
