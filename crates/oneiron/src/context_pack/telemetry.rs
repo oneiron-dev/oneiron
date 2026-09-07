@@ -12,6 +12,7 @@ pub(super) fn finalize_context_pack_telemetry(
     telemetry: ContextPackTelemetry<'_>,
     telemetry_run_id: Option<RetrievalRunId>,
     elapsed_us: u64,
+    total_in_scope: usize,
     claims_suppressed: usize,
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
@@ -22,6 +23,7 @@ pub(super) fn finalize_context_pack_telemetry(
     match telemetry.finalize(
         run_id,
         elapsed_us,
+        total_in_scope,
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
