@@ -90,6 +90,12 @@ impl ClaimMaterialization {
         let Some(valid_to) = next.valid_to else {
             return Err(binding_error());
         };
+        if valid_to < header.occurred_start {
+            return Err(Error::InvalidTimeRange {
+                start: header.occurred_start,
+                end: valid_to,
+            });
+        }
         let mut expected = prior.clone();
         expected.lifecycle = next.lifecycle;
         expected.valid_to = next.valid_to;
@@ -100,7 +106,7 @@ impl ClaimMaterialization {
             )
             || encode_claim_body(&expected)? != *data
             || occurred.start != header.occurred_start
-            || occurred.end != valid_to.max(header.occurred_start)
+            || occurred.end != valid_to
             || *learned_at != header.learned_at
         {
             return Err(binding_error());
