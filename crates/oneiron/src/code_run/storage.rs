@@ -2,6 +2,11 @@ use sha2::{Digest, Sha256};
 
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
+use crate::secret_lease::SecretTaintRef;
+use crate::secret_rotation::{
+    ArtifactTaintState, decode_taint_refs_row, encode_taint_refs_row, taint_state_for_refs_in_txn,
+    validate_taint_refs,
+};
 use crate::session_overlay::RouteTarget;
 use crate::store::Store;
 use crate::{EntityId, Error, ModelId, Result, ScoredEntity, Vault, WriteActor};
@@ -14,6 +19,14 @@ use super::support::invalid_code_run_replay;
 
 const CODE_RUN_REPLAY_RECORD_KEY_PREFIX: &[u8] = b"code_run:replay:v1:";
 const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
+/// SECRET-04 (ONE-1922): the FORWARD taint sidecar of one raw-output row.
+///
+/// A sidecar rather than a wrapper because the raw-output row is bytes and
+/// nothing else — `get_code_run_raw_output` re-hashes it against its
+/// metadata, so a framing change there would break every stored output. The
+/// sidecar is keyed by the SAME handle, written in the SAME transaction, and
+/// absent for the overwhelmingly common untainted run.
+const CODE_RUN_RAW_OUTPUT_TAINT_KEY_PREFIX: &[u8] = b"code_run:raw_output:taint:v1:";
 /// Replay-adjacent, NODE-LOCAL per-model wire-heal tally (ONE-1929).
 const CODE_RUN_MODEL_HEAL_COUNT_PREFIX: &[u8] = b"code_run:heal_count:v1:";
 
@@ -240,6 +253,97 @@ impl Vault {
         Ok(wtxn.commit()?)
     }
 
+    /// Stores raw output bytes ALONGSIDE the taint refs of the action that
+    /// produced them (SECRET-04, ONE-1922).
+    ///
+    /// A SIBLING of [`Vault::put_code_run_raw_output`], not a replacement:
+    /// the existing signature is untouched, so every live persist call site
+    /// stays exactly as it was and no executor learns about secrets it does
+    /// not consume. A build leg that DID consume one calls this instead and
+    /// hands over the door receipt's taint token.
+    ///
+    /// One write transaction carries the sidecar and the raw-output row, so
+    /// tainted exhaust can never survive a half-failed write wearing no
+    /// mark. An empty ref list is exactly the untainted put (the sidecar is
+    /// cleared, not written empty).
+    ///
+    /// Deliberately a VAULT door and not (yet) an `ExecutorStorage` arm: the
+    /// durable executor has no secret awareness to route, so a passthrough
+    /// added here would be an uncalled arm on the executor's closed storage
+    /// set. The consumer that teaches a build leg to declare its taint adds
+    /// the arm together with the call site that needs it.
+    pub fn put_code_run_raw_output_tainted(
+        &self,
+        output: &CodeRunRawOutput,
+        raw: &[u8],
+        taint_refs: &[SecretTaintRef],
+    ) -> Result<()> {
+        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), raw)?;
+        if expected != *output {
+            return Err(invalid_code_run_replay(
+                "raw output metadata does not match bytes",
+            ));
+        }
+        validate_taint_refs(taint_refs)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let taint_key = code_run_raw_output_taint_key(output);
+        if taint_refs.is_empty() {
+            self.store.vault_meta.delete(&mut wtxn, &taint_key)?;
+        } else {
+            self.store.vault_meta.put(
+                &mut wtxn,
+                &taint_key,
+                &encode_taint_refs_row(taint_refs)?,
+            )?;
+        }
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
+        Ok(wtxn.commit()?)
+    }
+
+    /// The taint refs stored beside one raw output (empty when the sidecar
+    /// row is absent — an untainted run).
+    pub fn code_run_raw_output_taint_refs(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<Vec<SecretTaintRef>> {
+        let rtxn = self.store.env.read_txn()?;
+        match self
+            .store
+            .vault_meta
+            .get(&rtxn, &code_run_raw_output_taint_key(output))?
+        {
+            Some(raw) => decode_taint_refs_row(&raw),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// The READ-TIME taint state of one raw output (ARCH-0069 S7, amended).
+    ///
+    /// Derived on every call from the sidecar refs and the custody records'
+    /// CURRENT generations: `Clean` when the sidecar is absent,
+    /// `TaintedLive` while every named record still sits at the generation
+    /// the output was produced under, `TaintedStale` the moment one rotates
+    /// or is revoked. No row is rewritten at rotation time to make that
+    /// true.
+    pub fn code_run_raw_output_taint_state(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<ArtifactTaintState> {
+        let rtxn = self.store.env.read_txn()?;
+        let refs = match self
+            .store
+            .vault_meta
+            .get(&rtxn, &code_run_raw_output_taint_key(output))?
+        {
+            Some(raw) => decode_taint_refs_row(&raw)?,
+            None => Vec::new(),
+        };
+        taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
+    }
+
     /// Test-only direct tally increment. Production executor commits use the
     /// replay-and-heal transaction above so telemetry cannot lag persistence.
     #[cfg(test)]
@@ -315,6 +419,19 @@ fn code_run_replay_record_key(run_id: &EntityId) -> Vec<u8> {
 fn code_run_raw_output_key(output: &CodeRunRawOutput) -> Vec<u8> {
     let mut key = Vec::with_capacity(CODE_RUN_RAW_OUTPUT_KEY_PREFIX.len() + output.handle.len());
     key.extend_from_slice(CODE_RUN_RAW_OUTPUT_KEY_PREFIX);
+    key.extend_from_slice(output.handle.as_bytes());
+    key
+}
+
+/// The taint sidecar key for one raw-output handle.
+///
+/// Note the prefixes do not nest ambiguously: `code_run:raw_output:v1:` and
+/// `code_run:raw_output:taint:v1:` are disjoint because the handle follows a
+/// terminating `:` in both, so a prefix scan of one never sees the other.
+fn code_run_raw_output_taint_key(output: &CodeRunRawOutput) -> Vec<u8> {
+    let mut key =
+        Vec::with_capacity(CODE_RUN_RAW_OUTPUT_TAINT_KEY_PREFIX.len() + output.handle.len());
+    key.extend_from_slice(CODE_RUN_RAW_OUTPUT_TAINT_KEY_PREFIX);
     key.extend_from_slice(output.handle.as_bytes());
     key
 }

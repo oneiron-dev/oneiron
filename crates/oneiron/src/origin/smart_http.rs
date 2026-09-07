@@ -65,6 +65,7 @@
 //! this module owns neither.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr};
@@ -83,8 +84,12 @@ use crate::credential_door::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
-    GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireCommitOutcome,
-    GitWireProcessEnv, GitWireReceipt, lock_repository,
+    GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitTreeEntry, GitWire,
+    GitWireCommitOutcome, GitWireProcessEnv, GitWireReceipt, GitWireRepo, lock_repository,
+};
+use crate::origin::lfs::{
+    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsPointerIntent, LfsPushedPointer,
+    lfs_repo_id,
 };
 
 /// Directory under the vault root that holds the served bare repositories.
@@ -919,6 +924,14 @@ pub struct DoorWindowReport {
     pub verdict: DoorWindowVerdict,
     /// The ref updates the push proposed, as the hook saw them.
     pub ref_updates: Vec<RefUpdate>,
+    /// The Git-LFS pointers this push newly introduced, paired with the
+    /// repository paths that carry them.
+    ///
+    /// The pairing is knowable HERE and nowhere later: the vetted hook framed
+    /// every added or modified blob together with its path, and once the
+    /// quarantine migrates that association is gone. Carrying it forward is
+    /// what lets the landing decide about a pointer instead of guessing.
+    pub lfs_pointers: Vec<LfsPushedPointer>,
     /// The quarantine the objects sat in while the door decided.
     pub quarantine_path: Option<PathBuf>,
 }
@@ -928,6 +941,7 @@ impl DoorWindowReport {
         Self {
             verdict: DoorWindowVerdict::NotInvoked,
             ref_updates: Vec::new(),
+            lfs_pointers: Vec::new(),
             quarantine_path: None,
         }
     }
@@ -973,6 +987,7 @@ fn serve_door_window(
                     reasons: vec!["door window closed without a request".to_owned()],
                 },
                 ref_updates: Vec::new(),
+                lfs_pointers: Vec::new(),
                 quarantine_path: None,
             });
         }
@@ -983,42 +998,65 @@ fn serve_door_window(
     // that cannot be parsed and an extraction that cannot be read whole are
     // both unscanned bytes, so they become a published refusal rather than an
     // empty scan — and rather than an unanswered hook left blocking.
-    let (ref_updates, quarantine_path, verdict) = match door_window_inputs(&request_path, hooks) {
-        Ok((request, blobs)) => {
-            // The name rule decides FIRST, and it decides here rather than at
-            // the landing: this is the last moment at which refusing costs
-            // nothing, because the hook is still blocked and the backend has
-            // moved no ref. A push whose names the landing could not journal is
-            // refused whole; nothing about a legal batch changes.
-            let unlandable = unlandable_ref_reasons(&request.ref_updates);
-            let verdict = if unlandable.is_empty() {
-                match seam {
-                    DoorSeam::Noop => scan_through(&NoopDoorHook, repo, &blobs),
-                    DoorSeam::Landed => {
-                        scan_through(&CredentialDoorService::new(Arc::clone(vault)), repo, &blobs)
+    let (ref_updates, lfs_pointers, quarantine_path, verdict) =
+        match door_window_inputs(&request_path, hooks) {
+            Ok((request, blobs)) => {
+                // The name rule decides FIRST, and it decides here rather than
+                // at the landing: this is the last moment at which refusing
+                // costs nothing, because the hook is still blocked and the
+                // backend has moved no ref. A push whose names the landing
+                // could not journal is refused whole; nothing about a legal
+                // batch changes.
+                let unlandable = unlandable_ref_reasons(&request.ref_updates);
+                let verdict = if unlandable.is_empty() {
+                    match seam {
+                        DoorSeam::Noop => scan_through(&NoopDoorHook, repo, &blobs),
+                        DoorSeam::Landed => scan_through(
+                            &CredentialDoorService::new(Arc::clone(vault)),
+                            repo,
+                            &blobs,
+                        ),
                     }
-                }
-            } else {
+                } else {
+                    DoorWindowVerdict::Rejected {
+                        reasons: unlandable,
+                    }
+                };
+                (
+                    request.ref_updates,
+                    lfs_pushed_pointers(&blobs),
+                    request.quarantine_path,
+                    verdict,
+                )
+            }
+            Err(error) => (
+                Vec::new(),
+                Vec::new(),
+                None,
                 DoorWindowVerdict::Rejected {
-                    reasons: unlandable,
-                }
-            };
-            (request.ref_updates, request.quarantine_path, verdict)
-        }
-        Err(error) => (
-            Vec::new(),
-            None,
-            DoorWindowVerdict::Rejected {
-                reasons: vec![error.to_string()],
-            },
-        ),
-    };
+                    reasons: vec![error.to_string()],
+                },
+            ),
+        };
     hooks.publish_verdict(&verdict_line(&verdict))?;
     Ok(DoorWindowReport {
         verdict,
         ref_updates,
+        lfs_pointers,
         quarantine_path,
     })
+}
+
+/// The Git-LFS pointers a push newly introduced.
+///
+/// Reads only what the door was already handed. No git child runs, no object
+/// is re-read, and a blob that is not a pointer is simply not one: the
+/// grammar decides, never a size.
+fn lfs_pushed_pointers(blobs: &[PushedBlob]) -> Vec<LfsPushedPointer> {
+    blobs
+        .iter()
+        .filter_map(|blob| LfsPushedPointer::from_pointer_lines(&blob.path, &blob.added_lines))
+        .collect()
 }
 
 /// Reads what the hook left behind: the ref list it decided over, and the
@@ -1318,6 +1356,10 @@ pub struct ReceivePackOutcome {
     pub repo_root: PathBuf,
     /// The ref moves the push proposed, as the door window saw them.
     pub ref_updates: Vec<RefUpdate>,
+    /// The Git-LFS pointers this push newly introduced, as the door window
+    /// framed them. Empty for every push that introduced none, which is every
+    /// push that does not use LFS.
+    pub lfs_pointers: Vec<LfsPushedPointer>,
     /// Where the objects live after the quarantine migrated.
     pub staged_objects_dir: PathBuf,
     /// Byte and ref counters for the request.
@@ -1423,6 +1465,13 @@ impl Vault {
     /// re-verified against the repository, object availability is proved
     /// *whole* before any ref is certified, and `GitWire::recover` finishes any
     /// record a crash left `Prepared`. Nothing here writes the sync plane.
+    ///
+    /// # LFS pointer admission
+    ///
+    /// The admission runs HERE rather than at the transport, so a replay and a
+    /// recovery pass through it exactly as a served push does — a gate a caller
+    /// can route around is not a gate. It is the one place that knows both the
+    /// proven repository identity and the pointers the door framed.
     pub fn apply_receive_pack_update(
         &self,
         repo: &RepoRef,
@@ -1439,22 +1488,206 @@ impl Vault {
         let wire = GitWire::new(self)?;
         let handle = wire.open_repo(repo.clone(), &outcome.repo_root)?;
         let _guard = lock_repository(handle.common_dir())?;
-        match wire.publish_refs(&handle, publications, now_secs())? {
-            GitWireCommitOutcome::Applied(receipt) => Ok(ReceivePackLanding {
-                receipt,
-                replayed: false,
-            }),
-            GitWireCommitOutcome::Replayed(receipt) => Ok(ReceivePackLanding {
-                receipt,
-                replayed: true,
-            }),
+        let repo_id = lfs_repo_id(&handle.identity().as_hex())?;
+        // Decided BEFORE the refs move: a RepositoryLarge pointer whose bytes
+        // this vault does not hold refuses the landing, so no head is ever
+        // advertised that a stock client could not check out.
+        let admitted = admit_landing_lfs_pointers(self, repo_id, &outcome.lfs_pointers)?;
+        let learned_at = now_secs();
+        let (receipt, replayed) = match wire.publish_refs(&handle, publications, learned_at)? {
+            GitWireCommitOutcome::Applied(receipt) => (receipt, false),
+            GitWireCommitOutcome::Replayed(receipt) => (receipt, true),
             GitWireCommitOutcome::Rejected { reason, .. } => {
-                Err(Error::ReceivePackLandingRefused {
+                return Err(Error::ReceivePackLandingRefused {
                     reason: format!("{reason:?}"),
-                })
+                });
+            }
+        };
+        // After the refs moved, and on a replay too: the family is keyed by
+        // (repo, ref, oid), so re-asserting a row is idempotent rather than a
+        // second record, and dropping a ref's rows twice removes nothing the
+        // first pass left. A rejected publication never reaches here, so a ref
+        // that did not move neither gains an attachment nor loses one.
+        attach_landing_lfs_pointers(
+            self,
+            &wire,
+            &handle,
+            repo_id,
+            &outcome.ref_updates,
+            &admitted,
+            learned_at,
+        )?;
+        Ok(ReceivePackLanding { receipt, replayed })
+    }
+}
+
+/// Classifies this landing's pointers and returns the ones that publish.
+///
+/// `KeepInGit` is dropped silently and on purpose: a build-required asset stays
+/// ordinary Git content, so it publishes as itself, gets no durable ref
+/// attachment, and any staged upload of it stays unreferenced and collectible.
+/// `StoreInLfs` demands its bytes: publishing a pointer whose object is absent
+/// would advertise a head that fails checkout, which is the one outcome
+/// ARCH-0068 forbids outright.
+fn admit_landing_lfs_pointers(
+    vault: &Vault,
+    repo_id: EntityId,
+    pointers: &[LfsPushedPointer],
+) -> Result<Vec<LfsPointerIntent>> {
+    if pointers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let policy = DefaultRepositoryLargeLfsPathPolicy;
+    let mut admitted = Vec::new();
+    for pointer in pointers {
+        let intent = pointer.intent(repo_id);
+        match vault.admit_lfs_pointer(&policy, &intent)? {
+            LfsAdmission::KeepInGit => continue,
+            LfsAdmission::StoreInLfs => {
+                if !vault.has_lfs_object(intent.oid, intent.size_bytes)? {
+                    return Err(Error::ReceivePackLandingRefused {
+                        reason: format!(
+                            "lfs object for {} is not stored in this vault",
+                            printable_ref_name(&intent.path)
+                        ),
+                    });
+                }
+                admitted.push(intent);
             }
         }
     }
+    Ok(admitted)
+}
+
+/// Records which refs now reference which LFS objects, and unrecords the ones
+/// a ref stopped referencing by ceasing to exist.
+///
+/// The attachment family is a per-REF index, so this function owns both
+/// directions of it:
+///
+/// - **A realized deletion detaches.** The ref the update names is gone from
+///   the repository, so every row that named it is now a claim about nothing.
+///   Only rows go: an object another ref still references keeps its bytes, and
+///   so does an object no ref references at all — this is not a collector.
+/// - **An update attaches by the ref's OWN tree.** An admitted pointer belongs
+///   to the refs whose new tree actually carries its path, which is why the new
+///   tree is walked rather than assumed. Attaching every admitted object to
+///   every moved ref would let one branch's asset become a permanent claim on
+///   every other branch that happened to travel in the same push.
+///
+/// An update never REMOVES a row. `admitted` is what THIS push introduced, not
+/// an inventory of what the ref's tree carries: a commit that touches no
+/// pointer admits nothing, and replacing a ref's rows with that empty set would
+/// erase attachments that are still true. Rows are dropped when the ref itself
+/// goes, and there only.
+///
+/// A `BuildRequired` path is absent from `admitted` and so stays unattached,
+/// whatever tree carries it.
+fn attach_landing_lfs_pointers(
+    vault: &Vault,
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    repo_id: EntityId,
+    updates: &[RefUpdate],
+    admitted: &[LfsPointerIntent],
+    learned_at: u64,
+) -> Result<()> {
+    let mut trees = BTreeMap::new();
+    for update in updates {
+        let Some(new_oid) = update.new_oid.as_ref() else {
+            vault.detach_lfs_objects_from_git_ref(repo_id, &update.name)?;
+            continue;
+        };
+        // A push that introduced no publishable pointer reads no tree at all,
+        // which is every push that carries no LFS content.
+        if admitted.is_empty() || !ref_tip_is_tree_ish(wire, handle, new_oid)? {
+            continue;
+        }
+        for intent in admitted {
+            if !ref_tree_carries_path(wire, handle, &mut trees, new_oid, &intent.path)? {
+                continue;
+            }
+            vault.attach_lfs_object_to_git_ref(repo_id, &update.name, intent.oid, learned_at)?;
+        }
+    }
+    Ok(())
+}
+
+/// The tree-entry mode of a subdirectory.
+const GIT_TREE_MODE: u32 = 0o040_000;
+
+/// The tree-entry mode of a gitlink: a commit that lives in another repository,
+/// so this repository holds no blob for that path.
+const GIT_GITLINK_MODE: u32 = 0o160_000;
+
+/// Whether a ref's post-image can be read as a tree at all.
+///
+/// A commit and an annotated tag both peel to the tree the ref publishes. A ref
+/// that names a blob has no tree and therefore carries no path — an answer,
+/// deliberately, rather than a failure: the refs have already moved by the time
+/// this runs, and an odd but legal ref value must not turn a landed push into
+/// an error.
+fn ref_tip_is_tree_ish(wire: &GitWire<'_>, handle: &GitWireRepo, tip: &GitOid) -> Result<bool> {
+    let kinds = wire.object_info(handle, std::slice::from_ref(tip))?;
+    Ok(matches!(
+        kinds.get(tip).map(String::as_str),
+        Some("commit" | "tag" | "tree")
+    ))
+}
+
+/// Whether the tree `tip` publishes carries `path` as a file of this
+/// repository.
+///
+/// Component by component, so a path is present only where the directories
+/// leading to it are directories and the leaf is a blob this repository holds:
+/// a directory of that name, or a gitlink of that name, is not the pointer
+/// file.
+fn ref_tree_carries_path(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    trees: &mut BTreeMap<String, Vec<GitTreeEntry>>,
+    tip: &GitOid,
+    path: &str,
+) -> Result<bool> {
+    let mut current = tip.clone();
+    let mut components = path.split('/').peekable();
+    while let Some(component) = components.next() {
+        if component.is_empty() {
+            return Ok(false);
+        }
+        let entries = read_tree_entries(wire, handle, trees, &current)?;
+        let Some(entry) = entries.iter().find(|entry| entry.name == component.as_bytes()) else {
+            return Ok(false);
+        };
+        let mode = entry.mode;
+        if components.peek().is_none() {
+            return Ok(mode != GIT_TREE_MODE && mode != GIT_GITLINK_MODE);
+        }
+        if mode != GIT_TREE_MODE {
+            return Ok(false);
+        }
+        current = entry.oid.clone();
+    }
+    Ok(false)
+}
+
+/// The direct entries of one tree, read once per landing.
+///
+/// Refs pushed together share directories, and so do the pointers within one
+/// ref. The memo is what keeps a many-pointer push from re-reading the same
+/// tree once per pointer per ref; it lives for the one landing that built it
+/// and asserts nothing about any later one.
+fn read_tree_entries<'trees>(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    trees: &'trees mut BTreeMap<String, Vec<GitTreeEntry>>,
+    tree: &GitOid,
+) -> Result<&'trees [GitTreeEntry]> {
+    let entries = match trees.entry(tree.as_str().to_owned()) {
+        Entry::Occupied(occupied) => occupied.into_mut(),
+        Entry::Vacant(vacant) => vacant.insert(wire.read_tree(handle, tree)?),
+    };
+    Ok(entries.as_slice())
 }
 
 // ---------------------------------------------------------------------------
@@ -1913,6 +2146,7 @@ fn finish_serve(
             ref_update_count: moved.len(),
         },
         ref_updates: moved,
+        lfs_pointers: report.door.lfs_pointers.clone(),
         staged_objects_dir: repo_dir.join("objects"),
     };
     let repo = outcome.pinned_repo_ref()?;
@@ -1928,8 +2162,10 @@ mod tests {
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::config::VaultConfig;
     use crate::entity_id::ENTITY_ID_LEN;
+    use crate::origin::lfs::LfsOid;
     use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
     use crate::store::Store;
+    use crate::temporal::TimeRange;
     use std::process::Command as StdCommand;
 
     fn temp_vault() -> (tempfile::TempDir, Arc<Vault>) {
@@ -1990,6 +2226,7 @@ mod tests {
                 old_oid: None,
                 new_oid: Some(oid.clone()),
             }],
+            lfs_pointers: Vec::new(),
             staged_objects_dir: root.join(".git").join("objects"),
             pack_stats: PackStats {
                 request_bytes: 0,
@@ -2579,6 +2816,219 @@ mod tests {
         assert!(
             vault.apply_receive_pack_update(&repo, &outcome).is_err(),
             "a landing that moves no ref is refused, never receipted"
+        );
+    }
+
+    const LANDING_LEARNED_AT: u64 = 1_700_000_000;
+
+    fn landing_time() -> TimeRange {
+        TimeRange {
+            start: LANDING_LEARNED_AT,
+            end: LANDING_LEARNED_AT,
+        }
+    }
+
+    /// One Git-LFS pointer file, byte for byte as a client writes it.
+    fn pointer_file(oid: LfsOid, size: u64) -> String {
+        format!(
+            "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {size}\n",
+            oid.to_hex()
+        )
+    }
+
+    /// Commits one file onto the checked-out branch and returns its commit.
+    fn commit_file(root: &Path, path: &str, contents: &str) -> GitOid {
+        let file = root.join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).expect("parent directory");
+        }
+        std::fs::write(&file, contents).expect("write file");
+        git(root, &["add", "--", path]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=Oneiron",
+                "-c",
+                "user.email=oneiron@example.invalid",
+                "commit",
+                "-m",
+                "carry an asset",
+            ],
+        );
+        GitOid::parse_hex(git(root, &["rev-parse", "--verify", "HEAD"])).expect("commit oid")
+    }
+
+    /// The repository key the landing files its attachment rows under.
+    fn landed_repo_id(vault: &Vault, repo: &RepoRef, root: &Path) -> EntityId {
+        let wire = GitWire::new(vault).expect("git wire");
+        let handle = wire.open_repo(repo.clone(), root).expect("open repo");
+        lfs_repo_id(&handle.identity().as_hex()).expect("repo id")
+    }
+
+    fn ref_update(name: &str, old_oid: Option<&GitOid>, new_oid: Option<&GitOid>) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            old_oid: old_oid.cloned(),
+            new_oid: new_oid.cloned(),
+        }
+    }
+
+    fn pushed_outcome(
+        root: &Path,
+        ref_updates: Vec<RefUpdate>,
+        lfs_pointers: Vec<LfsPushedPointer>,
+    ) -> ReceivePackOutcome {
+        ReceivePackOutcome {
+            repo_root: root.to_path_buf(),
+            pack_stats: PackStats {
+                request_bytes: 0,
+                response_bytes: 0,
+                ref_update_count: ref_updates.len(),
+            },
+            ref_updates,
+            lfs_pointers,
+            staged_objects_dir: root.join(".git").join("objects"),
+        }
+    }
+
+    /// The attachment family is an index of WHICH ref references an object, so
+    /// a push that moves two refs must not hand one ref's asset to the other.
+    /// A cartesian attachment would make every branch pushed alongside a
+    /// pointer a permanent referent of it, and the object would then look
+    /// referenced by refs whose trees never carried it.
+    #[test]
+    fn smart_http_landing_attaches_a_pointer_only_to_the_ref_that_carries_it() {
+        let (_vault_dir, vault) = temp_vault();
+        let bytes = b"asset bytes exactly one branch carries".to_vec();
+        let oid = LfsOid::digest(&bytes);
+        let size = u64::try_from(bytes.len()).expect("length fits u64");
+        vault
+            .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+            .expect("the object the pointer names is stored before the push lands");
+
+        let (_repo_dir, root, main_oid) = seeded_repo();
+        // The pointer file exists on `assets` and on no other ref.
+        git(&root, &["checkout", "-b", "assets"]);
+        let assets_oid = commit_file(&root, "assets/logo.bin", &pointer_file(oid, size));
+
+        let outcome = pushed_outcome(
+            &root,
+            vec![
+                ref_update("refs/heads/main", None, Some(&main_oid)),
+                ref_update("refs/heads/assets", None, Some(&assets_oid)),
+            ],
+            vec![LfsPushedPointer {
+                path: "assets/logo.bin".to_owned(),
+                oid,
+                size_bytes: size,
+            }],
+        );
+        let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_update(&repo, &outcome)
+            .expect("land the push");
+
+        let repo_id = landed_repo_id(&vault, &repo, &root);
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/assets")
+                .expect("read assets rows"),
+            vec![oid],
+            "the ref whose tree carries the pointer references the object"
+        );
+        assert!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/main")
+                .expect("read main rows")
+                .is_empty(),
+            "a ref that never carried the pointer gains nothing by travelling with it"
+        );
+    }
+
+    /// Removing a ref removes that ref's rows and nothing else.
+    ///
+    /// The bytes are the point: two refs referenced this object, so the
+    /// deletion may not take the object down with the ref, and the surviving
+    /// ref's own row is still true.
+    #[test]
+    fn smart_http_landing_detaches_the_rows_of_a_deleted_ref() {
+        let (_vault_dir, vault) = temp_vault();
+        let bytes = b"asset bytes two branches share".to_vec();
+        let oid = LfsOid::digest(&bytes);
+        let size = u64::try_from(bytes.len()).expect("length fits u64");
+        vault
+            .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+            .expect("the object the pointer names is stored before the push lands");
+
+        let (_repo_dir, root, _base_oid) = seeded_repo();
+        let carrying = commit_file(&root, "assets/logo.bin", &pointer_file(oid, size));
+        // `release` publishes the very commit `main` does, so both refs carry
+        // the pointer path and both reference the one object.
+        git(&root, &["branch", "release", "refs/heads/main"]);
+
+        let pointer = LfsPushedPointer {
+            path: "assets/logo.bin".to_owned(),
+            oid,
+            size_bytes: size,
+        };
+        let pushed = pushed_outcome(
+            &root,
+            vec![
+                ref_update("refs/heads/main", None, Some(&carrying)),
+                ref_update("refs/heads/release", None, Some(&carrying)),
+            ],
+            vec![pointer],
+        );
+        let repo = pushed.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_update(&repo, &pushed)
+            .expect("land the push");
+        let repo_id = landed_repo_id(&vault, &repo, &root);
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/release")
+                .expect("read release rows"),
+            vec![oid],
+            "both refs carry the pointer path, so both reference the object"
+        );
+
+        // What the origin's receive-pack already did, which the landing then
+        // journals: the ref is observably gone.
+        git(
+            &root,
+            &["update-ref", "-d", "refs/heads/release", carrying.as_str()],
+        );
+        let deletion = pushed_outcome(
+            &root,
+            vec![ref_update("refs/heads/release", Some(&carrying), None)],
+            Vec::new(),
+        );
+        let deleted_repo = deletion
+            .pinned_repo_ref()
+            .expect("a delete-only push still pins its object store");
+        vault
+            .apply_receive_pack_update(&deleted_repo, &deletion)
+            .expect("land the deletion");
+
+        assert!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/release")
+                .expect("read release rows")
+                .is_empty(),
+            "the removed ref's rows go with it"
+        );
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/main")
+                .expect("read main rows"),
+            vec![oid],
+            "the ref that still carries the pointer keeps its row"
+        );
+        assert_eq!(
+            vault.get_lfs_object(oid).expect("download"),
+            Some(bytes),
+            "rows come and go; shared bytes do not"
         );
     }
 }

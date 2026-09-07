@@ -1,4 +1,5 @@
 use crate::claim::ClaimSource;
+use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::outbound_consent::ScopedMcpCallContext;
@@ -221,6 +222,13 @@ pub(crate) struct ExternalEffectGateContext {
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
     pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
+    /// ONE-1752: the `comm.send_override` head hydration matched for this send,
+    /// if any. GATE-INTERNAL state, deliberately absent from
+    /// [`ExternalEffectGateInput`]: no caller may assert its own override, so
+    /// the field exists only on the borrowed context the evaluator reads, and
+    /// the sole hydrating caller fills it after `gate_input()` (the
+    /// `scoped_mcp_grant_authorized` precedent below).
+    pub(crate) counterparty_send_override: Option<SendOverrideMatch>,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -277,6 +285,7 @@ impl ExternalEffectGateInput {
                 counterparty_first_touch: self.counterparty_first_touch,
                 counterparty_opted_out: self.counterparty_opted_out,
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
+                counterparty_send_override: None,
                 has_opted_in: self.has_opted_in,
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,

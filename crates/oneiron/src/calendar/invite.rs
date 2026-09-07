@@ -724,6 +724,18 @@ fn confirmed_booking_grant(
                 crate::counterparty_contact::normalize_channel_class(channel)
                     == CALENDAR_INVITE_CHANNEL
             }
+            // BK-03's booking-page grant. The scope names a PAGE, never a
+            // recipient, so a bare `true` here would turn one page grant into
+            // a licence to invite anyone. The booking layer owns the binding
+            // and answers only from persisted claims: a CONFIRMED booking on
+            // exactly this page whose recorded booker identity IS this
+            // recipient. Any resolution failure refuses.
+            StandingOutboundGrantScope::BookingPageInvites { page_ref } => {
+                crate::booking::invite_grant::booking_page_grant_covers_recipient(
+                    vault, page_ref, recipient,
+                )
+                .map_err(|err| ingest_reason(err.to_string()))?
+            }
             _ => false,
         };
         // Converge on one deterministic grant when several cover the same send.
