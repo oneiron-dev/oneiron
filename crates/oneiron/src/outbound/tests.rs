@@ -1,3 +1,5 @@
+mod sender_selection;
+
 use super::*;
 use crate::delivery_window::DeliveryWindowDecision;
 use rmpv::Value;
@@ -6437,9 +6439,8 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
         ChannelIdentityBinding::actor(actor),
         ChannelIdentityState::Active,
     )?;
-    assert_eq!(
-        resolve(Some(&actor))?,
-        None,
+    assert!(
+        matches!(resolve(Some(&actor)), Err(Error::InvalidConfig(_))),
         "masked plus unmasked is ambiguous"
     );
     vault.transition_channel_identity(
@@ -6457,9 +6458,8 @@ fn automatic_outbound_selection_matches_actor_not_facet_and_preserves_safety() -
         ChannelIdentityBinding::actor_with_facet(actor, second_facet),
         ChannelIdentityState::Active,
     )?;
-    assert_eq!(
-        resolve(Some(&actor))?,
-        None,
+    assert!(
+        matches!(resolve(Some(&actor)), Err(Error::InvalidConfig(_))),
         "two masks are still two identities"
     );
     let txn = vault.store.env.read_txn()?;
