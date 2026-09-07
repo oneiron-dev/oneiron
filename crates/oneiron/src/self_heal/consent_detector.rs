@@ -28,6 +28,7 @@ impl DeterministicDetector for ConsentDeniedDetector {
             .iter()
             .filter(|observation| observation.kind == CONSENT_REASON_DENIED)
             .map(|observation| DiagnosticEvent {
+                detector_id: self.detector_id().to_owned(),
                 event_class: DiagnosticEventClass::ConsentDenied,
                 actor_class: "system".to_owned(),
                 actor_ref: None,

@@ -393,7 +393,7 @@ pub(super) fn apply_put(
     } else if entity_type == ENTITY_TYPE_COMM_RECORD {
         crate::comm::validate_comm_record_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_DIAGNOSTIC {
-        crate::self_heal::validate_diagnostic_event_body_bytes(data)?;
+        crate::self_heal::validate_diagnostic_event_admission(&id, occurred, data)?;
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {

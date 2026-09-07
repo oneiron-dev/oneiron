@@ -153,3 +153,37 @@ fn diagnostic_unicode_tag_controls_fail_closed() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn diagnostic_raw_detail_byte_bound_and_escape_expansion_bound() -> Result<()> {
+    for raw in [
+        "a".repeat(MAX_UNTRUSTED_DETAIL_LEN + 1),
+        "é".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2 + 1),
+        "\t".repeat(MAX_UNTRUSTED_DETAIL_LEN / 8 + 1),
+        "\\".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2 + 1),
+    ] {
+        let mut event = draft();
+        event.untrusted_detail = Some(raw);
+        assert_eq!(
+            encode_diagnostic_event_body(&event).unwrap_err().kind(),
+            ErrorKind::InvalidDiagnosticBody
+        );
+    }
+    for raw in [
+        "a".repeat(MAX_UNTRUSTED_DETAIL_LEN),
+        "é".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2),
+        "\t".repeat(MAX_UNTRUSTED_DETAIL_LEN / 8),
+        "\\".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2),
+    ] {
+        let mut event = draft();
+        event.untrusted_detail = Some(raw);
+        let bytes = encode_diagnostic_event_body(&event)?;
+        let decoded = validate_diagnostic_event_body_bytes(&bytes)?;
+        assert_eq!(
+            decoded.untrusted_detail.as_ref().unwrap().len(),
+            MAX_UNTRUSTED_DETAIL_LEN
+        );
+        assert_eq!(encode_stored_diagnostic_event_body(&decoded)?, bytes);
+    }
+    Ok(())
+}

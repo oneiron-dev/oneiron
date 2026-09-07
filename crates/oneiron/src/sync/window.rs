@@ -1163,7 +1163,7 @@ pub fn forward_rematerialize(
             }
 
             // Track the local record for most ids: byte-identical →
-            // idempotent skip (return). Three kinds make this decision later
+            // idempotent skip (return). Immutable kinds make this decision later
             // inside their own replay door instead: REDACTION_AUDIT receipts
             // (inside the same write txn as their lease verification and
             // replicated put, so a stale long-lived `rtxn` cannot hide a
@@ -1177,11 +1177,14 @@ pub fn forward_rematerialize(
             // a tombstone-first replay left a `dt:` marker behind would
             // otherwise keep that false delete marker forever, and the
             // hard-erase sweep would later scrub append-only authority
-            // evidence for an id it believes was erased).
+            // evidence for an id it believes was erased). DIAGNOSTIC rows
+            // also validate their address and occurrence before the in-txn
+            // echo check, never through the generic snapshot shortcut.
             let byte_compare_in_door = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_REDACTION_AUDIT
                     | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
                     | ENTITY_TYPE_AUTHORITY_LOG
             );
             if !byte_compare_in_door {

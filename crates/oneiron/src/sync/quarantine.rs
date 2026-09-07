@@ -307,8 +307,9 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // local corruption.
         | ErrorKind::InvalidSecretCustodyBody
         // ONE-1394 (GATE-14 layer 1): a replicated DIAGNOSTIC (byte 69) row
-        // failing the pinned body grammar — or arriving in a non-canonical
-        // encoding of it — is a rejection of that remote op, not a local
+        // failing the pinned body grammar, canonical encoding, content-address
+        // or occurrence binding, or diverging from an existing local blob,
+        // is a rejection of that remote op, not a local
         // storage failure. One malformed self-heal finding must not abort the
         // whole window and wedge every unrelated valid change beside it:
         // quarantine the row (`x:`) and continue. Locally stored diagnostics
