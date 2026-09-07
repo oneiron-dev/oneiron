@@ -85,6 +85,10 @@ const GIT_HTTP_CHALLENGE: &str = "Bearer realm=\"oneiron-origin\"";
 /// the producer blocks instead of accumulating a body.
 const GIT_HTTP_STREAM_CHUNKS: usize = 4;
 
+// Status reports only; fetch packs continue to stream without this bound.
+const GIT_HTTP_MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+const GIT_HTTP_MAX_HELD_CHUNKS: usize = 4096;
+
 /// The two smart-HTTP services, and the only two this origin serves.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GitService {
@@ -429,13 +433,31 @@ async fn held_response(
 ) -> Response {
     let head = head.await.ok();
     let mut body = Vec::new();
-    // Drained as it arrives, never after: the worker writes into a bounded
-    // channel with a blocking send, so a reader that waited for the worker
-    // before draining would wedge them against each other.
+    let mut bytes = 0usize;
+    let mut exceeded = false;
+    // Keep draining after overflow: dropping the receiver or waiting first can
+    // strand the blocking producer before it journals the effects already made.
     while let Some(chunk) = chunks.recv().await {
-        body.push(chunk);
+        if !exceeded {
+            if chunk.len() > GIT_HTTP_MAX_HELD_BYTES.saturating_sub(bytes)
+                || body.len() >= GIT_HTTP_MAX_HELD_CHUNKS
+            {
+                exceeded = true;
+                body.clear();
+            } else {
+                bytes += chunk.len();
+                body.push(chunk);
+            }
+        }
     }
-    landed_response(head, body, worker.await)
+    let joined = worker.await;
+    if exceeded {
+        return text_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "git status response exceeded its limit; ref effects may be partial; retry to recover",
+        );
+    }
+    landed_response(head, body, joined)
 }
 
 /// The response a held push produces, decided by the landing rather than by the
@@ -452,19 +474,173 @@ fn landed_response(
     body: Vec<Bytes>,
     joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
 ) -> Response {
-    match joined {
-        Ok(Ok(_)) => {}
+    let report = match joined {
+        Ok(Ok(report)) => report,
         refused => return serve_failure(refused),
-    }
-    let Some((status, headers)) = head else {
+    };
+    let Some((status, mut headers)) = head else {
         return text_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "git smart-http produced no response",
         );
     };
-    let mut response = Response::new(Body::from(concat_chunks(body)));
+    let body = concat_chunks(body);
+    let body = if report.ref_results.is_empty() {
+        body
+    } else {
+        let Some(rewritten) = rewrite_receive_pack_status(&body, &report.ref_results) else {
+            return text_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "git per-ref status is unavailable; ref effects may be partial; retry to recover",
+            );
+        };
+        // The pkt-line lengths changed. A backend Content-Length is no longer valid.
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str()));
+        Bytes::from(rewritten)
+    };
+    let mut response = Response::new(Body::from(body));
     apply_response_head(&mut response, status, headers);
     response
+}
+
+// Reframe Git report-status and report-status-v2, with or without side-band-64k.
+// Channel 1 may split a nested pkt-line anywhere, including its length header.
+fn rewrite_receive_pack_status(
+    body: &[u8],
+    results: &[smart_http::ReceivePackRefResult],
+) -> Option<Vec<u8>> {
+    if body.len() > GIT_HTTP_MAX_HELD_BYTES
+        || results.is_empty()
+        || results.len() > smart_http::ORIGIN_MAX_REF_UPDATES
+    {
+        return None;
+    }
+    let mut probe = body;
+    let first = status_packet(&mut probe)?;
+    let sideband = first
+        .first()
+        .is_some_and(|channel| matches!(channel, 1..=3));
+    let mut data = Vec::new();
+    if sideband {
+        let mut input = body;
+        while !input.is_empty() {
+            let packet = status_packet(&mut input)?;
+            match packet.split_first() {
+                Some((1, payload)) => data.extend_from_slice(payload),
+                Some((2, _)) | None => {}
+                _ => return None,
+            }
+        }
+    } else {
+        data.extend_from_slice(body);
+    }
+    let mut input = data.as_slice();
+    if status_packet(&mut input)? != b"unpack ok\n" {
+        return None;
+    }
+    let mut rewritten = Vec::new();
+    append_status_packet(&mut rewritten, b"unpack ok\n")?;
+    let mut seen = vec![false; results.len()];
+    let mut suppress_options = true;
+    let mut flushed = false;
+    while !input.is_empty() {
+        let packet = status_packet(&mut input)?;
+        if packet.is_empty() {
+            if !input.is_empty() {
+                return None;
+            }
+            append_status_packet(&mut rewritten, packet)?;
+            flushed = true;
+            break;
+        }
+        let accepted = packet.strip_prefix(b"ok ");
+        let refused = packet.strip_prefix(b"ng ");
+        if let Some(tail) = accepted.or(refused) {
+            let text = std::str::from_utf8(tail).ok()?.strip_suffix('\n')?;
+            let name = if refused.is_some() {
+                text.split_once(' ')?.0
+            } else {
+                text
+            };
+            let index = results.iter().position(|result| result.name == name)?;
+            if std::mem::replace(&mut seen[index], true) {
+                return None;
+            }
+            let status = results[index].status;
+            suppress_options =
+                refused.is_some() || status != smart_http::ReceivePackRefStatus::Published;
+            let reason = match status {
+                smart_http::ReceivePackRefStatus::Pending => {
+                    Some("publication pending; ref effects may exist")
+                }
+                smart_http::ReceivePackRefStatus::Superseded => {
+                    Some("observed ref effect was superseded")
+                }
+                smart_http::ReceivePackRefStatus::NotApplied => Some("ref was not applied"),
+                smart_http::ReceivePackRefStatus::Published if refused.is_some() => {
+                    Some("backend refused ref update")
+                }
+                smart_http::ReceivePackRefStatus::Published => None,
+            };
+            if let Some(reason) = reason {
+                append_status_packet(&mut rewritten, format!("ng {name} {reason}\n").as_bytes())?;
+            } else {
+                append_status_packet(&mut rewritten, packet)?;
+            }
+        } else if packet.starts_with(b"option ") {
+            if !suppress_options {
+                append_status_packet(&mut rewritten, packet)?;
+            }
+        } else {
+            return None;
+        }
+    }
+    if !flushed || seen.iter().any(|seen| !seen) {
+        return None;
+    }
+    if !sideband {
+        return Some(rewritten);
+    }
+    let mut framed = Vec::new();
+    for chunk in rewritten.chunks(65515) {
+        let mut payload = Vec::with_capacity(chunk.len() + 1);
+        payload.push(1);
+        payload.extend_from_slice(chunk);
+        append_status_packet(&mut framed, &payload)?;
+    }
+    append_status_packet(&mut framed, &[])?;
+    Some(framed)
+}
+
+fn status_packet<'a>(input: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let header = std::str::from_utf8(input.get(..4)?).ok()?;
+    let len = usize::from_str_radix(header, 16).ok()?;
+    if len == 0 {
+        *input = &input[4..];
+        return Some(&[]);
+    }
+    if !(4..=65520).contains(&len) || len > input.len() {
+        return None;
+    }
+    let payload = &input[4..len];
+    *input = &input[len..];
+    Some(payload)
+}
+
+fn append_status_packet(output: &mut Vec<u8>, payload: &[u8]) -> Option<()> {
+    if payload.len().checked_add(4)? > GIT_HTTP_MAX_HELD_BYTES.saturating_sub(output.len()) {
+        return None;
+    }
+    if payload.is_empty() {
+        output.extend_from_slice(b"0000");
+    } else {
+        if payload.len() > 65516 {
+            return None;
+        }
+        output.extend_from_slice(format!("{:04x}", payload.len() + 4).as_bytes());
+        output.extend_from_slice(payload);
+    }
+    (output.len() <= GIT_HTTP_MAX_HELD_BYTES).then_some(())
 }
 
 fn concat_chunks(chunks: Vec<Bytes>) -> Bytes {
@@ -481,18 +657,26 @@ type ResponseHead = (u16, Vec<(String, String)>);
 fn serve_failure(
     joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
 ) -> Response {
+    if let Ok(Err(error)) = &joined {
+        tracing::warn!(error = %error, "git smart-http worker failed");
+    }
     let (status, message) = match joined {
         Ok(Ok(_)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "git smart-http produced no response".to_owned(),
         ),
-        Ok(Err(error @ oneiron::Error::ReceivePackLandingRefused { .. })) => {
-            (StatusCode::CONFLICT, error.to_string())
-        }
-        Ok(Err(
-            error @ (oneiron::Error::ConcurrentWrite(_) | oneiron::Error::RepoMutationFailed(_)),
-        )) => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
-        Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+        Ok(Err(oneiron::Error::ReceivePackLandingRefused { .. })) => (
+            StatusCode::CONFLICT,
+            "git publication refused; ref effects may be partial".to_owned(),
+        ),
+        Ok(Err(oneiron::Error::ConcurrentWrite(_) | oneiron::Error::RepoMutationFailed(_))) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "git publication is pending; ref effects may be partial; retry to recover".to_owned(),
+        ),
+        Ok(Err(_)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git request could not complete; ref effects may be partial".to_owned(),
+        ),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "git smart-http worker did not complete".to_owned(),
@@ -1088,6 +1272,171 @@ mod tests {
             },
             outcome: None,
             landing: None,
+            ref_results: Vec::new(),
+        }
+    }
+
+    fn status_body(lines: &[&str]) -> Vec<u8> {
+        let mut body = Vec::new();
+        append_status_packet(&mut body, b"unpack ok\n").expect("unpack");
+        for line in lines {
+            append_status_packet(&mut body, line.as_bytes()).expect("status");
+        }
+        append_status_packet(&mut body, &[]).expect("flush");
+        body
+    }
+
+    fn partial_ref_results() -> Vec<smart_http::ReceivePackRefResult> {
+        use smart_http::{ReceivePackRefResult, ReceivePackRefStatus};
+        vec![
+            ReceivePackRefResult {
+                name: "refs/heads/first".to_owned(),
+                status: ReceivePackRefStatus::Published,
+            },
+            ReceivePackRefResult {
+                name: "refs/heads/second".to_owned(),
+                status: ReceivePackRefStatus::Pending,
+            },
+            ReceivePackRefResult {
+                name: "refs/heads/third".to_owned(),
+                status: ReceivePackRefStatus::NotApplied,
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn git_http_partial_push_keeps_each_ref_status_and_removes_stale_length() {
+        let mut report = landed_report();
+        report.ref_results = partial_ref_results();
+        let body = status_body(&[
+            "ok refs/heads/first\n",
+            "ok refs/heads/second\n",
+            "option new-oid 1111111111111111111111111111111111111111\n",
+            "ng refs/heads/third internal /private/vault/data.mdb\n",
+        ]);
+        let (status, mut headers) = receive_pack_head();
+        headers.push(("Content-Length".to_owned(), body.len().to_string()));
+        let response = landed_response(
+            Some((status, headers)),
+            vec![Bytes::from(body)],
+            Ok(Ok(report)),
+        );
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(CONTENT_LENGTH).is_none());
+        let actual = axum::body::to_bytes(response.into_body(), GIT_HTTP_MAX_HELD_BYTES)
+            .await
+            .expect("body");
+        assert_eq!(
+            actual.as_ref(),
+            status_body(&[
+                "ok refs/heads/first\n",
+                "ng refs/heads/second publication pending; ref effects may exist\n",
+                "ng refs/heads/third ref was not applied\n",
+            ])
+        );
+    }
+
+    #[test]
+    fn git_http_partial_status_handles_split_sideband_and_rejects_missing_or_duplicate_refs() {
+        let results = partial_ref_results();
+        let raw = status_body(&[
+            "ok refs/heads/first\n",
+            "ok refs/heads/second\n",
+            "ng refs/heads/third refused\n",
+        ]);
+        let mut framed = Vec::new();
+        append_status_packet(&mut framed, b"\x02progress\n").expect("progress");
+        for byte in &raw {
+            append_status_packet(&mut framed, &[1, *byte]).expect("split status");
+        }
+        append_status_packet(&mut framed, &[]).expect("flush");
+        let rewritten = rewrite_receive_pack_status(&framed, &results).expect("sideband status");
+        let mut input = rewritten.as_slice();
+        let packet = status_packet(&mut input).expect("channel one");
+        assert_eq!(packet.first(), Some(&1));
+        assert_eq!(
+            &packet[1..],
+            rewrite_receive_pack_status(&raw, &results).expect("plain status")
+        );
+        assert_eq!(status_packet(&mut input), Some(&b""[..]));
+        assert!(input.is_empty());
+        for invalid in [
+            status_body(&["ok refs/heads/first\n"]),
+            status_body(&[
+                "ok refs/heads/first\n",
+                "ok refs/heads/first\n",
+                "ok refs/heads/third\n",
+            ]),
+            status_body(&[
+                "ok refs/heads/first\n",
+                "ok refs/heads/second\n",
+                "ok refs/heads/other\n",
+            ]),
+            raw[..raw.len() - 4].to_vec(),
+        ] {
+            assert!(rewrite_receive_pack_status(&invalid, &results).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn git_http_held_response_bounds_bytes_and_chunks_but_drains_to_worker_completion() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for (chunk, count) in [
+            (
+                Bytes::from(vec![b'x'; 8192]),
+                GIT_HTTP_MAX_HELD_BYTES / 8192 + 2,
+            ),
+            (Bytes::new(), GIT_HTTP_MAX_HELD_CHUNKS + 2),
+        ] {
+            let (head_tx, head_rx) = oneshot::channel();
+            let (chunks_tx, chunks_rx) = mpsc::channel(1);
+            let completed = Arc::new(AtomicBool::new(false));
+            let worker_completed = Arc::clone(&completed);
+            let worker = tokio::task::spawn_blocking(move || {
+                head_tx.send(receive_pack_head()).expect("head");
+                for _ in 0..count {
+                    chunks_tx
+                        .blocking_send(chunk.clone())
+                        .expect("reader keeps draining");
+                }
+                drop(chunks_tx);
+                worker_completed.store(true, Ordering::SeqCst);
+                Ok(landed_report())
+            });
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                held_response(head_rx, chunks_rx, worker),
+            )
+            .await
+            .expect("no bounded-channel deadlock");
+            assert!(completed.load(Ordering::SeqCst));
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .expect("body");
+            assert_eq!(body.as_ref(), b"git status response exceeded its limit; ref effects may be partial; retry to recover");
+        }
+    }
+
+    #[tokio::test]
+    async fn git_http_internal_failure_text_never_reaches_the_client() {
+        for error in [
+            oneiron::Error::ReceivePackLandingRefused {
+                reason: "/private/vault/data.mdb secret".to_owned(),
+            },
+            oneiron::Error::ConcurrentWrite("/private/vault/data.mdb secret"),
+            oneiron::Error::RepoMutationFailed("/private/vault/data.mdb secret".to_owned()),
+            oneiron::Error::InvariantViolation("/private/vault/data.mdb secret"),
+        ] {
+            let response = serve_failure(Ok(Err(error)));
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .expect("public body");
+            let text = std::str::from_utf8(&body).expect("text");
+            assert!(!text.contains("/private"));
+            assert!(!text.contains("data.mdb"));
+            assert!(!text.contains("secret"));
+            assert!(text.contains("ref effects may be partial"));
         }
     }
 

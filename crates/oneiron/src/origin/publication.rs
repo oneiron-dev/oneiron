@@ -104,6 +104,9 @@ pub const ORIGIN_PUBLICATION_SCHEMA_VERSION: u8 = 1;
 /// claim door; the append-only predicate registry needs no edit.
 pub const ORIGIN_PUBLICATION_PREDICATE: &str = "repo.publication";
 
+/// Explicit, target-bound source for callers outside the receive-pack observer.
+pub const ORIGIN_PUBLICATION_INTENT_PREDICATE: &str = "repo.publication_intent";
+
 /// Publication journal family: `prefix ++ 16B publication_id`.
 ///
 /// The prefix ends in the version separator `v1:` so a future `v10:` can never
@@ -673,6 +676,70 @@ fn publication_claim_body(record: &OriginPublicationRecord) -> Result<ClaimBody>
     Ok(body)
 }
 
+/// Builds the exact source statement required by the generic publication door.
+/// The caller must durably write this claim before requesting publication.
+/// A generic active claim, or a statement about a different target, is not authority.
+#[must_use]
+pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> ClaimBody {
+    let fields = vec![
+        ("repo_id", Value::from(request.repo_id.to_hex())),
+        ("actor_id", Value::from(request.actor_id.to_hex())),
+        ("ref_name", Value::from(request.ref_name.as_str())),
+        (
+            "expected_old_oid",
+            request
+                .expected_old_oid
+                .as_ref()
+                .map_or(Value::Nil, |oid| Value::from(oid.as_str())),
+        ),
+        ("new_oid", Value::from(request.new_oid.as_str())),
+        (
+            "required_objects",
+            Value::Array(
+                request
+                    .required_objects
+                    .iter()
+                    .map(|oid| Value::from(oid.as_str()))
+                    .collect(),
+            ),
+        ),
+        (
+            "required_lfs_oids",
+            Value::Array(
+                request
+                    .required_lfs_oids
+                    .iter()
+                    .map(|(oid, size)| {
+                        Value::Array(vec![Value::from(oid.to_hex()), Value::from(*size)])
+                    })
+                    .collect(),
+            ),
+        ),
+    ];
+    let mut body = ClaimBody::new(
+        ORIGIN_PUBLICATION_INTENT_PREDICATE,
+        ClaimSubject::Edge {
+            source: request.actor_id,
+            kind: EdgeKind::PartOf,
+            target: request.repo_id,
+        },
+        Value::Map(
+            fields
+                .into_iter()
+                .map(|(key, value)| (Value::from(key), value))
+                .collect(),
+        ),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.scope = Some(Value::Map(vec![(
+        Value::from("sensitivity"),
+        Value::from("public"),
+    )]));
+    body
+}
+
 fn publication_claim_value(record: &OriginPublicationRecord) -> Value {
     let expected = record
         .expected_old_oid
@@ -863,6 +930,7 @@ impl Vault {
     ) -> Result<OriginCensusReport> {
         self.validate_origin_repo(repo_id, repo)?;
         let _guard = lock_repository(repo.common_dir())?;
+        self.reconcile_receive_pack_operations(repo.repo_root())?;
         let mut items = Vec::new();
         for record in self.origin_publication_rows(Some(repo_id))? {
             let publication_id = record.publication_id;
@@ -1009,6 +1077,13 @@ impl Vault {
             || self.has_receive_pack_evidence(request.provenance_claim_id)?
         {
             self.validate_receive_pack_publication(request)?;
+        } else if provenance.predicate != ORIGIN_PUBLICATION_INTENT_PREDICATE
+            || provenance.subject != origin_publication_intent_claim(request).subject
+            || provenance.value != origin_publication_intent_claim(request).value
+        {
+            return Err(Error::InvariantViolation(
+                "origin publication source does not authorize this actor and ref intent",
+            ));
         }
         let record = OriginPublicationRecord {
             publication_id,
@@ -1092,6 +1167,20 @@ impl Vault {
                 &request.new_oid,
                 request.learned_at,
             )?;
+        }
+        // Independent dependencies are not necessarily reachable from the tip.
+        // Keep them until this publication stops owning the visible-ref slot.
+        for oid in &request.required_objects {
+            if oid != &request.new_oid && git.object_exists(&request.repo, oid)? {
+                self.pin_origin_object(
+                    git,
+                    &request.repo,
+                    OriginKeepRefKind::Publication,
+                    &publication_id.to_hex(),
+                    oid,
+                    request.learned_at,
+                )?;
+            }
         }
         let key = publication_key(&publication_id);
         let row = encode_publication_row(&record)?;
@@ -1493,7 +1582,32 @@ impl Vault {
             &record.publication_id.to_hex(),
             &record.new_oid,
             learned_at,
-        )
+        )?;
+        let owns_visible_slot = {
+            let rtxn = self.store.env.read_txn()?;
+            self.store
+                .vault_meta
+                .get(&rtxn, &visible_ref_key(&record.repo_id, &record.ref_name))?
+                .is_some_and(|id| id.as_ref() == record.publication_id.as_bytes())
+        };
+        if record.status != OriginPublicationStatus::Published
+            || !owns_visible_slot
+            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid)
+        {
+            for oid in &record.required_objects {
+                if oid != &record.new_oid {
+                    self.unpin_origin_object(
+                        git,
+                        repo,
+                        OriginKeepRefKind::Publication,
+                        &record.publication_id.to_hex(),
+                        oid,
+                        learned_at,
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// A crash after pinning but before T1 has an owner but no journal row.
@@ -1782,28 +1896,17 @@ mod tests {
         GitRefName::parse_full("refs/heads/main").expect("ref name")
     }
 
-    fn fixture_provenance(vault: &Vault, repo_id: EntityId) -> EntityId {
+    fn fixture_provenance(vault: &Vault, request: &OriginPublicationRequest) -> EntityId {
         let id = EntityId::now();
-        let mut body = ClaimBody::new(
-            "test.publication_source",
-            ClaimSubject::Edge {
-                source: id,
-                kind: EdgeKind::PartOf,
-                target: repo_id,
-            },
-            Value::from("test fixture source, not authentication evidence"),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        );
-        body.scope = Some(Value::Map(vec![(
-            Value::from("sensitivity"),
-            Value::from("public"),
-        )]));
+        let body = origin_publication_intent_claim(request);
         vault
             .put_claim(&id, &body, occurred(), LEARNED_AT)
-            .expect("durable fixture provenance");
+            .expect("durable target-bound fixture provenance");
         id
+    }
+
+    fn authorize_fixture(vault: &Vault, request: &mut OriginPublicationRequest) {
+        request.provenance_claim_id = fixture_provenance(vault, request);
     }
 
     fn request(
@@ -1813,7 +1916,7 @@ mod tests {
         expected_old_oid: Option<GitOid>,
         new_oid: GitOid,
     ) -> OriginPublicationRequest {
-        OriginPublicationRequest {
+        let mut request = OriginPublicationRequest {
             repo_id,
             repo: repo.clone(),
             ref_name: main_ref(),
@@ -1821,11 +1924,13 @@ mod tests {
             new_oid,
             required_objects: Vec::new(),
             required_lfs_oids: Vec::new(),
-            provenance_claim_id: fixture_provenance(vault, repo_id),
+            provenance_claim_id: EntityId::now(),
             actor_id: EntityId::now(),
             occurred: occurred(),
             learned_at: LEARNED_AT,
-        }
+        };
+        authorize_fixture(vault, &mut request);
+        request
     }
 
     /// The repo id the protocol itself derives, so a fixture and the code
@@ -1838,6 +1943,101 @@ mod tests {
     /// crash before the CAS looks like from the journal's point of view.
     fn force_ref(root: &Path, oid: &GitOid) {
         git(root, &["update-ref", "refs/heads/main", oid.as_str()]);
+    }
+
+    #[test]
+    fn publication_rejects_unrelated_and_retargeted_active_sources() {
+        let (_vault_dir, vault) = test_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        let next = commit(&root, "next", "next\n");
+        force_ref(&root, &base);
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = open_repo(&wire, &root, &base);
+        let repo_id = repo_id_of(&vault, &repo);
+        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
+        let mut unrelated = origin_publication_intent_claim(&ask);
+        unrelated.predicate = "test.unrelated".to_owned();
+        unrelated.value = Value::from("an active claim is not publication authority");
+        let unrelated_id = EntityId::now();
+        vault
+            .put_claim(&unrelated_id, &unrelated, occurred(), LEARNED_AT)
+            .expect("claim");
+        let mut variants = Vec::new();
+        let mut changed = ask.clone();
+        changed.provenance_claim_id = unrelated_id;
+        variants.push(changed);
+        let mut changed = ask.clone();
+        changed.actor_id = EntityId::now();
+        variants.push(changed);
+        let mut changed = ask.clone();
+        changed.ref_name = GitRefName::parse_full("refs/heads/other").expect("ref");
+        variants.push(changed);
+        let mut changed = ask.clone();
+        changed.new_oid = base.clone();
+        variants.push(changed);
+        let mut changed = ask.clone();
+        changed.expected_old_oid = None;
+        variants.push(changed);
+        let mut changed = ask.clone();
+        changed.required_objects = vec![next];
+        variants.push(changed);
+        let mut changed = ask.clone();
+        changed.required_lfs_oids = vec![(LfsOid::parse_hex(&"a".repeat(64)).expect("oid"), 1)];
+        variants.push(changed);
+        let (_other_dir, other_root, other_base) = seeded_repo();
+        let other_repo = open_repo(&wire, &other_root, &other_base);
+        let mut changed = ask;
+        changed.repo_id = repo_id_of(&vault, &other_repo);
+        changed.repo = other_repo;
+        variants.push(changed);
+        for changed in variants {
+            assert!(vault.publish_origin_ref(&wire, changed).is_err());
+        }
+        assert!(vault.origin_publication_ids(None).expect("ids").is_empty());
+        assert_eq!(wire.read_ref(&repo, &main_ref()).expect("ref"), Some(base));
+    }
+
+    #[test]
+    fn publication_retains_independent_required_objects_until_superseded() {
+        let (_vault_dir, vault) = test_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        std::fs::write(root.join("independent"), b"not in any commit").expect("bytes");
+        let extra =
+            GitOid::parse_hex(git(&root, &["hash-object", "-w", "independent"])).expect("blob");
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = open_repo(&wire, &root, &base);
+        let repo_id = repo_id_of(&vault, &repo);
+        let mut ask = request(&vault, &repo, repo_id, Some(base.clone()), base.clone());
+        ask.required_objects = vec![extra.clone()];
+        authorize_fixture(&vault, &mut ask);
+        let published = vault.publish_origin_ref(&wire, ask).expect("publish");
+        assert_eq!(published.record.status, OriginPublicationStatus::Published);
+        let keep = origin_keep_ref_name(&extra).expect("keep");
+        assert_eq!(
+            wire.read_ref(&repo, &keep).expect("root"),
+            Some(extra.clone())
+        );
+        git(&root, &["reflog", "expire", "--expire=now", "--all"]);
+        git(&root, &["gc", "--prune=now"]);
+        vault
+            .reconcile_origin_publications(&wire, repo_id, &repo, LEARNED_AT + 1)
+            .expect("census retains dependency");
+        assert!(wire.object_exists(&repo, &extra).expect("still present"));
+        assert_eq!(
+            vault
+                .published_origin_refs(&wire, repo_id, &repo)
+                .expect("visible")
+                .len(),
+            1
+        );
+        let next = commit(&root, "next", "next\n");
+        force_ref(&root, &base);
+        let ask = request(&vault, &repo, repo_id, Some(base), next);
+        vault.publish_origin_ref(&wire, ask).expect("supersede");
+        vault
+            .reconcile_origin_publications(&wire, repo_id, &repo, LEARNED_AT + 2)
+            .expect("release old dependency");
+        assert_eq!(wire.read_ref(&repo, &keep).expect("retired"), None);
     }
 
     #[test]
@@ -1994,6 +2194,7 @@ mod tests {
         let mut missing_object = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
         missing_object.required_objects =
             vec![GitOid::parse_hex("b".repeat(40)).expect("absent oid")];
+        authorize_fixture(&vault, &mut missing_object);
         let refused = vault
             .publish_origin_ref(&wire, missing_object)
             .expect("publish refuses rather than errors");
@@ -2059,6 +2260,7 @@ mod tests {
         assert!(vault.has_lfs_object(oid, size).expect("metadata remains"));
         let mut corrupt_lfs = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
         corrupt_lfs.required_lfs_oids = vec![(oid, size)];
+        authorize_fixture(&vault, &mut corrupt_lfs);
         let refused = vault
             .publish_origin_ref(&wire, corrupt_lfs)
             .expect("corrupt lfs refusal");
@@ -2075,6 +2277,7 @@ mod tests {
         let mut missing_lfs = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
         missing_lfs.required_lfs_oids =
             vec![(LfsOid::parse_hex(&"c".repeat(64)).expect("lfs oid"), 11)];
+        authorize_fixture(&vault, &mut missing_lfs);
         let refused = vault
             .publish_origin_ref(&wire, missing_lfs)
             .expect("publish refuses rather than errors");
@@ -2105,6 +2308,7 @@ mod tests {
             .object;
         let mut ask = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
         ask.required_lfs_oids = vec![(oid, u64::try_from(bytes.len()).expect("size"))];
+        authorize_fixture(&vault, &mut ask);
         let published = vault
             .publish_origin_ref(&wire, ask.clone())
             .expect("publish with lfs");
@@ -2377,6 +2581,7 @@ mod tests {
             .expect("extra oid");
         let mut unavailable = request(&vault, &repo, repo_id, Some(moved_on.clone()), fifth);
         unavailable.required_objects = vec![extra.clone()];
+        authorize_fixture(&vault, &mut unavailable);
         let unavailable_id = origin_publication_id(&unavailable).expect("publication id");
         vault
             .stage_origin_publication(&wire, &unavailable, unavailable_id)
@@ -2707,6 +2912,7 @@ mod tests {
         let mut second = ask;
         second.ref_name = GitRefName::parse_full("refs/heads/other").expect("ref");
         second.expected_old_oid = None;
+        authorize_fixture(&vault, &mut second);
         let landed = vault
             .publish_origin_ref(&wire, second)
             .expect("publish")
@@ -2744,7 +2950,7 @@ mod tests {
             .stage_origin_publication(&wire, &first, id)
             .expect("T1");
         let mut duplicate = first.clone();
-        duplicate.provenance_claim_id = fixture_provenance(&vault, repo_id);
+        duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
         let duplicate_id = origin_publication_id(&duplicate).expect("duplicate id");
         assert!(vault.publish_origin_ref(&wire, duplicate.clone()).is_err());
         assert_eq!(
@@ -2859,7 +3065,7 @@ mod tests {
         let blocked = root.join(".git/refs/heads/main.lock");
         std::fs::write(&blocked, b"another git ref transaction").expect("block CAS");
         let mut duplicate = ask.clone();
-        duplicate.provenance_claim_id = fixture_provenance(&vault, repo_id);
+        duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
         let duplicate_id = origin_publication_id(&duplicate).expect("duplicate id");
         assert!(vault.publish_origin_ref(&wire, duplicate).is_err());
         assert!(
@@ -2930,6 +3136,7 @@ mod tests {
         let size = bytes.len() as u64;
         let mut ask = request(&vault, &repo, repo_id, Some(base), next.clone());
         ask.required_lfs_oids = vec![(oid, size)];
+        authorize_fixture(&vault, &mut ask);
         let id = origin_publication_id(&ask).expect("id");
         vault.stage_origin_publication(&wire, &ask, id).expect("T1");
         // Model a crash after the Git subprocess, before its journal transition.
