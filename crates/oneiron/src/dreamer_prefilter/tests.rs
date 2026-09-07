@@ -1,5 +1,7 @@
 use super::*;
 
+mod repair_regressions;
+
 use crate::config::VaultConfig;
 use crate::dreamer_consolidation::{
     ConsolidationPartitionPlan, plan_partitions, read_watermark, scan_dirty_turns,

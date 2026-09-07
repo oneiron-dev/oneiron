@@ -20,8 +20,9 @@
 //!
 //! * **Not a security gate.** It is a budget estimate. Every failure mode
 //!   resolves toward KEEPING work: an unreadable body passes unscored, an
-//!   absent config row bootstraps to the compiled default, and a screen that
-//!   cannot reconstruct a round writes no receipts rather than a wrong one.
+//!   absent config row bootstraps to the compiled default. Committing a lossy
+//!   round requires complete planning input and atomic screening receipts;
+//!   corrupt rows abort that commit rather than silently losing its audit.
 //! * **Not a selection authority.** It NEVER touches the watermark scan, the
 //!   snapshot fence, `planned_turn_ids`, or `advance_watermark_to`. Skipped
 //!   turns are still consumed by the round and still advance the cursor, so a
@@ -187,7 +188,7 @@ impl PrefilterWeights {
         ]
     }
 
-    /// Total weight mass. Validation requires this to be positive.
+    /// Total weight mass. Validation requires this to be finite and positive.
     #[must_use]
     pub fn total(&self) -> f32 {
         self.len + self.ttr + self.entity_density + self.novelty + self.role
@@ -236,7 +237,7 @@ fn invalid_prefilter_config(reason: impl Into<String>) -> Error {
 /// Refuses a config that cannot produce a meaningful score.
 ///
 /// Non-finite (NaN/±Inf) and out-of-`[0, 1]` thresholds, negative or
-/// non-finite weights, and an all-zero weight vector are all rejected here —
+/// non-finite weights, an overflowing total, and an all-zero vector are rejected —
 /// BEFORE the row is encoded, so a refused config is never persisted.
 ///
 /// # Errors
@@ -266,9 +267,10 @@ pub fn validate_prefilter_config(config: &PrefilterConfig) -> Result<()> {
             )));
         }
     }
-    if config.weights.total() <= 0.0 {
+    let total = config.weights.total();
+    if !total.is_finite() || total <= 0.0 {
         return Err(invalid_prefilter_config(
-            "dreamer prefilter weights must have positive total mass",
+            "dreamer prefilter weights must have finite positive total mass",
         ));
     }
     Ok(())
@@ -860,10 +862,13 @@ struct PrefilterSkipRow {
     features: BTreeMap<String, f32>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PrefilterRoundRow {
     version: u8,
     occurred_at: u64,
+    // Still-current members of this round. A partial rescan retires only its
+    // overlapping decisions and reduces the rollup, retaining the rest.
+    members: Vec<[u8; 16]>,
     scanned: u64,
     passed: u64,
     skipped: u64,
@@ -888,85 +893,27 @@ fn prefilter_round_key(round: &[u8; 32]) -> Vec<u8> {
     key
 }
 
-/// Writes the round's screening receipts inside the CALLER's transaction — the
-/// same commit as the round's enqueue and watermark advance.
+/// Persists the exact screen consumed by the transaction's partition planner.
+/// Per-turn rows remain SKIPS ONLY; passes ride a lossy round's rollup. An
+/// all-pass or disabled round writes nothing, but still retires earlier
+/// decisions for its input turns. Disjoint historical decisions stay intact.
 ///
-/// That placement is what makes the receipts exactly-once: they exist if and
-/// only if the round they describe committed, and a replay of the same batch
-/// re-derives the same keys (`partition_round_hash || turn_id`) and replaces
-/// its previous receipts rather than retaining stale skips or duplicates.
-///
-/// Per-turn rows are written for SKIPS ONLY. A pass costs nothing to explain
-/// and would put one row in the store per extracted turn forever; the passes
-/// ride the round rollup as counts. A disabled round or one that skipped
-/// nothing leaves no receipts, removing any from an earlier same-batch screen.
-/// Under the shipped default policy that is every round, so the screen leaves
-/// no trace until an operator asks it to filter.
-///
-/// # Errors
-///
-/// Storage errors, or [`Error::InvalidConfig`] when the landed config row is
-/// unusable.
+/// The owner reconstructs all input rows before planning and passes that same
+/// input and screen here. Any storage/accounting error aborts the surrounding
+/// enqueue and watermark transaction; no reconstruction error becomes success.
 pub(crate) fn write_prefilter_receipts_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    planned_turn_ids: &[EntityId],
+    scope: DreamerConsolidationScope,
+    turns: &[WorkingSetTurn],
+    screen: &PrefilterScreen,
     now: u64,
 ) -> Result<()> {
-    if planned_turn_ids.is_empty() {
+    supersession::retire_overlapping_decisions(vault, wtxn, scope, turns)?;
+    if !screen.enabled || screen.skipped == 0 {
         return Ok(());
     }
-    let config = vault.prefilter_config_in_txn(wtxn)?;
-
-    let mut turns = Vec::with_capacity(planned_turn_ids.len());
-    let mut inputs = Vec::with_capacity(planned_turn_ids.len());
-    for turn_id in planned_turn_ids {
-        let Some(raw) = vault.get_raw_in(&*wtxn, turn_id)? else {
-            unreconstructable_round(turn_id);
-            return Ok(());
-        };
-        let Some((role, learned_at, text)) = screen_text_from_raw(&raw) else {
-            unreconstructable_round(turn_id);
-            return Ok(());
-        };
-        let turn = WorkingSetTurn {
-            turn_id: *turn_id,
-            role,
-            learned_at,
-            conversation: None,
-        };
-        turns.push(turn);
-        inputs.push((turn, text));
-    }
-
-    // The round identity is `partition_round_hash` over the WHOLE fenced batch
-    // — the same function the attempt dedupe key is built from, applied at
-    // round granularity rather than per partition. It is reproducible from the
-    // fenced turn list alone, which is what lets a replay replace itself.
-    let round = partition_round_hash(&turns);
-
-    // Reconstruct the whole round before touching its receipts: an unreadable
-    // turn must not leave a partially cleared round. These exact keys cover
-    // every possible prior skip of this batch without scanning other rounds.
-    // Cleanup and replacement share the caller's enqueue/watermark transaction,
-    // including when the new policy disables the screen or keeps every turn.
-    for turn in &turns {
-        vault
-            .store
-            .vault_meta
-            .delete(wtxn, &prefilter_skip_key(&round, &turn.turn_id))?;
-    }
-    vault
-        .store
-        .vault_meta
-        .delete(wtxn, &prefilter_round_key(&round))?;
-    if !config.enabled {
-        return Ok(());
-    }
-    let screen = screen_turn_inputs(&config, &inputs, &BTreeSet::new());
-    if screen.skipped == 0 {
-        return Ok(());
-    }
+    let round = supersession::round_hash(scope, turns);
 
     for entry in &screen.verdicts {
         if entry.verdict.pass {
@@ -997,6 +944,7 @@ pub(crate) fn write_prefilter_receipts_in_txn(
     let rollup = PrefilterRoundRow {
         version: PREFILTER_RECEIPT_VERSION,
         occurred_at: now,
+        members: turns.iter().map(|turn| *turn.turn_id.as_bytes()).collect(),
         scanned: screen.scanned as u64,
         passed: screen.passed as u64,
         skipped: screen.skipped as u64,
@@ -1009,24 +957,11 @@ pub(crate) fn write_prefilter_receipts_in_txn(
         .store
         .vault_meta
         .put(wtxn, &prefilter_round_key(&round), &encoded)?;
+    supersession::index_round(vault, wtxn, scope, &round, turns)?;
     Ok(())
 }
 
-/// A round whose turn rows cannot be re-read in the close transaction is not
-/// receipted at all.
-///
-/// The rows were enumerated by the fence in THIS transaction, so this is a
-/// corrupt-index shape rather than a race — but receipts are observability,
-/// and failing a session close over one would trade a durable close for a
-/// bookkeeping row. A partial rollup would understate the savings and a
-/// mis-keyed skip row would be unjoinable with its round, so the honest answer
-/// is silence plus a warning.
-fn unreconstructable_round(turn_id: &EntityId) {
-    tracing::warn!(
-        turn = %turn_id.to_hex(),
-        "dreamer prefilter round not receipted: planned turn row is unreadable"
-    );
-}
+mod supersession;
 
 fn prefilter_skip_receipt(round: &[u8], turn: &EntityId, row: &PrefilterSkipRow) -> ReceiptRecord {
     let round_hex = hex_lower(round);
