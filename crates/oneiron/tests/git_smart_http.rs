@@ -100,13 +100,12 @@ struct TestOrigin {
 }
 
 impl TestOrigin {
-    /// Starts an origin whose `demo` repository is a bare clone of `source`.
+    /// Starts an origin whose `main` is published by a real scanned push.
     fn start(source: &Path, seam: DoorSeam) -> Self {
         let dir = tempfile::tempdir().expect("vault tempdir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
         let root = smart_http::origin_serving_root(&vault).expect("serving root");
-        let source = source.to_string_lossy().into_owned();
-        git(&root, &["clone", "--bare", "--", &source, "demo.git"]);
+        git(&root, &["init", "--bare", "--initial-branch=main", "demo.git"]);
         let repo_dir = root.join("demo.git");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind origin");
@@ -130,14 +129,30 @@ impl TestOrigin {
             }
         });
 
-        Self {
+        let origin = Self {
             _dir: dir,
             vault,
             addr,
             repo_dir,
             reports,
             shutdown,
-        }
+        };
+        // Raw refs from a bare clone are deliberately not advertised. Bootstrap
+        // through the same scan, durable intent, and publication as later pushes.
+        let head = git(source, &["rev-parse", "--verify", "refs/heads/main"]);
+        git(source, &["push", &origin.url(), "main:refs/heads/main"]);
+        assert_eq!(
+            origin.origin_ref("refs/heads/main").as_deref(),
+            Some(head.as_str()),
+            "the scanned seed reached the origin"
+        );
+        let landed = origin.landed();
+        assert_eq!(landed.len(), 1, "the seed has an authentic landing");
+        assert_eq!(landed[0].door.verdict, DoorWindowVerdict::Clean);
+        // Scenario assertions count only scenario traffic, never the seed push.
+        // Durable publication and provenance stay in the vault for clone/fetch.
+        origin.reports.lock().expect("reports lock").clear();
+        origin
     }
 
     fn url(&self) -> String {
@@ -408,10 +423,13 @@ impl Read for ChunkedBody {
 fn git_smart_http_clone_then_fetch_round_trips_stock_client() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     assert_eq!(
         std::fs::read_to_string(clone.join("README.md")).expect("cloned file"),
@@ -425,7 +443,10 @@ fn git_smart_http_clone_then_fetch_round_trips_stock_client() {
         &["rev-parse", "--verify", "refs/heads/main"],
     );
     let bump = tempfile::tempdir().expect("bump tempdir");
-    git(bump.path(), &["clone", "--", &origin.url(), "bump"]);
+    git(
+        bump.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "bump"],
+    );
     let bump_clone = bump.path().join("bump");
     let head = commit_file(&bump_clone, "next.txt", "second\n", "second");
     git(&bump_clone, &["push", "origin", "main"]);
@@ -440,13 +461,16 @@ fn git_smart_http_clone_then_fetch_round_trips_stock_client() {
 }
 
 #[test]
-fn git_smart_http_noop_door_hook_clean_push_lands() {
+fn git_smart_http_landed_door_hook_clean_push_lands() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     let head = commit_file(&clone, "app.txt", "clean\n", "clean push");
     git(&clone, &["push", "origin", "main"]);
@@ -482,10 +506,13 @@ fn git_smart_http_noop_door_hook_clean_push_lands() {
 fn git_smart_http_delete_only_push_is_journaled_like_any_other_landing() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     git(&clone, &["checkout", "-b", "feature"]);
     let tip = commit_file(&clone, "feature.txt", "branch\n", "feature commit");
@@ -548,7 +575,10 @@ fn git_smart_http_rejecting_door_hook_fails_before_refs_move_and_objects_stay_un
         .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     // Secret-shaped added bytes. The door's scan is unconditional, so this is
     // refused while the objects are still quarantined.
@@ -574,6 +604,13 @@ fn git_smart_http_rejecting_door_hook_fails_before_refs_move_and_objects_stay_un
         origin.landed().is_empty(),
         "a refused push produces no landing and no receipt"
     );
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("config.env: gate.secret_scan.github_token")),
+        "the door detected the secret: {refusals:?}"
+    );
 }
 
 /// A binary push must never be answered `Clean` on bytes nobody read.
@@ -591,7 +628,10 @@ fn git_smart_http_binary_push_is_refused_rather_than_admitted_unscanned() {
         .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     let head = commit_bytes(
         &clone,
@@ -618,20 +658,51 @@ fn git_smart_http_binary_push_is_refused_rather_than_admitted_unscanned() {
         origin.landed().is_empty(),
         "a refused push produces no landing and no receipt"
     );
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("receive-pack scan could not complete")),
+        "the landed scan refused unscannable bytes: {refusals:?}"
+    );
 }
 
-/// The refusal above is the DOOR's rule, not the extraction's: with the no-op
-/// seam the same binary push rides the same wire and lands.
+/// Git's binary diff classification must not prevent whole-blob extraction.
+/// The positive payload is valid UTF-8 without NULs, so the real door can scan
+/// it even though `-diff` hides its patch. Truly unscannable bytes still fail.
 #[test]
-fn git_smart_http_binary_push_streams_whole_under_the_noop_seam() {
+fn git_smart_http_binary_diff_push_streams_whole_through_landed_scan() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    commit_file(
+        source.path(),
+        ".gitattributes",
+        "logo.png -diff\n",
+        "binary diff policy",
+    );
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
+    // A bare repository has no worktree attributes file. Apply the same diff
+    // classification locally; this changes no scanner policy or content bytes.
+    std::fs::write(origin.repo_dir.join("info/attributes"), "logo.png -diff\n")
+        .expect("origin binary diff policy");
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
-    let head = commit_bytes(&clone, "logo.png", &binary_payload(), "binary push");
+    let bytes = b"clean scan-compatible binary-diff content\n";
+    let head = commit_bytes(&clone, "logo.png", bytes, "binary push");
+    let patch = git(
+        &clone,
+        &["diff-tree", "-p", "HEAD^", "HEAD", "--", "logo.png"],
+    );
+    assert!(patch.contains("Binary files"), "git omits the binary patch");
+    assert!(
+        !patch.contains("clean scan-compatible"),
+        "no payload in the patch"
+    );
     git(&clone, &["push", "origin", "main"]);
 
     assert_eq!(
@@ -642,6 +713,42 @@ fn git_smart_http_binary_push_streams_whole_under_the_noop_seam() {
     assert!(
         origin.object_present(&head),
         "the pushed commit became durable"
+    );
+    let stored = git_output(&origin.repo_dir, &["cat-file", "blob", "main:logo.png"]);
+    assert!(stored.status.success(), "read the landed whole blob");
+    assert_eq!(stored.stdout.as_slice(), bytes, "all payload bytes survived");
+    let landed = origin.landed();
+    assert_eq!(landed.len(), 1, "the binary-diff push was journaled");
+    assert_eq!(landed[0].door.verdict, DoorWindowVerdict::Clean);
+
+    // The diff attribute is not an exemption: the original NUL/invalid-UTF-8
+    // payload must still be refused before refs move or objects leave quarantine.
+    let rejected = commit_bytes(
+        &clone,
+        "logo.png",
+        &binary_payload(),
+        "unscannable binary push",
+    );
+    let push = git_output(&clone, &["push", "origin", "main"]);
+    assert!(
+        !push.status.success(),
+        "binary diff policy cannot bypass scanning"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(head.as_str())
+    );
+    assert!(
+        !origin.object_present(&rejected),
+        "unscannable commit stayed quarantined"
+    );
+    assert_eq!(origin.landed().len(), 1, "refusal added no landing");
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("receive-pack scan could not complete")),
+        "the landed scan refused the binary bytes: {refusals:?}"
     );
 }
 
@@ -660,7 +767,10 @@ fn git_smart_http_double_plus_added_lines_reach_the_door() {
         .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     let head = commit_file(
         &clone,
@@ -682,6 +792,13 @@ fn git_smart_http_double_plus_added_lines_reach_the_door() {
     assert!(
         !origin.object_present(&head),
         "rejected before objects become durable"
+    );
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("notes.md: gate.secret_scan.github_token")),
+        "the door scanned the leading-plus content: {refusals:?}"
     );
 }
 
@@ -719,7 +836,10 @@ fn git_smart_http_planted_replace_ref_cannot_substitute_the_bytes_the_door_scans
         .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     // The secret commit exists locally BEFORE anything is pushed, so its oid is
     // known in advance: that is exactly what makes a replacement plantable.
@@ -777,6 +897,13 @@ fn git_smart_http_planted_replace_ref_cannot_substitute_the_bytes_the_door_scans
         origin.landed().is_empty(),
         "a refused push produces no landing and no receipt"
     );
+    let refusals = door_refusals(&origin);
+    assert!(
+        refusals
+            .last()
+            .is_some_and(|reason| reason.contains("config.env: gate.secret_scan.github_token")),
+        "the door scanned the real secret, not the replacement: {refusals:?}"
+    );
 }
 
 /// A name git accepts but the landing could never journal is refused pre-move.
@@ -791,10 +918,13 @@ fn git_smart_http_planted_replace_ref_cannot_substitute_the_bytes_the_door_scans
 fn git_smart_http_ref_name_the_landing_cannot_journal_is_refused_before_refs_move() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     let head = commit_file(&clone, "app.txt", "unjournalable\n", "illegal ref name");
 
@@ -838,7 +968,7 @@ fn git_smart_http_ref_name_the_landing_cannot_journal_is_refused_before_refs_mov
 fn git_smart_http_repo_supplied_pre_receive_hook_never_executes() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     // A repository-supplied hook that would refuse every push and leave a
     // sentinel behind. `core.hooksPath` is pinned in argv to the door's own
@@ -858,7 +988,10 @@ fn git_smart_http_repo_supplied_pre_receive_hook_never_executes() {
     set_executable(&hook);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     let head = commit_file(&clone, "app.txt", "hooked\n", "hook probe");
     git(&clone, &["push", "origin", "main"]);
@@ -878,10 +1011,13 @@ fn git_smart_http_repo_supplied_pre_receive_hook_never_executes() {
 fn git_smart_http_replayed_receive_pack_outcome_is_noop_without_duplicate_oplog_entry() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     commit_file(&clone, "app.txt", "replay\n", "replayed push");
     git(&clone, &["push", "origin", "main"]);
@@ -910,13 +1046,16 @@ fn git_smart_http_replayed_receive_pack_outcome_is_noop_without_duplicate_oplog_
 fn git_smart_http_crash_window_recovery_never_half_moves_refs() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
     let base = origin
         .origin_ref("refs/heads/main")
         .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     commit_file(&clone, "app.txt", "recovered\n", "recovery probe");
     git(&clone, &["push", "origin", "main"]);
@@ -967,10 +1106,13 @@ fn git_smart_http_crash_window_recovery_never_half_moves_refs() {
 fn git_smart_http_large_push_streams_without_buffering() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Noop);
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
 
     let work = tempfile::tempdir().expect("work tempdir");
-    git(work.path(), &["clone", "--", &origin.url(), "clone"]);
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
     let clone = work.path().join("clone");
     let head = commit_file(&clone, "bulk.txt", &incompressible_text(), "bulk push");
     // A tiny post buffer forces the stock client onto chunked upload, so the
