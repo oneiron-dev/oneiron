@@ -521,7 +521,7 @@ fn check_session_bundle_actor_policy(
     // Read-only review over already-proposed bodies. Bundle MERGE builds its
     // own trivial-lineage envelope above, so there is no observed history for
     // this door to read: declared-source only, exactly as before.
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, None)
 }
 
 /// One bundle member paired with the hash of the LIVE claim body the digest

@@ -1322,47 +1322,85 @@ fn gate_outcomes_remain_authoritative() {
     vault
         .create_counterparty_contact(&contact_id, &contact)
         .expect("store contact");
-    vault
-        .opt_out_counterparty_contact(
-            &contact_id,
-            crate::counterparty_contact::CounterpartyOptOutReason::Unsubscribe,
-            20,
-        )
-        .expect("opt the contact out");
 
     let route = send_route()
         .with_channel_identity_ref(identity_ref)
         .with_counterparty_ref("feedback@example.com");
     let scope = FeedbackApprovalScope::Send(route.clone());
-    let approval = approved_for(&preview, &scope);
-    let context = send_context(route, actor);
+    let mut approval = approved_for(&preview, &scope);
+    let mut context = send_context(route, actor);
 
+    // The same route, actor, and stored contact can send before opt-out.
+    let mut allowed_transport = RecordingTransport::default();
+    let allowed = send_feedback(
+        &vault,
+        &preview,
+        &context,
+        &approval,
+        &mut allowed_transport,
+    )
+    .expect("send before opt-out");
+    assert_eq!(
+        allowed.dispatch.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(allowed.dispatch.gate_outcome, "allow");
+    assert_eq!(allowed.transport_calls, 1);
+    assert_eq!(allowed_transport.payloads, vec![preview.bytes().to_vec()]);
+    assert_eq!(allowed_transport.digests, vec![preview.digest().to_owned()]);
+
+    vault
+        .opt_out_counterparty_contact(
+            &contact_id,
+            crate::counterparty_contact::CounterpartyOptOutReason::Unsubscribe,
+            1_001,
+        )
+        .expect("opt the contact out");
+
+    // A fresh approval gives this send fresh receipt, intent, and ledger
+    // identities, so replay dedupe cannot mask the opt-out gate decision.
+    approval.receipt.receipt_id = "consent:feedback:approval:2".to_owned();
+    approval.receipt.occurred_at = 1_002;
+    context.occurred_at = 1_002;
     let mut transport = RecordingTransport::default();
     let outcome = send_feedback(&vault, &preview, &context, &approval, &mut transport)
-        .expect("a denied dispatch is still an ordinary result");
+        .expect("a held dispatch is still an ordinary result");
 
+    assert_ne!(outcome.logical_send_ref, allowed.logical_send_ref);
+    assert_eq!(outcome.dispatch.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(outcome.dispatch.gate_outcome, "pending");
+    let receipt = &outcome.dispatch.receipt;
+    assert_eq!(receipt.outcome, "held");
     assert_eq!(
-        outcome.dispatch.outcome,
-        OutboundDispatchOutcome::Suppressed
+        receipt.fields.get("hold_reason").map(String::as_str),
+        Some("gate.pending.counterparty_opt_out")
     );
-    assert_eq!(outcome.dispatch.gate_outcome, "deny");
+    assert!(!receipt.fields.contains_key("suppression"));
     assert!(
-        outcome
-            .dispatch
-            .receipt
+        receipt
             .policy_trace
-            .contains(&"gate.deny.counterparty_opt_out".to_owned()),
-        "the opt-out deny arm fired over a stored contact"
+            .contains(&"gate.pending.counterparty_opt_out".to_owned()),
+        "the opt-out pending arm fired over the same stored contact"
+    );
+    assert!(
+        receipt
+            .policy_trace
+            .contains(&"counterparty_opt_out_unsubscribe".to_owned())
+    );
+    assert_eq!(
+        receipt
+            .fields
+            .get("gate_receipt_reasons")
+            .map(String::as_str),
+        Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
     );
     assert_eq!(outcome.transport_calls, 0);
     assert!(
         transport.payloads.is_empty(),
-        "a denied send charges no transport"
+        "a held send charges no transport"
     );
     assert!(
-        !outcome
-            .dispatch
-            .receipt
+        !receipt
             .fields
             .contains_key(FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST),
         "transport fields only exist when a transport ran"

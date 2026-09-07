@@ -33,7 +33,8 @@ use crate::dreamer_runner::{
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneClaim,
     DreamerMilestoneKind, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-    EnqueueDreamerConsolidationAttempt, ParkDreamerAttempt, SettleDreamerBudget,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerVaultCleanupAttempt, ParkDreamerAttempt,
+    SettleDreamerBudget,
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::{
@@ -1283,6 +1284,9 @@ enum ProgressKind {
 ///
 /// `trigger` carries host intent; the scope is the caller's (typically
 /// `trigger.default_scope()`, which an Event payload may override).
+/// Timer/Macro also enqueues vault cleanup in the SAME transaction. Other
+/// triggers and narrower scopes enqueue consolidation only. The returned
+/// outcome remains the consolidation outcome; cleanup has its own queue kind.
 pub fn request_wake(
     store: &DreamerRunnerStore<'_>,
     trigger: WakeTrigger,
@@ -1292,10 +1296,9 @@ pub fn request_wake(
     run_id: Option<String>,
     now: u64,
 ) -> Result<EnqueueDreamerAttemptOutcome> {
-    // The trigger's runtime effect is scope derivation, owned by the caller
-    // via `WakeTrigger::default_scope`; it is accepted here so hosts express
-    // intent at the single wake entry point.
-    let _ = trigger;
+    if trigger == WakeTrigger::Timer && scope == DreamerConsolidationScope::Macro {
+        return store.enqueue_timer_wake(payload, dedupe_key, run_id, now);
+    }
     store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
         scope,
         input: payload.input,
@@ -1331,6 +1334,21 @@ pub(crate) fn request_wake_in_txn(
     now: u64,
 ) -> Result<EnqueueDreamerAttemptOutcome> {
     let scope = trigger.default_scope();
+    if trigger == WakeTrigger::Timer {
+        // The queue dedupe domain includes the kind, so sharing the wake key
+        // coalesces each lane without one lane swallowing the other.
+        store.enqueue_vault_cleanup_in_txn(
+            txn,
+            EnqueueDreamerVaultCleanupAttempt {
+                trigger,
+                input: Value::Nil,
+                parent_attempt: payload.parent_attempt,
+                dedupe_key: dedupe_key.clone(),
+                run_id: run_id.clone(),
+                now,
+            },
+        )?;
+    }
     store.enqueue_consolidation_in_txn(
         txn,
         EnqueueDreamerConsolidationAttempt {

@@ -504,6 +504,10 @@ pub enum ErrorKind {
     GitHttpServeFailed,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    VaultCleanupRestoreNotArchived,
+    VaultCleanupArchiveMarkerUndecodable,
+    VaultCleanupProposalNotFound,
+    VaultCleanupWakeTriggerRejected,
 }
 
 /// Sync configuration field rejected by protocol setup validation.
@@ -2264,6 +2268,48 @@ pub enum Error {
         /// The publication rejection class.
         reason: String,
     },
+    /// [`crate::Vault::restore_archived`] was called on an entity that
+    /// carries no `archived_by_cleanup` marker (ONE-1931).
+    ///
+    /// The restore door is scoped to cleanup archives ALONE, and this is the
+    /// refusal that keeps it there: a `user_delete` shell, a hard-purged id
+    /// and a live row all land here, so the door can never become a general
+    /// un-delete for tombstones the owner or a regulator asked for.
+    #[error("restore refused: {entity} carries no archived_by_cleanup marker")]
+    VaultCleanupRestoreNotArchived {
+        /// Lowercase hex entity id.
+        entity: String,
+    },
+    /// A cleanup-archive marker exists for the entity but its bytes are not
+    /// an `archived_by_cleanup` tombstone value (ONE-1931).
+    ///
+    /// Fail-closed, matching the tombstone decode law it borrows: a marker
+    /// the engine cannot read as an archive is never treated as one, so a
+    /// corrupt row refuses the restore instead of reviving a shell on a guess.
+    #[error("cleanup archive marker for {entity} is not readable as an archive: {reason}")]
+    VaultCleanupArchiveMarkerUndecodable {
+        /// Lowercase hex entity id.
+        entity: String,
+        /// Why the marker could not be read as an archive.
+        reason: &'static str,
+    },
+    /// No cleanup proposal exists under the given id (ONE-1931). An accept or
+    /// reject of an already-resolved proposal lands here rather than silently
+    /// doing nothing.
+    #[error("vault cleanup proposal {proposal} not found")]
+    VaultCleanupProposalNotFound {
+        /// Lowercase hex proposal id.
+        proposal: String,
+    },
+    /// The vault-cleanup cron was registered on a wake it does not run on
+    /// (ONE-1931). ARCH-0073 puts the cleanup pass on the TIMER wake (Macro
+    /// scope); registering it on a compaction/session-end/event wake would
+    /// make an interactive turn pay for a maintenance scan.
+    #[error("vault cleanup registers on the timer wake only, not {trigger}")]
+    VaultCleanupWakeTriggerRejected {
+        /// The refused trigger's name.
+        trigger: &'static str,
+    },
 }
 
 impl From<CompactionPacketError> for Error {
@@ -2618,6 +2664,16 @@ impl Error {
             Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
+            Self::VaultCleanupRestoreNotArchived { .. } => {
+                ErrorKind::VaultCleanupRestoreNotArchived
+            }
+            Self::VaultCleanupArchiveMarkerUndecodable { .. } => {
+                ErrorKind::VaultCleanupArchiveMarkerUndecodable
+            }
+            Self::VaultCleanupProposalNotFound { .. } => ErrorKind::VaultCleanupProposalNotFound,
+            Self::VaultCleanupWakeTriggerRejected { .. } => {
+                ErrorKind::VaultCleanupWakeTriggerRejected
+            }
         }
     }
 
