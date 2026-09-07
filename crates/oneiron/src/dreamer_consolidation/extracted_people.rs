@@ -7,6 +7,7 @@
 use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
+use crate::analyzer::normalize::{casefold, nfkc};
 use crate::claim::ClaimSource;
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::entity_id::EntityId;
@@ -77,6 +78,10 @@ pub(super) fn mint_extracted_people(
             else {
                 continue;
             };
+            let normalized_name = normalize_name_span(name);
+            if !normalized_name.chars().any(char::is_alphabetic) {
+                continue;
+            }
             let Some(evidence) = person
                 .get("evidence_turn_refs")
                 .and_then(serde_json::Value::as_array)
@@ -115,7 +120,7 @@ pub(super) fn mint_extracted_people(
                 mentioned |= facts
                     .text
                     .as_deref()
-                    .is_some_and(|text| text.contains(name));
+                    .is_some_and(|text| has_name_span(text, &normalized_name));
             }
             if !admissible || !mentioned {
                 continue;
@@ -140,4 +145,56 @@ pub(super) fn mint_extracted_people(
         }
         Ok(())
     })
+}
+
+// Normalize spelling and whitespace, but never strip punctuation or accents:
+// separate words must not collapse into evidence for a different name.
+fn normalize_name_span(text: &str) -> String {
+    let normalized = nfkc(text);
+    casefold(&normalized)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn has_name_span(text: &str, normalized_name: &str) -> bool {
+    if normalized_name.is_empty() {
+        return false;
+    }
+    let text = normalize_name_span(text);
+    text.match_indices(normalized_name).any(|(start, span)| {
+        text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(name_span_boundary)
+            && text[start + span.len()..]
+                .chars()
+                .next()
+                .is_none_or(name_span_boundary)
+    })
+}
+
+// Fail closed on unknown separators, combining marks, identifiers, and name
+// continuations such as apostrophes or hyphens (Ann is not Ann-Marie).
+fn name_span_boundary(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '.' | ','
+                | '!'
+                | '?'
+                | ';'
+                | ':'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '"'
+                | '“'
+                | '”'
+                | '«'
+                | '»'
+        )
 }

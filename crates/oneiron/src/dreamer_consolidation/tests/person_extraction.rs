@@ -129,3 +129,65 @@ fn extraction_provenance_rechecks_role_and_liveness_even_for_working_set_ids() -
     assert!(!vault.entity_exists(&deleted_person)?);
     Ok(())
 }
+
+#[test]
+fn extraction_requires_a_normalized_name_span_not_an_embedded_word() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x31, 1);
+    let cases = [
+        ("Ann", "Annual planning starts today.", false),
+        ("ann", "The ANNUAL report is ready.", false),
+        ("Lee", "I met Ashlee.", false),
+        ("Ann", "I met Ann2 and Ann_team.", false),
+        ("Ann", "I met team_Ann.", false),
+        ("Ann", "I met Ann-Marie and O'Ann.", false),
+        ("Ann", "I met ÉAnn and Ann\u{301}.", false),
+        ("Ann", "Ann\u{200d}ual planning starts today.", false),
+        ("Ann Lee", "I met Ann, Lee, and Casey.", false),
+        ("---", "---", false),
+        ("  ", "There is no name here.", false),
+        ("Ann", "Ann", true),
+        ("Ann", "Annual planning includes Ann.", true),
+        ("Ann", "I met (ANN), today.", true),
+        ("Ann", "I met Ａｎｎ.", true),
+        ("  Ann   Lee  ", "I met ANN\tLEE.", true),
+        ("José", "I met Jose\u{301}.", true),
+        ("Ann-Marie", "I met Ann-Marie.", true),
+    ];
+    let mut working_set = Vec::new();
+    let mut people = Vec::new();
+    let mut expected = Vec::new();
+    for (name, text, should_mint) in cases {
+        let turn = seed_turn(&vault, &conversation, "user", text, 10);
+        let person = EntityId::now();
+        working_set.push(turn);
+        people.push(serde_json::json!({
+            "id": person.to_hex(),
+            "name": name,
+            "evidence_turn_refs": [turn.to_hex()],
+        }));
+        expected.push((person, name, text, should_mint));
+    }
+    let response =
+        text_response(serde_json::json!({"candidates": [], "persons": people}).to_string());
+    crate::dreamer_consolidation::extracted_people::mint_extracted_people(
+        &vault,
+        &response,
+        &working_set,
+        20,
+    )?;
+    for (person, name, text, should_mint) in expected {
+        assert_eq!(
+            vault.entity_exists(&person)?,
+            should_mint,
+            "name {name:?}, evidence {text:?}"
+        );
+        if should_mint {
+            assert_eq!(
+                zero_live_members(&vault, &person)?,
+                Some(CleanupKind::ClaimlessExtractionPerson)
+            );
+        }
+    }
+    Ok(())
+}
