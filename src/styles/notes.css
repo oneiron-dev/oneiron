@@ -154,25 +154,7 @@ main.pane.notes-pane {
 .notes-pane .cite:hover, .notes-pane .cite:focus-visible { color: var(--silver-1); text-decoration-color: var(--safelight); }
 .notes-pane .doc-body ::selection { background: color-mix(in srgb, var(--safelight) 22%, transparent); }
 
-/* ── the selection toolbar: portaled to body, so it lives here whole.
-   fixed above the words, radius 8, the pop shadow, mono verbs ── */
-.doc-seltools {
-  position: fixed; z-index: 60;
-  transform: translate(-50%, calc(-100% - 10px));
-  display: flex; align-items: baseline; gap: 14px;
-  padding: 7px 12px; border-radius: 8px;
-  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
-  animation: seltools-in 160ms ease-out;
-  white-space: nowrap;
-}
-.doc-seltools .act { padding: 0; font-size: 11.5px; }
-@keyframes seltools-in { from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)); } to { opacity: 1; transform: translate(-50%, calc(-100% - 10px)); } }
-/* no room over the top edge: the toolbar sits under the words instead */
-.doc-seltools.below { transform: translate(-50%, 10px); animation-name: seltools-in-below; }
-@keyframes seltools-in-below { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 10px); } }
-
 @media (prefers-reduced-motion: reduce) {
-  .notes-pane .doc, .doc-seltools { animation: none; }
-  .doc-seltools.below { animation-name: none; }
+  .notes-pane .doc { animation: none; }
   .notes-pane .prov, .notes-pane .nrow, .notes-pane .blk.unread .btext { transition: none; }
 }

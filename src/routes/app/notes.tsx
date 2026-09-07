@@ -1,7 +1,7 @@
 import * as React from 'react'
-import { createPortal } from 'react-dom'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { cue, markCued, openChat, useEscape } from '~/components/safelight/hooks'
+import { SelTools, selWithin, useSelTools, type SelPlace } from '~/components/safelight/SelTools'
 import notesCss from '~/styles/notes.css?url'
 
 export const Route = createFileRoute('/app/notes')({
@@ -339,11 +339,9 @@ function Prov({ b }: { b: Block }) {
   )
 }
 
-/* ── the selection toolbar: raise on mouseup with a selection in the
-   document; hand the words to a companion, ask the house mind, cite,
-   copy. fixed above the words, radius 8, the pop shadow. ── */
-type Sel = { x: number; y: number; below: boolean; text: string; blockId: string | null; start: number; end: number }
-function SelTools({ sel, onCite, onClose }: { sel: Sel; onCite: () => void; onClose: () => void }) {
+/* ── the selection toolbar (the shared atom, SelTools): hand the words to a
+   companion, ask the house mind, cite, copy. the page owns the verbs. ── */
+function NoteSelTools({ sel, canCite, onCite, onClose }: { sel: SelPlace; canCite: boolean; onCite: () => void; onClose: () => void }) {
   const hand = (agent: 'eiri' | 'tory' | 'ask') => (e: React.MouseEvent) => {
     e.preventDefault()
     markCued(e)
@@ -360,14 +358,8 @@ function SelTools({ sel, onCite, onClose }: { sel: Sel; onCite: () => void; onCl
     cue('success')
     onClose()
   }
-  return createPortal(
-    <div
-      className={sel.below ? 'doc-seltools below' : 'doc-seltools'}
-      role="toolbar"
-      aria-label="the words you picked"
-      style={{ left: sel.x, top: sel.y }}
-      onMouseDown={(e) => e.preventDefault() /* keep the selection */}
-    >
+  return (
+    <SelTools sel={sel}>
       <a className="act" href="#" title="Eiri takes these words into a chat" onClick={hand('eiri')}>
         hand to Eiri
       </a>
@@ -377,7 +369,7 @@ function SelTools({ sel, onCite, onClose }: { sel: Sel; onCite: () => void; onCl
       <a className="act" href="#" title="Antevon answers on these words" onClick={hand('ask')}>
         ask Antevon
       </a>
-      {sel.blockId && (
+      {canCite && (
         <a
           className="act"
           href="#"
@@ -394,9 +386,20 @@ function SelTools({ sel, onCite, onClose }: { sel: Sel; onCite: () => void; onCl
       <a className="act" href="#" title="copies the words" onClick={copy}>
         copy
       </a>
-    </div>,
-    document.body,
+    </SelTools>
   )
+}
+
+/* the block and the offsets the picked words sit in (one block only) */
+function spanOf(range: Range): { blockId: string; start: number; end: number } | null {
+  const el = selWithin(range, '.btext')
+  const blockId = el?.closest<HTMLElement>('[data-blk]')?.dataset.blk
+  if (!el || !blockId) return null
+  const pre = range.cloneRange()
+  pre.selectNodeContents(el)
+  pre.setEnd(range.startContainer, range.startOffset)
+  const start = pre.toString().length
+  return { blockId, start, end: start + range.toString().length }
 }
 
 /* ── the document ── */
@@ -413,7 +416,7 @@ export function Doc({
 }) {
   const root = React.useRef<HTMLDivElement>(null)
   const pending = React.useRef<{ id: string; offset: number; all?: boolean } | null>(focus ? { id: focus.id, offset: 0, all: focus.all } : null)
-  const [sel, setSel] = React.useState<Sel | null>(null)
+  const { sel, raise, clear, dismiss } = useSelTools(root)
   const navigate = useNavigate()
 
   /* after a structural change the caret lands where the writer expects */
@@ -482,76 +485,23 @@ export function Doc({
     cue('success')
   }
 
-  /* selection → toolbar. it rides above the words, and flips under them
-     when there is no room over the top edge; both edges of the viewport
-     hold it in */
-  const raise = React.useCallback(() => {
-    const s = getSelection()
-    const r0 = root.current
-    if (!s || s.rangeCount === 0 || s.isCollapsed || !r0) return setSel(null)
-    const range = s.getRangeAt(0)
-    if (!r0.contains(range.commonAncestorContainer)) return setSel(null)
-    const text = range.toString()
-    if (!text.trim()) return setSel(null)
-    const rect = range.getBoundingClientRect()
-    const startEl = (range.startContainer instanceof HTMLElement ? range.startContainer : range.startContainer.parentElement)?.closest<HTMLElement>('.btext')
-    const endEl = (range.endContainer instanceof HTMLElement ? range.endContainer : range.endContainer.parentElement)?.closest<HTMLElement>('.btext')
-    let blockId: string | null = null
-    let start = 0
-    let end = 0
-    if (startEl && startEl === endEl) {
-      blockId = startEl.closest<HTMLElement>('[data-blk]')?.dataset.blk ?? null
-      const pre = range.cloneRange()
-      pre.selectNodeContents(startEl)
-      pre.setEnd(range.startContainer, range.startOffset)
-      start = pre.toString().length
-      end = start + text.length
-    }
-    const below = rect.top < 88
-    const margin = 185 /* half the toolbar, so neither edge clips it */
-    setSel({
-      x: Math.min(Math.max(rect.left + rect.width / 2, margin), innerWidth - margin),
-      y: below ? rect.bottom : rect.top,
-      below,
-      text,
-      blockId,
-      start,
-      end,
-    })
-  }, [])
-  /* the caret leaves → the toolbar goes; the page moves → it follows */
-  React.useEffect(() => {
-    if (!sel) return
-    const onSel = () => {
-      const s = getSelection()
-      if (!s || s.isCollapsed) setSel(null)
-    }
-    document.addEventListener('selectionchange', onSel)
-    addEventListener('scroll', raise, true)
-    addEventListener('resize', raise)
-    return () => {
-      document.removeEventListener('selectionchange', onSel)
-      removeEventListener('scroll', raise, true)
-      removeEventListener('resize', raise)
-    }
-  }, [sel, raise])
   useEscape(() => {
-    setSel(null)
+    dismiss()
     /* Esc leaves the writing surface, so the next Esc reaches the page */
     const el = document.activeElement
     if (el instanceof HTMLElement && el.closest('.btext')) el.blur()
   })
 
   const cite = () => {
-    if (!sel?.blockId) return
-    const i = blocks.findIndex((b) => b.id === sel.blockId)
+    const span = sel ? spanOf(sel.range) : null
+    if (!span) return
+    const i = blocks.findIndex((b) => b.id === span.blockId)
     if (i < 0) return
     const b = blocks[i]
     const id = `cl_${Math.floor(Math.random() * 0xffff).toString(16).padStart(4, '0')}`
     const next = blocks.slice()
-    next[i] = { ...touch(b), runs: citeRuns(b.runs, sel.start, sel.end, { id }) }
-    getSelection()?.removeAllRanges()
-    setSel(null)
+    next[i] = { ...touch(b), runs: citeRuns(b.runs, span.start, span.end, { id }) }
+    clear()
     onChange(next, { op: 'cite', id: b.id, index: i })
     cue('success')
   }
@@ -621,7 +571,7 @@ export function Doc({
       }}
     >
       {out}
-      {sel && <SelTools sel={sel} onCite={cite} onClose={() => setSel(null)} />}
+      {sel && <NoteSelTools sel={sel} canCite={!!spanOf(sel.range)} onCite={cite} onClose={dismiss} />}
     </div>
   )
 }

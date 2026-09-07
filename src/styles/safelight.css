@@ -436,6 +436,27 @@ table.ledger td.mono, table.ledger td .mono { font-size: 12.5px; }
 .sprite .live-dot { width: 4px; height: 4px; }
 @media (prefers-reduced-motion: reduce) { .sprite { transition: none; } }
 
+/* ── the selection toolbar (SelTools, every page): portaled to body, fixed
+   above the words, radius 8, the pop shadow, mono verbs. flips under the
+   words when there is no room over the top edge. ── */
+.doc-seltools {
+  position: fixed; z-index: 60;
+  transform: translate(-50%, calc(-100% - 10px));
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 7px 12px; border-radius: 8px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+  animation: seltools-in 160ms ease-out;
+  white-space: nowrap;
+}
+.doc-seltools .act { padding: 0; font-size: 11.5px; }
+@keyframes seltools-in { from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)); } to { opacity: 1; transform: translate(-50%, calc(-100% - 10px)); } }
+.doc-seltools.below { transform: translate(-50%, 10px); animation-name: seltools-in-below; }
+@keyframes seltools-in-below { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 10px); } }
+@media (prefers-reduced-motion: reduce) {
+  .doc-seltools { animation: none; }
+  .doc-seltools.below { animation-name: none; }
+}
+
 /* ── select-anything → summon (OF-248/OF-371): mini-composer ──
    pick the creature (companion preselected, routes it), say what, send.
    the selection travels as an engine-issued handle, never a text blob;
