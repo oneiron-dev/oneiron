@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::brief_share::brief_share_receipts;
 use super::grant::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
     federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
@@ -267,6 +268,7 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::Share) {
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
+        records.extend(brief_share_receipts(vault, &rtxn, query)?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
     // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN

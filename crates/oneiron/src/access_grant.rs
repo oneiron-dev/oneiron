@@ -6,6 +6,7 @@
 //! unsupported scope/capability/status strings, malformed entity references,
 //! and inconsistent revocation state are rejected.
 
+use std::collections::BTreeSet;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -56,7 +57,7 @@ const SCOPE_KIND_COMPANION_PROFILE: &str = "companion_profile";
 const SCOPE_KIND_CALENDAR: &str = "calendar";
 
 /// Scope addressed by an AccessGrant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AccessGrantScope {
     /// Access to one companion persona profile in one person scope.
@@ -80,6 +81,17 @@ pub enum AccessGrantScope {
         /// Highest rung the audience may read, before any surface ceiling.
         rung: DisclosureRung,
     },
+    /// Read one opaque brief through a render-time redaction maximum.
+    SharedBrief {
+        /// Rendering-layer document handle, not a document copy.
+        brief_ref: String,
+        /// Maximum explicitly permitted WORLD refs.
+        world_refs: BTreeSet<EntityId>,
+        /// Maximum explicitly permitted FACET refs.
+        facet_refs: BTreeSet<EntityId>,
+        /// Whether unscoped dimensions may pass.
+        include_unscoped: bool,
+    },
 }
 
 impl AccessGrantScope {
@@ -100,7 +112,7 @@ impl AccessGrantScope {
 
     /// Returns whether this scope exactly names the supplied companion profile.
     #[must_use]
-    pub fn matches_companion_profile(self, person_ref: &EntityId, persona_ref: &EntityId) -> bool {
+    pub fn matches_companion_profile(&self, person_ref: &EntityId, persona_ref: &EntityId) -> bool {
         match self {
             Self::CompanionProfile {
                 person_ref: grant_person_ref,
@@ -109,19 +121,19 @@ impl AccessGrantScope {
                 grant_person_ref.as_bytes() == person_ref.as_bytes()
                     && grant_persona_ref.as_bytes() == persona_ref.as_bytes()
             }
-            Self::Calendar { .. } => false,
+            Self::Calendar { .. } | Self::SharedBrief { .. } => false,
         }
     }
 
     /// Returns companion profile refs when this scope uses that shape.
     #[must_use]
-    pub const fn companion_profile_refs(self) -> Option<(EntityId, EntityId)> {
+    pub const fn companion_profile_refs(&self) -> Option<(EntityId, EntityId)> {
         match self {
             Self::CompanionProfile {
                 person_ref,
                 persona_ref,
-            } => Some((person_ref, persona_ref)),
-            Self::Calendar { .. } => None,
+            } => Some((*person_ref, *persona_ref)),
+            Self::Calendar { .. } | Self::SharedBrief { .. } => None,
         }
     }
 
@@ -133,22 +145,25 @@ impl AccessGrantScope {
     /// door that enforces it, so a mispaired grant can never encode, decode,
     /// or persist.
     #[must_use]
-    pub const fn required_capability(self) -> AccessGrantCapability {
+    pub const fn required_capability(&self) -> AccessGrantCapability {
         match self {
             Self::CompanionProfile { .. } => AccessGrantCapability::CompanionProfileRead,
             Self::Calendar { .. } => AccessGrantCapability::CalendarDisclosureRead,
+            Self::SharedBrief { .. } => AccessGrantCapability::SharedBriefRead,
         }
     }
 
     /// Returns the granted rung when this scope names the supplied calendar.
     #[must_use]
-    pub fn calendar_rung(self, calendar_ref: &EntityId) -> Option<DisclosureRung> {
+    pub fn calendar_rung(&self, calendar_ref: &EntityId) -> Option<DisclosureRung> {
         match self {
             Self::Calendar {
                 calendar_ref: grant_calendar_ref,
                 rung,
-            } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(rung),
-            Self::Calendar { .. } | Self::CompanionProfile { .. } => None,
+            } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(*rung),
+            Self::Calendar { .. } | Self::CompanionProfile { .. } | Self::SharedBrief { .. } => {
+                None
+            }
         }
     }
 }
@@ -161,6 +176,8 @@ pub enum AccessGrantCapability {
     CompanionProfileRead,
     /// Read one calendar as a rung projection, never as raw event rows.
     CalendarDisclosureRead,
+    /// Read a shared brief after live scope redaction.
+    SharedBriefRead,
 }
 
 impl AccessGrantCapability {
@@ -168,6 +185,7 @@ impl AccessGrantCapability {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::SharedBriefRead => "brief.share.read",
             Self::CompanionProfileRead => "companion_profile.read",
             Self::CalendarDisclosureRead => "calendar.disclosure_read",
         }
@@ -177,6 +195,7 @@ impl AccessGrantCapability {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "brief.share.read" => Some(Self::SharedBriefRead),
             "companion_profile.read" => Some(Self::CompanionProfileRead),
             "calendar.disclosure_read" => Some(Self::CalendarDisclosureRead),
             _ => None,
@@ -216,7 +235,7 @@ impl AccessGrantStatus {
 }
 
 /// Vault-resident access grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessGrant {
     /// Principal receiving access.
     pub principal_ref: EntityId,
@@ -273,11 +292,11 @@ impl AccessGrant {
     }
 
     /// Returns a revoked version of this grant.
-    pub fn revoked(self, revoked_at: u64) -> Result<Self> {
+    pub fn revoked(&self, revoked_at: u64) -> Result<Self> {
         let grant = Self {
             status: AccessGrantStatus::Revoked,
             revoked_at: Some(revoked_at),
-            ..self
+            ..self.clone()
         };
         grant.validate()?;
         Ok(grant)
@@ -290,6 +309,9 @@ impl AccessGrant {
     /// about it — so it is rejected here, at the one door every codec, mint,
     /// and revoke path already passes through.
     pub fn validate(&self) -> Result<()> {
+        if matches!(self.scope, AccessGrantScope::SharedBrief { .. }) {
+            crate::share::validate_shared_brief_grant(self)?;
+        }
         if self.capability != self.scope.required_capability() {
             return Err(Error::InvalidAccessGrantBody(
                 "scope and capability are not a matched pair",
@@ -350,7 +372,7 @@ impl AccessGrant {
 /// The pair, not the bare grant: `grant_ref` is the handle
 /// [`Vault::revoke_calendar_access_grant`] takes, so a listed row is directly
 /// revocable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CalendarAccessGrantRow {
     /// Entity id of the grant record.
     pub grant_ref: EntityId,
@@ -370,7 +392,7 @@ pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
             Value::from(KEY_PRINCIPAL_REF),
             Value::from(grant.principal_ref.to_hex()),
         ),
-        (Value::from(KEY_SCOPE), encode_scope(grant.scope)),
+        (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
         (
             Value::from(KEY_CAPABILITY),
             Value::from(grant.capability.as_str()),
@@ -447,8 +469,9 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
     Ok(grant)
 }
 
-fn encode_scope(scope: AccessGrantScope) -> Value {
+fn encode_scope(scope: &AccessGrantScope) -> Value {
     match scope {
+        AccessGrantScope::SharedBrief { .. } => crate::share::encode_shared_brief_scope(scope),
         AccessGrantScope::CompanionProfile {
             person_ref,
             persona_ref,
@@ -495,6 +518,7 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
         .ok_or_else(invalid_grant)?;
 
     match kind {
+        "shared_brief" => crate::share::decode_shared_brief_scope(entries),
         SCOPE_KIND_COMPANION_PROFILE => {
             validate_keys(entries, &SCOPE_KEYS_COMPANION_PROFILE)?;
             Ok(AccessGrantScope::CompanionProfile {
@@ -522,12 +546,12 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
     }
 }
 
-fn decode_entity_ref(value: &Value) -> Result<EntityId> {
+pub(crate) fn decode_entity_ref(value: &Value) -> Result<EntityId> {
     let hex = value.as_str().ok_or_else(invalid_grant)?;
     EntityId::from_hex(hex).map_err(|_| invalid_grant())
 }
 
-fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+pub(crate) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
     let mut seen = vec![false; keys.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_grant)?;
@@ -546,14 +570,14 @@ fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
     }
 }
 
-fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
+pub(crate) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
     entries
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
         .ok_or_else(invalid_grant)
 }
 
-fn invalid_grant() -> Error {
+pub(crate) fn invalid_grant() -> Error {
     Error::InvalidAccessGrantBody("body failed validation")
 }
 
@@ -565,13 +589,18 @@ impl Vault {
     /// pinned AccessGrant body before using the maintenance write path.
     pub fn put_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
         let data = encode_access_grant_body(grant)?;
-        self.write_access_grant_body(id, grant.created_at, &data)
+        let mut wtxn = self.store.env.write_txn()?;
+        crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
+        self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
+        wtxn.commit()?;
+        Ok(())
     }
 
     /// Creates an AccessGrant only when no entity already exists at `id`.
     pub fn create_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
         let data = encode_access_grant_body(grant)?;
         let mut wtxn = self.store.env.write_txn()?;
+        crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
             return Err(Error::AccessGrantAlreadyExists);
         }
@@ -609,6 +638,7 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
         admit(&grant)?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_access_grant_body(&revoked)?;
@@ -684,14 +714,7 @@ impl Vault {
         })
     }
 
-    fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        self.apply_access_grant_body(&mut wtxn, id, learned_at, data.to_vec())?;
-        wtxn.commit()?;
-        Ok(())
-    }
-
-    fn apply_access_grant_body(
+    pub(crate) fn apply_access_grant_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

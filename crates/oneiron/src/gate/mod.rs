@@ -17,6 +17,7 @@ mod effect;
 mod grants;
 mod input;
 mod resolution;
+mod share;
 mod witness_message;
 
 #[cfg(test)]
@@ -82,6 +83,9 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub(crate) use self::share::check_share_create_policy;
+#[cfg(test)]
+pub(crate) use self::share::share_create_effect;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{

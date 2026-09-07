@@ -169,6 +169,9 @@ pub(super) fn access_grant_receipts(
         "access grant type index",
         |id, _header, body| {
             let grant = decode_access_grant_body(body)?;
+            if matches!(grant.scope, AccessGrantScope::SharedBrief { .. }) {
+                return Ok(());
+            }
             let created = access_grant_receipt(id, &grant, grant.created_at, "active", "created");
             if query.matches(&created) {
                 receipts.push(created);
@@ -198,7 +201,7 @@ fn access_grant_receipt(
         "capability".to_owned(),
         grant.capability.as_str().to_owned(),
     );
-    append_access_grant_scope_fields(&mut fields, grant.scope);
+    append_access_grant_scope_fields(&mut fields, &grant.scope);
 
     ReceiptRecord {
         receipt_id: format!("scoped_read:{}:{event_name}", id.to_hex()),
@@ -459,9 +462,12 @@ fn entity_id_from_type_index_key(key: &[u8], context: &'static str) -> Result<En
 
 fn append_access_grant_scope_fields(
     fields: &mut BTreeMap<String, String>,
-    scope: AccessGrantScope,
+    scope: &AccessGrantScope,
 ) {
     match scope {
+        AccessGrantScope::SharedBrief { .. } => {
+            unreachable!("brief shares have their own Share receipt projection")
+        }
         AccessGrantScope::CompanionProfile {
             person_ref,
             persona_ref,
