@@ -50,7 +50,7 @@ use crate::dreamer_consolidation::{
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::llm::AutoChecker;
+use crate::llm::BoundedAutoChecker;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -112,12 +112,14 @@ pub fn promote_consolidated_claims(
 /// nothing approved.
 ///
 /// This is the ticket's ONE production injection point. Every other claim
-/// write door passes no checker at all.
+/// write door passes no checker at all. The concrete [`BoundedAutoChecker`]
+/// makes capacity, timeout, and panic isolation mandatory. The host resolves
+/// the manifest's opaque selector and supplies its matching implementation.
 pub fn promote_consolidated_claims_with_checker(
     vault: &Vault,
     run: &DreamerRunContext,
     candidates: Vec<PromotionCandidate>,
-    checker: Option<&dyn AutoChecker>,
+    checker: Option<&BoundedAutoChecker>,
 ) -> Result<PromotionOutcome> {
     let mut outcome = PromotionOutcome::default();
 
@@ -150,7 +152,7 @@ fn promote_one(
     vault: &Vault,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
-    checker: Option<&dyn AutoChecker>,
+    checker: Option<&BoundedAutoChecker>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
     // 1. Evidence admission (GATE-11 write-path consumption): drop refs
     // resolving to evidence-inadmissible CLAIM entities and refs that do
@@ -243,25 +245,15 @@ fn promote_one(
     // 4. ONE wtxn: the claim write composed with its optional supersession
     // — commit or roll back BOTH (the landed torn-window contract).
     // GATE-007 (Generated over UserStated) surfaces here per-candidate.
-    let write = vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .claim_candidate(
-                &candidate.claim_id,
-                claim_candidate,
-                &envelope,
-                candidate.occurred,
-                candidate.learned_at,
-            )
-            .apply_recording_gate_decisions_with_checker(wtxn, checker)?;
+    let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
         if let Some(old_id) = candidate.supersedes.as_ref() {
             vault.supersede_claim_in_txn(wtxn, &candidate.claim_id, old_id, run.now_ms)?;
         }
-        // No approval queues (§4/§9): if the gate narrowed the Auto request,
-        // the whole transaction — claim, supersession, decision receipt and
-        // the pending consent row it would have minted — rolls back, and the
-        // candidate is reported as rejected instead. The already-stored
-        // answer TURN is untouched: it never shared this transaction.
+        // No approval queues (§4/§9): a phase-2 or landed-verification failure
+        // rolls back claim, supersession, and allow receipt together. Checker
+        // refusals never reach this callback: the batch preflight commits only
+        // their actual rejection receipt, with no claim or pending-consent row.
+        // The already-stored answer TURN never shared this transaction.
         let landed =
             vault
                 .get_claim_in_txn(&*wtxn, &candidate.claim_id)?
@@ -274,7 +266,34 @@ fn promote_one(
             ));
         }
         Ok(())
-    });
+    };
+    let write = if let Some(checker) = checker {
+        vault
+            .batch()
+            .claim_candidate(
+                &candidate.claim_id,
+                claim_candidate,
+                &envelope,
+                candidate.occurred,
+                candidate.learned_at,
+            )
+            .commit_with_checker_and_then(checker, finish_promotion)
+    } else {
+        // Preserve the original single-pass transaction for every None caller.
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(
+                    &candidate.claim_id,
+                    claim_candidate,
+                    &envelope,
+                    candidate.occurred,
+                    candidate.learned_at,
+                )
+                .apply_recording_gate_decisions(wtxn)?;
+            finish_promotion(wtxn)
+        })
+    };
     if let Err(error) = write {
         return Err(format!("gated write rejected: {error}"));
     }
@@ -422,7 +441,7 @@ pub struct PromotionWriterSink<'a> {
     /// The host's auto checker for every candidate this sink promotes
     /// (ONE-1296). Absent by default: a sink built with [`Self::new`] promotes
     /// exactly as it did before the knob existed.
-    pub checker: Option<&'a dyn AutoChecker>,
+    pub checker: Option<&'a BoundedAutoChecker>,
 }
 
 impl<'a> PromotionWriterSink<'a> {
@@ -438,7 +457,7 @@ impl<'a> PromotionWriterSink<'a> {
 
     /// Binds the host's auto checker to this sink.
     #[must_use]
-    pub fn with_checker(mut self, checker: &'a dyn AutoChecker) -> Self {
+    pub fn with_checker(mut self, checker: &'a BoundedAutoChecker) -> Self {
         self.checker = Some(checker);
         self
     }

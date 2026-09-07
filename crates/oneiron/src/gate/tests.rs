@@ -14000,11 +14000,14 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
 mod auto_checker {
     use super::*;
 
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::{Arc, Mutex};
 
     use crate::inbox::{InboxExceptionClass, InboxQuery};
-    use crate::llm::{AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker};
+    use crate::llm::{
+        AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker,
+        BoundedAutoChecker,
+    };
 
     const CHECKER_REF: &str = "host-checker-v1";
     const OTHER_CHECKER_REF: &str = "host-checker-v2";
@@ -14151,15 +14154,22 @@ mod auto_checker {
         vault: &crate::Vault,
         claim_id: &EntityId,
         body: &ClaimBody,
-        checker: Option<&dyn AutoChecker>,
+        checker: Option<&BoundedAutoChecker>,
     ) -> Result<()> {
         let (candidate, envelope) = dreamer_parts(vault, body)?;
-        vault.with_write_txn(|wtxn| {
+        if let Some(checker) = checker {
             vault
-                .batch_in()
+                .batch()
                 .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
-                .apply_recording_gate_decisions_with_checker(wtxn, checker)
-        })
+                .commit_with_checker_and_then(checker, |_| Ok(()))
+        } else {
+            vault.with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+                    .apply_recording_gate_decisions(wtxn)
+            })
+        }
     }
 
     /// The claim write door itself, with the checker under test injected. The
@@ -14170,7 +14180,7 @@ mod auto_checker {
         claim_id: &EntityId,
         body: &ClaimBody,
         envelope: &WriteEnvelope,
-        checker: Option<&dyn AutoChecker>,
+        checker: Option<&BoundedAutoChecker>,
         persist_pending_consent: bool,
     ) -> Result<()> {
         let mut wtxn = vault.store.env.write_txn()?;
@@ -14306,9 +14316,10 @@ mod auto_checker {
         let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
         let claim_id = test_id(0x33);
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
-        let checker = RecordingAutoChecker::allow();
+        let checker = Arc::new(RecordingAutoChecker::allow());
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
 
-        attempt_checked_candidate_write(&vault, &claim_id, &body, Some(&checker))?;
+        attempt_checked_candidate_write(&vault, &claim_id, &body, Some(&bounded_checker))?;
 
         assert_eq!(
             vault.get_claim(&claim_id)?.expect("claim landed").approval,
@@ -14347,8 +14358,16 @@ mod auto_checker {
         // Now the same write with the checker injected. The ordinary verdict
         // is still Auto; the checker is what narrows it.
         let body = vault.get_claim(&claim_id)?.expect("proposal landed");
-        let checker = RecordingAutoChecker::hold();
-        gate_claim_write(&vault, &claim_id, &body, &envelope, Some(&checker), true)?;
+        let checker = Arc::new(RecordingAutoChecker::hold());
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+        gate_claim_write(
+            &vault,
+            &claim_id,
+            &body,
+            &envelope,
+            Some(&bounded_checker),
+            true,
+        )?;
         assert_eq!(checker.calls(), 1);
 
         assert_eq!(
@@ -14418,7 +14437,7 @@ mod auto_checker {
         }));
         let panicking = bounded(PanickingAutoChecker);
         let slow = bounded(SlowAutoChecker);
-        let dead: [(&str, &dyn AutoChecker); 5] = [
+        let dead: [(&str, &BoundedAutoChecker); 5] = [
             ("unavailable", &unavailable),
             ("malformed verdict", &malformed),
             ("untokenizable reasons", &untokenizable),
@@ -14445,7 +14464,89 @@ mod auto_checker {
                 "{label} must leave no claim behind"
             );
             assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+            let records: Vec<_> = vault
+                .store
+                .gate_decisions(100)?
+                .into_iter()
+                .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+                .collect();
+            assert_eq!(records.len(), 1, "{label} must retain its refusal receipt");
+            assert_eq!(records[0].outcome, "pending");
+            assert_eq!(
+                records[0].reason_codes,
+                ["gate.pending.checker.unavailable"]
+            );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn checker_preflight_rejection_discards_earlier_allows_and_all_batch_writes() -> Result<()> {
+        struct AllowThenHold {
+            calls: AtomicUsize,
+        }
+        impl AutoChecker for AllowThenHold {
+            fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+                if self.calls.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
+                    AutoCheckOutcome::Allow
+                } else {
+                    AutoCheckOutcome::Hold {
+                        reasons: vec![HOLD_REASON.to_owned()],
+                    }
+                }
+            }
+        }
+
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let (candidate, envelope) = dreamer_parts(&vault, &body)?;
+        let first_id = test_id(0x41);
+        let held_id = test_id(0x43);
+        let host = Arc::new(AllowThenHold {
+            calls: AtomicUsize::new(0),
+        });
+        let checker = BoundedAutoChecker::new(host.clone());
+        let receipts_before = vault.store.gate_decisions(100)?;
+        let mut after_apply_ran = false;
+
+        let error = vault
+            .batch()
+            .claim_candidate(&first_id, candidate.clone(), &envelope, test_time(3), 3)
+            .claim_candidate(&held_id, candidate, &envelope, test_time(3), 3)
+            .commit_with_checker_and_then(&checker, |_| {
+                after_apply_ran = true;
+                Ok(())
+            })
+            .expect_err("a later checker hold refuses the whole batch");
+
+        let (outcome, reasons) = gate_rejection_parts(error);
+        assert_eq!(outcome, "pending");
+        assert_eq!(reasons, ["gate.pending.checker"]);
+        assert_eq!(host.calls.load(AtomicOrdering::Relaxed), 2);
+        assert!(!after_apply_ran);
+        assert!(vault.get_raw(&first_id)?.is_none());
+        assert!(vault.get_raw(&held_id)?.is_none());
+        assert!(vault.pending_gate_consents(10)?.is_empty());
+        let records = vault.store.gate_decisions(100)?;
+        assert_eq!(records.len(), receipts_before.len() + 1);
+        for prior in receipts_before {
+            assert!(
+                records.contains(&prior),
+                "pre-existing receipts stay intact"
+            );
+        }
+        assert!(
+            !records
+                .iter()
+                .any(|record| record.claim_id == Some(*first_id.as_bytes()))
+        );
+        let rejection = records
+            .iter()
+            .find(|record| record.claim_id == Some(*held_id.as_bytes()))
+            .expect("actual held candidate receipt");
+        assert_eq!(rejection.outcome, "pending");
+        assert_eq!(rejection.reason_codes, ["gate.pending.checker"]);
+        assert_eq!(rejection.receipt_reasons, [HOLD_RECEIPT_REASON]);
         Ok(())
     }
 
@@ -14460,9 +14561,17 @@ mod auto_checker {
         let claim_id = test_id(0x37);
         let body = public_stamped(source_trust_claim(ClaimSource::UserStated));
         let (_candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
-        let checker = RecordingAutoChecker::hold();
+        let checker = Arc::new(RecordingAutoChecker::hold());
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
 
-        gate_claim_write(&vault, &claim_id, &body, &envelope, Some(&checker), false)?;
+        gate_claim_write(
+            &vault,
+            &claim_id,
+            &body,
+            &envelope,
+            Some(&bounded_checker),
+            false,
+        )?;
 
         assert_eq!(
             checker.calls(),
