@@ -623,6 +623,7 @@ impl Vault {
                         step: MemberOnboardingStep::Started,
                         completed_at: None,
                     },
+                    authenticated_writer,
                 )?;
                 0
             }
@@ -649,6 +650,7 @@ impl Vault {
                     step,
                     completed_at,
                 },
+                authenticated_writer,
             )?;
             done = step.rank();
             if step == halt_after {
@@ -680,10 +682,10 @@ impl Vault {
                 None => Ok(()),
             },
             MemberOnboardingStep::MailboxBound => match &intent.delegated_mailbox {
-                Some(mailbox) => bind_delegated_mailbox(self, intent, mailbox),
+                Some(mailbox) => bind_delegated_mailbox(self, intent, mailbox, writer),
                 None => Ok(()),
             },
-            MemberOnboardingStep::Complete => record_roster_member(self, intent),
+            MemberOnboardingStep::Complete => record_roster_member(self, intent, writer),
         }
     }
 

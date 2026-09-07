@@ -6,6 +6,7 @@
 
 use super::*;
 
+mod authorization;
 mod current_architecture;
 use current_architecture::register_mailbox_custody;
 

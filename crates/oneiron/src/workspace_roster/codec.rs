@@ -113,6 +113,7 @@ pub(super) fn write_journal(
     key: &[u8],
     intent: &MemberOnboardingIntent,
     record: &OnboardingJournal,
+    writer: &WriteActor,
 ) -> Result<()> {
     let encoded = encode_value(&Value::Map(vec![
         (
@@ -133,7 +134,7 @@ pub(super) fn write_journal(
             record.completed_at.map_or(Value::Nil, Value::from),
         ),
     ]))?;
-    vault.with_write_txn(|wtxn| {
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         if let Some(raw) = vault.store.vault_meta.get(wtxn, key)? {
             let prior = decode_journal(&raw)?;
             if prior.intent_digest != record.intent_digest {

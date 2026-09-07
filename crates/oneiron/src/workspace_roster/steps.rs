@@ -31,27 +31,8 @@ pub(super) fn require_workspace_authority_in_txn(
     writer: &WriteActor,
 ) -> Result<()> {
     let member_ref = writer.entity_ref();
-    let raw = vault
-        .store
-        .entities
-        .get(txn, member_ref.as_bytes())?
-        .ok_or_else(|| invalid("workspace writer must name a live authority-bearing entity"))?;
-    let entity_type = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("workspace writer entity header"))?
-        .entity_type;
-    crate::provenance::validate_actor_class(entity_type, writer.actor_class())?;
     let scope = FederationGrantScope::vault(vault_id);
-    let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    if fold.vault_root_is_conflicted()
-        || (fold.vault_id.is_some()
-            && !crate::authority::actor_binding_is_active(
-                &fold,
-                &member_ref,
-                writer.actor_class().gate_actor_class(),
-            ))
-    {
-        return Err(invalid("workspace writer has no active authority binding"));
-    }
+    let fold = vault.verify_write_actor_in_txn(txn, writer)?;
     for entry in vault
         .store
         .type_index
@@ -75,6 +56,19 @@ pub(super) fn require_workspace_authority_in_txn(
     Err(invalid(
         "workspace onboarding requires an admin federation grant over the target vault",
     ))
+}
+
+/// No read-time authorization result crosses the LMDB writer boundary.
+pub(super) fn with_workspace_authority<T>(
+    vault: &Vault,
+    vault_id: u64,
+    writer: &WriteActor,
+    write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+) -> Result<T> {
+    vault.with_write_txn(|txn| {
+        require_workspace_authority_in_txn(vault, txn, vault_id, writer)?;
+        write(txn)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -190,12 +184,12 @@ pub(super) fn establish_workspace(
     // uses. Nothing about it is house-specific except which subject it names.
     ensure_subject_anchor(
         vault,
+        intent,
         workspace.house_actor_ref,
         workspace.org_ref,
         writer,
-        intent.occurred_at,
     )?;
-    ensure_preset_row(vault, workspace)
+    ensure_preset_row(vault, workspace, writer)
 }
 
 /// Step 2: define the member's actor and anchor it to the member `PERSON`.
@@ -206,17 +200,12 @@ pub(super) fn link_member_actor(
 ) -> Result<()> {
     ensure_agent_definition(
         vault,
+        intent,
         &intent.actor_ref,
         &intent.actor_definition,
-        intent.occurred_at,
-    )?;
-    ensure_subject_anchor(
-        vault,
-        intent.actor_ref,
-        intent.person_ref,
         writer,
-        intent.occurred_at,
-    )
+    )?;
+    ensure_subject_anchor(vault, intent, intent.actor_ref, intent.person_ref, writer)
 }
 
 /// Step 3: write the one `(Member, Member)` grant for the shared org vault.
@@ -251,13 +240,7 @@ pub(super) fn grant_member_bundle(
         start: intent.occurred_at,
         end: intent.occurred_at,
     };
-    vault.with_write_txn(|wtxn| {
-        require_workspace_authority_in_txn(
-            vault,
-            wtxn,
-            intent.workspace.workspace_vault_id,
-            writer,
-        )?;
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         if let Some(existing) = read_federation_grant_in_txn(vault, wtxn, &id)? {
             if existing != expected {
                 return Err(invalid(
@@ -300,24 +283,30 @@ pub(super) fn birth_companion(
     companion: &CompanionBirthIntent,
     writer: &WriteActor,
 ) -> Result<()> {
-    ensure_companion_person(vault, companion, intent.occurred_at)?;
-    ensure_model_substrate(vault, companion.person_ref, writer, intent.occurred_at)?;
+    ensure_companion_person(vault, intent, companion, writer)?;
+    ensure_model_substrate(vault, intent, companion.person_ref, writer)?;
 
     // The quiz-born name lands in the actor's runtime-editable `display_name`
     // slot — the one place the engine already reads a persona name from, and
     // the one an owner can later edit through `update_agent_definition`.
     let mut definition = companion.actor_definition.clone();
     definition.display_name = Some(companion.display_name.clone());
-    ensure_agent_definition(vault, &companion.actor_ref, &definition, intent.occurred_at)?;
+    ensure_agent_definition(vault, intent, &companion.actor_ref, &definition, writer)?;
 
     ensure_subject_anchor(
         vault,
+        intent,
         companion.actor_ref,
         companion.person_ref,
         writer,
-        intent.occurred_at,
     )?;
-    ensure_work_facet_edge(vault, companion.person_ref, companion.work_facet_ref)?;
+    ensure_work_facet_edge(
+        vault,
+        intent,
+        companion.person_ref,
+        companion.work_facet_ref,
+        writer,
+    )?;
     ensure_companion_record(vault, intent, companion, writer)?;
     ensure_companion_profile_grant(vault, intent, companion, writer)
 }
@@ -329,35 +318,58 @@ pub(super) fn bind_delegated_mailbox(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     mailbox: &DelegatedMailboxOnboarding,
+    writer: &WriteActor,
 ) -> Result<()> {
     let grant = DelegatedGrant::new(&mailbox.custody_name, mailbox.scopes.clone());
     let binding = ChannelIdentityBinding::agent(intent.actor_ref);
-    if let Some(existing) = vault.get_channel_identity(&mailbox.identity_ref)? {
-        if !existing.is_delegated()
-            || existing.assignment_key() != AssignmentKey::of(&mailbox.channel, &mailbox.address)
-            || existing.binding != binding
-            || existing.grant.as_ref() != Some(&grant)
-            || existing.state != ChannelIdentityState::Requested
-            || existing.state_changed_at != intent.occurred_at
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
+        if let Some(raw) = vault
+            .store
+            .entities
+            .get(txn, mailbox.identity_ref.as_bytes())?
         {
-            return Err(invalid(
-                "identity_ref is already bound to a different mailbox",
-            ));
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("mailbox entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+                return Err(Error::InvalidEntityType(header.entity_type));
+            }
+            let existing = crate::channel_identity::decode_channel_identity_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if !existing.is_delegated()
+                || existing.assignment_key()
+                    != AssignmentKey::of(&mailbox.channel, &mailbox.address)
+                || existing.binding != binding
+                || existing.grant.as_ref() != Some(&grant)
+                || existing.state != ChannelIdentityState::Requested
+                || existing.state_changed_at != intent.occurred_at
+            {
+                return Err(invalid(
+                    "identity_ref is already bound to a different mailbox",
+                ));
+            }
+            // Re-prove the existing Requested row's custody and assignment.
+            crate::channel_identity::admit_channel_identity_transition_in_txn(
+                &vault.store,
+                txn,
+                &mailbox.identity_ref,
+                crate::channel_identity::IdentityTransition::Birth { next: &existing },
+            )?;
+        } else {
+            vault.provision_delegated_identity_in_txn(
+                txn,
+                &mailbox.identity_ref,
+                DelegatedProvisionRequest {
+                    channel: mailbox.channel.clone(),
+                    address_or_handle: mailbox.address.clone(),
+                    binding,
+                    grant,
+                },
+                intent.occurred_at,
+            )?;
         }
-        // Retrying after custody revocation must not treat a stale row as proof.
-        vault.verify_delegated_custody(&mailbox.channel, &mailbox.address, &grant)?;
-    } else {
-        vault.provision_delegated_identity(
-            &mailbox.identity_ref,
-            DelegatedProvisionRequest {
-                channel: mailbox.channel.clone(),
-                address_or_handle: mailbox.address.clone(),
-                binding,
-                grant,
-            },
-            intent.occurred_at,
-        )?;
-    }
+        Ok(())
+    })?;
     // ONE-1829 is an external remaining leg, not a second lifecycle machine.
     // Leave the identity Requested (non-sending), the journal at CompanionBorn,
     // and the exact requested mode pinned in the intent digest.
@@ -368,7 +380,11 @@ pub(super) fn bind_delegated_mailbox(
 }
 
 /// Step 6: record the member's roster row so the workspace read can find it.
-pub(super) fn record_roster_member(vault: &Vault, intent: &MemberOnboardingIntent) -> Result<()> {
+pub(super) fn record_roster_member(
+    vault: &Vault,
+    intent: &MemberOnboardingIntent,
+    writer: &WriteActor,
+) -> Result<()> {
     let row = RosterMemberRow {
         person_ref: intent.person_ref,
         actor_ref: intent.actor_ref,
@@ -379,7 +395,7 @@ pub(super) fn record_roster_member(vault: &Vault, intent: &MemberOnboardingInten
     };
     let key = roster_member_key(&intent.workspace.workspace_ref, &intent.person_ref);
     let encoded = encode_value(&roster_member_value(&row))?;
-    vault.with_write_txn(|wtxn| {
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         if let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? {
             if decode_roster_member_row(&raw)? != row {
                 return Err(invalid(
@@ -404,12 +420,21 @@ pub(super) fn record_roster_member(vault: &Vault, intent: &MemberOnboardingInten
 /// re-attribute every routed event this actor has ever spoken.
 pub(super) fn ensure_subject_anchor(
     vault: &Vault,
+    intent: &MemberOnboardingIntent,
     actor_ref: EntityId,
     subject_ref: EntityId,
     writer: &WriteActor,
-    at: u64,
 ) -> Result<()> {
-    crate::subject_model::ensure_actor_subject(vault, actor_ref, subject_ref, *writer, at)
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
+        crate::subject_model::ensure_actor_subject_in_txn(
+            vault,
+            txn,
+            actor_ref,
+            subject_ref,
+            *writer,
+            intent.occurred_at,
+        )
+    })
 }
 
 /// Defines `id` from `definition` unless an `AGENT_DEF` already sits there.
@@ -419,12 +444,14 @@ pub(super) fn ensure_subject_anchor(
 /// and onboarding is not the door that reconciles those.
 pub(super) fn ensure_agent_definition(
     vault: &Vault,
+    intent: &MemberOnboardingIntent,
     id: &EntityId,
     definition: &AgentDefinition,
-    at: u64,
+    writer: &WriteActor,
 ) -> Result<()> {
+    let at = intent.occurred_at;
     let data = encode_agent_definition(definition)?;
-    vault.with_write_txn(|txn| {
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -454,9 +481,11 @@ pub(super) fn ensure_agent_definition(
 /// contract, so inventing a richer one here would be inventing product shape.
 pub(super) fn ensure_companion_person(
     vault: &Vault,
+    intent: &MemberOnboardingIntent,
     companion: &CompanionBirthIntent,
-    at: u64,
+    writer: &WriteActor,
 ) -> Result<()> {
+    let at = intent.occurred_at;
     let body = encode_value(&Value::Map(vec![
         (
             Value::from("schema_version"),
@@ -467,7 +496,7 @@ pub(super) fn ensure_companion_person(
             Value::from(companion.display_name.as_str()),
         ),
     ]))?;
-    vault.with_write_txn(|txn| {
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault
             .store
             .entities
@@ -502,27 +531,39 @@ pub(super) fn ensure_companion_person(
 /// about a someone, and overwriting it here would silently reclassify a human.
 pub(super) fn ensure_model_substrate(
     vault: &Vault,
+    intent: &MemberOnboardingIntent,
     person_ref: EntityId,
     writer: &WriteActor,
-    at: u64,
 ) -> Result<()> {
-    crate::subject_model::ensure_model_person(vault, person_ref, *writer, at)
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
+        crate::subject_model::ensure_model_person_in_txn(
+            vault,
+            txn,
+            person_ref,
+            *writer,
+            intent.occurred_at,
+        )
+    })
 }
 
 /// Associates the companion person with its work facet.
 pub(super) fn ensure_work_facet_edge(
     vault: &Vault,
+    intent: &MemberOnboardingIntent,
     person_ref: EntityId,
     facet_ref: EntityId,
+    writer: &WriteActor,
 ) -> Result<()> {
-    let already = vault
-        .edges_out(&person_ref)?
-        .into_iter()
-        .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == facet_ref);
-    if already {
-        return Ok(());
-    }
-    vault.put_edge(&person_ref, EdgeKind::HasFacet, &facet_ref, 1.0)
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
+        let key = crate::store::Store::encode_edge_key(&person_ref, EdgeKind::HasFacet, &facet_ref);
+        if vault.store.edges_out.get(txn, &key)?.is_some() {
+            return Ok(());
+        }
+        vault
+            .batch_in()
+            .edge(&person_ref, EdgeKind::HasFacet, &facet_ref, 1.0)
+            .apply(txn)
+    })
 }
 
 /// Writes the companion-register persona record if it is absent.
@@ -568,20 +609,38 @@ pub(super) fn ensure_companion_record(
         provenance,
         CompanionExportClassification::LocalOnly,
     );
-    if let Some(existing) = vault.get_companion_record(&companion.companion_record_ref)? {
-        if existing.scope != record.scope
-            || existing.subject != record.subject
-            || existing.value != record.value
-            || existing.lifecycle != record.lifecycle
-            || existing.export_classification != record.export_classification
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
+        if let Some(raw) = vault
+            .store
+            .entities
+            .get(txn, companion.companion_record_ref.as_bytes())?
         {
-            return Err(invalid(
-                "companion_record_ref is already bound to a different companion",
-            ));
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("companion entity header"))?;
+            if header.entity_type != crate::companion::ENTITY_TYPE_COMPANION_REGISTER {
+                return Err(Error::InvalidEntityType(header.entity_type));
+            }
+            let existing =
+                crate::companion::decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if existing.scope != record.scope
+                || existing.subject != record.subject
+                || existing.value != record.value
+                || existing.lifecycle != record.lifecycle
+                || existing.export_classification != record.export_classification
+            {
+                return Err(invalid(
+                    "companion_record_ref is already bound to a different companion",
+                ));
+            }
+            return Ok(());
         }
-        return Ok(());
-    }
-    vault.create_companion_record(&companion.companion_record_ref, &record, intent.occurred_at)
+        vault.create_companion_record_in_txn(
+            txn,
+            &companion.companion_record_ref,
+            &record,
+            intent.occurred_at,
+        )
+    })
 }
 
 /// Mints exactly the companion-profile READ grant the intent named.
@@ -603,13 +662,7 @@ pub(super) fn ensure_companion_profile_grant(
     );
     let id = companion.profile_grant_ref;
     let data = crate::access_grant::encode_access_grant_body(&expected)?;
-    vault.with_write_txn(|txn| {
-        require_workspace_authority_in_txn(
-            vault,
-            txn,
-            intent.workspace.workspace_vault_id,
-            writer,
-        )?;
+    with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         if let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -653,18 +706,14 @@ pub(super) fn ensure_companion_profile_grant(
 }
 
 /// Writes the preset row, or verifies the stored one agrees with it.
-pub(super) fn ensure_preset_row(vault: &Vault, preset: &WorkspaceRosterPreset) -> Result<()> {
-    if let Some(stored) = read_preset(vault, &preset.workspace_ref)? {
-        if &stored != preset {
-            return Err(invalid(
-                "workspace_ref is already bound to a different workspace preset",
-            ));
-        }
-        return Ok(());
-    }
+pub(super) fn ensure_preset_row(
+    vault: &Vault,
+    preset: &WorkspaceRosterPreset,
+    writer: &WriteActor,
+) -> Result<()> {
     let key = preset_key(&preset.workspace_ref);
     let encoded = encode_value(&preset_value(preset))?;
-    vault.with_write_txn(|wtxn| {
+    with_workspace_authority(vault, preset.workspace_vault_id, writer, |wtxn| {
         if let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? {
             if raw.as_ref() != encoded.as_slice() {
                 return Err(invalid(

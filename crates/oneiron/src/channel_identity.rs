@@ -1526,7 +1526,22 @@ impl Vault {
         requested_at: u64,
     ) -> Result<ChannelIdentity> {
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+        let identity =
+            self.provision_delegated_identity_in_txn(&mut wtxn, id, request, requested_at)?;
+        wtxn.commit()?;
+        Ok(identity)
+    }
+
+    /// The delegated door composed with a caller's authorization transaction.
+    /// Custody proof, admission, and write all use that same transaction.
+    pub(crate) fn provision_delegated_identity_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        request: DelegatedProvisionRequest,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        if self.store.entities.get(wtxn, id.as_bytes())?.is_some() {
             return Err(Error::ChannelIdentityAlreadyExists);
         }
         // The proof borrows `wtxn`; the block ends the borrow before the write
@@ -1538,7 +1553,7 @@ impl Vault {
                 AssignmentAddress::normalize(channel_key.as_str(), &request.address_or_handle);
             let proof = verify_delegated_custody_in_txn(
                 &self.store,
-                &wtxn,
+                wtxn,
                 channel_key.as_str(),
                 address.as_str(),
                 &request.grant,
@@ -1555,12 +1570,11 @@ impl Vault {
         let data = encode_channel_identity_body(&identity)?;
         admit_channel_identity_transition_in_txn(
             &self.store,
-            &wtxn,
+            wtxn,
             id,
             IdentityTransition::Birth { next: &identity },
         )?;
-        self.apply_channel_identity_body(&mut wtxn, id, requested_at, data)?;
-        wtxn.commit()?;
+        self.apply_channel_identity_body(wtxn, id, requested_at, data)?;
         Ok(identity)
     }
 
