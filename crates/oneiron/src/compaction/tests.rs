@@ -1019,7 +1019,7 @@ fn a_backend_error_abandons_to_idle_and_the_next_crossing_begins_again() -> Resu
 // ── the request ─────────────────────────────────────────────────────────
 
 #[test]
-fn request_for_is_legal_only_while_compacting() -> Result<()> {
+fn request_for_is_legal_only_while_compacting() {
     let (_dir, vault) = open_vault();
     let session = mint_session(&vault, 10);
     let mut driver = engine_driver(1_000);
@@ -1032,7 +1032,6 @@ fn request_for_is_legal_only_while_compacting() -> Result<()> {
         invariant(refused),
         "request_for is legal only while compacting"
     );
-    Ok(())
 }
 
 #[test]
@@ -1340,7 +1339,7 @@ fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Resul
 }
 
 #[test]
-fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() -> Result<()> {
+fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() {
     let (_dir, vault) = open_vault();
     let session = mint_session(&vault, 10);
     let actor = loom_actor(&vault, 0x6E);
@@ -1357,7 +1356,6 @@ fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() -> Result<()
     assert_eq!(summary_row_count(&vault), 0);
     assert_eq!(pending_embedding_marker_count(&vault), 0);
     assert!(driver.is_compacting());
-    Ok(())
 }
 
 #[test]
@@ -1457,7 +1455,7 @@ fn epoch_summary_strict_decode_rejection_matrix() -> Result<()> {
     };
 
     // Trailing bytes after the map.
-    let mut trailing = base.clone();
+    let mut trailing = base;
     trailing.push(0xC0);
     invalid(&trailing);
 
@@ -1556,7 +1554,8 @@ fn unvalidated_encode(body: &EpochSummaryBody) -> Vec<u8> {
 /// could reach storage that its own consumers refuse at render time.
 #[test]
 fn epoch_summary_encode_refuses_every_axis_the_decoder_refuses() -> Result<()> {
-    let axes: [(&str, fn(&mut EpochSummaryBody)); 5] = [
+    type RejectionAxis = (&'static str, fn(&mut EpochSummaryBody));
+    let axes: [RejectionAxis; 5] = [
         ("unsupported epoch summary codec version", |body| {
             body.v = EPOCH_SUMMARY_BODY_VERSION + 1;
         }),
