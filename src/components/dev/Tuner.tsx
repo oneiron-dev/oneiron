@@ -246,22 +246,22 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   }, [])
 
   /* the ground under your turns: none · well · hairline (the surface ladder's rungs) */
-  type Ground = 'none' | 'well' | 'hairline'
-  const [ground, setGroundState] = React.useState<Ground>('none')
+  type Ground = 'well' | 'none' | 'hairline'
+  const [ground, setGroundState] = React.useState<Ground>('well')
   React.useEffect(() => {
     try {
       const v = localStorage.getItem('oneiron-voice-ground')
-      if (v === 'well' || v === 'hairline') setGroundState(v)
+      if (v === 'none' || v === 'hairline') setGroundState(v)
     } catch {
       /* default */
     }
   }, [])
   const setGround = React.useCallback((k: Ground) => {
     setGroundState(k)
-    if (k === 'none') document.documentElement.removeAttribute('data-voice-ground')
+    if (k === 'well') document.documentElement.removeAttribute('data-voice-ground')
     else document.documentElement.setAttribute('data-voice-ground', k)
     try {
-      if (k === 'none') localStorage.removeItem('oneiron-voice-ground')
+      if (k === 'well') localStorage.removeItem('oneiron-voice-ground')
       else localStorage.setItem('oneiron-voice-ground', k)
     } catch {
       /* session only */
@@ -412,12 +412,12 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="t-sec">your ground</div>
       <div className="t-acts">
-        {(['none', 'well', 'hairline'] as const).map((k) => (
+        {(['well', 'none', 'hairline'] as const).map((k) => (
           <button
             key={k}
             type="button"
             className={ground === k ? 'act on' : 'act'}
-            title={k === 'none' ? 'position alone carries your turns' : k === 'well' ? 'a tinted zone under your turns · flat, 3px, no tail' : 'a hairline frame under your turns'}
+            title={k === 'well' ? 'a tinted zone under your turns · flat, 3px, no tail (his pick)' : k === 'none' ? 'position alone carries your turns' : 'a hairline frame under your turns'}
             onClick={() => setGround(k)}
           >
             {k}

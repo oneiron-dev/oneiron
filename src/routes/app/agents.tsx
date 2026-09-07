@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { ChanLine, ChanLinkedin, ChanMail, ChanSlack, Chevron } from '~/components/safelight/icons'
+import { ChanLine, ChanLinkedin, ChanMail, ChanSlack, Chevron, IconSettings } from '~/components/safelight/icons'
 import { cue, markCued, openChat, useDocumentEvent, useEscape } from '~/components/safelight/hooks'
 import agentsCss from '~/styles/agents.css?url'
 
@@ -1525,13 +1525,25 @@ function Agents() {
           <Face c={c.creature} size={72} alt={c.fixture?.creature.alt} />
         </div>
         <div className="rh-text">
-          {editing ? (
-            <Editable as="h2" className={c.ink ? 'rh-name aname' : 'rh-name'} value={c.name} placeholder="name your agent" onCommit={(v) => patch(c.id, 'identity', (x) => ({ ...x, name: v }))} />
-          ) : (
-            <h2 className={c.ink ? 'rh-name aname' : 'rh-name'} title={c.fixture?.tip}>
-              {c.name || <span className="unnamed">a new agent</span>}
-            </h2>
-          )}
+          <div className="rh-title">
+            {editing ? (
+              <Editable as="h2" className={c.ink ? 'rh-name aname' : 'rh-name'} value={c.name} placeholder="name your agent" onCommit={(v) => patch(c.id, 'identity', (x) => ({ ...x, name: v }))} />
+            ) : (
+              <h2 className={c.ink ? 'rh-name aname' : 'rh-name'} title={c.fixture?.tip}>
+                {c.name || <span className="unnamed">a new agent</span>}
+              </h2>
+            )}
+            <button
+              type="button"
+              className="rh-gear"
+              aria-pressed={editing}
+              aria-label="setup"
+              title={editing ? 'back to the conversation' : 'how it is set up · one layer down'}
+              onClick={(e) => { markCued(e); setLayer(editing ? 'thread' : 'setup'); cue('toggle') }}
+            >
+              <IconSettings />
+            </button>
+          </div>
           {editing ? (
             <Editable as="span" className="rh-role" value={c.role} placeholder="what it is for, in one line" onCommit={(v) => patch(c.id, 'identity', (x) => ({ ...x, role: v }))} />
           ) : (
@@ -1539,14 +1551,10 @@ function Agents() {
           )}
           <div className="rh-line">
             {editing ? (
-              <button type="button" className="act" title="back to the conversation" onClick={(e) => { markCued(e); setLayer('thread'); cue('toggle') }}>
-                ‹ thread
+              <button type="button" className="door back" title="back to the conversation" onClick={(e) => { markCued(e); setLayer('thread'); cue('toggle') }}>
+                <span className="chev" aria-hidden="true">‹</span> thread
               </button>
-            ) : (
-              <button type="button" className="act" title="how it is set up · one layer down" onClick={(e) => { markCued(e); setLayer('setup'); cue('toggle') }}>
-                setup ›
-              </button>
-            )}
+            ) : null}
             <Saved id={c.id} k="identity" />
             {editing && c.fixture ? (
               <span className="meta-line">
@@ -1699,12 +1707,6 @@ function Agents() {
                 </button>
               )
             })}
-            <button type="button" className="rrow new" title="a new agent · Antevon proposes the pieces, you confirm each" onClick={openNew}>
-              <span className="rtext">
-                <span className="rname">+ new agent</span>
-                <span className="rdoing">by conversation with Antevon</span>
-              </span>
-            </button>
             <span className="rsep" aria-hidden="true"></span>
             <button
               type="button"
@@ -1726,6 +1728,13 @@ function Agents() {
                 <span className="rdoing" title="Eiri · Tory · Antevon · you">
                   {configs.filter((c) => c.fixture).length} agents · you
                 </span>
+              </span>
+            </button>
+            <span className="rsep" aria-hidden="true"></span>
+            <button type="button" className="rrow new" title="a new agent · Antevon proposes the pieces, you confirm each" onClick={openNew}>
+              <span className="rtext">
+                <span className="rname">+ new agent</span>
+                <span className="rdoing">by conversation with Antevon</span>
               </span>
             </button>
           </nav>

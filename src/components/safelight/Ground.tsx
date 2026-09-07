@@ -250,13 +250,13 @@ export function Ground() {
               {/* the panel is the pocket door; the ROOM on the agents page is
                   the same conversation, full size (owner 09-07) */}
               <Link
-                className="act chat-room"
+                className="door chat-room"
                 to="/app/agents"
                 search={{ with: ask ? 'house' : (scope as 'eiri' | 'tory') }}
                 title="the full room · the agents page"
                 onClick={closeRun}
               >
-                room
+                room <span className="chev" aria-hidden="true">›</span>
               </Link>
               <button className="chat-close" aria-label="close the chat" title="close · esc" onClick={closeRun}>
                 ×
