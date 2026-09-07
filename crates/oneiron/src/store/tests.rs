@@ -1003,7 +1003,7 @@ fn context_pack_finalization_preserves_only_surfaced_trace_candidates() -> Resul
         2,
         vec![RetrievalSignal::Text],
         score_breakdown.clone(),
-        0,
+        2,
         0,
         None,
     )
@@ -1035,11 +1035,13 @@ fn context_pack_finalization_preserves_only_surfaced_trace_candidates() -> Resul
 
     vault
         .store
-        .finalize_context_pack_retrieval_run(run_id, 10, 0, &[*kept.as_bytes()], None)?;
+        .finalize_context_pack_retrieval_run(run_id, 10, 1, 0, &[*kept.as_bytes()], None)?;
 
     let finalized = vault
         .retrieval_run(run_id)?
         .expect("finalized context-pack run");
+    assert_eq!(finalized.total_in_scope, 1);
+    assert_eq!(finalized.result_ids, vec![*kept.as_bytes()]);
     let trace = finalized.trace.expect("trace remains present");
     let expected = &record.score_breakdown[..1];
     assert_eq!(trace.per_channel[0].candidates, expected);
@@ -1117,8 +1119,11 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
 
     vault
         .store
-        .finalize_context_pack_retrieval_run(run_id, 10, 0, &[*kept.as_bytes()], None)?;
+        .finalize_context_pack_retrieval_run(run_id, 10, 2, 0, &[*kept.as_bytes()], None)?;
 
+    let finalized = vault.retrieval_run(run_id)?.expect("published run");
+    assert_eq!(finalized.total_in_scope, 2);
+    assert_eq!(finalized.result_ids, vec![*kept.as_bytes()]);
     assert_eq!(
         vault
             .retrieval_trace_by_fork_hash(fork_hash)?

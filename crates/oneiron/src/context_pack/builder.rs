@@ -133,6 +133,7 @@ impl ContextPackTelemetry<'_> {
         self,
         run_id: RetrievalRunId,
         elapsed_us: u64,
+        total_in_scope: usize,
         claims_suppressed: usize,
         surfaced_result_ids: &[[u8; 16]],
         empty_reason: Option<String>,
@@ -141,6 +142,7 @@ impl ContextPackTelemetry<'_> {
             Self::Base(store) => store.finalize_context_pack_retrieval_run(
                 run_id,
                 elapsed_us,
+                total_in_scope,
                 claims_suppressed,
                 surfaced_result_ids,
                 empty_reason,
@@ -148,6 +150,7 @@ impl ContextPackTelemetry<'_> {
             Self::Session(session) => session.finalize_run(
                 run_id,
                 elapsed_us,
+                total_in_scope,
                 claims_suppressed,
                 surfaced_result_ids,
                 empty_reason,
@@ -169,6 +172,8 @@ pub(super) struct ContextPackRun<'a> {
     pub(super) pack: ContextPack,
     pub(super) telemetry_run_id: Option<RetrievalRunId>,
     pub(super) telemetry: ContextPackTelemetry<'a>,
+    /// Original pipeline scope count, retained by ordinary finalization.
+    pub(super) total_in_scope: usize,
     clamped_out: u64,
 }
 
@@ -176,6 +181,7 @@ pub struct UnfinalizedContextPack<'a> {
     pub value: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
     telemetry: ContextPackTelemetry<'a>,
+    total_in_scope: usize,
     clamped_out: u64,
 }
 
@@ -213,6 +219,7 @@ impl UnfinalizedContextPack<'_> {
             self.telemetry,
             self.telemetry_run_id.take(),
             pack.stats.query_time_us,
+            self.total_in_scope,
             pack.stats.claims_suppressed,
             &surfaced_result_ids,
             projected_context_pack_empty_reason(
@@ -239,9 +246,9 @@ impl UnfinalizedContextPack<'_> {
     /// projection (ONE-1433's `code_run::vault_read` adapter). Deferring the
     /// finalize is the whole point of the door: a durable run row published
     /// out of an actor-scoped read must carry EXACTLY the ids that actor
-    /// received, so the surfaced ids, the suppression count and the empty
-    /// reason are all read back off the post-filter value rather than off the
-    /// assembly's own pre-filter results. An entity the caller's filter
+    /// received, so the surfaced ids, candidate and suppression counts, and
+    /// empty reason are all read back off the post-filter value rather than
+    /// off the assembly's own pre-filter results. An entity the caller's filter
     /// removed is then as absent from telemetry as it is from the response —
     /// the same fail-closed boundary OF-365 states for the disclosure clamp,
     /// where a durable trace must not retain ids a clamp removed.
@@ -264,6 +271,7 @@ impl UnfinalizedContextPack<'_> {
             && let Err(error) = self.telemetry.finalize(
                 run_id,
                 self.value.stats.query_time_us,
+                self.value.stats.candidates_considered,
                 self.value.stats.claims_suppressed,
                 &surfaced_result_ids,
                 context_pack_empty_reason(&self.value, &surfaced_result_ids),
@@ -669,6 +677,7 @@ impl<'a> ContextPackBuilder<'a> {
             run.telemetry,
             run.telemetry_run_id,
             run.pack.stats.query_time_us,
+            run.total_in_scope,
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
@@ -710,6 +719,7 @@ impl<'a> ContextPackBuilder<'a> {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
+            total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
         })
     }
@@ -995,6 +1005,7 @@ impl<'a> ContextPackBuilder<'a> {
                 },
                 telemetry_run_id,
                 telemetry,
+                total_in_scope,
                 clamped_out,
             })
         })();
@@ -1036,6 +1047,7 @@ impl<'a> ContextPackBuilder<'a> {
             run.telemetry,
             run.telemetry_run_id,
             telemetry.stats.query_time_us,
+            run.total_in_scope,
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),

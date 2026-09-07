@@ -476,11 +476,13 @@ impl SessionStoreView<'_> {
     /// Finalizes the same overlay row the session registration created; the
     /// base finalizer never sees that row and this one never reaches a base
     /// row.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finalize_context_pack_retrieval_run_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         run_id: RetrievalRunId,
         elapsed_us: u64,
+        total_in_scope: usize,
         claims_suppressed: usize,
         surfaced_result_ids: &[[u8; 16]],
         empty_reason: Option<String>,
@@ -490,6 +492,7 @@ impl SessionStoreView<'_> {
             wtxn,
             run_id,
             elapsed_us,
+            total_in_scope,
             claims_suppressed,
             surfaced_result_ids,
             empty_reason,
@@ -565,10 +568,14 @@ impl Store {
         Ok(())
     }
 
+    /// Publishes the caller's scope count and surfaced ids atomically.
+    /// Ordinary callers retain the pipeline count; post-filter callers supply
+    /// the count from their filtered pack instead.
     pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
         run_id: RetrievalRunId,
         elapsed_us: u64,
+        total_in_scope: usize,
         claims_suppressed: usize,
         surfaced_result_ids: &[[u8; 16]],
         empty_reason: Option<String>,
@@ -585,6 +592,7 @@ impl Store {
             &mut wtxn,
             run_id,
             elapsed_us,
+            total_in_scope,
             claims_suppressed,
             surfaced_result_ids,
             empty_reason,
@@ -1005,11 +1013,13 @@ fn stage_retrieval_run_delete(
 /// A session run finalizes the SAME overlay row its registration created:
 /// the row is looked up through the composed accessor, so the base finalizer
 /// never sees it and this one never reaches a base row (ARCH-0052 §7).
+#[allow(clippy::too_many_arguments)]
 fn stage_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
     elapsed_us: u64,
+    total_in_scope: usize,
     claims_suppressed: usize,
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
@@ -1022,6 +1032,7 @@ fn stage_context_pack_retrieval_run_finalize(
     };
     let mut record = decode_retrieval_run(&raw)?;
     record.elapsed_us = elapsed_us;
+    record.total_in_scope = total_in_scope;
     record.claims_suppressed = claims_suppressed;
     record.result_ids = surfaced_result_ids.to_vec();
     let mut surfaced_breakdown = Vec::with_capacity(surfaced_result_ids.len());
