@@ -3476,6 +3476,8 @@ mod tests {
 
         let denied_bytes = *denied_id.as_bytes();
         let run = published_context_pack_run(&vault);
+        assert_eq!(response.0.stats.candidates_considered, results.len());
+        assert_eq!(run.total_in_scope, response.0.stats.candidates_considered);
         let published_row = vault.retrieval_run(run.run_id).expect("run row read");
         assert!(
             published_row.is_some(),
@@ -3563,6 +3565,7 @@ mod tests {
         assert_eq!(response.0.stats.neighbors_hydrated, 0);
 
         let run = published_context_pack_run(&vault);
+        assert_eq!(run.total_in_scope, response.0.stats.candidates_considered);
         assert!(
             run.result_ids.is_empty(),
             "no id survived the filter, so none is published"

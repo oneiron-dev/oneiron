@@ -283,6 +283,7 @@ fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
                 .any(|item| item.id == admitted_id)
         );
         let (_, provisional) = provisional_context_pack_run(&vault);
+        assert!(provisional.total_in_scope >= 2);
         let pre_trace = provisional
             .trace
             .expect("trace was captured before filtering");
@@ -304,6 +305,7 @@ fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
             .scoped_read(ScopedReadActorKey::new(actor).expect("actor key"))
             .filter_context_pack(&mut assembly.value)
             .expect("scope filter");
+        scrub_context_pack_visible_stats(&mut assembly.value);
         let finished = assembly
             .finish_post_filter()
             .expect("finalize filtered pack");
@@ -326,6 +328,11 @@ fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
             .expect("durable read")
             .expect("published run");
         assert_eq!(run.result_ids, allowed);
+        assert_eq!(
+            run.total_in_scope,
+            finished.value.stats.candidates_considered
+        );
+        assert_eq!(run.total_in_scope, allowed.len());
         assert!(
             run.score_breakdown
                 .iter()
@@ -357,6 +364,98 @@ fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
             forked, trace,
             "fork lookup exposes only the filtered durable trace"
         );
+    }
+}
+
+#[test]
+fn ordinary_context_pack_finalization_retains_scope_count_on_base_and_session_routes() {
+    // Plain base beside a live room, off-record overlay, and on-record base.
+    for (session_bound, on_record) in [(false, false), (true, false), (true, true)] {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let (admitted_id, _) = seed_scoped_pack_vault(&vault);
+        let session = vault
+            .off_record_session_vault()
+            .enter(
+                "count-finalization",
+                crate::off_record::OffRecordBackendClass::Local,
+            )
+            .expect("session");
+        if on_record {
+            session.flip_on_record().expect("on-record route");
+        }
+        let route = session.write_route().expect("route");
+        let door = session.retrieval_telemetry(&route).expect("telemetry door");
+        let builder = || {
+            let builder = vault
+                .context_pack()
+                .limit(1)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10);
+            if session_bound {
+                builder.in_session(&door)
+            } else {
+                builder
+            }
+        };
+        let pack = builder().run_with_telemetry().expect("ordinary pack");
+        assert_eq!(pack.value.results.len(), 1);
+        assert_eq!(pack.value.results[0].id, admitted_id);
+        let serialized = builder()
+            .run_serialized_with_stats()
+            .expect("ordinary serialized pack");
+        let mut runs = vec![
+            (pack.run_id, pack.value.stats.candidates_considered),
+            (
+                serialized.run_id,
+                serialized.value.stats.candidates_considered,
+            ),
+        ];
+        // Rooms still cannot use the deferred/projected door.
+        if !session_bound {
+            let config = crate::serialize::SerializeConfig {
+                format: crate::context_pack::PackFormat::Json,
+                profile: FieldProfile::Standard,
+                budget: 4000,
+                allocation: TokenAllocation::default(),
+                include_stats: true,
+                merge_neighbors: false,
+                max_field_chars: 500,
+                max_item_tokens: 0,
+            };
+            let projected = builder()
+                .run_projected_json_with_telemetry(&config)
+                .expect("ordinary projected pack");
+            runs.push((
+                projected.run_id,
+                projected.value.stats.candidates_considered,
+            ));
+        }
+        let view = session.read_view().expect("session read view");
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let room_runs = view
+            .retrieval_runs_in_txn(&rtxn, 64)
+            .expect("composed run rows");
+        drop(rtxn);
+        for (run_id, candidates_considered) in runs {
+            let run_id = run_id.expect("finalized run id");
+            assert_eq!(
+                candidates_considered, 1,
+                "the result limit removed a candidate"
+            );
+            let run = room_runs
+                .iter()
+                .find(|record| record.run_id == run_id)
+                .expect("the same run is finalized, not left provisional");
+            assert_eq!(
+                run.total_in_scope, 2,
+                "ordinary runs retain the pipeline count"
+            );
+            assert_eq!(run.result_ids, vec![*admitted_id.as_bytes()]);
+            assert_eq!(
+                vault.retrieval_run(run_id).expect("base row").is_some(),
+                !session_bound || on_record,
+                "only off-record session runs stay out of the base ledger"
+            );
+        }
     }
 }
 
