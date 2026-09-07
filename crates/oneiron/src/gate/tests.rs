@@ -1227,7 +1227,7 @@ fn scoped_read_search_filters_before_limit_truncation() -> Result<()> {
 
     let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
     let visible: Vec<_> = scoped_read
-        .search_text("scopedslots", 1)?
+        .search_text("scopedslots", 1, None)?
         .into_iter()
         .map(|hit| hit.id)
         .collect();
