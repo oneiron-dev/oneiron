@@ -12,10 +12,10 @@ on:
       - "crates/oneiron-remote/**"
       - "crates/oneiron-napi/**"
       - "crates/oneiron-server/**"
-      - "crates/oneiron/src/memory/**"
-      - "crates/oneiron/src/vault.rs"
+      - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
+      - "scripts/tests/test_wire_workflow.py"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -28,10 +28,10 @@ on:
       - "crates/oneiron-remote/**"
       - "crates/oneiron-napi/**"
       - "crates/oneiron-server/**"
-      - "crates/oneiron/src/memory/**"
-      - "crates/oneiron/src/vault.rs"
+      - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
+      - "scripts/tests/test_wire_workflow.py"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -162,6 +162,7 @@ jobs:
         run: >-
           "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
           scripts/tests/test_wire_quickstart.py::test_installed_quickstarts
+          scripts/tests/test_wire_workflow.py
 
       - name: Remote DTO and error parity through the real server
         env:

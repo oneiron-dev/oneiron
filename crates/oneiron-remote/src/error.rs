@@ -82,7 +82,7 @@ pub(crate) fn transport_error(message: impl Into<String>) -> MemoryError {
 pub(crate) fn vault_locked() -> MemoryError {
     sdk_error(
         MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
-        "this vault directory is already owned by another embedded process",
+        "this vault directory is already owned by another process",
         &[
             "Connect to the process that owns this vault with Oneiron.connect(url, key).",
             "Stop the owning process before reopening this path in embedded mode.",

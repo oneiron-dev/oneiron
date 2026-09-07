@@ -34,8 +34,8 @@ Repository = "https://github.com/oneiron-dev/oneiron"
 module-name = "oneiron._native"
 python-source = "python"
 features = ["pyo3/extension-module"]
-# Publish allowlist: the wrapper, its stubs, and the compiled extension. No
-# Rust sources, no tests, no vaults, no credentials.
+# Wheels contain the wrapper, stubs, and compiled extension. The sdist also
+# retains Rust sources and Cargo inputs collected by maturin (including path deps).
 include = [
   { path = "python/oneiron/py.typed", format = ["sdist", "wheel"] },
   { path = "python/oneiron/__init__.pyi", format = ["sdist", "wheel"] },
@@ -43,7 +43,7 @@ include = [
 exclude = [
   "tests/**",
   "target/**",
-  "**/*.rs",
+  { path = "**/*.rs", format = "wheel" },
 ]
 
 [tool.pytest.ini_options]

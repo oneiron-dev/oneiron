@@ -84,183 +84,7 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
-/// Lock-file name for the embedded single-writer lease (ONE-1441 WIRE-P1).
-///
-/// Deliberately its own file, NOT a reuse of the off-record sweep lock: that
-/// one is dedicated to off-record recovery and pairs a different lifetime with
-/// a different owner. Two unrelated exclusions sharing one inode would make
-/// either feature's hold silently deny the other.
-pub const VAULT_WRITER_LOCK_FILE: &str = "oneiron.writer.lock";
-
-/// The `Error::ConcurrentWrite` message that means "another process holds this
-/// vault directory's writer lease" (ONE-1441 WIRE-P1).
-///
-/// Load-bearing as an EXACT string: the SDK's embedded constructor maps
-/// `Error::ConcurrentWrite(message)` to the typed
-/// `VAULT_LOCKED_SINGLE_WRITER` binding code ONLY when
-/// `message == VAULT_WRITER_LEASE_HELD`. Every other `ConcurrentWrite` keeps
-/// the existing `From<Error>` mapping to `INVALID_STATE`, and that impl is not
-/// amended.
-pub const VAULT_WRITER_LEASE_HELD: &str = "vault writer lease is held by another process";
-
-/// An exclusive, process-scoped hold on one vault directory's write side
-/// (ONE-1441 WIRE-P1 single-writer ownership).
-///
-/// The AUTHORITY is the live OS lock held on the open file description, never
-/// the file's contents. The bytes are diagnostics only — the acquiring PID and
-/// a newline — so a stale pidfile left by a crashed owner blocks nothing: the
-/// kernel dropped its lock when the process died, and the next acquirer
-/// truncates and rewrites the line.
-///
-/// The guard OWNS the open file. Releasing is `Drop` and nothing else: there
-/// is deliberately no public unlock method, because an explicit release could
-/// run while another in-process handle still believed it held the lease. A
-/// shared native vault keeps one lease value alive (behind an `Arc`) for its
-/// whole lifetime, so the single drop that releases it is the last one.
-///
-/// [`Self::pid`] records the acquiring process. A post-`fork` child inherits
-/// the descriptor — and therefore the kernel's lock — without ever having
-/// acquired it, so the SDK dispatcher compares [`Self::pid`] against the
-/// current PID before every verb and fails closed when they differ. That check
-/// is [`Self::held_by_current_process`]; the lease does not enforce it itself,
-/// because the enforcement point is the dispatcher, not the handle.
-pub struct VaultWriterLease {
-    /// Held for the lease's whole lifetime: dropping the file closes the
-    /// descriptor, and closing the descriptor is what releases the OS lock.
-    ///
-    /// `None` on targets where this crate has no advisory-lock primitive —
-    /// the same `#[cfg(not(unix))]` posture `git_wire`'s repository guard
-    /// already takes. See [`VaultWriterLease::acquire`].
-    file: Option<std::fs::File>,
-    pid: u32,
-}
-
-impl VaultWriterLease {
-    /// Acquires the exclusive writer lease on `vault_dir`, or refuses.
-    ///
-    /// Non-blocking: a directory already owned by another process fails
-    /// immediately with `Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD)`
-    /// rather than parking. Contention is a fact about the deployment, not a
-    /// transient the caller should wait out.
-    ///
-    /// Non-contention failures — a missing directory, a permission denial, a
-    /// read-only filesystem — keep their ordinary typed `Error::Io` and never
-    /// masquerade as lock contention, so an operator's diagnosis is not
-    /// redirected at a process that does not exist.
-    ///
-    /// UNIX ONLY today: `flock` is the primitive this crate already depends on
-    /// and the one this lease is specified against. On other targets no lock
-    /// file is opened and no exclusion is claimed, exactly as `git_wire`'s
-    /// repository guard already behaves. The Windows arm needs `LockFileEx`,
-    /// whose `OVERLAPPED` lives in a `windows-sys` feature this crate does not
-    /// enable — a dependency change, and therefore its own bounded change.
-    pub fn acquire(vault_dir: &Path) -> Result<Self> {
-        let pid = std::process::id();
-        let file = Self::lock_exclusive_nonblocking(vault_dir)?;
-        if let Some(file) = file.as_ref() {
-            Self::write_pid_line(file, pid)?;
-        }
-        Ok(Self { file, pid })
-    }
-
-    /// The process that acquired this lease.
-    #[must_use]
-    pub const fn pid(&self) -> u32 {
-        self.pid
-    }
-
-    /// Whether the CALLING process is the one that acquired this lease.
-    ///
-    /// `false` in a post-`fork` child holding an inherited handle: the child
-    /// never took the lock, so it must not write through it even though the
-    /// inherited descriptor would let the kernel say yes.
-    #[must_use]
-    pub fn held_by_current_process(&self) -> bool {
-        self.pid == std::process::id()
-    }
-
-    #[cfg(unix)]
-    fn lock_exclusive_nonblocking(vault_dir: &Path) -> Result<Option<std::fs::File>> {
-        use std::os::fd::AsRawFd;
-
-        // `create(true)` + `truncate(false)`: the file is a rendezvous point,
-        // not state. Truncating before the lock is granted would let a REFUSED
-        // acquirer erase the live owner's diagnostics.
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(vault_dir.join(VAULT_WRITER_LOCK_FILE))?;
-        // SAFETY: `file` is a live, open `std::fs::File` owned by this frame
-        // and closed nowhere within it, so `as_raw_fd()` yields a descriptor
-        // valid for the whole call. `flock` reads only that descriptor and the
-        // flag word, and writes nothing through a pointer.
-        let granted = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if granted == 0 {
-            return Ok(Some(file));
-        }
-        let error = std::io::Error::last_os_error();
-        // EWOULDBLOCK (EAGAIN on Linux and macOS) is the ONLY contention
-        // answer. Everything else is a real I/O failure and keeps its typed
-        // error, so a permission problem is never reported as a busy vault.
-        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            return Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD));
-        }
-        Err(error.into())
-    }
-
-    #[cfg(not(unix))]
-    fn lock_exclusive_nonblocking(_vault_dir: &Path) -> Result<Option<std::fs::File>> {
-        Ok(None)
-    }
-
-    /// Records the owning PID for humans reading the directory. Diagnostics
-    /// only: nothing reads this back to decide who owns the lease.
-    fn write_pid_line(mut file: &std::fs::File, pid: u32) -> Result<()> {
-        use std::io::{Seek, SeekFrom, Write};
-
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        file.write_all(format!("{pid}\n").as_bytes())?;
-        file.flush()?;
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    fn release(file: &std::fs::File) {
-        use std::os::fd::AsRawFd;
-
-        // SAFETY: `file` is the live `File` this guard has owned since
-        // `acquire`, borrowed for the duration of this call, so its descriptor
-        // is valid. `flock(LOCK_UN)` reads only that descriptor and the flag
-        // word.
-        unsafe {
-            libc::flock(file.as_raw_fd(), libc::LOCK_UN);
-        }
-    }
-
-    #[cfg(not(unix))]
-    fn release(_file: &std::fs::File) {}
-}
-
-impl Drop for VaultWriterLease {
-    fn drop(&mut self) {
-        if let Some(file) = self.file.take() {
-            // Closing the descriptor releases the lock on its own; the
-            // explicit unlock keeps the release visible at the drop site.
-            Self::release(&file);
-        }
-    }
-}
-
-impl std::fmt::Debug for VaultWriterLease {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VaultWriterLease")
-            .field("pid", &self.pid)
-            .finish_non_exhaustive()
-    }
-}
+pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 /// Namespace the embedded default owner actor's id is derived from
 /// (ONE-1441 WIRE-P1).
@@ -365,6 +189,8 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    // Declared after Store: LMDB closes before process ownership is released.
+    writer_lease: Option<VaultWriterLease>,
     /// `false` only when `Vault::open` ran with
     /// `skip_text_index_manifest_check = true` against a populated index.
     /// In that state the on-disk postings may have been written under a
@@ -428,8 +254,8 @@ impl Vault {
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
     ///
-    /// This is the only door that CREATES a vault, and the only one whose
-    /// gates may repair an existing one at open time. Callers that must reopen
+    /// This and [`Self::open_owned`] use the create-capable gates, which may
+    /// repair an existing vault at open time. Callers that must reopen
     /// an already-initialized vault, and must never bring one into existence,
     /// use [`Self::open_existing`].
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
@@ -438,6 +264,26 @@ impl Vault {
         // consumer build (including `--all-features`) can open a vault that
         // skips the default consent/policy gate.
         Self::open_seeded(path, config, DefaultPolicySeedMode::Required)
+    }
+
+    /// Opens a process-owned vault. Server and embedded SDK owners use this
+    /// door so the writer lease covers startup, all Arc holders, and shutdown.
+    /// Low-level `open` remains available for caller-managed engine lifetimes.
+    pub fn open_owned(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        validate_open_config(&config)?;
+        std::fs::create_dir_all(path.as_ref())?;
+        let canonical = path.as_ref().canonicalize()?;
+        let lease = VaultWriterLease::acquire(&canonical)?;
+        let store = Store::open_with_writer_lease(&canonical, &config, &lease)?;
+        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
+        vault.writer_lease = Some(lease);
+        Ok(vault)
+    }
+
+    /// Process ownership, when opened through [`Self::open_owned`].
+    #[must_use]
+    pub fn writer_lease(&self) -> Option<&VaultWriterLease> {
+        self.writer_lease.as_ref()
     }
 
     /// Opens an ALREADY-INITIALIZED vault at `path`, or refuses.
@@ -600,6 +446,7 @@ impl Vault {
             store,
             config,
             analyzer,
+            writer_lease: None,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
@@ -1130,6 +977,9 @@ impl Vault {
         let owner = embedded_owner_actor_id()?;
         let now = unix_seconds_now();
         self.try_with_write_txn(|wtxn| {
+            if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
+                return Err(crate::memory::hard_deleted_refusal(&owner));
+            }
             match self.get_entity_type_in_txn(wtxn, &owner)? {
                 Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
                 // Present but not a PERSON: refuse, never retype. The typed

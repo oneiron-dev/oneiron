@@ -65,7 +65,8 @@ jobs:
         with:
           toolchain: "1.96"
           components: rustfmt
-      - run: cargo fmt --all --check
+      # Honor the workspace's heed exclusion; --all also follows local path dependencies.
+      - run: cargo fmt --check
 
   clippy:
     name: Clippy

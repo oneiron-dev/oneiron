@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod campaign;
+pub mod caps;
 mod chat;
 mod claims;
 mod dreamer;
@@ -78,4 +79,4 @@ pub use structural::{
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
-pub(crate) use support::{facade_provenance, verify_actor_binding};
+pub(crate) use support::{facade_provenance, hard_deleted_refusal, verify_actor_binding};

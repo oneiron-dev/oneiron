@@ -45,8 +45,8 @@ use std::fmt;
 use std::path::Path;
 
 use oneiron::memory::{
-    ClaimInput, CommitReceipt, Effort, MEMORY_CODE_INTERNAL, MemoryError, MemoryPack,
-    MemoryReceipt, RecallScope, WitnessReceipt, WitnessTurn,
+    ClaimInput, CommitReceipt, Effort, MemoryError, MemoryPack, MemoryReceipt, RecallScope,
+    WitnessReceipt, WitnessTurn,
 };
 use serde::Serialize;
 
@@ -56,6 +56,7 @@ pub use crate::caps::{
     MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_dimensions, check_limit,
     check_payload_bytes, check_query, check_unix_seconds,
 };
+use crate::caps::{check_claim_input, check_witness_turn};
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
@@ -297,10 +298,7 @@ impl OneironClient {
     /// backend cannot tell an omitted `0` from a deliberate one.
     pub fn witness(&self, turn: &WitnessTurn) -> Result<WitnessReceipt, MemoryError> {
         self.ensure_dispatch_pid()?;
-        check_batch_len("messages", turn.messages.len())?;
-        for message in &turn.messages {
-            check_payload_bytes("message content", message.content.len())?;
-        }
+        check_witness_turn(turn)?;
         match &self.backend {
             Backend::Embedded(embedded) => embedded.memory().witness(turn),
             Backend::Remote(remote) => remote.call("witness", turn),
@@ -360,32 +358,4 @@ impl OneironClient {
             Backend::Remote(remote) => remote.call("receipts", &ReceiptsRequest { limit }),
         }
     }
-}
-
-/// Validates a claim's boundary-checkable fields before dispatch.
-///
-/// `confidence` and `salience` are already `f32` on the engine DTO, so the
-/// non-finite refusal for them happens in the binding layers where the host's
-/// `f64` narrows. What remains checkable here is the serialized value size.
-fn check_claim_input(claim: &ClaimInput) -> Result<(), MemoryError> {
-    if !claim.confidence.is_finite() {
-        return Err(crate::error::bad_request(
-            "confidence must be a finite number",
-            &["NaN and infinity are not confidences; send a value in [0, 1]."],
-        ));
-    }
-    if claim.salience.is_some_and(|value| !value.is_finite()) {
-        return Err(crate::error::bad_request(
-            "salience must be a finite number",
-            &["NaN and infinity are not salience values; send a value in [0, 1]."],
-        ));
-    }
-    let encoded = serde_json::to_vec(&claim.value).map_err(|error| {
-        crate::error::sdk_error(
-            MEMORY_CODE_INTERNAL,
-            format!("claim value could not be serialized: {error}"),
-            &["Send a JSON-representable claim value."],
-        )
-    })?;
-    check_payload_bytes("claim value", encoded.len())
 }
