@@ -61,7 +61,7 @@ function VaultPage() {
         </div>
         <div className="crea">
           <span
-            className="face"
+            className="face vault"
             data-agent="antevon"
             role="img"
             aria-label="the antevon moth"

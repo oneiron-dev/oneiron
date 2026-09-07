@@ -316,9 +316,9 @@ const SCHEDULES: Array<{ id: Schedule; tip: string }> = [
   { id: 'on ask', tip: 'wakes only when asked, or when a message arrives' },
 ]
 const CREATURES: Array<{ id: Creature; alt: string; w: number; h: number; tip: string }> = [
-  { id: 'eiri', alt: 'the pigeon', w: 30, h: 24, tip: 'the pigeon' },
-  { id: 'tory', alt: 'the fox', w: 21, h: 26, tip: 'the fox' },
-  { id: 'antevon', alt: 'the moth', w: 30, h: 16, tip: 'the moth' },
+  { id: 'eiri', alt: 'Iris, the messenger', w: 30, h: 24, tip: 'Iris · the messenger' },
+  { id: 'tory', alt: 'Athena, watchful', w: 21, h: 26, tip: 'Athena · watchful' },
+  { id: 'antevon', alt: 'Mnemosyne, memory', w: 30, h: 16, tip: 'Mnemosyne · memory' },
   { id: 'none', alt: '', w: 24, h: 24, tip: 'no creature · the name alone' },
 ]
 
