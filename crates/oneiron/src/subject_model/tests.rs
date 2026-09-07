@@ -1234,9 +1234,9 @@ fn time_filter_preserves_stored_subject_ambiguity_and_excluded_history() -> Resu
             let txn = vault.store.env.read_txn()?;
             let mut tables = Vec::new();
             for db in [
-                vault.store.entities,
-                vault.store.edges_in,
-                vault.store.edges_out,
+                &vault.store.entities,
+                &vault.store.edges_in,
+                &vault.store.edges_out,
             ] {
                 let mut rows = Vec::new();
                 for row in db.iter(&txn)? {
