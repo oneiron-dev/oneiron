@@ -1044,7 +1044,9 @@ fn ppr_community_query_in_txn(
             .map(|report| (report, std::collections::BTreeSet::new()))
     }
     .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-    if needs_refresh {
+    // Keep the refreshed snapshot for boosting and diversity, but do not
+    // reintroduce a cache write after the diagnostic's compute-only PPR path.
+    if needs_refresh && !VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().is_some()) {
         let pending = write.get_or_insert_with(|| DeferredPprCacheWrite {
             seed_hash: hash_community_seeds(
                 hash_seeds(
