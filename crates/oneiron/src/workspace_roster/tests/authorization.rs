@@ -403,6 +403,12 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
             ),
         );
         let outcome = vault.onboard_workspace_member(intent.clone(), &admin)?;
+        let companion = intent.companion_birth.as_ref().expect("required companion");
+        assert_eq!(
+            person_substrate(&vault, &companion.person_ref)?,
+            Some(PersonSubstrate::Model)
+        );
+        assert_eq!(outcome.companion_person_ref, Some(companion.person_ref));
         assert_eq!(
             actor_subject_anchor(&vault, &intent.actor_ref)?,
             Some(intent.person_ref)
@@ -421,6 +427,15 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
                 AT + 1,
             )
             .expect_err("admin enrollment is not human-owner reattribution");
+            assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
+            let err = crate::subject_model::set_person_substrate(
+                &vault,
+                companion.person_ref,
+                PersonSubstrate::Meat,
+                admin,
+                AT + 1,
+            )
+            .expect_err("admin enrollment is not human-owner substrate replacement");
             assert_eq!(err.kind(), ErrorKind::ActorLacksClaimAuthority);
             assert_eq!(durable_rows(&vault)?, before);
         }

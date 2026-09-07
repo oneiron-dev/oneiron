@@ -7,6 +7,7 @@
 use super::*;
 
 mod authorization;
+mod companion_requirement;
 mod current_architecture;
 use current_architecture::register_mailbox_custody;
 
@@ -183,9 +184,9 @@ fn intent(vault: &Vault, workspace_ref: &str, venture_name: &str) -> MemberOnboa
             federation_grant_ref: entity(MEMBER_GRANT),
             role: FederationGrantRole::Member,
             preset: FederationGrantPreset::Member,
-            companion_profile_grant_ref: None,
+            companion_profile_grant_ref: Some(entity(PROFILE_GRANT)),
         },
-        companion_birth: None,
+        companion_birth: Some(companion_birth()),
         delegated_mailbox: None,
         occurred_at: AT,
     }
@@ -591,13 +592,34 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     second.person_ref = entity(0xB9);
     second.actor_ref = entity(0xBA);
     second.grant_bundle.federation_grant_ref = entity(0xBB);
+    let mut second_birth = companion_birth();
+    second_birth.person_ref = entity(0xD1);
+    second_birth.actor_ref = entity(0xD2);
+    second_birth.companion_record_ref = entity(0xD3);
+    second_birth.profile_grant_ref = entity(0xD4);
+    second_birth.actor_definition = definition("fixture.second_companion");
+    second_birth.display_name = "Silverleaf".to_owned();
+    second.grant_bundle.companion_profile_grant_ref = Some(second_birth.profile_grant_ref);
+    second.companion_birth = Some(second_birth.clone());
     let outcome = vault.onboard_workspace_member(second, &writer(WRITER))?;
     assert_eq!(outcome.person_ref, entity(0xB9));
 
-    // Two members, no companions: the roster is still just the house mind.
+    // Each principal has their own quiz-named companion beside the same house.
     let roster = vault.workspace_roster("antevon-slack")?;
-    assert_eq!(roster.len(), 1);
+    assert_eq!(roster.len(), 3);
     assert_eq!(roster[0].role, WorkspaceRosterRole::HouseMind);
+    for (principal, birth) in [
+        (entity(MEMBER_PERSON), companion_birth()),
+        (entity(0xB9), second_birth),
+    ] {
+        let row = roster
+            .iter()
+            .find(|row| row.principal_ref == Some(principal))
+            .expect("one companion per principal");
+        assert_eq!(row.subject_ref, birth.person_ref);
+        assert_eq!(row.actor_ref, birth.actor_ref);
+        assert_eq!(row.display_name, birth.display_name);
+    }
     Ok(())
 }
 
@@ -615,9 +637,9 @@ fn aliased_entity_ids_are_refused() {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     let mut mismatched = intent;
-    mismatched.grant_bundle.companion_profile_grant_ref = Some(entity(PROFILE_GRANT));
+    mismatched.grant_bundle.companion_profile_grant_ref = Some(entity(0xD5));
     let err = vault
         .onboard_workspace_member(mismatched, &writer(WRITER))
-        .expect_err("a profile grant ref without a companion birth must be refused");
+        .expect_err("a mismatched companion profile grant ref must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 }

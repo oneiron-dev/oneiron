@@ -137,6 +137,7 @@ impl Vault {
 pub const PREDICATE_ACTOR_SUBJECT_REF: &str = "actor.subject_ref";
 
 /// Records whether a PERSON is `meat` or `model`.
+/// Engine-owned individually; other `person.*` predicates remain public.
 pub const PREDICATE_PERSON_SUBSTRATE: &str = "person.substrate";
 
 /// What a PERSON is made of (ARCH-0063 R7).
@@ -243,7 +244,7 @@ fn write_actor_subject_anchor(
                 "actor.subject_ref subject kind mismatch",
             ));
         }
-        write_head_in_txn(vault, wtxn, &claim_id, &body, at, Reserved::Yes)
+        write_head_in_txn(vault, wtxn, &claim_id, &body, at)
     })?;
     Ok(claim_id)
 }
@@ -277,12 +278,10 @@ pub(crate) fn actor_subject_anchor_in_txn(
     txn: &heed::RoTxn<'_>,
     actor_ref: &EntityId,
 ) -> Result<Option<ActorSubjectAnchor>> {
-    let Some(body) = single_active_body_in_txn(vault, txn, actor_ref, PREDICATE_ACTOR_SUBJECT_REF)?
-    else {
+    let Some(value) = single_subject_value(vault, txn, actor_ref, PREDICATE_ACTOR_SUBJECT_REF)? else {
         return Ok(None);
     };
-    let stored = body
-        .value
+    let stored = value
         .as_str()
         .and_then(|hex| EntityId::from_hex(hex).ok())
         .ok_or(Error::InvalidClaimBody(
@@ -309,8 +308,10 @@ pub(crate) fn actor_subject_anchor_in_txn(
 ///
 /// Refuses any entity that is not a PERSON: an ORG has no substrate, and an
 /// actor is not a someone at all. Redirects must identify one PERSON, with
-/// no malformed or competing active substrate claims. Supersession closes
-/// the canonical person's prior claim without changing its stored subject.
+/// no malformed or conflicting eligible substrate claims. Agreeing heads on
+/// one stored subject may all close; distinct historical subjects remain
+/// ambiguous. Canonical human-owner authority is checked in the write transaction.
+/// Supersession never changes a prior claim's stored subject.
 pub fn set_person_substrate(
     vault: &Vault,
     person_ref: EntityId,
@@ -331,34 +332,26 @@ pub fn set_person_substrate(
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(writer_evidence(writer));
 
-    // `person.*` is NOT reserved, so this rides the ordinary claim doors. The
-    // substrate of a someone is a normal fact about them, not engine-owned
-    // truth, and giving it the reserved door would have quietly widened that
-    // namespace.
+    // Exactly `person.substrate` is engine-owned; other `person.*` facts
+    // retain their ordinary doors. Authority and replacement share this txn.
     vault.with_write_txn(|wtxn| {
+        validate_writer_in_txn(vault, wtxn, writer)?;
+        vault.verify_owner_write_actor_in_txn(wtxn, &writer)?;
         if vault.get_entity_type_in_txn(wtxn, &person_ref)? != Some(ENTITY_TYPE_PERSON) {
             return Err(Error::InvalidClaimBody(
                 "person.substrate subject must be a PERSON",
             ));
         }
-        validate_writer_in_txn(vault, wtxn, writer)?;
-        write_head_in_txn(vault, wtxn, &claim_id, &body, at, Reserved::No)
+        write_head_in_txn(vault, wtxn, &claim_id, &body, at)
     })?;
     Ok(claim_id)
 }
 
-/// Which write door a predicate's namespace demands.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Reserved {
-    Yes,
-    No,
-}
-
-/// Writes `body` as the new single active head for `subject`, closing every
-/// prior head of the same predicate in the SAME transaction.
+/// Writes `body` as the new active head, closing every eligible prior head
+/// of the same predicate in the SAME transaction through the reserved door.
 ///
-/// For anchors, closes EVERY prior head, not the first found. Substrate
-/// heads must first pass the canonical person's single-head validation.
+/// For anchors, closes EVERY eligible prior head, not the first found. Substrate
+/// heads must first agree on one value and one historical stored subject.
 /// `EntityId::now()` is per-replica unique, so two replicas that stated this
 /// fact hold distinct claim entities and both read Active after a sync. Closing one
 /// would leave the other live forever.
@@ -368,7 +361,6 @@ fn write_head_in_txn(
     claim_id: &EntityId,
     body: &ClaimBody,
     at: u64,
-    reserved: Reserved,
 ) -> Result<()> {
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(Error::InvalidClaimBody(
@@ -381,18 +373,10 @@ fn write_head_in_txn(
     } else {
         active_bodies_in_txn(vault, wtxn, &subject, &body.predicate)?
     };
-    match reserved {
-        Reserved::Yes => vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?,
-        Reserved::No => vault.put_claim_in_txn(wtxn, claim_id, body, occurred, at)?,
-    }
+    vault.put_reserved_claim_in_txn(wtxn, claim_id, body, occurred, at)?;
     for (head_id, head_body) in superseded {
         let now = at.max(head_body.valid_from.unwrap_or(0));
-        match reserved {
-            Reserved::Yes => {
-                vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, now)?;
-            }
-            Reserved::No => vault.supersede_claim_in_txn(wtxn, claim_id, &head_id, now)?,
-        }
+        vault.supersede_reserved_claim_in_txn(wtxn, claim_id, &head_id, now)?;
     }
     Ok(())
 }
@@ -421,7 +405,6 @@ pub(crate) fn ensure_actor_subject_in_txn(
             at,
         ),
         at,
-        Reserved::Yes,
     )
 }
 
@@ -451,7 +434,6 @@ pub(crate) fn ensure_model_person_in_txn(
             at,
         ),
         at,
-        Reserved::No,
     )
 }
 
@@ -460,7 +442,6 @@ fn ensure_fact_in_txn(
     txn: &mut heed::RwTxn<'_>,
     body: ClaimBody,
     at: u64,
-    reserved: Reserved,
 ) -> Result<()> {
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(Error::InvariantViolation(
@@ -470,9 +451,9 @@ fn ensure_fact_in_txn(
     let prior = if body.predicate == PREDICATE_PERSON_SUBSTRATE {
         active_person_substrate_bodies_in_txn(vault, txn, &subject)?
             .pop()
-            .map(|(_, body)| body)
+            .map(|(_, body)| body.value)
     } else {
-        let prior = single_active_body_in_txn(vault, txn, &subject, &body.predicate)?;
+        let prior = single_subject_value(vault, txn, &subject, &body.predicate)?;
         if prior.is_some() && actor_subject_anchor_in_txn(vault, txn, &subject)?.is_none() {
             return Err(Error::InvalidClaimBody(
                 "actor.subject_ref requires one canonical subject",
@@ -481,22 +462,9 @@ fn ensure_fact_in_txn(
         prior
     };
     if let Some(prior) = prior {
-        // Proposed or qualified facts cannot prove onboarding completed. Do not
-        // hide them and then overwrite history through an "absent" fast path.
-        if !matches!(
-            prior.approval,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        ) || prior.world.is_some()
-            || prior.rel.is_some()
-            || prior.scope.is_some()
-        {
-            return Err(Error::InvalidClaimBody(
-                "subject model fact is not an unqualified approved fact",
-            ));
-        }
         // Compare the stored assertion, not the redirected anchor: a retry
         // must never rewrite the subject the original writer actually named.
-        return if prior.value == body.value {
+        return if prior == body.value {
             Ok(())
         } else {
             Err(Error::InvalidClaimBody(
@@ -504,7 +472,7 @@ fn ensure_fact_in_txn(
             ))
         };
     }
-    write_head_in_txn(vault, txn, &EntityId::now(), &body, at, reserved)
+    write_head_in_txn(vault, txn, &EntityId::now(), &body, at)
 }
 
 fn subject_fact(
@@ -578,6 +546,7 @@ fn active_person_substrate_bodies_in_txn(
     )?;
     subjects.insert(*canonical);
     let mut heads = Vec::new();
+    let mut stored_fact = None;
     for subject in subjects {
         // Validate every reached path, including an empty shell at the inverse
         // walk's depth bound: truncation must not hide a more distant claim.
@@ -602,25 +571,40 @@ fn active_person_substrate_bodies_in_txn(
             ));
         }
         for (_, body) in &bodies {
-            if body
+            let substrate = body
                 .value
                 .as_str()
                 .and_then(PersonSubstrate::parse)
-                .is_none()
-            {
-                return Err(Error::InvalidClaimBody(
+                .ok_or(Error::InvalidClaimBody(
                     "person.substrate must be meat or model",
+                ))?;
+            // `subject` is the STORED identity, checked by active_bodies_in_txn.
+            // Never replace it with `canonical`: equal values on absorbed and
+            // survivor records are still two distinct historical assertions.
+            let fact = (subject, substrate);
+            if stored_fact.is_some_and(|prior| prior != fact) {
+                return Err(Error::InvalidClaimBody(
+                    "person.substrate has conflicting values or historical subjects",
                 ));
             }
+            stored_fact = Some(fact);
         }
         heads.extend(bodies);
-        if heads.len() > 1 {
-            return Err(Error::InvalidClaimBody(
-                "subject-model claim has multiple active heads",
-            ));
-        }
     }
     Ok(heads)
+}
+
+fn admissible_subject_head(body: &ClaimBody, subject: &EntityId, predicate: &str) -> bool {
+    body.subject == ClaimSubject::Entity(*subject)
+        && body.predicate == predicate
+        && body.lifecycle == ClaimLifecycleStatus::Active
+        && matches!(
+            body.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+        && body.world.is_none()
+        && body.rel.is_none()
+        && body.scope.is_none()
 }
 
 fn active_bodies_in_txn(
@@ -633,10 +617,7 @@ fn active_bodies_in_txn(
     // Keep the generic reader's bounded, fail-closed scan rather than bypassing
     // its ceiling. Ignore stale claim_of edges whose body names another subject.
     vault.find_claim_for_subject_in_txn(txn, subject, |id, body| {
-        if body.subject == ClaimSubject::Entity(*subject)
-            && body.predicate == predicate
-            && body.lifecycle == ClaimLifecycleStatus::Active
-        {
+        if admissible_subject_head(body, subject, predicate) {
             heads.push((*id, body.clone()));
         }
         None::<()>
@@ -644,19 +625,23 @@ fn active_bodies_in_txn(
     Ok(heads)
 }
 
-fn single_active_body_in_txn(
+/// Eligible concurrent heads on this exact stored subject must agree.
+fn single_subject_value(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
     predicate: &str,
-) -> Result<Option<ClaimBody>> {
+) -> Result<Option<Value>> {
     let mut heads = active_bodies_in_txn(vault, txn, subject, predicate)?;
-    if heads.len() > 1 {
+    let Some((_, body)) = heads.pop() else {
+        return Ok(None);
+    };
+    if heads.iter().any(|(_, prior)| prior.value != body.value) {
         return Err(Error::InvalidClaimBody(
-            "subject-model claim has multiple active heads",
+            "subject model has conflicting active heads",
         ));
     }
-    Ok(heads.pop().map(|(_, body)| body))
+    Ok(Some(body.value))
 }
 
 // WriteActor is supplied by the authenticated host. As at the existing write

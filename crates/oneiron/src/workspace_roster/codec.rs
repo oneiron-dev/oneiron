@@ -36,17 +36,21 @@ pub(super) fn house_mind_entry(
     })
 }
 
-/// Builds one principal-companion row, or `None` for a member who has no
-/// companion. Membership without a companion is a legal roster state; it simply
-/// contributes no persona.
+/// Builds one principal-companion row. A stored member row without its
+/// required companion is invalid, not a successful companion-free onboarding.
 pub(super) fn companion_entry(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
     row: &RosterMemberRow,
-) -> Result<Option<WorkspaceRosterEntry>> {
-    let (Some(actor_ref), Some(person_ref)) = (row.companion_actor_ref, row.companion_person_ref)
-    else {
-        return Ok(None);
+) -> Result<WorkspaceRosterEntry> {
+    let (Some(actor_ref), Some(person_ref), Some(_)) = (
+        row.companion_actor_ref,
+        row.companion_person_ref,
+        row.companion_facet_ref,
+    ) else {
+        return Err(invalid(
+            "workspace member row is missing its required companion",
+        ));
     };
     let definition = vault.get_agent_definition(&actor_ref)?;
     let display_name = definition
@@ -57,7 +61,7 @@ pub(super) fn companion_entry(
         })
         .unwrap_or_default();
     let subject_ref = actor_subject_anchor(vault, &actor_ref)?.unwrap_or(person_ref);
-    Ok(Some(WorkspaceRosterEntry {
+    Ok(WorkspaceRosterEntry {
         workspace_ref: preset.workspace_ref.clone(),
         role: WorkspaceRosterRole::PrincipalCompanion,
         principal_ref: Some(row.person_ref),
@@ -68,7 +72,7 @@ pub(super) fn companion_entry(
         // Only the shared house identity may represent this roster presence.
         identity_ref: preset.house_identity_ref,
         display_name,
-    }))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +119,7 @@ pub(super) fn write_journal(
     record: &OnboardingJournal,
     writer: &WriteActor,
 ) -> Result<()> {
+    intent.required_companion()?;
     let encoded = encode_value(&Value::Map(vec![
         (
             Value::from("schema_version"),
