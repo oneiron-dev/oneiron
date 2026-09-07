@@ -58,6 +58,9 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
             format!("calendar:{}", calendar_ref.to_hex()),
             format!("rung:{}", rung.as_str()),
         ]),
+        AccessGrantScope::ChannelIdentity { .. } => Err(invalid_bound(
+            "channel identity reads require the live mailbox envelope door",
+        )),
         AccessGrantScope::SharedBrief { .. } => Err(invalid_bound(
             "shared brief scopes require Vault::resolve_share_for_view",
         )),
@@ -90,6 +93,9 @@ pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
 pub fn action_grant_from_standing_outbound_grant(
     grant: &StandingOutboundGrant,
 ) -> Result<ActionGrant> {
+    if matches!(grant.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }) {
+        return Err(invalid_bound("channel identity actions require atomic volume consumption"));
+    }
     let actor = ActorBound::new(grant.principal_ref.as_str())?;
     let (class, selectors, target) = outbound_scope_axes(&grant.scope);
     let mut envelope = ActionEnvelope::new(selectors)?;
@@ -111,6 +117,11 @@ pub(super) fn outbound_scope_axes(
     scope: &StandingOutboundGrantScope,
 ) -> (String, Vec<String>, Option<String>) {
     match scope {
+        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref, envelope_ref, verb_class } => (
+            verb_class.clone(),
+            vec![format!("identity:{}", identity_ref.to_hex()), format!("envelope:{}", envelope_ref.to_hex())],
+            Some(identity_ref.to_hex()),
+        ),
         StandingOutboundGrantScope::Contact { contact_ref } => (
             OUTBOUND_SEND_VERB_CLASS.to_owned(),
             vec![format!("contact:{contact_ref}")],

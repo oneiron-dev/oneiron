@@ -477,6 +477,57 @@ pub struct ReceiptRecord {
     pub fields: BTreeMap<String, String>,
 }
 
+/// A receipt-family result with explicit source and result-limit completeness.
+///
+/// Only `complete` proves that `records` contains every matching receipt.
+/// Incomplete records are not a safe candidate set for ranking or lifecycle folds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptScan {
+    pub records: Vec<ReceiptRecord>,
+    pub complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<ReceiptScanContinuation>,
+}
+
+/// Boundaries of omitted data, not a snapshot or a globally ordered page token.
+///
+/// Source and result truncation are independent: both boundaries can be present.
+/// A source boundary is retained even when every scanned row is filtered out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptScanContinuation {
+    /// Exclusive raw ledger key for continuing the reverse attempt-pack walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_pack_before: Option<Vec<u8>>,
+    /// First matching record omitted by the result limit, in receipt sort order.
+    /// This does not describe rows omitted by a source work cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_record: Option<ReceiptScanPosition>,
+}
+
+/// Inclusive position in newest-first receipt order (time descending, kind/id ascending).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptScanPosition {
+    pub occurred_at: u64,
+    pub receipt_kind: ReceiptKind,
+    pub receipt_id: String,
+}
+
+impl ReceiptScan {
+    pub(super) fn from_complete_records(records: Vec<ReceiptRecord>) -> Self {
+        Self {
+            records,
+            complete: true,
+            continuation: None,
+        }
+    }
+
+    pub(super) fn mark_incomplete(&mut self) -> &mut ReceiptScanContinuation {
+        self.complete = false;
+        self.continuation
+            .get_or_insert_with(ReceiptScanContinuation::default)
+    }
+}
+
 /// Minimal OF-367/RCPT-3 seam for consumers that render receipts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptView {

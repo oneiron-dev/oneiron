@@ -6,6 +6,7 @@ thread_local! {
 }
 
 pub mod access_grant;
+pub mod agent_inbox_lens;
 pub mod actor_claims;
 pub mod affect;
 pub mod agent_def;
@@ -26,6 +27,7 @@ pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
+pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;

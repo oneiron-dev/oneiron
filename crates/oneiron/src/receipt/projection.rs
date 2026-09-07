@@ -7,7 +7,7 @@ use super::kernel::{
     FIELD_CHANNEL_IDENTITY_REF, FIELD_COUNTERPARTY_REF, FIELD_FIRST_TOUCH, FIELD_GRANT_REF,
     FIELD_IDENTITY_REF, FIELD_INTENT_REF, FIELD_JOB_REF, FIELD_OPT_OUT, FIELD_PARENT_REF,
     FIELD_PROMO_CONSENT, FIELD_RECEIVING_IDENTITY_REF, FIELD_RUN_REF, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, receipt_newest_first_order,
+    ReceiptRecord, ReceiptScan, ReceiptScanPosition, receipt_newest_first_order,
 };
 use crate::Vault;
 use crate::counterparty_contact::CounterpartyContactRecord;
@@ -667,17 +667,41 @@ fn sort_receipts_newest_first(records: &mut [ReceiptRecord]) {
 }
 
 pub(super) fn finalize_receipt_query_records(
-    mut records: Vec<ReceiptRecord>,
+    records: Vec<ReceiptRecord>,
     query: &ReceiptQuery,
     lineage_records: Option<&[ReceiptRecord]>,
 ) -> Vec<ReceiptRecord> {
-    sort_receipts_newest_first(&mut records);
+    // Legacy callers request records only. Completeness-aware callers must pass
+    // their source metadata to `finalize_receipt_scan` instead.
+    finalize_receipt_scan(
+        ReceiptScan::from_complete_records(records),
+        query,
+        lineage_records,
+    )
+    .records
+}
+
+pub(super) fn finalize_receipt_scan(
+    mut scan: ReceiptScan,
+    query: &ReceiptQuery,
+    lineage_records: Option<&[ReceiptRecord]>,
+) -> ReceiptScan {
+    sort_receipts_newest_first(&mut scan.records);
     if let Some(job_ref) = query.job_ref.as_deref() {
-        let index = ReceiptProjectionIndex::new(lineage_records.unwrap_or(&records));
-        records.retain(|receipt| index.receipt_matches_brief(receipt, job_ref));
+        let index = ReceiptProjectionIndex::new(lineage_records.unwrap_or(&scan.records));
+        scan.records
+            .retain(|receipt| index.receipt_matches_brief(receipt, job_ref));
     }
-    records.truncate(query.limit);
-    records
+    if let Some(next) = scan.records.get(query.limit) {
+        let position = ReceiptScanPosition {
+            occurred_at: next.occurred_at,
+            receipt_kind: next.receipt_kind,
+            receipt_id: next.receipt_id.clone(),
+        };
+        scan.mark_incomplete().next_record = Some(position);
+    }
+    scan.records.truncate(query.limit);
+    scan
 }
 
 #[derive(Debug, Clone)]

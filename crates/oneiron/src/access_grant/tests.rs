@@ -499,8 +499,8 @@ fn shared_brief_grant() -> AccessGrant {
 }
 
 #[test]
-fn shared_brief_adds_only_v1_scope_and_capability() -> Result<()> {
-    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 1);
+fn shared_brief_preserves_scope_and_capability_in_schema_v2() -> Result<()> {
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
     let grant = shared_brief_grant();
     assert_eq!(grant.capability.as_str(), "brief.share.read");
     let bytes = encode_access_grant_body(&grant)?;
@@ -514,7 +514,7 @@ fn shared_brief_adds_only_v1_scope_and_capability() -> Result<()> {
         decode_access_grant_body(&encode_access_grant_body(&revoked)?)?,
         revoked
     );
-    // Independently authored v1 maps pin both pre-existing wire shapes.
+    // Independently authored v2 maps pin both pre-existing scope wire shapes.
     assert_eq!(
         encode_access_grant_body(&test_grant())?,
         grant_map(valid_entries())
@@ -621,5 +621,53 @@ fn shared_brief_codec_rejects_unknown_duplicate_and_malformed_scope() -> Result<
     let mut typed_invalid = shared_brief_grant();
     typed_invalid.principal_ref = EntityId::from_bytes_unchecked([0; 16]);
     assert!(encode_access_grant_body(&typed_invalid).is_err());
+    Ok(())
+}
+
+
+#[test]
+fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<()> {
+    let scopes = [
+        AccessGrantScope::companion_profile(entity(0xB1), entity(0xC1)),
+        AccessGrantScope::calendar(entity(0xB2), DisclosureRung::Titles),
+        AccessGrantScope::SharedBrief { brief_ref: "brief:kept".to_owned(),
+            world_refs: BTreeSet::from([entity(0x81)]), facet_refs: BTreeSet::from([entity(0x82)]), include_unscoped: false },
+        AccessGrantScope::ChannelIdentity { identity_ref: entity(0x91), envelope_ref: entity(0x92) },
+    ];
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
+    for scope in scopes {
+        let grant = AccessGrant { principal_ref: entity(0x51), capability: scope.required_capability(), scope,
+            status: AccessGrantStatus::Active, created_at: 42, revoked_at: None };
+        let bytes = encode_access_grant_body(&grant)?;
+        assert_eq!(decode_access_grant_body(&bytes)?, grant);
+        let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
+        let Value::Map(entries) = value else { panic!("map"); };
+        assert_eq!(entries[0].1, Value::from(2_u64));
+        for version in [Value::from(0_u64), Value::from(1_u64), Value::from(3_u64),
+            Value::from(-1), Value::from("2"), Value::from(2.0), Value::Nil] {
+            let mut invalid = entries.clone();
+            invalid[0].1 = version;
+            let invalid_bytes = grant_map(invalid);
+            assert_eq!(decode_access_grant_body(&invalid_bytes).unwrap_err().kind(),
+                ErrorKind::InvalidAccessGrantBody);
+            assert!(validate_access_grant_body_bytes(&invalid_bytes).is_err());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn channel_identity_scope_rejects_hybrid_capability_and_unknown_keys() -> Result<()> {
+    let mut grant = test_grant();
+    grant.scope = AccessGrantScope::ChannelIdentity { identity_ref: entity(0x91), envelope_ref: entity(0x92) };
+    assert!(encode_access_grant_body(&grant).is_err());
+    grant.capability = AccessGrantCapability::ChannelIdentityScopedRead;
+    assert_eq!(grant.capability.as_str(), "channel_identity.scoped_read");
+    let bytes = encode_access_grant_body(&grant)?;
+    let mut value = rmpv::decode::read_value(&mut Cursor::new(bytes)).unwrap();
+    let Value::Map(entries) = &mut value else { panic!("map"); };
+    let Value::Map(scope) = &mut entries[2].1 else { panic!("scope"); };
+    scope.push((Value::from("world_refs"), Value::Array(Vec::new())));
+    assert!(decode_access_grant_body(&encode_value(&value)).is_err());
     Ok(())
 }
