@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { Link } from '@tanstack/react-router'
 import { Chevron, IconHistory } from './icons'
 import { Cwidget, Throbber } from './Widgets'
 import { cue, useDocumentEvent, useEscape } from './hooks'
@@ -246,6 +247,17 @@ export function Ground() {
                   )}
                 </>
               )}
+              {/* the panel is the pocket door; the ROOM on the agents page is
+                  the same conversation, full size (owner 09-07) */}
+              <Link
+                className="act chat-room"
+                to="/app/agents"
+                search={{ with: ask ? 'house' : (scope as 'eiri' | 'tory') }}
+                title="the full room · the agents page"
+                onClick={closeRun}
+              >
+                room
+              </Link>
               <button className="chat-close" aria-label="close the chat" title="close · esc" onClick={closeRun}>
                 ×
               </button>

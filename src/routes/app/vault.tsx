@@ -385,6 +385,12 @@ function filterActive(f: FilterValue) {
 }
 
 const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(' ')
+/* the receipt's clock: the moment an act settled (this is the one place a
+   live clock is right — the fixture's TODAY stays fixed for the rows) */
+function hhmm() {
+  const d = new Date()
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 /* ── inline glyphs · house line, 1.5 stroke, currentColor ── */
 function FilterGlyph() {
@@ -412,7 +418,17 @@ function Vault() {
   const [sort, setSort] = React.useState<{ id: ColId; dir: 'asc' | 'desc' } | null>(null)
   const [filters, setFilters] = React.useState<Partial<Record<ColId, FilterValue>>>({})
   const [pop, setPop] = React.useState<ColId | null>(null)
-  const [sel, setSel] = React.useState<string | null>(null)
+  /* the selection is a SET (owner 09-07: bulk actions, normal table ops):
+     click = this row · shift-click = the range from the anchor · ⌘-click =
+     toggle · the head square = every row shown · space toggles the cursor
+     row · shift+arrows extend · esc clears. an act on the selection settles
+     every row in place and leaves ONE receipt line (no toast, ever). */
+  const [selected, setSelected] = React.useState<Set<string>>(() => new Set())
+  const [anchor, setAnchor] = React.useState<string | null>(null)
+  const [cursor, setCursor] = React.useState<string | null>(null)
+  const [verdicts, setVerdicts] = React.useState<Record<string, { word: string; ok: boolean; when: string }>>({})
+  const [receipt, setReceipt] = React.useState<string | null>(null)
+  const [moveOpen, setMoveOpen] = React.useState(false)
   const [open, setOpen] = React.useState<string>('cl_9f27c3')
   const [asof, setAsof] = React.useState<string>(TODAY)
   const searchRef = React.useRef<HTMLInputElement>(null)
@@ -480,11 +496,54 @@ function Vault() {
     setFilters({})
     setQ('')
   }
-  function pick(id: string) {
-    setSel(id)
-    setOpen(id)
+  function pick(id: string, e?: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) {
+    const toggle = !!e && (e.metaKey || e.ctrlKey)
+    const range = !!e && e.shiftKey
+    setSelected((s) => {
+      const n = new Set(toggle || range ? s : [])
+      if (range && anchor) {
+        const a = rows.findIndex((r) => r.id === anchor)
+        const b = rows.findIndex((r) => r.id === id)
+        if (a >= 0 && b >= 0) for (let i = Math.min(a, b); i <= Math.max(a, b); i++) n.add(rows[i].id)
+        else n.add(id)
+      } else if (toggle) {
+        if (n.has(id)) n.delete(id)
+        else n.add(id)
+      } else n.add(id)
+      return n
+    })
+    if (!range) setAnchor(id)
+    setCursor(id)
+    /* a plain click also opens the record; a modified click only selects */
+    if (!toggle && !range) setOpen(id)
     cue('toggle')
   }
+  function clearSel() {
+    setSelected(new Set())
+    setAnchor(null)
+    setMoveOpen(false)
+  }
+  function selectAll() {
+    setSelected(new Set(rows.map((r) => r.id)))
+    if (!anchor && rows[0]) setAnchor(rows[0].id)
+    cue('toggle')
+  }
+  /* an act on the selection: every row settles in place, one receipt line lands */
+  function actOn(word: string, ok: boolean) {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    const when = hhmm()
+    setVerdicts((v) => {
+      const n = { ...v }
+      for (const id of ids) n[id] = { word, ok, when }
+      return n
+    })
+    setReceipt(`${ids.length} ${word} · ${when}`)
+    clearSel()
+    cue(ok ? 'success' : 'press')
+  }
+  const allSel = rows.length > 0 && rows.every((r) => selected.has(r.id))
+  const someSel = selected.size > 0
   /* the popover hands focus back to the head it hangs from */
   function closePop() {
     setPop(null)
@@ -494,7 +553,8 @@ function Vault() {
   /* Esc: the popover · the selection · the filters · the as-of date */
   useEscape(() => {
     if (pop) return closePop()
-    if (sel) return setSel(null)
+    if (moveOpen) return setMoveOpen(false)
+    if (selected.size > 0) return clearSel()
     if (activeFilters.length > 0 || q.trim()) return clearFilters()
     if (past) return setAsof(TODAY)
   })
@@ -512,17 +572,48 @@ function Vault() {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (rows.length === 0) return
       e.preventDefault()
-      const i = rows.findIndex((r) => r.id === sel)
+      const cur = cursor ?? anchor
+      const i = rows.findIndex((r) => r.id === cur)
       const j = e.key === 'ArrowDown' ? Math.min(rows.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1)
       const next = rows[j].id
-      setSel(next)
+      if (e.shiftKey) {
+        /* shift+arrow extends the selection from the anchor */
+        setSelected((s) => {
+          const n = new Set(s)
+          n.add(next)
+          return n
+        })
+        if (!anchor) setAnchor(next)
+      } else {
+        setSelected(new Set([next]))
+        setAnchor(next)
+      }
+      setCursor(next)
       bodyRef.current?.querySelector<HTMLElement>(`[data-id="${next}"]`)?.scrollIntoView({ block: 'nearest' })
+    } else if (e.key === ' ' && !typing) {
+      /* space toggles the cursor row */
+      if (t?.closest?.('button, a, [role="slider"]')) return
+      const cur = cursor ?? anchor
+      if (!cur) return
+      e.preventDefault()
+      setSelected((s) => {
+        const n = new Set(s)
+        if (n.has(cur)) n.delete(cur)
+        else n.add(cur)
+        return n
+      })
+      cue('toggle')
+    } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && !typing) {
+      e.preventDefault()
+      selectAll()
     } else if (e.key === 'Enter') {
       /* a focused act runs itself; Enter is the row's door only */
       if (t?.closest?.('button, a, [role="slider"]')) return
-      const next = sel ?? rows[0]?.id
+      const next = cursor ?? anchor ?? rows[0]?.id
       if (!next) return
-      setSel(next)
+      setSelected(new Set([next]))
+      setAnchor(next)
+      setCursor(next)
       setOpen(next)
       cue('toggle')
     }
@@ -547,7 +638,41 @@ function Vault() {
           />
         </div>
 
-        {/* chrome: world scope + state filters (OF-293 / OF-111) + the column filters */}
+        {/* chrome: world scope + state filters (OF-293 / OF-111) + the column filters.
+            while anything is selected the same row is the SELECTION LINE: the
+            count and the acts that apply (owner 09-07) */}
+        {someSel ? (
+        <div className="filters selbar" role="group" aria-label="selection" aria-live="polite">
+          <span className="meta-line" title="click = one · shift-click = a range · ⌘-click = toggle · esc clears">
+            {selected.size} selected
+          </span>
+          <button className="act" title="verb: approve_claims · every selected claim settles approved, in place" onClick={(e) => { markCued(e); actOn('accepted', true) }}>
+            accept
+          </button>
+          <button className="act" title="verb: reject_claims · kept, struck" onClick={(e) => { markCued(e); actOn('rejected', false) }}>
+            reject
+          </button>
+          <span className="set" role="group" aria-label="move to a world">
+            <button className="act" aria-expanded={moveOpen} title="move the selected claims to another world" onClick={(e) => { markCued(e); setMoveOpen((o) => !o); cue('toggle') }}>
+              move to
+            </button>
+            {moveOpen && WORLDS.filter((w) => !w.dead).map((w) => (
+              <button key={w.id} className="chip" title={w.title} onClick={(e) => { markCued(e); actOn(`moved to ${w.id}`, true) }}>
+                {w.id}
+              </button>
+            ))}
+          </span>
+          <button className="act" title="verb: forget_claims · a deletion receipt prints; nothing pretends to forget" onClick={(e) => { markCued(e); actOn('forgotten', false) }}>
+            forget
+          </button>
+          <button className="act" title="an export slip · everything you selected, itemized" onClick={(e) => { markCued(e); actOn('exported', true) }}>
+            export
+          </button>
+          <button className="act" title="clear the selection · esc" onClick={(e) => { markCued(e); clearSel(); cue('toggle') }}>
+            clear
+          </button>
+        </div>
+        ) : (
         <div className="filters">
           <span className="set" role="group" aria-label="worlds">
             <span className="label">worlds</span>
@@ -594,15 +719,33 @@ function Vault() {
               <button className="act" onClick={clearFilters}>clear</button>
             </span>
           )}
+          {/* the outcome of the last act on a selection IS the receipt line,
+              where the acts stood — never a toast (08-14) */}
+          {receipt && (
+            <span className="meta-line selreceipt" aria-live="polite" title="what the last act on a selection did">
+              {receipt}
+            </span>
+          )}
         </div>
+        )}
 
         {/* chrome: the as-of scrubber — what did the vault believe then (OF-082) */}
         <AsOf value={asof} onChange={setAsof} />
 
-        <div className="ledger-wrap">
-          <table className="ledger" role="grid">
+        <div className={someSel ? 'ledger-wrap has-sel' : 'ledger-wrap'}>
+          <table className="ledger" role="grid" aria-multiselectable="true">
             <thead>
               <tr>
+                <th className="c-sel" scope="col">
+                  <button
+                    type="button"
+                    className={cx('selbox', allSel && 'on', someSel && !allSel && 'some')}
+                    aria-pressed={allSel}
+                    aria-label={allSel ? 'clear the selection' : 'select every row shown'}
+                    title={allSel ? 'clear · esc' : 'select every row shown · ⌘A'}
+                    onClick={(e) => { markCued(e); if (allSel) clearSel(); else selectAll() }}
+                  />
+                </th>
                 {COLUMNS.map((col) => {
                   const f = filters[col.id]
                   const sorted = sort?.id === col.id ? sort.dir : null
@@ -651,18 +794,39 @@ function Vault() {
             <tbody ref={bodyRef}>
               {rows.map((c) => {
                 const state = stateAt(c, asof)
+                const isSel = selected.has(c.id)
+                const v = verdicts[c.id]
+                /* a settled verdict takes the dot and the text treatment (approved
+                   fills, rejected/forgotten strike); an export leaves the record as it was */
+                const dotCls = v && v.word !== 'exported' ? (v.ok ? 'dot-approved' : 'dot-rejected') : STATUS_DOT[c.status].cls
+                const dotTitle = v ? `${v.word} · ${v.when}` : STATUS_DOT[c.status].title
                 return (
                 <tr
                   key={c.id}
                   data-id={c.id}
-                  className={cx(sel === c.id && 'selected', open === c.id && 'open', state === 'superseded' && 'superseded')}
-                  aria-selected={sel === c.id}
-                  onClick={(e) => { markCued(e); pick(c.id) }}
+                  className={cx(isSel && 'selected', open === c.id && 'open', state === 'superseded' && 'superseded')}
+                  aria-selected={isSel}
+                  onMouseDown={(e) => {
+                    /* a modified click selects rows, never text: the browser
+                       would otherwise drag a text selection across the range */
+                    if (e.shiftKey || e.metaKey || e.ctrlKey) e.preventDefault()
+                  }}
+                  onClick={(e) => { markCued(e); pick(c.id, e) }}
                 >
+                  <td className="c-sel">
+                    <button
+                      type="button"
+                      className={isSel ? 'selbox on' : 'selbox'}
+                      aria-pressed={isSel}
+                      aria-label={isSel ? 'deselect this claim' : 'select this claim'}
+                      title={isSel ? 'selected · click to drop' : 'select · shift-click for a range'}
+                      onClick={(e) => { e.stopPropagation(); markCued(e); pick(c.id, { shiftKey: e.shiftKey, metaKey: !e.shiftKey, ctrlKey: false }) }}
+                    />
+                  </td>
                   <td>
                     <span
-                      className={cx('claim', confClass(c.conf), state === 'retracted' && 'retracted')}
-                      title={`confidence ${c.conf.toFixed(2)}${c.critical ? ' · critical predicate · never renders below muted ink' : ''}`}
+                      className={cx('claim', confClass(c.conf), (state === 'retracted' || (v && !v.ok)) && 'retracted')}
+                      title={`confidence ${c.conf.toFixed(2)}${c.critical ? ' · critical predicate · never renders below muted ink' : ''}${v ? ` · ${v.word} ${v.when}` : ''}`}
                     >
                       {c.text}
                     </span>
@@ -697,7 +861,7 @@ function Vault() {
                     </span>
                   </td>
                   <td className="c-dot">
-                    <span className={`dot ${STATUS_DOT[c.status].cls}`} title={STATUS_DOT[c.status].title}></span>
+                    <span className={`dot ${dotCls}`} title={dotTitle}></span>
                   </td>
                 </tr>
                 )

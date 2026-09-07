@@ -222,6 +222,29 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* the selected row's chrome (owner 09-07: the rounded well reads as slop; he picks by feel) */
+  type SelChrome = 'rounded' | 'square' | 'gutter'
+  const [selChrome, setSelChromeState] = React.useState<SelChrome>('rounded')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-select-chrome')
+      if (v === 'square' || v === 'gutter') setSelChromeState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setSelChrome = React.useCallback((k: SelChrome) => {
+    setSelChromeState(k)
+    if (k === 'rounded') document.documentElement.removeAttribute('data-select-chrome')
+    else document.documentElement.setAttribute('data-select-chrome', k)
+    try {
+      if (k === 'rounded') localStorage.removeItem('oneiron-select-chrome')
+      else localStorage.setItem('oneiron-select-chrome', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   if (!values) return null
   return (
     <aside
@@ -299,6 +322,20 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             className={faceStyle === k ? 'act on' : 'act'}
             title={k === 'cut' ? 'linocut · solid ink, holds at 24' : k === 'base' ? 'the 08-18 riso reference' : k === 'trink' ? 'two inks · the red is lost in a mask' : 'dream print · edges dissolve'}
             onClick={() => setFaceStyle(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">select chrome</div>
+      <div className="t-acts">
+        {(['rounded', 'square', 'gutter'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={selChrome === k ? 'act on' : 'act'}
+            title={k === 'rounded' ? 'the well on a 5px radius (as built)' : k === 'square' ? 'the well, square corners' : 'no fill · a hair of ink at the left edge'}
+            onClick={() => setSelChrome(k)}
           >
             {k}
           </button>
