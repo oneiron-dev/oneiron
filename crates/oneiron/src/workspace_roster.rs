@@ -38,13 +38,10 @@
 //!
 //! # The journal is the resume contract
 //!
-//! Every entity id in [`MemberOnboardingIntent`] is caller-supplied and stable,
-//! so the outcome is a pure function of the intent. The journal therefore only
-//! has to remember HOW FAR a given `onboarding_id` got, plus a digest of the
-//! inputs it got that far on. A crash between two public write doors resumes at
-//! the next unfinished step; a replay of identical input returns the prior
-//! outcome and writes nothing; the same id with different input fails typed
-//! rather than silently rewriting someone's workspace.
+//! Caller-supplied entity ids and the exact desired bounds are digest-pinned.
+//! A crash resumes at the next unfinished step without re-minting grants.
+//! Completed mailbox replays re-prove live autonomy before returning the prior
+//! outcome. Different input under the same id fails typed, never overwrites.
 //!
 //! # Ownership fences
 //!
@@ -65,10 +62,14 @@ use crate::channel_identity::{
     AssignmentKey, ChannelIdentityBinding, ChannelIdentityState, DelegatedGrant,
     DelegatedGrantScope, DelegatedProvisionRequest,
 };
+use crate::channel_identity_autonomy::{
+    ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -230,13 +231,9 @@ pub struct DelegatedMailboxOnboarding {
     ///
     /// [`DelegatedGrantScope`] has no write variant, so this cannot name one.
     pub scopes: Vec<DelegatedGrantScope>,
-    /// Caller-requested ONE-1829 wire mode, retained but never interpreted here.
-    ///
-    /// The predecessor's typed mode and authenticated application door are not
-    /// landed. Every mailbox request therefore stops with
-    /// [`Error::WorkspaceMailboxAutonomyNotReady`], even on replay. No mode is
-    /// assumed safe and no local autonomy claim substitutes for that door.
-    pub starting_mode: String,
+    /// Exact owner-requested bounds, pinned in the onboarding digest.
+    /// Delegated onboarding admits read/draft authority, never a send grant.
+    pub autonomy: ChannelIdentityAutonomyRequest,
 }
 
 impl DelegatedMailboxOnboarding {
@@ -253,10 +250,7 @@ impl DelegatedMailboxOnboarding {
             &self.custody_name,
             "delegated mailbox custody_name must be 1..=256 bytes and contain no NUL",
         )?;
-        validate_name(
-            &self.starting_mode,
-            "delegated mailbox starting_mode must be 1..=256 bytes and contain no NUL",
-        )?;
+        validate_mailbox_request(self)?;
         DelegatedGrant::new(&self.custody_name, self.scopes.clone()).validate()
     }
 }
@@ -310,6 +304,9 @@ impl MemberOnboardingIntent {
         }
         if let Some(mailbox) = &self.delegated_mailbox {
             mailbox.validate()?;
+            if mailbox.autonomy.actor_ref != self.actor_ref {
+                return Err(invalid("mailbox autonomy must name the member actor"));
+            }
         }
         self.validate_minted_ids()
     }
@@ -402,7 +399,7 @@ pub enum MemberOnboardingStep {
     MemberGranted,
     /// Required companion person/actor/facet/record/grant written.
     CompanionBorn,
-    /// Delegated mailbox identity written, when requested.
+    /// Delegated mailbox bound and its exact autonomy verified, when requested.
     MailboxBound,
     /// Roster row written; the outcome is final.
     Complete,
@@ -556,23 +553,23 @@ struct OnboardingJournal {
 impl Vault {
     /// Onboards one member into a workspace, idempotently and resumably.
     ///
-    /// Authority comes from `authenticated_writer`: the writer must already
-    /// hold an administrative [`FederationGrant`] over
-    /// `intent.workspace.workspace_vault_id`. That check runs BEFORE the
-    /// journal is touched, so an unprivileged caller leaves no trace and
-    /// cannot burn an `onboarding_id`.
-    ///
-    /// Replaying an identical intent under the same `onboarding_id` returns the
-    /// prior outcome and writes nothing. Replaying a DIFFERENT intent under
-    /// that id is [`Error::InvalidClaimBody`], never an overwrite.
+    /// The writer needs an admin federation grant over the target vault;
+    /// `mailbox_owner` authenticates the member PERSON, independently of the writer.
+    /// Requested/PendingFulfillment stay resumable. External fulfillment requires
+    /// policy-gated Bind ([`Vault::apply_channel_identity_lifecycle_intent`]), then
+    /// trusted manual/API completion ([`Vault::fulfill_channel_identity`]). Onboarding
+    /// does neither. Exact replay verifies live grants without writes; different
+    /// inputs under the same id fail with [`Error::InvalidClaimBody`].
     pub fn onboard_workspace_member(
         &self,
         intent: MemberOnboardingIntent,
         authenticated_writer: &WriteActor,
+        mailbox_owner: Option<&AuthenticatedOwner>,
     ) -> Result<MemberOnboardingOutcome> {
         self.onboard_workspace_member_halting_after(
             intent,
             authenticated_writer,
+            mailbox_owner,
             MemberOnboardingStep::Complete,
         )?
         .ok_or(Error::InvariantViolation(
@@ -590,9 +587,13 @@ impl Vault {
         &self,
         intent: MemberOnboardingIntent,
         authenticated_writer: &WriteActor,
+        mailbox_owner: Option<&AuthenticatedOwner>,
         halt_after: MemberOnboardingStep,
     ) -> Result<Option<MemberOnboardingOutcome>> {
         intent.validate()?;
+        if intent.delegated_mailbox.is_some() {
+            require_mailbox_owner(&intent, mailbox_owner)?;
+        }
         require_workspace_authority(
             self,
             intent.workspace.workspace_vault_id,
@@ -609,6 +610,13 @@ impl Vault {
                     ));
                 }
                 if let Some(completed_at) = record.completed_at {
+                    let revision = verify_mailbox_revision(self, &intent, mailbox_owner)?;
+                    with_workspace_authority(
+                        self,
+                        intent.workspace.workspace_vault_id,
+                        authenticated_writer,
+                        |_| require_mailbox_revision(self, revision),
+                    )?;
                     return Ok(Some(outcome_of(&intent, completed_at)));
                 }
                 record.step.rank()
@@ -632,6 +640,7 @@ impl Vault {
                         completed_at: None,
                     },
                     authenticated_writer,
+                    mailbox_owner,
                 )?;
                 0
             }
@@ -646,7 +655,7 @@ impl Vault {
                 intent.workspace.workspace_vault_id,
                 authenticated_writer,
             )?;
-            self.run_onboarding_step(step, &intent, authenticated_writer)?;
+            self.run_onboarding_step(step, &intent, authenticated_writer, mailbox_owner)?;
             let completed_at =
                 (step == MemberOnboardingStep::Complete).then_some(intent.occurred_at);
             write_journal(
@@ -659,6 +668,7 @@ impl Vault {
                     completed_at,
                 },
                 authenticated_writer,
+                mailbox_owner,
             )?;
             done = step.rank();
             if step == halt_after {
@@ -679,6 +689,7 @@ impl Vault {
         step: MemberOnboardingStep,
         intent: &MemberOnboardingIntent,
         writer: &WriteActor,
+        mailbox_owner: Option<&AuthenticatedOwner>,
     ) -> Result<()> {
         match step {
             MemberOnboardingStep::Started => Ok(()),
@@ -689,10 +700,18 @@ impl Vault {
                 birth_companion(self, intent, intent.required_companion()?, writer)
             }
             MemberOnboardingStep::MailboxBound => match &intent.delegated_mailbox {
-                Some(mailbox) => bind_delegated_mailbox(self, intent, mailbox, writer),
+                Some(mailbox) => {
+                    bind_delegated_mailbox(self, intent, mailbox, writer)?;
+                    let owner = require_mailbox_owner(intent, mailbox_owner)?;
+                    self.apply_channel_identity_autonomy(&mailbox.autonomy, owner)?;
+                    self.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
+                    Ok(())
+                }
                 None => Ok(()),
             },
-            MemberOnboardingStep::Complete => record_roster_member(self, intent, writer),
+            MemberOnboardingStep::Complete => {
+                record_roster_member(self, intent, writer, mailbox_owner)
+            }
         }
     }
 
