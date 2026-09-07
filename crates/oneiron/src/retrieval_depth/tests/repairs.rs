@@ -119,6 +119,52 @@ fn standard_fusion_can_replace_a_saturated_direct_page() -> TestResult {
 }
 
 #[test]
+fn graph_expansion_uses_configured_vad_alpha_at_each_effort() -> TestResult {
+    let (_dir, mut vault, anchor, _, neighbor) = seeded_vault();
+    vault.set_edge_vad(
+        &anchor,
+        crate::edge::EdgeKind::Mentions,
+        &neighbor,
+        crate::affect::Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let lease = minted_lease();
+    for alpha in [0.0, 0.2, 0.4] {
+        vault.config.ppr_vad_alpha = alpha;
+        let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+        // Only the anchor matches; the neighbor's score comes solely from PPR.
+        let direct = scoped.search_text("date", 10)?;
+        assert_eq!(ids_of(&direct), vec![anchor]);
+        for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
+            let backend = ScriptedBackend::new(Vec::new());
+            let request = hosted_request("date", effort, Some(&lease), Some(&backend));
+            let result = scoped.search_with_effort(&request)?;
+            if effort == Effort::Minimal {
+                assert_eq!(result.hits, direct);
+                assert!(!result.signals_used.contains(&"ppr".to_owned()));
+            } else {
+                let hit = result
+                    .hits
+                    .iter()
+                    .find(|hit| hit.id == neighbor)
+                    .expect("one-hop neighbor");
+                let expected = 0.6 * (1.0 + alpha) * (1.0 - STANDARD_PPR_ALPHA);
+                assert!(
+                    (hit.score - expected).abs() < 1e-6,
+                    "{effort:?}, alpha={alpha}: {hit:?}, expected {expected}"
+                );
+            }
+            assert_eq!(result.backend_used, effort == Effort::Deep);
+            assert_eq!(result.tokens_used, 0);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn session_scope_precedes_text_topk_and_deep_candidate_bodies() -> TestResult {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     let (outside, inside, extra) = (entity(0x71), entity(0x72), entity(0x73));
