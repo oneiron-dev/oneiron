@@ -112,18 +112,28 @@ html[data-roster-face="mark"] .rrow .creature-none { display: block; }
 .room-thread.house .rmsg.head { margin-top: 4px; }
 .room-thread.solo .rday { padding-left: 0; }
 .room-thread.house .rday { padding-left: 108px; }
-/* your voice (owner 09-08): never a name. indent by default; the tuner offers
-   right · mono · glyph. In the house the indent is measured from the shared margin. */
-.rmsg.mine { padding-left: 22%; }
-.room-thread.house .rmsg.mine { padding-left: calc(108px + 16%); }
-html[data-voice="right"] .rmsg.mine { padding-left: 0; max-width: 62ch; justify-content: flex-end; }
-html[data-voice="right"] .rmsg.mine .rbody { flex: 0 1 auto; max-width: 60%; }
-html[data-voice="mono"] .rmsg.mine { padding-left: 0; }
+/* your voice (owner 09-08): never a name. RIGHT by default (his pick): your
+   turns end at the text column's right edge, no bubble. The tuner offers
+   indent · mono · glyph. In the house the column is measured from the shared margin. */
+.rmsg.mine { padding-left: 0; max-width: 62ch; justify-content: flex-end; }
+.rmsg.mine .rbody { flex: 0 1 auto; max-width: 60%; }
+.room-thread.house .rmsg.mine { padding-left: 108px; max-width: calc(108px + 62ch); }
+html[data-voice="indent"] .rmsg.mine { padding-left: 22%; max-width: 80ch; justify-content: flex-start; }
+html[data-voice="indent"] .rmsg.mine .rbody { flex: 1; max-width: none; }
+html[data-voice="indent"] .room-thread.house .rmsg.mine { padding-left: calc(108px + 16%); }
+html[data-voice="mono"] .rmsg.mine,
+html[data-voice="glyph"] .rmsg.mine { padding-left: 0; max-width: 80ch; justify-content: flex-start; }
+html[data-voice="mono"] .rmsg.mine .rbody,
+html[data-voice="glyph"] .rmsg.mine .rbody { flex: 1; max-width: none; }
 html[data-voice="mono"] .room-thread.house .rmsg.mine,
 html[data-voice="glyph"] .room-thread.house .rmsg.mine { padding-left: 108px; }
 html[data-voice="mono"] .rmsg.mine .rtext { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; letter-spacing: 0.01em; }
-html[data-voice="glyph"] .rmsg.mine { padding-left: 0; }
 html[data-voice="glyph"] .rmsg.mine .rtext::before { content: "\203A\00a0"; color: var(--silver-4); }
+/* the ground under your turns (owner 09-08 asked for "some visual bubble"): the
+   surface ladder is whitespace → hairline → well, so the options are exactly
+   those. Flat, 3px, no tail, no shadow. */
+html[data-voice-ground="well"] .rmsg.mine .rbody { background: var(--bg-well); padding: 7px 12px; border-radius: 3px; }
+html[data-voice-ground="hairline"] .rmsg.mine .rbody { box-shadow: inset 0 0 0 1px var(--rule); padding: 7px 12px; border-radius: 3px; }
 .rmsg .rbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .rmsg .rtext { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); max-width: 62ch; }
 .rmsg.mine .rtext { color: var(--silver-1); }
