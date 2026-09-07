@@ -15,8 +15,9 @@ use crate::attempt_queue::{
 };
 use crate::consult_ladder::{A2aBaseTaskState, A2aTaskProjection, OneironA2aExtensions};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
-use crate::entity_id::bytes_to_hex_lower;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::store::GateDecisionId;
 
 /// Renderable run tree for dashboard/read APIs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +41,14 @@ pub struct RunTreeNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     pub status: RunTreeStatus,
+    /// The artifact version this attempt's durable output lives in, copied
+    /// from the backing queue row. Cross-executor: any executor kind that
+    /// named a result projects it here, not only foreign ones.
+    ///
+    /// Additive and elided when absent — the same shape as `agent_id` — so
+    /// serialized trees stay wire-compatible in both directions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
     pub timestamps: RunTreeTimestamps,
     pub failure: Option<RunTreeFailure>,
     pub events: Vec<RunTreeEvent>,
@@ -61,6 +70,11 @@ pub enum RunTreeStatus {
     Completed,
     Failed,
     Cancelled,
+    /// The executor stopped without delivering and without being stopped. Its
+    /// own token because the two neighbouring ones are both claims about a
+    /// cause: `Failed` asserts an observed fault, `Cancelled` asserts an
+    /// operator's intent, and an abandonment has neither.
+    Abandoned,
 }
 
 /// Node timestamps copied from the backing queue row.
@@ -98,6 +112,12 @@ pub enum RunTreeEventKind {
     Failed,
     Cancelled,
     Interrupted,
+    /// The attempt reached [`RunTreeStatus::Abandoned`].
+    Abandoned,
+    /// The attempt named the artifact version carrying its durable output.
+    /// Emitted for every executor kind that attaches one, whether or not the
+    /// row settled normally.
+    ResultAttached,
 }
 
 /// Non-mutating repairs applied while rendering a tree from rows.
@@ -139,6 +159,190 @@ impl<'a> RunTreeAdapter<'a> {
     /// children.
     pub fn read_run(&self, run_id: &str) -> Result<RunTree> {
         render_run_tree_presorted(self.queue.list_run(run_id)?)
+    }
+
+    /// Engine-generated display name and agent label for one run's consent
+    /// bundle, as `(name, agent_label)`.
+    ///
+    /// The label is the first nonempty root [`RunTreeNode::agent_id`] in
+    /// deterministic run-tree order; the name is `"{agent label} · {id8}"`, or
+    /// [`GATE_CONSENT_BUNDLE_FALLBACK_LABEL`] followed by the same fragment
+    /// when the run tree exposes no dispatched agent. `id8` is the first eight
+    /// lowercase hex characters of the bundle id.
+    ///
+    /// Read-only: it renders durable attempt rows and writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Propagates storage failures from the attempt-queue read. A run the
+    /// attempt queue cannot NAME — a run id it refuses, or an undecodable
+    /// attempt row — is not one of them: naming is presentation metadata over
+    /// an identity the bundle digest already fixed, so an unnameable tree
+    /// takes the fallback label rather than making its bundle unreviewable.
+    pub fn consent_bundle_label(
+        &self,
+        dreamer_run_id: &str,
+        bundle_id: &[u8; 32],
+    ) -> Result<(String, Option<String>)> {
+        let agent_label = match self.read_run(dreamer_run_id) {
+            Ok(tree) => first_root_agent_label(&tree),
+            Err(Error::InvalidAttemptQueueRecord(_)) => None,
+            Err(error) => return Err(error),
+        };
+        Ok((
+            gate_consent_bundle_name(agent_label.as_deref(), bundle_id),
+            agent_label,
+        ))
+    }
+}
+
+/// Schema version of the [`GateConsentBundle`] projection and its receipt.
+pub const GATE_CONSENT_BUNDLE_SCHEMA_VERSION: u8 = 1;
+
+/// Domain separator for the content-bound consent-bundle digest.
+pub const GATE_CONSENT_BUNDLE_DOMAIN: &[u8] = b"oneiron/gate/consent-bundle/v1";
+
+/// Engine label used when a run tree exposes no dispatched root agent.
+pub const GATE_CONSENT_BUNDLE_FALLBACK_LABEL: &str = "agent run";
+
+/// Separator between the agent label and the bundle-id fragment.
+const GATE_CONSENT_BUNDLE_NAME_SEPARATOR: &str = " · ";
+
+/// Bundle-id hex characters carried by the display name.
+const GATE_CONSENT_BUNDLE_NAME_ID_CHARS: usize = 8;
+
+/// The two owner actions over one run's consent bundle. Partial member
+/// selection is deliberately not a variant: the bundle resolves as a unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateConsentBundleAction {
+    Approve,
+    Decline,
+}
+
+impl GateConsentBundleAction {
+    /// The stable token for this action.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::Decline => "decline",
+        }
+    }
+}
+
+/// One still-pending consent row projected into a bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateConsentBundleMember {
+    pub decision_id: GateDecisionId,
+    #[serde(with = "entity_id_hex")]
+    pub claim_id: EntityId,
+    pub created_at: u64,
+    pub diff_handle: Vec<u8>,
+    pub read_frontier_hash: [u8; 32],
+    pub reason_codes: Vec<String>,
+}
+
+/// One run's pending consent rows as a single named, content-bound unit.
+///
+/// This is a PROJECTION over the durable pending-consent, claim, and attempt
+/// rows: it is not persisted, owns no database, and mints no entity. Identity
+/// is `bundle_id`; `name` and `agent_label` are presentation metadata a UI may
+/// skin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateConsentBundle {
+    pub schema_version: u8,
+    pub bundle_id: [u8; 32],
+    pub name: String,
+    pub dreamer_run_id: String,
+    pub agent_label: Option<String>,
+    pub members: Vec<GateConsentBundleMember>,
+}
+
+/// Typed view of the ONE durable gate-decision row a bundle resolution
+/// appends. The row itself stays an ordinary `GateDecisionRecord` in the
+/// existing ledger; this carries the bundle-shaped fields its schema has no
+/// slot for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateConsentBundleReceipt {
+    pub schema_version: u8,
+    pub receipt_id: GateDecisionId,
+    pub bundle_id: [u8; 32],
+    pub dreamer_run_id: String,
+    pub action: GateConsentBundleAction,
+    #[serde(with = "entity_id_hex_seq")]
+    pub member_claim_ids: Vec<EntityId>,
+    pub created_at: u64,
+}
+
+/// The first nonempty root agent label in deterministic run-tree order.
+fn first_root_agent_label(tree: &RunTree) -> Option<String> {
+    tree.roots.iter().find_map(|root| {
+        root.agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// `"{agent label} · {id8}"`, with the engine fallback for an unlabelled run.
+fn gate_consent_bundle_name(agent_label: Option<&str>, bundle_id: &[u8; 32]) -> String {
+    let id8: String = bytes_to_hex_lower(bundle_id)
+        .chars()
+        .take(GATE_CONSENT_BUNDLE_NAME_ID_CHARS)
+        .collect();
+    let label = agent_label.unwrap_or(GATE_CONSENT_BUNDLE_FALLBACK_LABEL);
+    format!("{label}{GATE_CONSENT_BUNDLE_NAME_SEPARATOR}{id8}")
+}
+
+/// [`EntityId`] carries no serde impl, so bundle wire rows spell claim ids as
+/// the same lowercase hex the rest of this module's surface uses.
+mod entity_id_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::entity_id::EntityId;
+
+    pub(super) fn serialize<S>(id: &EntityId, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&id.to_hex())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<EntityId, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let hex = String::deserialize(deserializer)?;
+        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
+    }
+}
+
+/// [`entity_id_hex`] over a sequence.
+mod entity_id_hex_seq {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::entity_id::EntityId;
+
+    pub(super) fn serialize<S>(ids: &[EntityId], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        ids.iter()
+            .map(EntityId::to_hex)
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Vec<EntityId>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<String>::deserialize(deserializer)?
+            .iter()
+            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
+            .collect()
     }
 }
 
@@ -240,6 +444,10 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
     let state = record.state;
     let status = run_tree_status(&record);
     let attempt_id = attempt_id_hex(&record);
+    let result_ref = record
+        .result_ref
+        .take()
+        .map(crate::attempt_queue::AttemptResultRef::into_string);
     let events = run_tree_events(
         record.created_at,
         record.updated_at,
@@ -247,6 +455,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         record.claimed_at,
         std::mem::take(&mut record.events),
         state,
+        result_ref.is_some(),
     )?;
     let node = RunTreeNode {
         attempt_id,
@@ -255,10 +464,16 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         worker_kind: metadata.worker_kind,
         agent_id: metadata.agent_id,
         status,
+        result_ref,
         timestamps: RunTreeTimestamps {
             created_at: record.created_at,
             updated_at: record.updated_at,
         },
+        // An abandoned row carries its stop reason in `last_error`, but this
+        // field is the FAILURE summary and only `Failed` fills it: rendering
+        // an abandonment's reason here would present a stop nobody diagnosed
+        // as a diagnosed fault, and every read surface that folds on
+        // `failure.is_some()` would then count it as one.
         failure: match state {
             AttemptState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
             AttemptState::Queued
@@ -267,7 +482,8 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
             | AttemptState::Scheduled
             | AttemptState::Landing
             | AttemptState::Completed
-            | AttemptState::Cancelled => None,
+            | AttemptState::Cancelled
+            | AttemptState::Abandoned => None,
         },
         events,
         children: Vec::new(),
@@ -400,6 +616,7 @@ fn run_tree_events(
     claimed_at: Option<u64>,
     stored_events: Vec<AttemptEvent>,
     state: AttemptState,
+    has_result: bool,
 ) -> Result<Vec<RunTreeEvent>> {
     let has_claim = attempt_count > 0;
     let mut events = Vec::with_capacity(stored_events.len() + 2 + usize::from(has_claim));
@@ -418,20 +635,47 @@ fn run_tree_events(
         events.push(operator_event(event, sequence_offset)?);
     }
 
-    if let Some(kind) = status_event_kind(state)
-        && !events.iter().any(|event| event.kind == kind)
-    {
-        let sequence = events
-            .iter()
-            .map(|event| event.sequence)
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("run-tree event sequence"))?;
-        events.push(lifecycle_event(sequence, updated_at, kind));
+    // A row that named a result says so before it says how it ended: the
+    // artifact is durable first, and the settling event is what a reader
+    // scans back from. Ordering them the other way would render a terminal
+    // node whose last event claims work continued after it stopped.
+    if has_result {
+        push_lifecycle_event(&mut events, updated_at, RunTreeEventKind::ResultAttached)?;
+    }
+    if let Some(kind) = status_event_kind(state) {
+        push_lifecycle_event(&mut events, updated_at, kind)?;
     }
 
     Ok(events)
+}
+
+/// Appends one synthesized lifecycle event, unless the stream already carries
+/// that kind from a durable operator row. Cancellation must be the final event.
+fn push_lifecycle_event(
+    events: &mut Vec<RunTreeEvent>,
+    at: u64,
+    kind: RunTreeEventKind,
+) -> Result<()> {
+    let already_present = if kind == RunTreeEventKind::Cancelled {
+        // Keep the operator's cancellation intact, but do not let it suppress
+        // terminal truth after a synthesized result attachment. Only the
+        // queue's Cancelled state requests this final lifecycle event.
+        events.last().is_some_and(|event| event.kind == kind)
+    } else {
+        events.iter().any(|event| event.kind == kind)
+    };
+    if already_present {
+        return Ok(());
+    }
+    let sequence = events
+        .iter()
+        .map(|event| event.sequence)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("run-tree event sequence"))?;
+    events.push(lifecycle_event(sequence, at, kind));
+    Ok(())
 }
 
 fn operator_event(event: AttemptEvent, sequence_offset: u64) -> Result<RunTreeEvent> {
@@ -470,6 +714,7 @@ fn status_event_kind(state: AttemptState) -> Option<RunTreeEventKind> {
         AttemptState::Completed => Some(RunTreeEventKind::Completed),
         AttemptState::Failed => Some(RunTreeEventKind::Failed),
         AttemptState::Cancelled => Some(RunTreeEventKind::Cancelled),
+        AttemptState::Abandoned => Some(RunTreeEventKind::Abandoned),
     }
 }
 
@@ -491,6 +736,7 @@ impl From<AttemptState> for RunTreeStatus {
             AttemptState::Completed => Self::Completed,
             AttemptState::Failed => Self::Failed,
             AttemptState::Cancelled => Self::Cancelled,
+            AttemptState::Abandoned => Self::Abandoned,
         }
     }
 }
@@ -538,6 +784,13 @@ pub fn project_attempt_to_a2a(record: &AttemptRecord) -> A2aTaskProjection {
         AttemptState::Completed => A2aBaseTaskState::Completed,
         AttemptState::Failed => A2aBaseTaskState::Failed,
         AttemptState::Cancelled => A2aBaseTaskState::Cancelled,
+        // A2A's base vocabulary is closed and holds no abandoned token, so
+        // this is the one projection that must lose the distinction. `failed`
+        // is the lossy target that keeps the only fact a peer can act on —
+        // this task will never deliver. `cancelled` is refused for the same
+        // reason the native surfaces refuse it: it would assert to the peer
+        // that somebody decided to stop the work, and nobody did.
+        AttemptState::Abandoned => A2aBaseTaskState::Failed,
     };
     if let Some(cancellation) = record.cancellation() {
         extensions.cancel_mode = Some(cancellation.mode.as_str().to_owned());

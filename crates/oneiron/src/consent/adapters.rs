@@ -136,6 +136,19 @@ pub(super) fn outbound_scope_axes(
                 Some(format!("{server}/{tool}")),
             )
         }
+        StandingOutboundGrantScope::BookingPageInvites { page_ref } => {
+            // The tightest class this grant can project: it authorizes exactly
+            // one verb, so the verb string IS the action class — the same
+            // shape `ScopedMcp` uses when it projects `{server}.{tool}` rather
+            // than a send class. The envelope target binds the bound to the
+            // exact page, as the contact/channel/brief dials bind theirs.
+            let page = page_ref.to_hex();
+            (
+                crate::calendar::CALENDAR_INVITE_VERB.to_owned(),
+                vec![format!("page:{page}")],
+                Some(page),
+            )
+        }
     }
 }
 

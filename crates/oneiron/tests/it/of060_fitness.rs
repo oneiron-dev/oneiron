@@ -416,6 +416,25 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
+        // ONE-1595 server-plane metadata, like auth/idempotency above: a keyed
+        // DEK verification MAC and a monotonic wake-ledger revision. Neither
+        // writes guest entity, edge, or vector content, so no stamper applies.
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/managed.rs".to_owned(),
+                ident: "sync_state_put".to_owned(),
+                line: ".sync_state_put(DEK_MAC_KEY, mac.as_bytes())".to_owned(),
+            },
+            1,
+        ),
+        (
+            RawHit {
+                path: "crates/oneiron-server/src/managed.rs".to_owned(),
+                ident: "sync_state_put".to_owned(),
+                line: ".sync_state_put(LEDGER_REV_KEY, &rev.to_le_bytes())".to_owned(),
+            },
+            1,
+        ),
         (
             RawHit {
                 path: "crates/oneiron-server/src/server.rs".to_owned(),

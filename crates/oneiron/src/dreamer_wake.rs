@@ -33,7 +33,8 @@ use crate::dreamer_runner::{
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneClaim,
     DreamerMilestoneKind, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-    EnqueueDreamerConsolidationAttempt, ParkDreamerAttempt, SettleDreamerBudget,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerVaultCleanupAttempt, ParkDreamerAttempt,
+    SettleDreamerBudget,
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::{
@@ -679,52 +680,74 @@ impl<'a> DreamerWakeDriver<'a> {
                 break;
             }
 
+            let cleanup = if input.trigger == WakeTrigger::Timer
+                && input.scope == DreamerConsolidationScope::Macro
+            {
+                self.store.admit_next_vault_cleanup(AdmitDreamerAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now,
+                    budget_id: self.budget_id.clone(),
+                    budget_total_units: input.budget_total_units,
+                    reserve_units: input.reserve_units,
+                    started_milestone: self
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                })?
+            } else {
+                DreamerAdmissionOutcome::Empty
+            };
             let mut admitted =
-                match self
-                    .store
-                    .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
-                        scope: input.scope,
-                        local_node_id: input.local_node_id,
-                        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-                        admission: AdmitDreamerAttempt {
-                            lease_owner: input.lease_owner.clone(),
-                            now: input.now,
-                            budget_id: self.budget_id.clone(),
-                            budget_total_units: input.budget_total_units,
-                            reserve_units: input.reserve_units,
-                            started_milestone: self
-                                .milestone_claim(DreamerMilestoneKind::Started, input.now),
-                        },
-                    })? {
-                    DreamerConsolidationAdmissionOutcome::NoHomeNode => {
-                        report.stop = WakePassStop::NoHomeNode;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
-                        report.stop = WakePassStop::NotHomeNode;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
-                        // The store already paused the attempt (admission-level trap).
-                        report.stop = WakePassStop::Trapped;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::Empty,
-                    ) => {
-                        report.stop = WakePassStop::QueueEmpty;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::BudgetExhausted(_),
-                    ) => {
+                match cleanup {
+                    DreamerAdmissionOutcome::Admitted(attempt) => *attempt,
+                    DreamerAdmissionOutcome::BudgetExhausted(_) => {
                         report.stop = WakePassStop::BudgetExhausted;
                         break;
                     }
-                    DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::Admitted(attempt),
-                    ) => *attempt,
+                    DreamerAdmissionOutcome::Empty => match self.store.admit_next_consolidation(
+                        AdmitDreamerConsolidationAttempt {
+                            scope: input.scope,
+                            local_node_id: input.local_node_id,
+                            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+                            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+                            admission: AdmitDreamerAttempt {
+                                lease_owner: input.lease_owner.clone(),
+                                now: input.now,
+                                budget_id: self.budget_id.clone(),
+                                budget_total_units: input.budget_total_units,
+                                reserve_units: input.reserve_units,
+                                started_milestone: self
+                                    .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                            },
+                        },
+                    )? {
+                        DreamerConsolidationAdmissionOutcome::NoHomeNode => {
+                            report.stop = WakePassStop::NoHomeNode;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
+                            report.stop = WakePassStop::NotHomeNode;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
+                            // The store already paused the attempt (admission-level trap).
+                            report.stop = WakePassStop::Trapped;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::Admission(
+                            DreamerAdmissionOutcome::Empty,
+                        ) => {
+                            report.stop = WakePassStop::QueueEmpty;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::Admission(
+                            DreamerAdmissionOutcome::BudgetExhausted(_),
+                        ) => {
+                            report.stop = WakePassStop::BudgetExhausted;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::Admission(
+                            DreamerAdmissionOutcome::Admitted(attempt),
+                        ) => *attempt,
+                    },
                 };
 
             report.admitted += 1;
@@ -791,7 +814,16 @@ impl<'a> DreamerWakeDriver<'a> {
                 // executor is abandoned when the error propagates (a
                 // supervisor builds a fresh one per pass), so the
                 // AssertUnwindSafe is never observable.
-                let mut execute = pin!(exec.execute(&admitted, &mut ctx));
+                let mut execute = pin!(async {
+                    if admitted.status.attempt.kind
+                        == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+                    {
+                        crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
+                        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    } else {
+                        exec.execute(&admitted, &mut ctx).await
+                    }
+                });
                 let caught = poll_fn(|task_cx| {
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         execute.as_mut().poll(task_cx)
@@ -1283,6 +1315,9 @@ enum ProgressKind {
 ///
 /// `trigger` carries host intent; the scope is the caller's (typically
 /// `trigger.default_scope()`, which an Event payload may override).
+/// Timer/Macro also enqueues vault cleanup in the SAME transaction. Other
+/// triggers and narrower scopes enqueue consolidation only. The returned
+/// outcome remains the consolidation outcome; cleanup has its own queue kind.
 pub fn request_wake(
     store: &DreamerRunnerStore<'_>,
     trigger: WakeTrigger,
@@ -1292,10 +1327,9 @@ pub fn request_wake(
     run_id: Option<String>,
     now: u64,
 ) -> Result<EnqueueDreamerAttemptOutcome> {
-    // The trigger's runtime effect is scope derivation, owned by the caller
-    // via `WakeTrigger::default_scope`; it is accepted here so hosts express
-    // intent at the single wake entry point.
-    let _ = trigger;
+    if trigger == WakeTrigger::Timer && scope == DreamerConsolidationScope::Macro {
+        return store.enqueue_timer_wake(payload, dedupe_key, run_id, now);
+    }
     store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
         scope,
         input: payload.input,
@@ -1304,6 +1338,59 @@ pub fn request_wake(
         run_id,
         now,
     })
+}
+
+/// [`request_wake`] inside a CALLER-OWNED write transaction (CMT-3, ONE-1540).
+///
+/// The transactional twin, not a second scheduler: same trigger/scope
+/// semantics, same store verb, same queue keys, run-tree logic, and admission —
+/// only the transaction boundary moves outward. It exists because a wake that
+/// must be atomic with the durable fact that PROVOKED it (a commitment due
+/// phase being consumed) cannot open a transaction of its own; the public
+/// [`request_wake`] stays source-compatible for every host that does not need
+/// that composition.
+///
+/// The trigger is nominal here, not decorative: it IS the scope, derived
+/// through [`WakeTrigger::default_scope`] exactly as [`request_wake`] documents
+/// its own scope argument. The public entry point takes that scope separately
+/// because a host's Event payload may override it; this crate-private door has
+/// no such host, so deriving keeps trigger and scope from ever disagreeing.
+pub(crate) fn request_wake_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    trigger: WakeTrigger,
+    payload: DreamerAttemptPayload,
+    dedupe_key: Option<String>,
+    run_id: Option<String>,
+    now: u64,
+) -> Result<EnqueueDreamerAttemptOutcome> {
+    let scope = trigger.default_scope();
+    if trigger == WakeTrigger::Timer {
+        // The queue dedupe domain includes the kind, so sharing the wake key
+        // coalesces each lane without one lane swallowing the other.
+        store.enqueue_vault_cleanup_in_txn(
+            txn,
+            EnqueueDreamerVaultCleanupAttempt {
+                trigger,
+                input: Value::Nil,
+                parent_attempt: payload.parent_attempt,
+                dedupe_key: dedupe_key.clone(),
+                run_id: run_id.clone(),
+                now,
+            },
+        )?;
+    }
+    store.enqueue_consolidation_in_txn(
+        txn,
+        EnqueueDreamerConsolidationAttempt {
+            scope,
+            input: payload.input,
+            parent_attempt: payload.parent_attempt,
+            dedupe_key,
+            run_id,
+            now,
+        },
+    )
 }
 
 /// [`request_wake`] for a Compaction wake that CARRIES a forked-compaction

@@ -584,7 +584,7 @@ impl ContractEdgeLayout {
     }
 }
 
-const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 22] = [
+const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 24] = [
     (EdgeKind::AuthoredBy, ContractEdgeLayout::Structural),
     (EdgeKind::ScopedTo, ContractEdgeLayout::Structural),
     (EdgeKind::PartOf, ContractEdgeLayout::Structural),
@@ -609,6 +609,9 @@ const CONTRACT_EDGE_VALUE_LAYOUTS: [(EdgeKind, ContractEdgeLayout); 22] = [
     (EdgeKind::BlockedBy, ContractEdgeLayout::Structural),
     // ONE-1608: u8 24 `blocks`, structural 12 B (contracts.ts edgeKinds).
     (EdgeKind::Blocks, ContractEdgeLayout::Structural),
+    // ONE-1541: u8 25/26 `fulfills` / `discharged_by`, structural 12 B.
+    (EdgeKind::Fulfills, ContractEdgeLayout::Structural),
+    (EdgeKind::DischargedBy, ContractEdgeLayout::Structural),
 ];
 
 fn assert_f32_exact(actual: f32, expected: f32) {
@@ -1791,79 +1794,76 @@ fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
 
     let learned_at = 1_772_000_000;
     let window_key = WindowKey::from_timestamp(learned_at);
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"converge-secret",
+        )
+        .commit()?;
+    vault.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
 
-    for attempt in 0..3 {
-        let (_dir, vault) = open_test_vault();
-        let id = EntityId::now();
-        vault
-            .batch()
-            .put(
-                &id,
-                1,
-                test_time_range(learned_at, learned_at),
-                learned_at,
-                b"converge-secret",
-            )
-            .commit()?;
+    // The bare barrier did not order the header read before the erase commit;
+    // Linux could take the FULLY-MISSING path on every retry. The existing
+    // post-header-read rendezvous forces the HEADERFUL path while the eraser
+    // holds LMDB's write lock. Its commit then releases tombstone publication
+    // followed by GDPR soft-erase and purge, both of which find no local scope.
+    let outcome = run_raced_delete_rendezvous(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
+        crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        Ok(())
+    })?;
+    let dt_marker = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))?
+        .expect("the rendezvous must construct the raced-to-nothing branch");
 
-        // GdprDelete races the tombstone-LESS full-scope erase that
-        // `BatchOp::Delete` performs (`deindex_entity`): the delete reads
-        // E's header, the racer erases the whole scope, and the delete's
-        // purge txn finds nothing.
-        let outcome = run_raced_delete(&vault, &id, DeleteReason::GdprDelete, |wtxn| {
-            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
-            Ok(())
-        })?;
+    // Origin RACED-TO-NOTHING: no false audit, but the convergent CRDT
+    // tombstone + exactly one d:/q: propagation pair survive. gdpr_delete
+    // pinned wire byte = 3.
+    assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
+    assert!(vault.get_raw(&id)?.is_none());
+    assert!(vault.get_vector(&id)?.is_none());
+    let origin_doc = window::load_window_from_state(&vault, "origin", &window_key)?;
+    assert!(
+        map_contains_binary(&origin_doc.get_map("tombstones"), id.to_hex().as_str()),
+        "the raced GdprDelete must still publish a convergent CRDT tombstone"
+    );
 
-        let Some(dt_marker) = sync_state_value(&vault, &format!("dt:{}", id.to_hex()))? else {
-            // Scheduling miss: the deleter probed after the commit and took
-            // the FULLY-MISSING strict-noop path. Verify, then retry.
-            assert_eq!(outcome, DeleteEntityOutcome::missing());
-            assert_no_erasure_audit_artifacts(&vault)?;
-            assert!(
-                attempt < 2,
-                "raced branch was never constructed in 3 attempts"
-            );
-            continue;
-        };
+    // A fresh peer still holds E; applying the origin window must
+    // converge it away (the dropped-GDPR-delete net the anti-(A)
+    // invariant guarantees).
+    let (_peer_dir, peer) = open_test_vault();
+    peer.batch()
+        .put(
+            &id,
+            1,
+            test_time_range(learned_at, learned_at),
+            learned_at,
+            b"converge-secret",
+        )
+        .commit()?;
+    peer.put_vector(&id, &[0.1, 0.2, 0.3, 0.4])?;
+    assert!(
+        peer.get_raw(&id)?.is_some(),
+        "peer fixture must hold E before convergence"
+    );
+    assert!(peer.get_vector(&id)?.is_some());
+    assert_eq!(peer.search_vector(&[0.1, 0.2, 0.3, 0.4], 10)?.len(), 1);
 
-        // Origin RACED-TO-NOTHING: no false audit, but the convergent CRDT
-        // tombstone + exactly one d:/q: propagation pair survive. gdpr_delete
-        // pinned wire byte = 3.
-        assert_raced_delete_artifacts(&vault, &outcome, &dt_marker, 3)?;
-        let origin_doc = window::load_window_from_state(&vault, "origin", &window_key)?;
-        assert!(
-            map_contains_binary(&origin_doc.get_map("tombstones"), id.to_hex().as_str()),
-            "the raced GdprDelete must still publish a convergent CRDT tombstone"
-        );
-
-        // A fresh peer still holds E; applying the origin window must
-        // converge it away (the dropped-GDPR-delete net the anti-(A)
-        // invariant guarantees).
-        let (_peer_dir, peer) = open_test_vault();
-        peer.batch()
-            .put(
-                &id,
-                1,
-                test_time_range(learned_at, learned_at),
-                learned_at,
-                b"converge-secret",
-            )
-            .commit()?;
-        assert!(
-            peer.get_raw(&id)?.is_some(),
-            "peer fixture must hold E before convergence"
-        );
-
-        let materializer = Materializer::new();
-        window::forward_rematerialize(&peer, &origin_doc, &materializer, &window_key)?;
-        assert!(
-            peer.get_raw(&id)?.is_none(),
-            "applying the origin window to the peer must purge E (convergence net)"
-        );
-        return Ok(());
-    }
-    unreachable!("the attempt loop either returns or panics");
+    let materializer = Materializer::new();
+    window::forward_rematerialize(&peer, &origin_doc, &materializer, &window_key)?;
+    assert!(
+        peer.get_raw(&id)?.is_none(),
+        "applying the origin window to the peer must purge E (convergence net)"
+    );
+    assert!(peer.get_vector(&id)?.is_none());
+    assert!(peer.search_vector(&[0.1, 0.2, 0.3, 0.4], 10)?.is_empty());
+    assert_eq!(redaction_audit_receipts(&peer)?.len(), 1);
+    assert_eq!(hard_erase_sweep_rows(&peer)?.len(), 1);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -7001,7 +7001,7 @@ fn entity_id_now_is_monotonic_lexicographically() {
     );
 }
 
-const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 23] = [
+const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 25] = [
     (0, EdgeKind::AuthoredBy),
     (1, EdgeKind::ScopedTo),
     (2, EdgeKind::PartOf),
@@ -7031,6 +7031,11 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 23] = [
     // ONE-1608: minted at byte 24, appended last. Byte 23 stays ONE-1924's
     // TASK-plane `blocked_by`; this is the ARCH-0050 L2 readiness edge.
     (24, EdgeKind::Blocks),
+    // ONE-1541 (CMT-4): the brief-fulfillment pair, appended above every
+    // landed byte. `discharged_by` is the inverse traversal edge, not a
+    // creation-causation claim.
+    (25, EdgeKind::Fulfills),
+    (26, EdgeKind::DischargedBy),
 ];
 
 #[test]
@@ -7047,8 +7052,45 @@ fn edge_kind_u8_round_trip_accepts_pinned_range() {
         assert_eq!(kind, expected);
         assert_eq!(kind as u8, disc);
     }
-    // The frontier: 25 and up stay unallocated (ONE-1608 took 24).
-    assert!(EdgeKind::try_from_u8(25).is_none());
+    // The frontier: 27 and up stay unallocated (ONE-1541 took 25/26).
+    assert!(EdgeKind::try_from_u8(27).is_none());
+}
+
+/// ONE-1541 done-means: appending `fulfills`/`discharged_by` must leave every
+/// frozen landed byte 0–22 exactly where it was — including the byte-20
+/// `same_as` slot — while minting 25/26. Bytes 23/24 are deliberately not
+/// asserted here: this lane neither mints them nor depends on their state.
+#[test]
+fn edge_kind_append_preserves_legacy_bytes() {
+    for (disc, expected) in PINNED_EDGE_KIND_DISCRIMINANTS {
+        if disc > 22 {
+            continue;
+        }
+        assert_eq!(
+            EdgeKind::try_from_u8(disc),
+            Some(expected),
+            "legacy edge byte {disc} drifted"
+        );
+    }
+    assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
+
+    assert_eq!(EdgeKind::try_from_u8(25), Some(EdgeKind::Fulfills));
+    assert_eq!(EdgeKind::try_from_u8(26), Some(EdgeKind::DischargedBy));
+    assert_eq!(EdgeKind::Fulfills as u8, 25);
+    assert_eq!(EdgeKind::DischargedBy as u8, 26);
+
+    for kind in [EdgeKind::Fulfills, EdgeKind::DischargedBy] {
+        assert_eq!(kind.default_weight(), None, "{kind:?} carries no prior");
+        assert_eq!(
+            ppr::lambda_for_kind(kind),
+            None,
+            "{kind:?} is not traversed"
+        );
+        assert_eq!(
+            edge::edge_value_layout_for_kind(kind, false),
+            EdgeValueLayout::Structural
+        );
+    }
 }
 
 /// ONE-1924 — minting `blocked_by` at u8 23 must leave the edge byte frontier
@@ -17703,4 +17745,153 @@ fn blake3_vault_identity_algorithm_unchanged() -> Result<()> {
     assert_eq!(vault_id.len(), AUTHORITY_HASH_LEN);
     assert_eq!(AUTHORITY_HASH_LEN, 32);
     Ok(())
+}
+
+// ONE-215: the synchronous door is only a delegate, never a second trust mode.
+#[cfg(test)]
+mod claim_vad_now_tests {
+    use super::*;
+
+    fn approved_fixture(vault: &Vault) -> Result<(EntityId, EntityId, Vad)> {
+        let subject = EntityId::now();
+        let claim = EntityId::now();
+        let turns = [EntityId::now(), EntityId::now()];
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            test_time_range(1, 1),
+            1,
+            b"subject",
+        )?;
+        for (turn, vad) in turns.iter().zip([
+            Vad {
+                valence: -0.5,
+                arousal: 0.25,
+                dominance: 0.5,
+            },
+            Vad {
+                valence: 0.0,
+                arousal: 0.75,
+                dominance: 1.0,
+            },
+        ]) {
+            put_claim_vad_turn(vault, turn, 10, vad)?;
+        }
+        let mut body = public_stamped(claim_vad_fixture_body(subject, &turns));
+        body.approval = ClaimApprovalStatus::Approved;
+        body.source = Some(ClaimSource::Generated);
+        vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+        vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+        vault.put_edge(&subject, EdgeKind::Supports, &claim, 1.0)?;
+        vault.put_edge(&claim, EdgeKind::BelongsTo, &subject, 1.0)?;
+        Ok((
+            claim,
+            subject,
+            Vad {
+                valence: -0.25,
+                arousal: 0.5,
+                dominance: 0.75,
+            },
+        ))
+    }
+
+    #[test]
+    fn claim_vad_now_approved_full_mean_structural_skip_and_canonical_retry() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let (claim, subject, expected) = approved_fixture(&vault)?;
+        let structural = EdgeRef::new(claim, EdgeKind::BelongsTo, subject);
+        let before = raw_edge_values(&vault, &structural)?;
+        let first = vault.consolidate_claim_vad_now(&claim, 100)?;
+        assert_eq!(first.vad, Some(expected));
+        assert_eq!(first.evidence_turns.len(), 2);
+        assert_eq!(first.semantic_edges_updated, 2);
+        assert!(first.structural_edges_skipped >= 2);
+        assert_eq!(raw_edge_values(&vault, &structural)?, before);
+        for edge in vault
+            .edges_out(&claim)?
+            .into_iter()
+            .chain(vault.edges_in(&claim)?)
+        {
+            if matches!(edge.kind, EdgeKind::Mentions | EdgeKind::Supports) {
+                assert_eq!(edge.vad, Some(expected));
+            }
+        }
+        let state = first.reappraisal.created_claim_id.expect("created state");
+        let body = vault.get_claim(&state)?.expect("audit state");
+        assert_eq!(body.source, Some(ClaimSource::Inferred));
+        assert_eq!(body.predicate, CLAIM_VAD_REAPPRAISAL_PREDICATE);
+        assert!(body.evidence.is_some());
+        let sync_retry = vault.consolidate_claim_vad_now(&claim, 110)?;
+        let async_retry = block_on_ready(vault.consolidate_claim_vad(&claim, 110))?;
+        assert_eq!(sync_retry, async_retry);
+        assert_eq!(sync_retry.reappraisal.active_claim_id, Some(state));
+        assert_eq!(sync_retry.reappraisal.created_claim_id, None);
+        Ok(())
+    }
+
+    #[test]
+    fn claim_vad_now_auto_generated_matches_async_error_and_clear_bytes() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let (claim, subject, _) = approved_fixture(&vault)?;
+        seed_generated_auto_source_trust_manifest(&vault)?;
+        let approved = vault.get_claim(&claim)?.expect("approved");
+        let semantic = EdgeRef::new(claim, EdgeKind::Mentions, subject);
+        let mut cleared = None;
+        for synchronous in [true, false] {
+            vault.put_claim(&claim, &approved, test_time_range(30, 30), 30)?;
+            let first = vault.consolidate_claim_vad_now(&claim, 100)?;
+            let state = first.reappraisal.active_claim_id.expect("active state");
+            let mut unvetted = approved.clone();
+            unvetted.approval = ClaimApprovalStatus::Auto;
+            vault.put_claim(&claim, &unvetted, test_time_range(30, 30), 30)?;
+            let result = if synchronous {
+                vault.consolidate_claim_vad_now(&claim, 200)
+            } else {
+                block_on_ready(vault.consolidate_claim_vad(&claim, 200))
+            };
+            assert_matches!(
+                result,
+                Err(Error::InvalidClaimBody("claim is not consolidatable"))
+            );
+            assert_eq!(
+                vault.get_claim(&state)?.expect("closed state").lifecycle,
+                ClaimLifecycleStatus::Superseded
+            );
+            let bytes = raw_edge_values(&vault, &semantic)?;
+            if let Some(previous) = &cleared {
+                assert_eq!(&bytes, previous, "both entries clear identical edge bytes");
+            }
+            cleared = Some(bytes);
+            let edge = vault
+                .edges_out(&claim)?
+                .into_iter()
+                .find(|edge| edge.kind == EdgeKind::Mentions)
+                .expect("semantic edge");
+            assert_eq!(edge.vad, Some(Vad::NEUTRAL));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn claim_vad_now_propagates_reappraisal_and_annotation_rejection() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let (claim, _, _) = approved_fixture(&vault)?;
+        let result = vault.consolidate_claim_vad_now(&claim, 100)?;
+        let state = result.reappraisal.active_claim_id.expect("active state");
+        assert_matches!(
+            vault.consolidate_claim_vad_now(&state, 110),
+            Err(Error::InvalidClaimBody(
+                "claim VAD state claims cannot be consolidated"
+            ))
+        );
+        let turn = result.evidence_turns[0].turn_id;
+        let annotation = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+        assert_matches!(
+            vault.consolidate_claim_vad_now(&annotation, 110),
+            Err(Error::InvalidClaimBody(
+                "turn VAD annotation claims cannot be consolidated"
+            ))
+        );
+        Ok(())
+    }
 }

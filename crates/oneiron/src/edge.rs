@@ -107,6 +107,24 @@ pub enum EdgeKind {
     /// permit-requiring `ClaimSource`. Local-only in v1: sync reverse
     /// rematerialization skips it.
     Blocks = 24,
+    /// A completed task brief discharges the target `commitment.record`
+    /// CLAIM (CMT-4, ONE-1541).
+    ///
+    /// Structural and never traversed by PPR (`lambda_for_kind` is `None`):
+    /// a brief that happens to discharge an obligation is not evidence that
+    /// the two share retrieval relevance. It carries no stored-weight prior
+    /// — the validated door writes an explicit `1.0` — and both generic
+    /// public doors reject it ([`validate_public_edge_kind`]), leaving
+    /// `commitment_lifecycle::link_brief_fulfillment` as the sole writer.
+    Fulfills = 25,
+    /// Inverse traversal edge: this commitment is discharged BY the target
+    /// task brief (CMT-4, ONE-1541).
+    ///
+    /// Deliberately NOT a creation-causation claim — the brief did not cause
+    /// the commitment to exist, it closed it. Same trust class, layout and
+    /// non-traversal contract as [`Self::Fulfills`], and written only in the
+    /// same validated transaction as its forward twin.
+    DischargedBy = 26,
 }
 
 impl EdgeKind {
@@ -161,6 +179,11 @@ impl EdgeKind {
             // takes no caller weight at all. The two layers are independent;
             // both hold.
             Self::Blocks => Some(1.0),
+            // CMT-4 (ONE-1541): the brief-fulfillment pair joins the
+            // `pprWeight: null` set. Neither kind is traversed, and the one
+            // validated door that may write them carries an explicit `1.0`
+            // per edge rather than inheriting a prior from here.
+            Self::Fulfills | Self::DischargedBy => None,
         }
     }
 
@@ -192,6 +215,8 @@ impl EdgeKind {
             22 => Some(Self::SplitInto),
             23 => Some(Self::BlockedBy),
             24 => Some(Self::Blocks),
+            25 => Some(Self::Fulfills),
+            26 => Some(Self::DischargedBy),
             _ => None,
         }
     }
@@ -313,6 +338,8 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::SplitInto
         | EdgeKind::BlockedBy
         | EdgeKind::Blocks
+        | EdgeKind::Fulfills
+        | EdgeKind::DischargedBy
         | EdgeKind::SameAs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
@@ -517,11 +544,22 @@ fn edge_record_error() -> crate::error::Error {
 /// (which delegates here) and deletion through `Vault::delete_edge` (which
 /// calls this directly) — leaving `code_memory::insert_blocks_edge` /
 /// `remove_blocks_edge` as the sole write and retirement doors.
+///
+/// The CMT-4 `fulfills` / `discharged_by` pair (ONE-1541) joins them on the
+/// same terms: the ruled directions are only meaningful once BOTH endpoint
+/// classes have been proven (a task brief on one side, an OPEN
+/// `commitment.record` CLAIM on the other) and both rows have been written in
+/// ONE transaction. A raw builder edge proves neither and can write one
+/// direction without the other, so the pair stays reachable only through
+/// `commitment_lifecycle::link_brief_fulfillment`. As with the arms above,
+/// one arm reserves BOTH generic doors — creation and deletion.
 pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<()> {
     match kind {
         EdgeKind::MergedInto => Err(crate::error::Error::ReservedEdgeKind("merged_into")),
         EdgeKind::SplitInto => Err(crate::error::Error::ReservedEdgeKind("split_into")),
         EdgeKind::Blocks => Err(crate::error::Error::ReservedEdgeKind("blocks")),
+        EdgeKind::Fulfills => Err(crate::error::Error::ReservedEdgeKind("fulfills")),
+        EdgeKind::DischargedBy => Err(crate::error::Error::ReservedEdgeKind("discharged_by")),
         _ => Ok(()),
     }
 }
@@ -623,123 +661,4 @@ pub(crate) fn encode_edge_value(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::EDGE_KEY_LEN;
-    use super::EDGE_VALUE_STRUCTURAL_LEN;
-    use super::ENTITY_ID_LEN;
-    use super::EdgeKind;
-    use super::EntityId;
-    use super::Vad;
-    use super::encode_edge_value;
-    use super::parse_strict_edge_record;
-
-    #[test]
-    fn strict_edge_record_parser_decodes_key_and_value() {
-        let source = EntityId::from_bytes([0x11; ENTITY_ID_LEN]).unwrap();
-        let target = EntityId::from_bytes([0x22; ENTITY_ID_LEN]).unwrap();
-        let kind = EdgeKind::Supports;
-        let mut key = [0_u8; EDGE_KEY_LEN];
-        key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
-        key[ENTITY_ID_LEN] = kind as u8;
-        key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
-        let value = encode_edge_value(kind, 0.75, 42, Vad::NEUTRAL, None).unwrap();
-
-        let record = parse_strict_edge_record(&key, &value).unwrap();
-        assert_eq!(record.source, source);
-        assert_eq!(record.kind, kind);
-        assert_eq!(record.target, target);
-        assert_eq!(record.decoded.weight, 0.75);
-        assert_eq!(record.decoded.created_at, 42);
-
-        let info = record.into_edge_info();
-        assert_eq!(info.kind, kind);
-        assert_eq!(info.target, target);
-        assert_eq!(info.target_short_id, None);
-        assert_eq!(info.weight, 0.75);
-        assert_eq!(info.created_at, 42);
-    }
-
-    /// ONE-1414 done-means 10 + the no-pooling contract, at the byte level.
-    ///
-    /// One test because these are one decision: `same_as` is byte 20, carries
-    /// the 12-byte structural layout, has NO stored-weight prior, and is never
-    /// traversed. A future edit that gave it a λ or a default weight would have
-    /// to delete a line here to pass.
-    #[test]
-    fn same_as_is_byte_20_structural_unweighted_and_never_traversed() {
-        assert_eq!(EdgeKind::SameAs as u8, 20);
-        assert_eq!(EdgeKind::try_from_u8(20), Some(EdgeKind::SameAs));
-        assert_eq!(EdgeKind::SameAs.default_weight(), None);
-        assert_eq!(crate::ppr::lambda_for_kind(EdgeKind::SameAs), None);
-        assert_eq!(
-            super::edge_value_layout_for_kind(EdgeKind::SameAs, false),
-            super::EdgeValueLayout::Structural
-        );
-
-        // Byte 20 is the ONLY byte this ticket allocates: 21/22 keep their
-        // reserved identity-topology meaning untouched.
-        assert_eq!(EdgeKind::try_from_u8(21), Some(EdgeKind::MergedInto));
-        assert_eq!(EdgeKind::try_from_u8(22), Some(EdgeKind::SplitInto));
-    }
-
-    /// The owning write door stores an EXPLICIT `0.0`, and the row decodes back
-    /// as a 12-byte structural value carrying exactly that weight.
-    #[test]
-    fn same_as_encodes_explicit_zero_weight_as_a_structural_row() {
-        let value = encode_edge_value(EdgeKind::SameAs, 0.0, 1_772_000_300, Vad::NEUTRAL, None)
-            .expect("same_as encodes at explicit zero weight");
-        assert_eq!(value.len(), EDGE_VALUE_STRUCTURAL_LEN);
-
-        let decoded = super::decode_edge_value_for_kind(EdgeKind::SameAs, &value)
-            .expect("structural same_as value decodes for its kind");
-        assert_eq!(decoded.weight.to_bits(), 0.0_f32.to_bits());
-        assert_eq!(decoded.created_at, 1_772_000_300);
-        assert_eq!(decoded.vad, None);
-        assert_eq!(decoded.provenance, None);
-    }
-
-    /// A raw byte-20 edge key parses back to `SameAs` with its endpoints
-    /// intact — the decode half of the wire contract.
-    #[test]
-    fn same_as_edge_record_decodes_from_raw_bytes() {
-        let source = EntityId::from_bytes([0x31; ENTITY_ID_LEN]).unwrap();
-        let target = EntityId::from_bytes([0x32; ENTITY_ID_LEN]).unwrap();
-        let mut key = [0_u8; EDGE_KEY_LEN];
-        key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
-        key[ENTITY_ID_LEN] = 20;
-        key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
-        let value = encode_edge_value(EdgeKind::SameAs, 0.0, 7, Vad::NEUTRAL, None).unwrap();
-
-        let record = parse_strict_edge_record(&key, &value).expect("byte-20 edge record parses");
-        assert_eq!(record.kind, EdgeKind::SameAs);
-        assert_eq!(record.source, source);
-        assert_eq!(record.target, target);
-    }
-
-    #[test]
-    fn strict_edge_record_parser_normalizes_corruption_errors() {
-        let source = EntityId::from_bytes([0x11; ENTITY_ID_LEN]).unwrap();
-        let target = EntityId::from_bytes([0x22; ENTITY_ID_LEN]).unwrap();
-        let mut key = [0_u8; EDGE_KEY_LEN];
-        key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
-        key[ENTITY_ID_LEN] = EdgeKind::Supports as u8;
-        key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
-
-        let truncated_value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN - 1];
-        let err = parse_strict_edge_record(&key, &truncated_value)
-            .expect_err("truncated edge value must fail closed");
-        assert!(matches!(
-            err,
-            crate::error::Error::CorruptedIndex("edge record")
-        ));
-
-        key[ENTITY_ID_LEN + 1..].fill(0xFF);
-        let value = encode_edge_value(EdgeKind::Supports, 0.5, 1, Vad::NEUTRAL, None).unwrap();
-        let err = parse_strict_edge_record(&key, &value)
-            .expect_err("reserved target id must fail closed");
-        assert!(matches!(
-            err,
-            crate::error::Error::CorruptedIndex("edge record")
-        ));
-    }
-}
+mod tests;

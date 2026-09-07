@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use oneiron::{
     EntityId, ErrorKind, InboundSurfaceRouteOutcome, Result, SurfaceCounterpartyStamp, Vault,
     VaultConfig, attempt_queue::EnqueueOutcome, channel_identity::ChannelIdentity,
-    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityShape,
-    channel_identity::ChannelIdentityState, linkedin_connector::LINKEDIN_CHANNEL,
+    channel_identity::ChannelIdentityBinding, channel_identity::ChannelIdentityState,
+    channel_identity::SelfHeldShape, linkedin_connector::LINKEDIN_CHANNEL,
     linkedin_connector::LINKEDIN_CONNECT_CONSENT_BODY,
     linkedin_connector::LINKEDIN_CONNECT_REQUEST_VERB,
     linkedin_connector::LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
@@ -119,7 +119,7 @@ fn active_linkedin_identity_with_seeds(
     let mut identity = ChannelIdentity::requested(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),
-        ChannelIdentityShape::DedicatedHandle,
+        SelfHeldShape::DedicatedHandle,
         ChannelIdentityBinding::agent(agent_ref),
         1_800_000_000,
     );
@@ -415,7 +415,7 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
     let mut identity = ChannelIdentity::requested(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),
-        ChannelIdentityShape::DedicatedHandle,
+        SelfHeldShape::DedicatedHandle,
         ChannelIdentityBinding::agent(agent_ref),
         1_800_000_000,
     );

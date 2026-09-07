@@ -5,6 +5,7 @@ mod authority_log;
 mod builder;
 mod child_of_overlay;
 mod claim_candidate_apply;
+mod claim_materialization;
 mod deindex;
 mod edge_apply;
 mod facet_validation;
@@ -15,6 +16,7 @@ mod put_apply;
 mod short_id;
 mod txn_builder;
 mod types;
+mod vad_postcommit;
 mod vector_apply;
 
 #[cfg(test)]
@@ -22,10 +24,12 @@ mod tests;
 
 pub use self::builder::BatchBuilder;
 pub use self::txn_builder::TxnBatchBuilder;
+pub(crate) use self::vad_postcommit::VadPostcommitScope;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::child_of_overlay::child_of_prefix;
+pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
 #[cfg(test)]
 pub(crate) use self::deindex::deindex_entity_for_test;
 pub(crate) use self::deindex::{deindex_entity, deindex_lexical_query_hints_for_target};
@@ -42,6 +46,7 @@ pub(crate) use self::ops_pipeline::{
     apply_ops_with_origin, apply_session_bundle_claim_puts, reject_overlay_member_base_write,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
+pub(crate) use self::put_apply::delete_entity_index_rows;
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader,

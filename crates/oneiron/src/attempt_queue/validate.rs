@@ -13,6 +13,7 @@ use super::cancel::{
     LandingTrigger, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_LANDING_RESERVE_PERCENT,
     MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS,
 };
+use super::encoding::MAX_DEDUPE_ACTOR_REF_LEN;
 use super::telemetry::invalid_transition;
 use super::types::{
     AttemptEvent, AttemptInterventionKind, AttemptRecord, AttemptState, CleanupAttemptLeases,
@@ -36,12 +37,20 @@ pub(super) const MAX_RUN_ID_LEN: usize = crate::skill_optimize::SKILL_EDIT_CYCLE
     - crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
 const MAX_INTERVENTION_ACTOR_LEN: usize = 128;
 const MAX_INTERVENTION_NOTE_LEN: usize = 2048;
+/// Same bound as a resume point's artifact reference: both name one durable
+/// artifact, so one over-long reference must not be admissible on one door and
+/// refused on the other.
+pub(super) const MAX_RESULT_REF_LEN: usize = MAX_RESUME_ARTIFACT_REF_LEN;
 pub(super) const MAX_MANIFEST_REFERENCE_LEN: usize = 512;
 pub(super) const MAX_MANIFEST_VERSION_LEN: usize = 128;
 const ERR_EMPTY_KIND: &str = "kind must not be empty";
 const ERR_KIND_TOO_LONG: &str = "kind exceeds 128 bytes";
 const ERR_DEDUPE_KEY_EMPTY: &str = "dedupe key must not be empty";
 const ERR_DEDUPE_KEY_TOO_LONG: &str = "dedupe key exceeds 512 bytes";
+const ERR_DEDUPE_ACTOR_REF_EMPTY: &str = "dedupe actor ref must not be empty";
+const ERR_DEDUPE_ACTOR_REF_TOO_LONG: &str = "dedupe actor ref exceeds 128 bytes";
+pub(super) const ERR_DEDUPE_ACTOR_WITHOUT_KEY: &str =
+    "attempt with actor scope must carry a dedupe key";
 pub(super) const ERR_FAILURE_REASON_EMPTY: &str = "failure reason must not be empty";
 const ERR_FAILURE_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
 const ERR_LEASE_OWNER_EMPTY: &str = "lease owner must not be empty";
@@ -110,6 +119,16 @@ pub(super) const ERR_CANCEL_RECEIPT_MISSING_GROUNDS: &str =
     "a force-cancel receipt must carry its authorized grounds";
 pub(super) const ERR_CANCEL_RECEIPT_RESERVE_UNITS: &str =
     "cancel receipt reserve units contradict its kind";
+pub(super) const ERR_RESULT_REF_EMPTY: &str = "attempt result reference must not be empty";
+pub(super) const ERR_RESULT_REF_TOO_LONG: &str = "attempt result reference exceeds 512 bytes";
+pub(super) const ERR_RESULT_REF_CONTROL: &str =
+    "attempt result reference contains a control character";
+pub(super) const ERR_ABANDONED_WITHOUT_RESULT: &str =
+    "abandoned attempt must name its last durable result";
+pub(super) const ERR_ABANDONED_WITHOUT_REASON: &str =
+    "abandoned attempt must record why it stopped";
+pub(super) const ERR_RESULT_REF_REBOUND: &str =
+    "attempt result reference is write-once and already names a different artifact";
 
 pub(super) fn validate_kind(kind: &str) -> Result<()> {
     if kind.is_empty() {
@@ -133,6 +152,26 @@ pub(super) fn validate_optional_dedupe(dedupe_key: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Guards the optional actor scope of a dedupe key, at the same doors the kind
+/// and the key itself are guarded.
+///
+/// The bound matters twice: it keeps a scope out of the index that the v2
+/// length prefix could not describe, and it keeps one caller from spending
+/// another's key space on an unbounded segment.
+pub(super) fn validate_optional_dedupe_actor_ref(actor_ref: Option<&str>) -> Result<()> {
+    if let Some(actor_ref) = actor_ref {
+        if actor_ref.is_empty() {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_REF_EMPTY));
+        }
+        if actor_ref.len() > MAX_DEDUPE_ACTOR_REF_LEN {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_DEDUPE_ACTOR_REF_TOO_LONG,
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_failure_reason(reason: &str) -> Result<()> {
     validate_optional_failure_reason(Some(reason))
 }
@@ -149,6 +188,58 @@ pub(super) fn validate_optional_failure_reason(reason: Option<&str>) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Refuses a result reference no reader could resolve.
+///
+/// Control characters are rejected in addition to the length/emptiness bounds
+/// the other reference doors use: a result reference is projected onto read
+/// surfaces verbatim (the run tree renders it under its own wire key), so an
+/// embedded newline or terminal escape would be a rendering hazard carried on
+/// a durable row.
+pub(super) fn validate_result_ref(result_ref: &str) -> Result<()> {
+    if result_ref.is_empty() {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_EMPTY));
+    }
+    if result_ref.len() > MAX_RESULT_REF_LEN {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_TOO_LONG));
+    }
+    if result_ref.chars().any(char::is_control) {
+        return Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_CONTROL));
+    }
+    Ok(())
+}
+
+/// Re-validates a result reference read back off a row.
+///
+/// [`super::types::AttemptResultRef`] validates at construction, but its
+/// `Deserialize` is transparent, so a hand-written or corrupted row could
+/// still carry a reference the constructor would have refused.
+pub(super) fn validate_optional_result_ref(
+    result_ref: Option<&super::types::AttemptResultRef>,
+) -> Result<()> {
+    match result_ref {
+        Some(result_ref) => validate_result_ref(result_ref.as_str()),
+        None => Ok(()),
+    }
+}
+
+/// Guards the write-once discipline on a result reference.
+///
+/// Re-attaching the SAME reference is idempotent, so a retried capture
+/// converges. Attaching a DIFFERENT one is refused: the row already published
+/// which artifact carries this try's output, and silently repointing it would
+/// orphan evidence a reader has already resolved.
+pub(super) fn validate_result_rebind(
+    record: &AttemptRecord,
+    result_ref: &super::types::AttemptResultRef,
+) -> Result<()> {
+    match record.result_ref.as_ref() {
+        Some(existing) if existing != result_ref => {
+            Err(Error::InvalidAttemptQueueRecord(ERR_RESULT_REF_REBOUND))
+        }
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn validate_optional_run_id(run_id: Option<&str>) -> Result<()> {

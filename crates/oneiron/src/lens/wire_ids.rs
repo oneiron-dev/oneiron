@@ -101,7 +101,10 @@ pub struct LensHandleRef {
     pub role: LensHandleRole,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The ordering/hash derives are additive: they let a bound-read set be held in a
+/// canonical `BTreeSet`/`BTreeMap` so behavior diffs are deterministic. They add no
+/// wire meaning — a role is still an opaque closed token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LensHandleRole {
     ClaimSet,

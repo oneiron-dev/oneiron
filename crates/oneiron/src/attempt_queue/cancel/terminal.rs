@@ -5,7 +5,7 @@
 //! or a lease runs out. RUNG 1 and the reserve dial live in [`super::ops`].
 
 use crate::attempt_queue::encoding::{
-    decode_record, dedupe_index_key, encode_record, lease_expired, ready_at, ready_key,
+    DedupeIndexKeys, decode_record, encode_record, lease_expired, ready_at, ready_key,
 };
 use crate::attempt_queue::engine::AttemptQueue;
 use crate::attempt_queue::telemetry::invalid_transition;
@@ -38,10 +38,21 @@ impl AttemptQueue<'_> {
     /// finalized and its advisory dedupe entry moves to the successor, exactly
     /// as a retry moves it, so the pair can never both be completed.
     pub fn finish_landing(&self, input: FinishAttemptLanding) -> Result<FinishLandingOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let outcome = self.finish_landing_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Transaction-composable [`Self::finish_landing`], including cancellation receipts.
+    pub(crate) fn finish_landing_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: FinishAttemptLanding,
+    ) -> Result<FinishLandingOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("finish_landing", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
@@ -97,12 +108,12 @@ impl AttemptQueue<'_> {
         let encoded = encode_record(&record)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
         // Landing is a terminal attempt door too: preserve the existing PACK
         // receipt invariant when the live attempt accumulated a manifest.
         crate::receipt::stamp_attempt_pack_receipt_in_txn(
             self.store,
-            &mut wtxn,
+            wtxn,
             &record,
             record
                 .cancel_state
@@ -112,33 +123,37 @@ impl AttemptQueue<'_> {
                     cancellation.actor.as_str()
                 }),
         )?;
-        self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+        self.delete_dedupe_entry_for_record(wtxn, &record)?;
 
         let Some(successor) = successor else {
-            wtxn.commit()?;
             return Ok(FinishLandingOutcome::Landed(record));
         };
 
         let encoded_successor = encode_record(&successor)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, successor.id.as_bytes(), &encoded_successor)?;
+            .put(wtxn, successor.id.as_bytes(), &encoded_successor)?;
         let ready_key = ready_key(ready_at(&successor), successor.id);
         self.store
             .attempt_ready
-            .put(&mut wtxn, &ready_key, successor.id.as_bytes())?;
+            .put(wtxn, &ready_key, successor.id.as_bytes())?;
         self.store.put_attempt_run_index_in_txn(
-            &mut wtxn,
+            wtxn,
             successor.run_id.as_deref(),
             successor.id.as_bytes(),
         )?;
+        // Same rule a retry uses, so a landed handoff cannot invent a second
+        // scoping scheme: the successor's entry comes from the scope it copied.
         if let Some(dedupe_key) = successor.dedupe_key.as_deref() {
-            let index_key = dedupe_index_key(&successor.kind, dedupe_key);
+            let keys = DedupeIndexKeys::new(
+                &successor.kind,
+                successor.dedupe_actor_ref.as_deref(),
+                dedupe_key,
+            );
             self.store
                 .attempt_dedupe
-                .put(&mut wtxn, &index_key[..], successor.id.as_bytes())?;
+                .put(wtxn, &keys.primary[..], successor.id.as_bytes())?;
         }
-        wtxn.commit()?;
         Ok(FinishLandingOutcome::HandedOff {
             landed: record,
             successor,
@@ -181,7 +196,7 @@ impl AttemptQueue<'_> {
         let mut record = decode_record(&raw_record, input.id)?;
         match record.state {
             AttemptState::Cancelled => return Ok(ForceCancelOutcome::AlreadyCancelled(record)),
-            AttemptState::Completed | AttemptState::Failed => {
+            AttemptState::Completed | AttemptState::Failed | AttemptState::Abandoned => {
                 return Ok(ForceCancelOutcome::AlreadySettled(record));
             }
             _ => {}
@@ -509,6 +524,7 @@ fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64
         task_ref: source.task_ref.clone(),
         run_id: source.run_id.clone(),
         dedupe_key: source.dedupe_key.clone(),
+        dedupe_actor_ref: source.dedupe_actor_ref.clone(),
         created_at: now,
         updated_at: now,
         events: Vec::new(),
@@ -528,5 +544,6 @@ fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64
             },
             ..AttemptCancelState::default()
         },
+        result_ref: None,
     }
 }

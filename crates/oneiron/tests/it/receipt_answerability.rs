@@ -8,18 +8,32 @@ use oneiron::{
     commitment::CommitmentBirthProvenance, commitment::CommitmentContent,
     commitment::CommitmentObligor, commitment::CommitmentObligorKind, commitment::CommitmentRecord,
     commitment::CommitmentStatus, commitment::CommitmentStrength,
-    dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND, genui::GrantMintIntent,
-    genui::GrantMintIntentScope, genui::ReceiptDeepLinkKind, genui::ViewTimeResolution,
-    genui::resolve_commitment_receipt_link, outbound::OutboundIntentSource,
-    receipt::GrantReceiptProjection, receipt::PendingTrayQuery, receipt::ReceiptKind,
-    receipt::ReceiptQuery, receipt::ReceiptRecord, receipt::StandingOutboundGrantsLensQuery,
-    receipt::project_receipts_by_brief, receipt::project_receipts_by_counterparty,
-    receipt::project_receipts_by_grant, registry::ENTITY_TYPE_PERSON,
+    dreamer_consolidation::ConsolidationEvidenceEnvelope,
+    dreamer_consolidation::encode_consolidation_evidence,
+    dreamer_consolidation::evidence_chain_source, dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+    genui::GrantMintIntent, genui::GrantMintIntentScope, genui::ReceiptDeepLinkKind,
+    genui::ViewTimeResolution, genui::resolve_commitment_receipt_link,
+    outbound::OutboundIntentSource, receipt::GrantReceiptProjection, receipt::PendingTrayQuery,
+    receipt::ReceiptKind, receipt::ReceiptQuery, receipt::ReceiptRecord,
+    receipt::StandingOutboundGrantsLensQuery, receipt::project_receipts_by_brief,
+    receipt::project_receipts_by_counterparty, receipt::project_receipts_by_grant,
+    registry::ENTITY_TYPE_PERSON, registry::ENTITY_TYPE_TURN,
 };
 use rmpv::Value;
 
 const BRIEF_REF: &str = "brief:party";
 const PENDING_DREAMER_RUN_ID: &str = "dreamer:party-planning";
+
+/// The party-reminder commitment INSTANCE the 2am send fired for.
+///
+/// Instance-SHAPED (`commitment:<32-hex>`) since CMT-3 (ONE-1540): the
+/// producer is now `schedule_approved_commitment_wake`, whose `trigger_ref` is
+/// exactly `commitment:{instance_id.to_hex()}`. This literal and the paired
+/// assertion in the "what happened at 2am" test move together — a fixture that
+/// spells a reference no producer can emit proves nothing about the door.
+/// Resolving that reference back to a commitment is ONE-1542's job, not this
+/// pack's: it asserts source plus exact reference only.
+const PARTY_REMINDER_COMMITMENT_REF: &str = "commitment:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
 
 struct AnswerabilityFixture {
     receipts: Vec<ReceiptRecord>,
@@ -222,7 +236,7 @@ fn answerability_fixture() -> Result<AnswerabilityFixture> {
             occurred_at: 107,
             outcome: "delivered_to_channel",
             job_ref: Some(BRIEF_REF),
-            trigger_ref: Some("commitment:party-reminder"),
+            trigger_ref: Some(PARTY_REMINDER_COMMITMENT_REF),
             policy_trace: &[
                 "delivery_window.async_surface_allowed",
                 "delivery_window.no_interrupt",
@@ -303,12 +317,23 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
     )?;
 
     let pending_claim_id = entity(0x91);
+    // GATE-12 needs a live candidate evidence ref even for a Proposed
+    // Dreamer write. Cite the existing guest-count subject, as the inbox
+    // proposal fixture does, without changing the runner's authorship.
+    let evidence = oneiron::dreamer_consolidation::encode_consolidation_evidence(
+        &oneiron::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    );
     let candidate = ClaimCandidate::new(
         "profile.party_guest_count",
         ClaimSubject::Entity(subject),
         Value::from("confirm final guest count before sending venue update"),
         0.82,
-    );
+    )
+    .with_evidence(evidence);
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Agent),
         ClaimSource::Generated,
@@ -321,10 +346,101 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
         ]))?,
         ClaimApprovalStatus::Proposed,
     );
+    // Runner/run_id provenance identifies the Dreamer, but is not evidence.
+    // Pin the refusal on this exact Proposed candidate before supplying its
+    // supporting TURN. A denial must not become a claim or a pending ask.
+    let missing_evidence_ref = entity(0x94);
+    assert!(vault.get_raw(&missing_evidence_ref)?.is_none());
+    let unresolved_evidence = ConsolidationEvidenceEnvelope {
+        refs: vec![missing_evidence_ref],
+        chain: Vec::new(),
+        source_meet: evidence_chain_source(&vault, &[], &[missing_evidence_ref])?,
+    };
+    for (case, unsupported) in [
+        ("missing evidence", candidate.clone()),
+        (
+            "unresolved evidence ref",
+            candidate
+                .clone()
+                .with_evidence(encode_consolidation_evidence(&unresolved_evidence)),
+        ),
+    ] {
+        let error = vault
+            .batch()
+            .claim_candidate(
+                &pending_claim_id,
+                unsupported,
+                &envelope,
+                test_time(108),
+                108,
+            )
+            .commit()
+            .expect_err("unsupported Dreamer candidate must be denied");
+        match error {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny", "{case}: never downgrade to pending");
+                assert_eq!(
+                    reason_codes,
+                    ["gate.deny.dreamer_precommit.no_evidence"],
+                    "{case}: the precommit evidence floor must refuse the write"
+                );
+            }
+            other => panic!("{case}: expected GateWriteRejected, got {other:?}"),
+        }
+        assert!(vault.get_raw(&pending_claim_id)?.is_none(), "{case}");
+        assert!(vault.pending_gate_consents(10)?.is_empty(), "{case}");
+        assert!(
+            vault.pending_tray(PendingTrayQuery::new(10))?.is_empty(),
+            "{case}: a validity denial must not create a pending-tray row"
+        );
+    }
+
+    // Use the public consolidation evidence codec, as the GATE-12 fixtures
+    // do. The user TURN is a live witness, not a fabricated claim or receipt;
+    // its computed meet stays at Generated and does not upgrade the writer.
+    let evidence_turn_id = entity(0x93);
+    let mut evidence_turn_body = Vec::new();
+    rmpv::encode::write_value(
+        &mut evidence_turn_body,
+        &Value::Map(vec![
+            (
+                Value::from("txt"),
+                Value::from(
+                    "The party guest count is not final; confirm it before the venue update.",
+                ),
+            ),
+            (Value::from("spkr"), Value::from("user")),
+        ]),
+    )
+    .expect("fixture TURN body encodes");
+    vault.put_entity(
+        &evidence_turn_id,
+        ENTITY_TYPE_TURN,
+        test_time(107),
+        107,
+        &evidence_turn_body,
+    )?;
+    let evidence = ConsolidationEvidenceEnvelope {
+        refs: vec![evidence_turn_id],
+        chain: Vec::new(),
+        source_meet: evidence_chain_source(&vault, &[], &[evidence_turn_id])?,
+    };
+    assert_eq!(evidence.source_meet, ClaimSource::Generated);
+    let candidate = candidate.with_evidence(encode_consolidation_evidence(&evidence));
+    // Retry the same claim id and envelope. Only the candidate evidence has
+    // changed; the real actor-ceiling pend and Dreamer run binding must stay.
     vault
         .batch()
         .claim_candidate(&pending_claim_id, candidate, &envelope, test_time(108), 108)
         .commit()?;
+    let stored = vault
+        .get_claim(&pending_claim_id)?
+        .expect("evidenced Dreamer candidate is stored for review");
+    assert_eq!(stored.source, Some(ClaimSource::Generated));
+    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
 
     Ok(PublicSurfaceFixture {
         _tmp,
@@ -667,7 +783,7 @@ fn answerability_test_pack_why_message_at_2am_from_receipts_alone() -> Result<()
     );
     assert_eq!(
         receipt.trigger_ref.as_deref(),
-        Some("commitment:party-reminder"),
+        Some(PARTY_REMINDER_COMMITMENT_REF),
         "{question}: receipt does not link back to the triggering commitment"
     );
     Ok(())
@@ -1056,8 +1172,9 @@ fn answerability_test_pack_why_message_at_2am_gates_on_intent_source_before_trig
 
     // A present-but-broken `commitment:` suffix is a producer bug: it fails
     // typed and never collapses to Ok(None). `commitment:party-reminder` is the
-    // literal this pack already carries on the 2am receipt, and exactly one
-    // prefix comes off, so a doubled prefix does not resolve to the id inside.
+    // pre-ONE-1540 label shape — no producer emits it now, which is exactly why
+    // it belongs here — and exactly one prefix comes off, so a doubled prefix
+    // does not resolve to the id inside.
     let doubled = format!("commitment:{target}");
     for broken in ["commitment:", "commitment:party-reminder", doubled.as_str()] {
         let error = resolve_commitment_receipt_link(
