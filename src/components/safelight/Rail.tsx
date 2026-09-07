@@ -2,7 +2,6 @@ import * as React from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Chevron,
-  IconAgents,
   IconBriefs,
   IconInbox,
   IconMint,
@@ -270,19 +269,13 @@ export function Rail() {
             </span>
             <span className="txt">vault</span>
           </Link>
-          <Link to="/app/agents" title="agents" className="agents-head">
-            <span className="ico" aria-hidden="true">
-              <IconAgents />
-            </span>
-            <span className="txt">agents</span>
-          </Link>
         </div>
 
-        {/* the rooms (owner 09-08): the places you talk — every agent's room,
-            the house, a new agent, and the channels' threads — one section
-            between the base and the lenses. Selection lives here; status
-            stays on the ground line, so no live dot on a row. */}
-        <Pack name="rooms" label="chats" packs={packs}>
+        {/* agents (owner 09-08): the section IS the base's agents row — every
+            agent's room, the house, a new agent — between the base and the
+            lenses. Selection lives here; status stays on the ground line, so
+            no live dot on a row. The fold key stays `rooms`. */}
+        <Pack name="rooms" label="agents" packs={packs}>
           {RAIL_AGENTS.map((a) => (
             <Link
               key={a.key}
@@ -299,6 +292,9 @@ export function Rail() {
               </span>
             </Link>
           ))}
+        </Pack>
+
+        <Pack name="channels" packs={packs}>
           <Link to="/app/threads" title="threads">
             <span className="ico" aria-hidden="true">
               <IconThreads />
