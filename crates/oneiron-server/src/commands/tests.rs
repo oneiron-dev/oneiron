@@ -322,14 +322,14 @@ fn auto_discovers_candidate_with_cjk_dict_marker() {
 fn token_mint_claims_reproduce_the_golden_vectors() {
     const VECTOR_SECRET: &str = "correct horse battery staple";
 
-    let owner = build_token_claims(None, None);
+    let owner = build_token_claims(None, None, None);
     assert_eq!(owner, "");
     assert_eq!(
         mint_core_token_v2(VECTOR_SECRET, &owner),
         "v2..326ad3492c855a6d722398f75f006241ce8808250d79f38ffd4af64470118743"
     );
 
-    let scoped = build_token_claims(Some(&["core:read".to_owned()]), None);
+    let scoped = build_token_claims(Some(&["core:read".to_owned()]), None, None);
     assert_eq!(scoped, "scope=core:read");
     assert_eq!(
         mint_core_token_v2(VECTOR_SECRET, &scoped),
@@ -339,6 +339,7 @@ fn token_mint_claims_reproduce_the_golden_vectors() {
     let bound = build_token_claims(
         Some(&["companion:profile:read".to_owned()]),
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        None,
     );
     assert_eq!(
         bound,
@@ -357,7 +358,7 @@ fn token_mint_claims_reproduce_the_golden_vectors() {
 #[test]
 fn mint_path_warns_on_a_weak_secret_and_stays_quiet_otherwise() {
     let short = "x".repeat(MIN_RECOMMENDED_AUTH_SECRET_BYTES - 1);
-    let warning = prepare_token_mint(&short, None, None)
+    let warning = prepare_token_mint(&short, None, None, None)
         .expect("mint succeeds")
         .warning
         .expect("the mint path must carry the warning, not just compute it");
@@ -375,7 +376,7 @@ fn mint_path_warns_on_a_weak_secret_and_stays_quiet_otherwise() {
         "x".repeat(64),
     ] {
         assert!(
-            prepare_token_mint(&secret, Some(&["core:read".to_owned()]), None)
+            prepare_token_mint(&secret, Some(&["core:read".to_owned()]), None, None)
                 .expect("mint succeeds")
                 .warning
                 .is_none(),
@@ -384,7 +385,7 @@ fn mint_path_warns_on_a_weak_secret_and_stays_quiet_otherwise() {
     }
 
     // A warning is a nudge, not a wall: the token is still minted and valid.
-    let weak = prepare_token_mint(&short, None, None).expect("mint succeeds");
+    let weak = prepare_token_mint(&short, None, None, None).expect("mint succeeds");
     assert!(weak.token.starts_with("v2."));
     assert!(weak.token.contains(&format!("jti={}", weak.jti)));
 }
@@ -505,13 +506,14 @@ fn token_mint_rejects_claims_the_server_would_refuse() {
     let multi = build_token_claims(
         Some(&["core:read".to_owned(), "core:write".to_owned()]),
         None,
+        None,
     );
     assert_eq!(multi, "scope=core:read,core:write");
     assert!(validate_bearer_claims(&multi).is_ok());
 
     for claims in [
-        build_token_claims(Some(&["core:admin".to_owned()]), None),
-        build_token_claims(Some(&["core:read".to_owned()]), Some("not-an-entity")),
+        build_token_claims(Some(&["core:admin".to_owned()]), None, None),
+        build_token_claims(Some(&["core:read".to_owned()]), Some("not-an-entity"), None),
     ] {
         assert!(
             validate_bearer_claims(&claims).is_err(),
@@ -525,7 +527,7 @@ fn token_mint_rejects_claims_the_server_would_refuse() {
         (vec!["core:read".to_owned()], Some("not-an-entity")),
     ] {
         assert!(
-            prepare_token_mint("secret", Some(&scope), principal_ref).is_err(),
+            prepare_token_mint("secret", Some(&scope), principal_ref, None).is_err(),
             "{scope:?}/{principal_ref:?} must never be minted"
         );
     }

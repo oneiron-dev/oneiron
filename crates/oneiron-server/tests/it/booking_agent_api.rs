@@ -1134,7 +1134,7 @@ fn booking_token_page_binding_precedes_admission() {
     for later in [
         "admission_facts(",
         "enforce_book(State(",
-        ".solve(&SolveRequest",
+        "public_availability::solve(",
         "run_booking_verb(",
     ] {
         let at = executor_body
@@ -1212,8 +1212,7 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
         .find("enforce_slot_list(State(")
         .expect("admission runs inside the executor");
     for later in [
-        "normalize_constraint(",
-        ".solve(&SolveRequest",
+        "public_availability::solve(",
         "execute_hold(",
         "execute_confirm(",
     ] {
@@ -1223,6 +1222,26 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
         assert!(
             admission_at < at,
             "admission must run before {later} in the shared executor"
+        );
+    }
+    // Availability moved to a child module. Keep the parser-before-oracle
+    // assertion at its implementation, not at a stale inlined call spelling.
+    let availability = source("src/api/booking/public_availability.rs");
+    let solve_body = availability
+        .split_once("pub(super) fn solve(")
+        .expect("shared availability implementation")
+        .1;
+    let parse_at = solve_body
+        .find("normalize_constraint(")
+        .expect("availability normalizes constraints");
+    let solve_at = solve_body
+        .find(".solve(&solve_request)")
+        .expect("availability uses the shared oracle");
+    assert!(parse_at < solve_at, "the parser must precede the oracle");
+    for guard in ["enforce_slot_list", "enforce_hold", "enforce_book"] {
+        assert!(
+            !availability.contains(guard),
+            "availability must not repeat {guard} admission"
         );
     }
 

@@ -550,7 +550,7 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
     assert_eq!(identity.shape, ChannelIdentityShape::SharedPresence);
     assert!(matches!(
         identity.binding,
-        ChannelIdentityBinding::Agent { agent_ref: bound } if bound == agent_ref
+        ChannelIdentityBinding::Actor { actor_ref: bound, .. } if bound == agent_ref
     ));
 
     let provision = adapter.provision(
@@ -604,7 +604,7 @@ fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
     assert_eq!(receipt.agent_ref, Some(agent_ref.to_hex()));
     let surface_event = receipt.surface_event.expect("routed event");
     assert_eq!(surface_event.receiving_identity_ref, identity_id.to_hex());
-    assert_eq!(surface_event.agent_ref, agent_ref.to_hex());
+    assert_eq!(surface_event.actor_ref, agent_ref.to_hex());
     assert_eq!(
         surface_event.payload_ref.as_deref(),
         Some("provider:line-event-1")

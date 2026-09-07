@@ -1,4 +1,7 @@
+#[path = "tests/sender_selection/facet_selection.rs"]
+mod facet_selection;
 mod retry_audit;
+mod sender_selection;
 
 use super::*;
 use crate::delivery_window::DeliveryWindowDecision;

@@ -22,6 +22,7 @@ pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod board_verb;
 pub mod booking;
+pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
@@ -82,6 +83,7 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod failure_ladder;
 pub mod fanout_auto;
 pub mod federation;
 pub mod feedback;
@@ -104,6 +106,7 @@ pub mod lens;
 pub(crate) mod limits;
 pub mod linear_sync;
 pub mod linkedin_connector;
+pub mod linkedin_lead_preload;
 pub mod llm;
 pub mod maintain;
 pub mod memory;
@@ -152,6 +155,7 @@ pub mod skill_scan;
 pub mod slim;
 pub mod speculative;
 pub mod store;
+pub mod subject_model;
 pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
@@ -185,6 +189,7 @@ pub use crate::agent_def::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
     MemoryProfile,
 };
+pub use crate::agent_dispatch::{DispatchHealer, HealerSlot, HealerSlotOutcome};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
@@ -210,6 +215,13 @@ pub use crate::batch::BatchBuilder;
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
+};
+pub use crate::build_cache::{
+    ActionKey, ActionResult, ArtifactVersionRef, BUILD_CACHE_ACTION_DOMAIN_V1,
+    BUILD_CACHE_ACTION_KEY_LEN, BUILD_CACHE_ACTION_SCHEMA_VERSION_V1, BUILD_CACHE_KEY_PREFIX_V1,
+    BUILD_CACHE_SCHEMA_VERSION_V1, BuildAction, BuildCache, BuildCacheError, BuildCachePutOutcome,
+    BuildCacheResult, BuildInputRoot, BuildPlatform, CachedActionResult, DeclaredOutputPath,
+    ExtraInputDigest, FrozenBuildCommand,
 };
 pub use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarEventView, CalendarInviteConsentBasis,
@@ -322,6 +334,11 @@ pub use crate::entity_id::{EntityId, parse_presentation_id};
 pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
+pub use crate::failure_ladder::{
+    DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, FailureClass, FailureEscalationMode, FailureLadder,
+    FailureLadderOutcome, FailureScope, FailureScopePolicy, HealerCase, HealerRepairRoute,
+    RetryLineagePathology, SurfacedFailure,
+};
 pub use crate::federation::FederationGrantScope;
 pub use crate::feedback::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
@@ -346,7 +363,11 @@ pub use crate::gate::{
     CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
     GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
+};
+pub use crate::genui::{
+    FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
+    SurfacedFailureCard,
 };
 pub use crate::ingest::{
     EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
@@ -447,9 +468,14 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
 // public `doctor`, `text_index_status`, and `as_actor` return them directly
 // or through the doctor report's `pub` fields, and `vault` is not `pub`.
+//
+// ONE-1441: the single-writer lease names ride the same rule. `vault` is a
+// private module, so the SDK backend that OWNS a lease value and compares the
+// contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+    ActorBound, HydratedShortId, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE,
+    Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
@@ -571,6 +597,54 @@ pub(crate) mod test_util {
              pick a byte outside PINNED_ID_BYTES or construct the pinned id explicitly"
         );
         EntityId::from_bytes([seed; 16]).expect("non-pinned seed byte forms a valid entity id")
+    }
+
+    /// Seeds a minimal, VALID AGENT_DEF entity at `id` and returns it.
+    ///
+    /// Centralized because an AGENT_DEF body is validated on write: the
+    /// obvious `put_entity(id, ENTITY_TYPE_AGENT_DEF, b"fixture")` is rejected
+    /// with `InvalidAgentDefBody`, so every test needing "an actor that is a
+    /// real agent" would otherwise grow its own copy of this constructor.
+    pub(crate) fn seed_agent_definition(vault: &Vault, id: EntityId, label: &str) -> EntityId {
+        use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+        use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+        use rmpv::Value;
+
+        let def = AgentDefinition::new(
+            format!("{label}-{}", id.to_hex()),
+            "test_util agent fixture",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            AgentScope::All,
+            AgentCeiling::Proposed,
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::Imported,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![(Value::from("fixture"), Value::from(label))]),
+            None,
+            true,
+            None,
+        );
+        vault
+            .put_agent_definition(
+                &id,
+                &def,
+                TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )
+            .expect("seed agent definition");
+        id
     }
 
     /// Raw stored-entity record: the 25-byte metadata header (type byte,

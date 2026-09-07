@@ -190,6 +190,7 @@ pub(super) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
+    crate::booking::publication::guard_publication_put(store, wtxn, id, entity_type, data)?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
     // at a live overlay member's id would publish the room into base, so it

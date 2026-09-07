@@ -536,7 +536,7 @@ mod tests {
 
     use super::*;
     use crate::claim::{ClaimApprovalStatus, ClaimSubject};
-    use crate::edge::EdgeActorClass;
+    use crate::edge::{EdgeActorClass, EdgeKind};
     use crate::temporal::TimeRange;
     use crate::test_util::entity;
     use crate::write_envelope::ClaimCandidate;
@@ -722,6 +722,71 @@ mod tests {
             assert!(!binding.matches_op(&wrong));
             assert!(ClaimMaterialization::lifecycle(&vault.store, &txn, &wrong).is_err());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -> Result<()> {
+        let (_dir, vault, actor) = fixture()?;
+        let subject =
+            crate::provenance::EdgeRef::new(entity(0x62), EdgeKind::EmployedBy, entity(0x63));
+        let first = entity(0x64);
+        let second = entity(0x65);
+        assert!(vault.resolve_imported_edge_provenance(
+            crate::provenance::ImportedEdgeProvenance {
+                claim_id: first,
+                subject,
+                actor,
+                evidence: Value::from("external record"),
+                weight: 0.8,
+                learned_at: 10,
+            }
+        )?);
+        // The canonical replacement closes the Imported prior under its OWN actor.
+        vault.supersede_edge_provenance(
+            &first,
+            &second,
+            &subject,
+            &crate::provenance::EdgeProvenanceClaimBody::new(
+                actor.entity_ref(),
+                1.0,
+                crate::provenance::SupersessionStatus::Confirmed,
+            ),
+            actor.actor_class(),
+            20,
+        )?;
+        let closed = vault.get_claim(&first)?.expect("prior");
+        assert_eq!(closed.source, Some(ClaimSource::Imported));
+        assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Superseded);
+        let record = crate::provenance::decode_edge_provenance_body(&closed.value)?;
+        assert_eq!(record.actor_entity_ref, actor.entity_ref());
+        assert_eq!(record.actor_class, Some(actor.actor_class()));
+        let third = entity(0x66);
+        let other_subject =
+            crate::provenance::EdgeRef::new(entity(0x63), EdgeKind::EmployedBy, entity(0x62));
+        vault.resolve_imported_edge_provenance(crate::provenance::ImportedEdgeProvenance {
+            claim_id: third,
+            subject: other_subject,
+            actor,
+            evidence: Value::from("other record"),
+            weight: 0.8,
+            learned_at: 10,
+        })?;
+        permit(&vault, entity(0x63), &[ClaimSource::Imported])?;
+        assert!(vault.retract_edge_provenance(&third, 30).is_err());
+        assert_eq!(
+            vault.get_claim(&third)?.expect("unchanged").lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        permit(&vault, actor.entity_ref(), &[ClaimSource::Imported])?;
+        vault.retract_edge_provenance(&third, 30)?;
+        let closed = vault.get_claim(&third)?.expect("closed");
+        assert_eq!(closed.source, Some(ClaimSource::Imported));
+        assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert_eq!(
+            crate::provenance::decode_edge_provenance_body(&closed.value)?.actor_entity_ref,
+            actor.entity_ref()
+        );
         Ok(())
     }
 }

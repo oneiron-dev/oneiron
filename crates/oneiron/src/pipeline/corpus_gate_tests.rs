@@ -12,8 +12,11 @@ fn corpus_candidate_probe_and_post_fusion_reuse_decoded_body() -> Result<()> {
     put_claim_with_vector_corpus(&vault, id, FACET_QUERY, Some(corpus(0x96)))?;
     let builder = vault.query().corpus(CorpusScope::Corpus(corpus(0x95)));
     let filter = CorpusFilter::new(&builder.corpus_scope)?;
-    let config = filter.config(&builder, None);
     let rtxn = vault.store.env.read_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    let authority =
+        crate::gate::narrow_retrieval_filter(&policy.retrieval_floor_for_actor(None), None)?;
+    let config = filter.config(&builder, None, &authority);
     let mut metadata = EntityMetadataCache::default();
     let mut probe = ClaimStatusGateCache::default();
     assert!(claim_status_gate_allows(
@@ -108,8 +111,11 @@ fn corpus_bounded_vector_and_temporal_reuse_run_claim_body() -> Result<()> {
         .world(WorldScope::All)
         .capture_retrieval_trace(false);
     let filter = CorpusFilter::new(&builder.corpus_scope)?;
-    let config = filter.config(&builder, None);
     let rtxn = vault.store.env.read_txn()?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+    let authority =
+        crate::gate::narrow_retrieval_filter(&policy.retrieval_floor_for_actor(None), None)?;
+    let config = filter.config(&builder, None, &authority);
     let mut metadata = EntityMetadataCache::default();
     let mut gate = ClaimStatusGateCache::default();
 
