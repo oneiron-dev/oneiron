@@ -2,6 +2,7 @@ import * as React from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ChanLine, ChanLinkedin, ChanMail, ChanSlack, Chevron, IconSettings } from '~/components/safelight/icons'
 import { cue, markCued, openChat, useDocumentEvent, useEscape } from '~/components/safelight/hooks'
+import { SelTools, selWithin, useSelTools } from '~/components/safelight/SelTools'
 import agentsCss from '~/styles/agents.css?url'
 
 /* ══ Agents · THE ROOM (owner 09-07) ══
@@ -261,6 +262,11 @@ type Msg = {
   live?: boolean
   card?: Card
   handoff?: { to: AgentKey; what: string }
+  /* reply = a message (the 0010 pointer) · quote = a selection (the same
+     pointer with the span) · thread = a branch HEAD never enters (0006a):
+     the replies under a trunk message, depth one (owner 09-08) */
+  replyTo?: { id: string; span?: string }
+  replies?: Msg[]
 }
 type RoomKey = AgentKey | 'house' | string
 
@@ -276,8 +282,10 @@ const THREADS: Record<AgentKey | 'house', Msg[]> = {
   tory: [
     { id: 't1', who: 'tory', at: '08:30', text: 'Graded the supplier rumor at 0.41. One source, second-hand.', card: { kind: 'door', title: 'Hokuei may be consolidating suppliers this fiscal year', line: 'proposed · 0.61 after the email · contradicts the May claim', doors: [{ label: 'the claim', tip: 'the claim, its confidence and its lone source', to: '/app/vault' }] } },
     { id: 't2', who: 'tory', at: '11:05', text: 'Found nothing new in the July filings. The absence is recorded.', card: { kind: 'door', title: 'July filings · nothing on Hokuei', line: 'a silence is evidence too · nothing minted', doors: [{ label: 'receipt', tip: 'run rx_8e77', href: '#' }] } },
+    { id: 't2q', who: 'o', at: '11:40', text: 'Why so low?', replyTo: { id: 't1', span: '0.41' } },
+    { id: 't2a', who: 'tory', at: '11:42', text: 'One source, and it is second-hand. The floor for a critical claim is two, so it stays a proposal until a second one lands.' },
     { id: 't3', who: 'o', at: '12:30', text: 'Anything in the Kansai freight filings on Hokuei?' },
-    { id: 't4', who: 'tory', at: '12:48', text: 'Read them. Four claims written, none waited.', card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · every one cleared the floor', doors: [{ label: 'receipt', tip: 'run rx_9033 · sources read, claims written, cost', href: '#' }] } },
+    { id: 't4', who: 'tory', at: '12:48', text: 'Read them. Four claims written, none waited.', replyTo: { id: 't3' }, card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · every one cleared the floor', doors: [{ label: 'receipt', tip: 'run rx_9033 · sources read, claims written, cost', href: '#' }] } },
     { id: 't5', who: 'tory', at: '13:26', live: true, text: 'Checking the supplier rumor against the filings now. Two filings open so far; neither of them says consolidation.' },
   ],
   antevon: [
@@ -291,7 +299,10 @@ const THREADS: Record<AgentKey | 'house', Msg[]> = {
     { id: 'h1', who: 'o', at: '09:02', text: 'Hokuei want to move the pilot start. Tory, anything in the filings? Eiri, hold the COO intro until we know.' },
     { id: 'h2', who: 'antevon', at: '09:03', handoff: { to: 'tory', what: 'the Kansai freight filings, anything on Hokuei' } },
     { id: 'h3', who: 'antevon', at: '09:03', handoff: { to: 'eiri', what: 'hold the COO intro · draft only' } },
-    { id: 'h4', who: 'tory', at: '12:48', text: 'Read the Kansai filings. Nothing on Hokuei moving; four claims on freight terms.', card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · none waited', doors: [{ label: 'receipt', tip: 'run rx_9033', href: '#' }] } },
+    { id: 'h4', who: 'tory', at: '12:48', text: 'Read the Kansai filings. Nothing on Hokuei moving; four claims on freight terms.', replyTo: { id: 'h1' }, card: { kind: 'door', title: 'Kansai freight filings · Hokuei', line: 'four writes · none waited', doors: [{ label: 'receipt', tip: 'run rx_9033', href: '#' }] }, replies: [
+      { id: 'h4r1', who: 'o', at: '12:50', text: 'Any freight terms that bite us?' },
+      { id: 'h4r2', who: 'tory', at: '12:52', text: 'Two. A 30-day settlement clause and a fuel surcharge cap. Both are on the claims.', replyTo: { id: 'h4r1', span: 'bite us' } },
+    ] },
     { id: 'h5', who: 'eiri', at: '13:55', text: 'Starting the COO intro in Yurii’s register. It will queue, not send.' },
     { id: 'h6', who: 'eiri', at: '14:02', text: 'The Mika reply is ready.', card: { kind: 'door', title: 'Reply to Mika Tanaka: the quote for Tuesday', line: 'a draft · LINE · waits in your inbox', doors: [{ label: 'open', tip: 'the draft, in the inbox', to: '/app/inbox' }] } },
     { id: 'h7', who: 'antevon', at: '14:07', text: 'Today was mostly Eiri. Nothing left the building without you. Tory’s supplier rumor still rests on one source, so it stays a proposal.' },
@@ -365,6 +376,24 @@ function DoorAct({ door, className = 'act' }: { door: Door; className?: string }
 
 /* the face: one mask in the agent's ink; 72 in the room head, small in rows */
 /* the pause glyph is a button, not a word (owner 09-08) */
+/* the hover tier speaks in glyphs (owner 09-08, "use symbols more"): the
+   reply arrow, and a bubble for the thread. the word rides the tooltip. */
+function IconReply() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6.5 3.5 3 7l3.5 3.5" />
+      <path d="M3 7h5.5a4.5 4.5 0 0 1 4.5 4.5V13" />
+    </svg>
+  )
+}
+function IconThread() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 13V4.5A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5v4.6a1.5 1.5 0 0 1-1.5 1.5H6z" />
+      <path d="M6 6.2h4M6 8.2h2.5" />
+    </svg>
+  )
+}
 function IconPause() {
   return (
     <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -505,6 +534,18 @@ function Agents() {
   /* the house composer addresses one agent or everyone */
   const [addr, setAddr] = React.useState<AgentKey | 'all'>('all')
   const [amenuOpen, setAmenuOpen] = React.useState(false)
+  /* reply · quote · thread (owner 09-08): what the composer answers, the
+     thread standing in the right slot, and that thread's own composer */
+  const [quoting, setQuoting] = React.useState<{ id: string; span?: string } | null>(null)
+  const [openThread, setOpenThread] = React.useState<string | null>(null)
+  const [tdraft, setTdraft] = React.useState('')
+  const [tquoting, setTquoting] = React.useState<{ id: string; span?: string } | null>(null)
+  const [alsoRoom, setAlsoRoom] = React.useState(false)
+  /* the message a strip travelled to lights up for a beat */
+  const [lit, setLit] = React.useState<string | null>(null)
+  const roomRef = React.useRef<HTMLElement>(null)
+  const tinputRef = React.useRef<HTMLInputElement>(null)
+  const { sel, raise: raiseSel, clear: clearSel } = useSelTools(roomRef, { min: 2 })
   const newCount = React.useRef(0)
   const msgCount = React.useRef(0)
   const rowRefs = React.useRef<Record<string, HTMLButtonElement | null>>({})
@@ -514,6 +555,15 @@ function Agents() {
   const newest = React.useMemo(() => configs.find((c) => !c.fixture) ?? null, [configs])
   const current = configs.find((c) => c.id === room) ?? null
   const isHouse = room === 'house'
+  /* the room's kind decides the verbs: threads only where several parties
+     talk (group · channel · mirror); replies and quotes everywhere */
+  const canThread = isHouse
+  React.useEffect(() => {
+    setQuoting(null)
+    setOpenThread(null)
+    setTquoting(null)
+    setTdraft('')
+  }, [room])
   const isNew = !!current && !current.fixture
 
   /* the url names the room (?with=) so a room can be handed on as a link;
@@ -623,17 +673,46 @@ function Agents() {
     setThreads((t) => ({ ...t, [key]: [...(t[key] ?? []), { ...m, id, at: now() }] }))
     return id
   }
+  /* a reply in a thread: the chain under its trunk message. `also send to
+     the room` lands it on the trunk too, as a reply to that message */
+  const pushReply = (key: string, trunkId: string, m: Omit<Msg, 'id' | 'at'>, also = false) => {
+    msgCount.current += 1
+    const id = `m-${msgCount.current}`
+    const at = now()
+    setThreads((t) => ({ ...t, [key]: (t[key] ?? []).map((x) => (x.id === trunkId ? { ...x, replies: [...(x.replies ?? []), { ...m, id, at }] } : x)) }))
+    if (also) push(key, { ...m, replyTo: { id: trunkId } })
+    return id
+  }
+  /* any message in the room, trunk or thread, by id */
+  const findMsg = (id: string): Msg | null => {
+    for (const m of threads[room] ?? []) {
+      if (m.id === id) return m
+      const r = m.replies?.find((x) => x.id === id)
+      if (r) return r
+    }
+    return null
+  }
+  /* a strip is a door: the room travels to the message, which lights up */
+  const goTo = (id: string) => {
+    const el = roomRef.current?.querySelector<HTMLElement>(`[data-id="${id}"]`)
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setLit(id)
+    setTimeout(() => setLit((l) => (l === id ? null : l)), 1400)
+    cue('press')
+  }
 
   /* ── the composer: a message into the room; the fixture answers ── */
   const send = () => {
     const text = draft.trim()
     if (!text) return
     const key = room
+    const rt = quoting ?? undefined
     setDraft('')
+    setQuoting(null)
     cue('press')
     if (current && !current.fixture) {
       /* the new agent's conversation: the first sentence is the brief */
-      push(key, { who: 'o', text })
+      push(key, { who: 'o', text, replyTo: rt })
       if (!prop) {
         const p = propose(text, configs.map((c) => c.name))
         setProp(p)
@@ -649,7 +728,7 @@ function Agents() {
       /* @name addresses one agent; otherwise the house mind routes */
       const m = /^@(eiri|tory|antevon)\b\s*/i.exec(text)
       const to = m ? (m[1].toLowerCase() as AgentKey) : addr === 'all' ? null : addr
-      push(key, { who: 'o', text })
+      push(key, { who: 'o', text, replyTo: rt })
       setTimeout(() => {
         if (to) {
           push(key, { who: to, text: REPLY[to] })
@@ -661,8 +740,42 @@ function Agents() {
       return
     }
     const agent = key as AgentKey
-    push(key, { who: 'o', text })
+    push(key, { who: 'o', text, replyTo: rt })
     setTimeout(() => push(key, { who: agent, text: REPLY[agent] ?? 'Noted.' }), 800)
+  }
+
+  /* the thread's composer: the reply joins the chain; the fixture answers there */
+  const sendThread = () => {
+    const text = tdraft.trim()
+    const trunkId = openThread
+    if (!text || !trunkId) return
+    const rt = tquoting ?? undefined
+    setTdraft('')
+    setTquoting(null)
+    cue('press')
+    pushReply(room, trunkId, { who: 'o', text, replyTo: rt }, alsoRoom)
+    const root = findMsg(trunkId)
+    const to: AgentKey = root && root.who !== 'o' ? root.who : 'antevon'
+    setTimeout(() => pushReply(room, trunkId, { who: to, text: REPLY[to] ?? 'Noted.' }), 800)
+  }
+  /* quote = the words you picked inside one message (OF-248 at the span
+     grain): the pointer carries the message and the span */
+  const selMsg = sel ? selWithin(sel.range, '.rtext')?.closest<HTMLElement>('.rmsg') ?? null : null
+  const quoteSel = (e: React.MouseEvent) => {
+    e.preventDefault()
+    markCued(e)
+    const id = selMsg?.dataset.id
+    if (!sel || !id) return
+    const span = sel.text.trim()
+    if (selMsg?.closest('.tpane')) {
+      setTquoting({ id, span })
+      setTimeout(() => tinputRef.current?.focus(), 0)
+    } else {
+      setQuoting({ id, span })
+      setTimeout(() => inputRef.current?.focus(), 0)
+    }
+    clearSel()
+    cue('press')
   }
 
   /* ── gates settle in place; the inbox row settles with them (one fact) ── */
@@ -793,11 +906,30 @@ function Agents() {
      named in the head, so no row is labelled. In the house each change of
      speaker opens with the face + the name in ink, once; following turns by
      the same voice fold under it. */
-  const renderMsg = (m: Msg, c: Config | null, head: boolean, house: boolean) => {
+  const renderMsg = (m: Msg, c: Config | null, head: boolean, house: boolean, where: 'trunk' | 'root' | 'thread' = 'trunk') => {
     const mine = m.who === 'o'
     const who = house && !mine ? configs.find((x) => x.id === m.who) : null
+    /* the verbs: reply on every message, thread only on a group's trunk */
+    const acts = !m.live && where !== 'root' && (house || !!c?.fixture)
+    const replyTo = (e: React.MouseEvent) => {
+      markCued(e)
+      if (where === 'thread') {
+        setTquoting({ id: m.id })
+        tinputRef.current?.focus()
+      } else {
+        setQuoting({ id: m.id })
+        inputRef.current?.focus()
+      }
+      cue('press')
+    }
+    const openThreadOn = (e: React.MouseEvent) => {
+      markCued(e)
+      setOpenThread(m.id)
+      cue('toggle')
+    }
+    const n = m.replies?.length ?? 0
     return (
-      <div key={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && !mine && head ? 'head' : ''].filter(Boolean).join(' ')}>
+      <div key={m.id} data-id={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && !mine && head ? 'head' : '', lit === m.id ? 'lit' : ''].filter(Boolean).join(' ')}>
         {house && !mine ? (
           <span className="rwho">
             {head ? (
@@ -822,13 +954,107 @@ function Agents() {
               <span>{m.handoff.what}</span>
             </span>
           ) : null}
+          {m.replyTo ? renderStrip(m.replyTo) : null}
           {m.text ? <span className="rtext">{m.text}</span> : null}
           {m.card ? renderCard(m.card, c) : null}
+          {where === 'trunk' && n ? (
+            <button type="button" className="door rthread" title="the thread under this message · open it beside the room" onClick={openThreadOn}>
+              {n} {n === 1 ? 'reply' : 'replies'} · {m.replies![n - 1].at}
+            </button>
+          ) : null}
         </span>
-        <span className="rat" title={`${m.at} · today`}>
-          {m.at}
+        <span className="rtier">
+          <span className="rat" title={`${m.at} · today`}>
+            {m.at}
+          </span>
+          {acts ? (
+            <span className="racts">
+              <button type="button" className="gact" title="reply · the pointer carries this message" aria-label="reply" onClick={replyTo}>
+                <IconReply />
+              </button>
+              {where === 'trunk' && canThread ? (
+                <button type="button" className="gact" title={n ? 'thread · open it beside the room' : 'thread · a branch under this message, the room keeps reading'} aria-label="thread" onClick={openThreadOn}>
+                  <IconThread />
+                </button>
+              ) : null}
+            </span>
+          ) : null}
         </span>
       </div>
+    )
+  }
+
+  /* the strip: whose words the message answers, and which. a door: the click
+     travels to them. in the composer the same strip is droppable. */
+  const renderStrip = (rt: { id: string; span?: string }, onDrop?: () => void) => {
+    const src = findMsg(rt.id)
+    if (!src) return null
+    const by = src.who === 'o' ? null : src.who
+    const line = rt.span ?? src.text ?? src.card?.title ?? (src.handoff ? `→ ${NAMES[src.handoff.to]} · ${src.handoff.what}` : '')
+    const excerpt = line.length > 96 ? line.slice(0, 93) + '…' : line
+    return (
+      <span className={onDrop ? 'rquote pending' : 'rquote'}>
+        <button type="button" className="rq-go" title={rt.span ? 'the words this answers · go to them' : 'the message this answers · go to it'} onClick={(e) => { markCued(e); goTo(rt.id) }}>
+          {by ? (
+            <span className="aname rq-who" data-agent={by}>
+              {NAMES[by]}
+            </span>
+          ) : (
+            <span className="rq-who">you</span>
+          )}
+          <span className="rq-text">{rt.span ? `“${excerpt}”` : excerpt}</span>
+        </button>
+        {onDrop ? (
+          <button type="button" className="rq-x" title="drop the pointer" aria-label="drop the pointer" onClick={(e) => { markCued(e); onDrop(); cue('toggle') }}>
+            ×
+          </button>
+        ) : null}
+      </span>
+    )
+  }
+
+  /* ── the thread: a branch under one message, in the right slot the work
+     pane uses (the ladder's dock). the root reads whole at the top, the
+     chain under it, its own composer at the foot. no thread inside a thread. ── */
+  const renderThread = () => {
+    const root = openThread ? findMsg(openThread) : null
+    if (!root) return null
+    const replies = root.replies ?? []
+    return (
+      <aside className="rpane tpane" aria-label="thread">
+        <div className="rp-head">
+          <span className="meta-line" title="a branch under one message · the room keeps reading">
+            thread · {replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : 'no replies yet'}
+          </span>
+          <button type="button" className="act" title="close the thread" onClick={(e) => { markCued(e); setOpenThread(null); cue('toggle') }}>
+            close
+          </button>
+        </div>
+        <div className="tp-body">
+          {renderMsg(root, current, true, true, 'root')}
+          <span className="tp-rule" aria-hidden="true" />
+          {replies.map((m, i) => renderMsg(m, current, i === 0 || replies[i - 1].who !== m.who, true, 'thread'))}
+        </div>
+        <div className="tp-foot">
+          {tquoting ? renderStrip(tquoting, () => setTquoting(null)) : null}
+          <input
+            ref={tinputRef}
+            className="gask-input"
+            type="text"
+            placeholder="reply in thread"
+            aria-label="reply in thread"
+            value={tdraft}
+            onChange={(e) => setTdraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') sendThread()
+            }}
+          />
+          <label className="tp-also" title="the reply lands on the room too, as a reply to this message">
+            <input type="checkbox" checked={alsoRoom} onChange={(e) => setAlsoRoom(e.target.checked)} />
+            also send to {isHouse ? 'the house' : 'the room'}
+          </label>
+        </div>
+      </aside>
     )
   }
 
@@ -1632,7 +1858,7 @@ function Agents() {
           </nav>
 
           {/* ══ the room ══ */}
-          <section className="room" aria-label={isHouse ? 'the house' : current?.name || 'new agent'}>
+          <section className="room" aria-label={isHouse ? 'the house' : current?.name || 'new agent'} ref={roomRef} onMouseUp={raiseSel}>
             <div className="room-main">
             {isHouse || current ? renderHead() : null}
             {layer === 'setup' && current ? (
@@ -1657,9 +1883,17 @@ function Agents() {
               </div>
             )}
             {layer === 'thread' ? renderBar() : null}
+            {layer === 'thread' && quoting ? renderStrip(quoting, () => setQuoting(null)) : null}
             {layer === 'thread' ? renderLine() : null}
             </div>
-            {(isHouse || current?.fixture) && layer === 'thread' ? renderPane() : null}
+            {(isHouse || current?.fixture) && layer === 'thread' ? (openThread ? renderThread() : renderPane()) : null}
+            {sel && selMsg ? (
+              <SelTools sel={sel}>
+                <a className="act" href="#" title="answer these words · the pointer carries the message and the span" onClick={quoteSel}>
+                  quote
+                </a>
+              </SelTools>
+            ) : null}
           </section>
         </div>
       </div>
