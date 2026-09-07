@@ -5,6 +5,6 @@
 //! root predeclares none of them: each downstream change adds its own single
 //! additive `pub mod ...;` line when its file exists.
 
-pub mod smart_http;
 pub mod lfs;
 pub mod publication;
+pub mod smart_http;

@@ -974,6 +974,54 @@ fn write_ppr_cache(
     Ok(())
 }
 
+/// SLIM (ONE-1933 / OF-447) concrete PPR drop producer: clears the whole
+/// derived cache inside the caller's write transaction.
+///
+/// Touches ONLY `ppr_cache` and `ppr_cache_deps` — never edges, the graph
+/// version, seeds, entities, or any optional external warm tier. No new state
+/// flag is needed: the existing cache-miss path (`read_exact_cache_row` →
+/// compute/resume → deferred cache write) is the lazy rebuild, so the first
+/// query after a shed recomputes and repopulates exactly as a cold vault does.
+///
+/// The caller commits, in the same write transaction as
+/// [`crate::hnsw::drop_rebuildable_hnsw`], so the persisted derived-index half
+/// of a shed commits together; any failure aborts and leaves both untouched.
+pub(crate) fn drop_rebuildable_ppr_cache(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<crate::slim::HeapDropReport> {
+    let mut ppr_cache_rows = 0_u64;
+    let mut ppr_dependency_rows = 0_u64;
+    let mut estimated_reclaimed_bytes = 0_u64;
+
+    for entry in store.ppr_cache().iter(&*wtxn)? {
+        let (key, value) = entry?;
+        ppr_cache_rows = ppr_cache_rows
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("ppr cache row count"))?;
+        estimated_reclaimed_bytes =
+            estimated_reclaimed_bytes.saturating_add((key.len() + value.len()) as u64);
+    }
+    for entry in store.ppr_cache_deps.iter(&*wtxn)? {
+        let (key, value) = entry?;
+        ppr_dependency_rows = ppr_dependency_rows
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("ppr cache dep row count"))?;
+        estimated_reclaimed_bytes =
+            estimated_reclaimed_bytes.saturating_add((key.len() + value.len()) as u64);
+    }
+
+    store.ppr_cache().clear(wtxn)?;
+    store.ppr_cache_deps.clear(wtxn)?;
+
+    Ok(crate::slim::HeapDropReport {
+        ppr_cache_rows,
+        ppr_dependency_rows,
+        estimated_reclaimed_bytes,
+        ..crate::slim::HeapDropReport::default()
+    })
+}
+
 /// Evicts `ppr_cache` rows that are stale-flagged, malformed, older than
 /// `max_age_secs`, or whose seed dependencies are dead.
 ///
