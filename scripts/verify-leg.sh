@@ -29,7 +29,8 @@ run_stage() {
 
 case "$LEG" in
   fmt-clippy)
-    run_stage fmt    cargo fmt --all --check
+    # Honor the workspace's heed exclusion; --all also follows local path dependencies.
+    run_stage fmt    cargo fmt --check
     run_stage clippy cargo clippy --workspace --all-targets --all-features -- -D warnings
     ;;
   tests:1/2)

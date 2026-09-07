@@ -7,6 +7,8 @@ use serde_json::Value as JsonValue;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
+mod per_call;
+
 fn on_device_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("test/model@r1").expect("model id"),

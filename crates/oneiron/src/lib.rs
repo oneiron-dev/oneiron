@@ -83,6 +83,7 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod failure_ladder;
 pub mod fanout_auto;
 pub mod federation;
 pub mod feedback;
@@ -186,6 +187,7 @@ pub use crate::agent_def::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
     MemoryProfile,
 };
+pub use crate::agent_dispatch::{DispatchHealer, HealerSlot, HealerSlotOutcome};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
@@ -330,6 +332,11 @@ pub use crate::entity_id::{EntityId, parse_presentation_id};
 pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
+pub use crate::failure_ladder::{
+    DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, FailureClass, FailureEscalationMode, FailureLadder,
+    FailureLadderOutcome, FailureScope, FailureScopePolicy, HealerCase, HealerRepairRoute,
+    RetryLineagePathology, SurfacedFailure,
+};
 pub use crate::federation::FederationGrantScope;
 pub use crate::feedback::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
@@ -357,6 +364,10 @@ pub use crate::gate::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
     GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, GateBreakerRunProjection, GateBreakerThresholds,
     RetrievalFilter,
+};
+pub use crate::genui::{
+    FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
+    SurfacedFailureCard,
 };
 pub use crate::ingest::{
     EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
@@ -452,9 +463,14 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
 // public `doctor`, `text_index_status`, and `as_actor` return them directly
 // or through the doctor report's `pub` fields, and `vault` is not `pub`.
+//
+// ONE-1441: the single-writer lease names ride the same rule. `vault` is a
+// private module, so the SDK backend that OWNS a lease value and compares the
+// contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
-    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+    ActorBound, HydratedShortId, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE,
+    Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
+    VaultDoctorReport, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
