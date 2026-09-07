@@ -2740,7 +2740,7 @@ mod tests {
             engine_code: NOT_FOUND_ENGINE_CODE.to_owned(),
             message: "short_id was not found".to_owned(),
         };
-        let (_transport, adapter) = wire_adapter(json!({ "err": forwarded.clone() }));
+        let (_transport, adapter) = wire_adapter(json!({ "err": forwarded }));
         let error = adapter
             .hydrate(hydrate_request("cl1:a7"))
             .expect_err("err arm");
@@ -3189,7 +3189,7 @@ mod tests {
         let batch = adapter
             .hydrate_many(CoreBatchShortIdHydrateRequest {
                 refs: vec![
-                    admitted_ref.clone(),
+                    admitted_ref,
                     denied_ref.clone(),
                     missing_ref.to_owned(),
                 ],
