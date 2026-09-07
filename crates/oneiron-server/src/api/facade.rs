@@ -23,6 +23,9 @@
 //! instead of collapsing into `INTERNAL_SERVER_ERROR`. `crate::error` is not
 //! edited to admit these codes; that is the whole point of the local type.
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -37,6 +40,9 @@ use serde::{Deserialize, Serialize};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use oneiron::memory::caps::{
+    MAX_REMOTE_REQUEST_BYTES, check_claim_input, check_limit, check_query, check_witness_turn,
+};
 use oneiron::memory::{
     ClaimInput, CommitReceipt, Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED,
@@ -51,7 +57,7 @@ use oneiron::{EdgeActorClass, EntityId};
 /// Sized for the largest legal blob append (32 MiB raw) once base64 and JSON
 /// framing are paid for. Applied as a layer on THIS router, so the limit is a
 /// property of the facade projection and no other route's body handling moves.
-const FACADE_MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 
 /// `recall`'s default result count, per §HEAD-CONTRACT.
 const FACADE_DEFAULT_RECALL_LIMIT: usize = 10;
@@ -83,6 +89,7 @@ async fn facade_witness(
 ) -> Result<Json<WitnessReceipt>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     let turn = facade_json(payload)?;
+    check_witness_turn(&turn)?;
     let (actor, actor_class) = facade_actor(&auth)?;
     let receipt = server.vault.memory(actor, actor_class).witness(&turn)?;
     Ok(Json(receipt))
@@ -96,6 +103,7 @@ async fn facade_claim_upsert(
 ) -> Result<Json<CommitReceipt>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     let claim = facade_json(payload)?;
+    check_claim_input(&claim)?;
     let (actor, actor_class) = facade_actor(&auth)?;
     let receipt = server
         .vault
@@ -135,6 +143,7 @@ async fn facade_recall(
 ) -> Result<Json<MemoryPack>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let request = facade_json(payload)?;
+    check_query(&request.query)?;
     let limit = facade_limit(request.limit, FACADE_DEFAULT_RECALL_LIMIT)?;
     let (actor, actor_class) = facade_actor(&auth)?;
     let pack = server.vault.memory(actor, actor_class).recall(
@@ -235,21 +244,10 @@ fn facade_json<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, FacadeAp
     })
 }
 
-/// Applies a verb's default row count and the shared `/v1/core` list ceiling.
-///
-/// The ceiling is `super::CORE_MAX_LIST_LIMIT`, not a second number minted
-/// here: an unbounded `limit` is an allocation a caller chooses for the
-/// server, and the rest of this plane already answers that with one value.
+/// Applies the verb default and the shared facade row-count ceiling.
 fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, FacadeApiError> {
     let limit = requested.unwrap_or(default);
-    if limit == 0 || limit > super::CORE_MAX_LIST_LIMIT {
-        return Err(FacadeApiError::new(
-            StatusCode::BAD_REQUEST,
-            MEMORY_CODE_BAD_REQUEST,
-            format!("limit must be between 1 and {}", super::CORE_MAX_LIST_LIMIT),
-            ["Request a smaller page and paginate."],
-        ));
-    }
+    check_limit(limit)?;
     Ok(limit)
 }
 

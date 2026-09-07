@@ -107,8 +107,11 @@ mod outbound_send_receipt;
 mod pending_embedding;
 mod pending_gate_consent;
 mod retrieval_telemetry;
+#[cfg(unix)]
+mod root_directory;
 mod short_id_alias;
 mod structural_kind_registry;
+mod writer_lease;
 
 #[cfg(test)]
 pub(crate) mod test_hooks;
@@ -128,3 +131,4 @@ pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
 pub use short_id_alias::*;
 pub(crate) use structural_kind_registry::*;
+pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};

@@ -17,9 +17,7 @@
 //! `NativeClient` and exports `Oneiron` and `OneironError` only; the export
 //! census asserts `not hasattr(oneiron, "NativeClient")`.
 
-use oneiron::memory::{
-    ClaimInput, MemoryError, WitnessAuthor, WitnessMessage, WitnessTurn,
-};
+use oneiron::memory::{ClaimInput, MemoryError, WitnessAuthor, WitnessMessage, WitnessTurn};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
@@ -88,8 +86,12 @@ impl WitnessTurnInput {
 /// payload crosses as data, not prose, so the wrapper never has to recover a
 /// code by matching on English.
 fn raise(error: MemoryError) -> PyErr {
-    let payload =
-        serde_json::to_string(&error).unwrap_or_else(|_| format!("{{\"code\":\"INTERNAL_SERVER_ERROR\",\"message\":{:?},\"suggestions\":[]}}", error.message));
+    let payload = serde_json::to_string(&error).unwrap_or_else(|_| {
+        format!(
+            "{{\"code\":\"INTERNAL_SERVER_ERROR\",\"message\":{:?},\"suggestions\":[]}}",
+            error.message
+        )
+    });
     PyRuntimeError::new_err(payload)
 }
 
@@ -99,7 +101,9 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
         raise(MemoryError {
             code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
             message: format!("{what} is not the documented shape: {error}"),
-            suggestions: vec![format!("Check the {what} keys against the oneiron type stubs.")],
+            suggestions: vec![format!(
+                "Check the {what} keys against the oneiron type stubs."
+            )],
             successor_short_id: None,
             gate_denial: None,
         })
@@ -130,38 +134,49 @@ impl NativeClient {
     /// Opens an embedded vault; `path` omitted resolves to `~/.oneiron/default`.
     #[staticmethod]
     #[pyo3(signature = (path=None, dimensions=None))]
-    fn open(path: Option<std::path::PathBuf>, dimensions: Option<usize>) -> PyResult<Self> {
+    fn open(
+        py: Python<'_>,
+        path: Option<std::path::PathBuf>,
+        dimensions: Option<usize>,
+    ) -> PyResult<Self> {
         let options = oneiron_remote::OpenOptions { dimensions };
-        let inner =
-            oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(raise)?;
+        let inner = py
+            .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
+            .map_err(raise)?;
         Ok(Self { inner })
     }
 
     /// Binds a remote `oneiron-server`; the slip crosses verbatim.
     #[staticmethod]
-    fn connect(url: &str, key: &str) -> PyResult<Self> {
-        let inner = oneiron_remote::OneironClient::connect(url, key).map_err(raise)?;
+    fn connect(py: Python<'_>, url: String, key: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| oneiron_remote::OneironClient::connect(&url, &key))
+            .map_err(raise)?;
         Ok(Self { inner })
     }
 
     /// Returns a NEW handle bound to another actor; refuses when connected.
-    fn as_actor(&self, actor_key: &str) -> PyResult<Self> {
-        let inner = self.inner.as_actor(actor_key).map_err(raise)?;
+    fn as_actor(&self, py: Python<'_>, actor_key: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| self.inner.as_actor(&actor_key))
+            .map_err(raise)?;
         Ok(Self { inner })
     }
 
     /// Witnesses one conversational turn.
-    fn witness(&self, turn_json: &str) -> PyResult<String> {
+    fn witness(&self, py: Python<'_>, turn_json: &str) -> PyResult<String> {
         let input: WitnessTurnInput = decode(turn_json, "the witness turn")?;
         let turn = input.into_engine().map_err(raise)?;
-        let receipt = self.inner.witness(&turn).map_err(raise)?;
+        let receipt = py.detach(|| self.inner.witness(&turn)).map_err(raise)?;
         encode(&receipt)
     }
 
     /// Upserts one claim through the gated claim-candidate path.
-    fn claim_upsert(&self, claim_json: &str) -> PyResult<String> {
+    fn claim_upsert(&self, py: Python<'_>, claim_json: &str) -> PyResult<String> {
         let claim: ClaimInput = decode(claim_json, "the claim")?;
-        let receipt = self.inner.claim_upsert(&claim).map_err(raise)?;
+        let receipt = py
+            .detach(|| self.inner.claim_upsert(&claim))
+            .map_err(raise)?;
         encode(&receipt)
     }
 
@@ -169,11 +184,12 @@ impl NativeClient {
     #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None))]
     fn recall(
         &self,
-        query: &str,
+        py: Python<'_>,
+        query: String,
         effort: Option<&str>,
         scope_json: Option<&str>,
         limit: Option<usize>,
-        format: Option<&str>,
+        format: Option<String>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("standard")).map_err(raise)?;
         let scope = match scope_json {
@@ -181,18 +197,20 @@ impl NativeClient {
             None => oneiron::memory::RecallScope::default(),
         };
         let limit = limit.unwrap_or(oneiron_remote::DEFAULT_RECALL_LIMIT);
-        let pack = self
-            .inner
-            .recall(query, effort, &scope, limit, format)
+        let pack = py
+            .detach(|| {
+                self.inner
+                    .recall(&query, effort, &scope, limit, format.as_deref())
+            })
             .map_err(raise)?;
         encode(&pack)
     }
 
     /// Gate decision receipts, newest first.
     #[pyo3(signature = (limit=None))]
-    fn receipts(&self, limit: Option<usize>) -> PyResult<String> {
+    fn receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
         let limit = limit.unwrap_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT);
-        let receipts = self.inner.receipts(limit).map_err(raise)?;
+        let receipts = py.detach(|| self.inner.receipts(limit)).map_err(raise)?;
         encode(&receipts)
     }
 }

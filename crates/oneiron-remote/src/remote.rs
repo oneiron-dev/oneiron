@@ -101,6 +101,9 @@ impl RemoteClient {
         let base_url = normalize_origin(url)?;
         let authorization = bearer_header(key)?;
         let agent = Client::builder()
+            // A redirect must not move a bearer request outside the validated
+            // origin or downgrade HTTPS to cleartext HTTP.
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -196,13 +199,13 @@ fn normalize_origin(url: &str) -> Result<Url, MemoryError> {
     })?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(bad_request(
-            format!("unsupported URL scheme {:?}", parsed.scheme()),
-            &["Use an http:// or https:// origin."],
+            "the Oneiron URL has an unsupported scheme",
+            &["Use HTTPS, or HTTP only for loopback development."],
         ));
     }
     if !parsed.has_host() {
         return Err(bad_request(
-            format!("{url:?} names no host"),
+            "the Oneiron URL names no host",
             &["Pass an absolute origin such as http://127.0.0.1:8080."],
         ));
     }
@@ -218,6 +221,12 @@ fn normalize_origin(url: &str) -> Result<Url, MemoryError> {
             &["Pass only the origin; the SDK appends the facade path itself."],
         ));
     }
+    if parsed.scheme() == "http" && !is_loopback_origin(&parsed) {
+        return Err(bad_request(
+            "the Oneiron URL requires HTTPS outside loopback development",
+            &["Use an https:// origin; cleartext HTTP is allowed only on loopback."],
+        ));
+    }
     // A trailing slash is what makes `Url::join` treat the path as a directory
     // to append to rather than a file to replace.
     if !parsed.path().ends_with('/') {
@@ -225,6 +234,19 @@ fn normalize_origin(url: &str) -> Result<Url, MemoryError> {
         parsed.set_path(&path);
     }
     Ok(parsed)
+}
+
+/// Allows only literal loopback addresses and the exact localhost name.
+/// No DNS lookup can turn a caller-chosen remote hostname into an exemption.
+fn is_loopback_origin(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    })
 }
 
 /// Builds the `Authorization` header and marks it sensitive (D3).
@@ -365,7 +387,7 @@ fn describe_send_failure(error: &reqwest::Error) -> String {
     if error.is_connect() {
         return "could not connect to the Oneiron server".to_owned();
     }
-    format!("the request to the Oneiron server failed: {error}")
+    "the request to the Oneiron server failed".to_owned()
 }
 
 #[cfg(test)]

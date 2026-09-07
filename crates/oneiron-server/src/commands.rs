@@ -158,7 +158,7 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     // A fresh vault holds no tokens, so creating one here would report a
     // successful revocation against storage the server does not read.
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open(&config.vault_path, vault_config)
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
 
     let revoked = revoke_token_jti(&vault, &args.jti)?;
@@ -464,7 +464,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
 
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
-    let vault = oneiron::Vault::open(&config.vault_path, vault_config)?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)?;
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {
@@ -525,7 +525,7 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open(&config.vault_path, vault_config)
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
     let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
@@ -567,7 +567,7 @@ fn open_vault_for_command(args: &VaultArgs) -> anyhow::Result<oneiron::Vault> {
     let configured_paths = args.dict_search_paths.clone().unwrap_or_default();
     config.dict_search_paths = resolve_dict_search_paths(&configured_paths).paths;
 
-    oneiron::Vault::open(&args.path, config)
+    oneiron::Vault::open_owned(&args.path, config)
         .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", args.path.display()))
 }
 
@@ -696,3 +696,5 @@ fn parse_allowed_origins(origins: &[String]) -> anyhow::Result<Vec<HeaderValue>>
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, unix))]
+mod writer_lease_tests;

@@ -11,7 +11,11 @@
 //! JSON-serialized engine `MemoryError` (`{code, message, suggestions}`),
 //! so the TS wrapper (deferred this wave) can rehydrate typed errors.
 
+mod numeric;
+
 use std::sync::Arc;
+
+use numeric::{claim_input_to_engine, dimensions_to_engine};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -19,8 +23,8 @@ use napi_derive::napi;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarEventView, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
-    CalendarSel, ClaimInput, ClaimListFilter, CompanionRecordInput, ConsolidationAttemptInput,
-    Effort, EntityId, HabitCheckinInput, Memory, MemoryError, NeighborOpts, OutboundDraftInput,
+    CalendarSel, ClaimListFilter, CompanionRecordInput, ConsolidationAttemptInput, Effort,
+    EntityId, HabitCheckinInput, Memory, MemoryError, NeighborOpts, OutboundDraftInput,
     RecallScope, SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
     TimeRange, Vault, VaultConfig, WitnessAuthor, WitnessMessage, WitnessTurn, parse_actor_key,
 };
@@ -227,13 +231,13 @@ pub struct NapiClaimInput {
     /// Optional scope map.
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).
-    pub valid_from: Option<i64>,
+    pub valid_from: Option<f64>,
     /// Validity window end (Unix seconds).
-    pub valid_to: Option<i64>,
+    pub valid_to: Option<f64>,
     /// Backdating passthrough (Unix seconds).
-    pub occurred_at: Option<i64>,
+    pub occurred_at: Option<f64>,
     /// Backdating passthrough (Unix seconds).
-    pub learned_at: Option<i64>,
+    pub learned_at: Option<f64>,
     /// Optional salience in [0, 1].
     pub salience: Option<f64>,
 }
@@ -902,28 +906,6 @@ fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<WitnessTurn>
     })
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "f64→f32 confidence/salience narrowing at the N-API boundary is intentional"
-)]
-fn claim_input_to_engine(input: &NapiClaimInput) -> BoundaryResult<ClaimInput> {
-    Ok(ClaimInput {
-        id: input.id.clone(),
-        predicate: input.predicate.clone(),
-        subject_ref: input.subject_ref.clone(),
-        value: input.value.clone(),
-        confidence: input.confidence as f32,
-        source: input.source.clone(),
-        world_ref: input.world_ref.clone(),
-        scope: input.scope.clone(),
-        valid_from: ts_opt_to_engine(input.valid_from, "valid_from")?,
-        valid_to: ts_opt_to_engine(input.valid_to, "valid_to")?,
-        occurred_at: ts_opt_to_engine(input.occurred_at, "occurred_at")?,
-        learned_at: ts_opt_to_engine(input.learned_at, "learned_at")?,
-        salience: input.salience.map(|s| s as f32),
-    })
-}
-
 fn commit_receipt_from_engine(receipt: oneiron::CommitReceipt) -> NapiCommitReceipt {
     NapiCommitReceipt {
         claim_short_id: receipt.claim_short_id,
@@ -1126,7 +1108,7 @@ impl ActorScopedVault {
     pub fn commit(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitReceipt>> {
         let mut engine_claims = Vec::with_capacity(claims.len());
         for claim in &claims {
-            engine_claims.push(claim_input_to_engine(claim).map_err(boundary_error)?);
+            engine_claims.push(claim_input_to_engine(claim).map_err(facade_error)?);
         }
         let receipts = self
             .facade()?
@@ -1141,7 +1123,7 @@ impl ActorScopedVault {
     /// Commits one claim with single-cardinality auto-supersede.
     #[napi]
     pub fn claim_upsert(&self, claim: NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
-        let engine_claim = claim_input_to_engine(&claim).map_err(boundary_error)?;
+        let engine_claim = claim_input_to_engine(&claim).map_err(facade_error)?;
         let receipt = self
             .facade()?
             .claim_upsert(&engine_claim)
@@ -1579,7 +1561,7 @@ impl ActorScopedVault {
     pub fn seed_claims(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitReceipt>> {
         let mut engine_claims = Vec::with_capacity(claims.len());
         for claim in &claims {
-            engine_claims.push(claim_input_to_engine(claim).map_err(boundary_error)?);
+            engine_claims.push(claim_input_to_engine(claim).map_err(facade_error)?);
         }
         let receipts = self
             .facade()?
@@ -1749,6 +1731,7 @@ impl ActorScopedVault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oneiron::ClaimInput;
 
     fn reason<T: std::fmt::Debug>(result: BoundaryResult<T>) -> String {
         result.expect_err("expected N-API boundary error")
@@ -2321,7 +2304,11 @@ fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> NapiMemoryItem 
 /// wrapper rerank, no truncation, and no synthesized field.
 fn memory_pack_from_engine(pack: oneiron::memory::MemoryPack) -> BoundaryResult<NapiMemoryPack> {
     Ok(NapiMemoryPack {
-        items: pack.items.into_iter().map(memory_item_from_engine).collect(),
+        items: pack
+            .items
+            .into_iter()
+            .map(memory_item_from_engine)
+            .collect(),
         scope_honesty: NapiScopeHonesty {
             out_of_scope_worlds: pack.scope_honesty.out_of_scope_worlds,
         },
@@ -2331,7 +2318,10 @@ fn memory_pack_from_engine(pack: oneiron::memory::MemoryPack) -> BoundaryResult<
                 pack.retrieval_meta.total_candidates,
                 "total_candidates",
             )?,
-            claims_returned: ts_from_engine(pack.retrieval_meta.claims_returned, "claims_returned")?,
+            claims_returned: ts_from_engine(
+                pack.retrieval_meta.claims_returned,
+                "claims_returned",
+            )?,
             deep_pending: pack.retrieval_meta.deep_pending,
         },
         pack_version: pack.pack_version,
@@ -2357,13 +2347,16 @@ pub struct NativeClient {
 impl NativeClient {
     /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`.
     #[napi(factory)]
-    pub fn open(path: Option<String>, dimensions: Option<u32>) -> napi::Result<Self> {
+    pub fn open(path: Option<String>, dimensions: Option<f64>) -> napi::Result<Self> {
         let options = oneiron_remote::OpenOptions {
-            dimensions: dimensions.map(|value| value as usize),
+            dimensions: dimensions
+                .map(dimensions_to_engine)
+                .transpose()
+                .map_err(facade_error)?,
         };
         let path = path.map(std::path::PathBuf::from);
-        let inner = oneiron_remote::OneironClient::open(path.as_deref(), &options)
-            .map_err(facade_error)?;
+        let inner =
+            oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
         Ok(Self { inner })
     }
 
@@ -2401,8 +2394,11 @@ impl NativeClient {
     /// Upserts one claim through the gated claim-candidate path.
     #[napi]
     pub fn claim_upsert(&self, claim: NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
-        let engine_claim = claim_input_to_engine(&claim).map_err(boundary_error)?;
-        let receipt = self.inner.claim_upsert(&engine_claim).map_err(facade_error)?;
+        let engine_claim = claim_input_to_engine(&claim).map_err(facade_error)?;
+        let receipt = self
+            .inner
+            .claim_upsert(&engine_claim)
+            .map_err(facade_error)?;
         Ok(commit_receipt_from_engine(receipt))
     }
 
@@ -2430,7 +2426,9 @@ impl NativeClient {
     /// Gate decision receipts, newest first.
     #[napi]
     pub fn receipts(&self, limit: Option<u32>) -> napi::Result<Vec<NapiGateReceipt>> {
-        let limit = limit.map_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT, |value| value as usize);
+        let limit = limit.map_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT, |value| {
+            value as usize
+        });
         let records = self.inner.receipts(limit).map_err(facade_error)?;
         records
             .into_iter()

@@ -9,47 +9,40 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, parse_actor_key};
-use oneiron::{
-    EdgeActorClass, EntityId, Error, VAULT_WRITER_LEASE_HELD, Vault, VaultConfig, VaultWriterLease,
-};
+use oneiron::{EdgeActorClass, EntityId, Error, VAULT_WRITER_LEASE_HELD, Vault, VaultConfig};
 
 use crate::OpenOptions;
 use crate::caps::check_dimensions;
 use crate::error::{bad_request, sdk_error, transport_error, vault_locked};
 
-/// One native vault, its writer lease, and the options it was opened with.
-///
-/// The three travel together for a reason: I8 requires the lease handle to be
-/// held for "the shared vault lifetime", and the only way to make that
-/// statement true by construction — rather than by everyone remembering — is
-/// to give the lease the same owner and the same drop as the vault. Field
-/// ORDER is load-bearing: Rust drops fields in declaration order, so the vault
-/// closes before the lease releases, and the directory is never unlocked while
-/// LMDB still has it open.
+/// One native vault and the options it was opened with. The engine Vault
+/// itself owns the lease, so server and embedded Arc holders obey one lifetime.
 pub(crate) struct SharedVault {
     vault: Vault,
-    lease: VaultWriterLease,
     options: OpenOptions,
 }
 
 impl SharedVault {
-    /// The native vault every handle sharing this entry dispatches into.
     pub(crate) fn vault(&self) -> &Vault {
         &self.vault
     }
 
-    /// Whether the CALLING process is the one that acquired this lease.
-    pub(crate) fn held_by_current_process(&self) -> bool {
-        self.lease.held_by_current_process()
+    fn lease(&self) -> &oneiron::VaultWriterLease {
+        self.vault
+            .writer_lease()
+            .expect("open_owned retains its lease")
     }
 
-    /// The process that acquired this lease.
+    pub(crate) fn held_by_current_process(&self) -> bool {
+        self.lease().held_by_current_process()
+    }
+
     pub(crate) fn lease_pid(&self) -> u32 {
-        self.lease.pid()
+        self.lease().pid()
     }
 }
 
@@ -60,8 +53,40 @@ impl SharedVault {
 /// dropped their last handle would still be locking the directory against
 /// themselves. The weak entry lets the last handle's drop close the vault and
 /// release the lease, and a later reopen of the same path simply misses.
-static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<SharedVault>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+struct Registry {
+    // Published BEFORE touching LazyLock or Mutex: either can be inherited
+    // locked by a forked child whose other threads no longer exist.
+    pid: AtomicU32,
+    entries: LazyLock<Mutex<HashMap<PathBuf, Weak<SharedVault>>>>,
+}
+
+impl Registry {
+    fn check_pid(&self) -> Result<(), MemoryError> {
+        let pid = std::process::id();
+        match self
+            .pid
+            .compare_exchange(0, pid, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => Ok(()),
+            Err(owner) if owner == pid => Ok(()),
+            Err(_) => Err(vault_locked()),
+        }
+    }
+
+    fn guard(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<PathBuf, Weak<SharedVault>>>, MemoryError> {
+        self.check_pid()?;
+        self.entries.lock().map_err(|_| {
+            transport_error("the vault registry was poisoned by a panic in another thread")
+        })
+    }
+}
+
+static REGISTRY: Registry = Registry {
+    pid: AtomicU32::new(0),
+    entries: LazyLock::new(|| Mutex::new(HashMap::new())),
+};
 
 /// Counts the `Vault::open` calls this process has actually made.
 ///
@@ -112,6 +137,7 @@ pub(crate) fn open_shared(
     path: Option<&Path>,
     options: &OpenOptions,
 ) -> Result<Arc<SharedVault>, MemoryError> {
+    REGISTRY.check_pid()?;
     if let Some(dimensions) = options.dimensions {
         check_dimensions(dimensions)?;
     }
@@ -137,7 +163,7 @@ pub(crate) fn open_shared(
         )
     })?;
 
-    let mut registry = registry_guard()?;
+    let mut registry = REGISTRY.guard()?;
     if let Some(existing) = registry.get(&canonical).and_then(Weak::upgrade) {
         // I8: the registry and the lease's descriptor BOTH survive `fork`, so a
         // child calling the constructor would otherwise be handed the parent's
@@ -153,6 +179,10 @@ pub(crate) fn open_shared(
         if !existing.held_by_current_process() {
             return Err(vault_locked());
         }
+        existing
+            .lease()
+            .validate_directory(&canonical)
+            .map_err(MemoryError::from)?;
         // I9: a same-PID reopen JOINS, and only when it asked for the same
         // vault. Divergent options are refused rather than honored-or-ignored,
         // because both alternatives are wrong: honoring them would need a
@@ -175,16 +205,14 @@ pub(crate) fn open_shared(
 
 /// Takes the lease and opens the store, in that order.
 fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVault, MemoryError> {
-    let lease = VaultWriterLease::acquire(canonical).map_err(map_lease_error)?;
     let mut config = VaultConfig::default();
     if let Some(dimensions) = options.dimensions {
         config.dimensions = dimensions;
     }
-    let vault = Vault::open(canonical, config).map_err(MemoryError::from)?;
+    let vault = Vault::open_owned(canonical, config).map_err(map_lease_error)?;
     STORE_OPEN_COUNT.fetch_add(1, Ordering::Relaxed);
     Ok(SharedVault {
         vault,
-        lease,
         options: options.clone(),
     })
 }
@@ -222,18 +250,6 @@ fn divergent_options_error(
             "A vault's dimensions are fixed at creation; a second open cannot change them.",
         ],
     )
-}
-
-/// Locks the registry, converting a poisoned mutex into a typed refusal.
-///
-/// A poisoned registry means another thread panicked mid-open. The map may
-/// name a vault whose lease state we cannot reason about, so this fails closed
-/// rather than recovering the guard.
-fn registry_guard()
--> Result<std::sync::MutexGuard<'static, HashMap<PathBuf, Weak<SharedVault>>>, MemoryError> {
-    REGISTRY.lock().map_err(|_| {
-        transport_error("the vault registry was poisoned by a panic in another thread")
-    })
 }
 
 /// The embedded half of [`crate::OneironClient`].
@@ -326,5 +342,36 @@ impl EmbeddedClient {
     /// The PID recorded by this vault's lease.
     pub(crate) fn lease_pid(&self) -> u32 {
         self.shared.lease_pid()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oneiron::memory::MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER;
+
+    #[test]
+    fn inherited_registry_is_refused_before_locked_mutex() {
+        let registry = Arc::new(Registry {
+            pid: AtomicU32::new(std::process::id().wrapping_add(1).max(1)),
+            entries: LazyLock::new(|| Mutex::new(HashMap::new())),
+        });
+        let inherited_guard = registry.entries.lock().expect("parent guard");
+        let child_registry = Arc::clone(&registry);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = std::thread::spawn(move || {
+            let error = match child_registry.guard() {
+                Ok(_) => panic!("a child must not acquire the inherited registry"),
+                Err(error) => error,
+            };
+            tx.send(error.code).expect("probe result");
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+        drop(inherited_guard);
+        probe.join().expect("probe thread");
+        assert_eq!(
+            result.expect("refusal before mutex wait"),
+            MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
+        );
     }
 }

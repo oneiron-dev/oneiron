@@ -69,8 +69,10 @@ package is resolved by the Oneiron root lockfile.)
 
 **Changed from upstream — exactly two files:**
 
-- `Cargo.toml` — a provenance COMMENT BLOCK only. No package, dependency,
-  feature, or target value is altered, and no table is added or removed.
+- `Cargo.toml` — a provenance comment block and packaging-only exclusions for
+  `/.cargo_vcs_info.json` and `/Cargo.toml.orig` (ONE-1441). Package identity,
+  dependency requirements, features, and targets are unchanged; no table is
+  added or removed.
 - `src/env.rs` — the open seam described below. Nothing else in the file, and
   no other source file, is touched.
 
@@ -84,6 +86,28 @@ package is resolved by the Oneiron root lockfile.)
   convention of `crates/oneiron-seal/vendor/README.md`.
 
 **Deliberately not copied:** the registry extraction marker `.cargo-ok`.
+
+## Re-packaging for the Python sdist (ONE-1441)
+
+The workspace dependency also declares this vendor as a path dependency so
+maturin includes the audited fork in the Python sdist. Maturin queries that
+path with `cargo package --list --allow-dirty`. The upstream archive's
+`.cargo_vcs_info.json` is a Cargo-reserved output name and causes that query
+to fail if it is selected as a source input.
+
+The active `Cargo.toml` excludes only the root `.cargo_vcs_info.json` and
+`Cargo.toml.orig` from package inputs. Both upstream files remain unchanged
+in this checkout as provenance records; Cargo owns their generated names
+when creating a new package. The Rust sources, including the ONE-218 seam,
+README, and license remain package inputs.
+
+`Cargo.toml.orig` is the upstream pre-publication manifest, not a replacement
+for the active normalized manifest. It refers to `../README.md` and sibling
+`../heed-traits`, `../heed-types`, and `../lmdb-master-sys` paths that are not
+part of this snapshot. Keep the normalized dependency requirements and local
+README path in `Cargo.toml`. Neither the workspace path dependency nor the
+root patch is replaced with registry heed, and the sdist archive, vendored
+source identity, and extracted offline-build assertions remain unchanged.
 
 ## The seam
 
