@@ -59,6 +59,7 @@ mod retrieval;
 mod safeguard;
 mod session;
 
+pub mod tts_spikes;
 #[cfg(unix)]
 pub mod uds;
 
