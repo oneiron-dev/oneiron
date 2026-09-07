@@ -66,6 +66,7 @@ CompanionScopeResolutionSource
 CompanionSubject
 CompanionTaskKind
 ComposedChatAnswer
+ConsentDeniedDetector
 ConsolidationAttemptInput
 ConsolidationExecutor
 ConsolidationSink
@@ -85,6 +86,8 @@ CriticalWriteConfirmResolution
 DEFAULT_CONTEXT_PACK_TOKENIZER_ID
 DEFAULT_DREAMER_CHILD_RESERVE_UNITS
 DEFAULT_MIN_EXTRACTED_CONTENT_BYTES
+DIAGNOSTIC_BODY_KEYS
+DIAGNOSTIC_SCHEMA_VERSION
 DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
 DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
 DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
@@ -93,9 +96,17 @@ DREAMER_GRACEFUL_WRAP_WINDOW_MS
 DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS
 DeleteReason
 DeliveryWindowApnsInterruptionLevel
+DeterministicDetector
 DeterministicFallback
 DevEmailIdentityAdapter
 DevEmailIdentityAdapterConfig
+DiagnosticCriticality
+DiagnosticEvent
+DiagnosticEventClass
+DiagnosticObservation
+DiagnosticReplayCoordinate
+DiagnosticSourceKind
+DiagnosticWorkingSet
 DisclosureAssembly
 DisclosureContext
 DreamerAdmittedAttempt
@@ -336,6 +347,9 @@ bm25_diagnostics_snapshot
 companion_value_from_json
 companion_value_to_json
 count_context_pack_tokens
+decode_diagnostic_event_body
+diagnostic_event_id
+encode_diagnostic_event_body
 export_repo_provenance_git_note
 linear_operation_id
 outbound_capability_manifest
@@ -348,5 +362,6 @@ plan_partitions
 read_watermark
 repo_commit_for_provenance_claim
 repo_commit_provenance
+run_deterministic_detectors
 scan_dirty_turns
 unsupported_outbound_connector
