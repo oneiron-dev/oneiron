@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 
 use super::*;
-use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape};
+use crate::channel_identity::{ChannelIdentity, ChannelIdentityBinding, SelfHeldShape};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, encode_claim_body};
 use crate::commitment::{
     CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
@@ -124,7 +124,7 @@ fn ledger_vault() -> Result<LedgerVault> {
     let identity = ChannelIdentity::requested(
         "email",
         "eiri@example.com",
-        ChannelIdentityShape::DedicatedAddress,
+        SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::vault(7),
         5,
     );

@@ -110,6 +110,7 @@ mod facade;
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
 mod git_http;
+mod git_lfs;
 mod lease;
 mod mcp_gateway;
 mod memory;

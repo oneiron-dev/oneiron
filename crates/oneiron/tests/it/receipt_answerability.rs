@@ -21,6 +21,17 @@ use rmpv::Value;
 const BRIEF_REF: &str = "brief:party";
 const PENDING_DREAMER_RUN_ID: &str = "dreamer:party-planning";
 
+/// The party-reminder commitment INSTANCE the 2am send fired for.
+///
+/// Instance-SHAPED (`commitment:<32-hex>`) since CMT-3 (ONE-1540): the
+/// producer is now `schedule_approved_commitment_wake`, whose `trigger_ref` is
+/// exactly `commitment:{instance_id.to_hex()}`. This literal and the paired
+/// assertion in the "what happened at 2am" test move together — a fixture that
+/// spells a reference no producer can emit proves nothing about the door.
+/// Resolving that reference back to a commitment is ONE-1542's job, not this
+/// pack's: it asserts source plus exact reference only.
+const PARTY_REMINDER_COMMITMENT_REF: &str = "commitment:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+
 struct AnswerabilityFixture {
     receipts: Vec<ReceiptRecord>,
     grant_ref: String,
@@ -222,7 +233,7 @@ fn answerability_fixture() -> Result<AnswerabilityFixture> {
             occurred_at: 107,
             outcome: "delivered_to_channel",
             job_ref: Some(BRIEF_REF),
-            trigger_ref: Some("commitment:party-reminder"),
+            trigger_ref: Some(PARTY_REMINDER_COMMITMENT_REF),
             policy_trace: &[
                 "delivery_window.async_surface_allowed",
                 "delivery_window.no_interrupt",
@@ -667,7 +678,7 @@ fn answerability_test_pack_why_message_at_2am_from_receipts_alone() -> Result<()
     );
     assert_eq!(
         receipt.trigger_ref.as_deref(),
-        Some("commitment:party-reminder"),
+        Some(PARTY_REMINDER_COMMITMENT_REF),
         "{question}: receipt does not link back to the triggering commitment"
     );
     Ok(())
@@ -1056,8 +1067,9 @@ fn answerability_test_pack_why_message_at_2am_gates_on_intent_source_before_trig
 
     // A present-but-broken `commitment:` suffix is a producer bug: it fails
     // typed and never collapses to Ok(None). `commitment:party-reminder` is the
-    // literal this pack already carries on the 2am receipt, and exactly one
-    // prefix comes off, so a doubled prefix does not resolve to the id inside.
+    // pre-ONE-1540 label shape — no producer emits it now, which is exactly why
+    // it belongs here — and exactly one prefix comes off, so a doubled prefix
+    // does not resolve to the id inside.
     let doubled = format!("commitment:{target}");
     for broken in ["commitment:", "commitment:party-reminder", doubled.as_str()] {
         let error = resolve_commitment_receipt_link(

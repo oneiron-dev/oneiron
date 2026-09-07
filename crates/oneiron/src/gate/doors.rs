@@ -1,15 +1,30 @@
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, claim_sensitivity_band};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass, claim_sensitivity_band,
+    dreamer_isolation_class,
+};
+use crate::compaction::turn_session_membership_in_txn;
+use crate::dreamer_consolidation::decode_consolidation_evidence;
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::vault::live_entity_row_in_txn;
-use crate::write_envelope::{WriteActor, WriteEnvelope};
+use crate::llm::{
+    AUTO_CHECK_VALUE_PREVIEW_BYTES, AutoCheckCandidate, AutoCheckOutcome, AutoChecker,
+    BoundedAutoChecker, truncate_on_char_boundary,
+};
+use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::store::{
+    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store,
+    checker_hold_receipt_reason,
+};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::write_envelope::{
+    WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, SourceLineage, WriteActor, WriteEnvelope,
+};
 
 use super::ceiling::PolicyApprovalCeiling;
 use super::confirm::{
@@ -62,6 +77,7 @@ pub(crate) fn check_claim_policy_for_write(
         ClaimGateWrite {
             body,
             envelope,
+            auto_checker: None,
             defer_metrics_until_commit: false,
         },
         policy,
@@ -94,6 +110,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         ClaimGateWrite {
             body,
             envelope,
+            auto_checker: None,
             defer_metrics_until_commit: false,
         },
         policy,
@@ -147,12 +164,18 @@ fn check_claim_policy_for_write_with_record_inner(
     let ClaimGateWrite {
         body,
         envelope,
+        auto_checker,
         defer_metrics_until_commit,
     } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
         validate_write_envelope(envelope)?;
     }
+
+    // Preserve the write's member identities for both source-trust checks:
+    // the evaluator below and the final Auto ceiling check. No member's
+    // permit can answer for a different member of the observed history.
+    let lineage = envelope.map(WriteEnvelope::lineage);
 
     // GATE-12: Dreamer authorship is detected exactly once, here, and the
     // provenance handle carries it into the evaluator input below. Pre-commit
@@ -175,7 +198,8 @@ fn check_claim_policy_for_write_with_record_inner(
     // unchanged — and every persisted Dreamer claim candidate, on every
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
-    let precommit_denial = if dreamer_run_id.is_some() && !operation_effect_body {
+    let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
+    let precommit_denial = if dreamer_candidate {
         dreamer_precommit_denial(store, &*wtxn, body)
     } else {
         None
@@ -218,7 +242,11 @@ fn check_claim_policy_for_write_with_record_inner(
             actor,
             GateContentKind::Claim,
             provenance,
-            mode.include_source_in_gate_input,
+            // Restricted lineage also needs the declared source's normal
+            // check and candidate sensitivity, even for non-Auto public writes.
+            // This boolean controls input shape, not permit authorization.
+            mode.include_source_in_gate_input
+                || envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit),
             agent_definition_ceiling,
             // Claim bodies carry no effect-fact axes the consent evaluator
             // could classify honestly; this door keeps its pre-DEC-0006
@@ -231,8 +259,29 @@ fn check_claim_policy_for_write_with_record_inner(
         // Deny aborts the caller's batch op before any claim-side write lands.
         let mut decision = match precommit_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
-            None => policy.evaluate_gate(&input),
+            None => policy.evaluate_gate_with_lineage(&input, lineage),
         };
+        // GATE-13: persona-core and mirroring-prone predicates are isolated
+        // for the DREAMER path only, and only AFTER the validity pass above.
+        // Authorship reuses the one detection computed at the top of this
+        // door, so there is no second notion of "is this a Dreamer write";
+        // owner/human writes never enter, and replicated replay never reaches
+        // this module at all.
+        //
+        // The guard is deny-first in both directions. A denial already
+        // returned — a GATE-12 validity refusal or a fail-closed policy
+        // verdict — is stricter than anything isolation would say, so it
+        // stands; isolation may only refuse or park a write that would
+        // otherwise have been allowed. It also runs BEFORE the
+        // critical-confirm attachment below, whose exact single-code match on
+        // `[PendingCriticalityFloor]` an isolation pend can therefore never
+        // satisfy: a persona-core write has no confirm-attached Auto path.
+        if dreamer_candidate
+            && decision.outcome() != GateOutcome::Deny
+            && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
+        {
+            decision = dreamer_isolation_decision(store, &*wtxn, body, isolation_class);
+        }
         let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(
                 &input,
@@ -243,6 +292,85 @@ fn check_claim_policy_for_write_with_record_inner(
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
         }
+
+        // ONE-1296: the host's auto checker is the LAST word on an ORDINARY
+        // Auto verdict, and only that. It runs after everything the engine
+        // decides for itself — pre-commit validity, the policy verdict,
+        // GATE-13 isolation, the critical-confirm attachment — so a write
+        // already refused or already parked is never consulted about, and the
+        // checker can only NARROW a verdict, never widen one.
+        //
+        // The consult is EXACTLY: a manifest names a checker, a checker is
+        // injected for this write, the ordinary decision is Auto, the write is
+        // an agent-class Dreamer write, and its source is one that requires an
+        // explicit auto permit. Human and owner writes therefore never reach a
+        // checker at all, and neither does any door that passes `None`.
+        //
+        // A confirm-attached Auto is excluded because it is not the ordinary
+        // verdict: the ordinary verdict there was a criticality-floor PEND,
+        // and what replaced it is an owner ceremony bound to this exact claim.
+        // A host hedge must not overrule a confirmation the owner just gave,
+        // and rewriting that decision would also drop the criticality marker
+        // the inbox classifies on.
+        //
+        // ONE-1314 widens this source check to source OR lineage.
+        // This only selects a checker consult; authorization still checks
+        // each restricted lineage member's own permit above and below.
+        let mut checker_receipt_reasons: Vec<String> = Vec::new();
+        if decision.outcome() == GateOutcome::Allow
+            && !attach_critical_confirm
+            && dreamer_candidate
+            && policy.auto_checker().is_some()
+            && let Some(checker) = auto_checker
+            && let Some(source) = body.source.filter(|source| {
+                source.requires_explicit_auto_permit()
+                    || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
+            })
+        {
+            let value_preview = auto_check_value_preview(&body.value);
+            let candidate = AutoCheckCandidate {
+                predicate: &body.predicate,
+                value_preview: &value_preview,
+                source,
+                lineage,
+                actor_class: &input.actor.actor_class,
+                sensitivity_band: claim_sensitivity_band(body),
+            };
+            // The concrete wrapper is required at every injection boundary:
+            // one capacity-bounded consult, with panic and timeout isolation.
+            match checker.check(&candidate) {
+                AutoCheckOutcome::Allow => {}
+                AutoCheckOutcome::Hold { reasons } => {
+                    // A host names its reasons in prose; the decision ledger's
+                    // receipt field is a closed token vocabulary vetted on the
+                    // append AND decode paths. Rendering them here is what
+                    // keeps a hold RECORDABLE: the raw text would fail the vet
+                    // and cost the whole decision row, so the write the
+                    // checker meant to park would fail with a corrupt-ledger
+                    // error instead of parking.
+                    checker_receipt_reasons = reasons
+                        .iter()
+                        .filter_map(|reason| checker_hold_receipt_reason(reason.as_str()))
+                        .collect();
+                    // Same rule `AutoCheckOutcome::normalized` already applies
+                    // one step earlier: a hold left naming no reason is a
+                    // malformed verdict, not a quiet hold, and an unexplained
+                    // refusal on the receipt is the one thing this seam must
+                    // not produce. Both verdicts park the write, so nothing
+                    // widens either way.
+                    decision = if checker_receipt_reasons.is_empty() {
+                        GateDecision::pending(vec![GateReasonCode::PendingCheckerUnavailable])
+                    } else {
+                        GateDecision::pending(vec![GateReasonCode::PendingChecker])
+                    };
+                }
+                AutoCheckOutcome::Unavailable => {
+                    decision =
+                        GateDecision::pending(vec![GateReasonCode::PendingCheckerUnavailable]);
+                }
+            }
+        }
+
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
         let created_at = crate::unix_seconds_now();
@@ -260,6 +388,11 @@ fn check_claim_policy_for_write_with_record_inner(
                 .receipt_reasons()
                 .iter()
                 .map(|reason| (*reason).to_owned())
+                // The checker's own reasons append to the receipt, rendered
+                // above into the ledger's token vocabulary: an owner reviewing
+                // a held write reads WHY the host held it, not just that
+                // something did.
+                .chain(checker_receipt_reasons)
                 .collect(),
             system_notices: Vec::new(),
             actor_class: input.actor.actor_class.clone(),
@@ -362,7 +495,23 @@ fn check_claim_policy_for_write_with_record_inner(
     }
 
     let actor_ref = write_envelope_actor_ref(envelope);
-    check_claim_source_trust(body, actor_ref.as_deref(), policy)
+    check_claim_source_trust(body, actor_ref.as_deref(), policy, lineage)
+}
+
+/// The bounded claim-value prefix an auto-check candidate carries (ONE-1296).
+///
+/// A string value is shown as itself; anything else is rendered through the
+/// MessagePack value's own display, because the engine does not interpret
+/// typed claim payloads. Either way the checker sees at most
+/// [`AUTO_CHECK_VALUE_PREVIEW_BYTES`], truncated on a character boundary: this
+/// seam asks for a second opinion on a candidate, it is not a disclosure
+/// channel for whole claim values.
+fn auto_check_value_preview(value: &Value) -> String {
+    let rendered = match value.as_str() {
+        Some(text) => text.to_owned(),
+        None => value.to_string(),
+    };
+    truncate_on_char_boundary(&rendered, AUTO_CHECK_VALUE_PREVIEW_BYTES).to_owned()
 }
 
 /// The hex actor ref an envelope attributes a write to, for source-trust row
@@ -384,6 +533,13 @@ pub(crate) struct GateWriteMode {
 pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) body: &'a ClaimBody,
     pub(crate) envelope: Option<&'a WriteEnvelope>,
+    /// The host's auto checker for THIS write (ONE-1296), or `None`.
+    ///
+    /// Injection rides the write options and nothing else: the checker is
+    /// never stored on the `Store` or on a resolved `PolicyManifestResolution`,
+    /// so there is no hidden mutable host state a later write could inherit,
+    /// and every door that does not opt in is unchanged by construction.
+    pub(crate) auto_checker: Option<&'a BoundedAutoChecker>,
     pub(crate) defer_metrics_until_commit: bool,
 }
 
@@ -416,7 +572,14 @@ pub(crate) fn check_reserved_claim_policy(
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     let actor_ref = write_envelope_actor_ref(envelope);
-    check_claim_source_trust(body, actor_ref.as_deref(), policy)
+    // Envelope-bearing local write path (the batch reserved-predicate door),
+    // so it reads the same two axes the main write door reads.
+    check_claim_source_trust(
+        body,
+        actor_ref.as_deref(),
+        policy,
+        envelope.map(WriteEnvelope::lineage),
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -507,6 +670,122 @@ fn dreamer_precommit_denial(
     .err()
 }
 
+/// How many distinct SESSION entities a persona-core Dreamer write must cite
+/// before it may be parked for owner review (GATE-13).
+///
+/// Two is the smallest number that cannot be one conversation. A persona head
+/// moves on DELIBERATE transformation — something the owner returned to across
+/// sittings — so a single cycle, however emphatic inside itself, is refused
+/// rather than queued.
+const PERSONA_CORE_MIN_DISTINCT_SESSIONS: usize = 2;
+
+/// The isolation verdict for one Dreamer-authored candidate whose predicate
+/// carries an isolation class.
+///
+/// Both classes force the ceiling to Proposed and both carry the EXISTING
+/// criticality marker beside their own code, so the inbox projection keeps
+/// classifying them `ManifestCritical` through the equality it already has —
+/// no new inbox variant, and no dial that can waive the row.
+fn dreamer_isolation_decision(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+    isolation_class: DreamerIsolationClass,
+) -> GateDecision {
+    match isolation_class {
+        DreamerIsolationClass::PersonaCore => {
+            let sessions = distinct_evidence_session_count(store, txn, body);
+            if sessions < PERSONA_CORE_MIN_DISTINCT_SESSIONS {
+                GateDecision::deny(GateReasonCode::DenyPersonaSingleCycle)
+            } else {
+                GateDecision::pending(vec![
+                    GateReasonCode::PendingPersonaIsolation,
+                    GateReasonCode::PendingCriticalityFloor,
+                ])
+            }
+        }
+        DreamerIsolationClass::MirroringProne => GateDecision::pending(vec![
+            GateReasonCode::PendingMirroringIsolation,
+            GateReasonCode::PendingCriticalityFloor,
+        ]),
+    }
+}
+
+/// Counts the DISTINCT sittings the candidate's own evidence reaches.
+///
+/// Read from the candidate's `candidate_evidence` payload through the same
+/// codec the GATE-12 floor uses, and resolved through the CALLER's
+/// transaction so a turn written earlier in this write transaction still
+/// answers. Every unreadable state is non-evidence rather than an abort: a
+/// legacy payload shape, a structurally broken envelope, a ref that does not
+/// resolve, a ref that resolves to something other than a TURN, a turn with
+/// no recorded sitting, and a recorded sitting that does not resolve to a
+/// live SESSION all fail closed and simply do not count.
+fn distinct_evidence_session_count(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> usize {
+    let Some(Value::Map(entries)) = body.evidence.as_ref() else {
+        return 0;
+    };
+    let Some(candidate_evidence) = entries.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)).then_some(value)
+    }) else {
+        return 0;
+    };
+    let Ok(Some(evidence)) = decode_consolidation_evidence(candidate_evidence) else {
+        return 0;
+    };
+
+    let mut sessions: Vec<EntityId> = Vec::new();
+    for entity_ref in &evidence.refs {
+        let Some(session) = evidence_ref_session(store, txn, entity_ref) else {
+            continue;
+        };
+        if !sessions.contains(&session) {
+            sessions.push(session);
+        }
+    }
+    sessions.len()
+}
+
+/// The sitting one evidence ref speaks from: the ref must resolve to a live
+/// TURN, that turn must carry a RECORDED session membership, and the
+/// membership must itself resolve to a live SESSION.
+///
+/// Membership is the engine-written fact recorded beside the turn at witness
+/// time, never a caller-authored field on the turn body — a body a writer
+/// controls could otherwise name any sitting it liked and manufacture the
+/// second cycle this floor exists to require.
+fn evidence_ref_session(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_ref: &EntityId,
+) -> Option<EntityId> {
+    if !live_entity_row_has_type(store, txn, entity_ref, ENTITY_TYPE_TURN) {
+        return None;
+    }
+    let session = turn_session_membership_in_txn(store, txn, entity_ref)
+        .ok()
+        .flatten()?;
+    live_entity_row_has_type(store, txn, &session, ENTITY_TYPE_SESSION).then_some(session)
+}
+
+/// Whether `id` reads back as a LIVE row of exactly `entity_type`. A read
+/// error, an absent row and an erased shell are all `false`.
+fn live_entity_row_has_type(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> bool {
+    matches!(
+        live_entity_row_in_txn(store, txn, id),
+        Ok(LiveEntityRow::Live { entity_type: found, .. }) if found == entity_type
+    )
+}
+
 /// The Dreamer run this write is authored by, if any.
 ///
 /// Authorship is a property of the WRITE, read off provenance and
@@ -591,7 +870,9 @@ pub(crate) fn check_edge_provenance_claim_policy(
     }
 
     let actor_ref = record.actor_entity_ref.to_hex();
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
+    // Edge-provenance claims arrive with no write envelope, so there is no
+    // observed lineage to read: declared-source only, exactly as before.
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, None)
 }
 
 // The claim-door assembler takes the full axis tuple one call site at a time

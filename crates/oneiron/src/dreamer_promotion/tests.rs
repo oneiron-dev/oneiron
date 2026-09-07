@@ -1159,3 +1159,498 @@ fn tool_output_meet_promotion_no_longer_lands_auto_on_an_unsigned_manifest() -> 
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// ONE-1296: promotion through the checker-aware terminal — the ticket's one
+// production injection point. Fixtures stay local to this module.
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
+
+const CHECKER_REF: &str = "host-checker-v1";
+
+struct CountingAutoChecker {
+    outcome: AutoCheckOutcome,
+    calls: AtomicUsize,
+}
+
+impl CountingAutoChecker {
+    fn new(outcome: AutoCheckOutcome) -> Arc<Self> {
+        Arc::new(Self {
+            outcome,
+            calls: AtomicUsize::new(0),
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(AtomicOrdering::Relaxed)
+    }
+}
+
+impl AutoChecker for CountingAutoChecker {
+    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+        let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+        self.outcome.clone()
+    }
+}
+
+/// [`auto_permitting_manifest`] plus the `auto_checker` knob that arms the
+/// consult.
+fn auto_checker_manifest(checker_ref: &str) -> Vec<u8> {
+    let encoded = auto_permitting_manifest();
+    let mut cursor = encoded.as_slice();
+    let mut manifest =
+        rmpv::decode::read_value(&mut cursor).expect("decode the promotion test manifest");
+    let Mp::Map(entries) = &mut manifest else {
+        panic!("the promotion test manifest is a map");
+    };
+    entries.push((Mp::from("auto_checker"), Mp::from(checker_ref)));
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &manifest).expect("encode the policy manifest");
+    out
+}
+
+fn open_auto_checker_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_vault();
+    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+    crate::test_util::put_policy_manifest_bytes(&vault, id, &auto_checker_manifest(CHECKER_REF))
+        .expect("seed the auto-permitting manifest with a checker knob");
+    (dir, vault)
+}
+
+fn assert_checker_rejection_receipt(
+    vault: &Vault,
+    claim_id: &EntityId,
+    reason: &str,
+    receipt_reasons: &[&str],
+) -> Result<crate::store::GateDecisionRecord> {
+    let mut records: Vec<_> = vault
+        .store
+        .gate_decisions(1_000)?
+        .into_iter()
+        .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+        .collect();
+    assert_eq!(
+        records.len(),
+        1,
+        "one actual rejection, no synthetic allow receipt"
+    );
+    let record = records.pop().expect("rejection receipt");
+    assert_eq!(record.outcome, "pending");
+    assert_eq!(record.reason_codes, [reason]);
+    assert_eq!(record.receipt_reasons, receipt_reasons);
+    assert_eq!(record.actor_class, "agent");
+    assert!(vault.get_claim(claim_id)?.is_none());
+    assert!(vault.pending_gate_consents(10)?.is_empty());
+    Ok(record)
+}
+
+#[test]
+fn promotion_consults_the_checker_once_and_lands_auto_on_allow() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = CountingAutoChecker::new(AutoCheckOutcome::Allow);
+
+    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&bounded_checker),
+    )?;
+
+    assert_eq!(outcome.landed, vec![claim_id]);
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(checker.calls(), 1, "exactly one consult per candidate");
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim landed").approval,
+        ClaimApprovalStatus::Auto
+    );
+    let records: Vec<_> = vault
+        .store
+        .gate_decisions(1_000)?
+        .into_iter()
+        .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+        .collect();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].outcome, "allow");
+    Ok(())
+}
+
+/// A hold refuses the Auto request. On THIS path that means the whole write
+/// rolls back and the candidate is reported as rejected — ARCH-0067 §7 keeps
+/// standing: consolidation mints no owner-review row behind the Dreamer's
+/// back, whoever narrowed the verdict.
+#[test]
+fn promotion_rejects_a_held_candidate_without_minting_a_review_row() -> Result<()> {
+    let (dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = CountingAutoChecker::new(AutoCheckOutcome::Hold {
+        reasons: vec!["checker: hedged verdict".to_owned()],
+    });
+
+    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&bounded_checker),
+    )?;
+
+    assert!(outcome.landed.is_empty());
+    assert!(outcome.pended.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert_eq!(outcome.rejected[0].0, claim_id);
+    assert!(
+        outcome.rejected[0].1.contains("gate.pending.checker"),
+        "the refusal names the checker: {}",
+        outcome.rejected[0].1
+    );
+    assert!(
+        !outcome.rejected[0]
+            .1
+            .contains("gate.pending.checker.unavailable"),
+        "a hold is not an unavailable checker: {}",
+        outcome.rejected[0].1
+    );
+    assert_eq!(checker.calls(), 1);
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert!(vault.pending_gate_consents(10)?.is_empty());
+    let receipt = assert_checker_rejection_receipt(
+        &vault,
+        &claim_id,
+        "gate.pending.checker",
+        &["checker_checker_hedged_verdict"],
+    )?;
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(
+        assert_checker_rejection_receipt(
+            &reopened,
+            &claim_id,
+            "gate.pending.checker",
+            &["checker_checker_hedged_verdict"],
+        )?,
+        receipt,
+        "the actual checker refusal and its reasons survive reopen"
+    );
+    Ok(())
+}
+
+/// Every way a checker can fail to answer fails closed the same way.
+#[test]
+fn promotion_fails_closed_when_the_checker_cannot_answer() -> Result<()> {
+    let (dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
+
+    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&bounded_checker),
+    )?;
+
+    assert!(outcome.landed.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert!(
+        outcome.rejected[0]
+            .1
+            .contains("gate.pending.checker.unavailable"),
+        "an unanswerable checker fails closed: {}",
+        outcome.rejected[0].1
+    );
+    assert!(vault.get_claim(&claim_id)?.is_none());
+    assert_eq!(checker.calls(), 1);
+    let receipt = assert_checker_rejection_receipt(
+        &vault,
+        &claim_id,
+        "gate.pending.checker.unavailable",
+        &[],
+    )?;
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(
+        assert_checker_rejection_receipt(
+            &reopened,
+            &claim_id,
+            "gate.pending.checker.unavailable",
+            &[],
+        )?,
+        receipt,
+        "the actual checker refusal and its reasons survive reopen"
+    );
+    Ok(())
+}
+
+struct PanickingPromotionAutoChecker;
+
+impl AutoChecker for PanickingPromotionAutoChecker {
+    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+        panic!("host checker panic at the public promotion boundary");
+    }
+}
+
+#[test]
+fn promotion_isolates_panicking_checkers_and_records_unavailable() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let checker = BoundedAutoChecker::new(Arc::new(PanickingPromotionAutoChecker));
+
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&checker),
+    )?;
+
+    assert!(outcome.landed.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert!(
+        outcome.rejected[0]
+            .1
+            .contains("gate.pending.checker.unavailable")
+    );
+    assert_checker_rejection_receipt(&vault, &claim_id, "gate.pending.checker.unavailable", &[])?;
+    Ok(())
+}
+
+struct BlockingPromotionAutoChecker {
+    calls: AtomicUsize,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl AutoChecker for BlockingPromotionAutoChecker {
+    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+        let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+        self.release
+            .lock()
+            .expect("release lock")
+            .recv()
+            .expect("release blocked promotion checker");
+        AutoCheckOutcome::Allow
+    }
+}
+
+#[test]
+fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let candidates: Vec<_> = (0..3)
+        .map(|_| candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]))
+        .collect();
+    let ids: Vec<_> = candidates
+        .iter()
+        .map(|candidate| candidate.claim_id)
+        .collect();
+    let (release, waiting) = std::sync::mpsc::sync_channel(1);
+    let host = Arc::new(BlockingPromotionAutoChecker {
+        calls: AtomicUsize::new(0),
+        release: std::sync::Mutex::new(waiting),
+    });
+    let checker = BoundedAutoChecker::new(host.clone());
+    let started = std::time::Instant::now();
+
+    let outcome =
+        promote_consolidated_claims_with_checker(&vault, &fixture.run, candidates, Some(&checker))?;
+
+    assert!(outcome.landed.is_empty());
+    assert!(outcome.pended.is_empty());
+    assert_eq!(outcome.rejected.len(), ids.len());
+    assert_eq!(host.calls.load(AtomicOrdering::Relaxed), 1);
+    assert!(
+        started.elapsed()
+            < std::time::Duration::from_millis(crate::llm::AUTO_CHECKER_DEADLINE_MS * 2),
+        "only the first consult may wait for the deadline"
+    );
+    for id in ids {
+        assert_checker_rejection_receipt(&vault, &id, "gate.pending.checker.unavailable", &[])?;
+    }
+    // Drop must not join a host that is still blocked.
+    drop(checker);
+    release.send(()).expect("release the sole host worker");
+    Ok(())
+}
+
+#[test]
+fn checked_promotion_rolls_back_claim_and_receipt_when_supersession_fails() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let head = user_stated_head(&vault, &fixture, "profile.name")?;
+    let head_before = vault.get_raw(&head)?.expect("existing head");
+    let receipts_before = vault.store.gate_decisions(1_000)?;
+    let mut promoted = candidate(&fixture, "profile.name", "Different", vec![fixture.turn]);
+    promoted.supersedes = Some(head);
+    let claim_id = promoted.claim_id;
+    let host = CountingAutoChecker::new(AutoCheckOutcome::Allow);
+    let checker = BoundedAutoChecker::new(host.clone());
+
+    let outcome = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        vec![promoted],
+        Some(&checker),
+    )?;
+
+    assert!(outcome.landed.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert_eq!(host.calls(), 1);
+    assert!(vault.get_raw(&claim_id)?.is_none());
+    assert_eq!(vault.get_raw(&head)?.expect("unchanged head"), head_before);
+    assert_eq!(vault.store.gate_decisions(1_000)?, receipts_before);
+    assert!(vault.pending_gate_consents(10)?.is_empty());
+    Ok(())
+}
+
+/// The compat entry point passes no checker: a vault with the knob configured
+/// but no checker injected promotes exactly as it did before this ticket.
+#[test]
+fn promotion_without_an_injected_checker_is_unchanged() -> Result<()> {
+    let (_dir, vault) = open_auto_checker_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+
+    assert_eq!(outcome.landed, vec![claim_id]);
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim landed").approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod vad_deferral_tests {
+    use super::*;
+    use crate::affect::{CLAIM_VAD_REAPPRAISAL_PREDICATE, Vad, VadAnnotation, VadAnnotationSource};
+    use crate::claim::ClaimLifecycleStatus;
+
+    const FULL_VAD: Vad = Vad {
+        valence: -0.5,
+        arousal: 0.75,
+        dominance: 0.25,
+    };
+
+    fn annotated_fixture(vault: &Vault) -> Result<PromotionFixture> {
+        let fixture = fixture(vault)?;
+        vault.annotate_turn_vad(
+            &fixture.turn,
+            VadAnnotation::new(FULL_VAD, VadAnnotationSource::ModelInference, 7)?,
+        )?;
+        Ok(fixture)
+    }
+
+    fn active_states(vault: &Vault, claim: EntityId) -> Result<Vec<EntityId>> {
+        let mut states = Vec::new();
+        for edge in vault.edges_in(&claim)? {
+            if edge.kind == EdgeKind::ClaimOf
+                && let Some(body) = vault.get_claim(&edge.target)?
+                && body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                states.push(edge.target);
+            }
+        }
+        Ok(states)
+    }
+
+    #[test]
+    fn promotion_auto_all_landed_classes_must_remain_non_consolidatable_tripwire() -> Result<()> {
+        for source in [
+            ClaimSource::Generated,
+            ClaimSource::ToolOutput,
+            ClaimSource::Imported,
+        ] {
+            let (_dir, vault) = open_auto_vault();
+            let fixture = annotated_fixture(&vault)?;
+            let mut promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);
+            promoted.evidence_meet = source;
+            let claim = promoted.claim_id;
+            // Pre-existing incident edges make an accidental population visible
+            // during promotion, before any canonical decline could clear it.
+            vault.put_edge(&claim, EdgeKind::Mentions, &fixture.subject, 0.6)?;
+            vault.put_edge(&fixture.subject, EdgeKind::Supports, &claim, 1.0)?;
+            let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+            assert_eq!(outcome.landed, vec![claim]);
+            assert!(outcome.rejected.is_empty());
+            assert!(outcome.pended.is_empty());
+            let body = vault.get_claim(&claim)?.expect("landed Auto claim");
+            assert_eq!(body.approval, ClaimApprovalStatus::Auto);
+            assert_eq!(body.source, Some(source));
+            assert!(
+                !claim_consolidatable(&body),
+                "promotion lane changed: revisit VAD trigger"
+            );
+            assert!(active_states(&vault, claim)?.is_empty());
+            let mut semantic = 0;
+            for edge in vault
+                .edges_out(&claim)?
+                .into_iter()
+                .chain(vault.edges_in(&claim)?)
+            {
+                if let Some(vad) = edge.vad {
+                    semantic += 1;
+                    assert_eq!(vad, Vad::NEUTRAL);
+                }
+            }
+            assert!(
+                semantic >= 2,
+                "incident semantic edges make the tripwire non-vacuous"
+            );
+            assert!(matches!(
+                vault.consolidate_claim_vad_now(&claim, 11_000),
+                Err(Error::InvalidClaimBody("claim is not consolidatable"))
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn promotion_deferred_approved_fixture_populates_full_vad_non_vacuously() -> Result<()> {
+        let (_dir, vault) = open_auto_vault();
+        let fixture = annotated_fixture(&vault)?;
+        let promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);
+        let claim = promoted.claim_id;
+        let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+        assert_eq!(outcome.landed, vec![claim]);
+        assert!(active_states(&vault, claim)?.is_empty());
+        vault.put_edge(&claim, EdgeKind::Mentions, &fixture.subject, 0.6)?;
+        vault.put_edge(&claim, EdgeKind::BelongsTo, &fixture.subject, 1.0)?;
+        // Fixture-only overwrite: ordinary Auto promotions have no pending
+        // consent. This is not a new production approval door.
+        let mut body = vault.get_claim(&claim)?.expect("landed claim");
+        body.approval = ClaimApprovalStatus::Approved;
+        vault.put_claim(&claim, &body, occurred(9_000), 9_000)?;
+        let populated = vault.consolidate_claim_vad_now(&claim, 11_000)?;
+        assert_eq!(populated.vad, Some(FULL_VAD));
+        assert_eq!(populated.evidence_turns.len(), 1);
+        assert!(populated.structural_edges_skipped >= 2);
+        let state = populated.reappraisal.created_claim_id.expect("new state");
+        assert_eq!(active_states(&vault, claim)?, vec![state]);
+        for edge in vault.edges_out(&claim)? {
+            if edge.kind == EdgeKind::Mentions {
+                assert_eq!(edge.vad, Some(FULL_VAD));
+            } else if edge.kind == EdgeKind::BelongsTo {
+                assert_eq!(edge.vad, None);
+            }
+        }
+        let retry = vault.consolidate_claim_vad_now(&claim, 12_000)?;
+        assert_eq!(retry.reappraisal.active_claim_id, Some(state));
+        assert_eq!(retry.reappraisal.created_claim_id, None);
+        Ok(())
+    }
+}
