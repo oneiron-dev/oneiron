@@ -1,7 +1,8 @@
 //! Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload.
 //!
-//! Corpus application is a single-owner operation. Entity check/create is atomic;
-//! claim and edge existence checks precede separate writes under that ownership
+//! Corpus application is a single-owner operation. Entity creation and its exact
+//! provider/kind/external-id binding are atomic; reuse requires that binding.
+//! Claim and edge existence checks precede separate writes under that ownership
 //! constraint. Claims are admitted only after the resolver transaction commits.
 //! Storage failures can leave partial progress; reruns reuse deterministic ids and
 //! existing edges, including provenanced edges, without rewriting them. Changed
@@ -23,6 +24,8 @@ use crate::ingest::{
 use crate::provenance::validate_actor_class;
 use crate::temporal::TimeRange;
 use crate::{Vault, WriteActor, unix_seconds_now};
+
+mod source_binding;
 
 pub const LINKEDIN_LEAD_CORPUS_SCHEMA_VERSION: u16 = 1;
 
@@ -189,24 +192,7 @@ pub(crate) fn resolve_linkedin_entity(
     let key = LinkedInExternalKey::new(key.kind, &key.external_id)?;
     let id = derived_id(b"oneiron.linkedin.entity.v1", &[&key.source_ref()])?;
     let disposition =
-        vault.with_write_txn(|wtxn| match vault.get_entity_type_in_txn(wtxn, &id)? {
-            Some(kind) if kind == key.kind.entity_type() => Ok(Disposition::Reused),
-            Some(_) => Err(Error::InvariantViolation(
-                "LinkedIn derived entity type mismatch",
-            )),
-            None => {
-                let learned_at = unix_seconds_now();
-                let occurred = TimeRange {
-                    start: learned_at,
-                    end: learned_at,
-                };
-                vault
-                    .batch_in()
-                    .put(&id, key.kind.entity_type(), occurred, learned_at, b"")
-                    .apply(wtxn)?;
-                Ok(Disposition::Created)
-            }
-        })?;
+        vault.with_write_txn(|wtxn| source_binding::resolve_in_txn(vault, wtxn, &id, &key))?;
     Ok((id, disposition))
 }
 
@@ -388,16 +374,32 @@ fn resolve_employment(
     vault: &Vault,
     person: EntityId,
     company: EntityId,
+    key: &LinkedInExternalKey,
+    actor: WriteActor,
 ) -> Result<Disposition, LinkedInResolutionError> {
     let kind = EdgeKind::EmployedBy;
-    if vault.edge_exists(&person, kind, &company)? {
-        return Ok(Disposition::Reused);
-    }
+    let source_ref = key.source_ref();
+    let claim_id = derived_id(
+        b"oneiron.linkedin.claim.v1",
+        &[&source_ref, "linkedin.employed_by"],
+    )?;
+    let evidence = rmpv::Value::Map(vec![
+        (rmpv::Value::from("kind"), rmpv::Value::from("imported_evidence")),
+        (rmpv::Value::from("source_id"), rmpv::Value::from("linkedin-lead-corpus")),
+        (rmpv::Value::from("source_record_id"), rmpv::Value::from(source_ref)),
+    ]);
     let weight = kind.default_weight().ok_or(Error::InvariantViolation(
         "EmployedBy has no default weight",
     ))?;
-    vault.put_edge(&person, kind, &company, weight)?;
-    Ok(Disposition::Created)
+    let created = vault.resolve_imported_edge_provenance(crate::provenance::ImportedEdgeProvenance {
+        claim_id,
+        subject: crate::provenance::EdgeRef::new(person, kind, company),
+        actor,
+        evidence,
+        weight,
+        learned_at: unix_seconds_now(),
+    })?;
+    Ok(if created { Disposition::Created } else { Disposition::Reused })
 }
 
 pub(crate) fn apply_linkedin_lead_corpus(
@@ -456,7 +458,7 @@ pub(crate) fn apply_linkedin_lead_corpus(
             .ok_or(Error::InvariantViolation(
                 "validated LinkedIn company missing",
             ))?;
-        match resolve_employment(vault, id, *company)? {
+        match resolve_employment(vault, id, *company, &key, actor)? {
             Disposition::Created => report.employed_by_created += 1,
             Disposition::Reused => report.employed_by_reused += 1,
         }

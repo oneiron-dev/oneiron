@@ -1,9 +1,11 @@
 use super::*;
+
+mod employment;
+mod source_binding;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::provenance::{EdgeRef, SupersessionStatus};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
@@ -42,6 +44,7 @@ fn setup() -> (tempfile::TempDir, Vault, WriteActor) {
     let vault = Vault::open(temp.path(), VaultConfig::default()).expect("fixture");
     let id = EntityId::from_bytes([0x31; 16]).expect("fixture");
     put_fixture_entity(&vault, &id, ENTITY_TYPE_PERSON, b"").expect("fixture");
+    employment::permit_imported(&vault, id).expect("fixture");
     (temp, vault, WriteActor::new(id, EdgeActorClass::Human))
 }
 
@@ -125,38 +128,6 @@ fn display_name_claim_id(person: bool, i: usize) -> EntityId {
 }
 
 #[test]
-fn linkedin_entity_id_is_domain_separated_and_stable() -> TestResult {
-    let (temp, vault, _) = setup();
-    let key = LinkedInExternalKey::person(" \tsynthetic-shared\r\n")?;
-    assert_eq!(key.source_ref(), "linkedin:person:synthetic-shared");
-    let expected = blake3::hash(b"oneiron.linkedin.entity.v1linkedin:person:synthetic-shared");
-    let before = unix_seconds_now();
-    let (person, disposition) = resolve_linkedin_entity(&vault, key.clone())?;
-    assert_eq!(person.as_bytes().as_slice(), &expected.as_bytes()[..16]);
-    assert_eq!(disposition, Disposition::Created);
-    let raw = vault.get_raw(&person)?.expect("fixture");
-    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN);
-    let header = EntityMetadataHeader::parse(&raw).expect("fixture");
-    assert_eq!(header.entity_type, ENTITY_TYPE_PERSON);
-    assert_eq!(
-        (header.occurred_start, header.occurred_end),
-        (header.learned_at, header.learned_at)
-    );
-    assert!((before..=unix_seconds_now()).contains(&header.learned_at));
-    let company = LinkedInExternalKey::company("synthetic-shared")?;
-    assert_eq!(company.source_ref(), "linkedin:company:synthetic-shared");
-    assert_ne!(person, resolve_linkedin_entity(&vault, company)?.0);
-    drop(vault);
-    let reopened = Vault::open(temp.path(), VaultConfig::default())?;
-    assert_eq!(
-        resolve_linkedin_entity(&reopened, key)?,
-        (person, Disposition::Reused)
-    );
-    assert_eq!(reopened.get_raw(&person)?.expect("fixture"), raw);
-    Ok(())
-}
-
-#[test]
 fn linkedin_external_ids_are_opaque_and_resolver_revalidates() -> TestResult {
     for value in [
         "Synthetic:ID /?x=1",
@@ -222,25 +193,6 @@ fn linkedin_resolver_concurrent_invocations_create_once() -> TestResult {
 }
 
 #[test]
-fn linkedin_resolver_reuses_expected_type_and_refuses_wrong_type() -> TestResult {
-    for kind in [ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON] {
-        let (_temp, vault, _) = setup();
-        let external = key(true, 1);
-        let expected = id(&external);
-        put_fixture_entity(&vault, &expected, kind, b"synthetic")?;
-        let before = snapshot(&vault);
-        let resolved = resolve_linkedin_entity(&vault, external);
-        if kind == ENTITY_TYPE_PERSON {
-            assert_eq!(resolved?, (expected, Disposition::Reused));
-        } else {
-            assert!(matches!(resolved, Err(LinkedInResolutionError::Vault(_))));
-        }
-        assert_eq!(snapshot(&vault), before);
-    }
-    Ok(())
-}
-
-#[test]
 fn linkedin_preload_second_run_creates_nothing() -> TestResult {
     let (_temp, vault, actor) = setup();
     let first = apply_linkedin_lead_corpus(&vault, fixture(), actor)?;
@@ -290,7 +242,7 @@ fn linkedin_preload_partial_prior_state_converges_without_duplicates() -> TestRe
     let (_clean_temp, clean, clean_actor) = setup();
     let company = resolve_linkedin_entity(&vault, key(false, 1))?.0;
     let person = resolve_linkedin_entity(&vault, key(true, 1))?.0;
-    resolve_employment(&vault, person, company)?;
+    resolve_employment(&vault, person, company, &key(true, 1), actor)?;
     assert_eq!(
         admit_facts(
             &vault,
@@ -419,7 +371,7 @@ fn linkedin_preload_facts_use_imported_evidence_admission() -> TestResult {
             }
         }
     }
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 15);
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?, 18);
     Ok(())
 }
 
@@ -565,15 +517,8 @@ fn linkedin_preload_trims_ids_and_allows_same_bytes_across_kinds() -> TestResult
 fn linkedin_preload_preserves_provenanced_employment_edges() -> TestResult {
     let (_temp, vault, actor) = setup();
     apply_linkedin_lead_corpus(&vault, fixture(), actor)?;
-    let bound = vault.as_actor(actor.entity_ref(), EdgeActorClass::Human);
-    let body = bound.provenance_body(0.9, SupersessionStatus::Confirmed);
-    let subject = EdgeRef::new(id(&key(true, 1)), EdgeKind::EmployedBy, id(&key(false, 1)));
-    bound.put_edge_provenance(
-        &EntityId::from_bytes([0x32; 16])?,
-        &subject,
-        &body,
-        unix_seconds_now(),
-    )?;
+    let claim_id = employment::employment_claim_id();
+    vault.retract_edge_provenance(&claim_id, unix_seconds_now())?;
     let before = snapshot(&vault);
     assert_eq!(
         apply_linkedin_lead_corpus(&vault, fixture(), actor)?.employed_by_reused,
