@@ -1509,15 +1509,6 @@ function Agents() {
             <h2 className="rh-name">The house</h2>
             <span className="rh-role">Everyone who works here, and you. Antevon routes what you leave unaddressed.</span>
             <div className="rh-line">
-              <span className="views" role="group" aria-label="layer">
-                <button type="button" className="act" aria-pressed={layer === 'thread'} title="the conversation" onClick={(e) => { markCued(e); setLayer('thread'); cue('toggle') }}>
-                  thread
-                </button>
-                <span className="sep" aria-hidden="true">·</span>
-                <button type="button" className="act" aria-pressed={pane} title="the work pane · what runs now and ran today" onClick={(e) => { markCued(e); setPane((x) => !x); cue('toggle') }}>
-                  runs
-                </button>
-              </span>
               <span className="meta-line" title="what the roster spent today · as of 14:07">
                 ¥280 today · as of 14:07
               </span>
@@ -1547,60 +1538,17 @@ function Agents() {
             <span className="rh-role">{c.role || <span className="unnamed">Say what it should do, below.</span>}</span>
           )}
           <div className="rh-line">
-            <span className="views" role="group" aria-label="layer">
-              <button type="button" className="act" aria-pressed={layer === 'thread'} title="the conversation with it" onClick={(e) => { markCued(e); setLayer('thread'); cue('toggle') }}>
-                thread
+            {editing ? (
+              <button type="button" className="act" title="back to the conversation" onClick={(e) => { markCued(e); setLayer('thread'); cue('toggle') }}>
+                ‹ thread
               </button>
-              <span className="sep" aria-hidden="true">·</span>
-              <button type="button" className="act" aria-pressed={layer === 'setup'} title="how it is set up · one layer down" onClick={(e) => { markCued(e); setLayer('setup'); cue('toggle') }}>
-                setup
+            ) : (
+              <button type="button" className="act" title="how it is set up · one layer down" onClick={(e) => { markCued(e); setLayer('setup'); cue('toggle') }}>
+                setup ›
               </button>
-              {c.fixture ? (
-                <>
-                  <span className="sep" aria-hidden="true">·</span>
-                  <button type="button" className="act" aria-pressed={pane} title="the work pane · what it runs now and ran today" onClick={(e) => { markCued(e); setPane((x) => !x); cue('toggle') }}>
-                    runs
-                  </button>
-                </>
-              ) : null}
-            </span>
-            <span className="rh-acts">
-              {c.fixture ? (
-                c.id === 'antevon' ? (
-                  <span className="always" title="the house mind is the vault’s own · it wakes with the vault, it does not pause">
-                    always on
-                  </span>
-                ) : paused[c.id] ? (
-                  <>
-                    <span className="meta-line" title="nothing new starts · the live run finishes">
-                      paused {paused[c.id]}
-                    </span>
-                    <button className="act" title="verb: resume_agent" onClick={resume(c.id)}>
-                      resume
-                    </button>
-                  </>
-                ) : (
-                  <button className="act" title="verb: pause_agent · the live run finishes, nothing new starts" onClick={pause(c.id)}>
-                    pause
-                  </button>
-                )
-              ) : null}
-              {c.fixture && isLive(c.id) ? (
-                <button
-                  type="button"
-                  className="act"
-                  title="the live run, in the agent line · steer it there"
-                  onClick={(e) => {
-                    markCued(e)
-                    openChat(c.id as RunKey)
-                  }}
-                >
-                  steer the run
-                </button>
-              ) : null}
-              <Saved id={c.id} k="identity" />
-            </span>
-            {c.fixture ? (
+            )}
+            <Saved id={c.id} k="identity" />
+            {editing && c.fixture ? (
               <span className="meta-line">
                 <span title={c.fixture.modelTip}>{c.fixture.model}</span>
                 {' · '}
@@ -1643,13 +1591,13 @@ function Agents() {
             </span>
             <Chevron size={8} />
           </button>
-        ) : (
-          <span className="agent-chip" title={isNew ? 'Antevon sets it up with you' : `you are talking to ${chipName}`}>
+        ) : isNew ? (
+          <span className="agent-chip" title="Antevon sets it up with you">
             <span className="aname" data-agent={chipAgent}>
               {chipName}
             </span>
           </span>
-        )}
+        ) : null}
         <input
           ref={inputRef}
           className="gask-input"
@@ -1662,6 +1610,24 @@ function Agents() {
             if (e.key === 'Enter') send()
           }}
         />
+        {current?.fixture && !isHouse ? (
+          <span className="line-acts">
+            {current.id === 'antevon' ? null : paused[current.id] ? (
+              <>
+                <span className="meta-line" title="nothing new starts · the live run finishes">
+                  paused {paused[current.id]}
+                </span>
+                <button type="button" className="act" title={`resume ${current.name}`} onClick={resume(current.id)}>
+                  resume
+                </button>
+              </>
+            ) : (
+              <button type="button" className="act" title={`pause ${current.name} · nothing new starts, the live run finishes`} onClick={pause(current.id)}>
+                pause
+              </button>
+            )}
+          </span>
+        ) : null}
         {isHouse ? (
           <div className="amenu" hidden={!amenuOpen} role="menu" aria-label="address">
             <span className="label">address</span>
@@ -1699,32 +1665,6 @@ function Agents() {
   return (
     <main className="pane" id="pane">
       <div className="pane-body">
-        <div className="pane-head">
-          <h1>Agents</h1>
-          <span className="pane-tools">
-            <button type="button" className="act" title="a new agent · Antevon proposes the pieces, you confirm each" onClick={openNew}>
-              + new agent
-            </button>
-            <button
-              className="hint-btn"
-              aria-expanded={hintOpen}
-              aria-controls="agents-why"
-              title="what this screen is"
-              onClick={() => {
-                setHintOpen((o) => !o)
-                cue('toggle')
-              }}
-            >
-              ?
-            </button>
-          </span>
-        </div>
-        <div className="dial-why" id="agents-why" hidden={!hintOpen}>
-          <span className="why-voice">
-            Who works in this vault, and the conversation with each. Setup and runs sit one click under the name. What waits for you lives in the inbox; a card here only points at it.
-          </span>
-        </div>
-
         <div className="agents-grid">
           {/* ══ the roster ══ */}
           <nav className="roster" aria-label="roster">
@@ -1759,6 +1699,12 @@ function Agents() {
                 </button>
               )
             })}
+            <button type="button" className="rrow new" title="a new agent · Antevon proposes the pieces, you confirm each" onClick={openNew}>
+              <span className="rtext">
+                <span className="rname">+ new agent</span>
+                <span className="rdoing">by conversation with Antevon</span>
+              </span>
+            </button>
             <span className="rsep" aria-hidden="true"></span>
             <button
               type="button"
