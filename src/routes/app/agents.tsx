@@ -1503,7 +1503,7 @@ function Agents() {
      top-right corner, in the air (the Codex floatie); open = a well column
      docked at the room's right edge (the vault's inspector rule: a tinted
      zone divides). The run's tree, the one red dot on what needs you, stop
-     at rest; steering is replying below. Only under html[data-work="pane"];
+     at rest; steering is replying below. Only under html[data-work-axis="pane"];
      the thread's live card and the agent bar stand down there. ── */
   const renderPane = () => {
     const live = runRows.filter((r) => !stopped[r.agent])

@@ -424,14 +424,14 @@ html[data-picker="sidebar"] .roster {
 }
 html[data-picker="well"] .roster, html[data-picker="sidebar"] .roster { display: flex; }
 
-/* ── the work pane (owner 09-08, html[data-work="pane"]): closed = one mono
+/* ── the work pane (owner 09-08, html[data-work-axis="pane"]): closed = one mono
    mark at the room's top-right corner, in the air (the Codex floatie); open =
    a well column docked at the room's right edge. The thread's live card and
    the agent bar stand down under this axis. ── */
 .rpane { display: none; }
-html[data-work="pane"] .rlive-row, html[data-work="pane"] .agent-bar { display: none; }
-html[data-work="pane"] .rpane:not(.tpane) { display: flex; position: absolute; top: 0; right: 0; }
-html[data-work="pane"] .rpane.open {
+html[data-work-axis="pane"] .rlive-row, html[data-work-axis="pane"] .agent-bar { display: none; }
+html[data-work-axis="pane"] .rpane:not(.tpane) { display: flex; position: absolute; top: 0; right: 0; }
+html[data-work-axis="pane"] .rpane.open {
   position: static; flex: none; width: 316px; margin-left: auto; min-height: 0;
   background: var(--bg-well); border-radius: 6px; padding: 12px 16px 16px; overflow-y: auto;
   flex-direction: column; gap: 12px;
