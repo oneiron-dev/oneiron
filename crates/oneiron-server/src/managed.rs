@@ -86,6 +86,9 @@ pub const LEDGER_REV_KEY: &str = "managed:ledger_rev:v1";
 /// different outage and means a different response from the caller.
 pub const WRITES_FROZEN_TAG: &str = "writes_frozen";
 
+// Highest ctl version implemented here. Shed remains explicitly refused.
+const IMPLEMENTED_CTL_CONTRACT_VERSION: u32 = 1;
+
 /// Domain separator for the DEK MAC, so the same DEK over the same bytes in
 /// another role cannot collide with this one.
 const DEK_MAC_CONTEXT: &[u8] = b"oneiron:managed:dek_mac:v1";
@@ -1460,7 +1463,11 @@ impl ManagedState {
                 ok: true,
                 vault: self.vault_name.clone(),
                 pid: std::process::id(),
-                contract_version: CONTRACT_VERSION,
+                contract_version: IMPLEMENTED_CTL_CONTRACT_VERSION,
+            }),
+            CtlRequest::Shed { .. } => Err(ManagedError::CtlRequestRefused {
+                reason: "shed integration is deferred; managed ctl does not invoke engine shedding"
+                    .to_owned(),
             }),
             CtlRequest::PrepareReap => self.prepare_reap().await,
             CtlRequest::ReapAbort => {
@@ -1885,5 +1892,95 @@ pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
             );
         }
         Err(error) => tracing::warn!(%error, "final wake ledger export failed"),
+    }
+}
+
+#[cfg(test)]
+mod shed_tests {
+    use super::*;
+    use oneiron_vault_contract::{ShedCause, TOKEN_LEN, supports_slim};
+
+    #[tokio::test]
+    async fn ctl_shed_refusal_preserves_other_verbs() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let vault = Arc::new(oneiron::Vault::open(
+            dir.path(),
+            oneiron::VaultConfig::server(),
+        )?);
+        let server = Arc::new(SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig::default(),
+        )?);
+        let credentials = Credentials {
+            dek: [0x11; DEK_LEN],
+            token: [0x22; TOKEN_LEN],
+        };
+        let ledger = WakeLedger::load(
+            Arc::clone(&vault),
+            "ctl-test".to_owned(),
+            dir.path().join("supervisor.sock"),
+            &credentials,
+        )?;
+        let state = ManagedState::new("ctl-test".to_owned(), server, ledger);
+        let revision = state.ledger().rev();
+        for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
+            for waited_secs in [0, 1] {
+                let error = state
+                    .handle_request(CtlRequest::Shed { cause, waited_secs })
+                    .await
+                    .unwrap_err();
+                let ManagedError::CtlRequestRefused { reason } = error else {
+                    panic!("expected typed ctl refusal, got {error:?}");
+                };
+                if waited_secs == 0 {
+                    assert_eq!(reason, "shed requires a positive waited_secs");
+                } else {
+                    assert!(reason.contains("shed integration is deferred"));
+                }
+                assert!(!state.is_frozen());
+                assert!(state.observed_alarms().await.is_empty());
+                assert_eq!(state.ledger().rev(), revision);
+                assert_eq!(vault.residency(), oneiron::VaultResidency::Full);
+            }
+        }
+        assert!(matches!(
+            state.handle_request(CtlRequest::Ping).await?,
+            CtlResponse::Ping {
+                ok: true,
+                vault,
+                pid,
+                contract_version,
+            } if vault == "ctl-test"
+                && pid == std::process::id()
+                && contract_version == 1
+                && !supports_slim(contract_version)
+        ));
+        assert!(matches!(
+            state.handle_request(CtlRequest::PrepareReap).await?,
+            CtlResponse::PrepareReap {
+                quiescent: true,
+                ..
+            }
+        ));
+        assert!(state.is_frozen());
+        assert!(matches!(
+            state.handle_request(CtlRequest::ReapAbort).await?,
+            CtlResponse::Ok { ok: true }
+        ));
+        assert!(!state.is_frozen());
+        assert!(matches!(
+            state
+                .handle_request(CtlRequest::AlarmDue {
+                    id: "nightly".to_owned(),
+                    reason_tag: "cron".to_owned(),
+                })
+                .await?,
+            CtlResponse::Ok { ok: true }
+        ));
+        let alarms = state.observed_alarms().await;
+        assert_eq!(alarms.len(), 1);
+        assert_eq!(alarms[0].id, "nightly");
+        assert_eq!(alarms[0].reason_tag, "cron");
+        Ok(())
     }
 }

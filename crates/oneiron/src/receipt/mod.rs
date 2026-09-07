@@ -10,6 +10,7 @@ mod identity_kind;
 mod kernel;
 mod ledgers;
 mod projection;
+mod send_receipt_txn;
 mod session;
 
 #[cfg(test)]
@@ -58,6 +59,7 @@ pub(crate) use self::ledgers::{
     stamp_attempt_pack_receipt_in_txn,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
+pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
 
 // The flat receipt.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so
