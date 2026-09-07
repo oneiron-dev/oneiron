@@ -7,7 +7,11 @@ npm install oneiron
 ```
 
 Node 20 or newer. The package ships prebuilt native artifacts for macOS
-(arm64/x64), Linux gnu (arm64/x64), and Windows x64.
+(arm64/x64), Linux gnu (arm64/x64), and Windows x64. In both the Node and Python
+SDKs, embedded `Oneiron.open()` is currently supported only on Unix
+(macOS/Linux). On other targets, including Windows, use `Oneiron.connect()`
+to reach a server on a supported host; embedded open fails closed because
+writer locking is unsupported.
 
 ## Quickstart
 
