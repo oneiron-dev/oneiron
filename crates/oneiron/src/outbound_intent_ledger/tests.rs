@@ -2241,8 +2241,12 @@ fn listing_storage_errors_stay_top_level_by_construction() {
         .find(iteration)
         .expect("advancing a failed iterator stays a top-level error");
     let tolerance_at = body
-        .find("match decode_record(&key, &value)")
-        .expect("per-row tolerance must be a decode match");
+        .find("match decode_record_in_txn(vault, &rtxn, &key, &value)")
+        .expect("per-row tolerance must include attempt binding validation");
+    assert!(
+        body.contains("Err(error) => return Err(error)"),
+        "index read failures stay top-level errors"
+    );
     assert!(
         iteration_at < tolerance_at,
         "the storage error propagates BEFORE any per-row tolerance"
@@ -2310,6 +2314,127 @@ fn recovery_walk_is_unchanged() {
     expected.sort_unstable();
     assert_eq!(listed, expected);
     assert_eq!(raw_row(&vault, &corrupt_key), corrupt_row);
+}
+
+#[test]
+fn audit_and_authorized_recovery_isolate_broken_attempt_backlinks() {
+    use crate::outbound_consent::{
+        OutboundBindingAuthority, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
+        recover_authorized_outbound_intents,
+    };
+
+    #[derive(Default)]
+    struct RecoverySender {
+        calls: Vec<FrozenOutboundCall>,
+    }
+
+    impl OutboundResultSender for RecoverySender {
+        fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
+            self.calls.push(call.clone());
+            OutboundTransportResult {
+                outcome: OutboundSendOutcome::Acked,
+                raw_result: RawOutboundResult::new(None, None, None, None),
+            }
+        }
+    }
+
+    for missing in [true, false] {
+        let (_dir, vault) = open_vault();
+        // Use the ledger's bound Pending fixtures, not unbound connector rows
+        // that the authorized sweep intentionally skips before Resume.
+        let mut rows = [
+            persist_pending(&vault, attempt(130), 0, b"index first", 100, true),
+            persist_pending(&vault, attempt(131), 0, b"index second", 100, true),
+        ];
+        rows.sort_by_key(|record| record.id);
+        let [bad, healthy] = rows;
+        assert!(bad.authorization_binding.is_some());
+        assert!(bad.id < healthy.id, "the bad row must precede the good row");
+        let bad_key = intent_ledger_key(&bad.id);
+        let original_bytes = raw_row(&vault, &bad_key);
+        let index_key = intent_attempt_key(bad.attempt_id, bad.call_seq);
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        if missing {
+            assert!(
+                vault
+                    .store
+                    .vault_meta
+                    .delete(&mut wtxn, &index_key)
+                    .unwrap()
+            );
+        } else {
+            // A correctly-sized pointer to ANOTHER valid row is still damage.
+            vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, &index_key, &healthy.id)
+                .unwrap();
+        }
+        wtxn.commit().expect("damage only the backlink");
+        assert_eq!(decode_record(&bad_key, &original_bytes).unwrap(), bad);
+        assert!(matches!(
+            read_intent_record(&vault, &bad.id),
+            Err(IntentLedgerError::InvalidRecord(
+                "outbound intent is missing its unique attempt binding"
+            ))
+        ));
+        assert_eq!(
+            read_intent_record(&vault, &healthy.id).unwrap(),
+            Some(healthy.clone())
+        );
+
+        let listing = intent_ledger_records(&vault).expect("row-isolated audit");
+        assert_eq!(listing.records, vec![healthy.clone()]);
+        assert_eq!(listing.corrupt.len(), 1);
+        assert_eq!(&*listing.corrupt[0].key, bad_key.as_slice());
+        assert_eq!(
+            corrupt_reason(&listing.corrupt[0]),
+            "outbound intent is missing its unique attempt binding"
+        );
+        let entries = intent_recovery_entries(&vault).expect("row-isolated recovery entries");
+        assert!(matches!(
+            entries.as_slice(),
+            [IntentRecoveryEntry::Corrupt(Some(id)), IntentRecoveryEntry::Valid(record)]
+                if *id == bad.id && record == &healthy
+        ));
+
+        let authority = OutboundBindingAuthority::for_vault(&vault).expect("authority");
+        let mut sender = RecoverySender::default();
+        let report =
+            recover_authorized_outbound_intents(&vault, &authority, &mut sender, 200, 30_000)
+                .expect("a corrupt first row must not abort the authorized sweep");
+        assert_eq!(report.ledger.scanned, 2);
+        assert_eq!(report.ledger.resent, 1);
+        assert_eq!(report.ledger.completed, 1);
+        assert_eq!(report.ledger.pending, 0);
+        assert_eq!(report.effectful_sends, 1);
+        assert_eq!(report.authorization_rejections, 0);
+        assert!(report.ledger.failures.is_empty());
+        assert_eq!(
+            report.ledger.escalations,
+            vec![IntentEscalation {
+                intent_id: Some(bad.id),
+                reason: IntentEscalationReason::CorruptLedgerRow,
+            }]
+        );
+        assert_eq!(
+            sender.calls,
+            vec![FrozenOutboundCall::from_record(&healthy)]
+        );
+        let after = intent_ledger_records(&vault).expect("audit after recovery");
+        assert_eq!(after.records.len(), 1);
+        assert_eq!(after[0].id, healthy.id);
+        assert_eq!(after[0].state, IntentState::Done);
+        assert_eq!(after.corrupt.len(), 1);
+        assert_eq!(&*after.corrupt[0].key, bad_key.as_slice());
+        assert_eq!(raw_row(&vault, &bad_key), original_bytes);
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let index = vault.store.vault_meta.get(&rtxn, &index_key).unwrap();
+        assert_eq!(
+            index.as_deref(),
+            (!missing).then_some(healthy.id.as_slice())
+        );
+    }
 }
 
 #[test]

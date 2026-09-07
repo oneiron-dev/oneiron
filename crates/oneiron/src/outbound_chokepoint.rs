@@ -63,7 +63,7 @@ pub(crate) enum OutboundEffectCommand {
     Resume(IntentId),
 }
 
-/// Authorization material required only while admitting a new effect.
+/// Authorization material for admission and live retry gate checks.
 pub(crate) enum PreparedAuthorization {
     None,
     ScopedMcp {
@@ -187,7 +187,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         drop(wtxn);
         force_sync(vault)?;
-        return replay_record(vault, authority, record, now_ms, transport);
+        let prepared = match &command {
+            OutboundEffectCommand::New(prepared) => Some(prepared),
+            OutboundEffectCommand::Resume(_) => None,
+        };
+        return replay_record(vault, authority, record, prepared, now_ms, transport);
     }
 
     let OutboundEffectCommand::New(prepared) = command else {
@@ -423,6 +427,7 @@ fn replay_record<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    prepared: Option<&PreparedEffect>,
     now_ms: u64,
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
@@ -437,7 +442,7 @@ fn replay_record<T: OutboundTransport>(
             Ok(effect_result(&record, None, true, Some(reason)))
         }
         (IntentState::Pending, Some(RecordedOutboundOutcome::DefiniteNonDelivery)) => {
-            send_pending(vault, authority, record, now_ms, true, transport)
+            send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
             let abandoned = abandon_record(
@@ -454,7 +459,7 @@ fn replay_record<T: OutboundTransport>(
             ))
         }
         (IntentState::Pending, None) => {
-            send_pending(vault, authority, record, now_ms, true, transport)
+            send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
         }
         _ => Err(IntentLedgerError::InvalidRecord(
             "outbound state has no canonical recorded outcome",
@@ -466,6 +471,18 @@ fn send_pending<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    now_ms: u64,
+    replayed: bool,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    send_pending_with_gate(vault, authority, record, None, now_ms, replayed, transport)
+}
+
+fn send_pending_with_gate<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    prepared: Option<&PreparedEffect>,
     now_ms: u64,
     replayed: bool,
     transport: &mut T,
@@ -532,6 +549,34 @@ fn send_pending<T: OutboundTransport>(
                 replayed,
                 Some(IntentEscalationReason::ConnectorRevoked),
             ));
+        }
+    }
+
+    // A live retry keeps its frozen identity and paid admission, but today's
+    // policy/authorization may still stop a Pending send. Do not charge, spend
+    // approval, or record a second Allow. Terminal dedup never reaches here.
+    if let Some(prepared) = prepared {
+        let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+        let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+        let required_grant_id = match &prepared.authorization {
+            PreparedAuthorization::None => None,
+            PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
+        };
+        let governance = gate::evaluate_external_effect_policy(
+            &vault.store,
+            &mut wtxn,
+            &prepared.gate,
+            &policy,
+            required_grant_id,
+        )?;
+        if governance.outcome() != GateOutcome::Allow {
+            let (decision_id, decision) =
+                gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+            wtxn.commit().map_err(Error::from)?;
+            let mut result = gate_rejection(record.id, decision_id, decision);
+            result.dispatch.state = Some(record.state);
+            result.dispatch.replayed = replayed;
+            return Ok(result);
         }
     }
 

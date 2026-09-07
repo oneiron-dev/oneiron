@@ -757,9 +757,12 @@ pub(crate) fn intent_recovery_entries(
         .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
     {
         let (key, value) = row?;
-        entries.push(match decode_record(&key, &value) {
+        entries.push(match decode_record_in_txn(vault, &rtxn, &key, &value) {
             Ok(record) => IntentRecoveryEntry::Valid(record),
-            Err(_) => IntentRecoveryEntry::Corrupt(id_from_ledger_key(&key)),
+            Err(IntentLedgerError::InvalidRecord(_)) => {
+                IntentRecoveryEntry::Corrupt(id_from_ledger_key(&key))
+            }
+            Err(error) => return Err(error),
         });
     }
     Ok(entries)
@@ -947,12 +950,15 @@ pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<IntentLedgerLi
         .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
     {
         let (key, value) = row?;
-        match decode_record(&key, &value) {
+        match decode_record_in_txn(vault, &rtxn, &key, &value) {
             Ok(record) => listing.records.push(record),
-            Err(error) => listing.corrupt.push(IntentLedgerCorruptRow {
-                key: key.to_vec().into_boxed_slice(),
-                error,
-            }),
+            Err(error @ IntentLedgerError::InvalidRecord(_)) => {
+                listing.corrupt.push(IntentLedgerCorruptRow {
+                    key: key.to_vec().into_boxed_slice(),
+                    error,
+                });
+            }
+            Err(error) => return Err(error),
         }
     }
     Ok(listing)
@@ -983,9 +989,12 @@ pub(crate) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
             .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
         {
             let (key, value) = row?;
-            match decode_record(&key, &value) {
+            match decode_record_in_txn(vault, &rtxn, &key, &value) {
                 Ok(record) => rows.push(RecoveryRow::Valid(Box::new(record))),
-                Err(_) => rows.push(RecoveryRow::Corrupt(id_from_ledger_key(&key))),
+                Err(IntentLedgerError::InvalidRecord(_)) => {
+                    rows.push(RecoveryRow::Corrupt(id_from_ledger_key(&key)));
+                }
+                Err(error) => return Err(error),
             }
         }
         rows
@@ -1226,16 +1235,25 @@ pub(crate) fn read_intent_record_in_txn(
     let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
         return Ok(None);
     };
-    let record = decode_record(&key, &raw)?;
+    decode_record_in_txn(vault, txn, &key, &raw).map(Some)
+}
+
+fn decode_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+    raw: &[u8],
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    let record = decode_record(key, raw)?;
     check_intent_attempt_format(vault, txn)?;
     let attempt_key = intent_attempt_key(record.attempt_id, record.call_seq);
     let indexed_id = vault.store.vault_meta.get(txn, &attempt_key)?;
-    if indexed_id.as_deref() != Some(id.as_slice()) {
+    if indexed_id.as_deref() != Some(record.id.as_slice()) {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent is missing its unique attempt binding",
         ));
     }
-    Ok(Some(record))
+    Ok(record)
 }
 
 fn intent_attempt_key(attempt_id: AttemptId, call_seq: u64) -> Vec<u8> {
