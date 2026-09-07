@@ -136,6 +136,7 @@ pub mod recovery;
 pub mod registry;
 pub mod repo_mutation;
 pub mod rerank;
+pub mod retrieval_depth;
 pub mod run_tree;
 pub mod saved_query;
 pub mod secret_custody;
