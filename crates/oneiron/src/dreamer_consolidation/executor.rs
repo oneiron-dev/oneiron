@@ -87,7 +87,7 @@ impl ConsolidationExecutor<'_> {
                     global_default: ModelTierRef("consolidation".to_owned()),
                 },
                 response_format: ResponseFormat::Json {
-                    schema: serde_json::json!({"type": "object"}),
+                    schema: super::extracted_people::extraction_response_schema(),
                 },
                 locality: ModelLocality::OwnServer,
             },
@@ -252,6 +252,9 @@ impl ConsolidationExecutor<'_> {
             StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
         };
         let candidates = self.decode_candidates(&partition, &response, attempt_id, ctx.now_ms)?;
+        super::extracted_people::mint_extracted_people(
+            ctx.vault, &response, &turn_ids, ctx.now_ms,
+        )?;
         match self
             .resolve_conflicts(
                 candidates,

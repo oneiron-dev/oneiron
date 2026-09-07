@@ -11,7 +11,7 @@
 //!   ([`VAULT_LFS_OBJECT_KEY_PREFIX`], [`VAULT_LFS_REF_KEY_PREFIX`]). No new
 //!   entity type byte, no new named database, no new public storage primitive,
 //!   no dependency;
-//! * asset ids are deterministic through [`entity_id_from_hash_material`] over
+//! * asset ids are deterministic through `entity_id_from_hash_material` over
 //!   an LFS-only domain, so an LFS asset id can never collide with a
 //!   blob-artifact or codebase asset id even for byte-identical content.
 //!

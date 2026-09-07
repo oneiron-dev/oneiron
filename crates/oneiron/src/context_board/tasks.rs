@@ -345,6 +345,11 @@ const fn run_tree_board_status(status: RunTreeStatus) -> Option<TaskBoardStatus>
         RunTreeStatus::Completed => Some(TaskBoardStatus::Done),
         RunTreeStatus::Failed => Some(TaskBoardStatus::Failed),
         RunTreeStatus::Cancelled => None,
+        // Leaves the board on the `Cancelled` precedent. The axis holds live
+        // work, and no executor will ever advance an abandoned row again;
+        // rendering it `Failed` would assert a fault nobody observed, and a
+        // re-dispatch mints a fresh row that re-enters as queued work.
+        RunTreeStatus::Abandoned => None,
     }
 }
 

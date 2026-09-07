@@ -229,6 +229,15 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(crate::skill_optimize::skill_edit_verdict_receipts(
             vault, query,
         )?);
+        // The FIFTH Gate projector (ONE-1931): vault auto-cleanup run
+        // digests. Same kind, own store, own field class — the cron's
+        // decision to archive a batch of empty rows is a gate decision the
+        // engine ruled, so it mints no kind of its own. ONE row per DECISION,
+        // never one per archived entity: the ratified `archived_by_cleanup`
+        // contracts row pins `receipt: false` per entity, and this digest is
+        // what stands in its place. Opens its own read txn, as the three
+        // above do.
+        records.extend(crate::vault_cleanup::cleanup_receipts(vault, query)?);
     }
 
     // The OF-361 pre-extraction screen (ONE-1525): what the Dreamer declined

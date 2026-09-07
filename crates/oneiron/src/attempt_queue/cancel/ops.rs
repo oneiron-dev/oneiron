@@ -81,7 +81,10 @@ impl AttemptQueue<'_> {
         validate_cancel_standing(input.standing)?;
         match record.state {
             AttemptState::Landing => return Ok(CancelRequestOutcome::AlreadyLanding(record)),
-            AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled => {
+            AttemptState::Completed
+            | AttemptState::Failed
+            | AttemptState::Cancelled
+            | AttemptState::Abandoned => {
                 return Ok(CancelRequestOutcome::AlreadySettled(record));
             }
             // Only a CLAIMED, leased realization has a worker who can answer.
@@ -353,7 +356,7 @@ impl AttemptQueue<'_> {
     /// Dials the attempt's budget and carves its landing reserve out of it.
     ///
     /// ONE-SHOT per admitted generation: see
-    /// [`Self::dial_landing_reserve_in_txn`], which this door commits.
+    /// `Self::dial_landing_reserve_in_txn`, which this door commits.
     pub fn dial_landing_reserve(&self, input: DialLandingReserve) -> Result<AttemptRecord> {
         let mut wtxn = self.store.env.write_txn()?;
         let record = self.dial_landing_reserve_in_txn(&mut wtxn, input)?;
