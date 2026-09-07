@@ -22,8 +22,8 @@ const MAX_OUTPUT_TOKENS: u64 = 512;
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) struct TinyExtractor {
-    backend: Arc<dyn LlmBackend>,
-    budget: BudgetGuard,
+    pub(super) backend: Arc<dyn LlmBackend>,
+    pub(super) budget: BudgetGuard,
     model: ModelId,
     locality: ModelLocality,
     prompt: String,
