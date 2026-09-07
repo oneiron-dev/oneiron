@@ -49,6 +49,9 @@ use crate::temporal::TimeRange;
 
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
+mod admission;
+use admission::validate_detector_id;
+pub(crate) use admission::validate_diagnostic_event_admission;
 mod consent_detector;
 pub use consent_detector::ConsentDeniedDetector;
 
@@ -58,11 +61,11 @@ pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
 /// The pinned, ordered DIAGNOSTIC body key set.
 ///
 /// The order here IS the canonical encode order, and the set is CLOSED: decode
-/// rejects an unknown key, a missing key, or a duplicate key. Growing this
-/// array is a schema change and needs [`DIAGNOSTIC_SCHEMA_VERSION`] to move
-/// with it.
-pub const DIAGNOSTIC_BODY_KEYS: [&str; 16] = [
+/// rejects an unknown key, a missing key, or a duplicate key. This pre-release
+/// schema changes in place; no legacy body grammar is admitted.
+pub const DIAGNOSTIC_BODY_KEYS: [&str; 17] = [
     "schema_version",
+    "detector_id",
     "event_class",
     "actor_class",
     "actor_ref",
@@ -306,6 +309,9 @@ pub struct DiagnosticReplayCoordinate {
 /// it is a rumour, and encode rejects it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiagnosticEvent {
+    /// Stable detector token, persisted so every admission door can reproduce
+    /// the content-addressed id. Must match the emitting detector's identity.
+    pub detector_id: String,
     /// Closed event class.
     pub event_class: DiagnosticEventClass,
     /// Actor class that owns the failure, in the Gate vocabulary.
@@ -382,7 +388,8 @@ pub struct DiagnosticWorkingSet<'a> {
 pub trait DeterministicDetector: Send + Sync {
     /// Stable identity, folded into every derived event id.
     fn detector_id(&self) -> &'static str;
-    /// Draft events for this working set.
+    /// Draft events for this working set. Each draft's `detector_id` must
+    /// equal this detector's identity; the runner rejects a mismatch.
     fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent>;
 }
 
@@ -411,6 +418,9 @@ pub fn run_deterministic_detectors(
         let detector_id = detector.detector_id();
         validate_token(detector_id, "detector id is not a bounded token")?;
         for event in detector.detect(input) {
+            if event.detector_id != detector_id {
+                return Err(invalid_diagnostic("draft detector identity mismatch"));
+            }
             let body = encode_diagnostic_event_body(&event)?;
             let id = diagnostic_event_id(detector_id, &body);
             staged.push((id, body, event));
@@ -438,6 +448,9 @@ pub fn run_deterministic_detectors(
 }
 
 /// Derives the stable event id for `(detector_id, canonical_body)`.
+///
+/// Admission requires `detector_id` to equal the identity persisted in the
+/// canonical body. Every local and replicated put checks this binding.
 ///
 /// 16 raw domain-separated BLAKE3 bytes, so the id is reproducible from the
 /// detector identity and the canonical body alone. The detector id is
@@ -499,10 +512,11 @@ fn encode_stored_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8
     encode_body_with_detail(event, untrusted_detail)
 }
 
-/// Builds and writes the pinned 16-key body around an already-decided
+/// Builds and writes the pinned 17-key body around an already-decided
 /// `untrusted_detail` leaf, so the raw door and the stored door cannot drift
 /// apart in any other field.
 fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> Result<Vec<u8>> {
+    validate_detector_id(&event.detector_id)?;
     validate_actor_class(&event.actor_class)?;
     validate_validity(event.valid_from, event.valid_to)?;
     let run_ref = canonical_optional_ref(event.replay.run_ref.as_deref())?;
@@ -518,6 +532,7 @@ fn encode_body_with_detail(event: &DiagnosticEvent, untrusted_detail: Value) -> 
 
     let values = [
         Value::from(DIAGNOSTIC_SCHEMA_VERSION),
+        Value::from(event.detector_id.as_str()),
         Value::from(event.event_class.as_str()),
         Value::from(event.actor_class.as_str()),
         event
@@ -574,6 +589,8 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
         return Err(invalid_diagnostic("unsupported schema version"));
     }
 
+    let detector_id = required_str(entries, "detector_id")?;
+    validate_detector_id(detector_id)?;
     let event_class = DiagnosticEventClass::from_wire(required_str(entries, "event_class")?)
         .ok_or_else(|| invalid_diagnostic("unknown event class"))?;
     let source = DiagnosticSourceKind::from_wire(required_str(entries, "source")?)
@@ -602,6 +619,7 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     };
 
     Ok(DiagnosticEvent {
+        detector_id: detector_id.to_owned(),
         event_class,
         actor_class,
         actor_ref: decode_optional_entity_ref(required(entries, "actor_ref")?)?,
@@ -636,12 +654,12 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
 /// address: no writer, local or replicated, can store two byte strings that
 /// carry one event, and no stored byte string can be one an honest re-encode
 /// would not have produced.
-pub(crate) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<()> {
+pub(crate) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
     let event = decode_diagnostic_event_body(bytes)?;
     if encode_stored_diagnostic_event_body(&event)?.as_slice() != bytes {
         return Err(invalid_diagnostic("body is not canonically encoded"));
     }
-    Ok(())
+    Ok(event)
 }
 
 impl Vault {
@@ -761,7 +779,7 @@ fn validate_keys(entries: &[(Value, Value)]) -> Result<()> {
             return Err(invalid_diagnostic("duplicate body key"));
         }
         // Key ORDER is part of the body, not a rendering of it: the pinned
-        // array IS the encode order, so a map carrying the same 16 pairs in
+        // array IS the encode order, so a map carrying the same 17 pairs in
         // any other order is a DIFFERENT byte string and must not decode as
         // this event. Checked here rather than repaired, for the same reason
         // invariant values are checked rather than normalized.
@@ -1155,6 +1173,11 @@ fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
 /// [`encode_stored_diagnostic_event_body`], which validates it instead of
 /// escaping it again. This function's one caller is the raw author door.
 fn canonical_untrusted_detail(raw: &str) -> Result<String> {
+    // Escaping never shrinks the UTF-8 byte length. Bound raw input before
+    // allocating or scanning it, and retain the post-escape expansion bound.
+    if raw.len() > MAX_UNTRUSTED_DETAIL_LEN {
+        return Err(invalid_diagnostic("untrusted_detail is too long"));
+    }
     let canonical = escape_untrusted_detail(raw);
     validate_untrusted_detail(&canonical)?;
     Ok(canonical)
@@ -1180,6 +1203,8 @@ fn invalid_diagnostic(reason: &'static str) -> Error {
     Error::InvalidDiagnosticBody(reason)
 }
 
+#[cfg(test)]
+mod admission_tests;
 #[cfg(test)]
 mod production_tests;
 #[cfg(test)]

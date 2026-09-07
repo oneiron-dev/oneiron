@@ -57,6 +57,7 @@ fn detector_emits_typed_event() -> Result<()> {
         let bytes = body(&vault, &id)?;
         validate_diagnostic_event_body_bytes(&bytes)?;
         let event = decode_diagnostic_event_body(&bytes)?;
+        assert_eq!(event.detector_id, ConsentDeniedDetector.detector_id());
         assert_eq!(event.event_class, DiagnosticEventClass::ConsentDenied);
         assert_eq!(event.actor_class, "system");
         assert_eq!(event.actor_ref, None);

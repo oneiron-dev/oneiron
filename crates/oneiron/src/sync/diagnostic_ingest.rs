@@ -5,7 +5,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::self_heal::validate_diagnostic_event_body_bytes;
+use crate::self_heal::validate_diagnostic_event_admission;
 use crate::temporal::TimeRange;
 
 pub(super) fn ingest_diagnostic_in_txn(
@@ -18,11 +18,20 @@ pub(super) fn ingest_diagnostic_in_txn(
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     let data = &blob[ENTITY_METADATA_HEADER_LEN..];
-    validate_diagnostic_event_body_bytes(data)?;
-    if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
-        && *existing == *blob
-    {
-        return Ok(false);
+    let occurred = TimeRange {
+        start: header.occurred_start,
+        end: header.occurred_end,
+    };
+    validate_diagnostic_event_admission(id, occurred, data)?;
+    if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
+        if *existing == *blob {
+            return Ok(false);
+        }
+        // Content addresses are immutable, not LWW update handles. Reject
+        // even envelope-only divergence and keep the accepted local bytes.
+        return Err(Error::InvalidDiagnosticBody(
+            "diagnostic id already stores different bytes",
+        ));
     }
     let debit = quota::try_accept_maintenance_ingest_peer_in_txn(
         vault,
@@ -32,16 +41,7 @@ pub(super) fn ingest_diagnostic_in_txn(
     )?;
     let result = vault
         .batch_in()
-        .put_replicated(
-            id,
-            header.entity_type,
-            TimeRange {
-                start: header.occurred_start,
-                end: header.occurred_end,
-            },
-            header.learned_at,
-            data,
-        )
+        .put_replicated(id, header.entity_type, occurred, header.learned_at, data)
         .apply(wtxn);
     if let Err(err) = result {
         // Observer B quarantines remote failures and commits its siblings in

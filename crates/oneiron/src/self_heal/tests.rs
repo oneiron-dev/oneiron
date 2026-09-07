@@ -40,6 +40,7 @@ fn observation(seed: u8, observed_at: u64) -> DiagnosticObservation {
 /// property of the OBSERVATION rather than of the detector's mood.
 fn event_for(scope_ref: &str, observation: &DiagnosticObservation) -> DiagnosticEvent {
     DiagnosticEvent {
+        detector_id: "test.stub_detector".to_owned(),
         event_class: DiagnosticEventClass::TestFailure,
         actor_class: "system".to_owned(),
         actor_ref: Some(observation.source_ref),
@@ -163,8 +164,9 @@ fn working_set_order_is_checked_not_imposed() {
 #[test]
 fn public_byte_69_put_rejected() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let id = seed_id(4);
-    let body = encode_diagnostic_event_body(&sample_event())?;
+    let event = sample_event();
+    let body = encode_diagnostic_event_body(&event)?;
+    let id = diagnostic_event_id(&event.detector_id, &body);
 
     let err = vault
         .put_entity(&id, ENTITY_TYPE_DIAGNOSTIC, at(1_000), 1_001, &body)
@@ -249,12 +251,13 @@ fn open_validity_indexes_as_an_open_interval() -> Result<()> {
 
     let mut open = sample_event();
     open.valid_to = None;
-    let open_id = seed_id(7);
+    let open_id = diagnostic_event_id(&open.detector_id, &encode_diagnostic_event_body(&open)?);
     vault.emit_diagnostic_event(&open_id, &open)?;
 
     let closed = sample_event();
     let closed_end = closed.valid_to.expect("the sample event is closed");
-    let closed_id = seed_id(8);
+    let closed_id =
+        diagnostic_event_id(&closed.detector_id, &encode_diagnostic_event_body(&closed)?);
     vault.emit_diagnostic_event(&closed_id, &closed)?;
 
     let open_header = stored_header(&vault, &open_id)?;
@@ -483,7 +486,7 @@ fn non_canonical_spellings_are_refused() {
     let canonical = encode_diagnostic_event_body(&sample_event()).expect("sample encodes");
     validate_diagnostic_event_body_bytes(&canonical).expect("the canonical body is accepted");
 
-    // 1. Re-ordered keys: the same 16 pairs, spelled in a different order.
+    // 1. Re-ordered keys: the same 17 pairs, spelled in a different order.
     let mut entries = body_entries(&canonical);
     entries.swap(0, 1);
     let reordered = encode_entries(entries);
@@ -621,7 +624,7 @@ fn actor_class_vocabulary_tracks_the_gate() {
     assert_eq!(DIAGNOSTIC_ACTOR_CLASSES.len(), gate.len());
 }
 
-/// Every wire spelling round-trips, and the key set stays the pinned 16.
+/// Every wire spelling round-trips, and the key set stays the pinned 17.
 #[test]
 fn closed_vocabularies_round_trip() {
     for class in DiagnosticEventClass::all() {
@@ -648,7 +651,7 @@ fn closed_vocabularies_round_trip() {
         assert_eq!(parsed, Some(level));
     }
 
-    assert_eq!(DIAGNOSTIC_BODY_KEYS.len(), 16);
+    assert_eq!(DIAGNOSTIC_BODY_KEYS.len(), 17);
     let mut unique: Vec<&str> = DIAGNOSTIC_BODY_KEYS.to_vec();
     unique.sort_unstable();
     unique.dedup();
