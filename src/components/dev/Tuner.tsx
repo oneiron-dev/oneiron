@@ -359,6 +359,25 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* reset all (owner 09-08): every switch and dial back to the defaults.
+     The switch keys are cleared here, the dials by the store; a reload
+     lets prepaint restore the defaults in one pass. */
+  const resetAll = React.useCallback(() => {
+    const t = window.oneironTune
+    t?.reset()
+    try {
+      for (const k of ['oneiron-face-style', 'oneiron-open-law', 'oneiron-picker', 'oneiron-room-column', 'oneiron-roster-face', 'oneiron-select-chrome', 'oneiron-tune-pos', 'oneiron-voice-ground', 'oneiron-voice', 'oneiron-work'])
+        localStorage.removeItem(k)
+    } catch {
+      /* session only */
+    }
+    location.reload()
+  }, [])
+  /* the dials fold (owner 09-08: "the tuner is long") — the switches stand
+     first; the measures and the paper open on demand */
+  const [dialsOpen, setDialsOpen] = React.useState(false)
+  const [settledOpen, setSettledOpen] = React.useState(false)
+
   if (!values) return null
   return (
     <aside
@@ -370,29 +389,63 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     >
       <div className="t-head" onPointerDown={onDrag}>
         <span className="label">tune</span>
+        <button type="button" className="act" title="every switch and dial back to the defaults · reloads" onClick={resetAll}>
+          reset all
+        </button>
         <button type="button" className="chat-close" onClick={onClose} aria-label="close">
           ×
         </button>
       </div>
-      {SECTIONS.map((sec) => (
-        <React.Fragment key={sec.title}>
-          <div className="t-sec">{sec.title}</div>
-          {sec.rows.map((r) => (
-            <label key={r.key} className="t-row">
-              <span>{r.label}</span>
-              <input
-                type="range"
-                min={r.min}
-                max={r.max}
-                step={r.step}
-                value={values[r.key]}
-                onChange={(e) => set(r.key, Number(e.target.value))}
-              />
-              <span>{r.fmt ? r.fmt(values[r.key]) : values[r.key]}</span>
-            </label>
-          ))}
-        </React.Fragment>
-      ))}
+      <div className="t-sec">picker</div>
+      <div className="t-acts">
+        {(['well', 'sidebar', 'rail', 'ground'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={picker === k ? 'act on' : 'act'}
+            title={k === 'well' ? 'the roster as a well column beside the room (as built)' : k === 'sidebar' ? 'the roster belongs to the sheet: flush to its left edge, top to bottom (the Slack shape)' : k === 'rail' ? 'the agents as rows under `agents` in the rail · no second column' : 'the ground line is the picker: on this page a name at the bottom switches the room (his idea)'}
+            onClick={() => setPicker(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">work</div>
+      <div className="t-acts">
+        {(['thread', 'pane'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={work === k ? 'act on' : 'act'}
+            title={k === 'thread' ? 'the live run as a card at the foot of the conversation + the agent bar (as built)' : 'one mark at the room’s top right · click docks the work pane (the Codex shape)'}
+            onClick={() => setWork(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">room column</div>
+      <div className="t-acts">
+        {(['left', 'center', 'dock'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={roomCol === k ? 'act on' : 'act'}
+            title={k === 'left' ? 'the column at the left, the pane at the far right (as built)' : k === 'center' ? 'the column centers in the space beside the pane, in the whole room while it is closed (Claude, ChatGPT)' : 'the pane docks beside the column at the left; the air stays right'}
+            onClick={() => setRoomCol(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <button type="button" className="t-fold" aria-expanded={settledOpen} onClick={() => setSettledOpen((o) => !o)}>
+        <span className="t-sec">settled · earlier picks</span>
+        <span className="chev" aria-hidden="true">
+          {settledOpen ? '▾' : '›'}
+        </span>
+      </button>
+      {settledOpen ? (
+        <>
       <div className="t-sec">open law · rule 39</div>
       <div className="t-acts">
         {(['gesture', 'column', 'kind'] as const).map((k) => (
@@ -483,48 +536,35 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
           </button>
         ))}
       </div>
-      <div className="t-sec">picker</div>
-      <div className="t-acts">
-        {(['well', 'sidebar', 'rail', 'ground'] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            className={picker === k ? 'act on' : 'act'}
-            title={k === 'well' ? 'the roster as a well column beside the room (as built)' : k === 'sidebar' ? 'the roster belongs to the sheet: flush to its left edge, top to bottom (the Slack shape)' : k === 'rail' ? 'the agents as rows under `agents` in the rail · no second column' : 'the ground line is the picker: on this page a name at the bottom switches the room (his idea)'}
-            onClick={() => setPicker(k)}
-          >
-            {k}
-          </button>
-        ))}
-      </div>
-      <div className="t-sec">work</div>
-      <div className="t-acts">
-        {(['thread', 'pane'] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            className={work === k ? 'act on' : 'act'}
-            title={k === 'thread' ? 'the live run as a card at the foot of the conversation + the agent bar (as built)' : 'one mark at the room’s top right · click docks the work pane (the Codex shape)'}
-            onClick={() => setWork(k)}
-          >
-            {k}
-          </button>
-        ))}
-      </div>
-      <div className="t-sec">room column</div>
-      <div className="t-acts">
-        {(['left', 'center', 'dock'] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            className={roomCol === k ? 'act on' : 'act'}
-            title={k === 'left' ? 'the column at the left, the pane at the far right (as built)' : k === 'center' ? 'the column centers in the space beside the pane, in the whole room while it is closed (Claude, ChatGPT)' : 'the pane docks beside the column at the left; the air stays right'}
-            onClick={() => setRoomCol(k)}
-          >
-            {k}
-          </button>
-        ))}
-      </div>
+        </>
+      ) : null}
+      <button type="button" className="t-fold" aria-expanded={dialsOpen} onClick={() => setDialsOpen((o) => !o)}>
+        <span className="t-sec">dials · measures and paper</span>
+        <span className="chev" aria-hidden="true">
+          {dialsOpen ? '▾' : '›'}
+        </span>
+      </button>
+      {dialsOpen ? (
+        <>
+      {SECTIONS.map((sec) => (
+        <React.Fragment key={sec.title}>
+          <div className="t-sec">{sec.title}</div>
+          {sec.rows.map((r) => (
+            <label key={r.key} className="t-row">
+              <span>{r.label}</span>
+              <input
+                type="range"
+                min={r.min}
+                max={r.max}
+                step={r.step}
+                value={values[r.key]}
+                onChange={(e) => set(r.key, Number(e.target.value))}
+              />
+              <span>{r.fmt ? r.fmt(values[r.key]) : values[r.key]}</span>
+            </label>
+          ))}
+        </React.Fragment>
+      ))}
       <div className="t-sec">presets</div>
       <div className="t-acts">
         <button type="button" className="act" onClick={() => preset('current')}>current</button>
@@ -536,6 +576,8 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
         <button type="button" className={copied ? 'act on' : 'act'} onClick={copy}>{copied ? 'copied' : 'copy values'}</button>
         <button type="button" className="act" onClick={reset}>reset</button>
       </div>
+        </>
+      ) : null}
     </aside>
   )
 }
