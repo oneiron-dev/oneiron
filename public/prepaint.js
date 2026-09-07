@@ -26,7 +26,7 @@ try {
   const pm = localStorage.getItem('oneiron-pane-mark');
   if (pm === 'strip' || pm === 'stack') document.documentElement.setAttribute('data-pane-mark', pm);
   const vg = localStorage.getItem('oneiron-voice-ground');
-  if (vg === 'well' || vg === 'hairline') document.documentElement.setAttribute('data-voice-ground', vg);
+  if (vg === 'none' || vg === 'hairline') document.documentElement.setAttribute('data-voice-ground', vg);
   const sc = localStorage.getItem('oneiron-select-chrome');
   if (sc === 'square' || sc === 'gutter' || sc === 'box') document.documentElement.setAttribute('data-select-chrome', sc);
 }

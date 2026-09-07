@@ -43,7 +43,7 @@ main.pane {
 }
 .rrow:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
 .rrow:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: -2px; }
-.rrow.on { background: var(--bg-elevated); box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule); }
+.rrow.on { background: var(--bg-elevated); }
 .rrow .rtext { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .rname { font-family: var(--serif); font-size: 14.5px; color: var(--silver-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rname.aname { color: var(--p-ink); }   /* the name in its ink IS the identity in the row (A, owner 09-07) */
@@ -82,19 +82,40 @@ html[data-roster-face="mark"] .rrow .creature-none { display: block; }
 
 /* ── the room ── */
 /* the room = the main column + the pane (owner 09-08): the pane is the
-   docked inspector, closed at rest to one mark */
-.room { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 18px; min-height: 0; min-width: 0; }
-.room-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+   docked inspector, closed at rest to one mark. WIDTHS (owner 09-08,
+   "ultrathink about widths"): one measure for everything in the column —
+   head, thread, cards, composer — so nothing is wider than the words.
+   --room-w = 640px ≈ 85 characters of the 14px serif. The pane docks
+   beside the column in the air the measure leaves; under 1440px it slides
+   over that air instead of squeezing the column. */
+.room { --room-w: 620px; --pane-w: 304px; display: flex; gap: 18px; min-height: 0; min-width: 0; align-items: stretch; container-type: inline-size; container-name: room; }
+.room-main { flex: 0 1 var(--room-w); min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+/* when the room cannot hold the measure + the pane, the pane slides over the
+   air as a pocket door instead of squeezing the words (a container query:
+   the room's own width, not the viewport's) */
+@container room (max-width: 782px) {
+  .rpane.open { position: absolute; right: 0; top: 0; bottom: 0; z-index: 3; box-shadow: var(--shadow-sheet); }
+}
 /* the head: the portrait at 72 (the sheet's identity, owner 09-07), the name
    in its ink, the role line, then the layer switch */
 .room-head { display: flex; gap: 20px; align-items: flex-start; padding: 2px 0 10px; }
 .rh-face { flex: none; width: 72px; min-height: 64px; display: flex; align-items: center; justify-content: center; }
 .rh-face .creature-none { display: block; width: 44px; height: 44px; border-radius: 6px; border: 1px dashed var(--rule-strong); opacity: 0.6; }
 .rh-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rh-title { display: flex; align-items: center; gap: 10px; }
 .rh-name { font-family: var(--serif); font-size: 22px; font-weight: 550; letter-spacing: -0.01em; color: var(--silver-1); line-height: 1.25; }
+/* the setup door: a gear beside the name (owner 09-08), pressed while in setup */
+.rh-gear {
+  appearance: none; border: 0; background: none; padding: 4px; margin: 0; border-radius: 4px;
+  color: var(--silver-4); cursor: pointer; display: inline-flex; align-items: center; transition: color 160ms ease, background 160ms ease;
+}
+.rh-gear svg { width: 15px; height: 15px; }
+.rh-gear:hover, .rh-gear:focus-visible { color: var(--silver-1); }
+.rh-gear:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; }
+.rh-gear[aria-pressed="true"] { color: var(--silver-1); background: var(--bg-well); }
 .rh-name.aname { color: var(--p-ink); }
 .rh-name .unnamed { color: var(--silver-4); font-style: italic; font-weight: 450; }
-.rh-role { font-family: var(--serif); font-size: 14px; color: var(--silver-2); line-height: 1.45; max-width: 62ch; }
+.rh-role { font-family: var(--serif); font-size: 14px; color: var(--silver-2); line-height: 1.45; }
 .rh-role .unnamed { color: var(--silver-4); font-style: italic; }
 .rh-line { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding-top: 5px; }
 .rh-line .views { display: inline-flex; align-items: baseline; gap: 10px; }
@@ -113,7 +134,7 @@ html[data-roster-face="mark"] .rrow .creature-none { display: block; }
   display: flex; flex-direction: column; gap: 13px;
   padding: 8px 6px 14px 2px;
 }
-.rmsg { display: flex; gap: 12px; align-items: baseline; max-width: 80ch; }
+.rmsg { display: flex; gap: 12px; align-items: baseline; }
 /* the who column exists only in the house: face + name in ink at the head of
    a speaker's group, an empty column under it so the voices share one margin */
 .rmsg .rwho { flex: none; width: 96px; display: flex; align-items: baseline; gap: 7px; min-width: 0; }
@@ -125,14 +146,14 @@ html[data-roster-face="mark"] .rrow .creature-none { display: block; }
 /* your voice (owner 09-08): never a name. RIGHT by default (his pick): your
    turns end at the text column's right edge, no bubble. The tuner offers
    indent · mono · glyph. In the house the column is measured from the shared margin. */
-.rmsg.mine { padding-left: 0; max-width: 62ch; justify-content: flex-end; }
+.rmsg.mine { padding-left: 0; justify-content: flex-end; }
 .rmsg.mine .rbody { flex: 0 1 auto; max-width: 60%; }
-.room-thread.house .rmsg.mine { padding-left: 108px; max-width: calc(108px + 62ch); }
-html[data-voice="indent"] .rmsg.mine { padding-left: 22%; max-width: 80ch; justify-content: flex-start; }
+.room-thread.house .rmsg.mine { padding-left: 108px; }
+html[data-voice="indent"] .rmsg.mine { padding-left: 22%; justify-content: flex-start; }
 html[data-voice="indent"] .rmsg.mine .rbody { flex: 1; max-width: none; }
 html[data-voice="indent"] .room-thread.house .rmsg.mine { padding-left: calc(108px + 16%); }
 html[data-voice="mono"] .rmsg.mine,
-html[data-voice="glyph"] .rmsg.mine { padding-left: 0; max-width: 80ch; justify-content: flex-start; }
+html[data-voice="glyph"] .rmsg.mine { padding-left: 0; justify-content: flex-start; }
 html[data-voice="mono"] .rmsg.mine .rbody,
 html[data-voice="glyph"] .rmsg.mine .rbody { flex: 1; max-width: none; }
 html[data-voice="mono"] .room-thread.house .rmsg.mine,
@@ -142,10 +163,11 @@ html[data-voice="glyph"] .rmsg.mine .rtext::before { content: "\203A\00a0"; colo
 /* the ground under your turns (owner 09-08 asked for "some visual bubble"): the
    surface ladder is whitespace → hairline → well, so the options are exactly
    those. Flat, 3px, no tail, no shadow. */
-html[data-voice-ground="well"] .rmsg.mine .rbody { background: var(--bg-well); padding: 7px 12px; border-radius: 3px; }
-html[data-voice-ground="hairline"] .rmsg.mine .rbody { box-shadow: inset 0 0 0 1px var(--rule); padding: 7px 12px; border-radius: 3px; }
+.rmsg.mine .rbody { background: var(--bg-well); padding: 7px 12px; border-radius: 3px; }
+html[data-voice-ground="none"] .rmsg.mine .rbody { background: none; padding: 0; }
+html[data-voice-ground="hairline"] .rmsg.mine .rbody { background: none; box-shadow: inset 0 0 0 1px var(--rule); }
 .rmsg .rbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
-.rmsg .rtext { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); max-width: 62ch; }
+.rmsg .rtext { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); }
 .rmsg.mine .rtext { color: var(--silver-1); }
 .rmsg.live .rtext {
   background: linear-gradient(90deg, var(--silver-2) 35%, var(--silver-1) 50%, var(--silver-2) 65%) 0 0 / 200% 100%;
@@ -167,7 +189,7 @@ html[data-voice-ground="hairline"] .rmsg.mine .rbody { box-shadow: inset 0 0 0 1
 
 /* cards: the chat's widget grammar (chassis .cwidget); in the room they sit
    in the body column with no extra inset */
-.rbody .cwidget { margin-left: 0; max-width: 58ch; }
+.rbody .cwidget { margin-left: 0; max-width: 100%; }
 .cwidget .cw-why { font-family: var(--serif); font-size: 13px; line-height: 1.5; color: var(--silver-2); }
 .cwidget .cw-meta { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-4); }
 .cwidget .cw-foot { justify-content: flex-start; gap: 12px; padding-top: 5px; flex-wrap: wrap; align-items: baseline; }
@@ -195,7 +217,7 @@ html[data-voice-ground="hairline"] .rmsg.mine .rbody { box-shadow: inset 0 0 0 1
 .room .amenu { bottom: 56px; left: 0; }
 
 /* ── the setup layer: the former sheet body, one click down, scrolls in the room ── */
-.setup { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; max-width: 760px; padding: 6px 6px 24px 2px; }
+.setup { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; padding: 6px 6px 24px 2px; }
 .runs-layer { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 6px 6px 24px 2px; }
 
 /* editable text: the field is the text; a soft well only while it has focus,
@@ -375,7 +397,7 @@ table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--sil
    inside the sheet (the vault's inspector rule: a tinted zone divides, not
    a line). Three shapes for the mark, html[data-pane-mark]. ── */
 .rpane { min-height: 0; display: flex; flex-direction: column; align-items: flex-end; }
-.rpane.open { width: 316px; background: var(--bg-well); border-radius: 6px; padding: 12px 16px 16px; overflow-y: auto; align-items: stretch; gap: 12px; }
+.rpane.open { width: var(--pane-w); box-sizing: border-box; background: var(--bg-well); border-radius: 6px; padding: 12px 16px 16px; overflow-y: auto; align-items: stretch; gap: 12px; }
 .rp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .rp-body { display: flex; flex-direction: column; gap: 10px; }
 .rp-body .label { margin-top: 4px; }

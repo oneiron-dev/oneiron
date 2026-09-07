@@ -150,6 +150,20 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   white-space: nowrap;
   transition: color 160ms ease;
 }
+/* doors (owner 09-08): a door is a place to go, a verb is a thing to do.
+   Verbs bracket on hover (above). Doors never bracket: they darken and
+   underline on hover, and the ones that leave the room carry a chevron
+   that nudges. [ setup › ] read wrong; setup › reads right. */
+.door {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em;
+  color: var(--silver-3); white-space: nowrap; cursor: pointer;
+  text-decoration: none; text-underline-offset: 3px; text-decoration-color: var(--rule-strong);
+  transition: color 160ms ease;
+}
+.door:hover, .door:focus-visible { color: var(--silver-1); text-decoration: underline; }
+.door .chev { display: inline-block; color: var(--silver-4); transition: transform 160ms ease; text-decoration: none; }
+.door:hover .chev { transform: translateX(2px); }
+.door.back:hover .chev { transform: translateX(-2px); }
 .act::before { content: "[ "; opacity: 0; transition: opacity 160ms ease; }
 .act::after  { content: " ]"; opacity: 0; transition: opacity 160ms ease; }
 .act:hover, .act:focus-visible { color: var(--safelight); }
