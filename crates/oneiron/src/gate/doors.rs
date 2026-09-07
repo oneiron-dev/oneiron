@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::llm::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AutoCheckCandidate, AutoCheckOutcome, AutoChecker,
-    truncate_on_char_boundary,
+    BoundedAutoChecker, truncate_on_char_boundary,
 };
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::store::{
@@ -321,10 +321,9 @@ fn check_claim_policy_for_write_with_record_inner(
                 actor_class: &input.actor.actor_class,
                 sensitivity_band: claim_sensitivity_band(body),
             };
-            // Exactly one call per write. `normalized` is applied here too, so
-            // an unbounded implementation injected without the bounded wrapper
-            // still cannot write an unexplained hold or an unbounded receipt.
-            match checker.check(&candidate).normalized() {
+            // The concrete wrapper is required at every injection boundary:
+            // one capacity-bounded consult, with panic and timeout isolation.
+            match checker.check(&candidate) {
                 AutoCheckOutcome::Allow => {}
                 AutoCheckOutcome::Hold { reasons } => {
                     // A host names its reasons in prose; the decision ledger's
@@ -525,7 +524,7 @@ pub(crate) struct ClaimGateWrite<'a> {
     /// never stored on the `Store` or on a resolved `PolicyManifestResolution`,
     /// so there is no hidden mutable host state a later write could inherit,
     /// and every door that does not opt in is unchanged by construction.
-    pub(crate) auto_checker: Option<&'a dyn AutoChecker>,
+    pub(crate) auto_checker: Option<&'a BoundedAutoChecker>,
     pub(crate) defer_metrics_until_commit: bool,
 }
 

@@ -35,6 +35,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -986,10 +987,6 @@ const AUTO_CHECK_GLOBAL_DEFAULT_TIER: &str = "standard";
 /// fail-closed verdict every other failure mode produces.
 const AUTO_CHECK_DETERMINISTIC_FALLBACK: &str = "fail_closed_to_proposed";
 
-const AUTO_CHECK_SYSTEM_PROMPT: &str = "Decide whether this candidate memory claim may be stored \
-     automatically. Answer only in the requested JSON shape: `verdict` is \"allow\" or \"hold\", \
-     and `reasons` carries short strings when the verdict is hold.";
-
 /// One candidate write presented to a host checker, borrowed from the write
 /// door's own state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1098,19 +1095,54 @@ pub trait AutoChecker: Send + Sync + 'static {
 /// The wrapper that makes an arbitrary host checker safe to call from the
 /// write gate.
 ///
-/// It converts the candidate to owned data, runs the host implementation off
-/// the gate's own stack, captures a panic, and stops waiting after
-/// [`AUTO_CHECKER_DEADLINE_MS`]. Timeout, panic, a checker that cannot be run
-/// at all, and a malformed verdict all become [`AutoCheckOutcome::Unavailable`]
-/// — the gate never hangs, and nothing unwinds through it.
+/// Each wrapper owns one worker and admits only one outstanding consult.
+/// Clones share that worker and its capacity. A timeout stops the caller's wait,
+/// but capacity stays occupied until the host call actually ends. Further
+/// consults fail closed immediately while occupied; blocked hosts are never
+/// joined and cannot cause this wrapper to accumulate workers or queued calls.
+///
+/// Candidates are owned off the gate's stack. Timeout, panic, spawn failure,
+/// occupied capacity, and malformed verdicts become [`AutoCheckOutcome::Unavailable`].
+#[derive(Clone)]
 pub struct BoundedAutoChecker {
-    inner: Arc<dyn AutoChecker>,
+    sender: Option<mpsc::SyncSender<AutoCheckJob>>,
+    occupied: Arc<AtomicBool>,
+}
+
+struct AutoCheckJob {
+    candidate: AutoCheckCandidateOwned,
+    reply: mpsc::SyncSender<AutoCheckOutcome>,
 }
 
 impl BoundedAutoChecker {
     #[must_use]
     pub fn new(inner: Arc<dyn AutoChecker>) -> Self {
-        Self { inner }
+        let (sender, receiver) = mpsc::sync_channel::<AutoCheckJob>(1);
+        let occupied = Arc::new(AtomicBool::new(false));
+        let worker_occupied = Arc::clone(&occupied);
+        // One persistent worker, not one detached thread per consult. Dropping
+        // the last wrapper closes the channel; an idle worker then exits. A
+        // blocked host keeps only this worker, without delaying wrapper drop.
+        let worker = std::thread::Builder::new()
+            .name("oneiron-auto-check".to_owned())
+            .spawn(move || {
+                while let Ok(job) = receiver.recv() {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        inner.check(&job.candidate.borrowed()).normalized()
+                    }))
+                    .unwrap_or(AutoCheckOutcome::Unavailable);
+                    drop(job.candidate);
+                    // Only the worker releases an admitted call's capacity,
+                    // after the host has returned or unwound, never on timeout.
+                    worker_occupied.store(false, Ordering::Release);
+                    // Capacity one; never wait for a caller that has timed out.
+                    let _ = job.reply.try_send(outcome);
+                }
+            });
+        Self {
+            sender: worker.ok().map(|_| sender),
+            occupied,
+        }
     }
 }
 
@@ -1122,29 +1154,26 @@ impl fmt::Debug for BoundedAutoChecker {
 
 impl AutoChecker for BoundedAutoChecker {
     fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
-        let owned = AutoCheckCandidateOwned::from(candidate);
-        let inner = Arc::clone(&self.inner);
-        // Bounded, capacity one: the worker hands back exactly one verdict and
-        // must never block doing it, including when the deadline has already
-        // elapsed and nothing is listening any more.
-        let (sender, receiver) = mpsc::sync_channel::<AutoCheckOutcome>(1);
-        // Detached on purpose. The gate's contract is that it stops waiting
-        // after the deadline; joining a host implementation that never returns
-        // would reintroduce exactly the hang the deadline exists to prevent.
-        if std::thread::Builder::new()
-            .name("oneiron-auto-check".to_owned())
-            .spawn(move || {
-                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    inner.check(&owned.borrowed())
-                }))
-                .unwrap_or(AutoCheckOutcome::Unavailable);
-                let _ = sender.try_send(outcome.normalized());
-            })
+        let Some(sender) = &self.sender else {
+            return AutoCheckOutcome::Unavailable;
+        };
+        if self
+            .occupied
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return AutoCheckOutcome::Unavailable;
         }
-
+        let (reply, receiver) = mpsc::sync_channel(1);
+        let job = AutoCheckJob {
+            candidate: AutoCheckCandidateOwned::from(candidate),
+            reply,
+        };
+        if sender.try_send(job).is_err() {
+            // No worker accepted this call, so there is no live host to await.
+            self.occupied.store(false, Ordering::Release);
+            return AutoCheckOutcome::Unavailable;
+        }
         receiver
             .recv_timeout(Duration::from_millis(AUTO_CHECKER_DEADLINE_MS))
             .unwrap_or(AutoCheckOutcome::Unavailable)
@@ -1162,10 +1191,17 @@ impl AutoChecker for BoundedAutoChecker {
 /// call still fails closed to Proposed; the class says how the call is made,
 /// not how a failure is read.
 ///
-/// `checker_ref` is the manifest's OPAQUE selector. The engine picks no model:
-/// it carries the host's own ref through as the request's model identity.
+/// `checker_ref` is the manifest's OPAQUE selector. The host resolves it and
+/// injects the matching checker; the engine encodes it as the model identity
+/// without choosing a model. `system_prompt` is supplied by the host, including
+/// any instructions for interpreting candidate data. The engine owns the typed
+/// response schema and call contract, not natural-language prompt policy.
 #[must_use]
-pub fn auto_check_llm_request(checker_ref: &str, candidate: &AutoCheckCandidate<'_>) -> LlmRequest {
+pub fn auto_check_llm_request(
+    checker_ref: &str,
+    candidate: &AutoCheckCandidate<'_>,
+    system_prompt: &str,
+) -> LlmRequest {
     LlmRequest {
         model: auto_check_model_id(checker_ref),
         envelope: CallEnvelope {
@@ -1194,7 +1230,7 @@ pub fn auto_check_llm_request(checker_ref: &str, candidate: &AutoCheckCandidate<
             LlmMessage {
                 role: LlmMessageRole::System,
                 content: vec![ContentPart::Text {
-                    text: AUTO_CHECK_SYSTEM_PROMPT.to_owned(),
+                    text: system_prompt.to_owned(),
                 }],
             },
             LlmMessage {
@@ -1213,7 +1249,10 @@ pub fn auto_check_llm_request(checker_ref: &str, candidate: &AutoCheckCandidate<
 fn auto_check_model_id(checker_ref: &str) -> ModelId {
     dynamic_model_id(
         "auto-check",
-        sanitize_model_id_segment(checker_ref),
+        // Hex encodes the ORIGINAL UTF-8 bytes injectively. The fixed prefix
+        // keeps even the empty ref nonempty; no sanitization or normalization
+        // can alias distinct host selectors in pins or durable request keys.
+        format!("ref-{}", bytes_to_hex_lower(checker_ref.as_bytes())),
         "configured",
     )
 }
