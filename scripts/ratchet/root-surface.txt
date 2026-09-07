@@ -251,6 +251,7 @@ RendererKind
 RendererResult
 RepoRef
 ReserveDreamerBudget
+ResolvedShare
 ResponseFormat
 Result
 ResumeBudget
@@ -280,6 +281,8 @@ SessionClosePredicate
 SessionContext
 SessionEndWake
 SessionMintOutcome
+Share
+ShareViewerScope
 Signal
 SkillGovernanceTier
 StructuralEdgeSpec

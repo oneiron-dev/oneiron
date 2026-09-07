@@ -3,6 +3,7 @@
 //! RS1 is intentionally a projection over existing event substrates. This
 //! module does not mint a new receipt store and does not change emitter schema.
 
+mod brief_share;
 mod family;
 mod field_set;
 mod grant;
