@@ -203,22 +203,27 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
 .tuner {
   /* top-right: it must never cover the rail edge or the line it tunes */
   position: fixed; top: 12px; right: 16px; z-index: 80;
-  width: 300px; max-height: min(84vh, 680px); overflow-y: auto;
+  width: 272px; max-height: min(70vh, 560px); overflow-y: auto; overscroll-behavior: contain;
   padding: 10px 12px 12px;
   background: var(--bg-elevated); border-radius: 8px;
   box-shadow: var(--shadow-pop), inset 0 0 0 0.5px var(--rule);
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column; gap: 4px;
   font-family: var(--mono); font-size: 11px; color: var(--silver-2);
 }
 .tuner[hidden] { display: none; }
+.tuner .t-head .act { margin-right: 6px; }
+.tuner .t-fold { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 6px 0 0; margin-top: 4px; border-top: 1px solid var(--rule); cursor: pointer; color: var(--silver-4); }
+.tuner .t-fold .t-sec { margin: 0; }
+.tuner .t-fold:hover .t-sec, .tuner .t-fold:hover { color: var(--silver-1); }
 .tuner .t-head { display: flex; align-items: center; gap: 10px; margin: -4px -6px 2px; padding: 4px 6px; cursor: grab; user-select: none; touch-action: none; }
 .tuner .t-head:active { cursor: grabbing; }
 .tuner .t-head .label { flex: 1; }
-.tuner .t-sec { font-family: var(--bitmap); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); margin-top: 6px; }
+.tuner .t-sec { font-family: var(--bitmap); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--silver-4); margin-top: 4px; }
 .tuner .t-row { display: grid; grid-template-columns: 100px 1fr 46px; align-items: center; gap: 8px; }
 .tuner .t-row span:last-child { text-align: right; color: var(--silver-3); font-feature-settings: "tnum" 1; }
 .tuner input[type="range"] { width: 100%; height: 14px; accent-color: var(--silver-2); background: transparent; }
-.tuner .t-acts { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+.tuner .t-acts { display: flex; gap: 4px 12px; margin-top: 2px; flex-wrap: wrap; }
+.tuner .t-acts .act { font-size: 10.5px; }
 .tuner .t-acts .act { padding: 0; }
 .tuner .t-acts .on { color: var(--silver-1); }
 
