@@ -1523,14 +1523,13 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         )
         .expect("seed MCP claim subject");
 
+    // ToolOutput auto-allows only public (band 0) claims under the default
+    // manifest. An unstamped claim reads band 2 and correctly stays pending.
+    let mut args = mcp_propose_claim_args(actor_ref, subject_ref, "one-1222-propose-claim");
+    args["scope"] = json!({ "sensitivity": "public" });
     let (status, body) = mcp_legacy_adapter_json(
         server.clone(),
-        mcp_call_request(
-            credential,
-            "mcp-write-allow",
-            "oneiron.edit",
-            mcp_propose_claim_args(actor_ref, subject_ref, "one-1222-propose-claim"),
-        ),
+        mcp_call_request(credential, "mcp-write-allow", "oneiron.edit", args),
     )
     .await;
 
@@ -1576,6 +1575,16 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         .expect("MCP write must persist a Gate decision");
     assert_eq!(decision.outcome, "allow");
     assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+    // Apply must agree with the recorded preflight allow, not leave a pending
+    // proposal behind after evaluating a different source/sensitivity input.
+    assert!(
+        server
+            .vault
+            .pending_gate_consents(10)
+            .expect("pending consent after MCP write")
+            .iter()
+            .all(|pending| pending.claim_id != *claim_id.as_bytes())
+    );
     assert_eq!(decision.actor_class, "human");
     assert_eq!(
         decision.actor_ref.as_deref(),
