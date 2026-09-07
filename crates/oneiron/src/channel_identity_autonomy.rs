@@ -380,7 +380,7 @@ impl Vault {
                 crate::channel_identity::IdentityTransition::Step { prior: &record, next: &record })?;
         }
         match record.binding {
-            ChannelIdentityBinding::Agent { agent_ref } => Ok(agent_ref),
+            ChannelIdentityBinding::Actor { actor_ref, .. } => Ok(actor_ref),
             ChannelIdentityBinding::Vault { .. } => Err(invalid_autonomy()),
         }
     }
@@ -673,7 +673,7 @@ impl Vault {
         let scope = scope_value(&evidence.scope)?;
         token(&evidence.receipt_ref)?;
         if evidence.occurred_at > crate::unix_seconds_now() { return Err(invalid_autonomy()); }
-        let (outcome, distance) = self.validate_graduation_review(&evidence)?;
+        let (task_ref, outcome, distance) = self.validate_graduation_review(&evidence)?;
         let mut txn = self.store.env.write_txn()?;
         if self.autonomy_identity_actor(&txn, evidence.scope.identity_ref)? != evidence.scope.actor_ref {
             return Err(invalid_autonomy());
@@ -683,7 +683,7 @@ impl Vault {
         let mut key = prefix;
         key.extend_from_slice(reference.as_bytes());
         let value = Value::Array(vec![Value::from(evidence.receipt_ref), Value::from(outcome), distance,
-            id_value(evidence.scope.actor_ref), Value::from(owner_authenticated)]);
+            id_value(evidence.scope.actor_ref), Value::from(owner_authenticated), id_value(task_ref)]);
         if self.store.vault_meta.get(&txn, &key)?.is_some() { return Err(invalid_autonomy()); }
         self.write_autonomy_row(&mut txn, &key, writer, evidence.occurred_at, value)?;
         txn.commit()?;
@@ -695,7 +695,7 @@ impl Vault {
     // Resolve before opening the write txn: the receipt door owns its read txns
     // and send audit receipts are append-only. No actor/time filter may hide an
     // ambiguous receipt id; all durable outbound rows must remain visible.
-    fn validate_graduation_review(&self, evidence: &GraduationEvidence) -> Result<(&'static str, Value)> {
+    fn validate_graduation_review(&self, evidence: &GraduationEvidence) -> Result<(EntityId, &'static str, Value)> {
         let scan = self.scan_receipts(
             ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN).with_kind(ReceiptKind::Outbound)
         )?;
@@ -707,6 +707,8 @@ impl Vault {
         let receipt = matches.next().ok_or_else(invalid_autonomy)?;
         if matches.next().is_some() { return Err(invalid_autonomy()); }
         let field = |key: &str| receipt.fields.get(key).map(String::as_str);
+        let task_ref = field(crate::receipt::FIELD_TASK_REF)
+            .and_then(|value| EntityId::from_hex(value).ok()).ok_or_else(invalid_autonomy)?;
         let (outcome, distance) = match &evidence.outcome {
             DraftReviewOutcome::ApprovedUntouched => ("approved_untouched", None),
             DraftReviewOutcome::ApprovedAmended { edit_distance_millis } => ("approved_amended", Some(*edit_distance_millis)),
@@ -715,7 +717,6 @@ impl Vault {
         };
         if receipt.actor.as_deref() != Some(evidence.scope.actor_ref.to_hex().as_str())
             || receipt.occurred_at != evidence.occurred_at
-            || field(crate::receipt::FIELD_TASK_REF).and_then(|v| EntityId::from_hex(v).ok()).is_none()
             || field("channel_identity_ref") != Some(evidence.scope.identity_ref.to_hex().as_str())
             || field("relationship_context") != Some(evidence.scope.relationship_context.as_str())
             || field("verb_class") != Some(evidence.scope.verb_class.as_str())
@@ -723,11 +724,13 @@ impl Vault {
             || field("review_outcome") != Some(outcome)
             || field("edit_distance_millis") != distance.map(|d| d.to_string()).as_deref()
         { return Err(invalid_autonomy()); }
-        Ok((outcome, distance.map_or(Value::Nil, Value::from)))
+        Ok((task_ref, outcome, distance.map_or(Value::Nil, Value::from)))
     }
 
     /// Pure evaluation: zero selects the pinned default of twelve. The proposal
     /// retains the existing draft volume bound; acceptance must use owner consent.
+    /// Each task contributes only its latest `(occurred_at, receipt_ref)` review,
+    /// independent of admission order. A later correction replaces its old outcome.
     pub fn evaluate_graduation_offer(&self, scope: &GraduationScopeKey, unchanged_streak: u32,
         now: u64) -> Result<Option<GraduationOffer>> {
         let threshold = if unchanged_streak == 0 { DEFAULT_GRADUATION_UNCHANGED_STREAK } else { unchanged_streak };
@@ -745,16 +748,19 @@ impl Vault {
         for entry in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
             let (key, _) = entry?;
             let (actor, at, value) = self.autonomy_row(&txn, &key)?;
-            let v = array(&value, 5)?;
+            let v = array(&value, 6)?;
+            let task_ref = id(&v[5])?;
             let owner_authenticated = v[4].as_bool().ok_or_else(invalid_autonomy)?;
             if id(&v[3])? != scope.actor_ref || actor != scope.actor_ref && !owner_authenticated {
                 return Err(invalid_autonomy());
             }
-            if at <= now { rows.push((at, text(&v[0])?.to_owned(), text(&v[1])?.to_owned())); }
+            if at <= now { rows.push((at, text(&v[0])?.to_owned(), text(&v[1])?.to_owned(), task_ref)); }
         }
         rows.sort();
         let mut evidence_refs = Vec::new();
-        for (_, reference, outcome) in rows.into_iter().rev() {
+        let mut seen_tasks = std::collections::BTreeSet::new();
+        for (_, reference, outcome, task_ref) in rows.into_iter().rev() {
+            if !seen_tasks.insert(task_ref) { continue; }
             if outcome != "approved_untouched" { break; }
             evidence_refs.push(reference);
         }

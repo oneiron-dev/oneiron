@@ -65,10 +65,15 @@ fn review_receipt(scope: &GraduationScopeKey, at: u64, outcome: &DraftReviewOutc
 }
 
 fn persist_review(vault: &Vault, scope: &GraduationScopeKey, at: u64, outcome: DraftReviewOutcome) -> GraduationEvidence {
+    persist_review_for_task(vault, scope, EntityId::now(), at, outcome)
+}
+
+fn persist_review_for_task(vault: &Vault, scope: &GraduationScopeKey, task_ref: EntityId,
+    at: u64, outcome: DraftReviewOutcome) -> GraduationEvidence {
     let receipt = review_receipt(scope, at, &outcome);
     let evidence = GraduationEvidence { scope: scope.clone(), outcome,
         receipt_ref: receipt.receipt_id.clone(), occurred_at: at };
-    assert!(persist_send_receipt(vault, EntityId::now(), receipt, SendReceiptOutcome::Failed, false, None).unwrap());
+    assert!(persist_send_receipt(vault, task_ref, receipt, SendReceiptOutcome::Failed, false, None).unwrap());
     evidence
 }
 
@@ -154,7 +159,7 @@ fn concurrent_volume_window_never_overruns() {
 }
 
 #[test]
-fn twelve_untouched_offers_graduation() {
+fn twelve_distinct_tasks_untouched_offer_graduation() {
     let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::SendWithApproval);
     vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
     let scope = review_scope(&request);
@@ -169,6 +174,93 @@ fn twelve_untouched_offers_graduation() {
     let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
     let after = reopened.evaluate_graduation_offer(&scope, 12, crate::unix_seconds_now()).unwrap().unwrap();
     assert_eq!(before.evidence_refs, after.evidence_refs);
+}
+
+#[test]
+fn twelve_receipts_for_one_task_do_not_offer_graduation() {
+    for owner_authenticated in [false, true] {
+        let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::SendWithApproval);
+        vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+        let scope = review_scope(&request);
+        let task_ref = EntityId::now();
+        let actor = WriteActor::new(scope.actor_ref, EdgeActorClass::Agent);
+        let mut latest_ref = String::new();
+        for at in 1..=12 {
+            let evidence = persist_review_for_task(&vault, &scope, task_ref, at, DraftReviewOutcome::ApprovedUntouched);
+            latest_ref = evidence.receipt_ref.clone();
+            if owner_authenticated { vault.record_graduation_evidence_as_owner(evidence, &owner).unwrap(); }
+            else { vault.record_graduation_evidence(evidence, &actor).unwrap(); }
+        }
+        let scan = vault.scan_receipts(ReceiptQuery::new(12).with_kind(ReceiptKind::Outbound)).unwrap();
+        assert!(scan.complete);
+        assert_eq!(scan.records.len(), 12, "distinct attempts remain in durable history");
+        assert!(scan.records.iter().all(|r| r.fields.get(crate::receipt::FIELD_TASK_REF) == Some(&task_ref.to_hex())));
+        assert!(vault.evaluate_graduation_offer(&scope, 12, crate::unix_seconds_now()).unwrap().is_none());
+        assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
+        drop(vault);
+        let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
+        assert!(reopened.evaluate_graduation_offer(&scope, 12, crate::unix_seconds_now()).unwrap().is_none());
+        let offer = reopened.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap();
+        assert_eq!(offer.unchanged_streak, 1);
+        assert_eq!(offer.evidence_refs, [latest_ref]);
+    }
+}
+
+#[test]
+fn latest_task_correction_replaces_the_prior_review_outcome() {
+    for reset in [DraftReviewOutcome::ApprovedAmended { edit_distance_millis: 1 },
+        DraftReviewOutcome::Rejected, DraftReviewOutcome::Undone] {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+        let scope = review_scope(&request);
+        let task_ref = EntityId::now();
+        let actor = WriteActor::new(scope.actor_ref, EdgeActorClass::Agent);
+        let first = persist_review_for_task(&vault, &scope, task_ref, 1, DraftReviewOutcome::ApprovedUntouched);
+        vault.record_graduation_evidence(first, &actor).unwrap();
+        let mut expected: Vec<_> = (2..=12).map(|at| review(&vault, &scope, at, DraftReviewOutcome::ApprovedUntouched)).collect();
+        assert_eq!(vault.evaluate_graduation_offer(&scope, 12, crate::unix_seconds_now()).unwrap().unwrap().unchanged_streak, 12);
+        let correction = persist_review_for_task(&vault, &scope, task_ref, 13, reset.clone());
+        vault.record_graduation_evidence_as_owner(correction, &owner).unwrap();
+        assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+        let latest = persist_review_for_task(&vault, &scope, task_ref, 14, DraftReviewOutcome::ApprovedUntouched);
+        expected.push(latest.receipt_ref.clone());
+        vault.record_graduation_evidence(latest, &actor).unwrap();
+        // A late admission of an older correction cannot override the newest review.
+        let stale = persist_review_for_task(&vault, &scope, task_ref, 12, reset);
+        vault.record_graduation_evidence_as_owner(stale, &owner).unwrap();
+        let offer = vault.evaluate_graduation_offer(&scope, 12, crate::unix_seconds_now()).unwrap().unwrap();
+        assert_eq!(offer.unchanged_streak, 12);
+        assert_eq!(offer.evidence_refs, expected, "old approvals and corrections are superseded, not counted");
+    }
+}
+
+#[test]
+fn equal_time_task_reviews_use_receipt_id_order_not_admission_order() {
+    for reverse in [false, true] {
+        let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+        let scope = review_scope(&request);
+        let task_ref = EntityId::now();
+        let actor = WriteActor::new(scope.actor_ref, EdgeActorClass::Agent);
+        let mut reviews = [("outbound-review:z", 0, DraftReviewOutcome::Rejected),
+            ("outbound-review:a", 1, DraftReviewOutcome::Rejected),
+            ("outbound-review:b", 1, DraftReviewOutcome::ApprovedUntouched)];
+        if reverse { reviews.reverse(); }
+        for (reference, at, outcome) in reviews {
+            let mut receipt = review_receipt(&scope, at, &outcome);
+            receipt.receipt_id = reference.to_owned();
+            assert!(persist_send_receipt(&vault, task_ref, receipt, SendReceiptOutcome::Failed, false, None).unwrap());
+            vault.record_graduation_evidence(GraduationEvidence { scope: scope.clone(), outcome,
+                receipt_ref: reference.to_owned(), occurred_at: at }, &actor).unwrap();
+        }
+        let offer = vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap();
+        assert_eq!(offer.unchanged_streak, 1);
+        assert_eq!(offer.evidence_refs, ["outbound-review:b"]);
+        drop(vault);
+        let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
+        assert_eq!(reopened.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap().evidence_refs,
+            offer.evidence_refs);
+    }
 }
 
 #[test]
