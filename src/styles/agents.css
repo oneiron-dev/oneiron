@@ -61,6 +61,7 @@ main.pane {
 .rcreature img, .id-creature img, .pick img { display: block; image-rendering: pixelated; user-select: none; }
 .creature-none { display: block; width: 24px; height: 24px; border-radius: 4px; border: 1px dashed var(--rule-strong); opacity: 0.6; }
 .rname { font-family: var(--serif); font-size: 14.5px; color: var(--silver-1); }
+.rname.aname { color: var(--p-ink); }   /* the name in its ink IS the identity in the row (A, owner 09-07) */
 .rname .unnamed { color: var(--silver-4); font-style: italic; }
 .rcharter {
   font-family: var(--serif); font-size: 13.5px; color: var(--silver-2);
@@ -280,6 +281,8 @@ html[data-roster-face="mark"] .rcreature .face {
   width: 18px !important; height: 18px !important;
   -webkit-mask-image: var(--face-mark) !important; mask-image: var(--face-mark) !important;
 }
-html[data-roster-face="none"] .roster { --cols: 0px 96px minmax(0, 1fr) 96px 92px; }
+/* A (owner 09-07): no face in the row — the creature cell leaves the grid, so the
+   grid loses that column too (a hidden cell would shift every row one column left) */
+html[data-roster-face="none"] .roster { --cols: 96px minmax(0, 1fr) 96px 92px; }
 html[data-roster-face="none"] .rcreature { display: none; }
 html[data-roster-face="none"] .rline { padding-top: 8px; padding-bottom: 8px; }

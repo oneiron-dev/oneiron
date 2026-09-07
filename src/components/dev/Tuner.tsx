@@ -177,7 +177,7 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   }, [])
 
   /* the roster face (owner 08-18: unsure about the portrait in the table) */
-  const [rosterFace, setRosterFaceState] = React.useState<'portrait' | 'mark' | 'none'>('portrait')
+  const [rosterFace, setRosterFaceState] = React.useState<'portrait' | 'mark' | 'none'>('none')
   React.useEffect(() => {
     try {
       const v = localStorage.getItem('oneiron-roster-face')
@@ -194,6 +194,29 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     document.documentElement.setAttribute('data-roster-face', k)
     try {
       localStorage.setItem('oneiron-roster-face', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
+  /* the portrait style (owner 09-07, A): the gods on the sheet; cut is the default, the others ride for the pick */
+  type FaceStyle = 'cut' | 'base' | 'trink' | 'dream'
+  const [faceStyle, setFaceStyleState] = React.useState<FaceStyle>('cut')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-face-style')
+      if (v === 'base' || v === 'trink' || v === 'dream') setFaceStyleState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setFaceStyle = React.useCallback((k: FaceStyle) => {
+    setFaceStyleState(k)
+    if (k === 'cut') document.documentElement.removeAttribute('data-face-style')
+    else document.documentElement.setAttribute('data-face-style', k)
+    try {
+      if (k === 'cut') localStorage.removeItem('oneiron-face-style')
+      else localStorage.setItem('oneiron-face-style', k)
     } catch {
       /* session only */
     }
@@ -260,8 +283,22 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             key={k}
             type="button"
             className={rosterFace === k ? 'act on' : 'act'}
-            title={k === 'portrait' ? 'the D face at 32px in the row' : k === 'mark' ? 'the small pictogram (18px) beside the name' : 'no face in the roster · the name in its ink'}
+            title={k === 'portrait' ? 'the portrait at 32px in the row' : k === 'mark' ? 'the attribute mark beside the name' : 'no face in the roster · the name in its ink (A, owner 09-07)'}
             onClick={() => setRosterFace(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">portrait style</div>
+      <div className="t-acts">
+        {(['cut', 'base', 'trink', 'dream'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={faceStyle === k ? 'act on' : 'act'}
+            title={k === 'cut' ? 'linocut · solid ink, holds at 24' : k === 'base' ? 'the 08-18 riso reference' : k === 'trink' ? 'two inks · the red is lost in a mask' : 'dream print · edges dissolve'}
+            onClick={() => setFaceStyle(k)}
           >
             {k}
           </button>

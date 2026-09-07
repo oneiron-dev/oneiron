@@ -618,14 +618,30 @@ main.pane {
   -webkit-mask: var(--face-day) center / contain no-repeat;
   mask: var(--face-day) center / contain no-repeat;
 }
-.face.mark { width: 16px; height: 16px; -webkit-mask-image: var(--face-mark); mask-image: var(--face-mark); }
+.face.mark { width: 24px; height: 24px; -webkit-mask-image: var(--face-mark); mask-image: var(--face-mark); }
 html.dark .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: var(--face-night); }
 @media (prefers-color-scheme: dark) {
   html:not(.light) .face:not(.mark) { -webkit-mask-image: var(--face-night); mask-image: var(--face-night); }
 }
-.face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-mask.png");    --face-night: url("/art/faces/eiri-mask-night2.png");    --face-mark: url("/art/faces/eiri-sign2.png"); }
-.face[data-agent="tory"]    { --face-day: url("/art/faces/tory-mask.png");    --face-night: url("/art/faces/tory-mask-night2.png");    --face-mark: url("/art/faces/tory-sign2.png"); }
-.face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-mask.png"); --face-night: url("/art/faces/antevon-mask-night2.png"); --face-mark: url("/art/faces/antevon-sign2.png"); }
+/* A (owner 09-07): the gods. The portrait is the linocut (GC) as a mask in the
+   agent's ink, 72 on the sheet; rows carry the name in ink alone; the mark is a
+   traced SVG attribute glyph (batch 2) reserved for name-less spots at 24 and
+   up. Trial casting of the marks: wings 1c · helmet 1c · hearth 1c. */
+.face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-GC-mask-day.png");    --face-night: url("/art/faces/eiri-GC-mask-night.png");    --face-mark: url("/art/faces/svg/eiri-1c.svg"); }
+.face[data-agent="tory"]    { --face-day: url("/art/faces/tory-GC-mask-day.png");    --face-night: url("/art/faces/tory-GC-mask-night.png");    --face-mark: url("/art/faces/svg/tory-1c.svg"); }
+.face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-GC-mask-day.png"); --face-night: url("/art/faces/antevon-GC-mask-night.png"); --face-mark: url("/art/faces/svg/antevon-1c.svg"); }
+/* the portrait style rides the tuner (base · trink · dream) so the pick is made in context */
+html[data-face-style="base"]  .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-G-mask-day.png");     --face-night: url("/art/faces/eiri-G-mask-night.png"); }
+html[data-face-style="base"]  .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-G-mask-day.png");     --face-night: url("/art/faces/tory-G-mask-night.png"); }
+html[data-face-style="base"]  .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-G-mask-day.png");  --face-night: url("/art/faces/antevon-G-mask-night.png"); }
+html[data-face-style="trink"] .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-GT-mask-day.png");    --face-night: url("/art/faces/eiri-GT-mask-night.png"); }
+html[data-face-style="trink"] .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-GT-mask-day.png");    --face-night: url("/art/faces/tory-GT-mask-night.png"); }
+html[data-face-style="trink"] .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-GT-mask-day.png"); --face-night: url("/art/faces/antevon-GT-mask-night.png"); }
+html[data-face-style="dream"] .face[data-agent="eiri"]    { --face-day: url("/art/faces/eiri-GD-mask-day.png");    --face-night: url("/art/faces/eiri-GD-mask-night.png"); }
+html[data-face-style="dream"] .face[data-agent="tory"]    { --face-day: url("/art/faces/tory-GD-mask-day.png");    --face-night: url("/art/faces/tory-GD-mask-night.png"); }
+html[data-face-style="dream"] .face[data-agent="antevon"] { --face-day: url("/art/faces/antevon-GD-mask-day.png"); --face-night: url("/art/faces/antevon-GD-mask-night.png"); }
+/* the VAULT's creature stays an animal — the mascot is the address (creature lane 07-13) */
+.face.vault[data-agent="antevon"] { --face-day: url("/art/faces/antevon-mask.png"); --face-night: url("/art/faces/antevon-mask-night2.png"); }
 
 /* the focus ring is silver (owner 08-19) — red returns only when an act is armed */
 .act.armed:focus-visible, [data-danger].armed:focus-visible { outline-color: var(--safelight); }
