@@ -23,7 +23,7 @@ main.pane {
 /* ── the grid: roster · room ── */
 .agents-grid {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: 276px minmax(0, 1fr); column-gap: 22px; padding-top: 2px;
+  display: grid; grid-template-columns: 248px minmax(0, 1fr); column-gap: 22px; padding-top: 2px;
 }
 @media (max-width: 980px) {
   .agents-grid { grid-template-columns: 220px minmax(0, 1fr); column-gap: 14px; }
@@ -384,37 +384,27 @@ table.hist .wake { font-family: var(--mono); font-size: 11.5px; color: var(--sil
   .rrow.live .rdoing, .rmsg.live .rtext, .nrow.live .ndoing { animation: none; background: none; color: var(--silver-2); }
 }
 
-/* ── the work fold under the picked roster row (owner 09-08): one agent
-   panel, not two wells. The rp-* rows are shared with nothing else now. ── */
-.rwork { display: flex; flex-direction: column; gap: 10px; padding: 2px 8px 12px 10px; }
-.rwork-head {
-  appearance: none; border: 0; background: none; padding: 4px 0; margin: 0; cursor: pointer;
-  display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; text-align: left;
-}
-.rwork-head .meta-line { margin: 0; }
-.rwork-chev { font-family: var(--mono); font-size: 10px; color: var(--silver-4); }
-.rwork-head:hover .meta-line, .rwork-head:hover .rwork-chev { color: var(--silver-1); }
-.rwork-head:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; border-radius: 3px; }
-.rwork .rp-body { gap: 10px; }
-.rwork .rp-doing { font-size: 13px; }
+/* ── the live run in the thread (owner 09-08): a card at the foot of the
+   conversation, its helpers as mono rows, the one red dot on what needs
+   you. Steering is replying; stop sits at rest in the foot. ── */
+.cwidget.rlive .cw-title { color: var(--silver-1); }
+.rlive-tree { display: flex; flex-direction: column; gap: 3px; padding: 2px 0 2px 2px; }
+.rlive .cw-foot { display: flex; align-items: baseline; gap: 14px; }
+.rlive .cw-foot .meta-line { margin: 0; }
 .pm-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); margin-right: 5px; vertical-align: 1px; }
-.rp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.rp-body { display: flex; flex-direction: column; gap: 10px; }
-.rp-body .label { margin-top: 4px; }
-.rp-group { display: flex; flex-direction: column; gap: 12px; }
-.rp-gname { font-family: var(--serif); font-size: 13.5px; }
-.rp-run { display: flex; flex-direction: column; gap: 4px; }
-.rp-doing { font-family: var(--serif); font-size: 13.5px; line-height: 1.4; color: var(--silver-1); }
-.rp-run.still .rp-doing { color: var(--silver-3); }
+/* the agent bar (cross-arch-0009b): a thin mono line above the composer,
+   only while the live card is scrolled out of view */
+.agent-bar {
+  appearance: none; border: 0; background: none; padding: 6px 2px 0; margin: 0; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; color: var(--silver-3);
+}
+.agent-bar:hover { color: var(--silver-1); }
+.agent-bar .chev { color: var(--silver-4); }
+.agent-bar:focus-visible { outline: 2px solid var(--safelight); outline-offset: 2px; border-radius: 3px; }
 .rp-helper { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--silver-3); }
 .rp-hwhat::before { content: "· "; color: var(--silver-4); margin-left: -10px; }
 .rp-hstate { white-space: nowrap; color: var(--silver-4); font-feature-settings: "tnum" 1; }
 .rp-helper.needs, .rp-helper.needs .rp-hstate { color: var(--silver-1); }
 .rp-helper.needs .rp-hstate::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--safelight); margin-right: 6px; vertical-align: 1px; }
-.rp-acts { display: flex; gap: 12px; padding-left: 10px; opacity: 0; transition: opacity 160ms ease; }
-.rp-run:hover .rp-acts, .rp-acts:focus-within { opacity: 1; }
-.rp-earlier { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
-.rp-ewhat { font-family: var(--serif); font-size: 13px; line-height: 1.4; color: var(--silver-3); }
-.rp-estate { font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); white-space: nowrap; }
 
-.rwork .rp-ewhat { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

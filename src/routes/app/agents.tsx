@@ -474,8 +474,10 @@ function Agents() {
   const [armed, setArmed] = React.useState<string | null>(null)
   /* pause parks the agent (nothing new starts; the live run finishes) */
   const [paused, setPaused] = React.useState<Record<string, string>>({})
-  /* the work fold under the picked roster row (owner 09-08: one agent panel, not two wells) */
-  const [workOpen, setWorkOpen] = React.useState(true)
+  /* the live run prints in the thread (owner 09-08: the merge into the conversation);
+     when its card scrolls out of view a thin line above the composer carries the count */
+  const liveRef = React.useRef<HTMLDivElement>(null)
+  const [liveSeen, setLiveSeen] = React.useState(true)
   /* stop = the cancel signal (rule 34): the run settles midway, in place */
   const [stopped, setStopped] = React.useState<Partial<Record<RunKey, boolean>>>({})
   /* the ledger sorts on its heads: asc → desc → off */
@@ -549,6 +551,17 @@ function Agents() {
     const el = threadRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [threads, room, layer])
+  React.useEffect(() => {
+    const el = liveRef.current
+    const root = threadRef.current
+    if (!el || !root) {
+      setLiveSeen(true)
+      return
+    }
+    const io = new IntersectionObserver(([e]) => setLiveSeen(e.isIntersecting), { root, threshold: 0.2 })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [room, layer, threads, stopped])
 
   useEscape(() => {
     const el = document.activeElement as HTMLElement | null
@@ -1188,91 +1201,85 @@ function Agents() {
   }
 
   /* ── the runs layer: now · earlier today, scoped to the room ── */
-  /* ── the work fold (owner 09-08: "merge the left agent panel and the right
-     details"): under the picked roster row, the agent's work unfolds — the
-     runs to their helpers, the one red dot on what needs you, steer and
-     stop on hover, then what ran earlier. The house row unfolds every
-     agent's work grouped under names in ink. The count lives in the fold
-     line, so the room's head is identity only. ── */
-  const renderWork = () => {
-    const groups: Array<{ key: AgentKey | null; runs: typeof runRows }> = isHouse
-      ? (['eiri', 'tory', 'antevon'] as AgentKey[]).map((k) => ({ key: k as AgentKey | null, runs: runRows.filter((r) => r.agent === k) })).filter((g) => g.runs.length)
-      : [{ key: null, runs: runRows }]
+  /* ── the live run, in the thread (owner 09-08: not a pane, not a fold —
+     the work prints where it was asked for). One card per live run at the
+     foot of the thread: what it is doing, its helpers, the one red dot on
+     what needs you, stop at rest; steering is replying. In the house the
+     card wears its agent's mark like any other turn. The thread itself is
+     the record of what ran earlier. ── */
+  const renderLive = () => {
+    const live = runRows.filter((r) => !stopped[r.agent])
+    return live.map((r, i) => {
+      const who = isHouse ? configs.find((x) => x.id === r.agent) : null
+      return (
+        <div key={r.agent} className="rmsg rlive-row" ref={i === 0 ? liveRef : undefined}>
+          {isHouse ? (
+            <span className="rwho">
+              <Face c={who?.creature ?? 'none'} size={20} alt={who?.fixture?.creature.alt} />
+              <span className="aname" data-agent={r.agent}>
+                {NAMES[r.agent]}
+              </span>
+            </span>
+          ) : null}
+          <span className="rbody">
+            <div className="cwidget rlive" data-agent={r.agent}>
+              <span className="cw-title" title={r.tip}>
+                {r.doing}
+              </span>
+              <span className="cw-meta">
+                running · {r.elapsed} · {r.helpers.length} helpers
+              </span>
+              <div className="rlive-tree">
+                {r.helpers.map((h) => (
+                  <div key={h.what} className={h.needs ? 'rp-helper needs' : 'rp-helper'}>
+                    <span className="rp-hwhat">{h.what}</span>
+                    <span className="rp-hstate">{h.state}</span>
+                  </div>
+                ))}
+              </div>
+              <span className="cw-foot">
+                <button type="button" className="act" title="verb: stop_run · at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
+                  stop
+                </button>
+                <span className="meta-line" title="say it below · the run hears it at its next breakpoint">
+                  reply to steer
+                </span>
+              </span>
+            </div>
+          </span>
+          <span className="rat" aria-hidden="true" />
+        </div>
+      )
+    })
+  }
+
+  /* the agent bar (cross-arch-0009b): when the live card is scrolled off, a
+     thin line above the composer keeps the count and jumps back to it */
+  const renderBar = () => {
+    if (liveSeen || !liveCount) return null
     return (
-      <div className="rwork" aria-label="work">
-        <button
-          type="button"
-          className="rwork-head"
-          aria-expanded={workOpen}
-          title={workOpen ? 'fold the work' : 'unfold the work'}
-          onClick={(e) => { markCued(e); setWorkOpen((x) => !x); cue('toggle') }}
-        >
-          <span className="meta-line">
-            {liveCount} running
-            {needsCount ? (
-              <>
-                {' · '}
-                <i className="pm-dot" aria-hidden="true" />
-                {needsCount} needs you
-              </>
-            ) : null}
-          </span>
-          <span className="rwork-chev" aria-hidden="true">
-            {workOpen ? '▾' : '▸'}
-          </span>
-        </button>
-        {workOpen ? (
-          <div className="rp-body">
-            {groups.map((g) => (
-              <div key={g.key ?? 'all'} className="rp-group">
-                {g.key ? (
-                  <span className="aname rp-gname" data-agent={g.key}>
-                    {NAMES[g.key]}
-                  </span>
-                ) : null}
-                {g.runs.length === 0 ? <span className="meta-line">nothing runs right now</span> : null}
-                {g.runs.map((r) => {
-                  const still = !!stopped[r.agent]
-                  return (
-                    <div key={r.agent} className={still ? 'rp-run still' : 'rp-run'} data-agent={r.agent}>
-                      <span className="rp-doing" title={r.tip}>
-                        {r.doing}
-                      </span>
-                      {r.helpers.map((h) => (
-                        <div key={h.what} className={h.needs && !still ? 'rp-helper needs' : 'rp-helper'}>
-                          <span className="rp-hwhat">{h.what}</span>
-                          <span className="rp-hstate">{still ? '' : h.state}</span>
-                        </div>
-                      ))}
-                      {still ? (
-                        <span className="meta-line" title="stopped at its next breakpoint">
-                          stopped {SETTLE_AT}
-                        </span>
-                      ) : (
-                        <span className="rp-acts">
-                          <button type="button" className="act" title="opens the run in the agent line · steer it there" onClick={(e) => { markCued(e); openChat(r.agent) }}>
-                            steer
-                          </button>
-                          <button type="button" className="act" title="verb: stop_run · at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
-                            stop
-                          </button>
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
-            {histRows.length ? <span className="label">earlier</span> : null}
-            {histRows.slice(0, 3).map((h) => (
-              <div key={h.id} className="rp-earlier" title={h.tip}>
-                <span className="rp-ewhat">{h.ran}</span>
-                <span className="rp-estate">{h.wake.replace('woke ', '')}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      <button
+        type="button"
+        className="agent-bar"
+        title="the live run · back to it"
+        onClick={() => {
+          liveRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        }}
+      >
+        <span>
+          {liveCount} running
+          {needsCount ? (
+            <>
+              {' · '}
+              <i className="pm-dot" aria-hidden="true" />
+              {needsCount} needs you
+            </>
+          ) : null}
+        </span>
+        <span className="chev" aria-hidden="true">
+          ↓
+        </span>
+      </button>
     )
   }
 
@@ -1685,7 +1692,6 @@ function Agents() {
                     </span>
                   </span>
                 </button>
-                {room === c.id && c.fixture ? renderWork() : null}
                 </React.Fragment>
               )
             })}
@@ -1712,7 +1718,6 @@ function Agents() {
                 </span>
               </span>
             </button>
-            {room === 'house' ? renderWork() : null}
             <span className="rsep" aria-hidden="true"></span>
             <button type="button" className="rrow new" title="a new agent · Antevon proposes the pieces, you confirm each" onClick={openNew}>
               <span className="rtext">
@@ -1734,6 +1739,7 @@ function Agents() {
               <div className={room === 'house' ? 'room-thread house' : 'room-thread solo'} ref={threadRef} aria-live="polite">
                 <span className="rday">today</span>
                 {thread.map((m, i) => renderMsg(m, current, i === 0 || thread[i - 1].who !== m.who, room === 'house'))}
+                {!isNew ? renderLive() : null}
                 {isNew && !prop ? (
                   <div className="rmsg">
                     <span className="rwho"></span>
@@ -1748,6 +1754,7 @@ function Agents() {
                 ) : null}
               </div>
             )}
+            {layer === 'thread' ? renderBar() : null}
             {layer === 'thread' ? renderLine() : null}
             </div>
           </section>
