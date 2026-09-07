@@ -8,7 +8,7 @@ use crate::gate::{
 use crate::memory::MemoryResult;
 use crate::write_envelope::WriteActor;
 
-use super::consts::{TASK_CREATE_OWNER_KEY_PREFIX, TASK_CREATE_RATE_KEY_PREFIX};
+use super::consts::TASK_CREATE_RATE_KEY_PREFIX;
 use super::create_spec::TaskCreateRateLimit;
 use super::verb_kind::TasksVerb;
 
@@ -86,29 +86,21 @@ pub(super) fn task_create_rate_key(actor: EntityId, window_seconds: u64) -> Vec<
     key
 }
 
-pub(super) fn record_task_create_owner_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    task_ref: EntityId,
-    owner_ref: EntityId,
-) -> Result<()> {
-    vault.store.vault_meta.put(
-        wtxn,
-        task_create_owner_key(task_ref).as_slice(),
-        owner_ref.as_bytes(),
-    )?;
-    Ok(())
-}
-
-/// The actor whose ceiling admitted this create. ONE-1708's follow-up driver
-/// sends its reminders as this actor, so a nudge rides the same gate, budget
-/// and delivery-window pipeline as any other send the owner makes.
+/// The actor whose ceiling admitted this create, read from the replicated
+/// Owner authority fact. ONE-1708's follow-up driver sends its reminders as
+/// this actor, so a nudge rides the same gate, budget and delivery-window
+/// pipeline as any other send the owner makes.
+///
+/// The proof travels WITH the task now: a peer that materialized the TASK
+/// materialized its Owner fact too, so the owner is the same principal on
+/// every replica instead of a row only the minting node held.
 pub(crate) fn task_create_owner(vault: &Vault, task_ref: EntityId) -> Result<Option<EntityId>> {
-    let rtxn = vault.store.env.read_txn()?;
-    task_create_owner_in(vault, &rtxn, task_ref)
+    Ok(vault
+        .task_authority_state(task_ref)?
+        .map(|state| state.owner_ref))
 }
 
-/// The same owner fact, read through a caller-owned transaction.
+/// The same owner proof, read through a caller-owned transaction.
 ///
 /// The hard cancel rung re-verifies ownership INSIDE its write transaction
 /// before it terminalizes anything (ONE-1896 §7): a pre-transaction check is a
@@ -119,24 +111,7 @@ pub(crate) fn task_create_owner_in(
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
 ) -> Result<Option<EntityId>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(txn, task_create_owner_key(task_ref).as_slice())?
-    else {
-        return Ok(None);
-    };
-    let bytes: [u8; 16] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("tasks.create.owner"))?;
-    EntityId::from_bytes(bytes).map(Some)
-}
-
-fn task_create_owner_key(task_ref: EntityId) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(TASK_CREATE_OWNER_KEY_PREFIX.len() + task_ref.as_bytes().len());
-    key.extend_from_slice(TASK_CREATE_OWNER_KEY_PREFIX);
-    key.extend_from_slice(task_ref.as_bytes());
-    key
+    Ok(vault
+        .task_authority_state_in(txn, task_ref)?
+        .map(|state| state.owner_ref))
 }

@@ -612,7 +612,7 @@ fn store_sending_identity(vault: &Vault, actor: EntityId) {
     let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         "me@primary.test",
-        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::agent(actor),
         100,
     );
