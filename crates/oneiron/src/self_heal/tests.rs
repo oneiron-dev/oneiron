@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+#[path = "repair/tests.rs"]
+mod repair_tests;
+
 use super::*;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};

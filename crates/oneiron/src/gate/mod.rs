@@ -16,6 +16,7 @@ mod dreamer_precommit;
 mod effect;
 mod grants;
 mod input;
+mod repair;
 mod resolution;
 mod witness_message;
 
@@ -81,6 +82,7 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;

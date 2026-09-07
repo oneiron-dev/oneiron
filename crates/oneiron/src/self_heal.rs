@@ -27,13 +27,14 @@
 //!
 //! # Scope
 //!
-//! T1 ONLY. Detection has no repair type, no healer callback, no gate mutation
-//! and no apply path; the sole write is a DIAGNOSTIC entity through
-//! [`DiagnosticEvent`]'s maintenance-band door. T2 classifiers, T3 judges,
-//! healer proposals and automatic repair are deliberately absent (ONE-1395 and
-//! beyond). The narrow BM25 deindex self-heal is a different, untouched thing:
-//! receipts and retrieval telemetry are READ-ONLY detector inputs here, and no
-//! parallel log stack is introduced.
+//! Detection remains T1-only: its sole write is a DIAGNOSTIC entity through
+//! [`DiagnosticEvent`]'s maintenance-band door. ONE-1395 adds a separate,
+//! propose-only [`Healer`] contract and per-member [`RepairBundle`] review.
+//! Healers receive no vault or executor; the engine stamps invocation authority
+//! before their output exists and recomputes consent from current repair policy.
+//! T2 classifiers, T3 judges and automatic repair remain absent. The narrow BM25
+//! deindex self-heal is untouched. Receipts and retrieval telemetry remain
+//! READ-ONLY detector inputs; no parallel log stack is introduced.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -48,6 +49,16 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
+
+mod repair;
+
+pub(crate) use repair::validate_repair_proposal;
+pub use repair::{
+    Healer, HealerInvocationStamp, RepairActor, RepairBundle, RepairConsentRoute,
+    RepairCriticality, RepairOperation, RepairProposal, ReviewedRepair,
+};
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use repair::{RegisteredHealer, run_healer_proposals};
 
 /// Schema version stamped into, and required by, every DIAGNOSTIC body.
 pub const DIAGNOSTIC_SCHEMA_VERSION: u64 = 1;
