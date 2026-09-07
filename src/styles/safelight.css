@@ -657,6 +657,7 @@ html[data-select-chrome="square"] .rrow.on,
 html[data-select-chrome="square"] .tx.sel,
 html[data-select-chrome="square"] .brow.sel .brow-line,
 html[data-select-chrome="square"] .w-row.sel { border-radius: 0; }
+html[data-select-chrome="box"] table.ledger tr.selected td { background: transparent; border-radius: 0; }
 html[data-select-chrome="gutter"] table.ledger tr.selected td { background: transparent; }
 html[data-select-chrome="gutter"] table.ledger tr.selected td:first-child { box-shadow: inset 2px 0 0 var(--silver-2); border-radius: 0; }
 html[data-select-chrome="gutter"] table.ledger tr.selected td:last-child { border-radius: 0; }
