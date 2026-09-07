@@ -595,8 +595,10 @@ fn admit_federated_entity_blob(
         // the v3 re-key moves every maintenance kind DOWN into 64–99, so
         // keeping that test would have silently begun admitting peer-written
         // maintenance records. The zone arm below now covers only bytes with
-        // no static kind at all: the canon-reserved system bytes (69/72/74/75)
+        // no static kind at all: the canon-reserved system bytes (72/74/75)
         // and the entire pack half, neither of which a peer may author.
+        // DIAGNOSTIC (69) left that reserve set in ONE-1394 and is now caught
+        // by the CLASSIFICATION arm instead — engine-authored either way.
         let engine_authored = entity_type_registry_entry(header.entity_type).map_or_else(
             || {
                 !matches!(

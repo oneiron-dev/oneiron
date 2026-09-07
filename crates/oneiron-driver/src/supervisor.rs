@@ -48,6 +48,11 @@ use oneiron::{
     WakeTrigger, WriteActor,
 };
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
+#[cfg(all(unix, feature = "voice"))]
+use oneiron_server::{
+    managed::ManagedShutdown,
+    voice_host::{VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceServeConnection},
+};
 use tokio::sync::{Semaphore, watch};
 
 use crate::tick::{Tick, TickSource};
@@ -273,11 +278,17 @@ impl WakeSupervisorConfig {
 #[derive(Debug, Clone)]
 pub struct ShutdownHandle {
     tx: watch::Sender<bool>,
+    #[cfg(all(unix, feature = "voice"))]
+    voice: Option<ManagedShutdown>,
 }
 
 impl ShutdownHandle {
     /// Requests shutdown. Idempotent.
     pub fn shutdown(&self) {
+        #[cfg(all(unix, feature = "voice"))]
+        if let Some(shutdown) = &self.voice {
+            shutdown.trigger();
+        }
         let _ = self.tx.send(true);
     }
 }
@@ -285,10 +296,16 @@ impl ShutdownHandle {
 #[derive(Debug)]
 struct ShutdownListener {
     rx: watch::Receiver<bool>,
+    #[cfg(all(unix, feature = "voice"))]
+    voice: Option<ManagedShutdown>,
 }
 
 impl ShutdownListener {
     fn requested(&self) -> bool {
+        #[cfg(all(unix, feature = "voice"))]
+        if self.voice.as_ref().is_some_and(ManagedShutdown::is_triggered) {
+            return true;
+        }
         *self.rx.borrow()
     }
 
@@ -296,6 +313,19 @@ impl ShutdownListener {
     /// dropped without a request, nothing can ever request one — this pends
     /// forever rather than reporting a spurious shutdown.
     async fn triggered(&mut self) {
+        #[cfg(all(unix, feature = "voice"))]
+        if let Some(shutdown) = &self.voice {
+            tokio::select! {
+                biased;
+                () = shutdown.triggered() => {},
+                () = async {
+                    if self.rx.wait_for(|stopped| *stopped).await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                } => {},
+            }
+            return;
+        }
         if self.rx.wait_for(|stopped| *stopped).await.is_err() {
             std::future::pending::<()>().await;
         }
@@ -320,6 +350,25 @@ pub trait PassExecutorFactory {
     fn actor(&self) -> Option<WriteActor> {
         None
     }
+
+    /// Optional process-local attachment, after the supervisor creates its guard.
+    /// The default is inert, including for existing custom executor factories.
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_host(&self, _vault: &Vault, _guard: &BudgetGuard) -> Result<Option<VoiceHost>> {
+        Ok(None)
+    }
+
+    /// Claims optional, owner-supplied serve bindings. No connection is invented.
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_serve_bindings(&self) -> Result<Option<VoiceServeConnection>> {
+        Ok(None)
+    }
+
+    /// The configured lifecycle signal, not another shutdown owner.
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_shutdown(&self) -> Option<ManagedShutdown> {
+        None
+    }
 }
 
 /// [`PassExecutorFactory`] over the landed [`ConsolidationExecutor`]: owns
@@ -337,6 +386,8 @@ pub struct ConsolidationExecutorFactory {
     /// handler only when a planner is configured" is the one wiring this
     /// factory must not offer.
     commitment_wake_planner: Option<Box<dyn CommitmentWakeProposalPlanner>>,
+    #[cfg(all(unix, feature = "voice"))]
+    voice: Option<VoiceHostConfig>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -356,7 +407,18 @@ impl ConsolidationExecutorFactory {
             model,
             sink,
             commitment_wake_planner: None,
+            #[cfg(all(unix, feature = "voice"))]
+            voice: None,
         }
+    }
+
+    /// Opts into a pass-scoped voice attachment. No provider or meter is built.
+    /// `new` and `with_local_runtime` both leave voice unconfigured by default.
+    #[cfg(all(unix, feature = "voice"))]
+    #[must_use]
+    pub fn with_voice(mut self, config: VoiceHostConfig) -> Self {
+        self.voice = Some(config);
+        self
     }
 
     /// Opt-in CMT-3 (ONE-1540) proposal planner.
@@ -442,6 +504,52 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
     fn actor(&self) -> Option<WriteActor> {
         Some(self.actor)
     }
+
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_host(&self, vault: &Vault, guard: &BudgetGuard) -> Result<Option<VoiceHost>> {
+        let Some(config) = &self.voice else {
+            return Ok(None);
+        };
+        if !std::ptr::eq(vault, config.vault.as_ref()) {
+            return Err(oneiron::Error::InvalidConfig(
+                "voice attachment must use the supervisor vault".into(),
+            ));
+        }
+        VoiceHost::new(
+            Arc::clone(&config.vault),
+            &config.runtime,
+            VoiceHostBindings {
+                backend: Arc::clone(&self.backend),
+                budget: guard.clone(),
+                extraction_prompt: config.extraction_prompt.clone(),
+                session: config.session.clone(),
+                shutdown: config.shutdown.clone(),
+            },
+        )
+        .map(Some)
+        .map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("voice attachment refused: {error}"))
+        })
+    }
+
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_serve_bindings(&self) -> Result<Option<VoiceServeConnection>> {
+        let Some(bindings) = self
+            .voice
+            .as_ref()
+            .and_then(|config| config.serve_bindings.as_ref())
+        else {
+            return Ok(None);
+        };
+        bindings.take().map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("voice serve bindings refused: {error}"))
+        })
+    }
+
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_shutdown(&self) -> Option<ManagedShutdown> {
+        self.voice.as_ref().map(|config| config.shutdown.clone())
+    }
 }
 
 /// Supervisor run tally.
@@ -505,13 +613,23 @@ where
     #[must_use]
     pub fn new(vault: &'v Vault, ticks: T, factory: F, config: WakeSupervisorConfig) -> Self {
         let (tx, rx) = watch::channel(false);
+        #[cfg(all(unix, feature = "voice"))]
+        let voice = factory.voice_shutdown();
         Self {
             vault,
             ticks,
             factory,
             config,
-            shutdown_handle: ShutdownHandle { tx },
-            shutdown: ShutdownListener { rx },
+            shutdown_handle: ShutdownHandle {
+                tx,
+                #[cfg(all(unix, feature = "voice"))]
+                voice: voice.clone(),
+            },
+            shutdown: ShutdownListener {
+                rx,
+                #[cfg(all(unix, feature = "voice"))]
+                voice,
+            },
             pass_gate: Arc::new(Semaphore::new(1)),
             now_secs: Arc::new(system_now_secs),
         }
@@ -969,6 +1087,26 @@ async fn run_one_pass<F: PassExecutorFactory>(
             config.exhaustion_policy,
         ),
     };
+    // Only attach when the existing owner supplied a connection and outputs.
+    // Extraction-only configuration must not construct a throwaway host here.
+    #[cfg(all(unix, feature = "voice"))]
+    let voice = match factory
+        .voice_serve_bindings()
+        .map_err(PassRunError::PreAdmission)?
+    {
+        Some(bindings) => {
+            let host = factory
+                .voice_host(vault, &guard)
+                .map_err(PassRunError::PreAdmission)?
+                .ok_or_else(|| {
+                    PassRunError::PreAdmission(oneiron::Error::InvalidConfig(
+                        "voice serve bindings require an attached host".into(),
+                    ))
+                })?;
+            Some((host, bindings))
+        }
+        None => None,
+    };
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
@@ -986,10 +1124,19 @@ async fn run_one_pass<F: PassExecutorFactory>(
         reserve_units: config.reserve_units,
         now: (*now_secs)(),
     };
-    driver
-        .run_wake_pass(input, &mut executor, cancel)
-        .await
-        .map_err(PassRunError::Failed)
+    let pass = driver.run_wake_pass(input, &mut executor, cancel);
+    #[cfg(all(unix, feature = "voice"))]
+    if let Some((host, bindings)) = voice {
+        let (result, served) = bindings.serve_for_pass(host, pass).await;
+        let report = result.map_err(PassRunError::Failed)?;
+        served.map_err(|error| {
+            PassRunError::Failed(oneiron::Error::InvalidConfig(format!(
+                "voice serve failed: {error}"
+            )))
+        })?;
+        return Ok(report);
+    }
+    pass.await.map_err(PassRunError::Failed)
 }
 
 /// The units ORDINARY pass execution may spend: the dialed total minus the
@@ -2668,4 +2815,7 @@ mod tests {
         };
         *admitted
     }
+
+    #[cfg(all(unix, feature = "voice"))]
+    mod voice;
 }
