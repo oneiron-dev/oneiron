@@ -572,6 +572,89 @@ fn graduation_rejects_ambiguous_persisted_receipt_ids() {
 }
 
 #[test]
+fn graduation_rejects_capped_source_hiding_a_duplicate_review() {
+    use crate::receipt::{MAX_RECEIPT_QUERY_SCAN, put_attempt_pack_receipt_for_test};
+
+    let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    drop(vault);
+    let mut config = embedding_test_config();
+    config.map_size = 256 * 1024 * 1024;
+    let vault = Vault::open(dir.path(), config).unwrap();
+    let scope = review_scope(&request);
+    let mut receipt = review_receipt(&scope, 1, &DraftReviewOutcome::ApprovedUntouched);
+    receipt.receipt_id = format!("attempt:{:032x}", 0);
+    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+        receipt_ref: receipt.receipt_id.clone(), occurred_at: 1 };
+    persist_send_receipt(&vault, EntityId::now(), receipt.clone(), SendReceiptOutcome::Failed, false, None).unwrap();
+    // A conflicting, ineligible duplicate lives just beyond the source cap.
+    // Off-kind filler leaves only the eligible durable row in the result, so
+    // neither result length nor filtering can establish uniqueness.
+    receipt.actor = Some(entity(0x72).to_hex());
+    receipt.occurred_at = 2;
+    receipt.fields.insert("review_outcome".to_owned(), "rejected".to_owned());
+    vault.with_write_txn(|wtxn| {
+        put_attempt_pack_receipt_for_test(&vault.store, wtxn, &receipt)?;
+        let mut filler = ReceiptRecord { receipt_id: String::new(), receipt_kind: ReceiptKind::Gate,
+            occurred_at: 2, actor: None, on_behalf_of: None, outcome: "completed".to_owned(),
+            job_ref: None, trigger_ref: None, policy_trace: Vec::new(), fields: BTreeMap::new() };
+        for index in 1..=MAX_RECEIPT_QUERY_SCAN {
+            filler.receipt_id = format!("attempt:{index:032x}");
+            put_attempt_pack_receipt_for_test(&vault.store, wtxn, &filler)?;
+        }
+        Ok(())
+    }).unwrap();
+    assert_eq!(crate::receipt::attempt_pack_receipt(&vault, &evidence.receipt_ref).unwrap(), Some(receipt));
+    let scan = vault.scan_receipts(
+        ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN).with_kind(ReceiptKind::Outbound)
+    ).unwrap();
+    assert_eq!(scan.records.len(), 1);
+    assert_eq!(scan.records[0].receipt_id, evidence.receipt_ref);
+    assert_eq!(scan.records[0].fields.get("review_outcome").map(String::as_str), Some("approved_untouched"));
+    assert!(!scan.complete, "one visible match is not proof of uniqueness");
+    let continuation = scan.continuation.unwrap();
+    assert_eq!(continuation.attempt_pack_before,
+        Some(format!("attempt_receipt:v1:attempt:{:032x}", 1).into_bytes()));
+    assert!(continuation.next_record.is_none(), "the source, not the result limit, hid the duplicate");
+    assert_review_rejected(&vault, &owner, &evidence);
+    assert!(vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().is_none());
+}
+
+#[test]
+fn graduation_accepts_complete_unique_review_for_both_writers() {
+    for owner_authenticated in [false, true] {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+        let scope = review_scope(&request);
+        let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
+        // Other persisted reviews do not make this receipt id ambiguous.
+        persist_review(&vault, &scope, 2, DraftReviewOutcome::Rejected);
+        let scan = vault.scan_receipts(
+            ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN).with_kind(ReceiptKind::Outbound)
+        ).unwrap();
+        assert!(scan.complete);
+        assert!(scan.continuation.is_none());
+        assert_eq!(scan.records.len(), 2);
+        let matches: Vec<_> = scan.records.iter().filter(|r| r.receipt_id == evidence.receipt_ref).collect();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].fields.get(crate::receipt::FIELD_TASK_REF)
+            .and_then(|value| EntityId::from_hex(value).ok()).is_some());
+        if owner_authenticated {
+            vault.record_graduation_evidence_as_owner(evidence.clone(), &owner).unwrap();
+        } else {
+            vault.record_graduation_evidence(evidence.clone(),
+                &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)).unwrap();
+        }
+        let offer = vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap();
+        assert_eq!(offer.evidence_refs, [evidence.receipt_ref]);
+        assert_eq!(offer.unchanged_streak, 1);
+        assert_eq!(offer.scope, scope);
+        assert_eq!(vault.verify_channel_identity_autonomy(&request, &owner).unwrap().mode.rung,
+            ChannelIdentityAutonomyRung::DraftOnly);
+    }
+}
+
+#[test]
 fn graduation_duplicate_admission_is_atomic_and_survives_reopen() {
     let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
     vault.apply_channel_identity_autonomy(&request, &owner).unwrap();

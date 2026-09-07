@@ -696,8 +696,14 @@ impl Vault {
     // and send audit receipts are append-only. No actor/time filter may hide an
     // ambiguous receipt id; all durable outbound rows must remain visible.
     fn validate_graduation_review(&self, evidence: &GraduationEvidence) -> Result<(&'static str, Value)> {
-        let receipts = self.receipts(ReceiptQuery::new(usize::MAX).with_kind(ReceiptKind::Outbound))?;
-        let mut matches = receipts.iter().filter(|r| r.receipt_id == evidence.receipt_ref);
+        let scan = self.scan_receipts(
+            ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN).with_kind(ReceiptKind::Outbound)
+        )?;
+        // Continuations describe omitted data, not resumable snapshot pages.
+        // Without a bounded resume door, neither a missing id nor one visible
+        // match proves uniqueness. Reject source AND result truncation.
+        if !scan.complete { return Err(invalid_autonomy()); }
+        let mut matches = scan.records.iter().filter(|r| r.receipt_id == evidence.receipt_ref);
         let receipt = matches.next().ok_or_else(invalid_autonomy)?;
         if matches.next().is_some() { return Err(invalid_autonomy()); }
         let field = |key: &str| receipt.fields.get(key).map(String::as_str);
