@@ -15,6 +15,7 @@ use rmpv::Value;
 
 fn test_config() -> VaultConfig {
     VaultConfig {
+        ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
         map_size: 16 * 1024 * 1024,
         dimensions: 4,
         fast_dims: None,
