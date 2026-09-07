@@ -7,16 +7,23 @@ use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
     ReassignmentMap, SplitOp, SurvivorshipPlan,
 };
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_PLACE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_PLACE,
+};
 use crate::temporal::TimeRange;
 use crate::test_util::{entity, open_test_vault_with, seed_agent_definition};
 
 // Read times below name the operation being observed: initial writes at 100
 // (or 1_800_000_000), merge/split at 300, undo/retry at 400, replacement
 // at 500. Rejection checks use the attempted write's time, not wall clock.
+mod anchor_admission;
+mod anchor_session_admission;
 pub(crate) mod authorization;
 mod evaluation_time;
 mod head_admission;
+#[cfg(feature = "sync")]
+mod replicated_anchor;
 #[cfg(feature = "sync")]
 mod replicated_substrate;
 mod substrate_admission;
@@ -1221,15 +1228,37 @@ fn time_filter_preserves_stored_subject_ambiguity_and_excluded_history() -> Resu
                 ErrorKind::InvalidClaimBody
             );
         }
-        let replacement =
-            vault.set_person_substrate(survivor, PersonSubstrate::Meat, &writer(), 400)?;
-        for id in [first, agreeing] {
-            let historical = vault.get_claim(&id)?.expect("closed eligible head");
-            assert_eq!(historical.subject, ClaimSubject::Entity(absorbed));
-            assert_eq!(historical.lifecycle, ClaimLifecycleStatus::Superseded);
-            assert_eq!(historical.valid_to, Some(400));
-            assert_eq!(historical.evidence, Some(writer_evidence(writer())));
-        }
+        // The future fact is invisible to the read at 400, but overlaps an
+        // unbounded replacement. Snapshot all entity rows and both edge tables.
+        let snapshot = || -> Result<_> {
+            let txn = vault.store.env.read_txn()?;
+            let mut tables = Vec::new();
+            for db in [
+                vault.store.entities,
+                vault.store.edges_in,
+                vault.store.edges_out,
+            ] {
+                let mut rows = Vec::new();
+                for row in db.iter(&txn)? {
+                    let (key, value) = row?;
+                    rows.push((key.to_vec(), value.to_vec()));
+                }
+                tables.push(rows);
+            }
+            Ok(tables)
+        };
+        let before = snapshot()?;
+        let absorbed_claims = vault.claims_for_subject(&absorbed)?;
+        let survivor_claims = vault.claims_for_subject(&survivor)?;
+        assert!(matches!(
+            vault.set_person_substrate(survivor, PersonSubstrate::Meat, &writer(), 400),
+            Err(Error::InvalidClaimBody(
+                "subject model write overlaps retained or future history"
+            ))
+        ));
+        assert_eq!(snapshot()?, before);
+        assert_eq!(vault.claims_for_subject(&absorbed)?, absorbed_claims);
+        assert_eq!(vault.claims_for_subject(&survivor)?, survivor_claims);
         assert_eq!(vault.get(&future)?, future_bytes);
         assert_eq!(vault.get_claim(&future)?, Some(future_body));
         assert!(
@@ -1238,10 +1267,60 @@ fn time_filter_preserves_stored_subject_ambiguity_and_excluded_history() -> Resu
                 .iter()
                 .all(|edge| edge.kind != crate::edge::EdgeKind::Supersedes)
         );
-        assert_eq!(
-            vault.get_claim(&replacement)?.expect("replacement").subject,
-            ClaimSubject::Entity(survivor)
-        );
     }
+    Ok(())
+}
+
+#[test]
+fn no_overlap_replacement_closes_agreeing_heads_and_preserves_sealed_history() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let absorbed = seed(&vault, entity(0xB2), ENTITY_TYPE_PERSON);
+    let survivor = seed(&vault, entity(0xB3), ENTITY_TYPE_PERSON);
+    let first = vault.set_person_substrate(absorbed, PersonSubstrate::Model, &writer(), 100)?;
+    let agreeing = entity(0xB4);
+    let body = vault.get_claim(&first)?.expect("first head");
+    put_subject_fixture(&vault, &agreeing, &body)?;
+    merge_substrate_person(&vault, absorbed, survivor)?;
+    assert_eq!(
+        vault.person_substrate(&survivor, 400)?,
+        Some(PersonSubstrate::Model)
+    );
+    let replacement =
+        vault.set_person_substrate(survivor, PersonSubstrate::Meat, &writer(), 400)?;
+    for id in [first, agreeing] {
+        let historical = vault.get_claim(&id)?.expect("closed eligible head");
+        assert_eq!(historical.subject, ClaimSubject::Entity(absorbed));
+        assert_eq!(historical.value, Value::from("model"));
+        assert_eq!(historical.valid_from, Some(100));
+        assert_eq!(historical.lifecycle, ClaimLifecycleStatus::Superseded);
+        assert_eq!(historical.valid_to, Some(400));
+        assert_eq!(historical.evidence, Some(writer_evidence(writer())));
+        let superseders = vault
+            .edges_in(&id)?
+            .into_iter()
+            .filter(|edge| edge.kind == crate::edge::EdgeKind::Supersedes)
+            .collect::<Vec<_>>();
+        assert_eq!(superseders.len(), 1);
+        assert_eq!(superseders[0].target, replacement);
+    }
+    assert_eq!(
+        vault.get_claim(&replacement)?.expect("replacement").subject,
+        ClaimSubject::Entity(survivor)
+    );
+    let sealed = [vault.get(&first)?, vault.get(&agreeing)?];
+    // Current reads exclude closed history; historical reads use its sealed
+    // interval without mutating lifecycle or rewriting stored identities.
+    for queried in [absorbed, survivor] {
+        for (at, expected) in [
+            (400, Some(PersonSubstrate::Meat)),
+            (399, Some(PersonSubstrate::Model)),
+            (99, None),
+            (100, Some(PersonSubstrate::Model)),
+            (500, Some(PersonSubstrate::Meat)),
+        ] {
+            assert_eq!(vault.person_substrate(&queried, at)?, expected);
+        }
+    }
+    assert_eq!([vault.get(&first)?, vault.get(&agreeing)?], sealed);
     Ok(())
 }

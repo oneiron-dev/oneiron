@@ -1028,7 +1028,7 @@ pub(crate) fn apply_ops_session(
                         data,
                         *allow_reserved_predicate,
                     )?;
-                    crate::subject_model::validate_person_substrate_claim_in_session(
+                    crate::subject_model::validate_subject_model_claim_in_session(
                         view, wtxn, &body,
                     )?;
                 }

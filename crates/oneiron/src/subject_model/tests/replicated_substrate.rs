@@ -12,9 +12,9 @@ use crate::sync::window::forward_rematerialize;
 use loro::LoroDoc;
 use std::sync::Arc;
 
-const WINDOW: &str = "2026-03";
+pub(super) const WINDOW: &str = "2026-03";
 
-fn blob(kind: u8, data: &[u8]) -> Vec<u8> {
+pub(super) fn blob(kind: u8, data: &[u8]) -> Vec<u8> {
     let mut blob = vec![kind];
     for stamp in [100_u64; 3] {
         blob.extend_from_slice(&stamp.to_be_bytes());
