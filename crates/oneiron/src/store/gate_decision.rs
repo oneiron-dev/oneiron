@@ -631,7 +631,7 @@ impl Store {
     /// ledger's size stops bounding peak memory on a long-lived vault. The
     /// `Result<()>` return — not a `Vec` — is what enforces this; do not
     /// reintroduce an intermediate collection of every record.
-    pub(super) fn for_each_gate_decision_in_txn(
+    pub(crate) fn for_each_gate_decision_in_txn(
         &self,
         txn: &RoTxn<'_>,
         mut visit: impl FnMut(GateDecisionRecord) -> Result<()>,

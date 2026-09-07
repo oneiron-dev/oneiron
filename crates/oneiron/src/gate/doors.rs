@@ -23,7 +23,7 @@ use crate::store::{
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{
-    WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, SourceLineage, WriteActor, WriteEnvelope,
+    SourceLineage, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope,
 };
 
 use super::ceiling::PolicyApprovalCeiling;
@@ -1048,7 +1048,7 @@ pub(crate) fn standing_outbound_grant_binding_parts(
     Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
 }
 
-fn gate_decision_matches_pending_candidate(
+pub(super) fn gate_decision_matches_pending_candidate(
     record: &GateDecisionRecord,
     expected: &GateDecisionRecord,
 ) -> bool {

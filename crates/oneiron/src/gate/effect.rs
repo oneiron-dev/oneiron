@@ -26,7 +26,7 @@ use super::decision::{
     record_gate_decision_metrics,
 };
 use super::definition_ceiling::agent_definition_ceiling_for_effect_actor;
-use super::doors::GateConsentBinding;
+use super::doors::{GateConsentBinding, gate_decision_matches_pending_candidate};
 use super::grants::external_effect_grant_matches;
 use super::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateEvaluatorInput,
@@ -518,35 +518,49 @@ pub(crate) fn record_external_effect_policy(
     {
         crate::consent::spend_approve_once_in_txn(store, wtxn, authorization)?;
     }
-    crate::off_record::FloorWrites::new(store).append_egress_gate_decision(
-        wtxn,
-        &GateDecisionRecord {
-            version: 0,
-            decision_id,
-            created_at,
-            outcome: decision.outcome().as_str().to_owned(),
-            reason_codes: decision
-                .reason_codes()
-                .iter()
-                .map(|code| code.as_str().to_owned())
-                .collect(),
-            receipt_reasons: decision
-                .receipt_reasons()
-                .iter()
-                .map(|reason| (*reason).to_owned())
-                .collect(),
-            system_notices: Vec::new(),
-            actor_class: input.actor.actor_class.clone(),
-            actor_ref: input.actor.actor_ref.clone(),
-            content_kind: input.content_kind.as_str().to_owned(),
-            policy_manifest_version: input.policy_manifest_version,
-            claim_id: None,
-            grant_ref,
-            diff_handle: binding.diff_handle,
-            read_frontier_hash: binding.read_frontier_hash,
-            redacted_at: None,
-        },
-    )?;
+    let candidate = GateDecisionRecord {
+        version: 0,
+        decision_id,
+        created_at,
+        outcome: decision.outcome().as_str().to_owned(),
+        reason_codes: decision
+            .reason_codes()
+            .iter()
+            .map(|code| code.as_str().to_owned())
+            .collect(),
+        receipt_reasons: decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect(),
+        system_notices: Vec::new(),
+        actor_class: input.actor.actor_class.clone(),
+        actor_ref: input.actor.actor_ref.clone(),
+        content_kind: input.content_kind.as_str().to_owned(),
+        policy_manifest_version: input.policy_manifest_version,
+        claim_id: None,
+        grant_ref,
+        diff_handle: binding.diff_handle,
+        read_frontier_hash: binding.read_frontier_hash,
+        redacted_at: None,
+    };
+    if decision.outcome() == GateOutcome::Pending {
+        // Read the caller's txn so retries also see its uncommitted appends.
+        // Keep only the first matching id; the cursor is dropped before any write.
+        let mut existing_id = None;
+        store.for_each_gate_decision_in_txn(&*wtxn, |record| {
+            if existing_id.is_none() && gate_decision_matches_pending_candidate(&record, &candidate)
+            {
+                existing_id = Some(record.decision_id);
+            }
+            Ok(())
+        })?;
+        if let Some(existing_id) = existing_id {
+            record_gate_decision_metrics(&decision);
+            return Ok((existing_id, decision));
+        }
+    }
+    crate::off_record::FloorWrites::new(store).append_egress_gate_decision(wtxn, &candidate)?;
     if decision.outcome() == GateOutcome::Allow
         && let Some((grant_id, grant)) = matched_grant
     {
