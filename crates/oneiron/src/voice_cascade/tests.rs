@@ -132,6 +132,7 @@ fn result(id: &str) -> BrainEvent {
     BrainEvent::Tool(ToolEvent::Result {
         call_id: id.to_owned(),
         output: json!({"refs": ["tool:result"]}),
+        is_error: false,
     })
 }
 

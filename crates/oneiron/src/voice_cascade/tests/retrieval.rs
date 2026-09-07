@@ -2,6 +2,18 @@ use super::*;
 use crate::speculative::SpeculativeFireDecision;
 use crate::store::RetrievalAction;
 
+#[derive(Default)]
+struct FailingEnricher {
+    texts: Vec<String>,
+}
+
+impl PartialEnricher for FailingEnricher {
+    fn enrich_speculative_partial(&mut self, text: &str) -> Result<PartialEnrichment> {
+        self.texts.push(text.to_owned());
+        Err(Error::InvalidConfig("test enricher failure".to_owned()))
+    }
+}
+
 #[test]
 fn real_fire_and_normalized_unchanged_signature_promote_refs_only() -> Result<()> {
     let (_dir, vault) = vault();
@@ -98,8 +110,8 @@ fn changed_final_uses_real_fresh_pass_then_warm_order() -> Result<()> {
     enricher.value.salient_terms = vec!["orchid".to_owned()];
     let partial = bridge.observe_partial(&handle, 1, "orchid", &mut enricher)?;
     assert_eq!(
-        partial.context.expect("warm").result_refs,
-        [warm_ref.clone()]
+        partial.context.expect("warm").result_refs.as_slice(),
+        std::slice::from_ref(&warm_ref)
     );
     let before = vault.retrieval_runs(200)?.len();
     enricher.value.salient_terms = vec!["cobalt".to_owned()];
@@ -119,23 +131,74 @@ fn changed_final_uses_real_fresh_pass_then_warm_order() -> Result<()> {
 }
 
 #[test]
+fn empty_host_enrichment_skips_partial_and_runs_normal_final_retrieval() -> Result<()> {
+    for enrichment in [
+        PartialEnrichment::default(),
+        PartialEnrichment {
+            entity_labels: vec![" ".to_owned()],
+            salient_terms: vec!["\t".to_owned(), String::new()],
+            query_vector: None,
+        },
+    ] {
+        let (_dir, vault) = vault();
+        let result_ref = put_text(&vault, 5, "Tokyo launch")?;
+        let mut bridge = SpeculativeRetrievalBridge::new(Arc::clone(&vault));
+        let handle = bridge.open_utterance("empty", SpeculativeSessionConfig::default())?;
+        let mut enricher = Enricher {
+            value: enrichment,
+            texts: Vec::new(),
+        };
+        // Provider text is not a fallback meaning signature. The host pass still runs.
+        for revision in [1, 2] {
+            let partial =
+                bridge.observe_partial(&handle, revision, "Tokyo launch", &mut enricher)?;
+            assert_eq!(
+                partial.decision,
+                SpeculativeFireDecision::SkippedEmptySignature
+            );
+            assert!(partial.context.is_none());
+            assert_eq!(bridge.fires_used(&handle)?, 0);
+        }
+        assert!(vault.retrieval_runs(200)?.is_empty());
+        assert!(
+            bridge
+                .observe_partial(&handle, 2, "duplicate", &mut enricher)
+                .is_err(),
+            "an empty-signature skip still advances the revision"
+        );
+        assert_eq!(enricher.texts, ["Tokyo launch", "Tokyo launch"]);
+        let context = bridge.finalize(&handle, 3, "Tokyo launch", &mut enricher)?;
+        assert!(!context.promoted);
+        assert_eq!(context.result_refs, [result_ref]);
+        assert!(context.run_id.is_some());
+        let runs = vault.retrieval_runs(200)?;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].action, RetrievalAction::Pipeline);
+        assert_eq!(
+            enricher.texts,
+            ["Tokyo launch", "Tokyo launch", "Tokyo launch"]
+        );
+        assert!(!bridge.is_open(&handle));
+    }
+    Ok(())
+}
+
+#[test]
 fn enrichment_is_mandatory_and_errors_leave_partial_retryable() -> Result<()> {
     let (_dir, vault) = vault();
     let mut bridge = SpeculativeRetrievalBridge::new(Arc::clone(&vault));
     let handle = bridge.open_utterance("enriched", SpeculativeSessionConfig::default())?;
-    let mut enricher = Enricher {
-        value: PartialEnrichment::default(),
-        texts: Vec::new(),
-    };
-    // Meaningful-looking provider text never becomes an ad-hoc term fallback.
+    let mut failing = FailingEnricher::default();
+    // Meaningful-looking provider text cannot bypass a failed host pass.
     assert!(
         bridge
-            .observe_partial(&handle, 7, "Tokyo launch", &mut enricher)
+            .observe_partial(&handle, 7, "Tokyo launch", &mut failing)
             .is_err()
     );
+    assert_eq!(failing.texts, ["Tokyo launch"]);
     assert_eq!(bridge.fires_used(&handle)?, 0);
     assert!(vault.retrieval_runs(200)?.is_empty());
-    enricher.value = Enricher::default().value;
+    let mut enricher = Enricher::default();
     enricher.value.query_vector = Some(vec![f32::NAN, 0.0, 0.0, 0.0]);
     assert!(
         bridge
@@ -149,7 +212,7 @@ fn enrichment_is_mandatory_and_errors_leave_partial_retryable() -> Result<()> {
         observed.decision,
         SpeculativeFireDecision::Fired { .. }
     ));
-    assert_eq!(enricher.texts.len(), 3);
+    assert_eq!(enricher.texts.len(), 2);
     assert!(
         bridge
             .observe_partial(&handle, 7, "duplicate", &mut enricher)
@@ -157,28 +220,26 @@ fn enrichment_is_mandatory_and_errors_leave_partial_retryable() -> Result<()> {
     );
     assert_eq!(
         enricher.texts.len(),
-        3,
+        2,
         "late revision never reaches host/model"
     );
     Ok(())
 }
 
 #[test]
-fn finalize_error_consumes_real_session_but_empty_enrichment_does_not() -> Result<()> {
+fn finalize_error_consumes_real_session_but_enricher_error_is_retryable() -> Result<()> {
     let (_dir, vault) = vault();
     let mut bridge = SpeculativeRetrievalBridge::new(vault);
     let handle = bridge.open_utterance("error", SpeculativeSessionConfig::default())?;
-    let mut enricher = Enricher {
-        value: PartialEnrichment::default(),
-        texts: Vec::new(),
-    };
+    let mut failing = FailingEnricher::default();
     assert!(
         bridge
-            .finalize(&handle, 1, "Tokyo launch", &mut enricher)
+            .finalize(&handle, 1, "Tokyo launch", &mut failing)
             .is_err()
     );
+    assert_eq!(failing.texts, ["Tokyo launch"]);
     assert!(bridge.is_open(&handle));
-    enricher.value = Enricher::default().value;
+    let mut enricher = Enricher::default();
     enricher.value.query_vector = Some(vec![f32::NAN, 0.0, 0.0, 0.0]);
     assert!(
         bridge
