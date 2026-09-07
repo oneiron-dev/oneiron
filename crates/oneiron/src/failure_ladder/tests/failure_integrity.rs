@@ -121,7 +121,8 @@ fn card_attempt_in_state(
     state: AttemptState,
 ) -> Result<AttemptRecord> {
     use crate::attempt_queue::{
-        AttemptInterventionKind, CompleteAttempt, CompleteOutcome, InterveneAttempt,
+        AbandonAttempt, AbandonOutcome, AttemptInterventionKind, AttemptResultRef, CompleteAttempt,
+        CompleteOutcome, InterveneAttempt,
     };
 
     let queue = AttemptQueue::new(vault);
@@ -132,7 +133,8 @@ fn card_attempt_in_state(
         | AttemptState::Completed
         | AttemptState::Failed
         | AttemptState::Scheduled
-        | AttemptState::Landing => claim(vault, dispatched.id, 20)?,
+        | AttemptState::Landing
+        | AttemptState::Abandoned => claim(vault, dispatched.id, 20)?,
     };
     match state {
         AttemptState::Queued | AttemptState::Leased => Ok(current),
@@ -202,7 +204,56 @@ fn card_attempt_in_state(
             };
             Ok(landing)
         }
+        AttemptState::Abandoned => {
+            let AbandonOutcome::Abandoned(abandoned) = queue.abandon(AbandonAttempt {
+                id: current.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: current.attempt_count,
+                result_ref: AttemptResultRef::new("blob-artifact:aa@1")?,
+                reason: "executor stopped without delivering".to_owned(),
+                now: 30,
+            })?
+            else {
+                panic!("expected a fresh abandonment");
+            };
+            Ok(abandoned)
+        }
     }
+}
+
+#[test]
+fn abandoned_attempt_routes_no_late_failure() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let abandoned = card_attempt_in_state(&vault, agent_ref, AttemptState::Abandoned)?;
+    assert!(abandoned.state.is_terminal());
+    assert!(!abandoned.state.is_running());
+    assert_eq!(abandoned.lease_owner, None);
+    let queue = AttemptQueue::new(&vault);
+    let before = queue.list()?;
+    let tree = RunTreeAdapter::new(&vault).read_run(RUN_ID)?;
+
+    // Late evidence cannot reopen the terminal row or route a retry, healer, or surface.
+    for (evidence, expected_action) in [
+        (transient(), "retry"),
+        (permanent(), "fail"),
+        (indeterminate(), "fail"),
+    ] {
+        let error = FailureLadder::new(&vault)
+            .handle_attempt_failure(
+                failure_input(&abandoned, evidence, 40),
+                auto_policy(agent_ref),
+            )
+            .expect_err("an abandoned attempt must stay settled");
+        assert!(matches!(
+            error,
+            Error::InvalidAttemptQueueTransition { action, state: "abandoned" }
+                if action == expected_action
+        ));
+        assert_eq!(queue.list()?, before, "no row was changed or enqueued");
+        assert_eq!(RunTreeAdapter::new(&vault).read_run(RUN_ID)?, tree);
+    }
+    Ok(())
 }
 
 #[test]
@@ -218,6 +269,7 @@ fn public_card_requires_persisted_failed_state_for_every_class() -> Result<()> {
         AttemptState::Cancelled,
         AttemptState::Scheduled,
         AttemptState::Landing,
+        AttemptState::Abandoned,
     ] {
         let (_dir, vault) = open_vault();
         let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
@@ -237,6 +289,14 @@ fn public_card_requires_persisted_failed_state_for_every_class() -> Result<()> {
             &mut tree.roots[0]
         };
         assert_eq!(node.attempt_id, bytes_to_hex_lower(current.id.as_bytes()));
+        if state == AttemptState::Abandoned {
+            assert_eq!(node.status, RunTreeStatus::Abandoned);
+            assert_eq!(node.failure, None, "a stop reason is not a diagnosed fault");
+            assert_eq!(
+                node.result_ref.as_deref(),
+                Some(current.result_ref().expect("abandoned exhaust").as_str())
+            );
+        }
         if state == AttemptState::Failed {
             assert_eq!(node.status, RunTreeStatus::Failed);
         } else {
