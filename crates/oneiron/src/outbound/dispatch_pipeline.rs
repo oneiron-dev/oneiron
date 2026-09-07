@@ -25,7 +25,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::calendar::invite::CalendarInvitePayload;
 use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
-use crate::channel_identity::{ChannelIdentityBinding, decode_channel_identity_body};
+use crate::channel_identity::decode_channel_identity_body;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 use crate::edge::EdgeActorClass;
@@ -118,7 +118,7 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
         // were never given.
         if !identity.may_send()
             || normalize_channel_class(&identity.channel) != channel_class
-            || identity.binding != ChannelIdentityBinding::agent(bound_actor)
+            || identity.binding.actor_ref() != Some(bound_actor)
         {
             continue;
         }

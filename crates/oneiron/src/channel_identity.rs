@@ -1145,6 +1145,9 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
     let shape = ChannelIdentityShape::parse(required_string(entries, KEY_SHAPE)?)
         .ok_or_else(invalid_identity)?;
     let binding_scope = required_string(entries, KEY_BINDING_SCOPE)?;
+    if carries_facet_key && binding_scope == "agent" {
+        return Err(invalid_identity());
+    }
     let facet_ref = if carries_facet_key {
         decode_optional_entity_ref(required_value(entries, KEY_BINDING_FACET_REF)?)?
     } else {

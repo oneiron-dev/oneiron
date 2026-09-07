@@ -507,3 +507,247 @@ fn substrate_reader_refuses_generic_claims_with_invalid_value_or_subject() -> Re
     }
     Ok(())
 }
+
+fn merge_substrate_person(vault: &Vault, source: EntityId, survivor: EntityId) -> Result<EntityId> {
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![source],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: Vec::new(),
+                rationale: "substrate merge fixture".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        300,
+    )?;
+    let IdentityOpOutcome::Applied { event, .. } = outcome else {
+        panic!("merge must apply: {outcome:?}");
+    };
+    Ok(event)
+}
+
+#[test]
+fn substrate_follows_merged_anchor_and_supersedes_across_historical_subjects() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0x81), ENTITY_TYPE_AGENT_DEF);
+    let absorbed = seed(&vault, entity(0x82), ENTITY_TYPE_PERSON);
+    let middle = seed(&vault, entity(0x83), ENTITY_TYPE_PERSON);
+    let survivor = seed(&vault, entity(0x84), ENTITY_TYPE_PERSON);
+    anchor_actor_subject(&vault, actor, absorbed, writer(), 100)?;
+    let first = vault.set_person_substrate(absorbed, PersonSubstrate::Model, &writer(), 100)?;
+    let original = vault.get_claim(&first)?.expect("original substrate");
+    merge_substrate_person(&vault, absorbed, middle)?;
+    merge_substrate_person(&vault, middle, survivor)?;
+    let canonical = vault
+        .actor_subject_anchor(&actor)?
+        .expect("canonical anchor")
+        .subject_ref;
+    assert_eq!(canonical, survivor);
+    for id in [absorbed, middle, canonical] {
+        assert_eq!(vault.person_substrate(&id)?, Some(PersonSubstrate::Model));
+    }
+    assert_eq!(vault.get_claim(&first)?, Some(original.clone()));
+
+    let second = vault.set_person_substrate(canonical, PersonSubstrate::Meat, &writer(), 400)?;
+    let third = vault.set_person_substrate(absorbed, PersonSubstrate::Model, &writer(), 500)?;
+    for (id, subject, valid_to) in [(first, absorbed, 400), (second, survivor, 500)] {
+        let historical = vault.get_claim(&id)?.expect("historical substrate");
+        assert_eq!(historical.subject, ClaimSubject::Entity(subject));
+        assert_eq!(historical.lifecycle, ClaimLifecycleStatus::Superseded);
+        assert_eq!(historical.valid_to, Some(valid_to));
+        assert_eq!(historical.evidence, original.evidence);
+    }
+    let latest = vault.get_claim(&third)?.expect("new substrate");
+    assert_eq!(latest.subject, ClaimSubject::Entity(absorbed));
+    assert_eq!(latest.lifecycle, ClaimLifecycleStatus::Active);
+    for id in [absorbed, middle, survivor] {
+        assert_eq!(vault.person_substrate(&id)?, Some(PersonSubstrate::Model));
+    }
+    Ok(())
+}
+
+#[test]
+fn substrate_merge_undo_restores_original_subject_without_rewriting_claims() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let absorbed = seed(&vault, entity(0x85), ENTITY_TYPE_PERSON);
+    let survivor = seed(&vault, entity(0x86), ENTITY_TYPE_PERSON);
+    let claim = vault.set_person_substrate(absorbed, PersonSubstrate::Meat, &writer(), 100)?;
+    let original = vault.get_claim(&claim)?;
+    let merge = merge_substrate_person(&vault, absorbed, survivor)?;
+    assert_eq!(
+        vault.person_substrate(&survivor)?,
+        Some(PersonSubstrate::Meat)
+    );
+    vault.undo_identity_topology_event(
+        &merge,
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        400,
+    )?;
+    assert_eq!(vault.person_substrate(&survivor)?, None);
+    assert_eq!(
+        vault.person_substrate(&absorbed)?,
+        Some(PersonSubstrate::Meat)
+    );
+    assert_eq!(vault.get_claim(&claim)?, original);
+    Ok(())
+}
+
+#[test]
+fn substrate_split_refuses_ambiguous_reads_and_writes_without_closing_history() -> Result<()> {
+    for head_count in [0, 2] {
+        let (_dir, vault) = test_vault();
+        let original = seed(&vault, entity(0x87), ENTITY_TYPE_PERSON);
+        let heads = [
+            seed(&vault, entity(0x88), ENTITY_TYPE_PERSON),
+            seed(&vault, entity(0x89), ENTITY_TYPE_PERSON),
+        ];
+        let claim = vault.set_person_substrate(original, PersonSubstrate::Model, &writer(), 100)?;
+        let historical = vault.get_claim(&claim)?;
+        vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Split(SplitOp {
+                entity: original,
+                heads: heads[..head_count].to_vec(),
+                reassignment: ReassignmentMap::default(),
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "no single person".to_owned(),
+                },
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            300,
+        )?;
+        for subject in std::iter::once(original).chain(heads[..head_count].iter().copied()) {
+            assert_eq!(
+                vault
+                    .person_substrate(&subject)
+                    .expect_err("split is not one person")
+                    .kind(),
+                ErrorKind::InvalidClaimBody,
+            );
+            assert_eq!(
+                vault
+                    .set_person_substrate(subject, PersonSubstrate::Meat, &writer(), 400)
+                    .expect_err("a split must not be guessed or superseded")
+                    .kind(),
+                ErrorKind::InvalidClaimBody,
+            );
+        }
+        assert_eq!(vault.get_claim(&claim)?, historical);
+    }
+    Ok(())
+}
+
+#[test]
+fn substrate_merged_conflicting_or_malformed_heads_fail_closed_atomically() -> Result<()> {
+    for competing in [Some("meat"), Some("model"), None] {
+        let (_dir, vault) = test_vault();
+        let absorbed = seed(&vault, entity(0x8A), ENTITY_TYPE_PERSON);
+        let survivor = seed(&vault, entity(0x8B), ENTITY_TYPE_PERSON);
+        let first = vault.set_person_substrate(absorbed, PersonSubstrate::Model, &writer(), 100)?;
+        let mut claims = vec![first];
+        if let Some(value) = competing {
+            let second = entity(0x8C);
+            let mut body = vault.get_claim(&first)?.expect("substrate");
+            body.subject = ClaimSubject::Entity(survivor);
+            body.value = Value::from(value);
+            vault.put_claim(
+                &second,
+                &body,
+                TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )?;
+            claims.push(second);
+        } else {
+            let mut body = vault.get_claim(&first)?.expect("substrate");
+            body.value = Value::from("not-a-substrate");
+            vault.put_claim(
+                &first,
+                &body,
+                TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+            )?;
+        }
+        merge_substrate_person(&vault, absorbed, survivor)?;
+        let before = claims
+            .iter()
+            .map(|id| vault.get_claim(id))
+            .collect::<Result<Vec<_>>>()?;
+        for subject in [absorbed, survivor] {
+            assert_eq!(
+                vault
+                    .person_substrate(&subject)
+                    .expect_err("no arbitrary head")
+                    .kind(),
+                ErrorKind::InvalidClaimBody,
+            );
+            let before_ids = vault.claims_for_subject(&subject)?;
+            assert_eq!(
+                vault
+                    .set_person_substrate(subject, PersonSubstrate::Meat, &writer(), 400)
+                    .expect_err("invalid active heads require explicit repair")
+                    .kind(),
+                ErrorKind::InvalidClaimBody,
+            );
+            assert_eq!(vault.claims_for_subject(&subject)?, before_ids);
+        }
+        assert_eq!(
+            claims
+                .iter()
+                .map(|id| vault.get_claim(id))
+                .collect::<Result<Vec<_>>>()?,
+            before
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn substrate_rejects_malformed_dangling_wrong_kind_and_cyclic_redirects() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let person = seed(&vault, entity(0x8D), ENTITY_TYPE_PERSON);
+    let org = seed(&vault, entity(0x8E), ENTITY_TYPE_ORG);
+    let claim = vault.set_person_substrate(person, PersonSubstrate::Meat, &writer(), 100)?;
+    let historical = vault.get_claim(&claim)?;
+    let mut key = crate::identity_redirect::REDIRECT_TABLE_META_PREFIX.to_vec();
+    key.extend_from_slice(person.as_bytes());
+    let row = |target: EntityId| {
+        let mut bytes = vec![1];
+        bytes.extend_from_slice(target.as_bytes());
+        bytes
+    };
+    for (bytes, kind) in [
+        (vec![0xFF], ErrorKind::CorruptedIndex),
+        (row(entity(0x8F)), ErrorKind::InvalidClaimBody),
+        (row(org), ErrorKind::InvalidClaimBody),
+        (row(person), ErrorKind::CorruptedIndex),
+    ] {
+        vault.with_write_txn(|wtxn| {
+            vault.store.vault_meta.put(wtxn, &key, &bytes)?;
+            Ok(())
+        })?;
+        assert_eq!(
+            vault
+                .person_substrate(&person)
+                .expect_err("bad redirect")
+                .kind(),
+            kind
+        );
+        assert_eq!(
+            vault
+                .set_person_substrate(person, PersonSubstrate::Model, &writer(), 400)
+                .expect_err("bad redirect must not admit a replacement")
+                .kind(),
+            kind,
+        );
+        assert_eq!(vault.get_claim(&claim)?, historical);
+    }
+    Ok(())
+}

@@ -1227,3 +1227,42 @@ fn facet_check_covers_delegated_provision_and_shared_lifecycle_admission() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn current_binding_scope_is_canonical_and_legacy_agent_remains_decodable() -> Result<()> {
+    for (identity, legacy_version) in [
+        (sample_identity(), CHANNEL_IDENTITY_LEGACY_SCHEMA_VERSION),
+        (
+            sample_delegated_identity(),
+            CHANNEL_IDENTITY_LEGACY_DELEGATED_SCHEMA_VERSION,
+        ),
+    ] {
+        let encoded = encode_channel_identity_body(&identity)?;
+        let Value::Map(entries) =
+            rmpv::decode::read_value(&mut Cursor::new(&encoded)).expect("current body map")
+        else {
+            panic!("current identity must be a map");
+        };
+        for facet in [Value::Nil, Value::from(entity(0x77).to_hex())] {
+            let mut current = entries.clone();
+            current[4].1 = Value::from("agent");
+            current[12].1 = facet;
+            assert_eq!(
+                decode_channel_identity_body(&encode_entries(current))
+                    .expect_err("current schema cannot use the legacy scope")
+                    .kind(),
+                ErrorKind::InvalidChannelIdentityBody,
+            );
+        }
+        let mut legacy = entries;
+        legacy[0].1 = Value::from(legacy_version);
+        legacy[4].1 = Value::from("agent");
+        legacy.remove(12);
+        let decoded = decode_channel_identity_body(&encode_entries(legacy))?;
+        assert_eq!(decoded, identity);
+        let rewritten = encode_channel_identity_body(&decoded)?;
+        assert_eq!(rewritten, encoded);
+        assert_eq!(decode_channel_identity_body(&rewritten)?, identity);
+    }
+    Ok(())
+}
