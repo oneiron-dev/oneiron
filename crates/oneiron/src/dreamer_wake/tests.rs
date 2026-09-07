@@ -18,6 +18,8 @@ use crate::{EdgeActorClass, EntityId, Vault};
 
 use super::*;
 
+mod cleanup_lane;
+
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);

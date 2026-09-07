@@ -809,6 +809,9 @@ impl Vault {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
 
+        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(None);
+        }
         Ok(Some(bytes[ENTITY_METADATA_HEADER_LEN..].to_vec()))
     }
 
@@ -835,6 +838,9 @@ impl Vault {
     /// Retrieves a vector for an entity.
     pub fn get_vector(&self, id: &EntityId) -> Result<Option<Vec<f32>>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::vault_cleanup::is_archived_in_txn(&self.store, &rtxn, id)? {
+            return Ok(None);
+        }
         let Some(bytes) = self.store.vectors.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
@@ -1998,6 +2004,15 @@ impl Vault {
         let entity_type = header.entity_type;
         let learned_at = header.learned_at;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        if self.archive_tombstone_in_txn(&rtxn, &id)?.is_some() {
+            return Ok(Some(HydratedShortId {
+                id,
+                entity_type,
+                learned_at,
+                deletion: None,
+                body: None,
+            }));
+        }
         drop(rtxn);
 
         if body.is_empty()
@@ -2023,6 +2038,12 @@ impl Vault {
 
     /// Returns true when an entity row is a soft-delete shell, not a live
     /// zero-byte payload.
+    ///
+    /// An ARCHIVED row (ONE-1931) answers `true` here as well: the archive is
+    /// a soft tombstone, and the shell it leaves behind is the same 25 B
+    /// shell `user_delete` leaves. Which of the two it is — and therefore
+    /// whether [`Self::restore_archived`] will undo it — is
+    /// [`Self::archived_entity`]'s question, not this one's.
     pub fn is_deleted_shell(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
@@ -2030,6 +2051,12 @@ impl Vault {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // Checked inside the SAME read txn as the row, and before the
+        // window-doc path below, exactly as `entity_deletion_present_in_txn`
+        // orders its own three sources.
+        if self.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(true);
+        }
         if raw.len() != ENTITY_METADATA_HEADER_LEN {
             return Ok(false);
         }
@@ -3311,8 +3338,12 @@ pub(crate) fn live_entity_row_in_txn(
         return Ok(LiveEntityRow::Absent);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if raw.len() == ENTITY_METADATA_HEADER_LEN
-        && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?
+    if store
+        .sync_state
+        .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
+        .is_some()
+        || (raw.len() == ENTITY_METADATA_HEADER_LEN
+            && store.entity_deletion_present_in_txn(txn, id, header.learned_at)?)
     {
         return Ok(LiveEntityRow::DeletedShell);
     }

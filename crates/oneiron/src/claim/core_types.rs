@@ -513,6 +513,11 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let confidence = confidence.ok_or(Error::InvalidClaimBody("missing required field conf"))?;
     let approval = approval.ok_or(Error::InvalidClaimBody("missing required field appr"))?;
     let lifecycle = lifecycle.ok_or(Error::InvalidClaimBody("missing required field life"))?;
+    // `scope` stays opaque, but the entries the engine RECOGNIZES inside it
+    // are structurally pinned like any other decoded field: a duplicate or
+    // malformed corpus id fails closed here rather than reaching a retrieval
+    // scope decision. Unknown sibling entries are not inspected.
+    validate_known_claim_scope_entries(scope.as_ref())?;
 
     Ok(ClaimBody {
         predicate,

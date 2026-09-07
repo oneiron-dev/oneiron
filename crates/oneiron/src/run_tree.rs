@@ -41,10 +41,35 @@ pub struct RunTreeNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     pub status: RunTreeStatus,
+    /// The artifact version this attempt's durable output lives in, copied
+    /// from the backing queue row. Cross-executor: any executor kind that
+    /// named a result projects it here, not only foreign ones.
+    ///
+    /// Additive and elided when absent — the same shape as `agent_id` — so
+    /// serialized trees stay wire-compatible in both directions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_ref: Option<String>,
     pub timestamps: RunTreeTimestamps,
     pub failure: Option<RunTreeFailure>,
     pub events: Vec<RunTreeEvent>,
     pub children: Vec<RunTreeNode>,
+    /// ONE-1453 presentation marker: this run is durably paused by the
+    /// per-actor burst breaker.
+    ///
+    /// PRESENTATION ONLY, and additive: it never mutates [`RunTreeStatus`],
+    /// [`RunTreeEventKind`], attempt rows, or
+    /// [`crate::attempt_queue::AttemptState`]. A breaker pause is not
+    /// terminal and synthesizes no attempt event. Breaker truth lives in
+    /// `gate`; the read adapter obtains that projection without storing it. Elided
+    /// when false, so serialized trees stay wire-compatible in both
+    /// directions.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub gate_breaker_paused: bool,
+}
+
+/// Serializer predicate that elides the additive `false` marker.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Surface lifecycle status.
@@ -62,6 +87,11 @@ pub enum RunTreeStatus {
     Completed,
     Failed,
     Cancelled,
+    /// The executor stopped without delivering and without being stopped. Its
+    /// own token because the two neighbouring ones are both claims about a
+    /// cause: `Failed` asserts an observed fault, `Cancelled` asserts an
+    /// operator's intent, and an abandonment has neither.
+    Abandoned,
 }
 
 /// Node timestamps copied from the backing queue row.
@@ -99,6 +129,12 @@ pub enum RunTreeEventKind {
     Failed,
     Cancelled,
     Interrupted,
+    /// The attempt reached [`RunTreeStatus::Abandoned`].
+    Abandoned,
+    /// The attempt named the artifact version carrying its durable output.
+    /// Emitted for every executor kind that attaches one, whether or not the
+    /// row settled normally.
+    ResultAttached,
 }
 
 /// Non-mutating repairs applied while rendering a tree from rows.
@@ -117,9 +153,32 @@ pub enum RunTreeRepair {
     },
 }
 
+impl RunTree {
+    /// Stamps the ONE-1453 burst-breaker pause marker on this tree.
+    ///
+    /// Presentation only. The caller obtains `paused` from
+    /// [`crate::Vault::gate_breaker_run_projection`]; the setter never derives
+    /// breaker state from attempt lifecycle status.
+    ///
+    /// The marker lands on exactly the deterministic FIRST root — the same
+    /// root ordering ONE-1452 uses to pick a run's agent label — and every
+    /// other node, root or child, stays `false`.
+    pub fn set_gate_breaker_paused_marker(&mut self, paused: bool) {
+        let mut nodes: Vec<_> = self.roots.iter_mut().collect();
+        while let Some(node) = nodes.pop() {
+            node.gate_breaker_paused = false;
+            nodes.extend(node.children.iter_mut());
+        }
+        if let Some(root) = self.roots.first_mut() {
+            root.gate_breaker_paused = paused;
+        }
+    }
+}
+
 /// Read adapter over the runtime attempt queue.
 pub struct RunTreeAdapter<'a> {
     queue: AttemptQueue<'a>,
+    vault: &'a Vault,
 }
 
 impl<'a> RunTreeAdapter<'a> {
@@ -128,6 +187,7 @@ impl<'a> RunTreeAdapter<'a> {
     pub fn new(vault: &'a Vault) -> Self {
         Self {
             queue: AttemptQueue::new(vault),
+            vault,
         }
     }
 
@@ -139,7 +199,13 @@ impl<'a> RunTreeAdapter<'a> {
     /// Renders persisted rows for one run id into deterministic roots and
     /// children.
     pub fn read_run(&self, run_id: &str) -> Result<RunTree> {
-        render_run_tree_presorted(self.queue.list_run(run_id)?)
+        let mut tree = render_run_tree_presorted(self.queue.list_run(run_id)?)?;
+        let paused = self
+            .vault
+            .gate_breaker_run_projection(run_id)?
+            .gate_breaker_paused;
+        tree.set_gate_breaker_paused_marker(paused);
+        Ok(tree)
     }
 
     /// Engine-generated display name and agent label for one run's consent
@@ -425,6 +491,10 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
     let state = record.state;
     let status = run_tree_status(&record);
     let attempt_id = attempt_id_hex(&record);
+    let result_ref = record
+        .result_ref
+        .take()
+        .map(crate::attempt_queue::AttemptResultRef::into_string);
     let events = run_tree_events(
         record.created_at,
         record.updated_at,
@@ -432,6 +502,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         record.claimed_at,
         std::mem::take(&mut record.events),
         state,
+        result_ref.is_some(),
     )?;
     let node = RunTreeNode {
         attempt_id,
@@ -440,10 +511,16 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         worker_kind: metadata.worker_kind,
         agent_id: metadata.agent_id,
         status,
+        result_ref,
         timestamps: RunTreeTimestamps {
             created_at: record.created_at,
             updated_at: record.updated_at,
         },
+        // An abandoned row carries its stop reason in `last_error`, but this
+        // field is the FAILURE summary and only `Failed` fills it: rendering
+        // an abandonment's reason here would present a stop nobody diagnosed
+        // as a diagnosed fault, and every read surface that folds on
+        // `failure.is_some()` would then count it as one.
         failure: match state {
             AttemptState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
             AttemptState::Queued
@@ -452,10 +529,14 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
             | AttemptState::Scheduled
             | AttemptState::Landing
             | AttemptState::Completed
-            | AttemptState::Cancelled => None,
+            | AttemptState::Cancelled
+            | AttemptState::Abandoned => None,
         },
         events,
         children: Vec::new(),
+        // Rendering reads durable attempt rows only. The breaker marker is
+        // applied afterwards, by a caller holding the projection.
+        gate_breaker_paused: false,
     };
 
     Ok(FlatRunTreeNode {
@@ -585,6 +666,7 @@ fn run_tree_events(
     claimed_at: Option<u64>,
     stored_events: Vec<AttemptEvent>,
     state: AttemptState,
+    has_result: bool,
 ) -> Result<Vec<RunTreeEvent>> {
     let has_claim = attempt_count > 0;
     let mut events = Vec::with_capacity(stored_events.len() + 2 + usize::from(has_claim));
@@ -603,20 +685,47 @@ fn run_tree_events(
         events.push(operator_event(event, sequence_offset)?);
     }
 
-    if let Some(kind) = status_event_kind(state)
-        && !events.iter().any(|event| event.kind == kind)
-    {
-        let sequence = events
-            .iter()
-            .map(|event| event.sequence)
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("run-tree event sequence"))?;
-        events.push(lifecycle_event(sequence, updated_at, kind));
+    // A row that named a result says so before it says how it ended: the
+    // artifact is durable first, and the settling event is what a reader
+    // scans back from. Ordering them the other way would render a terminal
+    // node whose last event claims work continued after it stopped.
+    if has_result {
+        push_lifecycle_event(&mut events, updated_at, RunTreeEventKind::ResultAttached)?;
+    }
+    if let Some(kind) = status_event_kind(state) {
+        push_lifecycle_event(&mut events, updated_at, kind)?;
     }
 
     Ok(events)
+}
+
+/// Appends one synthesized lifecycle event, unless the stream already carries
+/// that kind from a durable operator row. Cancellation must be the final event.
+fn push_lifecycle_event(
+    events: &mut Vec<RunTreeEvent>,
+    at: u64,
+    kind: RunTreeEventKind,
+) -> Result<()> {
+    let already_present = if kind == RunTreeEventKind::Cancelled {
+        // Keep the operator's cancellation intact, but do not let it suppress
+        // terminal truth after a synthesized result attachment. Only the
+        // queue's Cancelled state requests this final lifecycle event.
+        events.last().is_some_and(|event| event.kind == kind)
+    } else {
+        events.iter().any(|event| event.kind == kind)
+    };
+    if already_present {
+        return Ok(());
+    }
+    let sequence = events
+        .iter()
+        .map(|event| event.sequence)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("run-tree event sequence"))?;
+    events.push(lifecycle_event(sequence, at, kind));
+    Ok(())
 }
 
 fn operator_event(event: AttemptEvent, sequence_offset: u64) -> Result<RunTreeEvent> {
@@ -655,6 +764,7 @@ fn status_event_kind(state: AttemptState) -> Option<RunTreeEventKind> {
         AttemptState::Completed => Some(RunTreeEventKind::Completed),
         AttemptState::Failed => Some(RunTreeEventKind::Failed),
         AttemptState::Cancelled => Some(RunTreeEventKind::Cancelled),
+        AttemptState::Abandoned => Some(RunTreeEventKind::Abandoned),
     }
 }
 
@@ -676,6 +786,7 @@ impl From<AttemptState> for RunTreeStatus {
             AttemptState::Completed => Self::Completed,
             AttemptState::Failed => Self::Failed,
             AttemptState::Cancelled => Self::Cancelled,
+            AttemptState::Abandoned => Self::Abandoned,
         }
     }
 }
@@ -723,6 +834,13 @@ pub fn project_attempt_to_a2a(record: &AttemptRecord) -> A2aTaskProjection {
         AttemptState::Completed => A2aBaseTaskState::Completed,
         AttemptState::Failed => A2aBaseTaskState::Failed,
         AttemptState::Cancelled => A2aBaseTaskState::Cancelled,
+        // A2A's base vocabulary is closed and holds no abandoned token, so
+        // this is the one projection that must lose the distinction. `failed`
+        // is the lossy target that keeps the only fact a peer can act on —
+        // this task will never deliver. `cancelled` is refused for the same
+        // reason the native surfaces refuse it: it would assert to the peer
+        // that somebody decided to stop the work, and nobody did.
+        AttemptState::Abandoned => A2aBaseTaskState::Failed,
     };
     if let Some(cancellation) = record.cancellation() {
         extensions.cancel_mode = Some(cancellation.mode.as_str().to_owned());

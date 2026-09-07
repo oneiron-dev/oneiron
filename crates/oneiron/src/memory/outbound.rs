@@ -250,7 +250,7 @@ impl CalendarInviteSurfaceInput {
     /// chokepoint only inside the derived idempotency/trigger strings. CAL-04
     /// added the typed channel it owns —
     /// [`crate::calendar::CalendarInvitePayload`], carried beside the draft
-    /// through [`Self::frozen_payload`] below — so nothing here re-parses a key
+    /// through `Self::frozen_payload` below — so nothing here re-parses a key
     /// back into a method, uid, or sequence and the public surface above is
     /// unchanged.
     #[must_use]

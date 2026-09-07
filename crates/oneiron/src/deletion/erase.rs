@@ -518,6 +518,14 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         let decoded = decode_tombstone_value(raw_value);
+        // Cleanup is local visibility, never a replicated deletion intent.
+        // Accepting byte 5 here would irreversibly scrub a retained archive
+        // (or an unrelated row) without the cleanup predicate or owner decision.
+        if decoded.reason == Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
+            return Err(Error::InvariantViolation(
+                "cleanup archives cannot be replayed as deletion intent",
+            ));
+        }
         if let Some(header) = self.read_entity_header_in_txn(wtxn, id)?
             && crate::registry::is_delete_protected_engine_record(header.entity_type)
         {

@@ -1245,8 +1245,16 @@ pub(crate) fn hnsw_search(
         nearest.sort_unstable();
     }
 
-    nearest.truncate(limit);
-    Ok(nearest
+    // Retain archived nodes for graph traversal, but never return them as
+    // active matches. Restore only removes the marker, not graph state.
+    let mut visible = Vec::with_capacity(nearest.len());
+    for entry in nearest {
+        if !crate::vault_cleanup::is_archived_in_txn(store, rtxn, &entry.id)? {
+            visible.push(entry);
+        }
+    }
+    visible.truncate(limit);
+    Ok(visible
         .into_iter()
         .map(|entry| ScoredEntity {
             id: entry.id,
@@ -1445,7 +1453,11 @@ fn beam_search_graph(
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
+    // Traversal stopping must count archived connectors too. A separate live
+    // heap keeps them out of matches without making a sparse live set exhaust
+    // the graph. Both heaps are bounded by ef.
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
+    let mut visible: BinaryHeap<HeapEntry> = BinaryHeap::new();
     let graph_nodes = match graph {
         GraphSource::Persisted => usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0),
         GraphSource::Rebuilt(neighbors_by_id) => neighbors_by_id.len(),
@@ -1460,6 +1472,9 @@ fn beam_search_graph(
 
     if !check_existence || store.entities().get(txn, entry_point.as_bytes())?.is_some() {
         results.push(entry);
+        if check_existence && !crate::vault_cleanup::is_archived_in_txn(store, txn, &entry_point)? {
+            visible.push(entry);
+        }
     }
 
     while let Some(Reverse(current)) = candidates.pop() {
@@ -1500,17 +1515,28 @@ fn beam_search_graph(
             };
 
             let distance = prepared_query.distance(score_prefix(neighbor_vector, score_dims)?);
+            let candidate = HeapEntry {
+                id: neighbor_id,
+                distance,
+            };
+            // A scored live neighbor can be a match even when archived nodes
+            // are closer and keep it out of the traversal beam.
+            if check_existence
+                && (visible.len() < ef
+                    || distance < visible.peek().map_or(f32::INFINITY, |entry| entry.distance))
+                && !crate::vault_cleanup::is_archived_in_txn(store, txn, &neighbor_id)?
+            {
+                visible.push(candidate);
+                if visible.len() > ef {
+                    visible.pop();
+                }
+            }
             let should_add = results.len() < ef
                 || distance < results.peek().map_or(f32::INFINITY, |entry| entry.distance);
 
             if should_add {
-                let candidate = HeapEntry {
-                    id: neighbor_id,
-                    distance,
-                };
                 candidates.push(Reverse(candidate));
                 results.push(candidate);
-
                 if results.len() > ef {
                     results.pop();
                 }
@@ -1518,7 +1544,11 @@ fn beam_search_graph(
         }
     }
 
-    let mut found = results.into_vec();
+    let mut found = if check_existence {
+        visible.into_vec()
+    } else {
+        results.into_vec()
+    };
     found.sort_unstable();
     Ok(found)
 }
@@ -2273,6 +2303,8 @@ fn decode_vector_into<'a>(
         .map_err(|_| Error::CorruptedIndex(ERR_VECTOR_BYTES))
 }
 
+#[cfg(test)]
+mod archive_tests;
 #[cfg(test)]
 mod tests;
 

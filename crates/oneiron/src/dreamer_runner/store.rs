@@ -5,7 +5,8 @@ use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, FailAttempt, FailOutcome,
 };
-use crate::error::Result;
+use crate::dreamer_wake::WakeTrigger;
+use crate::error::{Error, Result};
 
 use super::codec::{
     decode_dreamer_attempt_payload, decode_parked_record, decode_run_tree_record,
@@ -16,14 +17,14 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
     DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunTreeRecord, EnqueueDreamerAttempt,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    EnqueueDreamerSkillOptimizeAttempt, FailDreamerAttempt, FailDreamerAttemptOutcome,
-    ParkDreamerAttempt,
+    EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt,
+    FailDreamerAttemptOutcome, ParkDreamerAttempt,
 };
 
 /// Private Dreamer runner store over an already-open vault.
@@ -170,6 +171,81 @@ impl<'a> DreamerRunnerStore<'a> {
             DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
             DreamerAttemptPayload {
                 attempt_type: DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND.to_owned(),
+                input: input.input,
+                parent_attempt: input.parent_attempt,
+            },
+            input.dedupe_key,
+            input.run_id,
+            input.now,
+        )
+    }
+
+    /// Co-commits a Timer/Macro wake and its cleanup attempt.
+    pub(crate) fn enqueue_timer_wake(
+        &self,
+        payload: DreamerAttemptPayload,
+        dedupe_key: Option<String>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.vault.with_write_txn(|wtxn| {
+            crate::dreamer_wake::request_wake_in_txn(
+                self,
+                wtxn,
+                WakeTrigger::Timer,
+                payload,
+                dedupe_key,
+                run_id,
+                now,
+            )
+        })
+    }
+
+    /// Enqueues an ARCH-0073 vault-cleanup attempt (ONE-1931).
+    ///
+    /// TIMER-SCOPED registration: ARCH-0073 puts the cleanup pass on the timer
+    /// wake (default scope Macro), and every other trigger is refused with
+    /// [`Error::VaultCleanupWakeTriggerRejected`] rather than quietly
+    /// accepted. The refusal is the registration — a maintenance scan that can
+    /// be attached to any wake is a maintenance scan an interactive turn ends
+    /// up paying for.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::VaultCleanupWakeTriggerRejected`] for a non-timer trigger;
+    /// storage errors.
+    pub fn enqueue_vault_cleanup(
+        &self,
+        input: EnqueueDreamerVaultCleanupAttempt,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.enqueue_vault_cleanup_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Enqueues a vault-cleanup attempt in a caller-owned write transaction,
+    /// so a wake that registers one lands it as a durable fact of the wake.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::VaultCleanupWakeTriggerRejected`] for a non-timer trigger;
+    /// storage errors.
+    pub(crate) fn enqueue_vault_cleanup_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueDreamerVaultCleanupAttempt,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        if input.trigger != WakeTrigger::Timer {
+            return Err(Error::VaultCleanupWakeTriggerRejected {
+                trigger: wake_trigger_name(input.trigger),
+            });
+        }
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_VAULT_CLEANUP_ATTEMPT_KIND.to_owned(),
                 input: input.input,
                 parent_attempt: input.parent_attempt,
             },
@@ -430,6 +506,20 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
+        || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+}
+
+/// The refusal-facing name of a wake trigger.
+///
+/// Its own function rather than `{:?}`: the string lands in a typed error a
+/// caller may match on, so it must not drift with a derive.
+const fn wake_trigger_name(trigger: WakeTrigger) -> &'static str {
+    match trigger {
+        WakeTrigger::Compaction => "compaction",
+        WakeTrigger::SessionEnd => "session_end",
+        WakeTrigger::Event => "event",
+        WakeTrigger::Timer => "timer",
+    }
 }
 
 fn ensure_run_tree_record_in_txn(

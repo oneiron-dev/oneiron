@@ -229,7 +229,7 @@ fn collect_pull_candidates(
 /// 1. validate seeds / threshold / limit;
 /// 2. ONE `RoTxn`: seeds must be live `CODE_SYMBOL`s, then the ACTOR-SCOPED,
 ///    compute-only PPR entry at [`CODE_MEMORY_PPR_DEPTH`], alpha `0.15`,
-///    [`SeedWeighting::Specificity`] (`lambda_for_kind(Blocks) == None` keeps
+///    `SeedWeighting::Specificity` (`lambda_for_kind(Blocks) == None` keeps
 ///    readiness edges out of the walk). SCOPE BEFORE MASS: this `ScopedRead`
 ///    is the walk's node-visibility gate, so a seed the actor cannot read
 ///    carries no seed mass and no hop is taken through a node it cannot read
@@ -262,7 +262,7 @@ fn collect_pull_candidates(
 /// pull return fewer notes than the snapshot it ranked actually holds, with no
 /// lower-ranked note ever collected to take the empty place. The in-transaction
 /// predicate is the SAME admission `get_entity_parts` applies (see
-/// [`payload_visible_in_txn`]), so coherence costs no scope.
+/// `payload_visible_in_txn`), so coherence costs no scope.
 pub fn pull_code_memory(
     vault: &Vault,
     scoped_read: &ScopedRead<'_>,

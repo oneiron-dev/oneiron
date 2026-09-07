@@ -760,7 +760,7 @@ impl Vault {
 
     /// Attaches taint refs to one exhaust entity through the entity-keyed
     /// sidecar. The thin wrapper over
-    /// [`mark_exhaust_tainted_in_txn`] for callers that own no transaction;
+    /// `mark_exhaust_tainted_in_txn` for callers that own no transaction;
     /// callers that DO (an artifact put, a raw-output write) must use the
     /// in-txn form so the attach cannot separate from its exhaust.
     pub fn mark_artifact_tainted(&self, id: &EntityId, refs: &[SecretTaintRef]) -> Result<()> {

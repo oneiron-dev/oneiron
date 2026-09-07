@@ -335,7 +335,7 @@ pub(super) fn validate_score(score: f32) -> Result<f32> {
 /// no longer constructible from an arbitrary string. Every value comes from one
 /// of exactly two roads, both of which trace to durable scheduler state:
 ///
-/// - [`super::proven_cycle`] derives it from an [`AttemptId`] whose queue row
+/// - `super::proven_cycle` derives it from an [`AttemptId`] whose queue row
 ///   is read at the moment of use — the one resolver, shared by the drafting
 ///   door and the gate, so `run:<id>` and `attempt:<hex>` have one spelling;
 /// - [`SkillEditCycle::of_proposal`] reads the label a proposal was STAMPED
@@ -388,7 +388,7 @@ impl SkillEditCycle {
     ///
     /// A record that carries no cycle is refused here, and — since the
     /// MATERIAL-6 repair — at every gate door as well
-    /// ([`require_open_optimizer_proposal`]): an unstamped proposal has no
+    /// (`require_open_optimizer_proposal`): an unstamped proposal has no
     /// provable birth cycle, and no caller-named label rescues it. Prerelease,
     /// so no legacy unstamped corpus is accommodated.
     ///

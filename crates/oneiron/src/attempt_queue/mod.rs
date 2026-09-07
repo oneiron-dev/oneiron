@@ -16,6 +16,8 @@ mod cancel;
 mod completion;
 mod encoding;
 mod engine;
+mod result;
+mod settlement;
 mod telemetry;
 mod types;
 mod validate;
@@ -40,12 +42,13 @@ pub use cancel::{
 pub use engine::AttemptQueue;
 pub use telemetry::{AttemptQueueCleanupMetricsSnapshot, attempt_queue_cleanup_metrics_snapshot};
 pub use types::{
-    AttemptEvent, AttemptId, AttemptInterventionEffect, AttemptInterventionKind,
-    AttemptQueueCleanupReport, AttemptQueueRetryReason, AttemptQueueRetryReasonCount,
-    AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
-    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt,
-    InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, ManifestKind, RetryAttempt,
-    RetryOutcome,
+    AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
+    AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason,
+    AttemptQueueRetryReasonCount, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
+    ClaimOutcome, CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
+    EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome,
+    MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, ManifestKind, RetryAttempt, RetryOutcome,
+    SetAttemptResult,
 };
 
 pub(crate) use encoding::decode_record;

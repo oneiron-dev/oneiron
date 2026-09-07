@@ -279,7 +279,7 @@ pub enum ReceiptKind {
     /// Commitment lifecycle receipt (CMT-4, ONE-1541): a `commitment.record`
     /// CLAIM reached a terminal status — kept, waived, or let go. Projected
     /// from the claim row itself; there is no lifecycle ledger, so the
-    /// invariant it carries is bounded by [`MAX_RECEIPT_QUERY_SCAN`] exactly
+    /// invariant it carries is bounded by `MAX_RECEIPT_QUERY_SCAN` exactly
     /// like every other projected kind.
     CommitmentLifecycle,
     /// Pre-extraction screening receipt (OF-361, ONE-1525): what the Dreamer

@@ -24,10 +24,12 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
+use super::breaker::clear_gate_breaker_rows_for_run_in_txn;
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision,
+    check_claim_policy_for_write_with_owner_bundle_replay,
     check_claim_policy_for_write_with_record, claim_consent_binding_parts, claim_gate_input,
     edge_actor_class_str, enforce_gate_decision,
 };
@@ -62,9 +64,8 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
 
-/// Bound on the pending-consent rows one bundle projection reads. Membership
-/// is deterministic under it: the scan is ordered, so review and resolve
-/// select the same rows and a truncated group binds the same digest.
+/// Bound on the pending-consent rows one bundle projection accepts. Read one
+/// extra row and reject overflow rather than clear a run with omitted members.
 const GATE_BUNDLE_PENDING_SCAN_LIMIT: usize = 10_000;
 
 impl Vault {
@@ -314,6 +315,20 @@ impl Vault {
                     claim_id: members[0].member.claim_id,
                 });
             }
+
+            // ONE-1453: the ONE door that clears a durable burst-breaker trip.
+            // It runs AFTER the digest and staleness checks above and BEFORE
+            // any member transition below: clear-before-replay is required,
+            // clear-before-validation is forbidden. Both actions clear the
+            // whole run, not only the actor that first tripped, so the next
+            // original agent write on this run starts a fresh row under the
+            // then-live valid-or-default threshold. Any later failure in this
+            // transaction — a refused replay, a decline transition, the
+            // receipt append, the commit — rolls these deletes back with
+            // everything else and leaves the run paused and the bundle
+            // pending. The owner's bundle action IS the resume receipt; there
+            // is no separate resume verb.
+            clear_gate_breaker_rows_for_run_in_txn(&self.store, wtxn, dreamer_run_id)?;
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
             let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
@@ -585,7 +600,13 @@ fn gate_consent_bundle_members_in_txn(
     let mut members = Vec::new();
     let mut seen_decisions = BTreeSet::new();
     let mut seen_claims = BTreeSet::new();
-    for record in store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT)? {
+    let records = store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT + 1)?;
+    if records.len() > GATE_BUNDLE_PENDING_SCAN_LIMIT {
+        return Err(Error::InvalidClaimBody(
+            "gate consent bundle scan limit exceeded",
+        ));
+    }
+    for record in records {
         if record.dreamer_run_id.as_deref() != Some(dreamer_run_id) {
             continue;
         }
@@ -698,7 +719,12 @@ fn replay_gate_consent_bundle_member(
         body.approval,
     );
     let mut recorded_decision = None;
-    let gate_result = check_claim_policy_for_write_with_record(
+    // ONE-1453: the owner-bundle-replay seam. An owner resolving this bundle
+    // is authorizing exactly these writes, so the replay neither counts
+    // against nor is demoted by the run's burst budget. The exemption is a
+    // private function on this internal path — no public argument, no
+    // callable bypass.
+    let gate_result = check_claim_policy_for_write_with_owner_bundle_replay(
         &vault.store,
         wtxn,
         id,
