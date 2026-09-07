@@ -22,6 +22,7 @@ pub mod config;
 pub mod error;
 mod handler;
 mod idempotency;
+mod livequery;
 pub mod managed;
 pub mod mcp;
 mod oauth_relay;
@@ -31,6 +32,18 @@ pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
+// Process-local driver attachment only; this adds no HTTP/MCP route.
+// The stream/output owner still has to supply production serve prerequisites.
+#[cfg(unix)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "private voice bindings are host-injected; no provider factory in this daemon"
+    )
+)]
+#[doc(hidden)]
+pub mod voice_host;
 
 use std::sync::Arc;
 

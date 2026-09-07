@@ -3,6 +3,7 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+mod breaker;
 mod bundle;
 mod ceiling;
 mod confirm;
@@ -16,12 +17,16 @@ mod dreamer_precommit;
 mod effect;
 mod grants;
 mod input;
+mod repair;
 mod resolution;
+mod retrieval_filter;
+mod share;
 mod witness_message;
 
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::breaker::undo_gate_breaker_in_txn;
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
@@ -58,7 +63,8 @@ pub(crate) use self::definition_ceiling::first_party_eiri_connector_actor_ref;
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
-    ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, check_claim_policy_for_write,
+    ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, apply_staged_claim_gate_in_txn,
+    check_claim_policy_for_write, check_claim_policy_for_write_as_original_event,
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
@@ -81,7 +87,15 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub use self::retrieval_filter::RetrievalFilter;
+pub(crate) use self::retrieval_filter::{
+    ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
+};
+pub(crate) use self::share::check_share_create_policy;
+#[cfg(test)]
+pub(crate) use self::share::share_create_effect;
 #[cfg(test)]
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
@@ -95,6 +109,8 @@ pub(crate) use self::witness_message::{
 // were in scope for the inline test module through `use super::*`. After the
 // directory split the seam re-imports both so the sibling `tests.rs` resolves
 // exactly as it did before.
+#[cfg(test)]
+use self::breaker::*;
 #[cfg(test)]
 use self::ceiling::*;
 #[cfg(test)]

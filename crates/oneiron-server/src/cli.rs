@@ -69,6 +69,16 @@ pub struct TokenMintArgs {
     #[arg(long = "principal-ref", requires = "scope")]
     pub principal_ref: Option<String>,
 
+    /// D13 actor class the token binds write identity to: `human`, `agent`,
+    /// or `system`. Required by `/v1/core/facade` routes; absent by default.
+    ///
+    /// Requires `--principal-ref`, which itself requires `--scope`: a class
+    /// without a principal names nobody, and an owner-grade token is never
+    /// actor-bound. The value is grammar-checked before the token is emitted,
+    /// so a typo fails at the CLI instead of 401ing later.
+    #[arg(long = "actor-class", requires = "principal_ref")]
+    pub actor_class: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -720,11 +730,15 @@ mod tests {
             Err(err) => err,
         };
 
+        // Clap shows help when a required subcommand has no arguments. This
+        // must still be a failing parse, not a successful `--help` exit.
         assert_eq!(
             err.kind(),
-            clap::error::ErrorKind::MissingSubcommand,
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
             "bare `api` must not resolve to another command"
         );
+        assert!(err.use_stderr());
+        assert_eq!(err.exit_code(), 2);
     }
 
     /// Mirrors the server-side grammar rule: an owner-grade token is never

@@ -3,15 +3,18 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
-use crate::claim::{ClaimBody, ClaimSource, claim_sensitivity_band};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, claim_sensitivity_band};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard, BudgetPolicySelector, BudgetPolicyTable};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 use crate::vault::Vault;
-use crate::write_envelope::WriteActor;
+use crate::write_envelope::{SourceLineage, WriteActor};
 
+mod breaker_policy;
+
+use super::breaker::{GateBreakerThresholds, resolve_gate_breaker_thresholds};
 use super::ceiling::{
     ActorCeiling, DelegationFoldCache, DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack, PolicySensitivity,
@@ -106,7 +109,16 @@ pub(crate) struct PolicyManifestResolution {
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     comm_opt_out_posture: Option<CommOptOutPosture>,
+    /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
+    /// never stored here — only the manifest's selector for it. Injection
+    /// rides the write door's own options, so no host object is ever reachable
+    /// from a resolved manifest.
+    auto_checker: Option<String>,
     budget_policy: BudgetPolicyTable,
+    /// ONE-1453: the ONE resolved burst-breaker dial, or `None` for engine
+    /// defaults. Zero valid overrides and two-or-more distinct valid overrides
+    /// both resolve here as `None`.
+    actor_burst_breaker: Option<GateBreakerThresholds>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -138,6 +150,17 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
         self.comm_opt_out_posture.unwrap_or_default()
+    }
+
+    /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no
+    /// manifest names one.
+    ///
+    /// Presence is the whole meaning: it is what arms the write door's consult.
+    /// The engine never interprets the string, and the checker itself is
+    /// supplied per-write rather than resolved from here.
+    #[must_use]
+    pub(crate) fn auto_checker(&self) -> Option<&str> {
+        self.auto_checker.as_deref()
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
@@ -443,24 +466,18 @@ impl PolicyManifestResolution {
 
     #[must_use]
     pub(crate) fn evaluate_gate(&self, input: &GateEvaluatorInput) -> GateDecision {
-        self.evaluate_gate_with_lineage(input, false)
+        self.evaluate_gate_with_lineage(input, None)
     }
 
-    /// The ONE-1314 envelope-bearing entry: the same evaluation, plus the
-    /// write's observed source lineage as a second auto-permit axis.
-    ///
-    /// The flag is a DERIVED fact about the write in hand
-    /// ([`crate::WriteEnvelope::effective_requires_explicit_auto_permit`]), so
-    /// it rides the call rather than the input record: an input a door has no
-    /// envelope for cannot accidentally carry a stale or forged axis, and the
-    /// recorded gate input keeps its exact prior shape. Every non-envelope
-    /// door keeps entering through [`Self::evaluate_gate`], which is this call
-    /// with the axis off.
+    /// Envelope-bearing evaluation preserves the observed source members.
+    /// Each restricted member needs its own applicable permit; the declared
+    /// source cannot vouch for the rest. Doors without an envelope keep using
+    /// [`Self::evaluate_gate`], which passes no lineage.
     #[must_use]
     pub(crate) fn evaluate_gate_with_lineage(
         &self,
         input: &GateEvaluatorInput,
-        lineage_requires_auto_permit: bool,
+        lineage: Option<&SourceLineage>,
     ) -> GateDecision {
         let actor_class = input.actor.actor_class.trim();
         if actor_class.is_empty() {
@@ -559,7 +576,7 @@ impl PolicyManifestResolution {
             input.source,
             input.sensitivity_band,
             input.actor.actor_ref.as_deref(),
-            lineage_requires_auto_permit,
+            lineage,
         ) {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
@@ -584,6 +601,7 @@ impl PolicyManifestResolution {
             // fail-closed manifest checks, and the ceiling clamp above.
             GateContentKind::Claim
             | GateContentKind::EdgeProvenanceClaim
+            | GateContentKind::Repair
             | GateContentKind::WitnessMessage => {}
             GateContentKind::PolicyManifest => {
                 pending.push(GateReasonCode::PendingPolicyManifestAuthority);
@@ -608,8 +626,7 @@ impl PolicyManifestResolution {
         }
     }
 
-    /// `actor_ref` selects which source-trust rows answer this write; see
-    /// [`check_source_trust`], whose row selection this mirrors exactly.
+    /// Declared-source-only evaluation for doors without an envelope.
     // The declared-only form's one production caller is the federated
     // admission path, which exists only under `sync`.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
@@ -619,48 +636,27 @@ impl PolicyManifestResolution {
         sensitivity: Option<u8>,
         actor_ref: Option<&str>,
     ) -> bool {
-        self.source_trust_allows_auto_with_lineage(source, sensitivity, actor_ref, false)
+        self.source_trust_allows_auto_with_lineage(source, sensitivity, actor_ref, None)
     }
 
-    /// The ONE-1314 two-axis form: the declared label OR the write's observed
-    /// lineage. Only a caller holding a [`crate::WriteEnvelope`] can answer the
-    /// second axis, so the declared-only form above stays the entry for every
-    /// door with no envelope in scope (federated admission, external effects).
+    /// Use the same per-member rule for gate decisions and final Auto checks.
+    /// A restricted lineage member never borrows the declared source's row.
     pub(super) fn source_trust_allows_auto_with_lineage(
         &self,
         source: Option<ClaimSource>,
         sensitivity: Option<u8>,
         actor_ref: Option<&str>,
-        lineage_requires_auto_permit: bool,
+        lineage: Option<&SourceLineage>,
     ) -> bool {
-        let Some(source) = source else {
-            // No declared source to judge. Fail-closed on the lineage axis:
-            // an unstated label cannot vouch for an observed history.
-            return !lineage_requires_auto_permit;
-        };
-
-        if self.source_trust.malformed_manifest_seen {
-            return false;
-        }
-
-        let Some(sensitivity) = sensitivity else {
-            return false;
-        };
-
-        // An actor-bound row is invisible to every other actor, so the source
-        // reads as carrying no row at all and keeps its default posture.
-        let row = match self.source_trust.row(source) {
-            Some(row) if row.binds_actor(actor_ref) => row,
-            _ => return !(source.requires_explicit_auto_permit() || lineage_requires_auto_permit),
-        };
-
-        let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
-            return false;
-        };
-
-        sensitivity <= max_auto_sensitivity
-            && (!(source.requires_explicit_auto_permit() || lineage_requires_auto_permit)
-                || (row.receipted && row.warned))
+        check_source_trust(
+            source,
+            ClaimApprovalStatus::Auto,
+            sensitivity,
+            actor_ref,
+            &self.source_trust,
+            lineage,
+        )
+        .is_ok()
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
@@ -725,6 +721,14 @@ fn hash_policy_frontier_v0(
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
+    // names a checker keeps its exact no-checker frontier hash — and every
+    // consent binding taken against it stays valid. A domain tag rides with
+    // the value so no future optional field can collide with this one.
+    if let Some(auto_checker) = resolution.auto_checker.as_deref() {
+        hash_str(hasher, "auto_checker");
+        hash_str(hasher, auto_checker);
+    }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
@@ -792,6 +796,8 @@ fn hash_policy_frontier_v0(
     for row in &resolution.owner_policy_rows {
         hash_owner_policy_row(hasher, row);
     }
+
+    resolution.hash_actor_burst_breaker(hasher);
 
     hash_opt_str(hasher, resolution.owner_policy_document.as_deref());
     hash_opt_str(hasher, resolution.owner_policy_output_contract.as_deref());
@@ -1020,6 +1026,9 @@ pub(crate) fn resolve_policy_manifest(
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    // ONE-1453: only VALID overrides enter the fold; a malformed one
+    // contributed no candidate at decode.
+    let mut actor_burst_breaker_candidates: Vec<GateBreakerThresholds> = Vec::new();
 
     for index_entry in store
         .type_index
@@ -1098,10 +1107,26 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(posture, |existing| existing.restrict(posture)),
                     );
                 }
+                // One checker per vault (ONE-1296), folded exactly like the
+                // budget policy above: the first value wins, a second manifest
+                // stating the SAME ref is one configuration written twice, and
+                // two manifests naming different checkers is a policy state
+                // nothing downstream could resolve — so it fails closed rather
+                // than picking a winner.
+                if let Some(auto_checker) = decoded.auto_checker {
+                    match &resolution.auto_checker {
+                        None => resolution.auto_checker = Some(auto_checker),
+                        Some(existing) if *existing == auto_checker => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(thresholds) = decoded.actor_burst_breaker {
+                    actor_burst_breaker_candidates.push(thresholds);
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
@@ -1123,6 +1148,13 @@ pub(crate) fn resolve_policy_manifest(
         resolution.owner_policy_rows.clear();
         resolution.owner_policy_rows_dropped = true;
     }
+
+    // ONE-1453: the distinct-valid-value rule alone decides. One distinct
+    // valid value applies; two or more are an ambiguity, and both that case
+    // and the zero-candidate case take engine defaults. A conflicting dial is
+    // NOT a malformed manifest: it does not fail-close the write gate.
+    resolution.actor_burst_breaker =
+        resolve_gate_breaker_thresholds(&actor_burst_breaker_candidates);
 
     // A resolved table must stay addressable by a u16 row index: up to 65,536
     // rows (indices 0..=65535) are valid; the 65,537th row marks the whole
@@ -1212,14 +1244,13 @@ impl Vault {
 /// `None` for an unattributed one. Actor-bound source-trust rows answer only
 /// the actor they name, so an unattributed write never rides one.
 ///
-/// ONE-1314: `lineage_requires_auto_permit` comes from the write's envelope
-/// (`effective_requires_explicit_auto_permit`) where one exists; a door with
-/// no envelope in scope passes `false` and keeps its exact prior verdict.
+/// `lineage` comes from the write's envelope. A door without an envelope
+/// passes `None` and keeps its declared-source-only verdict.
 pub(super) fn check_claim_source_trust(
     body: &ClaimBody,
     actor_ref: Option<&str>,
     policy: &PolicyManifestResolution,
-    lineage_requires_auto_permit: bool,
+    lineage: Option<&SourceLineage>,
 ) -> Result<()> {
     check_source_trust(
         body.source,
@@ -1227,7 +1258,7 @@ pub(super) fn check_claim_source_trust(
         claim_sensitivity_band(body),
         actor_ref,
         &policy.source_trust,
-        lineage_requires_auto_permit,
+        lineage,
     )
 }
 

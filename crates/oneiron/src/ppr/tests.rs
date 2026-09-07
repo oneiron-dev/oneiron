@@ -2,6 +2,8 @@ use rmpv::Value;
 use tempfile::tempdir;
 
 use super::*;
+
+mod specificity_visibility;
 use crate::batch::EdgeValueFields;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
@@ -33,7 +35,13 @@ fn assert_scores_equal(left: &[ScoredEntity], right: &[ScoredEntity]) {
 }
 
 fn cache_row(vault: &Vault, seeds: &[EntityId], depth: u32, alpha: f32) -> Result<Vec<u8>> {
-    let hash = hash_seeds(seeds, depth, alpha, SeedWeighting::Uniform);
+    let hash = hash_seeds(
+        seeds,
+        depth,
+        alpha,
+        vault.config.ppr_vad_alpha,
+        SeedWeighting::Uniform,
+    );
     let rtxn = vault.store.env.read_txn()?;
     let row = vault
         .store
@@ -57,7 +65,7 @@ fn plant_cache_row(
     computed_at: u64,
     scores: &[ScoredEntity],
 ) -> Result<[u8; SEED_HASH_LEN]> {
-    let hash = hash_seeds(seeds, depth, alpha, weighting);
+    let hash = hash_seeds(seeds, depth, alpha, 0.0, weighting);
     let version = graph_version(vault)?;
     let value = encode_cache_value(computed_at, version, 0, scores);
     let mut wtxn = vault.store.env.write_txn()?;
@@ -78,7 +86,7 @@ fn plant_state_cache_row(
     computed_at: u64,
     state: &PprCacheState,
 ) -> Result<[u8; SEED_HASH_LEN]> {
-    let hash = hash_seeds(seeds, depth, alpha, SeedWeighting::Uniform);
+    let hash = hash_seeds(seeds, depth, alpha, 0.0, SeedWeighting::Uniform);
     let version = graph_version(vault)?;
     let value = encode_cache_value_with_state(computed_at, version, 0, state)?;
     let mut wtxn = vault.store.env.write_txn()?;
@@ -169,9 +177,9 @@ fn legacy_dep_key(
     key
 }
 
-/// ONE-1116 AC4 — the cache key hashes `sorted seeds ‖ depth ‖ alpha ‖
+/// Cache identity hashes `sorted seeds ‖ depth ‖ teleport_alpha ‖ ppr_vad_alpha ‖
 /// FORMULA_VERSION ‖ weighting byte` with the LITERAL pinned values:
-/// version 4 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
+/// version 5 and mode bytes Uniform = 0 / Specificity = 1 (hand-built
 /// here, NOT read from the constants, so a wrong bump fails). The two
 /// weighting modes must never collide — `search_ppr` rows are not
 /// servable to `expand_ppr` and vice versa.
@@ -183,13 +191,14 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let alpha: f32 = 0.15;
 
     let mut bytes = Vec::with_capacity(
-        ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + std::mem::size_of::<f32>() + 1,
+        ENTITY_ID_LEN * 2 + 2 * std::mem::size_of::<u32>() + 2 * std::mem::size_of::<f32>() + 1,
     );
     bytes.extend_from_slice(a.as_bytes());
     bytes.extend_from_slice(b.as_bytes());
     bytes.extend_from_slice(&depth.to_le_bytes());
     bytes.extend_from_slice(&alpha.to_le_bytes());
-    bytes.extend_from_slice(&4_u32.to_le_bytes());
+    bytes.extend_from_slice(&0.0_f32.to_le_bytes());
+    bytes.extend_from_slice(&5_u32.to_le_bytes());
 
     let mut uniform_bytes = bytes.clone();
     uniform_bytes.push(0_u8);
@@ -200,15 +209,15 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
     let expected_specificity = xxh3_128(&specificity_bytes).to_le_bytes();
 
     assert_eq!(
-        PPR_FORMULA_VERSION, 4,
-        "ONE-1236 lexical hint traversal skip must pin version 4"
+        PPR_FORMULA_VERSION, 5,
+        "ONE-215 VAD propagation must pin version 5"
     );
     assert_eq!(
-        hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
+        hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
         expected_uniform
     );
     assert_eq!(
-        hash_seeds(&[a, b], depth, alpha, SeedWeighting::Specificity),
+        hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Specificity),
         expected_specificity
     );
     assert_ne!(
@@ -216,8 +225,8 @@ fn hash_seeds_uses_full_xxh3_digest_and_is_order_insensitive() {
         "uniform and specificity rows must never share a cache key"
     );
     assert_eq!(
-        hash_seeds(&[a, b], depth, alpha, SeedWeighting::Uniform),
-        hash_seeds(&[b, a], depth, alpha, SeedWeighting::Uniform)
+        hash_seeds(&[a, b], depth, alpha, 0.0, SeedWeighting::Uniform),
+        hash_seeds(&[b, a], depth, alpha, 0.0, SeedWeighting::Uniform)
     );
 }
 
@@ -849,7 +858,7 @@ fn ppr_cache_state_tracks_frontier_and_expanded_dependencies() -> Result<()> {
     assert_eq!(state.completed_depth, 2);
     assert!(!state.frontier.is_empty());
 
-    let seed_hash = hash_seeds(&[a], 2, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 2, 0.15, 0.0, SeedWeighting::Uniform);
     assert!(dep_exists(&vault, a, &seed_hash)?);
     assert!(dep_exists(&vault, b, &seed_hash)?);
 
@@ -883,7 +892,7 @@ fn ppr_query_resumes_from_cached_frontier_and_matches_fresh_compute() -> Result<
     vault.put_edge(&c, EdgeKind::About, &e, 0.7)?;
 
     let _ = ppr_query(&vault.store, &vault.config, &[a], 1, 0.15)?;
-    let depth_one_hash = hash_seeds(&[a], 1, 0.15, SeedWeighting::Uniform);
+    let depth_one_hash = hash_seeds(&[a], 1, 0.15, 0.0, SeedWeighting::Uniform);
     let depth_one_row = cache_row(&vault, &[a], 1, 0.15)?;
     let (computed_at, graph_version, stale) = parse_cache_header(&depth_one_row)?;
     assert_eq!(stale, 0);
@@ -914,7 +923,7 @@ fn ppr_query_resumes_from_cached_frontier_and_matches_fresh_compute() -> Result<
     };
     assert_scores_equal(&resumed, &fresh);
 
-    let depth_three_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let depth_three_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     assert!(
         dep_exists(&vault, sentinel_dep, &depth_three_hash)?,
         "depth-3 cache must inherit dependencies from the resumed state"
@@ -942,7 +951,7 @@ fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
             &[a],
             SeedWeighting::Uniform,
             1,
-            0.15,
+            PprAlphas::default_vad(0.15),
             None,
         )?
     };
@@ -962,7 +971,7 @@ fn ppr_query_can_resume_from_expired_current_graph_state() -> Result<()> {
     };
     assert_scores_equal(&resumed, &fresh);
 
-    let depth_three_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let depth_three_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     assert!(
         dep_exists(&vault, sentinel_dep, &depth_three_hash)?,
         "depth-3 cache must inherit dependencies from the expired resume state"
@@ -1014,9 +1023,9 @@ fn ppr_cache_key_changes_with_depth_and_alpha() -> Result<()> {
     let _ = ppr_query(&vault.store, &vault.config, &[a], 4, 0.15)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.25)?;
 
-    let hash_depth_3 = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
-    let hash_depth_4 = hash_seeds(&[a], 4, 0.15, SeedWeighting::Uniform);
-    let hash_alpha_25 = hash_seeds(&[a], 3, 0.25, SeedWeighting::Uniform);
+    let hash_depth_3 = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
+    let hash_depth_4 = hash_seeds(&[a], 4, 0.15, 0.0, SeedWeighting::Uniform);
+    let hash_alpha_25 = hash_seeds(&[a], 3, 0.25, 0.0, SeedWeighting::Uniform);
 
     assert_ne!(hash_depth_3, hash_depth_4);
     assert_ne!(hash_depth_3, hash_alpha_25);
@@ -1054,7 +1063,7 @@ fn batch_noop_delete_edge_does_not_bump_version_or_stale_cache() -> Result<()> {
 
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let before = graph_version(&vault)?;
 
     vault
@@ -1111,7 +1120,7 @@ fn direct_delete_edge_increments_graph_version_and_stales_cache() -> Result<()> 
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let before = graph_version(&vault)?;
     assert!(vault.delete_edge(&a, EdgeKind::BelongsTo, &b)?);
@@ -1141,7 +1150,7 @@ fn batch_delete_edge_cleans_inbound_orphans_without_staling_cache() -> Result<()
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let key_out = Store::encode_edge_key(&a, EdgeKind::BelongsTo, &b);
     let key_in = Store::encode_edge_key(&b, EdgeKind::BelongsTo, &a);
@@ -1248,7 +1257,7 @@ fn cleanup_conservatively_evicts_cache_for_missing_dep_entities() -> Result<()> 
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let mut wtxn = vault.store.env.write_txn()?;
     let orphan_dep = encode_dep_key(&missing, &seed_hash);
@@ -1326,7 +1335,7 @@ fn cleanup_ppr_cache_prunes_malformed_dep_rows() -> Result<()> {
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
     malformed_dep[ENTITY_ID_LEN..].copy_from_slice(&seed_hash);
@@ -1369,7 +1378,7 @@ fn cleanup_ppr_cache_evicts_cache_when_last_dep_row_is_malformed() -> Result<()>
     vault.put_entity(&b, 1, tr, 1, b"b-data")?;
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
     let _ = ppr_query(&vault.store, &vault.config, &[a], 3, 0.15)?;
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     delete_dep_rows_for_hash(&vault, &seed_hash)?;
 
     let mut malformed_dep = [0_u8; CACHE_DEP_KEY_LEN];
@@ -1407,7 +1416,7 @@ fn invalidate_ppr_caches_prunes_malformed_cache_rows() -> Result<()> {
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(60);
     let b = entity(61);
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let dep_key = encode_dep_key(&a, &seed_hash);
 
     vault.put_entity(&a, 1, TimeRange { start: 1, end: 1 }, 1, b"a-data")?;
@@ -1568,7 +1577,7 @@ fn cache_write_is_skipped_when_graph_version_changes_before_store() -> Result<()
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let a = entity(48);
     let b = entity(49);
-    let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
 
     vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
 
@@ -1606,7 +1615,7 @@ fn store_cache_entry_replaces_dependency_rows_for_same_hash() -> Result<()> {
     let vault = Vault::open(temp_dir.path(), embedding_test_config())?;
     let seed = entity(83);
     let stale_dep = entity(84);
-    let seed_hash = hash_seeds(&[seed], 3, 0.15, SeedWeighting::Uniform);
+    let seed_hash = hash_seeds(&[seed], 3, 0.15, 0.0, SeedWeighting::Uniform);
     let graph_version = graph_version(&vault)?;
     let first_state = PprCacheState {
         completed_depth: 3,
@@ -1729,7 +1738,7 @@ fn ppr_query_rejects_non_finite_inputs() -> Result<()> {
                 vault.store.edges_out.put(&mut wtxn, &key, &value)?;
             }
             Site::CachedScores => {
-                let seed_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+                let seed_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
                 let cache = encode_cache_value(
                     crate::unix_seconds_now(),
                     0,
@@ -1794,7 +1803,7 @@ fn seed_specificity_weights_match_derived_values() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
 
-    let weights = specificity_seed_weights(&vault.store, &rtxn, &[a, b, c])?;
+    let weights = specificity_seed_weights(&vault.store, &rtxn, &[a, b, c], None)?;
     let expected_weights = [0.2_f32, 0.4, 0.4];
     for (got, expected) in weights.iter().zip(expected_weights) {
         assert!(
@@ -1909,8 +1918,8 @@ fn expand_ppr_pipeline_seeds_stay_uniform() -> Result<()> {
         .expand_ppr(&[a, b], 1)
         .run()?;
 
-    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Uniform);
-    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Specificity);
+    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Uniform);
+    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Specificity);
     let rtxn = vault.store.env.read_txn()?;
     assert!(
         vault
@@ -1966,8 +1975,8 @@ fn search_ppr_pipeline_applies_specificity_seeding() -> Result<()> {
 
     let first = vault.query().search_ppr(&[a, b], 1).run()?;
 
-    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Uniform);
-    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, SeedWeighting::Specificity);
+    let uniform_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Uniform);
+    let specificity_hash = hash_seeds(&[a, b], 1, 0.15, 0.0, SeedWeighting::Specificity);
     let raw = {
         let rtxn = vault.store.env.read_txn()?;
         assert!(
@@ -2051,7 +2060,7 @@ fn pre_bump_formula_v2_rows_are_never_served() -> Result<()> {
     );
     assert!(score_for(&scores, b) > 0.0);
 
-    let current_hash = hash_seeds(&[a], 3, 0.15, SeedWeighting::Uniform);
+    let current_hash = hash_seeds(&[a], 3, 0.15, 0.0, SeedWeighting::Uniform);
     {
         let rtxn = vault.store.env.read_txn()?;
         assert!(vault.store.ppr_cache.get(&rtxn, &current_hash)?.is_some());
@@ -2409,6 +2418,7 @@ fn scoped_ppr_never_traverses_a_denied_node() -> Result<()> {
         &[seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &visibility,
     )?;
@@ -2460,6 +2470,7 @@ fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> 
         &[readable, denied_seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &visibility,
     )?;
@@ -2469,6 +2480,7 @@ fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> 
         &[readable],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &visibility,
     )?;
@@ -2487,6 +2499,7 @@ fn scoped_ppr_renormalizes_seed_mass_and_empties_when_all_seeds_are_denied() -> 
         &[readable, denied_seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
         &all_denied,
     )?;
@@ -2525,6 +2538,7 @@ fn scoped_ppr_is_compute_only_and_repeats_bit_for_bit() -> Result<()> {
         &[seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Specificity,
         &visibility,
     )?;
@@ -2534,6 +2548,7 @@ fn scoped_ppr_is_compute_only_and_repeats_bit_for_bit() -> Result<()> {
         &[seed],
         2,
         0.15,
+        0.0,
         SeedWeighting::Specificity,
         &visibility,
     )?;
@@ -2585,6 +2600,7 @@ fn scoped_ppr_fails_closed_when_the_visibility_predicate_errors() -> Result<()> 
             &[seed],
             2,
             0.15,
+            0.0,
             SeedWeighting::Uniform,
             &failing,
         )
@@ -2804,6 +2820,1646 @@ fn pull_code_memory_does_not_rank_across_a_denied_claim_bridge() -> Result<()> {
 }
 
 #[test]
+fn ppr_vad_multiplier_contract() {
+    for (vad, salience) in [
+        (Vad::NEUTRAL, 0.0),
+        (
+            Vad {
+                valence: -1.0,
+                arousal: 0.0,
+                dominance: 0.0,
+            },
+            1.0,
+        ),
+        (
+            Vad {
+                valence: 1.0,
+                arousal: 0.0,
+                dominance: 0.0,
+            },
+            1.0,
+        ),
+        (
+            Vad {
+                valence: 0.1,
+                arousal: 0.9,
+                dominance: 1.0,
+            },
+            0.9,
+        ),
+    ] {
+        assert_eq!(vad_salience(vad), salience);
+        assert_eq!(vad_multiplier(Some(vad), 0.4), 1.0 + 0.4 * salience);
+        assert_eq!(vad_multiplier(Some(vad), 0.0).to_bits(), 1.0_f32.to_bits());
+    }
+    assert_eq!(vad_multiplier(None, 0.4), 1.0);
+    // Alpha zero must not evaluate the VAD expression at all.
+    assert_eq!(
+        vad_multiplier(
+            Some(Vad {
+                valence: f32::NAN,
+                arousal: f32::INFINITY,
+                dominance: 0.0
+            }),
+            0.0
+        )
+        .to_bits(),
+        1.0_f32.to_bits()
+    );
+}
+
+#[test]
+fn ppr_vad_normalized_share_and_zero_baseline_bits() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let neutral = entity(2);
+    let salient = entity(3);
+    let structural = entity(4);
+    vault.put_edge(&seed, EdgeKind::Mentions, &neutral, 0.25)?;
+    vault.put_edge(&seed, EdgeKind::Mentions, &salient, 0.75)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &salient,
+        Vad {
+            valence: -1.0,
+            arousal: 0.8,
+            dominance: 0.4,
+        },
+    )?;
+    vault.put_edge(&seed, EdgeKind::BelongsTo, &structural, 1.0)?;
+    for alpha in [0.0, 0.4] {
+        let mut config = vault.config.clone();
+        config.ppr_vad_alpha = alpha;
+        let fresh = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
+        let cached = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
+        for (left, right) in fresh.iter().zip(&cached) {
+            assert_eq!(left.id, right.id);
+            assert_eq!(left.score.to_bits(), right.score.to_bits());
+        }
+        // Literal pre-change formula, with exactly the original operation order.
+        let baseline_neutral = 1.0_f32 * (0.6 * 0.25 / 1.0) * (1.0 - 0.15);
+        let baseline_salient = 1.0_f32 * (0.6 * 0.75 / 1.0) * (1.0 - 0.15);
+        assert_eq!(
+            score_for(&fresh, neutral).to_bits(),
+            baseline_neutral.to_bits()
+        );
+        assert_eq!(score_for(&fresh, structural).to_bits(), 0.85_f32.to_bits());
+        if alpha == 0.0 {
+            assert_eq!(
+                score_for(&fresh, salient).to_bits(),
+                baseline_salient.to_bits()
+            );
+        } else {
+            let expected = 1.0_f32 * (0.6 * 0.75 / 1.0) * 1.4 * (1.0 - 0.15);
+            assert_eq!(score_for(&fresh, salient).to_bits(), expected.to_bits());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_gate_carries_canonical_stored_layouts() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    for (target, kind, provenance, len) in [
+        (entity(2), EdgeKind::BelongsTo, None, 12),
+        (entity(3), EdgeKind::Mentions, None, 24),
+        (
+            entity(4),
+            EdgeKind::Mentions,
+            Some(EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Confirmed,
+                actor_class: EdgeActorClass::Human,
+            }),
+            26,
+        ),
+    ] {
+        let vad = if len == 12 {
+            Vad::NEUTRAL
+        } else {
+            Vad {
+                valence: -0.8,
+                arousal: 0.9,
+                dominance: 0.4,
+            }
+        };
+        vault
+            .batch()
+            .edge_with_value_fields(
+                &seed,
+                kind,
+                &target,
+                EdgeValueFields {
+                    weight: 0.6,
+                    created_at: 1,
+                    vad,
+                    provenance,
+                },
+            )
+            .commit()?;
+        let txn = vault.store.env.read_txn()?;
+        let key = Store::encode_edge_key(&seed, kind, &target);
+        let value = vault.store.edges_out.get(&txn, &key)?.expect("stored edge");
+        assert_eq!(value.len(), len);
+        let gated = gate_edge(&vault.store, &txn, &key, &value, 0)?.expect("traversable");
+        assert_eq!(gated.vad, if len == 12 { None } else { Some(vad) });
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_cache_separates_both_alphas_and_resume_state() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    vault.put_edge(&seed, EdgeKind::Mentions, &entity(2), 1.0)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &entity(2),
+        Vad {
+            valence: 0.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut hashes = HashSet::new();
+    for &alpha in crate::config::PPR_VAD_ALPHA_SWEEP {
+        let mut config = vault.config.clone();
+        config.ppr_vad_alpha = alpha;
+        for teleport_alpha in [0.15, 0.25] {
+            assert!(hashes.insert(hash_seeds(
+                &[seed],
+                2,
+                teleport_alpha,
+                alpha,
+                SeedWeighting::Uniform
+            )));
+            ppr_query(&vault.store, &config, &[seed], 1, teleport_alpha)?;
+            let resumed = ppr_query(&vault.store, &config, &[seed], 2, teleport_alpha)?;
+            let txn = vault.store.env.read_txn()?;
+            let fresh = ppr_compute_state_weighted(
+                &vault.store,
+                &txn,
+                &[seed],
+                SeedWeighting::Uniform,
+                2,
+                PprAlphas {
+                    teleport_alpha,
+                    ppr_vad_alpha: alpha,
+                },
+                None,
+            )?;
+            assert_scores_equal(&resumed, &fresh.scores);
+            let hash = hash_seeds(&[seed], 2, teleport_alpha, alpha, SeedWeighting::Uniform);
+            assert!(vault.store.ppr_cache.get(&txn, &hash)?.is_some());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_invalid_alpha_rejected_before_empty_or_cached_query() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    ppr_query(&vault.store, &vault.config, &[seed], 1, 0.15)?;
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        let mut config = vault.config.clone();
+        config.ppr_vad_alpha = alpha;
+        for seeds in [&[][..], &[seed][..]] {
+            assert!(matches!(
+                ppr_query(&vault.store, &config, seeds, 1, 0.15),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_zero_matches_multiround_baseline_and_resume_bits() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let target = entity(2);
+    vault.put_edge(&seed, EdgeKind::Mentions, &target, 0.75)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &target,
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.5,
+        },
+    )?;
+    let mut seed_frontier = 1.0_f32;
+    let mut target_frontier = 0.0_f32;
+    let mut seed_score = 1.0_f32;
+    let mut target_score = 0.0_f32;
+    for depth in 1..=4 {
+        // Independent recurrence of the pre-VAD formula for one bidirectional
+        // semantic edge. Two frontier terms make addition order immaterial.
+        let total = seed_frontier + target_frontier;
+        let next_seed = target_frontier * (0.6 * 0.75 / 0.75) * (1.0 - 0.15) + total * 0.15;
+        let next_target = seed_frontier * (0.6 * 0.75 / 0.75) * (1.0 - 0.15);
+        seed_score += next_seed;
+        target_score += next_target;
+        seed_frontier = next_seed;
+        target_frontier = next_target;
+        let resumed = ppr_query(&vault.store, &vault.config, &[seed], depth, 0.15)?;
+        let cached = ppr_query(&vault.store, &vault.config, &[seed], depth, 0.15)?;
+        let txn = vault.store.env.read_txn()?;
+        let fresh = ppr_compute(&vault.store, &txn, &[seed], depth, 0.15)?;
+        for scores in [&resumed, &cached, &fresh] {
+            assert_eq!(score_for(scores, seed).to_bits(), seed_score.to_bits());
+            assert_eq!(score_for(scores, target).to_bits(), target_score.to_bits());
+            assert_eq!(
+                scores.iter().map(|row| row.id).collect::<Vec<_>>(),
+                vec![seed, target]
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_reverse_hops_use_the_same_salience_multiplier() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let source = entity(1);
+    let seed = entity(2);
+    let vad = Vad {
+        valence: 0.0,
+        arousal: 0.9,
+        dominance: 1.0,
+    };
+    vault
+        .batch()
+        .edge_with_value_fields(
+            &source,
+            EdgeKind::Mentions,
+            &seed,
+            EdgeValueFields {
+                weight: 0.75,
+                created_at: 1,
+                vad,
+                provenance: Some(EdgeProvenanceFlags {
+                    confirmation_status: EdgeConfirmationStatus::Confirmed,
+                    actor_class: EdgeActorClass::Human,
+                }),
+            },
+        )
+        .commit()?;
+    let mut config = vault.config.clone();
+    config.ppr_vad_alpha = 0.4;
+    let scores = ppr_query(&vault.store, &config, &[seed], 1, 0.15)?;
+    let expected = 1.0_f32 * (0.6 * 0.75 / 0.75) * (1.0 + 0.4 * 0.9) * (1.0 - 0.15);
+    assert_eq!(score_for(&scores, source).to_bits(), expected.to_bits());
+    Ok(())
+}
+
+#[test]
+fn ppr_vad_signed_zero_reuses_cache_and_exact_scores() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let target = entity(2);
+    vault.put_edge(&seed, EdgeKind::Mentions, &target, 1.0)?;
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &target,
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut config = vault.config.clone();
+    config.ppr_vad_alpha = 0.0;
+    let positive = ppr_query(&vault.store, &config, &[seed], 2, 0.15)?;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    config.ppr_vad_alpha = -0.0;
+    let negative = ppr_query(&vault.store, &config, &[seed], 2, 0.15)?;
+    assert_eq!(score_bits(&positive), score_bits(&negative));
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_before);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before
+    );
+    for mode in [SeedWeighting::Uniform, SeedWeighting::Specificity] {
+        assert_eq!(
+            hash_seeds(&[seed], 2, 0.15, 0.0, mode),
+            hash_seeds(&[seed], 2, 0.15, -0.0, mode)
+        );
+    }
+    let txn = vault.store.env.read_txn()?;
+    let fresh = ppr_compute_state_weighted(
+        &vault.store,
+        &txn,
+        &[seed],
+        SeedWeighting::Uniform,
+        2,
+        PprAlphas {
+            teleport_alpha: 0.15,
+            ppr_vad_alpha: -0.0,
+        },
+        None,
+    )?;
+    assert_eq!(score_bits(&positive), score_bits(&fresh.scores));
+    Ok(())
+}
+
+#[test]
+fn scoped_ppr_vad_preserves_visibility_and_no_cache() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let seed = entity(1);
+    let visible = entity(2);
+    let denied = entity(3);
+    for target in [visible, denied] {
+        vault.put_edge(&seed, EdgeKind::Mentions, &target, 1.0)?;
+        vault.set_edge_vad(
+            &seed,
+            EdgeKind::Mentions,
+            &target,
+            Vad {
+                valence: -1.0,
+                arousal: 1.0,
+                dominance: 0.0,
+            },
+        )?;
+    }
+    // Warm a vault-wide row containing the denied member; scoped calls must
+    // neither serve it nor overwrite it, at zero or nonzero alpha.
+    ppr_query(&vault.store, &vault.config, &[seed], 1, 0.15)?;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    let txn = vault.store.env.read_txn()?;
+    let visibility = DeniedNodes::new(&[denied]);
+    let query = |alpha| {
+        ppr_query_scoped_in_txn(
+            &vault.store,
+            &txn,
+            &[seed],
+            1,
+            0.15,
+            alpha,
+            SeedWeighting::Specificity,
+            &visibility,
+        )
+    };
+    let zero = query(0.0)?;
+    assert_eq!(score_bits(&zero), score_bits(&query(-0.0)?));
+    assert_eq!(
+        score_for(&zero, visible).to_bits(),
+        (0.6_f32 * 0.85).to_bits()
+    );
+    let weighted = query(0.4)?;
+    assert!(score_for(&weighted, visible) > score_for(&zero, visible));
+    assert_eq!(score_for(&weighted, denied), 0.0);
+    assert_eq!(score_bits(&weighted), score_bits(&query(0.4)?));
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        assert!(matches!(query(alpha), Err(Error::InvalidConfig(_))));
+        for seeds in [&[][..], &[denied][..]] {
+            assert!(matches!(
+                ppr_query_scoped_in_txn(
+                    &vault.store,
+                    &txn,
+                    seeds,
+                    0,
+                    0.15,
+                    alpha,
+                    SeedWeighting::Uniform,
+                    &visibility
+                ),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+    }
+    drop(txn);
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_before);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before
+    );
+    Ok(())
+}
+
+#[test]
+fn pull_code_memory_threads_vad_alpha_and_rejects_invalid_config() -> Result<()> {
+    let (_dir, mut vault) = open_test_vault_with(VaultConfig::device());
+    let symbol_type = crate::registry::ENTITY_TYPE_CODE_SYMBOL;
+    let person_type = crate::registry::ENTITY_TYPE_PERSON;
+    let seed = scoped_pull_entity(&vault, 0x71, symbol_type)?;
+    let neutral = scoped_pull_entity(&vault, 0x72, symbol_type)?;
+    let salient = scoped_pull_entity(&vault, 0x73, symbol_type)?;
+    let author = scoped_pull_entity(&vault, 0x74, person_type)?;
+    let subject = scoped_pull_entity(&vault, 0x75, person_type)?;
+    let _neutral_note = scoped_pull_note(&vault, author, subject, neutral, 1)?;
+    let salient_note = scoped_pull_note(&vault, author, subject, salient, 2)?;
+    for target in [neutral, salient] {
+        vault.put_edge(&seed, EdgeKind::Mentions, &target, 1.0)?;
+    }
+    vault.set_edge_vad(
+        &seed,
+        EdgeKind::Mentions,
+        &salient,
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut request = CodeMemoryPullRequest::new(vec![seed]);
+    request.minimum_relevance = 0.35;
+    let cache_before = count_entries(&vault.store.ppr_cache, &vault)?;
+    let deps_before = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    for alpha in [0.0, -0.0] {
+        vault.config.ppr_vad_alpha = alpha;
+        let result = vault.pull_code_memory(actor_key("vad-reader"), request.clone())?;
+        assert!(result.notes.is_empty());
+    }
+    vault.config.ppr_vad_alpha = 0.4;
+    let weighted = vault.pull_code_memory(actor_key("vad-reader"), request.clone())?;
+    assert_eq!(pulled_payload_ids(&weighted), vec![salient_note]);
+    for alpha in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.1, 0.41] {
+        vault.config.ppr_vad_alpha = alpha;
+        assert!(matches!(
+            vault.pull_code_memory(actor_key("vad-reader"), request.clone()),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            vault.pull_code_memory(
+                actor_key("vad-reader"),
+                CodeMemoryPullRequest::new(Vec::new())
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_before);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        deps_before
+    );
+    Ok(())
+}
+
+fn community_ppr_fixture(vault: &Vault) -> Result<()> {
+    // Keep 100 fixture nodes without aliasing any production-pinned identity.
+    // The low, unpinned IDs used by the graph and query assertions stay unchanged.
+    for n in (1..=u8::MAX)
+        .filter(|n| !crate::test_util::PINNED_ID_BYTES.contains(n))
+        .take(100)
+    {
+        vault.put_entity(&entity(n), 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    vault.put_edge(&entity(1), EdgeKind::BelongsTo, &entity(2), 1.0)?;
+    vault.put_edge(&entity(1), EdgeKind::Supports, &entity(3), 1.0)?;
+    Ok(())
+}
+
+fn community_query_for_test(
+    vault: &Vault,
+    config: &VaultConfig,
+    weighting: SeedWeighting,
+    depth: u32,
+    context: &crate::ppr_community::CommunityBoostContext<'_>,
+) -> Result<(
+    Vec<ScoredEntity>,
+    crate::ppr_community::CommunityBoostReport,
+)> {
+    let mut seeds: Vec<_> = context.ordered_seeds.iter().map(|seed| seed.id).collect();
+    seeds.sort_unstable();
+    let (scores, write, report) = {
+        let txn = vault.store.env.read_txn()?;
+        ppr_query_in_txn_with_community_deferred_cache(
+            &vault.store,
+            &txn,
+            CommunityPprRequest {
+                seeds: &seeds,
+                depth,
+                teleport_alpha: 0.15,
+                weighting,
+                config,
+                context,
+            },
+        )?
+    };
+    if let Some(write) = write {
+        flush_deferred_ppr_cache_writes(&vault.store, &[write])?;
+    }
+    Ok((scores, report))
+}
+
+#[test]
+fn ppr_community_zero_and_specificity_bypass_corrupt_cache_and_invalid_context_exactly()
+-> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let seed = entity(1);
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &[ScoredEntity {
+            id: seed,
+            score: f32::NAN,
+        }],
+        result_limit: 0,
+        session_usage: &usage,
+    };
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut txn, b"ppr_community_cache:v0:meta", b"corrupt")?;
+        txn.commit()?;
+    }
+    for weighting in [SeedWeighting::Uniform, SeedWeighting::Specificity] {
+        let baseline = {
+            let txn = vault.store.env.read_txn()?;
+            let (scores, write) = ppr_query_in_txn_with_vad_deferred_cache(
+                &vault.store,
+                &txn,
+                &[seed],
+                1,
+                0.15,
+                0.0,
+                weighting,
+            )?;
+            drop(txn);
+            if let Some(write) = write {
+                flush_deferred_ppr_cache_writes(&vault.store, &[write])?;
+            }
+            scores
+        };
+        let before = {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .ppr_cache
+                .iter(&txn)?
+                .map(|entry| entry.map(|(key, value)| (key.to_vec(), value.to_vec())))
+                .collect::<Result<Vec<_>>>()?
+        };
+        let mut config = vault.config.clone();
+        config.ppr_community.gamma = f32::NAN;
+        config.ppr_community.beta = if weighting == SeedWeighting::Uniform {
+            -0.0
+        } else {
+            f32::NAN
+        };
+        let (actual, report) = community_query_for_test(&vault, &config, weighting, 1, &context)?;
+        assert_eq!(
+            actual
+                .iter()
+                .map(|row| (row.id, row.score.to_bits()))
+                .collect::<Vec<_>>(),
+            baseline
+                .iter()
+                .map(|row| (row.id, row.score.to_bits()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            report,
+            crate::ppr_community::CommunityBoostReport::default()
+        );
+        let txn = vault.store.env.read_txn()?;
+        let after = vault
+            .store
+            .ppr_cache
+            .iter(&txn)?
+            .map(|entry| entry.map(|(key, value)| (key.to_vec(), value.to_vec())))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(before, after);
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_preserves_canonical_vad_keys_and_nonzero_salience() -> Result<()> {
+    use crate::ppr_community::{CommunityBoostContext, community_cache_identity};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    // Keep the structural community link; carry salience on a semantic relation.
+    vault.put_edge(&entity(1), EdgeKind::Mentions, &entity(2), 1.0)?;
+    vault.set_edge_vad(
+        &entity(1),
+        EdgeKind::Mentions,
+        &entity(2),
+        Vad {
+            valence: -1.0,
+            arousal: 1.0,
+            dominance: 0.0,
+        },
+    )?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let usage = HashMap::new();
+    let evidence = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let context = CommunityBoostContext {
+        ordered_seeds: &evidence,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let identity = community_cache_identity(0.2, graph_version(&vault)?).expect("identity");
+    let key_for = |alpha| {
+        hash_community_seeds(
+            hash_seeds(&[entity(1)], 1, 0.15, alpha, SeedWeighting::Uniform),
+            identity,
+        )
+    };
+    let row_for = |key: &[u8; SEED_HASH_LEN]| -> Result<Vec<u8>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .ppr_cache
+            .get(&txn, key)?
+            .expect("cache row")
+            .to_vec())
+    };
+    config.ppr_vad_alpha = 0.0;
+    let (zero, _) = community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    let zero_row = row_for(&key_for(0.0))?;
+    let cache_count = count_entries(&vault.store.ppr_cache, &vault)?;
+    let dep_count = count_entries(&vault.store.ppr_cache_deps, &vault)?;
+    config.ppr_vad_alpha = -0.0;
+    let (negative_zero, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_eq!(key_for(0.0), key_for(-0.0));
+    assert_eq!(score_bits(&zero), score_bits(&negative_zero));
+    assert_eq!(row_for(&key_for(-0.0))?, zero_row);
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, cache_count);
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache_deps, &vault)?,
+        dep_count
+    );
+
+    config.ppr_vad_alpha = 0.4;
+    let (weighted, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_ne!(key_for(0.0), key_for(0.4));
+    assert!(score_for(&weighted, entity(2)) > score_for(&zero, entity(2)));
+    let weighted_row = row_for(&key_for(0.4))?;
+    let weighted_state = decode_cache_state(&weighted_row[CACHE_HEADER_LEN..])?;
+    let zero_state = decode_cache_state(&zero_row[CACHE_HEADER_LEN..])?;
+    assert!(
+        score_for(&weighted_state.scores, entity(2)) > score_for(&zero_state.scores, entity(2))
+    );
+    let (cached, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_eq!(score_bits(&weighted), score_bits(&cached));
+    assert_eq!(
+        count_entries(&vault.store.ppr_cache, &vault)?,
+        cache_count + 1
+    );
+    assert_eq!(row_for(&key_for(0.0))?, zero_row);
+    Ok(())
+}
+
+#[test]
+fn ppr_community_vad_evidence_bypasses_cold_exact_and_resume_cache_writes() -> Result<()> {
+    use crate::ppr_community::community_cache_identity;
+
+    for alpha in [0.0, 0.4] {
+        let mut config = embedding_test_config();
+        config.ppr_community.beta = 0.2;
+        config.ppr_vad_alpha = alpha;
+        let (_dir, vault) = open_test_vault_with(config);
+        community_ppr_fixture(&vault)?;
+        vault
+            .batch()
+            .text(&entity(1), &[("body", "salientseed")])
+            .commit()?;
+        vault.put_edge(&entity(1), EdgeKind::Mentions, &entity(2), 1.0)?;
+        vault.set_edge_vad(
+            &entity(1),
+            EdgeKind::Mentions,
+            &entity(2),
+            Vad {
+                valence: -1.0,
+                arousal: 1.0,
+                dominance: 0.0,
+            },
+        )?;
+        let query = |depth| {
+            vault
+                .query()
+                .search_text("salientseed", 10)
+                .expand_ppr(&[entity(1)], depth)
+                .with_temporal_now(1)
+                .limit(10)
+        };
+
+        // The nonzero community prior still runs, but a cold snapshot must
+        // not reintroduce the deferred write suppressed by the diagnostic.
+        let (cold, effective) = query(1).run_with_ppr_vad_evidence()?;
+        assert!(!cold.is_empty());
+        assert_eq!(effective, alpha != 0.0);
+        {
+            let txn = vault.store.env.read_txn()?;
+            assert_eq!(vault.store.ppr_cache.len(&txn)?, 0);
+            assert_eq!(vault.store.ppr_cache_deps.len(&txn)?, 0);
+            assert!(vault.store.ppr_community_snapshot_in_txn(&txn)?.is_none());
+        }
+
+        // Normal queries retain the community namespace and publish both
+        // caches after the diagnostic scope has ended.
+        let warm = query(1).run()?;
+        assert_scores_equal(&cold, &warm);
+        let key = hash_community_seeds(
+            hash_seeds(&[entity(1)], 1, 0.15, alpha, SeedWeighting::Uniform),
+            community_cache_identity(0.2, graph_version(&vault)?).expect("identity"),
+        );
+        {
+            let mut txn = vault.store.env.write_txn()?;
+            assert!(vault.store.ppr_cache.get(&txn, &key)?.is_some());
+            assert!(vault.store.ppr_community_snapshot_in_txn(&txn)?.is_some());
+            // A malformed row proves bypass, not just a lucky cache miss.
+            vault.store.ppr_cache.put(&mut txn, &key, b"corrupt")?;
+            txn.commit()?;
+        }
+        let (cache_count, dep_count) = {
+            let txn = vault.store.env.read_txn()?;
+            (
+                vault.store.ppr_cache.len(&txn)?,
+                vault.store.ppr_cache_deps.len(&txn)?,
+            )
+        };
+        for depth in [1, 2] {
+            // Depth one would read the exact row; depth two would resume it.
+            let (rows, effective) = query(depth).run_with_ppr_vad_evidence()?;
+            assert_eq!(effective, alpha != 0.0);
+            if depth == 1 {
+                assert_scores_equal(&rows, &warm);
+            }
+            let txn = vault.store.env.read_txn()?;
+            assert_eq!(vault.store.ppr_cache.len(&txn)?, cache_count);
+            assert_eq!(vault.store.ppr_cache_deps.len(&txn)?, dep_count);
+            assert_eq!(
+                vault.store.ppr_cache.get(&txn, &key)?.as_deref(),
+                Some(b"corrupt".as_slice())
+            );
+        }
+        assert!(matches!(query(1).run(), Err(Error::CorruptedIndex(_))));
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_nonzero_cache_contains_base_state_and_session_decay_is_not_cached() -> Result<()> {
+    use crate::ppr_community::{CommunityBoostContext, community_cache_identity};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    config.ppr_vad_alpha = 0.4;
+    let evidence = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let empty_usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &evidence,
+        result_limit: 10,
+        session_usage: &empty_usage,
+    };
+    let (fresh, report) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_eq!(report.boosted_candidates, 2);
+    let version = graph_version(&vault)?;
+    let base_key = hash_seeds(&[entity(1)], 1, 0.15, 0.4, SeedWeighting::Uniform);
+    let key = hash_community_seeds(
+        base_key,
+        community_cache_identity(0.2, version).expect("identity"),
+    );
+    assert_ne!(key, base_key);
+    let (row, base_score, fine) = {
+        let txn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_cache.get(&txn, &base_key)?.is_none());
+        let row = vault
+            .store
+            .ppr_cache
+            .get(&txn, &key)?
+            .expect("cache")
+            .to_vec();
+        let state = decode_cache_state(&row[CACHE_HEADER_LEN..])?;
+        let base_score = score_for(&state.scores, entity(2));
+        let snapshot = vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("published snapshot");
+        (row, base_score, snapshot.nodes[&entity(1)].fine)
+    };
+    assert!(score_for(&fresh, entity(2)) > base_score);
+    let usage = HashMap::from([(fine, 10)]);
+    let decayed_context = CommunityBoostContext {
+        session_usage: &usage,
+        ..context
+    };
+    let (decayed, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &decayed_context)?;
+    assert!(score_for(&decayed, entity(2)) < score_for(&fresh, entity(2)));
+    assert!(score_for(&decayed, entity(2)) > base_score);
+    let txn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .ppr_cache
+            .get(&txn, &key)?
+            .expect("unchanged state")
+            .as_ref(),
+        row.as_slice()
+    );
+    assert_ne!(
+        key,
+        hash_community_seeds(
+            base_key,
+            community_cache_identity(0.2, version + 1).expect("version")
+        )
+    );
+    assert_ne!(
+        key,
+        hash_community_seeds(
+            base_key,
+            community_cache_identity(0.3, version).expect("beta")
+        )
+    );
+    assert_eq!(
+        base_key,
+        hash_community_seeds(
+            base_key,
+            community_cache_identity(0.0, version).expect("zero")
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn ppr_community_ordered_evidence_and_safety_knobs_are_reapplied_on_base_cache_hits() -> Result<()>
+{
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let usage = HashMap::new();
+    let dominant = [
+        ScoredEntity {
+            id: entity(1),
+            score: 1.5,
+        },
+        ScoredEntity {
+            id: entity(3),
+            score: 1.0,
+        },
+    ];
+    let context = CommunityBoostContext {
+        ordered_seeds: &dominant,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let (boosted, report) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert!(report.boosted_candidates > 0);
+    let ambiguous = [
+        ScoredEntity {
+            id: entity(1),
+            score: 1.49,
+        },
+        ScoredEntity {
+            id: entity(3),
+            score: 1.0,
+        },
+    ];
+    let inactive = CommunityBoostContext {
+        ordered_seeds: &ambiguous,
+        ..context
+    };
+    let (unboosted, report) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &inactive)?;
+    assert_eq!(report.activated_communities, 0);
+    assert!(score_for(&boosted, entity(2)) > score_for(&unboosted, entity(2)));
+    config.ppr_community.multiplier_cap = 1.0;
+    let (capped, report) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_eq!(report.boosted_candidates, 0);
+    assert_eq!(
+        score_for(&capped, entity(2)).to_bits(),
+        score_for(&unboosted, entity(2)).to_bits()
+    );
+    Ok(())
+}
+
+#[test]
+fn ppr_community_deferred_snapshot_is_not_published_after_graph_race() -> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &[ScoredEntity {
+            id: entity(1),
+            score: 1.0,
+        }],
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let write = {
+        let txn = vault.store.env.read_txn()?;
+        let (_, write, _) = ppr_query_in_txn_with_community_deferred_cache(
+            &vault.store,
+            &txn,
+            CommunityPprRequest {
+                seeds: &[entity(1)],
+                depth: 1,
+                teleport_alpha: 0.15,
+                weighting: SeedWeighting::Uniform,
+                config: &config,
+                context: &context,
+            },
+        )?;
+        write.expect("deferred")
+    };
+    let key = write.seed_hash;
+    vault.put_edge(&entity(4), EdgeKind::About, &entity(5), 1.0)?;
+    flush_deferred_ppr_cache_writes(&vault.store, &[write])?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(vault.store.ppr_cache.get(&txn, &key)?.is_none());
+    assert!(vault.store.ppr_community_snapshot_in_txn(&txn)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn ppr_community_nonzero_validates_config_evidence_and_cache_before_publishing() -> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut config = vault.config.clone();
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &[],
+        result_limit: 0,
+        session_usage: &usage,
+    };
+    for beta in [f32::NAN, f32::INFINITY, -0.1] {
+        config.ppr_community.beta = beta;
+        assert!(matches!(
+            community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+    config.ppr_community.beta = 0.2;
+    let context = CommunityBoostContext {
+        ordered_seeds: &[ScoredEntity {
+            id: entity(1),
+            score: f32::NAN,
+        }],
+        ..context
+    };
+    assert!(
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context).is_err()
+    );
+    let txn = vault.store.env.read_txn()?;
+    assert!(vault.store.ppr_community_snapshot_in_txn(&txn)?.is_none());
+    assert_eq!(vault.store.ppr_cache.len(&txn)?, 0);
+    Ok(())
+}
+
+#[test]
+fn ppr_community_shared_snapshot_never_enters_the_scoped_hidden_bridge_walk() -> Result<()> {
+    struct Visibility;
+    impl PprNodeVisibility for Visibility {
+        fn ppr_node_visible(&self, _txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+            Ok(*id != entity(2))
+        }
+    }
+    let mut config = embedding_test_config();
+    config.ppr_community.beta = 0.2;
+    let (_dir, vault) = open_test_vault_with(config);
+    for n in 1..=3 {
+        vault.put_entity(&entity(n), 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    vault.put_edge(&entity(1), EdgeKind::BelongsTo, &entity(2), 1.0)?;
+    vault.put_edge(&entity(2), EdgeKind::BelongsTo, &entity(3), 1.0)?;
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, b"ppr_community_cache:v0:meta", b"corrupt")?;
+    txn.commit()?;
+    let txn = vault.store.env.read_txn()?;
+    let scores = ppr_query_scoped_in_txn(
+        &vault.store,
+        &txn,
+        &[entity(1)],
+        2,
+        0.15,
+        vault.config.ppr_vad_alpha,
+        SeedWeighting::Uniform,
+        &Visibility,
+    )?;
+    assert_eq!(
+        scores.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![entity(1)]
+    );
+    assert_eq!(vault.store.ppr_cache.len(&txn)?, 0);
+    Ok(())
+}
+
+#[test]
+fn ppr_community_resume_uses_unboosted_frontier_and_never_compounds_the_prior() -> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &[ScoredEntity {
+            id: entity(1),
+            score: 1.0,
+        }],
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    let (resumed, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 2, &context)?;
+    let (cached, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 2, &context)?;
+    assert_eq!(
+        resumed
+            .iter()
+            .map(|row| (row.id, row.score.to_bits()))
+            .collect::<Vec<_>>(),
+        cached
+            .iter()
+            .map(|row| (row.id, row.score.to_bits()))
+            .collect::<Vec<_>>()
+    );
+    let txn = vault.store.env.read_txn()?;
+    let state = ppr_compute_state_weighted(
+        &vault.store,
+        &txn,
+        &[entity(1)],
+        SeedWeighting::Uniform,
+        2,
+        PprAlphas::default_vad(0.15),
+        None,
+    )?;
+    let snapshot = vault
+        .store
+        .ppr_community_snapshot_in_txn(&txn)?
+        .expect("snapshot");
+    let cache =
+        crate::ppr_community::PprCommunityCache::new(&snapshot, snapshot.meta.graph_version)
+            .expect("valid snapshot");
+    let mut expected = state.scores;
+    crate::ppr_community::apply_community_prior(
+        &mut expected,
+        &cache,
+        &context,
+        &config.ppr_community,
+    )
+    .expect("one prior application");
+    assert_scores_equal(&resumed, &expected);
+    Ok(())
+}
+
+#[test]
+fn community_pipeline_adapter_keeps_full_rounds_until_admitted_final_selection() -> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &[ScoredEntity {
+            id: entity(1),
+            score: 1.0,
+        }],
+        result_limit: 1,
+        session_usage: &usage,
+    };
+    let txn = vault.store.env.read_txn()?;
+    let (mut scores, write, diversity) = ppr_expand_in_txn_with_community_deferred_cache(
+        &vault.store,
+        &txn,
+        CommunityPprRequest {
+            seeds: &[entity(1)],
+            depth: 1,
+            teleport_alpha: 0.15,
+            weighting: SeedWeighting::Uniform,
+            config: &config,
+            context: &context,
+        },
+    )?;
+    assert!(
+        scores.len() > context.result_limit,
+        "PPR is a candidate channel, not final top-k"
+    );
+    assert!(write.is_some());
+    assert!(
+        vault.store.ppr_community_snapshot_in_txn(&txn)?.is_none(),
+        "still deferred"
+    );
+    let diversity = diversity.expect("activated seed");
+    let before: HashMap<_, _> = scores
+        .iter()
+        .map(|row| (row.id, row.score.to_bits()))
+        .collect();
+    // The only nonmatching candidate is filtered out after expansion. A cached
+    // membership row must not become a new result or refill the protected slot.
+    scores.retain(|row| row.id != entity(3));
+    diversity.apply(&mut scores, 1, &config.ppr_community)?;
+    assert_eq!(scores.len(), 1);
+    assert_ne!(scores[0].id, entity(3));
+    assert_eq!(scores[0].score.to_bits(), before[&scores[0].id]);
+    diversity.apply(&mut scores, 0, &config.ppr_community)?;
+    assert!(scores.is_empty());
+    Ok(())
+}
+
+#[test]
+fn community_pipeline_adapter_zero_preserves_original_state_and_key_without_context_reads()
+-> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.gamma = f32::NAN;
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, b"ppr_community_cache:v0:meta", b"corrupt")?;
+    txn.commit()?;
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &[ScoredEntity {
+            id: entity(50),
+            score: f32::NAN,
+        }],
+        result_limit: 0,
+        session_usage: &usage,
+    };
+    let txn = vault.store.env.read_txn()?;
+    let (expected, expected_write) = ppr_query_in_txn_with_vad_deferred_cache(
+        &vault.store,
+        &txn,
+        &[entity(1)],
+        1,
+        0.15,
+        config.ppr_vad_alpha,
+        SeedWeighting::Uniform,
+    )?;
+    for beta in [0.0, -0.0] {
+        config.ppr_community.beta = beta;
+        let (actual, write, diversity) = ppr_expand_in_txn_with_community_deferred_cache(
+            &vault.store,
+            &txn,
+            CommunityPprRequest {
+                seeds: &[entity(1)],
+                depth: 1,
+                teleport_alpha: 0.15,
+                weighting: SeedWeighting::Uniform,
+                config: &config,
+                context: &context,
+            },
+        )?;
+        assert_eq!(
+            actual
+                .iter()
+                .map(|row| (row.id, row.score.to_bits()))
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|row| (row.id, row.score.to_bits()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            write.as_ref().map(|write| write.seed_hash),
+            expected_write.as_ref().map(|write| write.seed_hash)
+        );
+        assert!(diversity.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_hot_query_ignores_unrelated_rows_but_full_refresh_rejects_them()
+-> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &seeds,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let (expected, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    let key = format!("ppr_community_cache:v0:node:{}", entity(100).to_hex());
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, key.as_bytes(), b"corrupt")?;
+    txn.commit()?;
+    let (actual, _) =
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_eq!(actual, expected);
+    {
+        let txn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_community_snapshot_in_txn(&txn).is_err());
+    }
+    // Stale snapshots still validate the entire previous family before refresh.
+    vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
+    assert!(
+        community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context).is_err()
+    );
+    assert!(vault.refresh_ppr_communities(&[], 44).is_err());
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_accessed_corruption_fails_before_any_publish() -> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &seeds,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("snapshot")
+    };
+    let membership = original.nodes[&entity(1)];
+    let node = |id: EntityId| format!("ppr_community_cache:v0:node:{}", id.to_hex()).into_bytes();
+    let members = |id: crate::ppr_community::CommunityId| {
+        format!("ppr_community_cache:v0:members:{}", id.to_hex()).into_bytes()
+    };
+    let encoded = original.encode_rows().expect("rows");
+    let mut wrong_node = encoded[&node(entity(1))].clone();
+    wrong_node[..16].copy_from_slice(original.nodes[&entity(3)].fine.as_bytes());
+    let mut reversed = encoded[&members(membership.fine)].clone();
+    reversed.rotate_left(16);
+    let mut reserved = encoded[&members(membership.fine)].clone();
+    reserved[..16].fill(0);
+    let mut wrong_count = encoded[b"ppr_community_cache:v0:meta".as_slice()].clone();
+    wrong_count[21..29].copy_from_slice(&100_001_u64.to_le_bytes());
+    let mutations = [
+        (node(entity(1)), Some(b"truncated".to_vec())),
+        (node(entity(2)), None), // accessed member backlink, not a seed
+        (node(entity(2)), Some(wrong_node)),
+        (node(entity(3)), Some(b"bad candidate".to_vec())), // PPR candidate, not seed
+        (node(entity(3)), None), // missing live singleton must not become unknown
+        (members(membership.fine), None),
+        (members(membership.fine), Some(reversed)),
+        (members(membership.fine), Some(reserved)),
+        (b"ppr_community_cache:v0:meta".to_vec(), Some(wrong_count)),
+        (b"ppr_community_cache:v0:meta".to_vec(), None),
+    ];
+    for (key, value) in mutations {
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut txn, &original)?;
+        if let Some(value) = value {
+            vault.store.vault_meta.put(&mut txn, &key, &value)?;
+        } else {
+            vault.store.vault_meta.delete(&mut txn, &key)?;
+        }
+        txn.commit()?;
+        let before = count_entries(&vault.store.ppr_cache, &vault)?;
+        assert!(
+            matches!(
+                community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context),
+                Err(Error::CorruptedIndex(_))
+            ),
+            "{}",
+            String::from_utf8_lossy(&key)
+        );
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_view_tracks_supplied_transaction_not_latest_commit() -> Result<()> {
+    use crate::ppr_community::{CommunityBoostContext, CommunitySnapshot};
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &seeds,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let query = |txn: &RoTxn<'_>| {
+        ppr_query_in_txn_with_community_deferred_cache(
+            &vault.store,
+            txn,
+            CommunityPprRequest {
+                seeds: &[entity(1)],
+                depth: 1,
+                teleport_alpha: 0.15,
+                weighting: SeedWeighting::Uniform,
+                config: &config,
+                context: &context,
+            },
+        )
+    };
+    let old_read = vault.store.env.read_txn()?;
+    let original = vault
+        .store
+        .ppr_community_snapshot_in_txn(&old_read)?
+        .expect("original");
+    let (expected, _, _) = query(&old_read)?;
+    let singletons: Vec<_> = original.nodes.keys().map(|&id| vec![id]).collect();
+    let replacement = CommunitySnapshot::from_partitions(original.meta, &singletons, &singletons)
+        .expect("same-version different partition");
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut txn, &replacement)?;
+        let (changed, _, _) = query(&txn)?;
+        assert_ne!(changed, expected, "read-your-writes must use replacement");
+        // Abort must not install any reusable query state.
+    }
+    assert_eq!(query(&old_read)?.0, expected);
+    // LMDB permits only one active read transaction per thread with TLS enabled.
+    // Keep old_read on this thread and open fresh snapshots on scoped threads.
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> Result<()> {
+                let txn = vault.store.env.read_txn()?;
+                assert_eq!(query(&txn)?.0, expected);
+                Ok(())
+            })
+            .join()
+            .expect("post-abort reader panicked")
+    })?;
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut txn, &replacement)?;
+        txn.commit()?;
+    }
+    assert_eq!(
+        query(&old_read)?.0,
+        expected,
+        "old read sees old same-version rows"
+    );
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> Result<()> {
+                {
+                    let txn = vault.store.env.read_txn()?;
+                    assert_ne!(
+                        query(&txn)?.0,
+                        expected,
+                        "new read sees committed replacement"
+                    );
+                }
+                // The mutation may open its own read transaction for validation.
+                vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
+                Ok(())
+            })
+            .join()
+            .expect("post-commit reader and graph mutation panicked")
+    })?;
+    assert_eq!(
+        query(&old_read)?.0,
+        expected,
+        "old graph and metadata stay paired"
+    );
+    drop(old_read);
+    {
+        let txn = vault.store.env.read_txn()?;
+        let (_, pending, _) = query(&txn)?;
+        let pending = pending.expect("stale full refresh");
+        assert!(pending.community_snapshot.is_some());
+        assert_eq!(
+            pending.graph_version,
+            read_graph_version(&vault.store, &txn)?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_hot_query_work_is_independent_of_unrelated_community_rows() -> Result<()> {
+    use crate::ppr_community::{CommunityBoostContext, CommunitySnapshot};
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("snapshot")
+    };
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity {
+        id: entity(1),
+        score: 1.0,
+    }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext {
+        ordered_seeds: &seeds,
+        result_limit: 10,
+        session_usage: &usage,
+    };
+    let mut expected = None;
+    for extra in [0_u32, 2_000] {
+        let mut fine: std::collections::BTreeMap<_, Vec<_>> = std::collections::BTreeMap::new();
+        let mut coarse: std::collections::BTreeMap<_, Vec<_>> = std::collections::BTreeMap::new();
+        for (&id, m) in &original.nodes {
+            fine.entry(m.fine).or_default().push(id);
+            coarse.entry(m.coarse).or_default().push(id);
+        }
+        let mut fine: Vec<_> = fine.into_values().collect();
+        let mut coarse: Vec<_> = coarse.into_values().collect();
+        for n in 0..extra {
+            let mut bytes = [0xdd; 16];
+            bytes[12..].copy_from_slice(&n.to_be_bytes());
+            let id = EntityId::from_bytes(bytes)?;
+            fine.push(vec![id]);
+            coarse.push(vec![id]);
+        }
+        let snapshot =
+            CommunitySnapshot::from_partitions(original.meta, &fine, &coarse).expect("snapshot");
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut txn, &snapshot)?;
+        txn.commit()?;
+        vault.store.take_ppr_community_read_work();
+        let (scores, report) =
+            community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+        let work = vault.store.take_ppr_community_read_work();
+        assert!(work.0 < 30 && work.1 < 4096, "indexed rows/bytes: {work:?}");
+        assert!(
+            report.boosted_candidates > 0,
+            "use full metadata count, not selected count"
+        );
+        if let Some((old_scores, old_work)) = &expected {
+            assert_eq!(&scores, old_scores);
+            assert_eq!(&work, old_work);
+        } else {
+            expected = Some((scores, work));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_views_do_not_cross_vaults_at_equal_graph_versions() -> Result<()> {
+    use crate::ppr_community::CommunitySnapshot;
+    let (_dir_a, a) = open_test_vault_with(VaultConfig::device());
+    let (_dir_b, b) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&a)?;
+    community_ppr_fixture(&b)?;
+    a.refresh_ppr_communities(&[], 42)?;
+    b.refresh_ppr_communities(&[], 42)?;
+    let read_a = a.store.env.read_txn()?;
+    let original = a
+        .store
+        .ppr_community_snapshot_in_txn(&read_a)?
+        .expect("snapshot");
+    let singletons: Vec<_> = original.nodes.keys().map(|&id| vec![id]).collect();
+    let snapshot = CommunitySnapshot::from_partitions(original.meta, &singletons, &singletons)
+        .expect("snapshot");
+    let mut write = b.store.env.write_txn()?;
+    assert_eq!(
+        read_graph_version(&a.store, &read_a)?,
+        read_graph_version(&b.store, &write)?
+    );
+    b.store
+        .replace_ppr_community_cache_in_txn(&mut write, &snapshot)?;
+    write.commit()?;
+    let selected = std::collections::BTreeSet::from([entity(1), entity(2)]);
+    let view_a = a
+        .store
+        .ppr_community_query_view_in_txn(&read_a, &selected)?;
+    let read_b = b.store.env.read_txn()?;
+    let view_b = b
+        .store
+        .ppr_community_query_view_in_txn(&read_b, &selected)?;
+    assert_eq!(view_a.nodes[&entity(1)], original.nodes[&entity(1)]);
+    assert_eq!(view_b.nodes[&entity(1)], snapshot.nodes[&entity(1)]);
+    assert_ne!(view_a.nodes[&entity(1)], view_b.nodes[&entity(1)]);
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
+    use crate::ppr_community::CommunitySnapshot;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("snapshot")
+    };
+    let mut fine = vec![vec![entity(1), entity(2)], vec![entity(3)]];
+    let mut coarse = vec![vec![entity(1), entity(2), entity(3)]];
+    for &id in original.nodes.keys() {
+        if ![entity(1), entity(2), entity(3)].contains(&id) {
+            fine.push(vec![id]);
+            coarse.push(vec![id]);
+        }
+    }
+    let nested = CommunitySnapshot::from_partitions(original.meta, &fine, &coarse).expect("nested");
+    let selected = std::collections::BTreeSet::from([entity(1)]);
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .replace_ppr_community_cache_in_txn(&mut txn, &nested)?;
+    let view = vault
+        .store
+        .ppr_community_query_view_in_txn(&txn, &selected)?;
+    assert_eq!(view.nodes.len(), 1);
+    assert_eq!(view.sizes[&nested.nodes[&entity(1)].fine], 2);
+    assert_eq!(view.sizes[&nested.nodes[&entity(1)].coarse], 3);
+    let encoded = nested.encode_rows().expect("rows");
+    // The unselected third member is in the accessed coarse row. A valid-size
+    // node value that points at another coarse parent is still corruption.
+    let key = format!("ppr_community_cache:v0:node:{}", entity(3).to_hex());
+    let mut wrong = encoded[key.as_bytes()].clone();
+    wrong[16..].copy_from_slice(nested.nodes[&entity(4)].coarse.as_bytes());
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, key.as_bytes(), &wrong)?;
+    assert!(
+        vault
+            .store
+            .ppr_community_query_view_in_txn(&txn, &selected)
+            .is_err()
+    );
+    // Likewise, a valid fine row from elsewhere cannot stand in for this group.
+    vault
+        .store
+        .replace_ppr_community_cache_in_txn(&mut txn, &nested)?;
+    let key = format!(
+        "ppr_community_cache:v0:members:{}",
+        nested.nodes[&entity(1)].fine.to_hex()
+    );
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, key.as_bytes(), entity(3).as_bytes())?;
+    assert!(
+        vault
+            .store
+            .ppr_community_query_view_in_txn(&txn, &selected)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn retrieval_quality_ppr_cache_miss_hit_preserve_score_only_results() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let seed = entity(0x71);
@@ -2817,6 +4473,7 @@ fn retrieval_quality_ppr_cache_miss_hit_preserve_score_only_results() -> Result<
             &[seed],
             3,
             0.15,
+            0.0,
             SeedWeighting::Uniform,
         )?;
         assert_eq!(cold.cache, PprCacheOutcome::Miss);
@@ -2836,17 +4493,19 @@ fn retrieval_quality_ppr_cache_miss_hit_preserve_score_only_results() -> Result<
         &[seed],
         3,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
     )?;
     assert_eq!(warm.cache, PprCacheOutcome::Hit);
     assert!(warm.deferred_cache_write.is_none());
     assert_eq!(score_bits(&warm.scores), score_bits(&cold.scores));
-    let (legacy_scores, legacy_write) = ppr_query_in_txn_with_deferred_cache(
+    let (legacy_scores, legacy_write) = ppr_query_in_txn_with_vad_deferred_cache(
         &vault.store,
         &txn,
         &[seed],
         3,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
     )?;
     assert_eq!(score_bits(&legacy_scores), score_bits(&warm.scores));
@@ -2867,6 +4526,7 @@ fn retrieval_quality_ppr_disabled_is_not_a_cache_miss() -> Result<()> {
         &[],
         3,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
     )?;
     assert_eq!(empty.cache, PprCacheOutcome::Disabled);
@@ -2879,6 +4539,7 @@ fn retrieval_quality_ppr_disabled_is_not_a_cache_miss() -> Result<()> {
             &[seed],
             3,
             0.15,
+            0.0,
             SeedWeighting::Uniform,
             &denied,
         )?;
@@ -2888,6 +4549,7 @@ fn retrieval_quality_ppr_disabled_is_not_a_cache_miss() -> Result<()> {
             &[seed],
             3,
             0.15,
+            0.0,
             SeedWeighting::Uniform,
             &denied,
         )?;
@@ -2919,6 +4581,7 @@ fn retrieval_quality_ppr_empty_cached_scores_still_report_hit() -> Result<()> {
         &[seed],
         1,
         0.15,
+        0.0,
         SeedWeighting::Uniform,
     )?;
     assert_eq!(result.cache, PprCacheOutcome::Hit);
@@ -2973,3 +4636,5 @@ fn retrieval_quality_cached_empty_ppr_yields_full_no_data_context() -> Result<()
     assert_eq!(row.empty_reason.as_deref(), Some("NoData"));
     Ok(())
 }
+
+mod quality_integration;

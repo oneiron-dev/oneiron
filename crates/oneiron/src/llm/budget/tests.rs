@@ -1,4 +1,6 @@
 use super::*;
+
+mod request_usage;
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, LlmInputUsage, LlmMessage, LlmMessageRole,
     LlmOutputUsage, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
@@ -6,6 +8,8 @@ use crate::llm::{
 use serde_json::Value as JsonValue;
 use std::sync::{Arc, Barrier};
 use std::thread;
+
+mod per_call;
 
 fn on_device_request() -> LlmRequest {
     LlmRequest {

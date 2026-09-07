@@ -1861,3 +1861,113 @@ fn the_pack_receipt_scan_stops_at_the_family_cap_and_signals_it() -> Result<()> 
     );
     Ok(())
 }
+
+#[test]
+fn brief_share_preserves_legacy_share_receipt_bytes_and_namespaces() -> Result<()> {
+    use crate::persona_snapshot::PersonaSnapshotExportRecord;
+
+    let (_dir, vault, issuer, share) = crate::share::tests::fixture()?;
+    let federation_id = entity(0x83);
+    let snapshot_id = entity(0x84);
+    let brief_id = entity(0x85);
+    put_federation_grant(&vault, federation_id, 40)?;
+    let snapshot = PersonaSnapshotExportRecord {
+        subject_ref: entity(0x53),
+        audience_ref: Some("audience".to_owned()),
+        identity_line: "Snapshot fixture".to_owned(),
+        compiled_at_secs: 10,
+        stale_after_secs: 20,
+        compiled_fingerprint: "ab".repeat(32),
+        takes_included: false,
+        granted_by: issuer.entity_ref().to_hex(),
+        granted_at_secs: 30,
+        exported_at_secs: 40,
+        included_row_ids: vec!["row:one".to_owned()],
+        struck_row_ids: vec!["row:two".to_owned()],
+        artifact_fingerprint: "cd".repeat(32),
+    };
+    vault.put_persona_snapshot_export(&snapshot_id, &snapshot)?;
+    let query = ReceiptQuery::new(20).with_kind(ReceiptKind::Share);
+    let before = vault.receipts(query.clone())?;
+    let expected_federation = ReceiptRecord {
+        receipt_id: format!("share:{}", federation_id.to_hex()),
+        receipt_kind: ReceiptKind::Share,
+        occurred_at: 40,
+        actor: Some(entity(0x61).to_hex()),
+        on_behalf_of: None,
+        outcome: "granted".to_owned(),
+        job_ref: None,
+        trigger_ref: Some(format!("federation_grant:{}", federation_id.to_hex())),
+        policy_trace: Vec::new(),
+        fields: field_map(&[
+            ("role", "viewer"),
+            ("preset", "read_only"),
+            ("scope", "vault"),
+            ("vault_id", "7"),
+        ]),
+    };
+    let expected_snapshot = ReceiptRecord {
+        receipt_id: format!("share:persona_snapshot:{}", snapshot_id.to_hex()),
+        receipt_kind: ReceiptKind::Share,
+        occurred_at: 40,
+        actor: Some(issuer.entity_ref().to_hex()),
+        on_behalf_of: None,
+        outcome: "exported".to_owned(),
+        job_ref: None,
+        trigger_ref: Some(format!("persona_snapshot_export:{}", snapshot_id.to_hex())),
+        policy_trace: Vec::new(),
+        fields: BTreeMap::from([
+            (
+                "persona_compile_stamp".to_owned(),
+                format!("oneiron.persona_snapshot_compile.v1:{}", "ab".repeat(32)),
+            ),
+            ("subject_ref".to_owned(), entity(0x53).to_hex()),
+            ("audience_ref".to_owned(), "audience".to_owned()),
+            ("compiled_at_secs".to_owned(), "10".to_owned()),
+            ("stale_after_secs".to_owned(), "20".to_owned()),
+            ("included_rows".to_owned(), "1".to_owned()),
+            ("struck_rows".to_owned(), "1".to_owned()),
+            ("takes_included".to_owned(), "false".to_owned()),
+            ("artifact_fingerprint".to_owned(), "cd".repeat(32)),
+        ]),
+    };
+    for expected in [&expected_federation, &expected_snapshot] {
+        let actual = before
+            .iter()
+            .find(|row| row.receipt_id == expected.receipt_id)
+            .expect("legacy receipt");
+        assert_eq!(
+            rmp_serde::to_vec_named(actual).expect("receipt bytes"),
+            rmp_serde::to_vec_named(expected).expect("pinned legacy bytes")
+        );
+    }
+    vault.create_share(&brief_id, &issuer, &share)?;
+    vault.revoke_share(&brief_id, &issuer, 60)?;
+    let after = vault.receipts(query)?;
+    assert_eq!(after.len(), 4);
+    for legacy in &before {
+        let actual = after
+            .iter()
+            .find(|row| row.receipt_id == legacy.receipt_id)
+            .expect("retained legacy receipt");
+        assert_eq!(
+            rmp_serde::to_vec_named(actual).expect("receipt bytes"),
+            rmp_serde::to_vec_named(legacy).expect("legacy bytes")
+        );
+    }
+    let ids: BTreeSet<_> = after.iter().map(|row| &row.receipt_id).collect();
+    assert_eq!(ids.len(), after.len());
+    // Even equal hex suffixes across kinds cannot collide.
+    let suffix = brief_id.to_hex();
+    assert_eq!(
+        BTreeSet::from([
+            format!("share:{suffix}"),
+            format!("share:persona_snapshot:{suffix}"),
+            format!("share:brief:{suffix}"),
+            format!("share:brief:{suffix}:revoked"),
+        ])
+        .len(),
+        4
+    );
+    Ok(())
+}

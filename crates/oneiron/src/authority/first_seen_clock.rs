@@ -109,7 +109,21 @@ pub(crate) fn authority_observation_secs_for_domain(
     previous_floor: u64,
     candidate_wall_secs: u64,
 ) -> u64 {
-    let now = Instant::now();
+    authority_observation_secs_for_domain_at(
+        clock_domain,
+        previous_floor,
+        candidate_wall_secs,
+        Instant::now(),
+    )
+}
+
+// Keep the clock transition shared with tests that supply an exact monotonic instant.
+pub(super) fn authority_observation_secs_for_domain_at(
+    clock_domain: usize,
+    previous_floor: u64,
+    candidate_wall_secs: u64,
+    now: Instant,
+) -> u64 {
     let mut clocks = authority_local_clocks()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

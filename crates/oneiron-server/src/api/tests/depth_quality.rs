@@ -14,6 +14,7 @@ pub(super) fn extend_depth_error_contract(value: &mut Value) {
         Value::Object(object) => {
             if let Some(values) = object.get_mut("enum").and_then(Value::as_array_mut)
                 && values.contains(&json!("BAD_REQUEST"))
+                && !values.contains(&json!("DEEP_RETRIEVAL_UNAVAILABLE"))
                 && let Some(index) = values.iter().position(|value| value == "MIRROR_NOT_READY")
             {
                 values.insert(index + 1, json!("DEEP_RETRIEVAL_UNAVAILABLE"));
@@ -28,6 +29,9 @@ pub(super) fn extend_depth_error_contract(value: &mut Value) {
                 if let Some(index) = variants
                     .iter()
                     .position(|variant| code(variant).as_deref() == Some("MIRROR_NOT_READY"))
+                    && !variants.iter().any(|variant| {
+                        code(variant).as_deref() == Some("DEEP_RETRIEVAL_UNAVAILABLE")
+                    })
                 {
                     let mut added = variants
                         .iter()
@@ -141,7 +145,7 @@ async fn retrieval_quality_depth_minimal_search_keeps_existing_ranked_items() {
     seed_text_turn(&server, "qualitydepth qualitydepth");
     seed_text_turn(&server, "qualitydepth other");
     let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
-    let expected = scoped.search_text("qualitydepth", 11).unwrap();
+    let expected = scoped.search_text("qualitydepth", 11, None).unwrap();
     let expected = search_response(&scoped, expected, View::Standard, 10).unwrap();
     // Apply the same JSON wire roundtrip as route_json before comparing
     // ordered IDs and scores exactly.
@@ -170,6 +174,7 @@ impl DeepSearchBackend for DecliningBackend {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         assert!(!lease.id().is_empty());
@@ -182,6 +187,7 @@ impl DeepSearchBackend for DecliningBackend {
         &self,
         _query: &str,
         candidates: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         assert!(!lease.id().is_empty());

@@ -1,3 +1,4 @@
+use super::claim_materialization::consume_claim_materialization;
 use super::*;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -14,55 +15,6 @@ use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::Store;
-
-#[derive(Debug, Clone)]
-pub(crate) struct ApplyOpsGateMode {
-    record_decisions: bool,
-    persist_pending_consent: bool,
-    include_source_in_gate_input: bool,
-    claim_gate_prechecked: bool,
-    preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-}
-
-impl ApplyOpsGateMode {
-    pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
-        Self {
-            record_decisions,
-            persist_pending_consent,
-            include_source_in_gate_input: false,
-            claim_gate_prechecked: false,
-            preflight_gate_decision_ids: HashMap::new(),
-        }
-    }
-
-    pub(crate) fn with_source_in_gate_input(mut self) -> Self {
-        self.include_source_in_gate_input = true;
-        self
-    }
-
-    /// Marks local CLAIM puts as already authorized in this transaction.
-    /// Structural validation and materialization still run; only the duplicate
-    /// gate evaluation in `apply_put` is skipped.
-    fn with_prechecked_claim_gate(mut self) -> Self {
-        self.claim_gate_prechecked = true;
-        self
-    }
-
-    /// Binds the receipt identities a same-transaction gate preflight already
-    /// recorded. Reachable crate-wide because `commitment::lapse_commitments_in_txn`
-    /// composes the batch apply from inside a `CommitmentGapDecay` op and must
-    /// carry its preflight identities forward rather than mint fresh ones.
-    pub(crate) fn with_preflight_gate_decision_ids(
-        mut self,
-        preflight_gate_decision_ids: HashMap<
-            EntityId,
-            VecDeque<Option<crate::store::GateDecisionId>>,
-        >,
-    ) -> Self {
-        self.preflight_gate_decision_ids = preflight_gate_decision_ids;
-        self
-    }
-}
 
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
@@ -392,7 +344,14 @@ pub(crate) fn apply_ops_with_origin(
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
+    let mut claim_materializations = gate_mode.claim_materializations;
+    if claim_gate_prechecked && !claim_materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "owner-bound materialization cannot skip the gate",
+        ));
+    }
     let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
+    let staged_claim_gate = gate_mode.staged_claim_gate;
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -441,6 +400,8 @@ pub(crate) fn apply_ops_with_origin(
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
         check_decode_point_taint_guard(store, &op, origin)?;
+        let materialization =
+            consume_claim_materialization(store, &*wtxn, &mut claim_materializations, &op, origin)?;
         match op {
             BatchOp::Put {
                 id,
@@ -498,6 +459,16 @@ pub(crate) fn apply_ops_with_origin(
                 } else {
                     store.validate_public_entity_type(entity_type)?;
                 }
+                let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                    && !allow_reserved_predicate
+                {
+                    preflight_gate_decision_ids
+                        .get_mut(&id)
+                        .and_then(VecDeque::pop_front)
+                        .flatten()
+                } else {
+                    None
+                };
                 let applied = apply_put(
                     store,
                     wtxn,
@@ -517,26 +488,26 @@ pub(crate) fn apply_ops_with_origin(
                     hub_sync_imported,
                     later_text_coverage_by_op[op_index],
                     write_policy.as_ref(),
-                    None,
+                    materialization.as_ref().map(ClaimMaterialization::envelope),
                     false,
                     record_gate_decisions,
                     persist_gate_pending_consent,
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
                     claim_gate_prechecked,
-                    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                        && !allow_reserved_predicate
-                    {
-                        preflight_gate_decision_ids
-                            .get_mut(&id)
-                            .and_then(VecDeque::pop_front)
-                            .flatten()
-                    } else {
-                        None
-                    },
+                    preflight_decision_id,
+                    preflight_decision_id
+                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                     Some(&companion_retired_histories),
                     origin,
                 )?;
+                if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                    if materialization.is_some() && !allow_reserved_predicate {
+                        claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                    } else {
+                        claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
+                    }
+                }
                 evicted_shell_sources.extend(applied.evicted_shell_sources);
                 #[cfg(feature = "sync")]
                 let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
@@ -630,6 +601,14 @@ pub(crate) fn apply_ops_with_origin(
                 learned_at,
                 internal_lexical_query_hint,
             } => {
+                let preflight_decision_id = if !internal_lexical_query_hint {
+                    preflight_gate_decision_ids
+                        .get_mut(&id)
+                        .and_then(VecDeque::pop_front)
+                        .flatten()
+                } else {
+                    None
+                };
                 let applied = apply_claim_candidate(
                     store,
                     wtxn,
@@ -646,15 +625,13 @@ pub(crate) fn apply_ops_with_origin(
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
                     claim_gate_prechecked,
-                    if !internal_lexical_query_hint {
-                        preflight_gate_decision_ids
-                            .get_mut(&id)
-                            .and_then(VecDeque::pop_front)
-                            .flatten()
-                    } else {
-                        None
-                    },
+                    preflight_decision_id,
+                    preflight_decision_id
+                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                 )?;
+                if !internal_lexical_query_hint {
+                    claim_materialization::bind_committed_claim(store, wtxn, &id)?;
+                }
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
                 }
@@ -819,6 +796,7 @@ pub(crate) fn apply_ops_with_origin(
                 reject_engine_authored_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
+                claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
                     store.let_go_pending_gate_consent_in_txn(
                         wtxn,
@@ -881,6 +859,11 @@ pub(crate) fn apply_ops_with_origin(
         }
     }
 
+    if !claim_materializations.is_empty() {
+        return Err(Error::InvariantViolation(
+            "unconsumed claim materialization envelope",
+        ));
+    }
     if preflight_gate_decision_ids
         .values()
         .any(|ids| !ids.is_empty())

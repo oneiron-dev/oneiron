@@ -1,6 +1,6 @@
 use super::*;
 use crate::api::memory_reason::{
-    DeepRetrievalHost, MemoryReasonBackend, MemoryReasonComposeRequest, MemoryReasonComposition,
+    MemoryReasonBackend, MemoryReasonComposeRequest, MemoryReasonComposition,
 };
 use oneiron::llm::{BudgetExhaustionPolicy, BudgetGuard, BudgetLease};
 use oneiron::rerank::RerankCandidate;
@@ -38,6 +38,7 @@ impl DeepSearchBackend for FailingBackend {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         *self.lease.lock().unwrap() = Some(lease.clone());
@@ -55,6 +56,7 @@ impl DeepSearchBackend for FailingBackend {
         &self,
         _query: &str,
         candidates: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         assert!(!candidates.is_empty());
@@ -111,8 +113,6 @@ impl MemoryReasonBackend for FailingBackend {
 fn failing_server(
     point: FailurePoint,
 ) -> (tempfile::TempDir, Arc<SyncServer>, Arc<FailingBackend>) {
-    let (dir, mut server) = test_server();
-    seed_text_turn(&server, "qualitydepth retained evidence");
     let backend = Arc::new(FailingBackend {
         point,
         guard: BudgetGuard::with_reserve_units(
@@ -123,10 +123,8 @@ fn failing_server(
         ),
         lease: Mutex::new(None),
     });
-    Arc::get_mut(&mut server).unwrap().deep_retrieval = Some(Arc::new(DeepRetrievalHost::new(
-        backend.clone(),
-        backend.guard.clone(),
-    )));
+    let (dir, server) =
+        memory_reason_server_with_guard(Some(backend.clone()), backend.guard.clone());
     (dir, server, backend)
 }
 
@@ -135,11 +133,11 @@ fn deep_request(reason: bool) -> Request<Body> {
         json_request(
             "POST",
             "/v1/companion/memory/reason",
-            json!({"query": "qualitydepth", "depth": "deep"}),
+            json!({"query": "launch", "depth": "deep"}),
         )
     } else {
         Request::builder()
-            .uri("/api/search/text?query=qualitydepth&depth=deep")
+            .uri("/api/search/text?query=launch&depth=deep")
             .body(Body::empty())
             .unwrap()
     }
@@ -179,7 +177,17 @@ async fn deep_reason_composition_errors_settle_retrieval_and_error_spend() {
         (FailurePoint::SpentCompose, 31),
     ] {
         let (_dir, server, backend) = failing_server(point);
-        let (status, response) = route_json(server, deep_request(true)).await;
+        // Retrieval costs 18, leaving only 1 for composition. A failed call's
+        // actual usage still counts, even when it exceeds that allowance.
+        let (status, response) = route_json(
+            server,
+            json_request(
+                "POST",
+                "/v1/companion/memory/reason",
+                json!({ "query": "launch", "depth": "deep", "tokenBudget": 19 }),
+            ),
+        )
+        .await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{response}");
         assert_eq!(response["error"]["code"], "INTERNAL_SERVER_ERROR");
         assert!(response.get("answer").is_none());

@@ -173,3 +173,7 @@ mod tests {
         assert!(lines.next().is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod render_tests;

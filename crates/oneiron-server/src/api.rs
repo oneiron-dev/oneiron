@@ -100,6 +100,12 @@ mod conversations;
 mod core;
 mod discover;
 mod entity;
+// ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
+// surface, nested at `/v1/core/facade`. Its own file because it is its own
+// contract — one route per public verb, engine DTOs verbatim, and a facade
+// error envelope whose `code` is the engine's raw string rather than this
+// crate's closed `ErrorCode`.
+mod facade;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
@@ -108,6 +114,9 @@ mod git_lfs;
 mod lease;
 mod mcp_gateway;
 mod memory;
+// ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
+// depth cost gate, the extractive answer for the model-free tiers, and the
+// citation gate over whatever a host composer returns.
 pub(crate) mod memory_reason;
 mod openapi;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
@@ -170,7 +179,6 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         core_batch_short_id_hydrate,
         core_memory_timeline,
         core_memory_verb,
-        companion_memory_reason,
         list_core_outbound_capabilities,
         get_core_outbound_capability,
         get_core_outbound_verb_contract,
@@ -201,6 +209,7 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         update_companion_register_record,
         retire_companion_register_record,
         end_companion_register_relationship,
+        companion_memory_reason,
         record_usage_event,
         get_usage_rollup,
         get_consumer_usage,
@@ -238,11 +247,6 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         VectorSearchQuery,
         SearchResult,
         TextSearchQuery,
-        MemoryReasonRequest,
-        MemoryReasonResponse,
-        MemoryReasonTrace,
-        MemoryReasonFormat,
-        MemoryReasonSessionContext,
         EdgeResult,
         CoreBatchRequest,
         CoreBatchEntityInput,
@@ -354,6 +358,11 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         CompanionGoodbyeArtifactHookPayload,
         CompanionEndRelationshipResponse,
         CompanionRegisterRecordResponse,
+        MemoryReasonRequest,
+        MemoryReasonResponse,
+        MemoryReasonFormat,
+        MemoryReasonSessionContext,
+        MemoryReasonTrace,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
         ConsumerAllowanceState,
@@ -460,7 +469,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let companion_routes = Router::new()
-        .route("/memory/reason", post(companion_memory_reason))
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
@@ -469,6 +477,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/register/records/{record_id}",
             get(get_companion_register_record),
         )
+        // ONE-207: the depth-dialed reasoning read. A POST that WRITES
+        // NOTHING, so it stays off `companion_mutation_routes` and out of the
+        // idempotency layer above: an idempotency key on a pure read would
+        // cache an answer against a vault that moves under it, and there is no
+        // replayed mutation for the layer to protect.
+        .route("/memory/reason", post(companion_memory_reason))
         .merge(companion_mutation_routes);
 
     Router::new()
@@ -516,6 +530,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/core", core_routes)
+        // ONE-1441: the facade projection is its own nest, not an arm inside
+        // `core_routes`. Nesting expands each row into a concrete
+        // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
+        // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
+        // limit stays a property of this nest alone.
+        .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
         .route("/api/companion/resume", post(resume))
         .route("/v1/consumer/usage", get(get_consumer_usage))

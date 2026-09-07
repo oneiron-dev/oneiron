@@ -194,7 +194,7 @@ fn calendar_access_grant_scope_round_trip_preserves_old_tags() -> Result<()> {
     validate_access_grant_body_bytes(&encoded)?;
     assert_eq!(decode_access_grant_body(&encoded)?, grant);
 
-    let scope = encode_scope(grant.scope);
+    let scope = encode_scope(&grant.scope);
     let Value::Map(entries) = &scope else {
         panic!("scope encodes as a map");
     };
@@ -480,4 +480,194 @@ fn revoke_calendar_access_grant_admits_and_rewrites_one_record() {
             .expect("calendar grant still present"),
         revoked
     );
+}
+
+fn shared_brief_grant() -> AccessGrant {
+    AccessGrant {
+        principal_ref: entity(0x51),
+        scope: AccessGrantScope::SharedBrief {
+            brief_ref: "brief:opaque".to_owned(),
+            world_refs: BTreeSet::from([entity(0x61), entity(0x62)]),
+            facet_refs: BTreeSet::from([entity(0x71)]),
+            include_unscoped: false,
+        },
+        capability: AccessGrantCapability::SharedBriefRead,
+        status: AccessGrantStatus::Active,
+        created_at: 42,
+        revoked_at: None,
+    }
+}
+
+#[test]
+fn shared_brief_preserves_scope_and_capability_in_schema_v2() -> Result<()> {
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
+    let grant = shared_brief_grant();
+    assert_eq!(grant.capability.as_str(), "brief.share.read");
+    let bytes = encode_access_grant_body(&grant)?;
+    assert_eq!(decode_access_grant_body(&bytes)?, grant);
+    assert_eq!(
+        encode_access_grant_body(&decode_access_grant_body(&bytes)?)?,
+        bytes
+    );
+    let revoked = grant.revoked(50)?;
+    assert_eq!(
+        decode_access_grant_body(&encode_access_grant_body(&revoked)?)?,
+        revoked
+    );
+    // Independently authored v2 maps pin both pre-existing scope wire shapes.
+    assert_eq!(
+        encode_access_grant_body(&test_grant())?,
+        grant_map(valid_entries())
+    );
+    let mut calendar = valid_entries();
+    calendar[1].1 = Value::from(entity(0x52).to_hex());
+    calendar[2].1 = Value::Map(vec![
+        (Value::from("kind"), Value::from("calendar")),
+        (
+            Value::from("calendar_ref"),
+            Value::from(entity(0xB2).to_hex()),
+        ),
+        (Value::from("rung"), Value::from("titles")),
+    ]);
+    calendar[3].1 = Value::from("calendar.disclosure_read");
+    assert_eq!(
+        encode_access_grant_body(&calendar_grant())?,
+        grant_map(calendar)
+    );
+    Ok(())
+}
+
+#[test]
+fn shared_brief_codec_rejects_unknown_duplicate_and_malformed_scope() -> Result<()> {
+    let mut cursor = Cursor::new(encode_access_grant_body(&shared_brief_grant())?);
+    let Value::Map(entries) = rmpv::decode::read_value(&mut cursor).expect("grant map") else {
+        panic!("grant map");
+    };
+    let Value::Map(scope) = &entries[2].1 else {
+        panic!("scope map")
+    };
+    let mut malformed_scopes = Vec::new();
+    let mut duplicate = scope.clone();
+    duplicate.push(duplicate[0].clone());
+    malformed_scopes.push(duplicate);
+    let mut unknown = scope.clone();
+    unknown.push((Value::from("future"), Value::Nil));
+    malformed_scopes.push(unknown);
+    let mut absent = scope.clone();
+    absent.pop();
+    malformed_scopes.push(absent);
+    for (key, bad) in [
+        ("brief_ref", Value::from(" ")),
+        ("brief_ref", Value::Nil),
+        ("world_refs", Value::Nil),
+        ("world_refs", Value::Array(vec![Value::from(1)])),
+        (
+            "world_refs",
+            Value::Array(vec![
+                Value::from(entity(0x61).to_hex()),
+                Value::from(entity(0x61).to_hex()),
+            ]),
+        ),
+        (
+            "facet_refs",
+            Value::Array(vec![Value::from("00000000000000000000000000000000")]),
+        ),
+        ("facet_refs", Value::Array(vec![Value::from("not-an-id")])),
+        (
+            "facet_refs",
+            Value::Array(vec![
+                Value::from(entity(0x71).to_hex()),
+                Value::from(entity(0x71).to_hex()),
+            ]),
+        ),
+        ("include_unscoped", Value::from("true")),
+    ] {
+        let mut bad_scope = scope.clone();
+        bad_scope
+            .iter_mut()
+            .find(|(candidate, _)| candidate.as_str() == Some(key))
+            .expect("scope key")
+            .1 = bad;
+        malformed_scopes.push(bad_scope);
+    }
+    for scope in malformed_scopes {
+        let mut bad = entries.clone();
+        bad[2].1 = Value::Map(scope);
+        assert!(decode_access_grant_body(&grant_map(bad)).is_err());
+    }
+    for (index, bad_value) in [
+        (1, Value::from("")),
+        (1, Value::from("00000000000000000000000000000000")),
+        (3, Value::from("companion_profile.read")),
+        (3, Value::from("calendar.disclosure_read")),
+        (4, Value::from("revoked")),
+        (5, Value::from(-1)),
+        (6, Value::from(43)),
+    ] {
+        let mut bad = entries.clone();
+        bad[index].1 = bad_value;
+        assert!(decode_access_grant_body(&grant_map(bad)).is_err());
+    }
+    let mut early_revoke = entries.clone();
+    early_revoke[4].1 = Value::from("revoked");
+    early_revoke[6].1 = Value::from(41);
+    assert!(decode_access_grant_body(&grant_map(early_revoke)).is_err());
+    let mut duplicate = entries.clone();
+    duplicate.push(duplicate[2].clone());
+    assert!(decode_access_grant_body(&grant_map(duplicate)).is_err());
+    let mut unknown = entries;
+    unknown.push((Value::from("issuer"), Value::from("forged")));
+    assert!(decode_access_grant_body(&grant_map(unknown)).is_err());
+    let mut typed_invalid = shared_brief_grant();
+    typed_invalid.principal_ref = EntityId::from_bytes_unchecked([0; 16]);
+    assert!(encode_access_grant_body(&typed_invalid).is_err());
+    Ok(())
+}
+
+
+#[test]
+fn schema_v2_carries_every_access_scope_and_rejects_other_versions() -> Result<()> {
+    let scopes = [
+        AccessGrantScope::companion_profile(entity(0xB1), entity(0xC1)),
+        AccessGrantScope::calendar(entity(0xB2), DisclosureRung::Titles),
+        AccessGrantScope::SharedBrief { brief_ref: "brief:kept".to_owned(),
+            world_refs: BTreeSet::from([entity(0x81)]), facet_refs: BTreeSet::from([entity(0x82)]), include_unscoped: false },
+        AccessGrantScope::ChannelIdentity { identity_ref: entity(0x91), envelope_ref: entity(0x92) },
+    ];
+    assert_eq!(ACCESS_GRANT_SCHEMA_VERSION, 2);
+    for scope in scopes {
+        let grant = AccessGrant { principal_ref: entity(0x51), capability: scope.required_capability(), scope,
+            status: AccessGrantStatus::Active, created_at: 42, revoked_at: None };
+        let bytes = encode_access_grant_body(&grant)?;
+        assert_eq!(decode_access_grant_body(&bytes)?, grant);
+        let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
+        let Value::Map(entries) = value else { panic!("map"); };
+        assert_eq!(entries[0].1, Value::from(2_u64));
+        for version in [Value::from(0_u64), Value::from(1_u64), Value::from(3_u64),
+            Value::from(-1), Value::from("2"), Value::from(2.0), Value::Nil] {
+            let mut invalid = entries.clone();
+            invalid[0].1 = version;
+            let invalid_bytes = grant_map(invalid);
+            assert_eq!(decode_access_grant_body(&invalid_bytes).unwrap_err().kind(),
+                ErrorKind::InvalidAccessGrantBody);
+            assert!(validate_access_grant_body_bytes(&invalid_bytes).is_err());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn channel_identity_scope_rejects_hybrid_capability_and_unknown_keys() -> Result<()> {
+    let mut grant = test_grant();
+    grant.scope = AccessGrantScope::ChannelIdentity { identity_ref: entity(0x91), envelope_ref: entity(0x92) };
+    assert!(encode_access_grant_body(&grant).is_err());
+    grant.capability = AccessGrantCapability::ChannelIdentityScopedRead;
+    assert_eq!(grant.capability.as_str(), "channel_identity.scoped_read");
+    let bytes = encode_access_grant_body(&grant)?;
+    let mut value = rmpv::decode::read_value(&mut Cursor::new(bytes)).unwrap();
+    let Value::Map(entries) = &mut value else { panic!("map"); };
+    let Value::Map(scope) = &mut entries[2].1 else { panic!("scope"); };
+    scope.push((Value::from("world_refs"), Value::Array(Vec::new())));
+    assert!(decode_access_grant_body(&encode_value(&value)).is_err());
+    Ok(())
 }

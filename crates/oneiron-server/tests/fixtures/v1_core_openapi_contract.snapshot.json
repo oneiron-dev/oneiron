@@ -22,6 +22,7 @@
               "NOT_ACCEPTABLE",
               "INVALID_HEADER",
               "UNSUPPORTED_CAPABILITY",
+              "DEEP_RETRIEVAL_UNAVAILABLE",
               "4001",
               "4002",
               "4003",
@@ -352,6 +353,18 @@
                   "supportedConnectors",
                   "supportedVerbs",
                   "recovery_suggestions"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "const": "DEEP_RETRIEVAL_UNAVAILABLE"
+                  }
+                },
+                "required": [
+                  "code"
                 ],
                 "type": "object"
               },
@@ -831,6 +844,20 @@
             "properties": {
               "code": {
                 "enum": [
+                  "DEEP_RETRIEVAL_UNAVAILABLE"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "enum": [
                   "4001"
                 ],
                 "type": "string"
@@ -956,6 +983,7 @@
                   "NOT_ACCEPTABLE",
                   "INVALID_HEADER",
                   "UNSUPPORTED_CAPABILITY",
+                  "DEEP_RETRIEVAL_UNAVAILABLE",
                   "4001",
                   "4002",
                   "4003",
@@ -1286,6 +1314,18 @@
                       "supportedConnectors",
                       "supportedVerbs",
                       "recovery_suggestions"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "const": "DEEP_RETRIEVAL_UNAVAILABLE"
+                      }
+                    },
+                    "required": [
+                      "code"
                     ],
                     "type": "object"
                   },
@@ -2052,9 +2092,25 @@
       },
       "CoreContextPackResponse": {
         "properties": {
+          "confidenceAdjustment": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "context_version": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "degradation": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
               "null"
             ]
           },
@@ -2101,6 +2157,12 @@
               "$ref": "#/components/schemas/CoreContextEntity"
             },
             "type": "array"
+          },
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "results": {
             "items": {
@@ -3225,7 +3287,9 @@
           "completed",
           "failed",
           "cancelled",
-          "interrupted"
+          "interrupted",
+          "abandoned",
+          "result_attached"
         ],
         "type": "string"
       },
@@ -3347,10 +3411,19 @@
               }
             ]
           },
+          "gate_breaker_paused": {
+            "type": "boolean"
+          },
           "job_id": {
             "type": "string"
           },
           "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result_ref": {
             "type": [
               "string",
               "null"
@@ -3469,7 +3542,8 @@
           "paused",
           "completed",
           "failed",
-          "cancelled"
+          "cancelled",
+          "abandoned"
         ],
         "type": "string"
       },
@@ -3664,6 +3738,7 @@
           "NOT_ACCEPTABLE",
           "INVALID_HEADER",
           "UNSUPPORTED_CAPABILITY",
+          "DEEP_RETRIEVAL_UNAVAILABLE",
           "4001",
           "4002",
           "4003",
@@ -3674,8 +3749,30 @@
       },
       "ResponseMeta": {
         "properties": {
+          "confidenceAdjustment": {
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "countMode": {
             "$ref": "#/components/schemas/CountMode"
+          },
+          "degradation": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "quality": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "total": {
             "format": "int64",
@@ -3809,7 +3906,8 @@
           "paused",
           "completed",
           "failed",
-          "cancelled"
+          "cancelled",
+          "abandoned"
         ],
         "type": "string"
       },

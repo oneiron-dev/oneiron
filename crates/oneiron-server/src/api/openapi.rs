@@ -102,6 +102,7 @@ pub(crate) fn openapi_document() -> Value {
     let mut spec = serde_json::to_value(ApiDoc::openapi()).expect("serialize generated OpenAPI");
     merge_error_components(&mut spec);
     merge_booking_components(&mut spec);
+    merge_retrieval_depth_components(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);
     fill_schema_description_gaps(&mut spec);
@@ -206,6 +207,96 @@ pub(crate) fn merge_booking_components(spec: &mut Value) {
         oneiron::booking::agent_api::BOOKING_AGENT_INSTRUCTIONS_MIME,
         "BookingAgentInstructionsBlock",
     );
+}
+
+// -------------------------------------------------------------------------
+// ONE-207 [RET-207] retrieval depth
+//
+// `depth` is the engine's `oneiron::Effort`, which lives in a crate with no
+// OpenAPI derive. Publishing it HERE, from the engine values themselves,
+// keeps one vocabulary on the wire: the document, the reason request body and
+// both raw-search query parameters all describe the same closed set, and
+// there is no second server-side depth type for them to disagree about.
+// -------------------------------------------------------------------------
+
+/// The wire form of every effort the engine defines, in tier order.
+pub(crate) fn retrieval_effort_values() -> Vec<&'static str> {
+    super::RETRIEVAL_EFFORT_VALUES
+        .iter()
+        .map(|effort| effort.as_str())
+        .collect()
+}
+
+fn retrieval_effort_schema() -> Value {
+    json!({
+        "type": "string",
+        "description": "Retrieval effort tier. `minimal` is one direct channel with no graph expansion, reranker, or host backend; `standard` adds one-hop graph expansion and deterministic subqueries and is still model-free; `deep` requires a host-injected backend under a budget lease.",
+        "enum": retrieval_effort_values(),
+    })
+}
+
+pub(crate) fn merge_retrieval_depth_components(spec: &mut Value) {
+    let values = retrieval_effort_values();
+    if let Some(components) = spec.get_mut("components").and_then(Value::as_object_mut) {
+        components
+            .entry("schemas")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .expect("OpenAPI schemas must be an object")
+            .insert("RetrievalEffort".to_owned(), retrieval_effort_schema());
+    }
+
+    constrain_property_to_efforts(spec, "MemoryReasonRequest", "depth", &values);
+    for path in ["/api/search/vector", "/api/search/text"] {
+        constrain_parameter_to_efforts(spec, path, "get", "depth", &values);
+    }
+}
+
+/// Stamps the closed effort set onto a generated `string` property, leaving
+/// its description, default and example exactly as the derive produced them.
+fn constrain_property_to_efforts(
+    spec: &mut Value,
+    schema_name: &str,
+    property: &str,
+    values: &[&'static str],
+) {
+    let Some(target) = spec
+        .get_mut("components")
+        .and_then(|components| components.get_mut("schemas"))
+        .and_then(|schemas| schemas.get_mut(schema_name))
+        .and_then(|schema| schema.get_mut("properties"))
+        .and_then(|properties| properties.get_mut(property))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    target.insert("enum".to_owned(), json!(values));
+}
+
+fn constrain_parameter_to_efforts(
+    spec: &mut Value,
+    path: &str,
+    method: &str,
+    parameter: &str,
+    values: &[&'static str],
+) {
+    let Some(parameters) = spec
+        .get_mut("paths")
+        .and_then(|paths| paths.get_mut(path))
+        .and_then(|item| item.get_mut(method))
+        .and_then(|operation| operation.get_mut("parameters"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for entry in parameters {
+        if entry.get("name").and_then(Value::as_str) != Some(parameter) {
+            continue;
+        }
+        if let Some(schema) = entry.get_mut("schema").and_then(Value::as_object_mut) {
+            schema.insert("enum".to_owned(), json!(values));
+        }
+    }
 }
 
 /// Points one request-body or response content schema at a component.

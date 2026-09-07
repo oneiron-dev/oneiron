@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::brief_share::brief_share_receipts;
 use super::grant::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
     federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
@@ -12,15 +13,18 @@ use super::identity_kind::{
 };
 use super::kernel::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
+    ReceiptRecord, ReceiptScan, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
     retain_newest_receipt,
 };
 #[cfg(test)]
 use super::kernel::{GATE_RECEIPT_MAX_BUFFERED, GATE_RECEIPT_PAGES_SCANNED};
-use super::ledgers::{attempt_pack_receipts, durable_send_receipts};
+use super::ledgers::{
+    attempt_pack_receipts, durable_send_receipts, scan_attempt_pack_receipts,
+    scan_durable_send_receipts,
+};
 use super::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
-    counterparty_contact_records_for_receipts, finalize_receipt_query_records,
+    counterparty_contact_records_for_receipts, finalize_receipt_query_records, finalize_receipt_scan,
     project_receipts_by_brief, project_receipts_by_counterparty_with_contacts,
     project_receipts_by_grant_limited,
 };
@@ -72,6 +76,34 @@ impl Vault {
     /// Queries the unified receipt family across existing receipt emitters.
     pub fn receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
         receipt_family_query(self, &query)
+    }
+
+    /// Scans receipts with explicit source and result-limit completeness.
+    ///
+    /// This initial seam supports explicit `Outbound`-only queries without
+    /// `job_ref`. Other kinds and cross-family lineage use legacy projectors
+    /// that cannot yet prove completeness, so those queries return an error.
+    /// `receipts` remains available with its existing bounded-view semantics.
+    /// The result limit cannot exceed the receipt-family work cap. Even a zero
+    /// result limit scans the sources, so an empty result is not mistaken for
+    /// proof that no matching receipt exists.
+    pub fn scan_receipts(&self, mut query: ReceiptQuery) -> Result<ReceiptScan> {
+        if query.kinds.len() != 1
+            || !query.kinds.contains(&ReceiptKind::Outbound)
+            || query.job_ref.is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "receipt completeness scan requires outbound-only queries without job_ref".to_owned(),
+            ));
+        }
+        query.limit = query.limit.min(MAX_RECEIPT_QUERY_SCAN);
+        let mut scan = scan_attempt_pack_receipts(self)?;
+        let durable = scan_durable_send_receipts(self)?;
+        // The durable projector is exhaustive. The attempt source metadata
+        // survives filtering, including when none of its scanned rows match.
+        scan.records.extend(durable.records);
+        scan.records.retain(|receipt| query.matches(receipt));
+        Ok(finalize_receipt_scan(scan, &query, None))
     }
 
     /// Alias for callers that prefer verb-first query naming.
@@ -229,6 +261,23 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(crate::skill_optimize::skill_edit_verdict_receipts(
             vault, query,
         )?);
+        // The FIFTH Gate projector (ONE-1931): vault auto-cleanup run
+        // digests. Same kind, own store, own field class — the cron's
+        // decision to archive a batch of empty rows is a gate decision the
+        // engine ruled, so it mints no kind of its own. ONE row per DECISION,
+        // never one per archived entity: the ratified `archived_by_cleanup`
+        // contracts row pins `receipt: false` per entity, and this digest is
+        // what stands in its place. Opens its own read txn, as the three
+        // above do.
+        records.extend(crate::vault_cleanup::cleanup_receipts(vault, query)?);
+    }
+
+    // The OF-361 pre-extraction screen (ONE-1525): what the Dreamer declined
+    // to spend extraction budget on. Its own kind, own store, own field class
+    // — a budget estimate is not a gate ruling — and its own read txn, so like
+    // the Gate projectors above it runs before the shared `rtxn` below.
+    if query.includes_kind(ReceiptKind::Extraction) {
+        records.extend(crate::dreamer_prefilter::prefilter_receipts(vault, query)?);
     }
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
@@ -267,6 +316,7 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::Share) {
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
+        records.extend(brief_share_receipts(vault, &rtxn, query)?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
     // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN

@@ -441,8 +441,22 @@ impl BudgetGuard {
         self.settle_absolute(lease, llm_usage_units(usage))
     }
 
+    /// Settles one call's usage exactly once, adding it to this meter's total.
+    /// Unlike `settle_terminal` / `settle_absolute`, `usage` is not a cumulative
+    /// counter. Lease validation, reservation release, and all global/row/floor/
+    /// shared charges happen under the same mutex. Unmetered local leases stay
+    /// uncharged; already-settled leases are no-ops even across settlement APIs.
+    pub fn settle_per_call(
+        &self,
+        lease: &BudgetLease,
+        usage: &LlmUsage,
+    ) -> Result<BudgetSettlement, BudgetDenied> {
+        self.settle_usage(lease, llm_usage_units(usage))
+    }
+
     pub fn abort(&self, lease: &BudgetLease) -> Result<BudgetSettlement, BudgetDenied> {
         let mut state = self.lock_state();
+        state.check_lease_provenance(lease)?;
         let mut aborted = None;
         {
             let Some(record) = state.leases.get_mut(lease.id()) else {
@@ -525,6 +539,7 @@ enum ReservePlan {
 
 #[derive(Debug)]
 struct BudgetState {
+    guard_identity: Arc<()>,
     attempt_id: String,
     limit_units: u64,
     reserve_units: u64,
@@ -585,6 +600,7 @@ impl BudgetState {
             })
             .collect();
         Self {
+            guard_identity: Arc::new(()),
             attempt_id,
             limit_units,
             reserve_units,
@@ -601,6 +617,14 @@ impl BudgetState {
             row_horizons,
             shared_used_units: 0,
             shared_reserved_units: 0,
+        }
+    }
+
+    fn check_lease_provenance(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
+        if Arc::ptr_eq(&self.guard_identity, &lease.guard_identity) {
+            Ok(())
+        } else {
+            Err(BudgetDenied::LeaseInvalid)
         }
     }
 
@@ -835,7 +859,7 @@ impl BudgetState {
     ) -> BudgetLease {
         self.next_lease_seq = self.next_lease_seq.saturating_add(1);
         let lease_id = format!("{}:{kind}:{}", self.attempt_id, self.next_lease_seq);
-        let lease = BudgetLease::issued(lease_id.clone());
+        let lease = BudgetLease::issued(lease_id.clone(), Arc::clone(&self.guard_identity));
         self.leases.insert(
             lease_id,
             LeaseRecord {
@@ -973,7 +997,7 @@ enum LeaseState {
 /// Releases every reservation one lease holds, in the one critical section:
 /// the global reserve, the full-charge reserve on every matched row, every
 /// floor allocation, and the shared-slice share. Settlement calls this before
-/// applying absolute usage; abort calls it alone and records no spend.
+/// applying usage; abort calls it alone and records no spend.
 fn release_reservations_for_lease(state: &mut BudgetState, record: &LeaseRecord) {
     state.reserved_units = state.reserved_units.saturating_sub(record.reserve_units);
     for &row_index in &record.matched_rows {
@@ -991,7 +1015,7 @@ fn release_reservations_for_lease(state: &mut BudgetState, record: &LeaseRecord)
         .saturating_sub(record.shared_reserved_units);
 }
 
-/// Charges one metered lease's terminal absolute usage to every matched row.
+/// Adds one metered lease's supplied usage to every matched row and partition.
 ///
 /// Rows meter per-lease matched spend, so they may sum above the global
 /// watermark when producers report per-response absolutes: rows are the
@@ -1001,17 +1025,13 @@ fn release_reservations_for_lease(state: &mut BudgetState, record: &LeaseRecord)
 /// the shared partition, so overshoot beyond the slice is recorded as shared
 /// spend and later admissions saturate-deny rather than any admitted call
 /// being killed.
-fn apply_absolute_usage_for_lease(
-    state: &mut BudgetState,
-    record: &LeaseRecord,
-    absolute_used_units: u64,
-) {
+fn apply_usage_for_lease(state: &mut BudgetState, record: &LeaseRecord, used_units: u64) {
     for &row_index in &record.matched_rows {
         if let Some(tally) = state.row_tallies.get_mut(usize::from(row_index)) {
-            tally.used_units = tally.used_units.saturating_add(absolute_used_units);
+            tally.used_units = tally.used_units.saturating_add(used_units);
         }
     }
-    let mut remaining = absolute_used_units;
+    let mut remaining = used_units;
     for &row_index in &record.matched_rows {
         if remaining == 0 {
             break;

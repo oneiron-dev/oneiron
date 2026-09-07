@@ -40,6 +40,7 @@ pub(super) fn apply_claim_candidate(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    staged_claim_gate: Option<&StagedClaimGateOutcome>,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -53,6 +54,13 @@ pub(super) fn apply_claim_candidate(
     crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
 
     let subject = candidate.subject();
+    if candidate.predicate() == crate::pipeline::PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+        && subject != crate::claim::ClaimSubject::Entity(actor.entity_ref())
+    {
+        return Err(Error::InvalidClaimBody(
+            "world default subset must be authored by its subject agent",
+        ));
+    }
     if let crate::claim::ClaimSubject::Entity(subject_id) = subject
         && store.entities.get(wtxn, subject_id.as_bytes())?.is_none()
     {
@@ -82,6 +90,7 @@ pub(super) fn apply_claim_candidate(
         include_source_in_gate_input,
         claim_gate_prechecked,
         preflight_gate_decision_id,
+        staged_claim_gate,
         None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.

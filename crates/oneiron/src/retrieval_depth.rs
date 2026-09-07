@@ -1,3 +1,37 @@
+//! ONE-207: the retrieval half of the effort dial.
+//!
+//! One wire value — [`Effort`], the SAME enum `memory::recall` and `.chat`
+//! already price retrieval with — decides how much work a raw search does.
+//! There is deliberately no second depth type here: a `SearchDepth` alias with
+//! `low | med | high` values would be a fourth vocabulary for a dial that
+//! already has one, and callers would have to learn which of them a given
+//! endpoint speaks.
+//!
+//! The three tiers are cost classes, not quality hints, and each is defined by
+//! what it is NOT allowed to do:
+//!
+//! - [`Effort::Minimal`] — ONE direct top-k channel. No graph expansion, no
+//!   subqueries, no reranker, no backend, no lease. This is the omission
+//!   default on raw search, so an existing caller that never sends `depth`
+//!   keeps paying exactly what it paid before.
+//! - [`Effort::Standard`] — deterministic and still model-free: one-hop PPR
+//!   over the direct hits plus up to [`STANDARD_SUBQUERY_LIMIT`] lexical
+//!   subqueries derived from the query by [`deterministic_subqueries`]. The
+//!   same query yields the same subqueries on every call and every process.
+//! - [`Effort::Deep`] — lease-gated AND host-injected. The engine still owns
+//!   retrieval and the caps; a [`DeepSearchBackend`] supplied by the host owns
+//!   decomposition and cross-encoder scoring. Without both a [`BudgetLease`]
+//!   and a backend this tier refuses rather than silently degrading.
+//!
+//! The caps on the deep tier are enforced HERE, on the backend's output, not
+//! documented at the backend. An over-eager host that returns nine subqueries
+//! for a round gets four of them run; one that repeats a query it already
+//! asked for gets it dropped. A cap the engine only asks for is not a cap.
+//!
+//! Nothing in this module knows a provider, a model id, a prompt, or a
+//! persona: the backend trait is the whole seam, exactly as
+//! [`crate::rerank::Reranker`] and `LlmBackend` are.
+//!
 //! Effort-dialed, actor-scoped retrieval with execution quality diagnostics.
 //! Quality is metadata; channel scores, admission, and backend caps are unchanged.
 
@@ -123,6 +157,9 @@ pub struct DepthSearchRequest<'a> {
     pub lease: Option<&'a BudgetLease>,
     /// Host-injected deep executor. Deep only.
     pub backend: Option<&'a dyn DeepSearchBackend>,
+    /// Total token cap for all deep calls in this search. `None` adds no cap
+    /// beyond the host's lease policy. Ignored by the model-free tiers.
+    pub token_budget: Option<u64>,
 }
 
 /// The result of one effort-dialed read, plus what it cost to produce.
@@ -188,6 +225,11 @@ impl<T> BackendSpend<T> {
 /// same admitted lease that pays for this read. On failure, report any tokens
 /// this call consumed in [`RetrievalError`]; a plain engine error converts to
 /// zero usage only. The host, not the backend, settles the shared lease.
+///
+/// `token_budget` is the remaining request allowance, not a fresh per-call cap.
+/// A backend must bound its total input and output tokens (including retries)
+/// to this allowance, or refuse with actual usage. `None` adds no request cap.
+/// The engine rejects reported overruns and stops before any subsequent call.
 pub trait DeepSearchBackend: Send + Sync {
     /// Proposes follow-up queries for one deep round.
     ///
@@ -201,6 +243,7 @@ pub trait DeepSearchBackend: Send + Sync {
         query: &str,
         already_run: &[String],
         max_queries: usize,
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>>;
 
@@ -214,6 +257,7 @@ pub trait DeepSearchBackend: Send + Sync {
         &self,
         query: &str,
         candidates: &[RerankCandidate<'_>],
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>>;
 }
@@ -294,8 +338,8 @@ fn is_stopword(token: &str) -> bool {
 /// Every channel here goes through `scoped`, so the tier changes HOW MUCH is
 /// retrieved and never WHAT is admissible: the direct channels filter through
 /// the same predicate `ScopedRead::search_text` already applies, and the
-/// expansion walks under [`crate::ppr::PprNodeVisibility`], which is that same
-/// predicate used as a traversal gate.
+/// expansion walks under [`crate::ppr::PprNodeVisibility`], conjoining the
+/// actor-read gate with the same resolved retrieval floor before traversal.
 pub(crate) fn execute(
     scoped: &ScopedRead<'_>,
     request: &DepthSearchRequest<'_>,
@@ -372,7 +416,7 @@ fn run_direct_channel(
         SearchProbe::Text { query } => {
             acc.mark(SIGNAL_TEXT);
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text(query, request.channel_limit(scoped, true)?)?;
+            let hits = scoped.search_text(query, request.channel_limit(scoped, true)?, None)?;
             acc.merge(request.narrow_hits(scoped, hits)?);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(query.clone());
@@ -380,7 +424,8 @@ fn run_direct_channel(
         SearchProbe::Vector { embedding, .. } => {
             acc.mark(SIGNAL_VECTOR);
             acc.attempt(RetrievalSignal::Vector);
-            let hits = scoped.search_vector(embedding, request.channel_limit(scoped, false)?)?;
+            let hits =
+                scoped.search_vector(embedding, request.channel_limit(scoped, false)?, None)?;
             acc.merge(request.narrow_hits(scoped, hits)?);
             acc.complete(RetrievalSignal::Vector);
             // No query recorded: a float vector is not a string a later
@@ -411,7 +456,7 @@ fn run_subquery_channels(
         // channel, and must not claim the signal.
         acc.mark(SIGNAL_SUBQUERIES);
         acc.attempt(RetrievalSignal::Text);
-        let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?)?;
+        let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
         acc.merge(request.narrow_hits(scoped, hits)?);
         acc.complete(RetrievalSignal::Text);
         acc.record_query(subquery);
@@ -442,14 +487,18 @@ fn run_graph_expansion(
     acc.attempt(RetrievalSignal::Ppr);
     let vault = scoped.vault();
     let rtxn = vault.store.env.read_txn()?;
+    // Graph candidates must inherit the same retrieval floor as direct hits;
+    // actor readability alone does not enforce entity-type and numeric limits.
+    let visibility = scoped.retrieval_visibility_in(&rtxn, None)?;
     let expanded = ppr_query_scoped_in_txn_with_diagnostics(
         &vault.store,
         &rtxn,
         &seeds,
         STANDARD_PPR_DEPTH,
         STANDARD_PPR_ALPHA,
+        vault.config.ppr_vad_alpha,
         SeedWeighting::Specificity,
-        scoped,
+        &visibility,
     )?;
     drop(rtxn);
     acc.retrieval_diagnostics.ppr_cache = Some(expanded.cache);
@@ -467,12 +516,16 @@ fn run_deep_rounds(
     acc: &mut DepthAccumulator,
 ) -> RetrievalResult<()> {
     for _ in 0..DEEP_MAX_ROUNDS {
-        let proposed = backend.decompose(
-            query,
-            &acc.queries_run,
-            DEEP_QUERIES_PER_ROUND,
-            request.lease.expect("deep preflight requires a lease"),
-        )?;
+        let token_budget = request.remaining_token_budget(acc.tokens_used)?;
+        let proposed = backend
+            .decompose(
+                query,
+                &acc.queries_run,
+                DEEP_QUERIES_PER_ROUND,
+                token_budget,
+                request.lease.expect("deep preflight requires a lease"),
+            )?
+            .enforce_token_budget(token_budget)?;
         acc.charge_backend(SIGNAL_BACKEND_DECOMPOSE, proposed.tokens_used);
         let round = acc.admissible_round_queries(proposed.value);
         if round.is_empty() {
@@ -480,7 +533,7 @@ fn run_deep_rounds(
         }
         for subquery in round {
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?)?;
+            let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
             acc.merge(request.narrow_hits(scoped, hits)?);
             acc.complete(RetrievalSignal::Text);
             acc.record_query(subquery);
@@ -508,11 +561,15 @@ fn run_deep_rerank(
     acc.attempt(RetrievalSignal::Rerank);
     let bodies = acc.candidate_claim_bodies(scoped)?;
     let candidates = acc.rerank_candidates(&bodies);
-    let scored = backend.rerank(
-        query,
-        &candidates,
-        request.lease.expect("deep preflight requires a lease"),
-    )?;
+    let token_budget = request.remaining_token_budget(acc.tokens_used)?;
+    let scored = backend
+        .rerank(
+            query,
+            &candidates,
+            token_budget,
+            request.lease.expect("deep preflight requires a lease"),
+        )?
+        .enforce_token_budget(token_budget)?;
     acc.charge_backend(SIGNAL_BACKEND_RERANK, scored.tokens_used);
     if scored.value.len() != acc.order.len() {
         return Err(Error::InvalidConfig(
@@ -523,17 +580,6 @@ fn run_deep_rerank(
     acc.reorder_by(&scored.value);
     acc.complete(RetrievalSignal::Rerank);
     Ok(())
-}
-
-impl ScopedRead<'_> {
-    /// Execute the requested effort through this actor-keyed read lane.
-    /// Errors retain actual reported spend; settle it just as on success.
-    pub fn search_with_effort(
-        &self,
-        request: &DepthSearchRequest<'_>,
-    ) -> RetrievalResult<DepthSearchResult> {
-        execute(self, request)
-    }
 }
 
 #[cfg(test)]

@@ -11,9 +11,11 @@ use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecord
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gate::PolicyManifestResolution;
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
+
+mod retrieval_visibility;
 
 /// Actor key bound to a scoped read lane over the `core:read` surface.
 ///
@@ -146,26 +148,139 @@ impl<'a> ScopedRead<'a> {
         &self.actor_key
     }
 
-    pub fn search(&self, query: &str, vector: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
-        let fetch_limit = self.search_candidate_limit(limit, true, true)?;
+    /// Searches within this actor's resolved read authority. Unset means the floor.
+    pub fn search(
+        &self,
+        query: &str,
+        vector: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<Vec<ScoredEntity>> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(Vec::new());
+        }
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, true, true)?;
         let results = self
             .vault
             .query()
+            .authority_filter(filter.clone())
             .search(query, vector, None, fetch_limit)
             .run()?;
-        self.filter_scored_entities_to_limit(results, limit)
+        self.filter_search_results(results, limit, &filter, &policy)
     }
 
-    pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        let fetch_limit = self.search_candidate_limit(limit, true, false)?;
-        let results = self.vault.search_text(query, fetch_limit)?;
-        self.filter_scored_entities_to_limit(results, limit)
+    pub fn search_text(
+        &self,
+        query: &str,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<Vec<ScoredEntity>> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(Vec::new());
+        }
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, true, false)?;
+        let results = self
+            .vault
+            .query()
+            .authority_filter(filter.clone())
+            .search_text(query, fetch_limit)
+            .limit(fetch_limit)
+            .run()?;
+        self.filter_search_results(results, limit, &filter, &policy)
     }
 
-    pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
-        let fetch_limit = self.search_candidate_limit(limit, false, true)?;
-        let results = self.vault.search_vector(query, fetch_limit)?;
-        self.filter_scored_entities_to_limit(results, limit)
+    pub fn search_vector(
+        &self,
+        query: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<Vec<ScoredEntity>> {
+        let (filter, policy) = self.resolve_retrieval_filter(requested)?;
+        if filter.deny_all {
+            return Ok(Vec::new());
+        }
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, false, true)?;
+        let results = self
+            .vault
+            .query()
+            .authority_filter(filter.clone())
+            .search_vector(query, fetch_limit)
+            .limit(fetch_limit)
+            .run()?;
+        self.filter_search_results(results, limit, &filter, &policy)
+    }
+
+    fn resolve_retrieval_filter(
+        &self,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.resolve_retrieval_filter_in(&txn, requested)
+    }
+
+    fn resolve_retrieval_filter_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
+        let filter = crate::gate::narrow_retrieval_filter(
+            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
+            requested,
+        )?;
+        Ok((filter, policy))
+    }
+
+    fn filter_search_results(
+        &self,
+        results: Vec<ScoredEntity>,
+        limit: usize,
+        filter: &ResolvedRetrievalFilter,
+        policy: &PolicyManifestResolution,
+    ) -> Result<Vec<ScoredEntity>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let mut kept = Vec::new();
+        for result in results {
+            if kept.len() >= limit {
+                break;
+            }
+            if self.is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)? {
+                kept.push(result);
+            }
+        }
+        Ok(kept)
+    }
+
+    /// ONE-207: the effort-dialed read.
+    ///
+    /// The ONE door a depth request enters this lane through, and deliberately
+    /// a THIN one: `retrieval_depth` owns the tier policy, the caps and the
+    /// deep-lease rule, while every channel it runs comes back through the
+    /// three search doors above and through
+    /// [`crate::ppr::PprNodeVisibility`], which conjoins
+    /// [`Self::is_entity_readable_with_policy_in`] with the resolved retrieval
+    /// floor so graph expansion cannot bypass the direct-search constraints.
+    ///
+    /// So the effort dial cannot widen admission. It changes how many
+    /// admitted channels run, never which entities an admitted channel is
+    /// allowed to return, and the deep tier's host-proposed queries are
+    /// ordinary text searches on this same lane rather than a second read
+    /// path that would need its own gate.
+    ///
+    /// Errors retain actual reported spend; settle it just as on success.
+    pub fn search_with_effort(
+        &self,
+        request: &crate::retrieval_depth::DepthSearchRequest<'_>,
+    ) -> crate::retrieval_depth::RetrievalResult<crate::retrieval_depth::DepthSearchResult> {
+        crate::retrieval_depth::execute(self, request)
     }
 
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -179,6 +294,9 @@ impl<'a> ScopedRead<'a> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if self.vault.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(None);
+        }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
@@ -344,6 +462,9 @@ impl<'a> ScopedRead<'a> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
+            return Ok(false);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {

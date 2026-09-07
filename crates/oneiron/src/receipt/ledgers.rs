@@ -8,8 +8,9 @@ use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
     FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
-    ReceiptKind, ReceiptRecord, hex_lower,
+    ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
 };
+use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
@@ -30,11 +31,11 @@ const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct DurableSendReceipt {
-    version: u8,
-    task_ref: String,
-    outcome: SendReceiptOutcome,
-    transport_dispatched: bool,
-    receipt: ReceiptRecord,
+    pub(super) version: u8,
+    pub(super) task_ref: String,
+    pub(super) outcome: SendReceiptOutcome,
+    pub(super) transport_dispatched: bool,
+    pub(super) receipt: ReceiptRecord,
 }
 
 // ONE-1690 closes the known interim double-authority window: ledger rows are
@@ -193,17 +194,22 @@ fn attempt_pack_receipt_key_range_end() -> Vec<u8> {
 /// Callers sort and truncate downstream, so below the cap this returns the
 /// same set the unbounded walk did.
 ///
-/// Above the cap the answer is a bounded PREFIX, not the family — which
-/// [`note_attempt_pack_scan_capped`] says out loud rather than truncating in
-/// silence.
+/// Compatibility view for callers that do not consume completeness metadata.
 pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
+    Ok(scan_attempt_pack_receipts(vault)?.records)
+}
+
+/// Scans the same bounded prefix and reports a source continuation in production.
+/// The overflow probe is not decoded and does not increase the projection cap.
+pub(super) fn scan_attempt_pack_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let rtxn = vault.store.env.read_txn()?;
     let end = attempt_pack_receipt_key_range_end();
     let bounds = (
         std::ops::Bound::Included(ATTEMPT_PACK_RECEIPT_KEY_PREFIX),
         std::ops::Bound::Excluded(&end[..]),
     );
-    let mut receipts = Vec::new();
+    let mut scan = ReceiptScan::from_complete_records(Vec::new());
+    let mut before = None;
     // One row PAST the cap is read and never decoded: it is what separates a
     // ledger holding exactly the cap from one the cap truncated.
     for row in vault
@@ -212,14 +218,16 @@ pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>>
         .rev_range(&rtxn, &bounds)?
         .take(MAX_RECEIPT_QUERY_SCAN + 1)
     {
-        let (_, raw) = row?;
-        if receipts.len() == MAX_RECEIPT_QUERY_SCAN {
+        let (key, raw) = row?;
+        if scan.records.len() == MAX_RECEIPT_QUERY_SCAN {
+            scan.mark_incomplete().attempt_pack_before = before;
             note_attempt_pack_scan_capped();
             break;
         }
-        receipts.push(decode_attempt_pack_receipt(&raw)?);
+        scan.records.push(decode_attempt_pack_receipt(&raw)?);
+        before = Some(key.to_vec());
     }
-    Ok(receipts)
+    Ok(scan)
 }
 
 /// Surfaces an attempt pack receipt scan that stopped at the work cap.
@@ -240,64 +248,28 @@ fn decode_attempt_pack_receipt(raw: &[u8]) -> Result<ReceiptRecord> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("attempt pack receipt row"))
 }
 
-/// Persists the outbound pipeline receipt as the sole durable record of a
-/// connector send. A delivered row atomically installs the actor-scoped client
-/// idempotency index; a failed row remains audit-only and may be replaced by a
-/// later delivered retry for the same TASK.
+/// Appends one outbound attempt's audit receipt and updates its TASK summary.
+/// Delivered summaries are sticky and atomically install the actor-scoped client
+/// idempotency index. Failed receipts never authorize idempotency and remain in
+/// the history after a later attempt updates the summary.
 pub(crate) fn persist_send_receipt(
     vault: &Vault,
     task_ref: EntityId,
-    mut receipt: ReceiptRecord,
+    receipt: ReceiptRecord,
     outcome: SendReceiptOutcome,
     transport_dispatched: bool,
     delivered_idempotency: Option<(EntityId, &str)>,
 ) -> Result<bool> {
-    receipt
-        .fields
-        .insert(FIELD_TASK_REF.to_owned(), task_ref.to_hex());
-    receipt.fields.insert(
-        FIELD_TRANSPORT_DISPATCHED.to_owned(),
-        transport_dispatched.to_string(),
-    );
-    let durable = DurableSendReceipt {
-        version: SEND_RECEIPT_RECORD_VERSION,
-        task_ref: task_ref.to_hex(),
-        outcome,
-        transport_dispatched,
-        receipt,
-    };
-    let encoded = rmp_serde::to_vec_named(&durable)
-        .map_err(|_| Error::InvariantViolation("send receipt encode failed"))?;
     vault.with_write_txn(|wtxn| {
-        let existing = vault
-            .store
-            .get_send_receipt_by_task_in_txn(&*wtxn, &task_ref)?;
-        if let Some(raw) = existing.as_deref() {
-            let existing = decode_durable_send_receipt(task_ref.as_bytes(), raw)?;
-            if existing.outcome == SendReceiptOutcome::Delivered {
-                return Ok(false);
-            }
-        }
-        if existing.is_some() {
-            vault
-                .store
-                .set_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
-        } else {
-            vault
-                .store
-                .put_send_receipt_in_txn(wtxn, &task_ref, &encoded)?;
-        }
-        if outcome == SendReceiptOutcome::Delivered
-            && let Some((actor_ref, idempotency_key)) = delivered_idempotency
-        {
-            vault.store.put_delivered_send_idempotency_in_txn(
-                wtxn,
-                &actor_ref,
-                idempotency_key,
-                &task_ref,
-            )?;
-        }
-        Ok(true)
+        persist_send_receipt_in_txn(
+            &vault.store,
+            wtxn,
+            task_ref,
+            receipt,
+            outcome,
+            transport_dispatched,
+            delivered_idempotency,
+        )
     })
 }
 
@@ -339,6 +311,11 @@ pub(super) fn decode_durable_send_receipt(
         return Err(Error::CorruptedIndex("send receipt ledger"));
     }
     Ok(durable)
+}
+
+/// This projector reads its entire existing audit source; it has no source cap.
+pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
+    durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
 }
 
 pub(super) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {

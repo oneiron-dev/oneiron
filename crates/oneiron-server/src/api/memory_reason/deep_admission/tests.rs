@@ -12,6 +12,7 @@ impl DeepSearchBackend for UncalledBackend {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         panic!("admission-only fixture must not execute a backend")
@@ -21,6 +22,7 @@ impl DeepSearchBackend for UncalledBackend {
         &self,
         _query: &str,
         _candidates: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         panic!("admission-only fixture must not execute a backend")

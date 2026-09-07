@@ -223,8 +223,23 @@ pub(crate) enum GateReasonCode {
     /// the counterparty, and the owner's own instrument may not refuse the
     /// owner outright. [`Self::DenyCounterpartyOptOut`] keeps its position,
     /// token and metric class for decode compatibility and is no longer emitted
-    /// on the owner path. Appended LAST — this enum is append-only.
+    /// on the owner path. New reason codes append after this entry.
     PendingCounterpartyOptOut,
+    /// ONE-1296: the manifest's auto checker HELD an otherwise-Auto Dreamer
+    /// write. The ceiling falls to Proposed and the checker's own reasons ride
+    /// the receipt beside this code.
+    PendingChecker,
+    /// ONE-1296: the auto checker could not answer — unavailable, panicked,
+    /// past its deadline, out of budget, or malformed. Fail-closed is the same
+    /// answer as a hold, spelled differently so an owner can tell "the checker
+    /// said no" from "nothing checked".
+    PendingCheckerUnavailable,
+    /// ONE-1453: the per-actor burst breaker converted a would-be-`Auto`
+    /// agent-run write into owner review. Velocity, not authority — the claim
+    /// is preserved and joins the run's existing consent bundle, so this is a
+    /// pend and never a denial. An event already pending for another cause
+    /// keeps its own reason set and does not gain this one.
+    PendingActorBurstBreaker,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -268,6 +283,9 @@ impl GateReasonCode {
             Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
             Self::DenyPersonaSingleCycle => "gate.deny.dreamer_precommit.persona_single_cycle",
             Self::PendingCounterpartyOptOut => "gate.pending.counterparty_opt_out",
+            Self::PendingChecker => "gate.pending.checker",
+            Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
+            Self::PendingActorBurstBreaker => "gate.pending.actor_burst_breaker",
         }
     }
 
@@ -319,6 +337,18 @@ impl GateReasonCode {
                 GateMetricReasonClass::CriticalityFloor
             }
             Self::DenyPersonaSingleCycle => GateMetricReasonClass::DreamerPrecommit,
+            // ONE-1296 meters where it acts: the checker is only ever asked
+            // about a source that `requires_explicit_auto_permit`, so a hold
+            // is the explicit-auto-permit question answered by the host
+            // instead of by a manifest row. No new metric class, so the
+            // counter width is unchanged.
+            Self::PendingChecker | Self::PendingCheckerUnavailable => {
+                GateMetricReasonClass::SourceTrust
+            }
+            // ONE-1453 rides the actor-level pending class it already belongs
+            // to: the breaker is an actor ceiling that velocity lowered. No
+            // new metric class, index, or counter width.
+            Self::PendingActorBurstBreaker => GateMetricReasonClass::ActorCeiling,
         }
     }
 }

@@ -2,6 +2,8 @@
 
 use crate::Error;
 
+use super::{BackendSpend, DepthSearchRequest};
+
 /// A retrieval result that preserves reported backend usage even on failure.
 pub type RetrievalResult<T> = std::result::Result<T, RetrievalError>;
 
@@ -30,5 +32,37 @@ impl From<Error> for RetrievalError {
             error,
             tokens_used: 0,
         }
+    }
+}
+
+impl DepthSearchRequest<'_> {
+    pub(super) fn remaining_token_budget(&self, tokens_used: u64) -> crate::Result<Option<u64>> {
+        let remaining = self
+            .token_budget
+            .map(|budget| budget.saturating_sub(tokens_used));
+        if remaining == Some(0) {
+            return Err(Error::InvalidConfig(
+                "deep retrieval token budget exhausted".to_owned(),
+            ));
+        }
+        Ok(remaining)
+    }
+}
+
+impl<T> BackendSpend<T> {
+    /// Rejects a backend's reported overrun without losing its actual usage.
+    ///
+    /// `token_budget` is the allowance passed to this call. The caller must
+    /// still settle the returned usage on error, including tokens over the cap.
+    pub fn enforce_token_budget(self, token_budget: Option<u64>) -> RetrievalResult<Self> {
+        if token_budget.is_some_and(|budget| self.tokens_used > budget) {
+            return Err(RetrievalError {
+                error: Error::InvalidConfig(
+                    "deep backend exceeded remaining token budget".to_owned(),
+                ),
+                tokens_used: self.tokens_used,
+            });
+        }
+        Ok(self)
     }
 }

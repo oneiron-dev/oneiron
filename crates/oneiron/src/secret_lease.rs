@@ -1368,7 +1368,7 @@ impl Vault {
     /// unbounded behaviour, unchanged for every existing caller.
     ///
     /// This wrapper is the API BOUNDARY, and the only place an external
-    /// absolute second count becomes a [`VaultInstant`] bound. The wall
+    /// absolute second count becomes a `VaultInstant` bound. The wall
     /// reading it has always stamped stays exactly what it was, so every
     /// current non-door caller keeps its behaviour unchanged. The credential
     /// door does NOT come through here: it carries its whole admission into

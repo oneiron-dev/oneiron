@@ -68,7 +68,7 @@ fn inbound_routes_active_identity_and_stamps_receiving_identity() -> Result<()> 
     assert!(receipt.claims_not_instructions);
     let event = receipt.surface_event.expect("routed surface event");
     assert_eq!(event.receiving_identity_ref, identity_ref.to_hex());
-    assert_eq!(event.agent_ref, agent_ref.to_hex());
+    assert_eq!(event.actor_ref, agent_ref.to_hex());
     assert!(!event.identity_retiring);
     assert!(event.claims_not_instructions);
     Ok(())
@@ -241,7 +241,7 @@ fn routed_event_carries_closed_source_action_and_correlation_stamps() -> Result<
     assert_eq!(event.action, SurfaceEventAction::Message);
     assert_eq!(event.correlation_id, "evt-stamped@example.com");
     assert_eq!(event.receiving_identity_ref, identity_ref.to_hex());
-    assert_eq!(event.agent_ref, agent_ref.to_hex());
+    assert_eq!(event.actor_ref, agent_ref.to_hex());
     assert!(event.claims_not_instructions);
     assert!(!event.identity_retiring);
 
@@ -1102,4 +1102,298 @@ fn sole_attempt(vault: &Vault) -> crate::attempt_queue::AttemptRecord {
         .collect::<Vec<_>>();
     assert_eq!(rows.len(), 1, "expected exactly one surface-event attempt");
     rows.pop().expect("one row")
+}
+
+/// An actor with no subject anchor is PLUMBING and routes exactly like an
+/// anchored one. Absence of a someone is not a rejection reason.
+#[test]
+fn plumbing_actor_routes() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let identity_ref = entity(0x90);
+    let actor_ref = entity(0x91);
+    vault.create_channel_identity(
+        &identity_ref,
+        &identity("relay@example.com", actor_ref, ChannelIdentityState::Active),
+    )?;
+
+    let receipt = vault.route_inbound_surface_event(input(
+        "relay@example.com",
+        SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+    ))?;
+
+    assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    let event = receipt.surface_event.expect("routed event");
+    assert_eq!(event.actor_ref, actor_ref.to_hex());
+    assert_eq!(event.subject_ref, None, "no someone behind this actor");
+    assert_eq!(event.facet_ref, None);
+    Ok(())
+}
+
+/// A routed event carries all three stamps once the actor is anchored and
+/// masked.
+#[test]
+fn routed_event_carries_actor_facet_and_subject_stamps() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor_ref = seed(&vault, entity(0x92), crate::registry::ENTITY_TYPE_AGENT_DEF);
+    let person = seed(&vault, entity(0x93), crate::registry::ENTITY_TYPE_PERSON);
+    let facet = seed(&vault, entity(0x94), crate::registry::ENTITY_TYPE_FACET);
+
+    crate::subject_model::anchor_actor_subject(
+        &vault,
+        actor_ref,
+        person,
+        crate::write_envelope::WriteActor::new(actor_ref, crate::edge::EdgeActorClass::Agent),
+        1_800_000_000,
+    )?;
+
+    let identity_ref = entity(0x95);
+    let mut record = identity(
+        "masked@example.com",
+        actor_ref,
+        ChannelIdentityState::Active,
+    );
+    record.binding = ChannelIdentityBinding::actor_with_facet(actor_ref, facet);
+    vault.create_channel_identity(&identity_ref, &record)?;
+
+    let receipt = vault.route_inbound_surface_event(input(
+        "masked@example.com",
+        SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+    ))?;
+
+    let event = receipt.surface_event.expect("routed event");
+    assert_eq!(event.actor_ref, actor_ref.to_hex());
+    assert_eq!(event.facet_ref, Some(facet.to_hex()));
+    assert_eq!(event.subject_ref, Some(person.to_hex()));
+    Ok(())
+}
+
+/// The rejection reason for a vault-bound identity keeps its exact pre-INB-06
+/// wire string. Adapters branch on it and `/v1/core` enumerates it, so the
+/// actor vocabulary change must NOT rename it.
+#[test]
+fn vault_bound_identity_still_rejects_with_the_stable_wire_string() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let identity_ref = entity(0x96);
+    let mut record = identity(
+        "vaulted@example.com",
+        entity(0x97),
+        ChannelIdentityState::Active,
+    );
+    record.binding = ChannelIdentityBinding::vault(7);
+    vault.create_channel_identity(&identity_ref, &record)?;
+
+    let receipt = vault.route_inbound_surface_event(input(
+        "vaulted@example.com",
+        SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+    ))?;
+
+    assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Rejected);
+    assert_eq!(
+        receipt.rejection_reason,
+        Some(InboundSurfaceRejectionReason::NonAgentBoundIdentity)
+    );
+    assert_eq!(
+        receipt.rejection_reason_str(),
+        Some("non_agent_bound_identity")
+    );
+    assert!(receipt.surface_event.is_none());
+    Ok(())
+}
+
+/// A SurfaceEvent written before INB-06 spelled the field `agent_ref`; it
+/// decodes onto `actor_ref` so queued attempts written by an older binary
+/// still drain.
+#[test]
+fn legacy_agent_ref_payload_decodes_as_actor_ref() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let identity_ref = entity(0x98);
+    let actor_ref = entity(0x99);
+    vault.create_channel_identity(
+        &identity_ref,
+        &identity(
+            "legacy@example.com",
+            actor_ref,
+            ChannelIdentityState::Active,
+        ),
+    )?;
+    let receipt = vault.route_inbound_surface_event(input(
+        "legacy@example.com",
+        SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+    ))?;
+    let event = receipt.surface_event.expect("routed event");
+
+    // Re-spell the field the way the pre-INB-06 binary wrote it.
+    let mut json = serde_json::to_value(&event).expect("event serializes");
+    let object = json.as_object_mut().expect("event is an object");
+    let value = object.remove("actor_ref").expect("actor_ref present");
+    object.insert("agent_ref".to_owned(), value);
+
+    let decoded: SurfaceEvent = serde_json::from_value(json).expect("legacy payload decodes");
+    assert_eq!(decoded.actor_ref, actor_ref.to_hex());
+    assert_eq!(decoded.subject_ref, None);
+    Ok(())
+}
+
+fn seed(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
+    if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
+        return crate::test_util::seed_agent_definition(vault, id, "surface_event");
+    }
+    vault
+        .put_entity(
+            &id,
+            entity_type,
+            crate::temporal::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"surface event fixture",
+        )
+        .expect("seed entity");
+    id
+}
+
+#[test]
+fn routing_resolves_merge_and_omits_split_subject_without_rewriting_anchor() -> Result<()> {
+    use crate::claim::ClaimSource;
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, ReassignmentMap, SplitOp,
+        SurvivorshipPlan,
+    };
+
+    for subject_type in [
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_ORG,
+    ] {
+        let (_dir, vault) = test_vault();
+        let actor = seed(&vault, entity(0xC4), crate::registry::ENTITY_TYPE_MACHINE);
+        let original = seed(&vault, entity(0xC5), subject_type);
+        let survivor = seed(&vault, entity(0xC6), subject_type);
+        let other = seed(&vault, entity(0xC7), subject_type);
+        let facet = seed(&vault, entity(0xC8), crate::registry::ENTITY_TYPE_FACET);
+        let author =
+            crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::System);
+        let anchor_id = crate::subject_model::anchor_actor_subject(
+            &vault,
+            actor,
+            original,
+            author,
+            1_800_000_000,
+        )?;
+        let historical = vault.get_claim(&anchor_id)?.expect("anchor");
+        let mut record = identity("redirect@example.com", actor, ChannelIdentityState::Active);
+        record.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+        vault.create_channel_identity(&entity(0xC9), &record)?;
+        let evidence = IdentityOpEvidence {
+            refs: Vec::new(),
+            rationale: "subject routing fixture".to_owned(),
+        };
+        vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![original],
+                survivor,
+                evidence: evidence.clone(),
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            1_800_000_010,
+        )?;
+        let route = || {
+            vault.route_inbound_surface_event(input(
+                "redirect@example.com",
+                SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+            ))
+        };
+        let event = route()?.surface_event.expect("merged subject routes");
+        assert_eq!(event.actor_ref, actor.to_hex());
+        assert_eq!(event.facet_ref, Some(facet.to_hex()));
+        assert_eq!(event.subject_ref, Some(survivor.to_hex()));
+
+        let split_head = seed(&vault, entity(0xCA), subject_type);
+        vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Split(SplitOp {
+                entity: survivor,
+                heads: vec![other, split_head],
+                reassignment: ReassignmentMap::default(),
+                evidence,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::Inferred),
+            1_800_000_020,
+        )?;
+        let event = route()?
+            .surface_event
+            .expect("ambiguous subject still routes");
+        assert_eq!(event.actor_ref, actor.to_hex());
+        assert_eq!(event.facet_ref, Some(facet.to_hex()));
+        assert_eq!(event.subject_ref, None);
+        assert_eq!(vault.get_claim(&anchor_id)?, Some(historical));
+    }
+    Ok(())
+}
+
+#[test]
+fn subject_projection_failure_does_not_replace_identity_rejection_receipts() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0xB8), crate::registry::ENTITY_TYPE_MACHINE);
+    let person = seed(&vault, entity(0xB9), crate::registry::ENTITY_TYPE_PERSON);
+    let author = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::System);
+    let id = crate::subject_model::anchor_actor_subject(&vault, actor, person, author, 100)?;
+    let mut malformed = vault.get_claim(&id)?.expect("anchor");
+    malformed.value = rmpv::Value::from("malformed-subject-ref");
+    vault.with_write_txn(|wtxn| {
+        vault.put_reserved_claim_in_txn(
+            wtxn,
+            &id,
+            &malformed,
+            crate::temporal::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+    })?;
+    for (identity_id, address, state, expected) in [
+        (
+            entity(0xBA),
+            "inactive@example.com",
+            ChannelIdentityState::Requested,
+            InboundSurfaceRejectionReason::InactiveReceivingIdentity,
+        ),
+        (
+            entity(0xBB),
+            "closed@example.com",
+            ChannelIdentityState::Tombstone,
+            InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
+        ),
+    ] {
+        vault.create_channel_identity(&identity_id, &identity(address, actor, state))?;
+        let receipt = vault.route_inbound_surface_event(input(
+            address,
+            SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+        ))?;
+        assert_eq!(receipt.rejection_reason, Some(expected));
+        assert!(receipt.surface_event.is_none());
+    }
+    vault.create_channel_identity(
+        &entity(0xBC),
+        &identity("active@example.com", actor, ChannelIdentityState::Active),
+    )?;
+    assert!(
+        vault
+            .route_inbound_surface_event(input(
+                "active@example.com",
+                SurfaceCounterpartyStamp::unknown("sender@elsewhere.example"),
+            ))
+            .is_err(),
+        "a corrupt anchor must not route as plumbing",
+    );
+    Ok(())
+}
+
+#[test]
+fn landing_surface_handoff_keeps_its_lease_projection() {
+    assert_eq!(
+        SurfaceEventHandoffState::from_attempt_state(AttemptState::Landing),
+        SurfaceEventHandoffState::Leased,
+    );
 }

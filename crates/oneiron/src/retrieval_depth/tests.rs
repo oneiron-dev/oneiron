@@ -1,216 +1,179 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use super::*;
-use crate::TimeRange;
-use crate::claim::ScopedReadActorKey;
-use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
-use crate::retrieval_quality::{
-    ConfidenceAdjustment, PprCacheOutcome, RetrievalDegradation, RetrievalQuality,
-};
-use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
+mod repairs;
 mod spend_tests;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-fn request<'a>(probe: SearchProbe, effort: Effort) -> DepthSearchRequest<'a> {
+use std::sync::Mutex;
+
+use rmpv::Value;
+
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
+    encode_claim_body,
+};
+use crate::config::VaultConfig;
+use crate::llm::{BudgetExhaustionPolicy, BudgetGuard, BudgetLease};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::temporal::TimeRange;
+use crate::test_util::{entity, open_test_vault_with};
+
+const READER: &str = "agent:one-207-reader";
+
+fn range(at: u64) -> TimeRange {
+    TimeRange { start: at, end: at }
+}
+
+/// Three notes: two the direct query matches and one reachable only across
+/// the `mentions` edge, so a graph expansion is visible as a hit the direct
+/// channel could not have produced.
+fn seeded_vault() -> (
+    tempfile::TempDir,
+    crate::Vault,
+    EntityId,
+    EntityId,
+    EntityId,
+) {
+    let (dir, vault) = open_test_vault_with(VaultConfig::default());
+    let anchor = entity(0x21);
+    let sibling = entity(0x22);
+    let neighbor = entity(0x23);
+
+    vault
+        .batch()
+        .put(&anchor, ENTITY_TYPE_PERSON, range(1), 1, b"anchor")
+        .text(&anchor, &[("body", "launch date decision")])
+        .put(&sibling, ENTITY_TYPE_PERSON, range(1), 1, b"sibling")
+        .text(&sibling, &[("body", "launch checklist")])
+        .put(&neighbor, ENTITY_TYPE_PERSON, range(1), 1, b"neighbor")
+        .text(&neighbor, &[("body", "stationery inventory")])
+        .edge(&anchor, crate::edge::EdgeKind::Mentions, &neighbor, 1.0)
+        .commit()
+        .expect("seed notes");
+
+    (dir, vault, anchor, sibling, neighbor)
+}
+
+fn text_request(query: &str, effort: Effort) -> DepthSearchRequest<'static> {
     DepthSearchRequest {
-        probe,
+        probe: SearchProbe::Text {
+            query: query.to_owned(),
+        },
         effort,
         limit: 10,
         session_scope: None,
         lease: None,
         backend: None,
+        token_budget: None,
     }
 }
 
-fn text_request<'a>(effort: Effort) -> DepthSearchRequest<'a> {
-    request(
-        SearchProbe::Text {
-            query: "qualitydepth".to_owned(),
+fn hosted_request<'a>(
+    query: &str,
+    effort: Effort,
+    lease: Option<&'a BudgetLease>,
+    backend: Option<&'a dyn DeepSearchBackend>,
+) -> DepthSearchRequest<'a> {
+    DepthSearchRequest {
+        probe: SearchProbe::Text {
+            query: query.to_owned(),
         },
         effort,
-    )
-}
-
-fn put_text(vault: &Vault, byte: u8, text: &str) -> Result<EntityId> {
-    let id = entity(byte);
-    vault
-        .batch()
-        .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
-        .text(&id, &[("body", text)])
-        .commit()?;
-    Ok(id)
-}
-
-fn score_bits(hits: &[ScoredEntity]) -> Vec<(EntityId, u32)> {
-    hits.iter()
-        .map(|hit| (hit.id, hit.score.to_bits()))
-        .collect()
-}
-
-#[test]
-fn retrieval_quality_depth_minimal_records_completed_empty_channels() -> TestResult {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
-    for (probe, signal) in [
-        (
-            SearchProbe::Text {
-                query: "absentqualitydepth".to_owned(),
-            },
-            RetrievalSignal::Text,
-        ),
-        (
-            SearchProbe::Vector {
-                embedding: vec![1.0, 0.0, 0.0, 0.0],
-                query_text: None,
-            },
-            RetrievalSignal::Vector,
-        ),
-    ] {
-        let result = scoped.search_with_effort(&request(probe, Effort::Minimal))?;
-        assert!(result.hits.is_empty());
-        assert_eq!(result.retrieval_diagnostics.attempted, vec![signal]);
-        assert_eq!(result.retrieval_diagnostics.succeeded, vec![signal]);
-        assert_eq!(result.retrieval_diagnostics.ppr_cache, None);
-        assert_eq!(
-            result.retrieval_quality.quality,
-            RetrievalQuality::Passthrough
-        );
-        assert!(result.retrieval_quality.degradation.is_empty());
-        assert_eq!(
-            result.retrieval_quality.confidence_adjustment,
-            ConfidenceAdjustment::PASSTHROUGH
-        );
-        assert!(!result.backend_used);
-        assert_eq!(result.tokens_used, 0);
+        limit: 10,
+        session_scope: None,
+        lease,
+        backend,
+        token_budget: None,
     }
-    Ok(())
 }
 
-#[test]
-fn retrieval_quality_depth_minimal_preserves_direct_score_bits_and_order() -> TestResult {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let first = put_text(&vault, 0x61, "qualitydepth qualitydepth")?;
-    let second = put_text(&vault, 0x62, "qualitydepth other")?;
-    vault.put_vector(&first, &[1.0, 0.0, 0.0, 0.0])?;
-    vault.put_vector(&second, &[0.8, 0.2, 0.0, 0.0])?;
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
-    let text = scoped.search_text("qualitydepth", 10)?;
-    let result = scoped.search_with_effort(&text_request(Effort::Minimal))?;
-    assert!(!text.is_empty());
-    assert_eq!(score_bits(&result.hits), score_bits(&text));
-    let vector = vec![1.0, 0.0, 0.0, 0.0];
-    let direct = scoped.search_vector(&vector, 10)?;
-    let result = scoped.search_with_effort(&request(
-        SearchProbe::Vector {
-            embedding: vector,
-            query_text: None,
-        },
-        Effort::Minimal,
-    ))?;
-    assert_eq!(score_bits(&result.hits), score_bits(&direct));
-    Ok(())
+fn hit_ids(result: &DepthSearchResult) -> Vec<EntityId> {
+    ids_of(&result.hits)
 }
 
-#[test]
-fn retrieval_quality_depth_standard_uses_real_disabled_ppr_without_false_miss() -> TestResult {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let seed = put_text(&vault, 0x63, "qualitydepth")?;
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
-    let direct = scoped.search_text("qualitydepth", 10)?;
-    assert_eq!(direct.len(), 1);
-    let expanded = {
-        let txn = vault.store.env.read_txn()?;
-        crate::ppr::ppr_query_scoped_in_txn(
-            &vault.store,
-            &txn,
-            &[seed],
-            STANDARD_PPR_DEPTH,
-            STANDARD_PPR_ALPHA,
-            SeedWeighting::Specificity,
-            &scoped,
-        )?
-    };
-    let expected = direct[0]
-        .score
-        .max(expanded.iter().find(|hit| hit.id == seed).unwrap().score);
-    let result = scoped.search_with_effort(&text_request(Effort::Standard))?;
-    assert_eq!(result.hits.len(), 1);
-    assert_eq!(result.hits[0].id, seed);
-    assert_eq!(result.hits[0].score.to_bits(), expected.to_bits());
-    assert_eq!(
-        result.retrieval_diagnostics.attempted,
-        vec![RetrievalSignal::Text, RetrievalSignal::Ppr]
-    );
-    assert_eq!(
-        result.retrieval_diagnostics.succeeded,
-        result.retrieval_diagnostics.attempted
-    );
-    assert_eq!(
-        result.retrieval_diagnostics.ppr_cache,
-        Some(PprCacheOutcome::Disabled)
-    );
-    assert_eq!(result.retrieval_quality.quality, RetrievalQuality::Degraded);
-    assert!(result.retrieval_quality.degradation.is_empty());
-    assert_eq!(
-        result.retrieval_quality.confidence_adjustment,
-        ConfidenceAdjustment::DEGRADED
-    );
-    let txn = vault.store.env.read_txn()?;
-    assert_eq!(vault.store.ppr_cache.len(&txn)?, 0);
-    Ok(())
+fn ids_of(hits: &[ScoredEntity]) -> Vec<EntityId> {
+    hits.iter().map(|hit| hit.id).collect()
 }
 
-#[test]
-fn retrieval_quality_depth_empty_standard_does_not_invent_graph_or_full_completion() -> TestResult {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
-    let result = scoped.search_with_effort(&request(
-        SearchProbe::Text {
-            query: "absentqualitydepth anotherabsenttoken".to_owned(),
-        },
-        Effort::Standard,
-    ))?;
-    assert!(result.hits.is_empty());
-    assert!(result.queries_run.len() > 1);
-    assert_eq!(
-        result.retrieval_diagnostics.attempted,
-        vec![RetrievalSignal::Text]
-    );
-    assert_eq!(
-        result.retrieval_diagnostics.succeeded,
-        vec![RetrievalSignal::Text]
-    );
-    assert_eq!(result.retrieval_diagnostics.ppr_cache, None);
-    assert_eq!(
-        result.retrieval_quality.quality,
-        RetrievalQuality::Passthrough
-    );
-    assert!(result.retrieval_quality.degradation.is_empty());
-    Ok(())
+/// A lease from the ONE mint path. Deep effort must never be reachable
+/// through a hand-rolled token, so these rows take the door production takes.
+fn minted_lease() -> BudgetLease {
+    BudgetGuard::new("one-207-tests", 10_000, BudgetExhaustionPolicy::Suspend)
+        .admit()
+        .expect("budget admits the deep read")
+        .lease
 }
 
-struct ReverseBackend {
-    lease_id: String,
-    decompose_calls: AtomicUsize,
-    rerank_calls: AtomicUsize,
-    only_candidate: Option<EntityId>,
+#[derive(Default)]
+struct BackendCalls {
+    decompose: usize,
+    rerank: usize,
+    max_queries_seen: Vec<usize>,
+    candidates_seen: usize,
+    leases_seen: Vec<BudgetLease>,
+    token_budgets_seen: Vec<Option<u64>>,
+    candidate_ids: Vec<EntityId>,
 }
 
-impl DeepSearchBackend for ReverseBackend {
+/// A host backend that records what the engine asked for and answers with
+/// whatever the row scripted — including deliberately over-eager output, so
+/// the caps can be watched being applied BY THE ENGINE rather than by the
+/// backend's own good behavior.
+struct ScriptedBackend {
+    rounds: Vec<Vec<String>>,
+    decompose_tokens: u64,
+    rerank_tokens: u64,
+    rerank_scores: Option<Vec<f32>>,
+    calls: Mutex<BackendCalls>,
+}
+
+impl ScriptedBackend {
+    fn new(rounds: Vec<Vec<String>>) -> Self {
+        Self {
+            rounds,
+            decompose_tokens: 0,
+            rerank_tokens: 0,
+            rerank_scores: None,
+            calls: Mutex::new(BackendCalls::default()),
+        }
+    }
+
+    fn with_spend(mut self, decompose_tokens: u64, rerank_tokens: u64) -> Self {
+        self.decompose_tokens = decompose_tokens;
+        self.rerank_tokens = rerank_tokens;
+        self
+    }
+
+    fn with_rerank_scores(mut self, scores: Vec<f32>) -> Self {
+        self.rerank_scores = Some(scores);
+        self
+    }
+
+    fn calls(&self) -> std::sync::MutexGuard<'_, BackendCalls> {
+        self.calls.lock().expect("backend call log")
+    }
+}
+
+impl DeepSearchBackend for ScriptedBackend {
     fn decompose(
         &self,
         _query: &str,
         _already_run: &[String],
-        _max_queries: usize,
+        max_queries: usize,
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
-        assert_eq!(lease.id(), self.lease_id);
-        self.decompose_calls.fetch_add(1, Ordering::SeqCst);
+        let mut calls = self.calls();
+        let round = calls.decompose;
+        calls.decompose += 1;
+        calls.max_queries_seen.push(max_queries);
+        calls.leases_seen.push(lease.clone());
+        calls.token_budgets_seen.push(token_budget);
+        drop(calls);
         Ok(BackendSpend {
-            value: Vec::new(),
-            tokens_used: 3,
+            value: self.rounds.get(round).cloned().unwrap_or_default(),
+            tokens_used: self.decompose_tokens,
         })
     }
 
@@ -218,174 +181,602 @@ impl DeepSearchBackend for ReverseBackend {
         &self,
         _query: &str,
         candidates: &[RerankCandidate<'_>],
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
-        assert_eq!(lease.id(), self.lease_id);
-        self.rerank_calls.fetch_add(1, Ordering::SeqCst);
-        if let Some(only) = self.only_candidate {
-            assert_eq!(candidates.len(), 1);
-            assert_eq!(candidates[0].id, only);
-        }
+        let mut calls = self.calls();
+        calls.rerank += 1;
+        calls.candidates_seen = candidates.len();
+        calls.candidate_ids = candidates.iter().map(|candidate| candidate.id).collect();
+        calls.leases_seen.push(lease.clone());
+        calls.token_budgets_seen.push(token_budget);
+        drop(calls);
+        let value = self
+            .rerank_scores
+            .clone()
+            .unwrap_or_else(|| vec![0.0; candidates.len()]);
         Ok(BackendSpend {
-            value: (0..candidates.len()).map(|index| index as f32).collect(),
-            tokens_used: 5,
+            value,
+            tokens_used: self.rerank_tokens,
         })
     }
 }
 
-#[test]
-fn retrieval_quality_depth_deep_tracks_rerank_without_rewriting_engine_scores() -> TestResult {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    put_text(&vault, 0x64, "qualitydepth qualitydepth")?;
-    put_text(&vault, 0x65, "qualitydepth other")?;
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
-    let standard = scoped.search_with_effort(&text_request(Effort::Standard))?;
-    assert_eq!(standard.hits.len(), 2);
-    let guard =
-        BudgetGuard::with_reserve_units("depth-quality", 100, 10, BudgetExhaustionPolicy::Suspend);
-    let admission = guard.admit().unwrap();
-    let backend = ReverseBackend {
-        lease_id: admission.lease.id().to_owned(),
-        decompose_calls: AtomicUsize::new(0),
-        rerank_calls: AtomicUsize::new(0),
-        only_candidate: None,
-    };
-    let mut deep = text_request(Effort::Deep);
-    deep.lease = Some(&admission.lease);
-    deep.backend = Some(&backend);
-    let result = scoped.search_with_effort(&deep)?;
-    let mut expected = score_bits(&standard.hits);
-    expected.reverse();
-    assert_eq!(score_bits(&result.hits), expected);
-    assert_eq!(result.retrieval_quality, standard.retrieval_quality);
-    assert_eq!(
-        result.retrieval_diagnostics.attempted,
-        vec![
-            RetrievalSignal::Text,
-            RetrievalSignal::Ppr,
-            RetrievalSignal::Rerank
-        ]
-    );
-    assert_eq!(
-        result.retrieval_diagnostics.succeeded,
-        result.retrieval_diagnostics.attempted
-    );
-    assert!(result.backend_used);
-    assert_eq!(result.tokens_used, 8);
-    assert_eq!(backend.decompose_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(backend.rerank_calls.load(Ordering::SeqCst), 1);
-    guard
-        .settle_usage(&admission.lease, result.tokens_used)
-        .unwrap();
-    assert_eq!(guard.read().used_units, 8);
-    assert_eq!(guard.read().reserved_units, 0);
-    Ok(())
-}
+/// A backend that must never be called. It fails the row the moment it runs,
+/// which is how "the model-free tiers touch no host" gets proven rather than
+/// inferred from a counter after the fact.
+struct ForbiddenBackend;
 
-#[test]
-fn retrieval_quality_depth_session_narrows_before_backend_and_diagnostics() -> TestResult {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let included = put_text(&vault, 0x66, "qualitydepth")?;
-    put_text(&vault, 0x67, "qualitydepth qualitydepth")?;
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
-    let guard = BudgetGuard::with_reserve_units(
-        "scoped-depth-quality",
-        100,
-        10,
-        BudgetExhaustionPolicy::Suspend,
-    );
-    let admission = guard.admit().unwrap();
-    let backend = ReverseBackend {
-        lease_id: admission.lease.id().to_owned(),
-        decompose_calls: AtomicUsize::new(0),
-        rerank_calls: AtomicUsize::new(0),
-        only_candidate: Some(included),
-    };
-    let scope = SessionScope {
-        document_short_ids: vec![short_ref_or_hex(&vault, &included)?],
-        ..Default::default()
-    };
-    let mut deep = text_request(Effort::Deep);
-    deep.limit = 1;
-    deep.session_scope = Some(&scope);
-    deep.lease = Some(&admission.lease);
-    deep.backend = Some(&backend);
-    let result = scoped.search_with_effort(&deep)?;
-    assert_eq!(result.hits.len(), 1);
-    assert_eq!(result.hits[0].id, included);
-    assert_eq!(result.retrieval_quality.quality, RetrievalQuality::Degraded);
-    assert!(result.retrieval_quality.degradation.is_empty());
-    guard
-        .settle_usage(&admission.lease, result.tokens_used)
-        .unwrap();
-    Ok(())
-}
-
-#[test]
-fn retrieval_quality_depth_report_finish_preserves_full_and_degraded_no_data() {
-    // Projection boundary fixture, not a claim that the frozen depth executor
-    // runs all five channels. A healthy empty result must keep its supplied facts.
-    let channels = vec![
-        RetrievalSignal::Vector,
-        RetrievalSignal::Text,
-        RetrievalSignal::Phonetic,
-        RetrievalSignal::Temporal,
-        RetrievalSignal::Ppr,
-    ];
-    let mut full = DepthAccumulator::default();
-    let mut degraded = DepthAccumulator::default();
-    for signal in channels {
-        full.attempt(signal);
-        full.complete(signal);
-        degraded.attempt(signal);
-        degraded.complete(signal);
+impl DeepSearchBackend for ForbiddenBackend {
+    fn decompose(
+        &self,
+        _: &str,
+        _: &[String],
+        _: usize,
+        _token_budget: Option<u64>,
+        _: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<String>>> {
+        panic!("a model-free tier must not call the deep backend");
     }
-    full.retrieval_diagnostics.ppr_cache = Some(PprCacheOutcome::Hit);
-    degraded.retrieval_diagnostics.ppr_cache = Some(PprCacheOutcome::Miss);
-    let full = full.finish(10);
-    let degraded = degraded.finish(10);
-    assert!(full.hits.is_empty());
-    assert!(degraded.hits.is_empty());
-    assert_eq!(full.retrieval_quality.quality, RetrievalQuality::Full);
+
+    fn rerank(
+        &self,
+        _: &str,
+        _: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
+        _: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
+        panic!("a model-free tier must not call the deep backend");
+    }
+}
+
+// ── The derivation ──────────────────────────────────────────────────────
+
+#[test]
+fn deterministic_subqueries_are_pure_deduped_and_capped() {
+    let query = "what did we decide about the launch date";
+    let first = deterministic_subqueries(query);
     assert_eq!(
-        full.retrieval_quality.confidence_adjustment,
-        ConfidenceAdjustment::FULL
+        first,
+        deterministic_subqueries(query),
+        "same query, same fan-out"
     );
-    assert!(full.retrieval_quality.degradation.is_empty());
+    assert!(
+        (3..=STANDARD_SUBQUERY_LIMIT).contains(&first.len()),
+        "a compound question fans out to 3-4 channels: {first:?}"
+    );
+    assert_eq!(first[0], query, "the caller's own query leads");
+    let mut deduped = first.clone();
+    deduped.sort();
+    deduped.dedup();
     assert_eq!(
-        degraded.retrieval_quality.quality,
-        RetrievalQuality::Degraded
+        deduped.len(),
+        first.len(),
+        "no channel runs twice: {first:?}"
     );
+    assert!(first.iter().all(|sub| !sub.trim().is_empty()));
+
+    // Nothing to derive: one token, no stop words, so every variant collapses
+    // onto the query itself and the tier costs exactly one channel.
     assert_eq!(
-        degraded.retrieval_quality.degradation,
-        vec![RetrievalDegradation::PprCacheMiss]
+        deterministic_subqueries("launch"),
+        vec!["launch".to_owned()]
     );
+    assert!(deterministic_subqueries("   ").is_empty());
+
+    // Never more than the cap, however long the question.
+    let long = deterministic_subqueries("alpha beta gamma delta epsilon zeta eta theta");
+    assert!(long.len() <= STANDARD_SUBQUERY_LIMIT, "{long:?}");
 }
 
 #[test]
-fn retrieval_quality_depth_deep_still_refuses_missing_lease_before_channels() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let scoped = vault.scoped_read(ScopedReadActorKey::new("depth-reader").unwrap());
+fn deterministic_subqueries_drop_stop_words_and_halve_the_remainder() {
+    let subqueries = deterministic_subqueries("what did we decide about the launch date");
+    assert!(
+        subqueries.iter().any(|sub| sub == "decide launch date"),
+        "stop words come out: {subqueries:?}"
+    );
+    assert!(
+        subqueries.iter().any(|sub| sub == "decide launch"),
+        "leading half: {subqueries:?}"
+    );
+    assert!(
+        subqueries.iter().any(|sub| sub == "date"),
+        "trailing half: {subqueries:?}"
+    );
+}
+
+// ── Minimal ─────────────────────────────────────────────────────────────
+
+#[test]
+fn minimal_runs_one_direct_channel_and_touches_no_host() -> TestResult {
+    let (_dir, vault, anchor, sibling, neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+
+    // The host is ATTACHED and still unreachable: minimal must ignore one
+    // outright, not merely decline to need one.
+    let forbidden = ForbiddenBackend;
+    let request = hosted_request(
+        "launch",
+        Effort::Minimal,
+        None,
+        Some(&forbidden as &dyn DeepSearchBackend),
+    );
+    let result = scoped.search_with_effort(&request)?;
+
+    assert_eq!(result.signals_used, vec!["text".to_owned()]);
+    assert_eq!(
+        result.queries_run,
+        vec!["launch".to_owned()],
+        "one channel, and it is the caller's own query"
+    );
+    assert!(!result.backend_used);
+    assert_eq!(result.tokens_used, 0);
+
+    let ids = hit_ids(&result);
+    assert!(ids.contains(&anchor), "{ids:?}");
+    assert!(ids.contains(&sibling), "{ids:?}");
+    assert!(
+        !ids.contains(&neighbor),
+        "minimal must not expand the graph: {ids:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn minimal_returns_exactly_the_actor_keyed_direct_door() -> TestResult {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+
+    let direct = scoped.search_text("launch", 10, None)?;
+    let dialed = scoped.search_with_effort(&text_request("launch", Effort::Minimal))?;
+    assert_eq!(
+        hit_ids(&dialed),
+        ids_of(&direct),
+        "the minimal tier IS the existing scoped text door"
+    );
+    Ok(())
+}
+
+// ── Standard ────────────────────────────────────────────────────────────
+
+#[test]
+fn standard_expands_one_hop_and_fans_out_deterministically() -> TestResult {
+    let (_dir, vault, anchor, _sibling, neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+
+    let forbidden = ForbiddenBackend;
+    let request = hosted_request(
+        "what did we decide about the launch date",
+        Effort::Standard,
+        None,
+        Some(&forbidden as &dyn DeepSearchBackend),
+    );
+    let result = scoped.search_with_effort(&request)?;
+
+    assert!(
+        result.signals_used.contains(&"ppr".to_owned()),
+        "{result:?}"
+    );
+    assert!(
+        result.signals_used.contains(&"subqueries".to_owned()),
+        "{result:?}"
+    );
+    assert!(!result.backend_used, "standard is model-free");
+    assert_eq!(result.tokens_used, 0, "standard spends nothing");
+    assert_eq!(
+        result.queries_run,
+        deterministic_subqueries("what did we decide about the launch date"),
+        "the tier runs exactly its own derivation, in order"
+    );
+    assert!(
+        (3..=STANDARD_SUBQUERY_LIMIT).contains(&result.queries_run.len()),
+        "one direct channel plus its derived siblings: {:?}",
+        result.queries_run
+    );
+
+    let ids = hit_ids(&result);
+    assert!(ids.contains(&anchor), "the direct hit survives: {ids:?}");
+    assert!(
+        ids.contains(&neighbor),
+        "the one-hop neighbor joins: {ids:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn standard_is_reproducible_across_calls() -> TestResult {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let query = "what did we decide about the launch date";
+
+    let first = scoped.search_with_effort(&text_request(query, Effort::Standard))?;
+    let second = scoped.search_with_effort(&text_request(query, Effort::Standard))?;
+    assert_eq!(first, second, "a deterministic tier must not drift");
+    Ok(())
+}
+
+// ── Deep ────────────────────────────────────────────────────────────────
+
+#[test]
+fn deep_truncates_and_dedups_an_over_eager_backend() -> TestResult {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+
+    // Eight proposals a round, two of them repeats of the caller's own query:
+    // the engine keeps four distinct new ones and stops after two rounds
+    // however many more the backend would go on offering.
+    let greedy: Vec<String> = [
+        "launch",
+        "launch",
+        "checklist",
+        "inventory",
+        "decision",
+        "date",
+        "stationery",
+        "anchor",
+    ]
+    .iter()
+    .map(|word| (*word).to_owned())
+    .collect();
+    let backend =
+        ScriptedBackend::new(vec![greedy.clone(), greedy.clone(), greedy.clone(), greedy]);
+
+    let request = hosted_request(
+        "launch",
+        Effort::Deep,
+        Some(&lease),
+        Some(&backend as &dyn DeepSearchBackend),
+    );
+    let result = scoped.search_with_effort(&request)?;
+    let standard = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;
+
+    let calls = backend.calls();
+    assert_eq!(
+        calls.decompose, DEEP_MAX_ROUNDS,
+        "the engine stops at its own round cap"
+    );
+    assert_eq!(calls.rerank, 1, "one cross-encoder pass per read");
+    assert!(
+        calls
+            .max_queries_seen
+            .iter()
+            .all(|seen| *seen == DEEP_QUERIES_PER_ROUND),
+        "the per-round cap is stated to the backend: {:?}",
+        calls.max_queries_seen
+    );
+    drop(calls);
+
+    assert!(result.backend_used);
+    assert!(
+        result
+            .signals_used
+            .contains(&"backend_decompose".to_owned()),
+        "{result:?}"
+    );
+    assert!(
+        result.signals_used.contains(&"backend_rerank".to_owned()),
+        "{result:?}"
+    );
+    // Round one keeps four of eight proposals and drops the two repeats of
+    // the caller's own query; round two has only two proposals left that were
+    // not already run. Nothing the backend offered past those survives.
+    assert_eq!(
+        result.queries_run,
+        [
+            "launch",
+            "checklist",
+            "inventory",
+            "decision",
+            "date",
+            "stationery",
+            "anchor",
+        ]
+        .iter()
+        .map(|query| (*query).to_owned())
+        .collect::<Vec<String>>(),
+        "the engine's own truncation and dedupe, visible query by query"
+    );
+    let deep_only = result.queries_run.len() - standard.queries_run.len();
+    assert!(
+        deep_only <= DEEP_MAX_ROUNDS * DEEP_QUERIES_PER_ROUND,
+        "deep ran {deep_only} extra queries past standard"
+    );
+    Ok(())
+}
+
+#[test]
+fn deep_reports_the_summed_backend_spend_not_a_budget() -> TestResult {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+    let backend =
+        ScriptedBackend::new(vec![vec!["checklist".to_owned()], Vec::new()]).with_spend(7, 11);
+
+    let request = hosted_request(
+        "launch",
+        Effort::Deep,
+        Some(&lease),
+        Some(&backend as &dyn DeepSearchBackend),
+    );
+    let result = scoped.search_with_effort(&request)?;
+
+    let decompose_calls = backend.calls().decompose as u64;
+    assert_eq!(
+        result.tokens_used,
+        7 * decompose_calls + 11,
+        "tokens_used is decompose + rerank spend, summed from the backend"
+    );
+    assert!(result.tokens_used > 0);
+    Ok(())
+}
+
+#[test]
+fn deep_rerank_reorders_without_rewriting_engine_scores() -> TestResult {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+
+    let baseline = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;
+    let candidate_count = baseline.hits.len();
+    assert!(candidate_count >= 2, "need a ranking to reorder");
+
+    // Ascending scores over the engine order == an exact reversal.
+    let backend = ScriptedBackend::new(vec![Vec::new()])
+        .with_rerank_scores((0..candidate_count).map(|index| index as f32).collect());
+    let request = hosted_request(
+        "launch",
+        Effort::Deep,
+        Some(&lease),
+        Some(&backend as &dyn DeepSearchBackend),
+    );
+    let result = scoped.search_with_effort(&request)?;
+
+    let mut reversed = hit_ids(&baseline);
+    reversed.reverse();
+    assert_eq!(hit_ids(&result), reversed, "the backend decides the order");
+    for hit in &result.hits {
+        let engine_score = baseline
+            .hits
+            .iter()
+            .find(|candidate| candidate.id == hit.id)
+            .map(|candidate| candidate.score)
+            .expect("same candidate set");
+        assert_eq!(
+            hit.score, engine_score,
+            "rerank scores must not leak into the engine score scale"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deep_refuses_a_rerank_that_does_not_score_every_candidate() {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+    let backend = ScriptedBackend::new(vec![Vec::new()]).with_rerank_scores(vec![1.0]);
+
+    let request = hosted_request(
+        "launch",
+        Effort::Deep,
+        Some(&lease),
+        Some(&backend as &dyn DeepSearchBackend),
+    );
     let error = scoped
-        .search_with_effort(&text_request(Effort::Deep))
-        .unwrap_err();
-    assert!(error.to_string().contains(MEMORY_CODE_LEASE_REQUIRED));
+        .search_with_effort(&request)
+        .expect_err("a mis-sized score vector mis-pairs every candidate");
+    assert!(
+        error.to_string().contains("one score per candidate"),
+        "{error}"
+    );
+}
+
+// ── Refusals ────────────────────────────────────────────────────────────
+
+#[test]
+fn deep_without_a_lease_is_the_existing_lease_required_refusal() {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let backend = ScriptedBackend::new(Vec::new());
+
+    let request = hosted_request(
+        "launch",
+        Effort::Deep,
+        None,
+        Some(&backend as &dyn DeepSearchBackend),
+    );
+    let error = scoped
+        .search_with_effort(&request)
+        .expect_err("deep is lease-gated");
+    assert!(
+        error.to_string().contains(MEMORY_CODE_LEASE_REQUIRED),
+        "the refusal reuses the landed lease vocabulary: {error}"
+    );
     assert_eq!(error.tokens_used, 0);
+    assert_eq!(backend.calls().decompose, 0, "no lease, no host call");
 }
 
 #[test]
-fn retrieval_quality_depth_budget_usage_is_additive_and_idempotent() {
-    let guard = BudgetGuard::with_reserve_units(
-        "depth-quality-settlement",
-        100,
-        10,
-        BudgetExhaustionPolicy::Suspend,
-    );
-    let first = guard.admit().unwrap();
-    let second = guard.admit().unwrap();
-    guard.settle_usage(&first.lease, 3).unwrap();
-    guard.settle_usage(&second.lease, 5).unwrap();
-    guard.settle_usage(&first.lease, 3).unwrap();
-    assert_eq!(guard.read().used_units, 8);
-    assert_eq!(guard.read().reserved_units, 0);
+fn deep_without_a_backend_refuses_rather_than_degrading() {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+
+    let request = hosted_request("launch", Effort::Deep, Some(&lease), None);
+    let error = scoped
+        .search_with_effort(&request)
+        .expect_err("deep is host-injected only");
+    assert!(error.to_string().contains("backend"), "{error}");
 }
+
+#[test]
+fn deep_vector_without_query_text_refuses() {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+    let backend = ScriptedBackend::new(Vec::new());
+    let embedding = vec![0.0_f32; VaultConfig::default().dimensions];
+
+    let ungrounded = DepthSearchRequest {
+        probe: SearchProbe::Vector {
+            embedding: embedding.clone(),
+            query_text: None,
+        },
+        effort: Effort::Deep,
+        limit: 10,
+        session_scope: None,
+        lease: Some(&lease),
+        backend: Some(&backend),
+        token_budget: None,
+    };
+    let error = scoped
+        .search_with_effort(&ungrounded)
+        .expect_err("deep decomposition needs the question, not a float vector");
+    assert!(error.to_string().contains("query text"), "{error}");
+    assert_eq!(backend.calls().decompose, 0, "refused before any host call");
+
+    // The same probe stays open at the tiers that never read the text.
+    for effort in [Effort::Minimal, Effort::Standard] {
+        let request = DepthSearchRequest {
+            probe: SearchProbe::Vector {
+                embedding: embedding.clone(),
+                query_text: None,
+            },
+            effort,
+            limit: 10,
+            session_scope: None,
+            lease: None,
+            backend: None,
+            token_budget: None,
+        };
+        scoped
+            .search_with_effort(&request)
+            .unwrap_or_else(|error| panic!("{effort:?} vector search must stay open: {error}"));
+    }
+}
+
+#[test]
+fn every_effort_refuses_a_zero_limit() {
+    let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+
+    for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
+        let mut request = text_request("launch", effort);
+        request.limit = 0;
+        let error = scoped
+            .search_with_effort(&request)
+            .expect_err("a zero-limit read returns nothing and still costs work");
+        assert!(
+            error.to_string().contains("at least 1"),
+            "{effort:?}: {error}"
+        );
+    }
+}
+
+// ── Admission ───────────────────────────────────────────────────────────
+
+/// A claim the actor-keyed door refuses stays refused at EVERY effort,
+/// including the deep tier whose extra rounds a host drives. The expansion,
+/// the fan-out and the backend's own queries all run through the same
+/// admitted channels, so no tier can be dialed into a read that minimal would
+/// not have allowed.
+#[test]
+fn no_effort_widens_what_the_actor_keyed_door_admits() -> TestResult {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let subject = entity(0x31);
+    let surfaceable = entity(0x32);
+    let withheld = entity(0x33);
+    let text = "quarterly ledger reconciliation";
+
+    let mut body = ClaimBody::new(
+        "facet.scope_test",
+        ClaimSubject::Entity(subject),
+        Value::from("v"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let open = encode_claim_body(&body)?;
+    body.approval = ClaimApprovalStatus::Proposed;
+    let closed = encode_claim_body(&body)?;
+
+    vault
+        .batch()
+        .put_replicated(&surfaceable, ENTITY_TYPE_CLAIM, range(1), 1, &open)
+        .text(&surfaceable, &[("body", text)])
+        .put_replicated(&withheld, ENTITY_TYPE_CLAIM, range(1), 1, &closed)
+        .text(&withheld, &[("body", text)])
+        .edge(
+            &surfaceable,
+            crate::edge::EdgeKind::Mentions,
+            &withheld,
+            1.0,
+        )
+        .commit()?;
+
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let lease = minted_lease();
+    // A host that keeps asking for exactly the withheld claim's own text.
+    let backend = ScriptedBackend::new(vec![vec![text.to_owned()], vec!["ledger".to_owned()]]);
+
+    for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
+        let request = hosted_request(
+            text,
+            effort,
+            Some(&lease),
+            Some(&backend as &dyn DeepSearchBackend),
+        );
+        let ids = hit_ids(&scoped.search_with_effort(&request)?);
+        assert!(
+            ids.contains(&surfaceable),
+            "{effort:?} must still return the admitted claim: {ids:?}"
+        );
+        assert!(
+            !ids.contains(&withheld),
+            "{effort:?} must not surface a claim the door refuses: {ids:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn session_scope_only_ever_narrows() -> TestResult {
+    let (_dir, vault, anchor, _sibling, _neighbor) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
+    let wide = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;
+    assert!(wide.hits.len() >= 2, "need something to narrow");
+
+    // The empty scope is a no-op: never a widening, and never a wipe.
+    let unchanged = narrow_to_session_scope(&scoped, wide.hits.clone(), &SessionScope::default())?;
+    assert_eq!(unchanged, wide.hits);
+
+    let scope = SessionScope {
+        document_short_ids: vec![short_ref_or_hex(&vault, &anchor)?],
+        ..SessionScope::default()
+    };
+    let narrowed = narrow_to_session_scope(&scoped, wide.hits.clone(), &scope)?;
+    assert_eq!(ids_of(&narrowed), vec![anchor]);
+    assert!(
+        narrowed.len() < wide.hits.len(),
+        "a document scope removes hits"
+    );
+
+    // A scope naming something outside the result set narrows to nothing; it
+    // cannot pull that something in.
+    let absent = SessionScope {
+        document_short_ids: vec!["no-such-short-id".to_owned()],
+        ..SessionScope::default()
+    };
+    assert!(narrow_to_session_scope(&scoped, wide.hits.clone(), &absent)?.is_empty());
+
+    let unknown_world = SessionScope {
+        world_ref: Some(entity(0x51)),
+        ..SessionScope::default()
+    };
+    assert!(narrow_to_session_scope(&scoped, wide.hits, &unknown_world)?.is_empty());
+    Ok(())
+}
+
+mod quality;

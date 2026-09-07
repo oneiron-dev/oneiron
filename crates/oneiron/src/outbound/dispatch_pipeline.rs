@@ -2,6 +2,12 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+mod sender_identity;
+
+pub(crate) use sender_identity::enrich_dispatch_channel_identity;
+#[cfg(test)]
+pub(crate) use sender_identity::resolve_channel_identity_ref_for_connector;
+
 use super::OutboundDeliveryWindowDecision;
 use super::capability::{
     OutboundRetryClass, OutboundVerbContract, normalize_key, outbound_verb_contract,
@@ -22,21 +28,16 @@ use super::window_door::{
     outbound_delivery_window_decision_at_door, outbound_delivery_window_resolution_at_door,
 };
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::calendar::invite::CalendarInvitePayload;
 use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
-use crate::channel_identity::{ChannelIdentityBinding, decode_channel_identity_body};
-use crate::counterparty_contact::normalize_channel_class;
 use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateOutcome};
 use crate::linkedin_connector::LinkedInSeatPolicyAction;
+use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
 use crate::receipt::outbound_intent_receipt;
-use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
-use crate::store::Store;
-use crate::vault::entity_id_from_type_index_key;
 
 /// The bytes one outbound effect freezes: the intent, plus the CA-05 send
 /// hygiene headers derived from that same frozen metadata.
@@ -59,91 +60,48 @@ struct FrozenOutboundPayload<'a> {
     /// byte-identical by reference rather than by re-rendering.
     #[serde(skip_serializing_if = "Option::is_none")]
     calendar_invite: Option<&'a CalendarInvitePayload>,
+    // The intent's display actor is not its gate principal. Freeze the actual
+    // authority and sender in the existing ledger payload, including an absent
+    // sender. Neither the gate audit nor the TASK stores this complete binding.
+    actor_class: &'a str,
+    actor_ref: Option<&'a str>,
+    actor_entity_ref: Option<String>,
+    channel_identity_ref: Option<String>,
+    counterparty_ref: Option<&'a str>,
+    has_opted_in: bool,
+    has_permission: bool,
+    // Preserve the caller's dial too: a manifest can map both values to the
+    // same effective risk, but that must not make different requests replayable.
+    requested_policy_risk: &'a str,
+    policy_risk: &'a str,
+    originating_session_ref: Option<&'a str>,
 }
 
 /// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OutboundDispatchPipeline;
 
-/// Resolves the OF-347 channel identity a connector key sends through.
+/// The `gate_outcome` value naming a send parked on a human decision.
+pub(super) const GATE_OUTCOME_PENDING: &str = "pending";
+/// Receipt field carrying the connector provider's own stated cool-down, in
+/// whole seconds from the dispatch instant.
+pub(super) const PROVIDER_RETRY_AFTER_FIELD: &str = "provider_retry_after";
+/// The execution field a connector adapter surfaces its cool-down on. Named
+/// for the provider header it comes from, so an adapter reports what the
+/// provider said rather than a value this engine invented.
+pub(super) const PROVIDER_RETRY_AFTER_EXECUTION_FIELD: &str = "retry_after";
+
+/// Whole seconds a provider asked this send to wait, if it asked at all.
 ///
-/// ONE-1868 leg 2, pure ENRICHMENT: the opt-out verdict rests on
-/// `(counterparty, channel_class)`, never on this value. Nothing new is minted —
-/// the governing connector key (OF-277) names the sending actor, and the
-/// ChannelIdentity bound to that actor on the connector's channel is the
-/// identity that will carry the send. Missing, unregistered, inactive, or
-/// AMBIGUOUS all resolve to `None`: an arbitrary pick would put a
-/// nondeterministic identity on the receipt, which is worse than none.
-pub(crate) fn resolve_channel_identity_ref_for_connector(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    connector_key: &str,
-    actor_entity_ref: Option<&EntityId>,
-) -> crate::Result<Option<EntityId>> {
-    let connector = normalize_key(connector_key);
-    let Some((_, key_record)) =
-        crate::connector_key::governing_connector_key(store, txn, &connector, actor_entity_ref)?
-    else {
-        return Ok(None);
-    };
-    let Some(bound_actor) = key_record
-        .actor_entity_ref
-        .or_else(|| actor_entity_ref.copied())
-    else {
-        return Ok(None);
-    };
-
-    let channel_class = normalize_channel_class(connector_key);
-    let mut resolved = None;
-    for entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
-    {
-        let (key, _) = entry?;
-        let id = entity_id_from_type_index_key(&key)?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-            return Err(Error::CorruptedIndex("channel identity entity row"));
-        };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
-            return Err(Error::CorruptedIndex("channel identity entity header"));
-        };
-        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-            return Err(Error::CorruptedIndex("channel identity entity type"));
-        }
-        let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        // `may_send` rather than `state == Active`: a `delegated_grant` row is
-        // a scoped-READ grant over a mailbox the product does not own, and it
-        // reaches ACTIVE like any other row. Selecting one as the sender of an
-        // outbound effect would be sending AS the member on an authority we
-        // were never given.
-        if !identity.may_send()
-            || normalize_channel_class(&identity.channel) != channel_class
-            || identity.binding != ChannelIdentityBinding::agent(bound_actor)
-        {
-            continue;
-        }
-        if resolved.is_some() {
-            return Ok(None);
-        }
-        resolved = Some(id);
-    }
-    Ok(resolved)
-}
-
-/// An explicit channel identity always wins; otherwise resolve it cheaply.
-pub(crate) fn enrich_dispatch_channel_identity(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    connector_key: &str,
-    actor_entity_ref: Option<&EntityId>,
-    explicit: Option<EntityId>,
-) -> crate::Result<Option<EntityId>> {
-    match explicit {
-        some @ Some(_) => Ok(some),
-        None => {
-            resolve_channel_identity_ref_for_connector(store, txn, connector_key, actor_entity_ref)
-        }
-    }
+/// A blank, negative, fractional, or otherwise unparseable value is NOT a
+/// cool-down: it is dropped here so a malformed provider string can never
+/// become a re-arm instant. The connector's raw text still reaches the receipt
+/// unchanged, so the drop stays auditable.
+fn provider_retry_after_secs(execution: &OutboundExecutionOutcome) -> Option<u64> {
+    execution
+        .receipt_fields
+        .get(PROVIDER_RETRY_AFTER_EXECUTION_FIELD)
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 impl OutboundDispatchPipeline {
@@ -192,15 +150,44 @@ impl OutboundDispatchPipeline {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+        let idempotency_supported = !matches!(
+            verb_contract.retry_class,
+            OutboundRetryClass::NonIdempotentInterrupt
+        );
 
-        // ONE-1868 leg 2. Every shipping constructor (facade bridge, connector
-        // task executor, direct dispatch) leaves `channel_identity_ref` unset,
-        // so resolve it ONCE here — the pipeline all three funnel through —
-        // rather than at each call site. Enrichment only: the opt-out verdict
-        // below rests on `(counterparty, channel_class)` either way. The read
-        // txn is scoped to this block so none is open when the stages below
-        // take their write txns.
-        request.channel_identity_ref = {
+        // Find the logical attempt BEFORE consulting today's sender set. A
+        // stable ref is only a lookup key, never authority to replay a different
+        // request. The exact frozen binding is checked below and again by New
+        // at the chokepoint; Resume alone would skip that request check.
+        let ledger_identity_ref = request
+            .ledger_identity_ref
+            .as_deref()
+            .unwrap_or(&request.intent_ref);
+        let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
+        let replay = {
+            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+            read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
+        };
+        let invalid_replay = || {
+            OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
+                "outbound dispatch replay does not match its admitted binding",
+            ))
+        };
+        request.channel_identity_ref = if let Some(record) = replay.as_ref() {
+            let frozen: serde_json::Value =
+                serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
+            let sender = match frozen.get("channel_identity_ref") {
+                Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(value)) => {
+                    Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
+                }
+                _ => return Err(invalid_replay()),
+            };
+            if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
+                return Err(invalid_replay());
+            }
+            sender
+        } else {
             let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
             enrich_dispatch_channel_identity(
                 &vault.store,
@@ -210,7 +197,6 @@ impl OutboundDispatchPipeline {
                 request.channel_identity_ref,
             )?
         };
-
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
         // The live claims are read once, here, at execute time. No schedule-time
         // window verdict is persisted or replayed.
@@ -279,6 +265,62 @@ impl OutboundDispatchPipeline {
                 .as_ref()
                 .is_none_or(|decision| matches!(decision.action, LinkedInSeatPolicyAction::Allow));
 
+        let payload = if admit_for_execution || replay.is_some() {
+            let mut hygiene_headers = BTreeMap::new();
+            inject_campaign_email_hygiene_headers(
+                &normalize_key(&request.intent.channel),
+                &mut hygiene_headers,
+                request.campaign_unsubscribe.as_ref(),
+            )?;
+            let payload = serde_json::to_vec(&FrozenOutboundPayload {
+                intent: &request.intent,
+                hygiene_headers,
+                calendar_invite: request.calendar_invite.as_ref(),
+                actor_class: &request.actor.actor_class,
+                actor_ref: request.actor.actor_ref.as_deref(),
+                actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
+                channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
+                counterparty_ref: request.counterparty_ref.as_deref(),
+                has_opted_in: request.gate.has_opted_in,
+                has_permission: request.gate.has_permission,
+                requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
+                policy_risk: policy_risk.as_str(),
+                originating_session_ref: request.originating_session_ref.as_deref(),
+            })
+            .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
+            if let Some(record) = replay.as_ref() {
+                if record.server != request.intent.channel
+                    || record.tool != verb_contract.kind
+                    || record.payload() != payload.as_slice()
+                    || record.idempotency_supported != idempotency_supported
+                    || !record.budget_accounting.budget_class.is_send()
+                    || record.resolved_endpoint.is_some()
+                    || record.authorization_binding.is_some()
+                    || record.capability_provenance().is_some()
+                {
+                    return Err(invalid_replay());
+                }
+                // New validates this only at admission. A facade retry must still
+                // name its bound actor, not borrow the original actor's authority.
+                if let Some((actor, actor_class)) = verified_actor {
+                    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+                    let entity_type = vault
+                        .get_entity_type_in_txn(&rtxn, &actor)?
+                        .ok_or(OutboundDispatchError::InvalidBoundActor)?;
+                    crate::provenance::validate_actor_class(entity_type, actor_class)?;
+                    if request.actor.actor_entity_ref != Some(actor)
+                        || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+                        || request.actor.actor_class != actor_class.gate_actor_class()
+                    {
+                        return Err(OutboundDispatchError::InvalidBoundActor);
+                    }
+                }
+            }
+            Some(payload)
+        } else {
+            None
+        };
+
         let mut engine_receipt_fields = BTreeMap::new();
         let mut engine_policy_trace = Vec::new();
         let linkedin_action = linkedin_decision.take().map(|decision| {
@@ -298,46 +340,15 @@ impl OutboundDispatchPipeline {
             outcome,
             execution,
         ) = if admit_for_execution {
-            // CA-05: the unsubscribe headers are derived ONCE, here, from the
-            // metadata this send is about to freeze — before the gate runs and
-            // long before any connector sees the call. A retry replays these
-            // bytes instead of re-deriving, which is what makes the headers
-            // byte-identical rather than merely equivalent.
-            let mut hygiene_headers = BTreeMap::new();
-            inject_campaign_email_hygiene_headers(
-                &normalize_key(&request.intent.channel),
-                &mut hygiene_headers,
-                request.campaign_unsubscribe.as_ref(),
-            )?;
-            let payload = serde_json::to_vec(&FrozenOutboundPayload {
-                intent: &request.intent,
-                hygiene_headers,
-                calendar_invite: request.calendar_invite.as_ref(),
-            })
-            .map_err(|_| {
-                OutboundDispatchError::Engine(Error::InvariantViolation(
-                    "outbound intent freeze failed",
-                ))
-            })?;
-            // The ledger/charge identity follows the stable logical-send ref
-            // when the caller supplies one, so fresh retries of the same logical
-            // send collapse onto one paid intent while `intent_ref` stays the
-            // sink-facing scheduled ref.
-            let ledger_identity_ref = request
-                .ledger_identity_ref
-                .as_deref()
-                .unwrap_or(&request.intent_ref);
-            let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
             let prepared = crate::outbound_chokepoint::PreparedEffect {
                 attempt_id,
                 call_seq: 0,
                 server: request.intent.channel.clone(),
                 tool: verb_contract.kind.clone(),
-                payload,
-                idempotency_supported: !matches!(
-                    verb_contract.retry_class,
-                    OutboundRetryClass::NonIdempotentInterrupt
-                ),
+                payload: payload.ok_or(Error::InvariantViolation(
+                    "admitted dispatch has no frozen payload",
+                ))?,
+                idempotency_supported,
                 resolved_endpoint: None,
                 gate: effect,
                 budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
@@ -504,6 +515,18 @@ impl OutboundDispatchPipeline {
             receipt.fields.insert(
                 "gate_receipt_reasons".to_owned(),
                 gate_receipt_reasons.join(","),
+            );
+        }
+        // The provider's own stated cool-down, normalized to whole seconds and
+        // stamped beside the gate evidence rather than mixed into it. Only a
+        // well-formed value is promoted: the connector's raw string still
+        // reaches the receipt verbatim through
+        // `append_execution_receipt_fields`, so this adds a machine-readable
+        // re-arm authority without editing what the provider actually said.
+        if let Some(retry_after) = execution.as_ref().and_then(provider_retry_after_secs) {
+            receipt.fields.insert(
+                PROVIDER_RETRY_AFTER_FIELD.to_owned(),
+                retry_after.to_string(),
             );
         }
         if let Some(effect_state) = effect_state {
@@ -750,7 +773,10 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
         };
-        let execution = self.sink.execute(&execution_request);
+        let mut execution = self.sink.execute(&execution_request);
+        // Only the pipeline may author the normalized re-arm authority, even
+        // when the adapter's raw `retry_after` is missing or malformed.
+        execution.receipt_fields.remove(PROVIDER_RETRY_AFTER_FIELD);
         let outcome = match execution.kind {
             OutboundExecutionOutcomeKind::DeliveredToChannel => {
                 crate::outbound_intent_ledger::OutboundSendOutcome::Acked

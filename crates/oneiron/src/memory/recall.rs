@@ -163,6 +163,72 @@ pub struct MemoryPack {
 }
 
 impl Memory<'_> {
+    /// Minimal recall for an exact-world view, with kind/predicate narrowing
+    /// BEFORE lexical top-k. Uses the same recall assembly and ranking as
+    /// [`Self::recall`]; no authority is inferred from these relevance filters.
+    pub fn recall_view(
+        &self,
+        query: &str,
+        scope: &RecallScope,
+        kind: Option<&str>,
+        predicate: Option<&str>,
+        limit: usize,
+    ) -> MemoryResult<MemoryPack> {
+        if limit == 0 || limit > 1000 {
+            return Err(MemoryError::bad_request(
+                "view limit must be between 1 and 1000",
+            ));
+        }
+        let world = scope
+            .world_ref
+            .as_deref()
+            .map(|reference| self.resolve_ref(reference))
+            .transpose()?;
+        let filter = |store: &crate::store::Store,
+                      txn: &heed::RoTxn<'_>,
+                      id: &EntityId|
+         -> crate::Result<bool> {
+            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+                return Ok(false);
+            };
+            let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                return Ok(false);
+            };
+            if kind.is_some_and(|kind| kind_string_for_type(header.entity_type) != kind) {
+                return Ok(false);
+            }
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Ok(world.is_none() && predicate.is_none());
+            }
+            let Some(body) = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+            else {
+                return Ok(false);
+            };
+            Ok(claim_surfaceable(&body)
+                && body.world == world
+                && predicate.is_none_or(|predicate| body.predicate == predicate))
+        };
+        let mut pack = self.recall_routed(
+            None,
+            query,
+            Effort::Minimal,
+            scope,
+            limit,
+            None,
+            None,
+            Some(&filter),
+        )?;
+        let world_hex = world.map(|id| id.to_hex());
+        pack.items.retain(|item| {
+            item.world == world_hex
+                && kind.is_none_or(|kind| item.kind == kind)
+                && predicate.is_none_or(|predicate| item.predicate.as_deref() == Some(predicate))
+        });
+        Ok(pack)
+    }
+
     /// Effort-dialed retrieval into an S6 `MemoryPack`.
     ///
     /// `Deep` requires a [`BudgetLease`] (W4/C4). No lease-issuer exists at
@@ -182,7 +248,7 @@ impl Memory<'_> {
         format: Option<&str>,
         lease: Option<&BudgetLease>,
     ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(None, query, effort, scope, limit, format, lease)
+        self.recall_routed(None, query, effort, scope, limit, format, lease, None)
     }
 
     /// Recalls FROM INSIDE a session (ONE-1570 Arm B), the retrieval sibling
@@ -218,7 +284,16 @@ impl Memory<'_> {
         format: Option<&str>,
         lease: Option<&BudgetLease>,
     ) -> MemoryResult<MemoryPack> {
-        self.recall_routed(Some(session), query, effort, scope, limit, format, lease)
+        self.recall_routed(
+            Some(session),
+            query,
+            effort,
+            scope,
+            limit,
+            format,
+            lease,
+            None,
+        )
     }
 
     /// The one recall body. `session` is `None` for every canonical caller,
@@ -237,6 +312,7 @@ impl Memory<'_> {
         limit: usize,
         format: Option<&str>,
         lease: Option<&BudgetLease>,
+        candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
     ) -> MemoryResult<MemoryPack> {
         if limit == 0 {
             return Err(MemoryError::bad_request("recall limit must be at least 1"));
@@ -308,6 +384,9 @@ impl Memory<'_> {
                     .search_text(query, limit)
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope);
+                if let Some(filter) = candidate_filter {
+                    pipeline = pipeline.filter_candidates(filter);
+                }
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
@@ -335,6 +414,9 @@ impl Memory<'_> {
                     .search_text(query, limit)
                     .limit(limit)
                     .world(world_scope);
+                if let Some(filter) = candidate_filter {
+                    builder = builder.filter_candidates(filter);
+                }
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
                 }

@@ -587,9 +587,9 @@ pub(super) fn scoped_vector_channel_limit(
     store: &Store,
     rtxn: &RoTxn<'_>,
     requested: usize,
-    codebase_scope_active: bool,
+    scope_widening_active: bool,
 ) -> Result<usize> {
-    if !codebase_scope_active || requested == 0 {
+    if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
     Ok(requested.max(crate::hnsw::hnsw_entity_count(store, rtxn)?))
@@ -599,9 +599,9 @@ pub(super) fn scoped_entity_channel_limit(
     store: &Store,
     rtxn: &RoTxn<'_>,
     requested: usize,
-    codebase_scope_active: bool,
+    scope_widening_active: bool,
 ) -> Result<usize> {
-    if !codebase_scope_active || requested == 0 {
+    if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
     let entity_count = usize::try_from(store.entities.len(rtxn)?)
