@@ -50,6 +50,9 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 20] = [
 ];
 
 const INTENT_LEDGER_PRIVATE_PREFIX: &[u8] = b"outbound:intent_ledger:v2:"; // + id(32)
+// Unique logical call -> immutable intent id, committed with the Pending row.
+const INTENT_ATTEMPT_PREFIX: &[u8] = b"outbound:intent_attempt:v1:"; // + attempt(16) + seq(8)
+const INTENT_ATTEMPT_FORMAT_KEY: &[u8] = b"outbound:intent_attempt_format";
 const BUDGET_ACCOUNTING_KEYS: [&str; 5] = [
     "key_ref",
     "budget_class",
@@ -1210,24 +1213,93 @@ pub(crate) fn read_intent_record(
     vault: &Vault,
     id: &[u8; 32],
 ) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
-    let key = intent_ledger_key(id);
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
-        return Ok(None);
-    };
-    Ok(Some(decode_record(&key, &raw)?))
+    read_intent_record_in_txn(vault, &rtxn, id)
 }
 
 pub(crate) fn read_intent_record_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     id: &[u8; 32],
 ) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
     let key = intent_ledger_key(id);
     let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
         return Ok(None);
     };
-    Ok(Some(decode_record(&key, &raw)?))
+    let record = decode_record(&key, &raw)?;
+    check_intent_attempt_format(vault, txn)?;
+    let attempt_key = intent_attempt_key(record.attempt_id, record.call_seq);
+    let indexed_id = vault.store.vault_meta.get(txn, &attempt_key)?;
+    if indexed_id.as_deref() != Some(id.as_slice()) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent is missing its unique attempt binding",
+        ));
+    }
+    Ok(Some(record))
+}
+
+fn intent_attempt_key(attempt_id: AttemptId, call_seq: u64) -> Vec<u8> {
+    let mut key = INTENT_ATTEMPT_PREFIX.to_vec();
+    key.extend_from_slice(attempt_id.as_bytes());
+    key.extend_from_slice(&call_seq.to_be_bytes());
+    key
+}
+
+fn check_intent_attempt_format(vault: &Vault, txn: &heed::RoTxn<'_>) -> IntentLedgerResult<()> {
+    match vault.store.vault_meta.get(txn, INTENT_ATTEMPT_FORMAT_KEY)? {
+        Some(version) if version.as_ref() == b"1" => return Ok(()),
+        Some(_) => {
+            return Err(IntentLedgerError::InvalidRecord(
+                "invalid outbound attempt index format",
+            ));
+        }
+        None => {}
+    }
+    // No pre-release compatibility reader: an unindexed ledger is not empty.
+    // Probe only the first key; never decode unrelated rows on a dispatch path.
+    for prefix in [INTENT_LEDGER_PRIVATE_PREFIX, INTENT_ATTEMPT_PREFIX] {
+        if vault
+            .store
+            .vault_meta
+            .prefix_iter(txn, prefix)?
+            .next()
+            .transpose()?
+            .is_some()
+        {
+            return Err(IntentLedgerError::InvalidRecord(
+                "outbound attempt index is missing",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Exact logical-call lookup. Admission repeats this read under its write lock.
+/// A corrupt pointer or target fails closed, without inspecting unrelated calls.
+pub(crate) fn read_intent_for_attempt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
+    check_intent_attempt_format(vault, txn)?;
+    let key = intent_attempt_key(attempt_id, call_seq);
+    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let id: IntentId = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| IntentLedgerError::InvalidRecord("invalid outbound attempt index target"))?;
+    let record = read_intent_record_in_txn(vault, txn, &id)?.ok_or(
+        IntentLedgerError::InvalidRecord("outbound attempt index target is missing"),
+    )?;
+    if record.attempt_id != attempt_id || record.call_seq != call_seq {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound attempt index binding mismatch",
+        ));
+    }
+    Ok(Some(record))
 }
 
 #[cfg(test)]
@@ -1235,10 +1307,10 @@ fn insert_pending_or_read(
     vault: &Vault,
     pending: &IntentLedgerRecord,
 ) -> IntentLedgerResult<(IntentLedgerRecord, bool)> {
-    let key = intent_ledger_key(&pending.id);
     let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
-    if let Some(raw) = vault.store.vault_meta.get(&wtxn, &key)? {
-        let existing = decode_record(&key, &raw)?;
+    if let Some(existing) =
+        read_intent_for_attempt_in_txn(vault, &wtxn, pending.attempt_id, pending.call_seq)?
+    {
         drop(wtxn);
         // A prior commit may be visible even if its force-sync reported an
         // error. Replay cannot send until the existing intent is durable.
@@ -1246,9 +1318,7 @@ fn insert_pending_or_read(
         return Ok((existing, true));
     }
 
-    validate_record(&key, pending)?;
-    let encoded = encode_record(pending)?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+    insert_pending_in_txn(vault, &mut wtxn, pending)?;
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
     Ok((pending.clone(), false))
@@ -1264,6 +1334,12 @@ pub(crate) fn insert_pending_in_txn(
             "only outcome-free Pending may be inserted",
         ));
     }
+    if read_intent_for_attempt_in_txn(vault, wtxn, pending.attempt_id, pending.call_seq)?.is_some()
+    {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound attempt already has an admitted binding",
+        ));
+    }
     let key = intent_ledger_key(&pending.id);
     if vault.store.vault_meta.get(&*wtxn, &key)?.is_some() {
         return Err(IntentLedgerError::InvalidRecord(
@@ -1273,6 +1349,15 @@ pub(crate) fn insert_pending_in_txn(
     validate_record(&key, pending)?;
     let encoded = encode_record(pending)?;
     vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, INTENT_ATTEMPT_FORMAT_KEY, b"1")?;
+    vault.store.vault_meta.put(
+        wtxn,
+        &intent_attempt_key(pending.attempt_id, pending.call_seq),
+        &pending.id,
+    )?;
     Ok(())
 }
 
