@@ -15331,14 +15331,18 @@ mod auto_checker {
     /// projection classifies the parked row as a checker hedge.
     #[test]
     fn checker_hold_falls_to_proposed() -> Result<()> {
-        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let (_tmp, vault) = temp_vault();
+        // Restricted lineage includes source/sensitivity even for Proposed
+        // writes. Withhold the permit so setup genuinely parks on source trust.
+        let mut setup_manifest = checker_manifest(vec![checker_entry(CHECKER_REF)]);
+        rewrite_policy_manifest_entries(&mut setup_manifest, |entries| {
+            entries.retain(|(key, _)| key.as_str() != Some(POLICY_SOURCE_TRUST_KEY));
+        });
+        put_policy_manifest_bytes(&vault, test_id(0x22), &setup_manifest)?;
         let claim_id = test_id(0x34);
         let body = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
         let (candidate, envelope) = dreamer_parts(&vault, &body)?;
 
-        // The ordinary Proposed write omits source/sensitivity from its gate
-        // input. Generated lineage still requires a permit, so landed main
-        // parks it as PendingSourceTrust before any checker is injected.
         vault
             .batch()
             .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
@@ -15348,8 +15352,13 @@ mod auto_checker {
         assert_eq!(setup_pending.len(), 1);
         assert_eq!(setup_pending[0].reason_codes, ["gate.pending.source_trust"]);
 
-        // This door includes source/sensitivity, so the explicit permit now
-        // makes the ordinary verdict Auto; the checker alone narrows it.
+        // Add the explicit public Generated permit to the same manifest. The
+        // ordinary verdict is now Auto; only the checker narrows it to Pending.
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
         let body = vault.get_claim(&claim_id)?.expect("proposal landed");
         let checker = Arc::new(RecordingAutoChecker::hold());
         let bounded_checker = BoundedAutoChecker::new(checker.clone());
@@ -15550,7 +15559,7 @@ mod auto_checker {
         rewrite_policy_manifest_entries(&mut data, |entries| {
             entries.retain(|(key, _)| key.as_str() != Some(POLICY_SOURCE_TRUST_KEY));
             if let Some(actor) = permit_actor {
-                let mut permit = source_trust_entry(ClaimSource::Observed, 0);
+                let mut permit = source_trust_entry(ClaimSource::ToolOutput, 0);
                 let Value::Map(sources) = &mut permit.1 else {
                     panic!("source-trust fixture is a map");
                 };
