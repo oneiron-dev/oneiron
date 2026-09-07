@@ -100,6 +100,8 @@ const MAX_CREDENTIAL_HANDLES: usize = 32;
 const MAX_ALLOWED_HOSTS: usize = 256;
 const MAX_CHECKPOINT_FRONTIER_ENTRIES: usize = 1024;
 const MAX_CHECKPOINT_FRONTIER_ENTRY_LEN: usize = 1024;
+// Keep terminal retries within attempt_queue::validate's failure-reason bound.
+const MAX_STOP_REASON_LEN: usize = 2048;
 
 /// Bytes a shell would interpret. An argv-only door refuses them in `program`
 /// so a caller cannot smuggle a shell fragment through the one field that
@@ -539,6 +541,8 @@ const ERR_EXECUTION_CHECKOUT: &str = "byoa execution requires a live matching ch
 const ERR_ARTIFACT_COLLISION: &str = "byoa exhaust artifact is not owned by this capture";
 const ERR_RUNTIME_ACTOR_COLLISION: &str = "byoa runtime actor is not the canonical identity";
 const ERR_CAPTURE_CONFLICT: &str = "byoa capture conflicts with the canonical result";
+const ERR_STOP_REASON_EMPTY: &str = "failure reason must not be empty";
+const ERR_STOP_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
 const ERR_CHECKPOINT_FRONTIER: &str = "byoa checkpoint frontier entry is unbounded or unprintable";
 const ERR_ATTEMPT_MISSING: &str = "missing";
 const ERR_RESULT_REF_SHAPE: &str = "byoa result reference is not artifact@version shaped";
@@ -712,6 +716,7 @@ pub struct CaptureByoaExhaust {
     pub exhaust: ByoaExhaust,
     /// Why the executor stopped. Failed and abandoned captures use a default
     /// when omitted; a supplied reason must satisfy the queue's reason bounds.
+    /// Retries must match the stored reason after applying that default.
     /// Advisory for the other dispositions.
     pub reason: Option<String>,
     pub now: u64,
@@ -1025,6 +1030,7 @@ where
         request: CaptureByoaExhaust,
     ) -> ByoaResult<ByoaTerminalReceipt> {
         validate_exhaust(&request.exhaust)?;
+        let reason = normalize_capture_reason(request.disposition, request.reason)?;
         if request.lease_owner.is_empty() || request.lease_owner.len() > 128 {
             return Err(invalid(ERR_CAPTURE_CONFLICT));
         }
@@ -1089,6 +1095,13 @@ where
             if !record.state.is_terminal() || existing_ref != &result_ref {
                 return Err(invalid(ERR_CAPTURE_CONFLICT));
             }
+            if matches!(
+                envelope.disposition,
+                ByoaTerminalDisposition::Failed | ByoaTerminalDisposition::Abandoned
+            ) && record.last_error.as_deref() != Some(reason.as_str())
+            {
+                return Err(invalid(ERR_CAPTURE_CONFLICT));
+            }
             validate_canonical_capture(
                 self.vault,
                 wtxn,
@@ -1147,9 +1160,7 @@ where
                     id: request.attempt_id,
                     lease_owner: envelope.lease_owner.clone(),
                     attempt_count: envelope.attempt_count,
-                    reason: request
-                        .reason
-                        .unwrap_or_else(|| BYOA_DEFAULT_FAILURE_REASON.to_owned()),
+                    reason,
                     now: request.now,
                 },
             )? {
@@ -1178,9 +1189,7 @@ where
                     lease_owner: envelope.lease_owner.clone(),
                     attempt_count: envelope.attempt_count,
                     result_ref: result_ref.clone(),
-                    reason: request
-                        .reason
-                        .unwrap_or_else(|| BYOA_DEFAULT_ABANDON_REASON.to_owned()),
+                    reason,
                     now: request.now,
                 },
             )? {
@@ -1226,6 +1235,35 @@ pub const BYOA_DEFAULT_FAILURE_REASON: &str = "foreign executor failed";
 
 /// Stamped on an abandonment whose caller supplied no reason.
 pub const BYOA_DEFAULT_ABANDON_REASON: &str = "foreign executor stopped without delivering";
+
+fn normalize_capture_reason(
+    disposition: ByoaTerminalDisposition,
+    reason: Option<String>,
+) -> ByoaResult<String> {
+    let reason = match disposition {
+        ByoaTerminalDisposition::Failed => {
+            reason.unwrap_or_else(|| BYOA_DEFAULT_FAILURE_REASON.to_owned())
+        }
+        ByoaTerminalDisposition::Abandoned => {
+            reason.unwrap_or_else(|| BYOA_DEFAULT_ABANDON_REASON.to_owned())
+        }
+        ByoaTerminalDisposition::Completed | ByoaTerminalDisposition::Cancelled => {
+            return Ok(String::new());
+        }
+    };
+    // Match queue admission on every request, including read-only retries.
+    if reason.is_empty() {
+        return Err(ByoaError::Store(Error::InvalidAttemptQueueRecord(
+            ERR_STOP_REASON_EMPTY,
+        )));
+    }
+    if reason.len() > MAX_STOP_REASON_LEN {
+        return Err(ByoaError::Store(Error::InvalidAttemptQueueRecord(
+            ERR_STOP_REASON_TOO_LONG,
+        )));
+    }
+    Ok(reason)
+}
 
 /// The one artifact every capture for this attempt appends to.
 ///

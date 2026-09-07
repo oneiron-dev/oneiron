@@ -1,5 +1,7 @@
 //! Successor Qodo regressions for terminal custody and runtime attribution.
 
+mod stop_reasons;
+
 use super::*;
 use crate::attempt_queue::{
     AcceptAttemptLanding, AttemptCancelReceiptKind, CancelMode, CancelStanding, ForceAttemptCancel,
