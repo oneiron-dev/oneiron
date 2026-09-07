@@ -101,7 +101,10 @@ pub(crate) fn lfs_routes() -> Router<Arc<SyncServer>> {
                 .post(lfs_upload)
                 .layer(DefaultBodyLimit::max(LFS_MAX_OBJECT_BYTES)),
         )
-        .route("/git/{repo}/info/lfs/objects/{oid}/verify", post(lfs_verify))
+        .route(
+            "/git/{repo}/info/lfs/objects/{oid}/verify",
+            post(lfs_verify),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -638,7 +641,9 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            headers.get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            headers
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
             Some(LFS_JSON_MEDIA_TYPE),
             "the batch answer is git-lfs JSON"
         );
@@ -656,7 +661,10 @@ mod tests {
             object["actions"]["verify"]["href"],
             format!("http://origin.invalid{}/verify", object_uri(&oid)).as_str()
         );
-        assert!(object.get("error").is_none(), "a live upload is not an error");
+        assert!(
+            object.get("error").is_none(),
+            "a live upload is not an error"
+        );
     }
 
     #[tokio::test]
@@ -738,7 +746,11 @@ mod tests {
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "a digest mismatch is refused");
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a digest mismatch is refused"
+        );
         assert_eq!(
             server.vault.lfs_object(claimed).expect("record read"),
             None,
@@ -779,7 +791,9 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
-            headers.get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            headers
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
             Some(LFS_OBJECT_MEDIA_TYPE)
         );
         assert_eq!(body, bytes, "download returns the uploaded bytes exactly");

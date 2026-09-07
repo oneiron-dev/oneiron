@@ -106,6 +106,11 @@ pub(crate) struct PolicyManifestResolution {
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     comm_opt_out_posture: Option<CommOptOutPosture>,
+    /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
+    /// never stored here — only the manifest's selector for it. Injection
+    /// rides the write door's own options, so no host object is ever reachable
+    /// from a resolved manifest.
+    auto_checker: Option<String>,
     budget_policy: BudgetPolicyTable,
 }
 
@@ -138,6 +143,17 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
         self.comm_opt_out_posture.unwrap_or_default()
+    }
+
+    /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no
+    /// manifest names one.
+    ///
+    /// Presence is the whole meaning: it is what arms the write door's consult.
+    /// The engine never interprets the string, and the checker itself is
+    /// supplied per-write rather than resolved from here.
+    #[must_use]
+    pub(crate) fn auto_checker(&self) -> Option<&str> {
+        self.auto_checker.as_deref()
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
@@ -725,6 +741,14 @@ fn hash_policy_frontier_v0(
     // opted-out send holds or ships, so flipping it must move the frontier and
     // invalidate every standing grant bound to the old one.
     hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
+    // names a checker keeps its exact no-checker frontier hash — and every
+    // consent binding taken against it stays valid. A domain tag rides with
+    // the value so no future optional field can collide with this one.
+    if let Some(auto_checker) = resolution.auto_checker.as_deref() {
+        hash_str(hasher, "auto_checker");
+        hash_str(hasher, auto_checker);
+    }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
@@ -1097,6 +1121,19 @@ pub(crate) fn resolve_policy_manifest(
                             .comm_opt_out_posture
                             .map_or(posture, |existing| existing.restrict(posture)),
                     );
+                }
+                // One checker per vault (ONE-1296), folded exactly like the
+                // budget policy above: the first value wins, a second manifest
+                // stating the SAME ref is one configuration written twice, and
+                // two manifests naming different checkers is a policy state
+                // nothing downstream could resolve — so it fails closed rather
+                // than picking a winner.
+                if let Some(auto_checker) = decoded.auto_checker {
+                    match &resolution.auto_checker {
+                        None => resolution.auto_checker = Some(auto_checker),
+                        Some(existing) if *existing == auto_checker => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
                 }
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in

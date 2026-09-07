@@ -157,6 +157,11 @@ pub struct Vault {
     /// rewrites the manifest. Reopening cleanly also restores trust via
     /// the regular handshake path.
     pub(crate) text_index_trusted: std::sync::atomic::AtomicBool,
+    /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
+    /// state mutex and nothing else: the fixed-order drop transaction and the
+    /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no
+    /// outbound callback, no timer handle and no second connection owner.
+    pub(crate) slim: crate::slim::SlimController,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a
@@ -384,6 +389,9 @@ impl Vault {
             config,
             analyzer,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            // Every vault opens FULL; only an explicit ctl-driven shed parks
+            // it, and only an inbound resume unparks it.
+            slim: crate::slim::SlimController::default(),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]

@@ -6,6 +6,8 @@ use serde_json::Map;
 use serde_json::Value;
 use tower::ServiceExt;
 
+mod mcp_source_gate;
+
 const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT: &str =
     include_str!("../../tests/fixtures/v1_core_openapi_contract.snapshot.json");
 const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT_PATH: &str = concat!(
@@ -1576,6 +1578,16 @@ async fn mcp_edit_propose_claim_persists_gate_decision_with_forced_stamp() {
         .expect("MCP write must persist a Gate decision");
     assert_eq!(decision.outcome, "allow");
     assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+    // Apply must agree with the recorded preflight allow, not leave a pending
+    // proposal behind after evaluating a different source/sensitivity input.
+    assert!(
+        server
+            .vault
+            .pending_gate_consents(10)
+            .expect("pending consent after MCP write")
+            .iter()
+            .all(|pending| pending.claim_id != *claim_id.as_bytes())
+    );
     assert_eq!(decision.actor_class, "human");
     assert_eq!(
         decision.actor_ref.as_deref(),
