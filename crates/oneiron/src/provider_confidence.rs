@@ -343,7 +343,7 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
 /// Opens ONE write transaction because a read may REPAIR a stale shortcut (see
 /// the module docs' index model). NO NESTING: `with_write_txn` takes the LMDB
 /// writer mutex first, so callers already holding a transaction must reach
-/// [`effective_confidence_in_txn`] instead of this door.
+/// `effective_confidence_in_txn` instead of this door.
 pub fn effective_confidence(vault: &Vault, claim_ref: &EntityId) -> Result<f32> {
     vault.with_write_txn(|wtxn| {
         let mut prior_memo = ProviderPriorMemo::default();

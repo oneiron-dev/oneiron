@@ -29,7 +29,7 @@
 //!
 //! [`admit_calendar_invite`] runs exact decode → emit/state validation →
 //! vault-only hygiene hydration → hygiene evaluation, and hands back a
-//! [`CalendarInviteAdmission`] whose [`CalendarInviteAdmission::commit_in_txn`]
+//! [`CalendarInviteAdmission`] whose `CalendarInviteAdmission::commit_in_txn`
 //! joins the caller's existing durable transaction. That is what makes "no
 //! bumped sequence survives without its frozen intent" true by construction:
 //! the passport head and the attempt/TASK land in one write transaction or
@@ -60,7 +60,7 @@ use crate::temporal::TimeRange;
 ///
 /// Equal to [`crate::memory::CALENDAR_INVITE_OUTBOUND_CHANNEL`] by law — CAL-09
 /// pinned the surface to CAL-04's spelling before CAL-04 existed, and
-/// [`tests::verb_and_channel_match_the_cal_09_surface_constants`] keeps the two
+/// `tests::verb_and_channel_match_the_cal_09_surface_constants` keeps the two
 /// from drifting.
 pub const CALENDAR_INVITE_CHANNEL: &str = "calendar";
 
@@ -340,7 +340,7 @@ pub enum CalendarInviteStateChange {
 /// One admitted invite: the state move plus everything the durable commit needs.
 ///
 /// Produced by [`admit_calendar_invite`] and consumed by
-/// [`CalendarInviteAdmission::commit_in_txn`] inside the caller's transaction.
+/// `CalendarInviteAdmission::commit_in_txn` inside the caller's transaction.
 #[derive(Debug, Clone)]
 pub struct CalendarInviteAdmission {
     event_ref: EntityId,

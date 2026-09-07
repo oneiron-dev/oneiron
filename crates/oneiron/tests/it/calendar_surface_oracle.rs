@@ -23,9 +23,12 @@
 //!
 //! ## Normal criticality is not source permission
 //!
-//! `gate::default_policy_manifest()` gives `calendar.` normal criticality and
-//! sensitivity. It does not grant Imported source trust. A Human actor's
-//! Approved request still needs an explicit, actor-bound source permit.
+//! `gate::default_policy_manifest()` resolves criticality from an allow-list of
+//! predicate prefixes and defaults everything else to `critical`. `calendar.`
+//! carries its own prefix rule (`criticality: normal`, `sensitivity: normal`),
+//! so calendar writes need no criticality override. It does not grant Imported
+//! source trust. A Human actor's Approved request still needs an explicit,
+//! actor-bound source permit at the unchanged unstamped floor.
 //!
 //! [`calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest`]
 //! first pins the distinction on an unchanged default vault: Imported + Approved
@@ -122,9 +125,10 @@ fn envelope(actor: EntityId, approval: ClaimApprovalStatus) -> WriteEnvelope {
 }
 
 /// Stores one calendar EVENT and its family through the ordinary claim
-/// candidate door at `approval`, against the default predicate policy. Callers
-/// explicitly install their actor's Imported source permit; Proposed claims
-/// keep their review status.
+/// candidate door at `approval`, against the default predicate policy plus
+/// the fixture actor's explicit Imported source permit. Callers install that
+/// permit beside the unchanged default manifest; Proposed claims keep their
+/// review status.
 fn store_calendar_event(
     vault: &Vault,
     actor: EntityId,

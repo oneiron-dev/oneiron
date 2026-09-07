@@ -14,7 +14,7 @@
 //!    or recovered — is published by a single `update-ref --stdin` transaction
 //!    whose durable intent was written first, so a crash is always recoverable
 //!    and a partial multi-ref result is never certified.
-//! 4. **The boundary is closed.** [`spawn_git`] is the crate's only production
+//! 4. **The boundary is closed.** `spawn_git` is the crate's only production
 //!    git process constructor: a pinned executable, a cleared environment, a
 //!    fixed config policy that disables every repository-configured program,
 //!    bounded runtime and output, and redacted failures.

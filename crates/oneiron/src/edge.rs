@@ -114,7 +114,7 @@ pub enum EdgeKind {
     /// a brief that happens to discharge an obligation is not evidence that
     /// the two share retrieval relevance. It carries no stored-weight prior
     /// — the validated door writes an explicit `1.0` — and both generic
-    /// public doors reject it ([`validate_public_edge_kind`]), leaving
+    /// public doors reject it (`validate_public_edge_kind`), leaving
     /// `commitment_lifecycle::link_brief_fulfillment` as the sole writer.
     Fulfills = 25,
     /// Inverse traversal edge: this commitment is discharged BY the target

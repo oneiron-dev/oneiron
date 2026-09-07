@@ -44,7 +44,14 @@ pub struct SystemRoute;
 
 impl RouteSource for SystemRoute {
     fn output_route(&self) -> OutputRoute {
-        detect().unwrap_or(OutputRoute::Other)
+        #[cfg(target_os = "macos")]
+        {
+            detect().unwrap_or(OutputRoute::Other)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            detect()
+        }
     }
 }
 
@@ -122,8 +129,8 @@ fn detect() -> super::Result<OutputRoute> {
 /// is simply unknown, and unknown is `Other` — the recorder never guesses its
 /// way to a bypass.
 #[cfg(not(target_os = "macos"))]
-fn detect() -> super::Result<OutputRoute> {
-    Ok(OutputRoute::Other)
+fn detect() -> OutputRoute {
+    OutputRoute::Other
 }
 
 #[cfg(test)]
