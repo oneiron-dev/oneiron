@@ -130,6 +130,29 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
     Ok(resolved)
 }
 
+/// The `gate_outcome` value naming a send parked on a human decision.
+pub(super) const GATE_OUTCOME_PENDING: &str = "pending";
+/// Receipt field carrying the connector provider's own stated cool-down, in
+/// whole seconds from the dispatch instant.
+pub(super) const PROVIDER_RETRY_AFTER_FIELD: &str = "provider_retry_after";
+/// The execution field a connector adapter surfaces its cool-down on. Named
+/// for the provider header it comes from, so an adapter reports what the
+/// provider said rather than a value this engine invented.
+pub(super) const PROVIDER_RETRY_AFTER_EXECUTION_FIELD: &str = "retry_after";
+
+/// Whole seconds a provider asked this send to wait, if it asked at all.
+///
+/// A blank, negative, fractional, or otherwise unparseable value is NOT a
+/// cool-down: it is dropped here so a malformed provider string can never
+/// become a re-arm instant. The connector's raw text still reaches the receipt
+/// unchanged, so the drop stays auditable.
+fn provider_retry_after_secs(execution: &OutboundExecutionOutcome) -> Option<u64> {
+    execution
+        .receipt_fields
+        .get(PROVIDER_RETRY_AFTER_EXECUTION_FIELD)
+        .and_then(|value| value.trim().parse::<u64>().ok())
+}
+
 /// An explicit channel identity always wins; otherwise resolve it cheaply.
 pub(crate) fn enrich_dispatch_channel_identity(
     store: &Store,
@@ -506,6 +529,18 @@ impl OutboundDispatchPipeline {
                 gate_receipt_reasons.join(","),
             );
         }
+        // The provider's own stated cool-down, normalized to whole seconds and
+        // stamped beside the gate evidence rather than mixed into it. Only a
+        // well-formed value is promoted: the connector's raw string still
+        // reaches the receipt verbatim through
+        // `append_execution_receipt_fields`, so this adds a machine-readable
+        // re-arm authority without editing what the provider actually said.
+        if let Some(retry_after) = execution.as_ref().and_then(provider_retry_after_secs) {
+            receipt.fields.insert(
+                PROVIDER_RETRY_AFTER_FIELD.to_owned(),
+                retry_after.to_string(),
+            );
+        }
         if let Some(effect_state) = effect_state {
             receipt
                 .fields
@@ -750,7 +785,10 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
         };
-        let execution = self.sink.execute(&execution_request);
+        let mut execution = self.sink.execute(&execution_request);
+        // Only the pipeline may author the normalized re-arm authority, even
+        // when the adapter's raw `retry_after` is missing or malformed.
+        execution.receipt_fields.remove(PROVIDER_RETRY_AFTER_FIELD);
         let outcome = match execution.kind {
             OutboundExecutionOutcomeKind::DeliveredToChannel => {
                 crate::outbound_intent_ledger::OutboundSendOutcome::Acked
