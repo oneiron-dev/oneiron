@@ -67,13 +67,13 @@ pub struct OutboundDispatchPipeline;
 
 /// Resolves the OF-347 channel identity a connector key sends through.
 ///
-/// ONE-1868 leg 2, pure ENRICHMENT: the opt-out verdict rests on
+/// ONE-1868 leg 2, optional enrichment: the opt-out verdict rests on
 /// `(counterparty, channel_class)`, never on this value. Nothing new is minted —
 /// the governing connector key (OF-277) names the sending actor, and the
 /// ChannelIdentity bound to that actor on the connector's channel is the
-/// identity that will carry the send. Missing, unregistered, inactive, or
-/// AMBIGUOUS all resolve to `None`: an arbitrary pick would put a
-/// nondeterministic identity on the receipt, which is worse than none.
+/// identity that will carry the send. Missing, unregistered, or inactive
+/// identities resolve to `None`. Multiple eligible identities instead return
+/// [`Error::InvalidConfig`]: automatic selection must not send without a unique sender.
 pub(crate) fn resolve_channel_identity_ref_for_connector(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -123,7 +123,10 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
             continue;
         }
         if resolved.is_some() {
-            return Ok(None);
+            return Err(Error::InvalidConfig(
+                "ambiguous outbound sender: multiple eligible channel identities; select an explicit channel_identity_ref"
+                    .to_owned(),
+            ));
         }
         resolved = Some(id);
     }
@@ -196,8 +199,9 @@ impl OutboundDispatchPipeline {
         // ONE-1868 leg 2. Every shipping constructor (facade bridge, connector
         // task executor, direct dispatch) leaves `channel_identity_ref` unset,
         // so resolve it ONCE here — the pipeline all three funnel through —
-        // rather than at each call site. Enrichment only: the opt-out verdict
-        // below rests on `(counterparty, channel_class)` either way. The read
+        // rather than at each call site. Absence is valid; ambiguity refuses
+        // before side effects. The opt-out verdict below still rests on
+        // `(counterparty, channel_class)` either way. The read
         // txn is scoped to this block so none is open when the stages below
         // take their write txns.
         request.channel_identity_ref = {
