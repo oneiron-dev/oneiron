@@ -23,7 +23,7 @@ use crate::store::{
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{
-    WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, SourceLineage, WriteActor, WriteEnvelope,
+    SourceLineage, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope,
 };
 
 use super::ceiling::PolicyApprovalCeiling;

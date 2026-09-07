@@ -15688,8 +15688,7 @@ mod auto_checker {
                 "history never relabels the candidate"
             );
             assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
-            let request =
-                crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
+            let request = crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
             let crate::llm::ContentPart::Text { text } = &request.messages[1].content[0] else {
                 panic!("checker request must carry candidate text");
             };

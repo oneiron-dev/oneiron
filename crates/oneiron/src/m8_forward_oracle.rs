@@ -35,14 +35,14 @@ use crate::agent_def::{
     AgentCeiling, AgentDefinition, AgentScope, CompactionOwnership, MemoryProfile,
     encode_agent_definition,
 };
-use crate::compaction::{
-    CompactionBackend, CompactionBackendRegistry, CompactionProduct, CompactionRequest,
-    CompactionTierClass,
-};
 use crate::anchored_annotation::{Anchor, Locator, ThreadState};
 use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::compaction::{
+    CompactionBackend, CompactionBackendRegistry, CompactionProduct, CompactionRequest,
+    CompactionTierClass,
+};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

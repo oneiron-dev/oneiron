@@ -89,6 +89,8 @@ fn booking_actor(vault: &Vault) -> EntityId {
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"booking actor")
         .expect("put actor");
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(vault, actor)
+        .expect("authorize this CAL ingest actor's Imported source");
     actor
 }
 

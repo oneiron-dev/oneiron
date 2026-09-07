@@ -1471,14 +1471,8 @@ fn full_profile() -> MemoryProfile {
 
 fn profile_entries() -> Vec<(Value, Value)> {
     vec![
-        (
-            Value::from("window_token_budget"),
-            Value::from(8_000_u64),
-        ),
-        (
-            Value::from("compaction_backend"),
-            Value::from("cheap.slm"),
-        ),
+        (Value::from("window_token_budget"), Value::from(8_000_u64)),
+        (Value::from("compaction_backend"), Value::from("cheap.slm")),
         (Value::from("compaction"), Value::from("engine")),
     ]
 }
@@ -1581,9 +1575,7 @@ fn budget_split_elides_when_absent() {
 fn profile_sub_map_strict_decode_rejection_matrix() {
     let invalid = |bytes: &[u8], why: &str| {
         assert_eq!(
-            decode_agent_definition(bytes)
-                .expect_err(why)
-                .kind(),
+            decode_agent_definition(bytes).expect_err(why).kind(),
             ErrorKind::InvalidAgentDefBody,
             "{why}"
         );
