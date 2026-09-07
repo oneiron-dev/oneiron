@@ -32,8 +32,8 @@ pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
-// No production backend/prompt/budget owner is constructed by this daemon yet.
-// Keep the integration private and inert until that owner supplies the bindings.
+// Process-local driver attachment only; this adds no HTTP/MCP route.
+// The stream/output owner still has to supply production serve prerequisites.
 #[cfg(unix)]
 #[cfg_attr(
     not(test),
@@ -42,7 +42,8 @@ pub mod usage;
         reason = "private voice bindings are host-injected; no provider factory in this daemon"
     )
 )]
-mod voice_host;
+#[doc(hidden)]
+pub mod voice_host;
 
 use std::sync::Arc;
 
