@@ -885,7 +885,7 @@ pub(crate) fn ppr_query_in_txn_with_community_deferred_cache(
 /// The same read snapshot and actual boosted IDs survive until final selection.
 /// Membership is metadata only: this state can never introduce a candidate.
 pub(crate) struct CommunityPprDiversity {
-    snapshot: crate::ppr_community::CommunitySnapshot,
+    view: crate::ppr_community::CommunityQueryView,
     boosted: std::collections::BTreeSet<EntityId>,
 }
 
@@ -896,11 +896,7 @@ impl CommunityPprDiversity {
         limit: usize,
         config: &crate::config::PprCommunityConfig,
     ) -> Result<()> {
-        let cache = crate::ppr_community::PprCommunityCache::new(
-            &self.snapshot,
-            self.snapshot.meta.graph_version,
-        )
-        .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
+        let cache = self.view.cache();
         crate::ppr_community::apply_community_diversity(
             scores,
             &cache,
@@ -942,7 +938,7 @@ fn ppr_community_query_in_txn(
     defer_diversity: bool,
 ) -> Result<CommunityPprOutput> {
     use crate::ppr_community::{
-        CommunityBoostReport, PprCommunityCache, apply_community_prior, boost_community_scores,
+        CommunityBoostReport, CommunityQueryView, apply_community_prior, boost_community_scores,
         community_cache_identity,
     };
     let config = &request.config.ppr_community;
@@ -990,26 +986,27 @@ fn ppr_community_query_in_txn(
         ));
     }
     let version = read_graph_version(store, txn)?;
-    let previous = store.ppr_community_snapshot_in_txn(txn)?;
-    let needs_refresh = previous
-        .as_ref()
-        .is_none_or(|snapshot| snapshot.meta.graph_version != version);
+    let metadata = store.ppr_community_meta_in_txn(txn)?;
+    let needs_refresh = metadata.is_none_or(|(meta, _)| meta.graph_version != version);
     let snapshot = if needs_refresh {
-        // No complete changed frontier is available on the query path. Unknown
-        // churn must use the full fallback rather than guessing from seeds.
-        store
-            .compute_ppr_communities_in_txn(
-                txn,
-                previous.as_ref(),
-                &[],
-                crate::unix_seconds_now(),
-                config,
-            )?
-            .0
+        // Only missing/stale snapshots take the whole-family validation and
+        // full graph projection path. Unknown churn cannot use seed frontiers.
+        let previous = store.ppr_community_snapshot_in_txn(txn)?;
+        Some(
+            store
+                .compute_ppr_communities_in_txn(
+                    txn,
+                    previous.as_ref(),
+                    &[],
+                    crate::unix_seconds_now(),
+                    config,
+                )?
+                .0,
+        )
     } else {
-        previous.ok_or(Error::CorruptedIndex("ppr community cache"))?
+        None
     };
-    let identity = community_cache_identity(config.beta, snapshot.meta.graph_version)
+    let identity = community_cache_identity(config.beta, version)
         .map_err(|error| Error::InvalidConfig(error.to_string()))?;
     let (mut scores, mut write) = ppr_query_in_txn_with_identity(
         store,
@@ -1026,8 +1023,20 @@ fn ppr_community_query_in_txn(
             community_identity: identity,
         },
     )?;
-    let cache = PprCommunityCache::new(&snapshot, version)
-        .map_err(|_| Error::CorruptedIndex("ppr community cache"))?;
+    let selected = request
+        .context
+        .ordered_seeds
+        .iter()
+        .chain(&scores)
+        .map(|row| row.id)
+        .collect();
+    let view = if let Some(snapshot) = &snapshot {
+        CommunityQueryView::from_snapshot(snapshot, &selected)
+            .map_err(|_| Error::CorruptedIndex("ppr community cache"))?
+    } else {
+        store.ppr_community_query_view_in_txn(txn, &selected)?
+    };
+    let cache = view.cache();
     let (report, boosted) = if defer_diversity {
         boost_community_scores(&mut scores, &cache, request.context, config)
     } else {
@@ -1052,10 +1061,10 @@ fn ppr_community_query_in_txn(
             state: None,
             community_snapshot: None,
         });
-        pending.community_snapshot = Some(snapshot.clone());
+        pending.community_snapshot = snapshot;
     }
     let diversity = (defer_diversity && report.activated_communities > 0)
-        .then_some(CommunityPprDiversity { snapshot, boosted });
+        .then_some(CommunityPprDiversity { view, boosted });
     Ok(CommunityPprOutput {
         scores,
         write,

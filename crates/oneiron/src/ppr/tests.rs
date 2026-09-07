@@ -3959,3 +3959,267 @@ fn community_pipeline_adapter_zero_preserves_original_state_and_key_without_cont
     }
     Ok(())
 }
+
+#[test]
+fn ppr_community_indexed_hot_query_ignores_unrelated_rows_but_full_refresh_rejects_them()
+-> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity { id: entity(1), score: 1.0 }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext { ordered_seeds: &seeds, result_limit: 10, session_usage: &usage };
+    let (expected, _) = community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    let key = format!("ppr_community_cache:v0:node:{}", entity(100).to_hex());
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(&mut txn, key.as_bytes(), b"corrupt")?;
+    txn.commit()?;
+    let (actual, _) = community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+    assert_eq!(actual, expected);
+    {
+        let txn = vault.store.env.read_txn()?;
+        assert!(vault.store.ppr_community_snapshot_in_txn(&txn).is_err());
+    }
+    // Stale snapshots still validate the entire previous family before refresh.
+    vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
+    assert!(community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context).is_err());
+    assert!(vault.refresh_ppr_communities(&[], 44).is_err());
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_accessed_corruption_fails_before_any_publish() -> Result<()> {
+    use crate::ppr_community::CommunityBoostContext;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity { id: entity(1), score: 1.0 }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext { ordered_seeds: &seeds, result_limit: 10, session_usage: &usage };
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot")
+    };
+    let membership = original.nodes[&entity(1)];
+    let node = |id: EntityId| format!("ppr_community_cache:v0:node:{}", id.to_hex()).into_bytes();
+    let members = |id: crate::ppr_community::CommunityId| format!("ppr_community_cache:v0:members:{}", id.to_hex()).into_bytes();
+    let encoded = original.encode_rows().expect("rows");
+    let mut wrong_node = encoded[&node(entity(1))].clone();
+    wrong_node[..16].copy_from_slice(original.nodes[&entity(3)].fine.as_bytes());
+    let mut reversed = encoded[&members(membership.fine)].clone();
+    reversed.rotate_left(16);
+    let mut reserved = encoded[&members(membership.fine)].clone();
+    reserved[..16].fill(0);
+    let mut wrong_count = encoded[b"ppr_community_cache:v0:meta".as_slice()].clone();
+    wrong_count[21..29].copy_from_slice(&100_001_u64.to_le_bytes());
+    let mutations = [
+        (node(entity(1)), Some(b"truncated".to_vec())),
+        (node(entity(2)), None), // accessed member backlink, not a seed
+        (node(entity(2)), Some(wrong_node)),
+        (node(entity(3)), Some(b"bad candidate".to_vec())), // PPR candidate, not seed
+        (node(entity(3)), None), // missing live singleton must not become unknown
+        (members(membership.fine), None),
+        (members(membership.fine), Some(reversed)),
+        (members(membership.fine), Some(reserved)),
+        (b"ppr_community_cache:v0:meta".to_vec(), Some(wrong_count)),
+        (b"ppr_community_cache:v0:meta".to_vec(), None),
+    ];
+    for (key, value) in mutations {
+        let mut txn = vault.store.env.write_txn()?;
+        vault.store.replace_ppr_community_cache_in_txn(&mut txn, &original)?;
+        if let Some(value) = value {
+            vault.store.vault_meta.put(&mut txn, &key, &value)?;
+        } else {
+            vault.store.vault_meta.delete(&mut txn, &key)?;
+        }
+        txn.commit()?;
+        let before = count_entries(&vault.store.ppr_cache, &vault)?;
+        assert!(matches!(
+            community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context),
+            Err(Error::CorruptedIndex(_))
+        ), "{}", String::from_utf8_lossy(&key));
+        assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_view_tracks_supplied_transaction_not_latest_commit() -> Result<()> {
+    use crate::ppr_community::{CommunityBoostContext, CommunitySnapshot};
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity { id: entity(1), score: 1.0 }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext { ordered_seeds: &seeds, result_limit: 10, session_usage: &usage };
+    let query = |txn: &RoTxn<'_>| ppr_query_in_txn_with_community_deferred_cache(
+        &vault.store, txn, CommunityPprRequest {
+            seeds: &[entity(1)], depth: 1, teleport_alpha: 0.15,
+            weighting: SeedWeighting::Uniform, config: &config, context: &context,
+        },
+    );
+    let old_read = vault.store.env.read_txn()?;
+    let original = vault.store.ppr_community_snapshot_in_txn(&old_read)?.expect("original");
+    let (expected, _, _) = query(&old_read)?;
+    let singletons: Vec<_> = original.nodes.keys().map(|&id| vec![id]).collect();
+    let replacement = CommunitySnapshot::from_partitions(original.meta, &singletons, &singletons)
+        .expect("same-version different partition");
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault.store.replace_ppr_community_cache_in_txn(&mut txn, &replacement)?;
+        let (changed, _, _) = query(&txn)?;
+        assert_ne!(changed, expected, "read-your-writes must use replacement");
+        // Abort must not install any reusable query state.
+    }
+    assert_eq!(query(&old_read)?.0, expected);
+    {
+        let txn = vault.store.env.read_txn()?;
+        assert_eq!(query(&txn)?.0, expected);
+    }
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault.store.replace_ppr_community_cache_in_txn(&mut txn, &replacement)?;
+        txn.commit()?;
+    }
+    assert_eq!(query(&old_read)?.0, expected, "old read sees old same-version rows");
+    {
+        let txn = vault.store.env.read_txn()?;
+        assert_ne!(query(&txn)?.0, expected, "new read sees committed replacement");
+    }
+    vault.put_edge(&entity(1), EdgeKind::About, &entity(3), 1.0)?;
+    assert_eq!(query(&old_read)?.0, expected, "old graph and metadata stay paired");
+    {
+        let txn = vault.store.env.read_txn()?;
+        let (_, pending, _) = query(&txn)?;
+        let pending = pending.expect("stale full refresh");
+        assert!(pending.community_snapshot.is_some());
+        assert_eq!(pending.graph_version, read_graph_version(&vault.store, &txn)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_hot_query_work_is_independent_of_unrelated_community_rows() -> Result<()> {
+    use crate::ppr_community::{CommunityBoostContext, CommunitySnapshot};
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot")
+    };
+    let mut config = vault.config.clone();
+    config.ppr_community.beta = 0.2;
+    let seeds = [ScoredEntity { id: entity(1), score: 1.0 }];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext { ordered_seeds: &seeds, result_limit: 10, session_usage: &usage };
+    let mut expected = None;
+    for extra in [0_u32, 2_000] {
+        let mut fine: std::collections::BTreeMap<_, Vec<_>> = std::collections::BTreeMap::new();
+        let mut coarse: std::collections::BTreeMap<_, Vec<_>> = std::collections::BTreeMap::new();
+        for (&id, m) in &original.nodes {
+            fine.entry(m.fine).or_default().push(id);
+            coarse.entry(m.coarse).or_default().push(id);
+        }
+        let mut fine: Vec<_> = fine.into_values().collect();
+        let mut coarse: Vec<_> = coarse.into_values().collect();
+        for n in 0..extra {
+            let mut bytes = [0xdd; 16];
+            bytes[12..].copy_from_slice(&n.to_be_bytes());
+            let id = EntityId::from_bytes(bytes)?;
+            fine.push(vec![id]);
+            coarse.push(vec![id]);
+        }
+        let snapshot = CommunitySnapshot::from_partitions(original.meta, &fine, &coarse).expect("snapshot");
+        let mut txn = vault.store.env.write_txn()?;
+        vault.store.replace_ppr_community_cache_in_txn(&mut txn, &snapshot)?;
+        txn.commit()?;
+        vault.store.take_ppr_community_read_work();
+        let (scores, report) = community_query_for_test(&vault, &config, SeedWeighting::Uniform, 1, &context)?;
+        let work = vault.store.take_ppr_community_read_work();
+        assert!(work.0 < 30 && work.1 < 4096, "indexed rows/bytes: {work:?}");
+        assert!(report.boosted_candidates > 0, "use full metadata count, not selected count");
+        if let Some((old_scores, old_work)) = &expected {
+            assert_eq!(&scores, old_scores);
+            assert_eq!(&work, old_work);
+        } else {
+            expected = Some((scores, work));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_views_do_not_cross_vaults_at_equal_graph_versions() -> Result<()> {
+    use crate::ppr_community::CommunitySnapshot;
+    let (_dir_a, a) = open_test_vault_with(VaultConfig::device());
+    let (_dir_b, b) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&a)?;
+    community_ppr_fixture(&b)?;
+    a.refresh_ppr_communities(&[], 42)?;
+    b.refresh_ppr_communities(&[], 42)?;
+    let read_a = a.store.env.read_txn()?;
+    let original = a.store.ppr_community_snapshot_in_txn(&read_a)?.expect("snapshot");
+    let singletons: Vec<_> = original.nodes.keys().map(|&id| vec![id]).collect();
+    let snapshot = CommunitySnapshot::from_partitions(original.meta, &singletons, &singletons).expect("snapshot");
+    let mut write = b.store.env.write_txn()?;
+    assert_eq!(read_graph_version(&a.store, &read_a)?, read_graph_version(&b.store, &write)?);
+    b.store.replace_ppr_community_cache_in_txn(&mut write, &snapshot)?;
+    write.commit()?;
+    let selected = std::collections::BTreeSet::from([entity(1), entity(2)]);
+    let view_a = a.store.ppr_community_query_view_in_txn(&read_a, &selected)?;
+    let read_b = b.store.env.read_txn()?;
+    let view_b = b.store.ppr_community_query_view_in_txn(&read_b, &selected)?;
+    assert_eq!(view_a.nodes[&entity(1)], original.nodes[&entity(1)]);
+    assert_eq!(view_b.nodes[&entity(1)], snapshot.nodes[&entity(1)]);
+    assert_ne!(view_a.nodes[&entity(1)], view_b.nodes[&entity(1)]);
+    Ok(())
+}
+
+#[test]
+fn ppr_community_indexed_nested_members_validate_all_backlinks() -> Result<()> {
+    use crate::ppr_community::CommunitySnapshot;
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    community_ppr_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault.store.ppr_community_snapshot_in_txn(&txn)?.expect("snapshot")
+    };
+    let mut fine = vec![vec![entity(1), entity(2)], vec![entity(3)]];
+    let mut coarse = vec![vec![entity(1), entity(2), entity(3)]];
+    for &id in original.nodes.keys() {
+        if ![entity(1), entity(2), entity(3)].contains(&id) {
+            fine.push(vec![id]);
+            coarse.push(vec![id]);
+        }
+    }
+    let nested = CommunitySnapshot::from_partitions(original.meta, &fine, &coarse).expect("nested");
+    let selected = std::collections::BTreeSet::from([entity(1)]);
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.replace_ppr_community_cache_in_txn(&mut txn, &nested)?;
+    let view = vault.store.ppr_community_query_view_in_txn(&txn, &selected)?;
+    assert_eq!(view.nodes.len(), 1);
+    assert_eq!(view.sizes[&nested.nodes[&entity(1)].fine], 2);
+    assert_eq!(view.sizes[&nested.nodes[&entity(1)].coarse], 3);
+    let encoded = nested.encode_rows().expect("rows");
+    // The unselected third member is in the accessed coarse row. A valid-size
+    // node value that points at another coarse parent is still corruption.
+    let key = format!("ppr_community_cache:v0:node:{}", entity(3).to_hex());
+    let mut wrong = encoded[key.as_bytes()].clone();
+    wrong[16..].copy_from_slice(nested.nodes[&entity(4)].coarse.as_bytes());
+    vault.store.vault_meta.put(&mut txn, key.as_bytes(), &wrong)?;
+    assert!(vault.store.ppr_community_query_view_in_txn(&txn, &selected).is_err());
+    // Likewise, a valid fine row from elsewhere cannot stand in for this group.
+    vault.store.replace_ppr_community_cache_in_txn(&mut txn, &nested)?;
+    let key = format!("ppr_community_cache:v0:members:{}", nested.nodes[&entity(1)].fine.to_hex());
+    vault.store.vault_meta.put(&mut txn, key.as_bytes(), entity(3).as_bytes())?;
+    assert!(vault.store.ppr_community_query_view_in_txn(&txn, &selected).is_err());
+    Ok(())
+}

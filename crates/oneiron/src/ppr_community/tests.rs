@@ -376,7 +376,8 @@ fn cache_roundtrip_uses_only_pinned_logical_keys_and_fixed_metadata() {
             .all(|k| k.starts_with(PPR_COMMUNITY_CACHE_PREFIX.as_bytes()))
     );
     let value = &rows[META_KEY.as_bytes()];
-    assert_eq!(value.len(), 21);
+    assert_eq!(value.len(), 29);
+    assert_eq!(&value[21..29], &100_u64.to_le_bytes());
     assert_eq!(&value[1..9], &7_u64.to_le_bytes());
     assert_eq!(&value[9..13], &1.0_f32.to_le_bytes());
     let key = format!("{PPR_COMMUNITY_CACHE_PREFIX}node:{}", id(1).to_hex()).into_bytes();
@@ -1133,4 +1134,42 @@ fn diversity_large_limit_has_logarithmic_selection_work() {
         let work = DIVERSITY_SELECTION_WORK.with(std::cell::Cell::get);
         assert!(work < n as usize * 256, "selection work={work}");
     }
+}
+
+#[test]
+fn metadata_graph_count_is_writer_derived_bounded_and_full_decode_cross_checked() {
+    let snapshot = fixture();
+    let mut rows = snapshot.encode_rows().expect("rows");
+    let raw = rows.get_mut(META_KEY.as_bytes()).expect("metadata");
+    let (_, count) = CommunityCacheMeta::decode_row(raw, 100).expect("metadata");
+    assert_eq!(count, snapshot.nodes.len());
+    raw[21..29].copy_from_slice(&99_u64.to_le_bytes());
+    assert!(CommunityCacheMeta::decode_row(raw, 100).is_ok());
+    let rows: Vec<_> = rows.into_iter().collect();
+    assert_eq!(CommunitySnapshot::decode_rows(&rows, 7, 100), Err(CommunityError::Cache));
+    for count in [101_u64, u64::MAX] {
+        let mut raw = snapshot.encode_rows().expect("rows")[META_KEY.as_bytes()].clone();
+        raw[21..29].copy_from_slice(&count.to_le_bytes());
+        assert!(CommunityCacheMeta::decode_row(&raw, 100).is_err());
+    }
+}
+
+#[test]
+fn selected_query_view_retains_full_graph_size_and_matches_full_prior() {
+    let snapshot = fixture();
+    let selected = BTreeSet::from([id(1), id(2), id(9)]);
+    let view = CommunityQueryView::from_snapshot(&snapshot, &selected).expect("view");
+    assert_eq!(view.nodes.len(), 3);
+    assert_eq!(view.graph_size, 100);
+    let seeds = [scored(1, 1.0)];
+    let usage = HashMap::new();
+    let context = CommunityBoostContext { ordered_seeds: &seeds, result_limit: 3, session_usage: &usage };
+    let mut expected = vec![scored(1, 1.0), scored(2, 0.8), scored(9, 0.6)];
+    let mut actual = expected.clone();
+    let full = PprCommunityCache::new(&snapshot, 7).expect("full cache");
+    let expected_report = apply_community_prior(&mut expected, &full, &context, &experiment()).expect("prior");
+    let actual_report = apply_community_prior(&mut actual, &view.cache(), &context, &experiment()).expect("prior");
+    assert_eq!(actual, expected);
+    assert_eq!(actual_report, expected_report);
+    assert!(actual_report.boosted_candidates > 0);
 }

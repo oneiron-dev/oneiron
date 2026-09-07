@@ -476,6 +476,62 @@ pub struct CommunityCacheMeta {
     pub generated_at: u64,
 }
 
+impl CommunityCacheMeta {
+    /// The unpublished v0 row also stores a writer-derived graph node count.
+    /// Full decoding checks it against every node; indexed queries trust that
+    /// atomic publication and never substitute the size of their selected view.
+    pub(crate) fn decode_row(value: &[u8], max_nodes: usize) -> Result<(Self, usize)> {
+        if value.len() != 29 {
+            return Err(CommunityError::Cache);
+        }
+        let meta = Self {
+            schema: value[0],
+            graph_version: u64::from_le_bytes(array(&value[1..9])?),
+            gamma: f32::from_le_bytes(array(&value[9..13])?),
+            generated_at: u64::from_le_bytes(array(&value[13..21])?),
+        };
+        let count = usize::try_from(u64::from_le_bytes(array(&value[21..29])?))
+            .map_err(|_| CommunityError::Cache)?;
+        if meta.schema != PPR_COMMUNITY_SCHEMA_VERSION
+            || meta.gamma != PPR_COMMUNITY_CPM_GAMMA
+            || count > max_nodes
+        {
+            return Err(CommunityError::Cache);
+        }
+        Ok((meta, count))
+    }
+}
+
+impl CommunityMembership {
+    pub(crate) fn decode_row(value: &[u8]) -> Result<Self> {
+        if value.len() != 32 {
+            return Err(CommunityError::Cache);
+        }
+        Ok(Self {
+            fine: CommunityId(array(&value[..16])?),
+            coarse: CommunityId(array(&value[16..])?),
+        })
+    }
+}
+
+pub(crate) fn decode_community_members(
+    id: CommunityId,
+    value: &[u8],
+    max_nodes: usize,
+) -> Result<Vec<EntityId>> {
+    if value.is_empty() || !value.len().is_multiple_of(16) || value.len() / 16 > max_nodes {
+        return Err(CommunityError::Cache);
+    }
+    let members = value
+        .chunks_exact(16)
+        .map(|v| EntityId::from_bytes(array(v)?).map_err(|_| CommunityError::Cache))
+        .collect::<Result<Vec<_>>>()?;
+    if members.windows(2).any(|w| w[0] >= w[1]) || CommunityId::from_members(&members)? != id {
+        return Err(CommunityError::Cache);
+    }
+    Ok(members)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommunitySnapshot {
     pub meta: CommunityCacheMeta,
@@ -570,6 +626,7 @@ impl CommunitySnapshot {
         meta.extend(self.meta.graph_version.to_le_bytes());
         meta.extend(self.meta.gamma.to_le_bytes());
         meta.extend(self.meta.generated_at.to_le_bytes());
+        meta.extend((self.nodes.len() as u64).to_le_bytes());
         rows.insert(META_KEY.as_bytes().to_vec(), meta);
         for (entity, m) in &self.nodes {
             let mut value = m.fine.0.to_vec();
@@ -613,15 +670,7 @@ impl CommunitySnapshot {
             }
             let key = std::str::from_utf8(key).map_err(|_| CommunityError::Cache)?;
             if key == META_KEY {
-                if value.len() != 21 {
-                    return Err(CommunityError::Cache);
-                }
-                meta = Some(CommunityCacheMeta {
-                    schema: value[0],
-                    graph_version: u64::from_le_bytes(array(&value[1..9])?),
-                    gamma: f32::from_le_bytes(array(&value[9..13])?),
-                    generated_at: u64::from_le_bytes(array(&value[13..21])?),
-                });
+                meta = Some(CommunityCacheMeta::decode_row(value, max_nodes)?);
             } else if let Some(hex) = key.strip_prefix("ppr_community_cache:v0:node:") {
                 let id = EntityId::from_bytes(hex_id(hex)?).map_err(|_| CommunityError::Cache)?;
                 if value.len() != 32 || nodes.len() >= max_nodes {
@@ -653,8 +702,12 @@ impl CommunitySnapshot {
                 return Err(CommunityError::Cache);
             }
         }
+        let (meta, count) = meta.ok_or(CommunityError::Cache)?;
+        if count != nodes.len() {
+            return Err(CommunityError::Cache);
+        }
         let snapshot = Self {
-            meta: meta.ok_or(CommunityError::Cache)?,
+            meta,
             nodes,
             members,
         };
@@ -799,14 +852,65 @@ fn affected_entities(
     seen
 }
 
+/// Owned, transaction-local selection. Only the Store's indexed validator or a
+/// fully validated snapshot may construct this view. It is never a full family
+/// and must not be published or passed to full-snapshot validation.
+#[derive(Debug, Clone)]
+pub(crate) struct CommunityQueryView {
+    pub(crate) nodes: BTreeMap<EntityId, CommunityMembership>,
+    pub(crate) sizes: BTreeMap<CommunityId, usize>,
+    pub(crate) graph_size: usize,
+}
+
+impl CommunityQueryView {
+    pub(crate) fn from_snapshot(
+        snapshot: &CommunitySnapshot,
+        selected: &BTreeSet<EntityId>,
+    ) -> Result<Self> {
+        snapshot.validate(snapshot.meta.graph_version)?;
+        let nodes: BTreeMap<_, _> = selected
+            .iter()
+            .filter_map(|id| snapshot.nodes.get(id).map(|&m| (*id, m)))
+            .collect();
+        let sizes = nodes
+            .values()
+            .flat_map(|m| [m.fine, m.coarse])
+            .map(|id| (id, snapshot.members[&id].len()))
+            .collect();
+        Ok(Self {
+            nodes,
+            sizes,
+            graph_size: snapshot.nodes.len(),
+        })
+    }
+
+    pub(crate) fn cache(&self) -> PprCommunityCache<'_> {
+        PprCommunityCache {
+            nodes: &self.nodes,
+            sizes: self.sizes.clone(),
+            graph_size: self.graph_size,
+        }
+    }
+}
+
 /// A validated read view. Version must come from the same graph read transaction.
 pub struct PprCommunityCache<'a> {
-    snapshot: &'a CommunitySnapshot,
+    nodes: &'a BTreeMap<EntityId, CommunityMembership>,
+    sizes: BTreeMap<CommunityId, usize>,
+    graph_size: usize,
 }
 impl<'a> PprCommunityCache<'a> {
     pub fn new(snapshot: &'a CommunitySnapshot, graph_version: u64) -> Result<Self> {
         snapshot.validate(graph_version)?;
-        Ok(Self { snapshot })
+        Ok(Self {
+            nodes: &snapshot.nodes,
+            sizes: snapshot
+                .members
+                .iter()
+                .map(|(&id, rows)| (id, rows.len()))
+                .collect(),
+            graph_size: snapshot.nodes.len(),
+        })
     }
 }
 
@@ -851,7 +955,7 @@ pub fn activated_communities(
     if seeds.is_empty() {
         return Ok(active);
     }
-    let membership = |s: &ScoredEntity| cache.snapshot.nodes.get(&s.id).map(|m| m.fine);
+    let membership = |s: &ScoredEntity| cache.nodes.get(&s.id).map(|m| m.fine);
     if (seeds.len() == 1
         || (seeds[0].score > 0.0 && f64::from(seeds[0].score) >= 1.5 * f64::from(seeds[1].score)))
         && let Some(id) = membership(&seeds[0])
@@ -948,12 +1052,12 @@ pub(crate) fn boost_community_scores(
         ..Default::default()
     };
     for &candidate in scores.iter() {
-        let membership = cache.snapshot.nodes.get(&candidate.id).copied();
+        let membership = cache.nodes.get(&candidate.id).copied();
         let mut multiplier = 1.0;
         if let Some(m) = membership.filter(|m| active.contains(&m.fine)) {
             multiplier = community_multiplier(
-                cache.snapshot.members[&m.fine].len(),
-                cache.snapshot.nodes.len(),
+                cache.sizes[&m.fine],
+                cache.graph_size,
                 *context.session_usage.get(&m.fine).unwrap_or(&0),
                 config,
             )?;
@@ -991,7 +1095,7 @@ pub(crate) fn apply_community_diversity(
         .iter()
         .map(|&entity| Ranked {
             entity,
-            membership: cache.snapshot.nodes.get(&entity.id).copied(),
+            membership: cache.nodes.get(&entity.id).copied(),
             boosted: boosted.contains(&entity.id),
         })
         .collect();

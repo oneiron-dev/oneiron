@@ -21,10 +21,10 @@ use super::Store;
 
 // Hard allocation/scan ceilings, not experimental ranking defaults. Fail closed
 // before cloning a corrupt row or allocating an unbounded projection.
-const MAX_COMMUNITY_NODES: usize = 100_000;
+pub(super) const MAX_COMMUNITY_NODES: usize = 100_000;
 const MAX_COMMUNITY_EDGES: usize = 1_000_000;
-const MAX_COMMUNITY_CACHE_BYTES: usize = 64 * 1024 * 1024;
-const COMMUNITY_META_KEY: &[u8] = b"ppr_community_cache:v0:meta";
+pub(super) const MAX_COMMUNITY_CACHE_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const COMMUNITY_META_KEY: &[u8] = b"ppr_community_cache:v0:meta";
 
 fn cache_error(_: crate::ppr_community::CommunityError) -> Error {
     Error::CorruptedIndex("ppr community cache")
@@ -44,6 +44,7 @@ impl Store {
             .prefix_iter(txn, PPR_COMMUNITY_CACHE_PREFIX.as_bytes())?
         {
             let (key, value) = entry?;
+            super::ppr_community_indexed::record_query_read(key.len() + value.len());
             bytes = bytes
                 .checked_add(key.len())
                 .and_then(|n| n.checked_add(value.len()))
@@ -135,6 +136,33 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn ppr_community_live_entity_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if self
+            .sync_state
+            .get(txn, &crate::deletion::local_hard_delete_key(id))?
+            .is_some()
+            || self.entity_deletion_present_in_txn(txn, id, header.learned_at)?
+        {
+            return Ok(false);
+        }
+        if header.entity_type == ENTITY_TYPE_CLAIM {
+            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            if !crate::claim::claim_surfaceable(&body)
+                || body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Materializes only live entity rows and edges with two live endpoints.
     /// Graph-only IDs do not inflate the graph-size safety denominator. Deleted
     /// shells, unpublished claims and lexical index side claims never connect
@@ -159,24 +187,8 @@ impl Store {
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("ppr community entity id"))?,
             )?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if self
-                .sync_state
-                .get(txn, &crate::deletion::local_hard_delete_key(&id))?
-                .is_some()
-                || self.entity_deletion_present_in_txn(txn, &id, header.learned_at)?
-            {
+            if !self.ppr_community_live_entity_in_txn(txn, &id, &raw)? {
                 continue;
-            }
-            if header.entity_type == ENTITY_TYPE_CLAIM {
-                let body =
-                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                if !crate::claim::claim_surfaceable(&body)
-                    || body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT
-                {
-                    continue;
-                }
             }
             entities.insert(id);
         }
