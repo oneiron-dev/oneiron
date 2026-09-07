@@ -969,7 +969,7 @@ fn retrieval_score_breakdown_access_factor_is_backward_compatible_both_ways() ->
 }
 
 #[test]
-fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
+fn context_pack_finalization_preserves_only_surfaced_trace_candidates() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let run_id = RetrievalRunId::now();
     let kept = entity_id(0xD1);
@@ -1005,13 +1005,17 @@ fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
         2,
         vec![RetrievalSignal::Text],
         score_breakdown.clone(),
-        0,
+        2,
         0,
         None,
     )
     .with_trace(Some(RetrievalTrace {
         fork_hash: [0xD0; 32],
-        per_channel: Vec::new(),
+        per_channel: vec![RetrievalTraceChannelRecord {
+            stage: RetrievalTraceStage::PerChannel,
+            signal: RetrievalSignal::Text,
+            candidates: score_breakdown.clone(),
+        }],
         fused: RetrievalTraceStageRecord {
             stage: RetrievalTraceStage::Fused,
             candidates: score_breakdown.clone(),
@@ -1033,16 +1037,28 @@ fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
 
     vault
         .store
-        .finalize_context_pack_retrieval_run(run_id, 10, 0, &[*kept.as_bytes()], None)?;
+        .finalize_context_pack_retrieval_run(run_id, 10, 1, 0, &[*kept.as_bytes()], None)?;
 
     let finalized = vault
         .retrieval_run(run_id)?
         .expect("finalized context-pack run");
+    assert_eq!(finalized.total_in_scope, 1);
+    assert_eq!(finalized.result_ids, vec![*kept.as_bytes()]);
     let trace = finalized.trace.expect("trace remains present");
-    assert_eq!(trace.reranked.candidates.len(), 2);
-    assert_eq!(trace.final_stage.candidates.len(), 1);
-    assert_eq!(trace.reranked.candidates[1].result_id, *dropped.as_bytes());
-    assert_eq!(trace.final_stage.candidates[0].result_id, *kept.as_bytes());
+    let expected = &record.score_breakdown[..1];
+    assert_eq!(trace.per_channel[0].candidates, expected);
+    for stage in [
+        &trace.fused,
+        &trace.blended,
+        &trace.reranked,
+        &trace.final_stage,
+    ] {
+        assert_eq!(stage.candidates, expected, "{:?}", stage.stage);
+    }
+    let forked = vault
+        .retrieval_trace_by_fork_hash(trace.fork_hash)?
+        .expect("filtered trace remains indexed");
+    assert_eq!(forked, trace);
     Ok(())
 }
 
@@ -1105,8 +1121,11 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
 
     vault
         .store
-        .finalize_context_pack_retrieval_run(run_id, 10, 0, &[*kept.as_bytes()], None)?;
+        .finalize_context_pack_retrieval_run(run_id, 10, 2, 0, &[*kept.as_bytes()], None)?;
 
+    let finalized = vault.retrieval_run(run_id)?.expect("published run");
+    assert_eq!(finalized.total_in_scope, 2);
+    assert_eq!(finalized.result_ids, vec![*kept.as_bytes()]);
     assert_eq!(
         vault
             .retrieval_trace_by_fork_hash(fork_hash)?
