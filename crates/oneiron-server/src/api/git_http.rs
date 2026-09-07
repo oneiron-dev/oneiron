@@ -528,6 +528,8 @@ fn rewrite_receive_pack_status(
             match packet.split_first() {
                 Some((1, payload)) => data.extend_from_slice(payload),
                 Some((2, _)) | None => {}
+                // Channel 3 is fatal, even with a complete status and published refs.
+                Some((3, _)) => return None,
                 _ => return None,
             }
         }
@@ -1376,6 +1378,49 @@ mod tests {
         ] {
             assert!(rewrite_receive_pack_status(&invalid, &results).is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn git_http_fatal_sideband_rejects_complete_published_status() {
+        let mut report = landed_report();
+        report.ref_results = vec![smart_http::ReceivePackRefResult {
+            name: "refs/heads/main".to_owned(),
+            status: smart_http::ReceivePackRefStatus::Published,
+        }];
+        let mut payload = vec![1];
+        payload.extend_from_slice(&status_body(&["ok refs/heads/main\n"]));
+        let mut framed = Vec::new();
+        append_status_packet(&mut framed, b"\x02progress\n").expect("progress");
+        append_status_packet(&mut framed, &payload).expect("complete channel one status");
+
+        let mut progress_only = framed.clone();
+        append_status_packet(&mut progress_only, &[]).expect("flush");
+        let mut expected = Vec::new();
+        append_status_packet(&mut expected, &payload).expect("status");
+        append_status_packet(&mut expected, &[]).expect("flush");
+        assert_eq!(
+            rewrite_receive_pack_status(&progress_only, &report.ref_results),
+            Some(expected),
+            "channel two progress is omitted without changing the published status"
+        );
+
+        append_status_packet(&mut framed, b"\x03fatal: /private/vault/data.mdb secret\n")
+            .expect("fatal");
+        append_status_packet(&mut framed, &[]).expect("flush");
+        assert!(rewrite_receive_pack_status(&framed, &report.ref_results).is_none());
+        let response = landed_response(
+            Some(receive_pack_head()),
+            vec![Bytes::from(framed)],
+            Ok(Ok(report)),
+        );
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), GIT_HTTP_MAX_HELD_BYTES)
+            .await
+            .expect("body");
+        assert_eq!(
+            body.as_ref(),
+            b"git per-ref status is unavailable; ref effects may be partial; retry to recover"
+        );
     }
 
     #[tokio::test]
