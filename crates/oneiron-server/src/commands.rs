@@ -525,9 +525,16 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     // `Tcp` is the only variant this path can produce, so unmanaged serve
     // still binds host:port and nothing else.
     let listener = ServeListener::Tcp(addr).bind().await?;
+    let managed::BoundServeListener::Tcp(listener) = listener else {
+        anyhow::bail!("unmanaged serve requires a TCP listener");
+    };
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let app = build_app(sync_server).layer(cors_layer);
-    let result = listener.serve(app).await;
+    let result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
     result?;

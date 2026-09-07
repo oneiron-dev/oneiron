@@ -59,6 +59,8 @@ mod instructions;
 mod lifecycle;
 mod offerability;
 mod page_token;
+mod public;
+mod public_availability;
 mod subject;
 mod transport;
 mod validate;
@@ -73,6 +75,7 @@ pub(crate) use self::instructions::{
 use self::lifecycle::{booking_oracle, run_booking_verb};
 use self::offerability::unoffered_slot_answer;
 pub(crate) use self::page_token::{booking_page_token, resolve_booking_page};
+use self::public::public_booking_router;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;
 use self::validate::validate_operation_shape;
@@ -97,6 +100,7 @@ const _: fn(EntityId) -> String = booking_page_token;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BookingTransport {
     PublicHttp,
+    AnonymousHttp,
     Mcp,
 }
 
@@ -104,6 +108,7 @@ impl BookingTransport {
     const fn as_str(self) -> &'static str {
         match self {
             Self::PublicHttp => "public_http",
+            Self::AnonymousHttp => "anonymous_http",
             Self::Mcp => "mcp",
         }
     }
@@ -153,6 +158,7 @@ pub(crate) fn booking_routes() -> Router<Arc<SyncServer>> {
             post(booking_reschedule),
         )
         .route("/api/booking/{page_token}/cancel", post(booking_cancel))
+        .merge(public_booking_router())
 }
 
 // -------------------------------------------------------------------------
@@ -400,16 +406,27 @@ pub(crate) async fn execute_booking_operation(
     transport: &BookingTransportContext,
 ) -> Result<BookingOperationResponse, ApiError> {
     // ── 1. shape, keys, and the page subject ────────────────────────────
-    let page_ref = resolve_booking_page(server, page_token)?;
+    let public_authority = if transport.transport == BookingTransport::AnonymousHttp {
+        let (page_ref, publication) = public::resolve_public_booking_page(server, page_token)?;
+        Some(oneiron::booking::publication::PublicBookingAuthority { page_ref, publication })
+    } else { None };
+    let page_ref = match &public_authority {
+        Some(authority) => authority.page_ref,
+        None => resolve_booking_page(server, page_token)?,
+    };
+    if let Some(authority) = &public_authority {
+        public_availability::validate_public_request(&authority.publication, &request)?;
+    }
     validate_operation_shape(&request)?;
     check_action_token_page(&server.vault, page_ref, &request)?;
     let now = now_secs()?;
 
     // ── 2. the one admission call ───────────────────────────────────────
     let facts = admission_facts(server, page_ref, &request, transport, now)?;
+    let cache = public_availability::cached_response(server, page_ref, &request, public_authority.as_ref())?;
     let disposition = match &request {
         BookingOperationRequest::Availability(_) => {
-            enforce_slot_list(State(Arc::clone(server)), facts).await?
+            enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(_)) => {
             enforce_hold(State(Arc::clone(server)), facts).await?
@@ -429,30 +446,27 @@ pub(crate) async fn execute_booking_operation(
         return Ok(response);
     }
 
+    if let Some(response) = cache {
+        public_availability::recheck(server, public_authority.as_ref())?;
+        return Ok(response);
+    }
+
     // ── 3, 4, 5. parse, dispatch, project ───────────────────────────────
     match request {
         BookingOperationRequest::Availability(input) => {
-            let constraint = normalize_constraint(input.constraint, now)?;
-            let solved = booking_oracle(server, page_ref, None, now)?.solve(&SolveRequest {
-                event_type: input.event_type,
-                window: input.window,
-                constraint,
-                visitor_tz: input.visitor_tz,
-            })?;
-            let SolveResult { slots, flex_used } = solved;
-            Ok(BookingOperationResponse::Availability { slots, flex_used })
+            public_availability::solve(server, page_ref, input, now, public_authority.as_ref())
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            execute_hold(server, page_ref, input, now).await
+            execute_hold(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
-            execute_confirm(server, page_ref, input, now).await
+            execute_confirm(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Reschedule(input) => {
-            execute_reschedule(server, page_ref, input, now).await
+            execute_reschedule(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Cancel(input) => {
-            execute_cancel(server, page_ref, input, now).await
+            execute_cancel(server, page_ref, input, now, public_authority).await
         }
     }
 }
@@ -526,6 +540,7 @@ async fn execute_hold(
     page_ref: EntityId,
     mut input: BookingHoldInput,
     now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
     // Taken rather than copied: the canonical object is the only constraint
@@ -568,6 +583,7 @@ async fn execute_hold(
         }),
         Some(session_key),
         now,
+        public_authority,
     )
     .await?;
     match receipt {
@@ -594,9 +610,10 @@ async fn execute_confirm(
     page_ref: EntityId,
     input: BookingConfirmInput,
     now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
-    let booker_contact = resolve_booker_contact(server, &input.booker_email, now)?;
+    let booker_contact = resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
     let receipt = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
@@ -607,6 +624,7 @@ async fn execute_confirm(
         }),
         Some(session_key),
         now,
+        public_authority,
     )
     .await?;
     match receipt {
@@ -636,6 +654,7 @@ async fn execute_reschedule(
     _page_ref: EntityId,
     input: BookingRescheduleInput,
     now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let receipt = run_booking_verb(
         server,
@@ -648,6 +667,7 @@ async fn execute_reschedule(
         }),
         None,
         now,
+        public_authority,
     )
     .await?;
     match receipt {
@@ -671,6 +691,7 @@ async fn execute_cancel(
     _page_ref: EntityId,
     input: BookingCancelInput,
     now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let receipt = run_booking_verb(
         server,
@@ -680,6 +701,7 @@ async fn execute_cancel(
         }),
         None,
         now,
+        public_authority,
     )
     .await?;
     match receipt {
@@ -702,34 +724,6 @@ fn unexpected_receipt(verb: &str, receipt: &BookingVerbReceipt) -> ApiError {
 // -------------------------------------------------------------------------
 // Constraint normalization
 // -------------------------------------------------------------------------
-
-/// Replaces caller-supplied constraint input with a canonical object.
-///
-/// A prebuilt object bypasses parsing but still validates and canonicalizes,
-/// so two semantically identical constraints reach the oracle as the same
-/// bytes. Free text goes to ONE-1816's bounded parser and NEVER reaches the
-/// oracle: [`SolveRequest`] has no text field, and this function returns the
-/// parsed object or an error — never the sentence.
-fn normalize_constraint(
-    input: Option<BookingConstraintInput>,
-    _now: u64,
-) -> Result<Option<ConstraintObject>, ApiError> {
-    match input {
-        None => Ok(None),
-        Some(BookingConstraintInput::Object(object)) => {
-            Ok(Some(object.canonicalize().map_err(booking_error)?))
-        }
-        // ONE-1816's parser is one bounded model call over a host-configured
-        // cheap tier. This daemon binds no LLM backend and no budget lease, so
-        // there is nothing to parse WITH — and the fail-closed answer is the
-        // only correct one: forwarding the sentence to the oracle is exactly
-        // what the seam exists to prevent, and inventing a local parser would
-        // be the second parser ONE-1816 forbids.
-        Some(BookingConstraintInput::FreeText(_)) => Err(ApiError::not_implemented(
-            "booking free-text constraint parsing requires a configured constraint parse tier",
-        )),
-    }
-}
 
 // -------------------------------------------------------------------------
 // MCP adapter

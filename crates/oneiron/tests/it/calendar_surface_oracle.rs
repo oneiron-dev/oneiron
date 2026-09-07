@@ -40,6 +40,7 @@
 //! permission — remains pinned by [`calendar_surface_scopes_read_search_and_freebusy`].
 
 use crate::common::entity as test_id;
+use oneiron::calendar::transcript::permit_imported_calendar_source_for_test;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     CalendarInviteMethod, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
@@ -293,7 +294,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
 
     // Only now authorize the same Human actor's Imported source, leaving the
     // default manifest intact and the requested Approved status unchanged.
-    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+    permit_imported_calendar_source_for_test(&vault, actor)
         .expect("authorize this CAL ingest actor's Imported source");
     assert_eq!(
         vault.get_raw(&default_manifest_id).expect("default policy"),
@@ -401,11 +402,8 @@ fn calendar_imported_source_permit_is_actor_bound() {
                     )
                     .expect("put the other permit holder");
             }
-            oneiron::calendar::transcript::permit_imported_calendar_source_for_test(
-                &vault,
-                permitted_actor,
-            )
-            .expect("install the explicit actor-bound Imported permit");
+            permit_imported_calendar_source_for_test(&vault, permitted_actor)
+                .expect("install the explicit actor-bound Imported permit");
         }
         let busy = test_id(BUSY_SEED);
         let claim = claim_id(BUSY_SEED, 1);
@@ -497,7 +495,7 @@ fn calendar_imported_source_permit_is_actor_bound() {
 fn calendar_surface_scopes_read_search_and_freebusy() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
-    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+    permit_imported_calendar_source_for_test(&vault, actor)
         .expect("source permission must not promote Proposed claims");
 
     // Written `proposed` on purpose: this oracle scopes the verbs against a
@@ -706,7 +704,7 @@ fn calendar_invite_draft_is_cal_04s_verb_and_typed_five_field_payload() {
 fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
-    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+    permit_imported_calendar_source_for_test(&vault, actor)
         .expect("permit this fixture actor's Imported calendar claims");
 
     // The pair the preflight used to refuse now resolves in the manifest, and
@@ -802,7 +800,7 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
 fn oneiron_calendar_invite_still_refuses_a_cold_invite() {
     let (_dir, vault) = temp_vault();
     let (actor, facade) = actor_facade(&vault);
-    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+    permit_imported_calendar_source_for_test(&vault, actor)
         .expect("permit this fixture actor's Imported calendar claims");
     // Everything a lawful invite needs EXCEPT a consent basis.
     let event_ref = store_calendar_event(

@@ -300,6 +300,7 @@ fn decode_claim_value_shape(
 #[must_use]
 pub fn is_booking_claim_predicate(predicate: &str) -> bool {
     predicate == BOOKING_EVENT_TYPE_PREDICATE
+        || predicate == crate::booking::publication::BOOKING_PUBLIC_PAGE_PREDICATE
 }
 
 /// One pure-data descriptor row, mirroring ARCH-0057 §4 fields.
@@ -328,13 +329,22 @@ pub struct ClaimClassDescriptorRow {
 /// own — the disclosure rung and the access grant are where consent lives.
 #[must_use]
 pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
-    vec![ClaimClassDescriptorRow {
-        predicate: BOOKING_EVENT_TYPE_PREDICATE,
-        write_class: "ordinary",
-        enforcement: false,
-        restrictive: false,
-        projector_only: false,
-    }]
+    vec![
+        ClaimClassDescriptorRow {
+            predicate: BOOKING_EVENT_TYPE_PREDICATE,
+            write_class: "ordinary",
+            enforcement: false,
+            restrictive: false,
+            projector_only: false,
+        },
+        ClaimClassDescriptorRow {
+            predicate: crate::booking::publication::BOOKING_PUBLIC_PAGE_PREDICATE,
+            write_class: "human_ruled",
+            enforcement: true,
+            restrictive: true,
+            projector_only: false,
+        },
+    ]
 }
 
 /// Validates one `booking.event_type` claim body's subject and value shape.
@@ -346,6 +356,9 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
 ///
 /// [`Error::InvalidClaimBody`] naming the defect.
 pub(crate) fn validate_event_type_claim(body: &ClaimBody) -> Result<()> {
+    if body.predicate == crate::booking::publication::BOOKING_PUBLIC_PAGE_PREDICATE {
+        return crate::booking::publication::validate_public_booking_page_claim(body);
+    }
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(Error::InvalidClaimBody(
             "booking claim subject must be an entity",
@@ -408,26 +421,34 @@ pub(crate) fn load_event_type_config(
     key: &EventTypeKey,
 ) -> std::result::Result<EventTypeConfig, BookingError> {
     let rtxn = vault.store.env.read_txn().map_err(storage_failure)?;
+    load_event_type_config_in_txn(vault, &rtxn, page_ref, key)
+}
 
+pub(super) fn load_event_type_config_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    key: &EventTypeKey,
+) -> std::result::Result<EventTypeConfig, BookingError> {
     let shortcut = vault
         .store
         .vault_meta
-        .get(&rtxn, &event_type_index_key(page_ref, key))
+        .get(rtxn, &event_type_index_key(page_ref, key))
         .map_err(storage_failure)?
         .and_then(|raw| <[u8; 16]>::try_from(raw.as_ref()).ok())
         .and_then(|bytes| EntityId::from_bytes(bytes).ok());
     if let Some(id) = shortcut
-        && let Some(config) = live_config_in_txn(vault, &rtxn, &id, page_ref, key)?
+        && let Some(config) = live_config_in_txn(vault, rtxn, &id, page_ref, key)?
     {
         return Ok(config);
     }
 
     let mut claims = vault
-        .claims_for_subject_in_txn(&rtxn, &page_ref)
+        .claims_for_subject_in_txn(rtxn, &page_ref)
         .map_err(storage_failure)?;
     claims.sort_unstable();
     for id in &claims {
-        if let Some(config) = live_config_in_txn(vault, &rtxn, id, page_ref, key)? {
+        if let Some(config) = live_config_in_txn(vault, rtxn, id, page_ref, key)? {
             return Ok(config);
         }
     }
@@ -455,7 +476,7 @@ fn live_config_in_txn(
     let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, id) else {
         return Ok(None);
     };
-    if !is_booking_claim_predicate(&body.predicate)
+    if body.predicate != BOOKING_EVENT_TYPE_PREDICATE
         || body.subject != ClaimSubject::Entity(page_ref)
         || !claim_surfaceable(&body)
     {
@@ -704,7 +725,7 @@ mod tests {
     #[test]
     fn booking_claim_descriptor_rows_are_complete() {
         let rows = claim_class_descriptors();
-        assert_eq!(rows.len(), 1, "one row per exact predicate");
+        assert_eq!(rows.len(), 2, "one row per exact predicate");
         assert_eq!(rows[0].predicate, BOOKING_EVENT_TYPE_PREDICATE);
         assert!(is_booking_claim_predicate(rows[0].predicate));
         for row in &rows {

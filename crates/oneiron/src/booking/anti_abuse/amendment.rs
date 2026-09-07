@@ -8,7 +8,7 @@ use super::storage::{
     ROW_VERSION_HASH_DOMAIN, decode_row, encode_row, engine_failure, notice_key,
     notice_scan_prefix, refused, rule_row_key, rule_scan_prefix,
 };
-use crate::booking::config::{decode_event_type_claim_value, is_booking_claim_predicate};
+use crate::booking::config::{BOOKING_EVENT_TYPE_PREDICATE, decode_event_type_claim_value};
 use crate::booking::lifecycle::{booking_writer, digest_with, put_meta, read_meta_bytes};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{ClaimSubject, claim_surfaceable};
@@ -343,7 +343,9 @@ fn validate_rule_scope_in_txn(
         else {
             continue;
         };
-        if !is_booking_claim_predicate(&body.predicate)
+        // The booking family also contains publication claims. Only the exact
+        // event-type predicate carries the configuration schema decoded below.
+        if body.predicate != BOOKING_EVENT_TYPE_PREDICATE
             || body.subject != ClaimSubject::Entity(scope.page_ref)
             || !claim_surfaceable(&body)
         {
