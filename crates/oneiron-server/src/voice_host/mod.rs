@@ -10,6 +10,9 @@
 
 mod connection;
 mod extraction;
+mod serve_bindings;
+
+pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -25,7 +28,7 @@ use crate::runtime::RuntimeConfig;
 use extraction::TinyExtractor;
 
 /// Submission-only existing brain/TTS/control seams, not provider executors.
-pub(crate) struct VoiceOutputs<B, T, C> {
+pub struct VoiceOutputs<B, T, C> {
     pub brain: B,
     pub tts: T,
     pub control: C,
@@ -79,6 +82,30 @@ pub struct VoiceHostConfig {
     pub extraction_prompt: String,
     pub session: VoiceSessionConfig,
     pub shutdown: ManagedShutdown,
+    /// Opt-in, one-shot owner connection and real output seams. Leave `None`
+    /// for extraction-only attachment; cloning never duplicates the stream.
+    pub serve_bindings: Option<VoiceServeBindings>,
+}
+
+impl VoiceHostConfig {
+    /// Configures extraction only. Serving stays disabled until the owner sets
+    /// `serve_bindings` with an admitted connection and existing output seams.
+    pub fn new(
+        vault: Arc<oneiron::Vault>,
+        runtime: RuntimeConfig,
+        extraction_prompt: String,
+        session: VoiceSessionConfig,
+        shutdown: ManagedShutdown,
+    ) -> Self {
+        Self {
+            vault,
+            runtime,
+            extraction_prompt,
+            session,
+            shutdown,
+            serve_bindings: None,
+        }
+    }
 }
 
 impl VoiceHost {
