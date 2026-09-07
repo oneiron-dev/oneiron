@@ -42,6 +42,7 @@ mod op_apply;
 mod vault_api;
 mod wire_decode;
 mod wire_encode;
+mod write_authorization;
 
 #[cfg(test)]
 mod tests;

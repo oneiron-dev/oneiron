@@ -182,8 +182,10 @@ impl PersonSubstrate {
 /// the previous head in the same transaction rather than leaving two live
 /// answers to "who is this".
 ///
-/// `writer` is required: an anchor is an assertion about a someone, so it
-/// carries the authenticated author that stamped it.
+/// `writer` must satisfy the canonical human-owner rule in the write
+/// transaction: a live, class-valid human and an active owner binding once
+/// the vault has an authority root. Unrooted vaults retain store-truth owner
+/// semantics. The target must also be an authority-bearing entity.
 pub fn anchor_actor_subject(
     vault: &Vault,
     actor_ref: EntityId,
@@ -231,11 +233,9 @@ fn write_actor_subject_anchor(
     // `actor.*` is a RESERVED namespace, so this rides the crate-internal
     // engine door; `Vault::put_claim` refuses it by design.
     vault.with_write_txn(|wtxn| {
-        if vault.get_entity_type_in_txn(wtxn, &actor_ref)?.is_none() {
-            return Err(Error::InvalidClaimBody(
-                "actor.subject_ref actor must exist",
-            ));
-        }
+        validate_writer_in_txn(vault, wtxn, writer)?;
+        vault.verify_owner_write_actor_in_txn(wtxn, &writer)?;
+        validate_anchor_entities_in_txn(vault, wtxn, actor_ref, subject_ref)?;
         let actual_kind =
             SubjectKind::from_entity_type(vault.get_entity_type_in_txn(wtxn, &subject_ref)?)?;
         if actual_kind != subject_kind {
@@ -243,7 +243,6 @@ fn write_actor_subject_anchor(
                 "actor.subject_ref subject kind mismatch",
             ));
         }
-        validate_writer_in_txn(vault, wtxn, writer)?;
         write_head_in_txn(vault, wtxn, &claim_id, &body, at, Reserved::Yes)
     })?;
     Ok(claim_id)
@@ -399,66 +398,61 @@ fn write_head_in_txn(
 }
 
 /// Onboarding may fill an absent anchor, never replace an existing someone.
-/// Validation, observation, and writing share LMDB's writer lock.
-pub(crate) fn ensure_actor_subject(
+/// The caller verifies authority in this transaction before calling this door.
+/// The read and write share LMDB's writer lock, including across Vault handles.
+pub(crate) fn ensure_actor_subject_in_txn(
     vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     subject: EntityId,
     writer: WriteActor,
     at: u64,
 ) -> Result<()> {
-    vault.with_write_txn(|txn| {
-        if vault.get_entity_type_in_txn(txn, &actor)?.is_none() {
-            return Err(Error::InvalidClaimBody(
-                "actor.subject_ref actor must exist",
-            ));
-        }
-        SubjectKind::from_entity_type(vault.get_entity_type_in_txn(txn, &subject)?)?;
-        validate_writer_in_txn(vault, txn, writer)?;
-        ensure_fact_in_txn(
-            vault,
-            txn,
-            subject_fact(
-                PREDICATE_ACTOR_SUBJECT_REF,
-                actor,
-                Value::from(subject.to_hex()),
-                writer,
-                at,
-            ),
+    validate_anchor_entities_in_txn(vault, txn, actor, subject)?;
+    validate_writer_in_txn(vault, txn, writer)?;
+    ensure_fact_in_txn(
+        vault,
+        txn,
+        subject_fact(
+            PREDICATE_ACTOR_SUBJECT_REF,
+            actor,
+            Value::from(subject.to_hex()),
+            writer,
             at,
-            Reserved::Yes,
-        )
-    })
+        ),
+        at,
+        Reserved::Yes,
+    )
 }
 
 /// An existing meat or malformed substrate is not an absent model fact.
-pub(crate) fn ensure_model_person(
+/// The caller verifies onboarding authority in this same transaction.
+pub(crate) fn ensure_model_person_in_txn(
     vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
     person: EntityId,
     writer: WriteActor,
     at: u64,
 ) -> Result<()> {
-    vault.with_write_txn(|txn| {
-        if vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
-            return Err(Error::InvalidClaimBody(
-                "person.substrate subject must be a PERSON",
-            ));
-        }
-        validate_writer_in_txn(vault, txn, writer)?;
-        ensure_fact_in_txn(
-            vault,
-            txn,
-            subject_fact(
-                PREDICATE_PERSON_SUBSTRATE,
-                person,
-                Value::from(PersonSubstrate::Model.as_str()),
-                writer,
-                at,
-            ),
+    if vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
+        return Err(Error::InvalidClaimBody(
+            "person.substrate subject must be a PERSON",
+        ));
+    }
+    validate_writer_in_txn(vault, txn, writer)?;
+    ensure_fact_in_txn(
+        vault,
+        txn,
+        subject_fact(
+            PREDICATE_PERSON_SUBSTRATE,
+            person,
+            Value::from(PersonSubstrate::Model.as_str()),
+            writer,
             at,
-            Reserved::No,
-        )
-    })
+        ),
+        at,
+        Reserved::No,
+    )
 }
 
 fn ensure_fact_in_txn(
@@ -688,5 +682,37 @@ fn writer_evidence(writer: WriteActor) -> Value {
     ])
 }
 
+fn validate_anchor_entities_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    subject: EntityId,
+) -> Result<()> {
+    let kind = vault.get_entity_type_in_txn(txn, &actor)?.ok_or(Error::InvalidClaimBody(
+        "actor.subject_ref actor must exist",
+    ))?;
+    let class = match kind {
+        ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF => {
+            crate::edge::EdgeActorClass::Agent
+        }
+        crate::registry::ENTITY_TYPE_MACHINE => crate::edge::EdgeActorClass::System,
+        _ => {
+            return Err(Error::InvalidClaimBody(
+                "actor.subject_ref actor must be authority-bearing",
+            ));
+        }
+    };
+    crate::provenance::validate_actor_class(kind, class)?;
+    if !matches!(
+        vault.get_entity_type_in_txn(txn, &subject)?,
+        Some(ENTITY_TYPE_PERSON) | Some(ENTITY_TYPE_ORG)
+    ) {
+        return Err(Error::InvalidClaimBody(
+            "actor.subject_ref subject must be a PERSON or ORG",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

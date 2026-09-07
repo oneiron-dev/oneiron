@@ -11,13 +11,42 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_PLAC
 use crate::temporal::TimeRange;
 use crate::test_util::{entity, open_test_vault_with, seed_agent_definition};
 
-fn test_vault() -> (tempfile::TempDir, Vault) {
+pub(crate) mod authorization;
+
+fn ensure_actor_subject(
+    vault: &Vault,
+    actor: EntityId,
+    subject: EntityId,
+    writer: WriteActor,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        validate_writer_in_txn(vault, txn, writer)?;
+        vault.verify_owner_write_actor_in_txn(txn, &writer)?;
+        ensure_actor_subject_in_txn(vault, txn, actor, subject, writer, at)
+    })
+}
+
+fn ensure_model_person(vault: &Vault, person: EntityId, writer: WriteActor, at: u64) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        validate_writer_in_txn(vault, txn, writer)?;
+        vault.verify_owner_write_actor_in_txn(txn, &writer)?;
+        ensure_model_person_in_txn(vault, txn, person, writer, at)
+    })
+}
+
+fn unrooted_test_vault() -> (tempfile::TempDir, Vault) {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 16 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    let (dir, vault) = open_test_vault_with(cfg);
-    seed(&vault, entity(0x9F), crate::registry::ENTITY_TYPE_MACHINE);
+    open_test_vault_with(cfg)
+}
+
+fn test_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = unrooted_test_vault();
+    seed(&vault, writer().entity_ref(), ENTITY_TYPE_PERSON);
+    authorization::root_owner(&vault, writer(), 0xE1).expect("root owner fixture");
     (dir, vault)
 }
 
@@ -41,7 +70,7 @@ fn seed(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
 }
 
 fn writer() -> WriteActor {
-    WriteActor::new(entity(0x9F), EdgeActorClass::System)
+    WriteActor::new(entity(0x9F), EdgeActorClass::Human)
 }
 
 #[test]
@@ -195,11 +224,12 @@ fn substrate_never_forks_the_entity_kind() -> Result<()> {
 /// Both writes carry the authenticated writer into durable evidence.
 #[test]
 fn writes_stamp_the_authenticated_writer() -> Result<()> {
-    let (_dir, vault) = test_vault();
+    let (_dir, vault) = unrooted_test_vault();
     let person = seed(&vault, entity(0x31), ENTITY_TYPE_PERSON);
     let actor = seed(&vault, entity(0x32), ENTITY_TYPE_AGENT_DEF);
     let author_ref = seed(&vault, entity(0x33), ENTITY_TYPE_PERSON);
     let author = WriteActor::new(author_ref, EdgeActorClass::Human);
+    authorization::root_owner(&vault, author, 0xE7)?;
 
     let anchor_claim = anchor_actor_subject(&vault, actor, person, author, 1_800_000_000)?;
     let substrate_claim =
@@ -298,7 +328,7 @@ fn ambiguous_split_subject_resolves_to_no_determinate_someone() -> Result<()> {
 
 #[test]
 fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
-    let (_dir, vault) = test_vault();
+    let (_dir, vault) = unrooted_test_vault();
     let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
     let person = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
     let anchor = ActorSubjectAnchor {
@@ -307,6 +337,7 @@ fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
         subject_kind: SubjectKind::Person,
     };
     let author = WriteActor::new(person, EdgeActorClass::Human);
+    authorization::root_owner(&vault, author, 0xE8)?;
     let claim_id = vault.set_actor_subject_anchor(anchor, &author, 1_800_000_000)?;
     assert_eq!(vault.actor_subject_anchor(&actor)?, Some(anchor));
     let substrate_id =
@@ -340,6 +371,47 @@ fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
         vault.get_claim(&claim_id)?.expect("old anchor").lifecycle,
         ClaimLifecycleStatus::Active,
     );
+    Ok(())
+}
+
+#[test]
+fn typed_anchor_door_requires_the_same_owner_as_the_free_door() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0xA1), ENTITY_TYPE_AGENT_DEF);
+    let person = seed(&vault, entity(0xA2), ENTITY_TYPE_PERSON);
+    let other = seed(&vault, entity(0xA3), ENTITY_TYPE_ORG);
+    let stranger = seed(&vault, entity(0xA4), ENTITY_TYPE_PERSON);
+    let machine = seed(&vault, entity(0xA5), crate::registry::ENTITY_TYPE_MACHINE);
+    let anchor = ActorSubjectAnchor {
+        actor_ref: actor,
+        subject_ref: person,
+        subject_kind: SubjectKind::Person,
+    };
+    let outsiders = [
+        WriteActor::new(stranger, EdgeActorClass::Human),
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        WriteActor::new(machine, EdgeActorClass::System),
+    ];
+    for outsider in outsiders {
+        assert!(vault.set_actor_subject_anchor(anchor, &outsider, 100).is_err());
+        assert!(vault.claims_for_subject(&actor)?.is_empty());
+    }
+    let claim = vault.set_actor_subject_anchor(anchor, &writer(), 100)?;
+    let before = vault.get_claim(&claim)?;
+    let claims = vault.claims_for_subject(&actor)?;
+    let replacement = ActorSubjectAnchor {
+        subject_ref: other,
+        subject_kind: SubjectKind::Org,
+        ..anchor
+    };
+    for outsider in outsiders {
+        assert!(vault.set_actor_subject_anchor(replacement, &outsider, 101).is_err());
+        assert_eq!(vault.actor_subject_anchor(&actor)?, Some(anchor));
+        assert_eq!(vault.get_claim(&claim)?, before);
+        assert_eq!(vault.claims_for_subject(&actor)?, claims);
+    }
+    vault.set_actor_subject_anchor(replacement, &writer(), 102)?;
+    assert_eq!(vault.actor_subject_anchor(&actor)?, Some(replacement));
     Ok(())
 }
 
