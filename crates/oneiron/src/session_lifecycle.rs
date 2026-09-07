@@ -44,6 +44,7 @@ use crate::dreamer_consolidation::{
     decode_turn_body, enqueue_partition_attempts_in_txn, plan_partitions_in_txn,
     read_watermark_in_txn, register_substitution_mine_in_txn,
 };
+use crate::dreamer_prefilter::write_prefilter_receipts_in_txn;
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerRunnerStore, dreamer_turn_role};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -209,6 +210,12 @@ pub struct SessionEndWake {
     /// dedupe shape the production `ConsolidationExecutor` decodes. Empty
     /// when nothing is dirty: a zero-turn sitting has nothing to dream
     /// about, so no attempt is minted for it.
+    ///
+    /// These carry only the turns the OF-361 pre-extraction screen KEPT
+    /// (`dreamer_prefilter`). `planned_turn_ids` below is deliberately the
+    /// PRE-screen scan: it is the fence's identity set and the watermark's
+    /// settlement basis, so a screened-out turn is still consumed by this
+    /// round rather than left dirty forever.
     pub plans: Vec<ConsolidationPartitionPlan>,
     /// The Meso watermark the plans were taken against. The transaction
     /// re-reads the watermark and skips the enqueue + advance when it
@@ -707,6 +714,20 @@ impl Vault {
                 if let Some(advance_to) = wake.advance_watermark_to {
                     advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
                 }
+                // The OF-361 screening receipts (ONE-1525), inside the fence
+                // and inside this commit: they exist ⟺ the round they describe
+                // committed, which is the same structural exactly-once the
+                // enqueue and the advance above get from being here.
+                //
+                // The screen is RE-RUN over the fence-matched turn list rather
+                // than carried in on the wake: `SessionEndWake` is constructed
+                // by struct literal outside this crate, so it cannot take a
+                // field, and re-running is the stronger property anyway — the
+                // receipts then describe the batch that actually committed,
+                // scored under the policy row this transaction sees. The
+                // screen is pure, so this reproduces the planner's verdicts
+                // exactly.
+                write_prefilter_receipts_in_txn(self, wtxn, &wake.planned_turn_ids, now)?;
             }
         }
 

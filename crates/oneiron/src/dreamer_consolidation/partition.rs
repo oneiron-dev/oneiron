@@ -15,6 +15,7 @@ use super::watermark::{
 };
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
+use crate::dreamer_prefilter::{prefilter_partition_input, prefilter_partition_input_in_txn};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
@@ -161,6 +162,20 @@ fn decode_cursor(raw: &[u8]) -> Result<ConsolidationCursor> {
 /// body key → None (facet None = "channel gave no mask signal"; world None
 /// = base reality — the connector-level facet fallback applies at ingest
 /// time, where connectors stamp the body key).
+///
+/// The OF-361 statistical screen (ONE-1525) runs FIRST, over the whole input:
+/// the scan's GATE-10 role gate has already ruled on which turns MAY be
+/// extracted, and [`prefilter_partition_input`] rules on which of those are
+/// worth the budget. The order is not interchangeable — eligibility, then
+/// value — and the screen is deliberately inside the planner rather than at
+/// its call sites, so the driver's out-of-transaction close and the session
+/// close's in-transaction wake cannot screen differently.
+///
+/// The screen NEVER reaches the selection authority: `dirty_turns` was chosen
+/// by the watermark scan, the caller's `planned_turn_ids` and watermark
+/// advance are taken from that same pre-screen list, and a skipped turn is
+/// therefore consumed by this round exactly as a kept one is. A screened-out
+/// turn loses its extraction, not its place in the log.
 pub fn plan_partitions(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -168,8 +183,9 @@ pub fn plan_partitions(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
+    let screened = prefilter_partition_input(vault, dirty_turns)?;
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
-    for turn in dirty_turns {
+    for turn in &screened.kept {
         let Some(conversation_ref) = turn.conversation else {
             // A turn without its structural conversation edge cannot be
             // partitioned; skip fail-closed rather than invent a partition.
@@ -200,6 +216,10 @@ pub fn plan_partitions(
 /// fallback chain (turn body key → conversation body key → None): only the read
 /// transaction differs, so an in-transaction plan and a committed-state plan of
 /// the same turns produce byte-identical partition keys.
+///
+/// The OF-361 screen composes the same way: same policy row, same pure
+/// arithmetic, only the read transaction differs, so the two twins keep or
+/// skip the same turns.
 pub(crate) fn plan_partitions_in_txn(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -208,8 +228,9 @@ pub(crate) fn plan_partitions_in_txn(
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
+    let screened = prefilter_partition_input_in_txn(vault, txn, dirty_turns)?;
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
-    for turn in dirty_turns {
+    for turn in &screened.kept {
         let Some(conversation_ref) = turn.conversation else {
             // A turn without its structural conversation edge cannot be
             // partitioned; skip fail-closed rather than invent a partition.

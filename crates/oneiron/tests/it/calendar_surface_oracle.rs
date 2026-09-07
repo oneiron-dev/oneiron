@@ -26,12 +26,14 @@
 //! `gate::default_policy_manifest()` resolves criticality from an allow-list of
 //! predicate prefixes and defaults everything else to `critical`. `calendar.`
 //! carries its own prefix rule (`criticality: normal`, `sensitivity: normal`),
-//! so an approved calendar write clears the criticality floor and the read
-//! surface projects it on a stock vault — no manifest edit required.
+//! so calendar writes need no criticality override. Imported source trust is
+//! a separate authorization: these CAL-ingest fixtures add a permit bound to
+//! their exact actor at the unchanged unstamped floor, beside the stock manifest.
 //!
 //! [`calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest`]
-//! pins that: it drives an approved `calendar.*` write through the real gate and
-//! then reads it back through the public surface. The tier-scoping property —
+//! pins that: it preserves the default manifest, drives an approved `calendar.*`
+//! write through the real gate with that source permit, then reads it back
+//! through the public surface. The tier-scoping property —
 //! that a claim which did NOT clear admission stays invisible on every verb —
 //! is what [`calendar_surface_scopes_read_search_and_freebusy`] pins, using a
 //! deliberately `proposed` fixture rather than a manifest hole.
@@ -123,7 +125,8 @@ fn envelope(actor: EntityId, approval: ClaimApprovalStatus) -> WriteEnvelope {
 }
 
 /// Stores one calendar EVENT and its family through the ordinary claim
-/// candidate door at `approval`, against the REAL default policy manifest.
+/// candidate door at `approval`, against the default policy plus the fixture
+/// actor's explicit Imported source permit.
 fn store_calendar_event(
     vault: &Vault,
     actor: EntityId,
@@ -166,6 +169,8 @@ fn actor_facade(vault: &Vault) -> (EntityId, Memory<'_>) {
     vault
         .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"calendar actor")
         .expect("put actor");
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(vault, actor)
+        .expect("authorize this CAL ingest actor's Imported source");
     (actor, vault.memory(actor, EdgeActorClass::Human))
 }
 
@@ -179,12 +184,29 @@ fn window() -> TimeRange {
 #[test]
 fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest() {
     let (_dir, vault) = temp_vault();
+    let manifests = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("default policy manifests");
+    assert_eq!(
+        manifests.len(),
+        1,
+        "the stock vault seeds one default policy"
+    );
+    let default_manifest_id = manifests[0];
+    let default_manifest = vault
+        .get_raw(&default_manifest_id)
+        .expect("read default manifest")
+        .expect("default manifest exists");
     let (actor, facade) = actor_facade(&vault);
+    assert_eq!(
+        vault.get_raw(&default_manifest_id).expect("default policy"),
+        Some(default_manifest),
+        "the explicit Imported permit must not replace the default policy"
+    );
 
-    // The `calendar.` prefix rule resolves criticality `normal`, so the
-    // criticality floor does not pend an approved calendar write: the claim is
-    // admitted at the tier the writer asked for, on a stock vault with no
-    // manifest edit.
+    // The unchanged `calendar.` prefix rule resolves criticality `normal`.
+    // The separate source permit contributes no predicate axes or ceilings;
+    // approval alone does not authorize Imported provenance.
     let busy = store_calendar_event(
         &vault,
         actor,
@@ -205,8 +227,8 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
     assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
     assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
 
-    // …and admitted claims project: the read surface is live on a default
-    // vault, not inert. `blocks_time` comes from the admitted
+    // …and admitted claims project under the default predicate policy plus
+    // explicit source authorization. `blocks_time` comes from the admitted
     // `calendar.time_kind` claim rather than the EVENT header, so a true here
     // proves the gate let the claim through to the projector.
     let view = facade
@@ -214,7 +236,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
             event_ref: busy.to_hex(),
         })
         .expect("read")
-        .expect("an admitted calendar claim projects on a default vault");
+        .expect("an authorized calendar claim projects under the default predicate policy");
     assert_eq!(view.event_ref, busy.to_hex());
     assert!(view.blocks_time);
     assert_eq!(view.start_utc, Some(1_000));
