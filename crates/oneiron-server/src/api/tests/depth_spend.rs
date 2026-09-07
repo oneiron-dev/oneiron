@@ -216,6 +216,7 @@ async fn deep_api_aborted_lease_fails_closed_for_success_and_search_error() {
             assert_eq!(error["code"], "DEEP_RETRIEVAL_UNAVAILABLE");
             assert!(response.get("answer").is_none());
             assert!(response.get("items").is_none());
+            assert!(response.get("quality").is_none());
             assert_eq!(backend.guard.read().used_units, 0);
             assert_eq!(backend.guard.read().reserved_units, 0);
         }

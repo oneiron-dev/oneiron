@@ -19,6 +19,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::retrieval_quality::PprCacheOutcome;
 use crate::store::{ManifestDbs, Store};
 
 const SEED_HASH_LEN: usize = 16;
@@ -238,6 +239,14 @@ pub(crate) struct DeferredPprCacheWrite {
     graph_version: u64,
     state: Option<PprCacheState>,
     community_snapshot: Option<crate::ppr_community::CommunitySnapshot>,
+}
+
+/// Cache diagnostics from the same read that produced the unchanged scores.
+#[derive(Debug, Clone)]
+pub(crate) struct PprQueryResult {
+    pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) cache: PprCacheOutcome,
+    pub(crate) deferred_cache_write: Option<DeferredPprCacheWrite>,
 }
 
 #[derive(Debug, Clone)]
@@ -795,7 +804,7 @@ pub(crate) fn ppr_query(
     depth: u32,
     teleport_alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    let (scores, deferred_write) = {
+    let result = {
         let rtxn = store.env.read_txn()?;
         ppr_query_in_txn_impl(
             store,
@@ -811,11 +820,11 @@ pub(crate) fn ppr_query(
         )?
     };
 
-    if let Some(deferred_write) = deferred_write {
+    if let Some(deferred_write) = result.deferred_cache_write {
         flush_deferred_ppr_cache_writes(store, &[deferred_write])?;
     }
 
-    Ok(scores)
+    Ok(result.scores)
 }
 
 #[cfg(test)]
@@ -835,7 +844,7 @@ pub(crate) fn ppr_query_in_txn(
         SeedWeighting::Uniform,
         false,
     )
-    .map(|(scores, _)| scores)
+    .map(|result| result.scores)
 }
 
 /// VAD-aware vault-wide query using the owning vault's configured coefficient.
@@ -848,6 +857,28 @@ pub(crate) fn ppr_query_in_txn_with_vad_deferred_cache(
     ppr_vad_alpha: f32,
     weighting: SeedWeighting,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+    ppr_query_in_txn_with_diagnostics(
+        store,
+        txn,
+        seeds,
+        depth,
+        teleport_alpha,
+        ppr_vad_alpha,
+        weighting,
+    )
+    .map(|result| (result.scores, result.deferred_cache_write))
+}
+
+/// Cache diagnostics from the same VAD-aware read that produced the scores.
+pub(crate) fn ppr_query_in_txn_with_diagnostics(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
+    weighting: SeedWeighting,
+) -> Result<PprQueryResult> {
     ppr_query_in_txn_impl(
         store,
         txn,
@@ -917,22 +948,40 @@ impl CommunityPprDiversity {
     }
 }
 
-/// Uniform-only pipeline adapter: keep the complete PPR channel for fusion.
+/// Uniform-only score adapter: keep the complete PPR channel for fusion.
+#[cfg(test)]
 pub(crate) fn ppr_expand_in_txn_with_community_deferred_cache(
     store: &Store,
     txn: &RoTxn<'_>,
-    mut request: CommunityPprRequest<'_>,
+    request: CommunityPprRequest<'_>,
 ) -> Result<(
     Vec<ScoredEntity>,
     Option<DeferredPprCacheWrite>,
     Option<CommunityPprDiversity>,
 )> {
+    let (result, diversity) = ppr_expand_in_txn_with_community_diagnostics(store, txn, request)?;
+    Ok((result.scores, result.deferred_cache_write, diversity))
+}
+
+pub(crate) fn ppr_expand_in_txn_with_community_diagnostics(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    mut request: CommunityPprRequest<'_>,
+) -> Result<(PprQueryResult, Option<CommunityPprDiversity>)> {
     request.weighting = SeedWeighting::Uniform;
     let output = ppr_community_query_in_txn(store, txn, request, true)?;
-    Ok((output.scores, output.write, output.diversity))
+    Ok((
+        PprQueryResult {
+            scores: output.scores,
+            cache: output.cache,
+            deferred_cache_write: output.write,
+        },
+        output.diversity,
+    ))
 }
 
 struct CommunityPprOutput {
+    cache: PprCacheOutcome,
     scores: Vec<ScoredEntity>,
     write: Option<DeferredPprCacheWrite>,
     report: crate::ppr_community::CommunityBoostReport,
@@ -951,7 +1000,7 @@ fn ppr_community_query_in_txn(
     };
     let config = &request.config.ppr_community;
     if request.weighting != SeedWeighting::Uniform || config.beta == 0.0 {
-        let (scores, write) = ppr_query_in_txn_with_vad_deferred_cache(
+        let result = ppr_query_in_txn_with_diagnostics(
             store,
             txn,
             request.seeds,
@@ -961,8 +1010,9 @@ fn ppr_community_query_in_txn(
             request.weighting,
         )?;
         return Ok(CommunityPprOutput {
-            scores,
-            write,
+            cache: result.cache,
+            scores: result.scores,
+            write: result.deferred_cache_write,
             report: CommunityBoostReport::default(),
             diversity: None,
         });
@@ -1016,7 +1066,7 @@ fn ppr_community_query_in_txn(
     };
     let identity = community_cache_identity(config.beta, version)
         .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-    let (mut scores, mut write) = ppr_query_in_txn_with_identity(
+    let result = ppr_query_in_txn_with_identity(
         store,
         txn,
         request.seeds,
@@ -1031,6 +1081,9 @@ fn ppr_community_query_in_txn(
             community_identity: identity,
         },
     )?;
+    let cache_outcome = result.cache;
+    let mut scores = result.scores;
+    let mut write = result.deferred_cache_write;
     let selected = request
         .context
         .ordered_seeds
@@ -1076,6 +1129,7 @@ fn ppr_community_query_in_txn(
     let diversity = (defer_diversity && report.activated_communities > 0)
         .then_some(CommunityPprDiversity { view, boosted });
     Ok(CommunityPprOutput {
+        cache: cache_outcome,
         scores,
         write,
         report,
@@ -1116,6 +1170,34 @@ pub(crate) fn ppr_query_scoped_in_txn(
     weighting: SeedWeighting,
     visibility: &dyn PprNodeVisibility,
 ) -> Result<Vec<ScoredEntity>> {
+    ppr_query_scoped_in_txn_with_diagnostics(
+        store,
+        txn,
+        seeds,
+        depth,
+        teleport_alpha,
+        ppr_vad_alpha,
+        weighting,
+        visibility,
+    )
+    .map(|result| result.scores)
+}
+
+/// Scoped walks bypass the shared cache, including all-denied seed sets.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scoped PPR carries both configured alphas and visibility"
+)]
+pub(crate) fn ppr_query_scoped_in_txn_with_diagnostics(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
+    weighting: SeedWeighting,
+    visibility: &dyn PprNodeVisibility,
+) -> Result<PprQueryResult> {
     validate_ppr_vad_alpha(ppr_vad_alpha)?;
     validate_ppr_request(seeds, depth)?;
 
@@ -1126,7 +1208,11 @@ pub(crate) fn ppr_query_scoped_in_txn(
         }
     }
     if readable_seeds.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PprQueryResult {
+            scores: Vec::new(),
+            cache: PprCacheOutcome::Disabled,
+            deferred_cache_write: None,
+        });
     }
 
     let state = ppr_compute_state_weighted(
@@ -1141,7 +1227,11 @@ pub(crate) fn ppr_query_scoped_in_txn(
         },
         Some(visibility),
     )?;
-    Ok(state.scores)
+    Ok(PprQueryResult {
+        scores: state.scores,
+        cache: PprCacheOutcome::Disabled,
+        deferred_cache_write: None,
+    })
 }
 
 pub(crate) fn flush_deferred_ppr_cache_writes(
@@ -1191,7 +1281,7 @@ fn ppr_query_in_txn_impl(
     alphas: PprAlphas,
     weighting: SeedWeighting,
     defer_cache_writes: bool,
-) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+) -> Result<PprQueryResult> {
     ppr_query_in_txn_with_identity(
         store,
         txn,
@@ -1220,18 +1310,26 @@ fn ppr_query_in_txn_with_identity(
     alphas: PprAlphas,
     weighting: SeedWeighting,
     policy: PprCachePolicy,
-) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+) -> Result<PprQueryResult> {
     validate_ppr_request(seeds, depth)?;
 
     validate_ppr_vad_alpha(alphas.ppr_vad_alpha)?;
 
     if seeds.is_empty() {
-        return Ok((Vec::new(), None));
+        return Ok(PprQueryResult {
+            scores: Vec::new(),
+            cache: PprCacheOutcome::Disabled,
+            deferred_cache_write: None,
+        });
     }
 
     if VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().is_some()) {
         let state = ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?;
-        return Ok((state.scores, None));
+        return Ok(PprQueryResult {
+            scores: state.scores,
+            cache: PprCacheOutcome::Disabled,
+            deferred_cache_write: None,
+        });
     }
 
     let seed_hash = hash_community_seeds(
@@ -1261,7 +1359,11 @@ fn ppr_query_in_txn_with_identity(
     if let Some(row) = read_exact_cache_row(&cache_context, &seed_hash, depth)? {
         let mut scores = row.into_scores();
         sort_scores(&mut scores);
-        return Ok((scores, None));
+        return Ok(PprQueryResult {
+            scores,
+            cache: PprCacheOutcome::Hit,
+            deferred_cache_write: None,
+        });
     }
 
     let resume = read_deepest_resume_state(&cache_context, depth)?;
@@ -1272,7 +1374,11 @@ fn ppr_query_in_txn_with_identity(
     };
     let scores = state.scores.clone();
     if !policy.defer_writes {
-        return Ok((scores, None));
+        return Ok(PprQueryResult {
+            scores,
+            cache: PprCacheOutcome::Miss,
+            deferred_cache_write: None,
+        });
     }
 
     let deferred_write = DeferredPprCacheWrite {
@@ -1282,7 +1388,11 @@ fn ppr_query_in_txn_with_identity(
         state: Some(state),
         community_snapshot: None,
     };
-    Ok((scores, Some(deferred_write)))
+    Ok(PprQueryResult {
+        scores,
+        cache: PprCacheOutcome::Miss,
+        deferred_cache_write: Some(deferred_write),
+    })
 }
 
 fn read_deepest_resume_state(

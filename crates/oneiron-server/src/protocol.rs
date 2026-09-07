@@ -22,6 +22,10 @@ pub(crate) mod window_sub_tags {
     pub(crate) use oneiron::sync::transport::window_sub_tags::*;
 }
 
+use oneiron::retrieval_quality::{
+    ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
+};
+
 // ─── Paginated HTTP Response Metadata ────────────────────────────────────────
 
 /// Count precision requested by list/search callers and reported in
@@ -69,11 +73,36 @@ pub(crate) struct ResponseMeta {
     /// Precision used for the reported `total` value.
     #[serde(rename = "countMode")]
     pub count_mode: CountMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    pub quality: Option<RetrievalQuality>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Vec<String>>)]
+    pub degradation: Option<Vec<RetrievalDegradation>>,
+    #[serde(
+        rename = "confidenceAdjustment",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(value_type = Option<f32>, example = -0.15)]
+    pub confidence_adjustment: Option<ConfidenceAdjustment>,
 }
 
 impl ResponseMeta {
     pub(crate) fn new(total: u64, count_mode: CountMode) -> Self {
-        Self { total, count_mode }
+        Self {
+            total,
+            count_mode,
+            quality: None,
+            degradation: None,
+            confidence_adjustment: None,
+        }
+    }
+
+    pub(crate) fn with_quality(mut self, report: &RetrievalQualityReport) -> Self {
+        self.quality = Some(report.quality);
+        self.degradation = (!report.degradation.is_empty()).then(|| report.degradation.clone());
+        self.confidence_adjustment = Some(report.confidence_adjustment);
+        self
     }
 
     pub(crate) fn none() -> Self {

@@ -778,3 +778,5 @@ fn session_scope_only_ever_narrows() -> TestResult {
     assert!(narrow_to_session_scope(&scoped, wide.hits, &unknown_world)?.is_empty());
     Ok(())
 }
+
+mod quality;

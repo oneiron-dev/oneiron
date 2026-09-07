@@ -190,7 +190,22 @@ pub(super) fn apply_put(
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
-    crate::booking::publication::guard_publication_put(store, wtxn, id, entity_type, data)?;
+    // Publication admission reuses the write-door decode and must precede
+    // gate receipts, debits, and every other write effect.
+    let incoming_claim_body = if entity_type == ENTITY_TYPE_CLAIM {
+        Some(crate::claim::validate_claim_body_and_decode(
+            data,
+            allow_reserved_predicate,
+        )?)
+    } else {
+        None
+    };
+    crate::booking::publication::guard_publication_put(
+        store,
+        wtxn,
+        id,
+        incoming_claim_body.as_ref(),
+    )?;
     // ARCH-0052 D2: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A base row
     // at a live overlay member's id would publish the room into base, so it
@@ -221,8 +236,7 @@ pub(super) fn apply_put(
     // and acted on only at the pre-write site: see the eviction comment there
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
-    if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-        let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
+    if let Some(body) = incoming_claim_body {
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
             if !id

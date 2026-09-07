@@ -18,6 +18,7 @@ use crate::server::SyncServer;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
+use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -808,6 +809,19 @@ pub(crate) struct CoreEiriSessionRagState {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Execution quality projected from the engine's shared report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    quality: Option<RetrievalQuality>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Vec<String>>)]
+    degradation: Option<Vec<RetrievalDegradation>>,
+    #[serde(
+        rename = "confidenceAdjustment",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(value_type = Option<f32>, example = -0.15)]
+    confidence_adjustment: Option<ConfidenceAdjustment>,
     /// Optional context format version for v4 response extensions.
     #[serde(rename = "context_version", skip_serializing_if = "Option::is_none")]
     #[schema(example = "v4")]
@@ -1763,6 +1777,7 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
             empty.total_in_scope = 0;
         } else {
             pack.empty = Some(oneiron::EmptyContext {
+                retrieval_quality: pack.retrieval_quality.clone(),
                 reason: oneiron::EmptyReason::FilterMatchedNone,
                 total_in_scope: 0,
                 hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
@@ -1893,6 +1908,10 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        quality: Some(pack.retrieval_quality.quality),
+        degradation: (!pack.retrieval_quality.degradation.is_empty())
+            .then_some(pack.retrieval_quality.degradation),
+        confidence_adjustment: Some(pack.retrieval_quality.confidence_adjustment),
         context_version,
         results: pack.results.into_iter().map(core_context_entity).collect(),
         neighbors: pack

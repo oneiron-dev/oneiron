@@ -17,6 +17,7 @@ use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use crate::serialize::{SerializeConfig, serialize_pack};
 
 /// The S6 `MemoryPack` schema version.
@@ -128,6 +129,12 @@ pub struct ScopeHonesty {
 /// Retrieval accounting (S6).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetrievalMeta {
+    #[serde(default)]
+    pub quality: RetrievalQuality,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub degradation: Vec<RetrievalDegradation>,
+    #[serde(default, rename = "confidenceAdjustment")]
+    pub confidence_adjustment: ConfidenceAdjustment,
     /// True when only sparse (lexical/graph) signals ran — no dense
     /// vector signal is available until the embedder lane lands.
     pub sparse: Option<bool>,
@@ -364,7 +371,7 @@ impl Memory<'_> {
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
 
-        let (items, total_candidates, rendered) = match &scope.facet {
+        let (items, total_candidates, rendered, retrieval_quality) = match &scope.facet {
             Some(facet_ref) => {
                 // Facet-strict narrowing rides the raw retrieval pipeline:
                 // ContextPackBuilder exposes no facet passthrough and
@@ -389,7 +396,8 @@ impl Memory<'_> {
                         .boost_salience()
                         .boost_confidence();
                 }
-                let hits = pipeline.run()?;
+                let retrieval = pipeline.run_with_telemetry()?;
+                let hits = retrieval.value;
                 let total = hits.len() as u64;
                 let mut items = Vec::new();
                 for hit in hits.into_iter().take(limit) {
@@ -397,7 +405,7 @@ impl Memory<'_> {
                         items.push(item);
                     }
                 }
-                (items, total, None)
+                (items, total, None, retrieval.retrieval_quality)
             }
             None => {
                 let mut builder = self
@@ -469,7 +477,7 @@ impl Memory<'_> {
                         items.push(item);
                     }
                 }
-                (items, total, rendered)
+                (items, total, rendered, pack.retrieval_quality)
             }
         };
 
@@ -479,6 +487,9 @@ impl Memory<'_> {
                 out_of_scope_worlds: self.out_of_scope_worlds(scope.world_ref.as_deref())?,
             },
             retrieval_meta: RetrievalMeta {
+                quality: retrieval_quality.quality,
+                degradation: retrieval_quality.degradation,
+                confidence_adjustment: retrieval_quality.confidence_adjustment,
                 sparse: Some(true),
                 total_candidates,
                 claims_returned,

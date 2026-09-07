@@ -14,6 +14,7 @@ use crate::query_expansion::{
     normalized_subqueries, retry_channel_limit,
 };
 use crate::rerank::RerankCandidate;
+use crate::retrieval_quality::{PprCacheOutcome, RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{
     RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceStage, Store,
@@ -39,9 +40,9 @@ use super::filters::{
 use super::support::normalize_range;
 use super::trace::{
     RetrievalTraceForkEvidence, add_signal_score_components, filter_retrieval_trace_scores,
-    retrieval_trace_candidate_set, retrieval_trace_channel_record, retrieval_trace_fork_hash,
-    retrieval_trace_fused_scores, retrieval_trace_stage_record, retrieval_trace_top_scores,
-    telemetry_score_breakdown,
+    merge_retrieval_diagnostics, record_ppr_cache_outcome, retrieval_trace_candidate_set,
+    retrieval_trace_channel_record, retrieval_trace_fork_hash, retrieval_trace_fused_scores,
+    retrieval_trace_stage_record, retrieval_trace_top_scores, telemetry_score_breakdown,
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PER_SCAN_CAP_FACTOR, PPR_DAMPING,
@@ -64,6 +65,7 @@ struct HydeAttemptOverrides<'a> {
 }
 
 struct RetrievalTxnOutput {
+    diagnostics: RetrievalDiagnostics,
     scores: Vec<ScoredEntity>,
     pending_vectors: Vec<PendingVectorEmbedding>,
     claim_gate: ClaimStatusGateCache,
@@ -108,6 +110,7 @@ impl PipelineBuilder<'_> {
             }
         };
         let no_data_fallback_eligible = self.no_data_fallback_eligible();
+        let mut diagnostics = self.retrieval_diagnostics();
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
         let trace_candidate_limit = self.result_limit;
@@ -246,6 +249,7 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                     &mut claim_gate,
                 )?;
+                diagnostics.succeeded.push(RetrievalSignal::Vector);
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Vector,
@@ -367,6 +371,7 @@ impl PipelineBuilder<'_> {
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
+                diagnostics.succeeded.push(RetrievalSignal::Text);
                 if self.candidate_filter.is_none()
                     && text_channel_limit > *limit
                     && text_scope_widening_active
@@ -502,6 +507,7 @@ impl PipelineBuilder<'_> {
 
             if let Some(codes) = &self.phonetic_search {
                 let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
+                diagnostics.succeeded.push(RetrievalSignal::Phonetic);
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Phonetic,
@@ -540,6 +546,7 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                     &mut claim_gate,
                 )?;
+                diagnostics.succeeded.push(RetrievalSignal::Temporal);
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Temporal,
@@ -569,16 +576,19 @@ impl PipelineBuilder<'_> {
                 // ARCH-0039 Layer 2: seed specificity applies ONLY to
                 // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                 // instead of uniform 1/n.
-                let (ppr_results, deferred_cache_write) =
-                    crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
-                        &self.vault.store,
-                        &rtxn,
-                        seeds,
-                        *depth,
-                        PPR_DAMPING,
-                        self.vault.config.ppr_vad_alpha,
-                        crate::ppr::SeedWeighting::Specificity,
-                    )?;
+                let ppr = crate::ppr::ppr_query_in_txn_with_diagnostics(
+                    &self.vault.store,
+                    &rtxn,
+                    seeds,
+                    *depth,
+                    PPR_DAMPING,
+                    self.vault.config.ppr_vad_alpha,
+                    crate::ppr::SeedWeighting::Specificity,
+                )?;
+                diagnostics.succeeded.push(RetrievalSignal::Ppr);
+                record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
+                let ppr_results = ppr.scores;
+                let deferred_cache_write = ppr.deferred_cache_write;
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Ppr,
@@ -620,6 +630,7 @@ impl PipelineBuilder<'_> {
             }
             if ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
+                    diagnostics,
                     scores: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
@@ -749,53 +760,57 @@ impl PipelineBuilder<'_> {
 
                     // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
                     // specificity weighting is search_ppr-only.
-                    let (mut ppr_results, deferred_cache_write) =
-                        if self.vault.config.ppr_community.beta == 0.0 {
-                            // Exact legacy path: no evidence/cache reads or new key namespace.
-                            crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
+                    let ppr = if self.vault.config.ppr_community.beta == 0.0 {
+                        // Exact legacy path: no evidence/cache reads or new key namespace.
+                        crate::ppr::ppr_query_in_txn_with_diagnostics(
+                            &self.vault.store,
+                            &rtxn,
+                            &seeds,
+                            *depth,
+                            PPR_DAMPING,
+                            self.vault.config.ppr_vad_alpha,
+                            crate::ppr::SeedWeighting::Uniform,
+                        )?
+                    } else {
+                        // ID sorting for the base cache must not replace the fused
+                        // evidence order. Explicit-only seeds get zero evidence.
+                        let ordered_seeds =
+                            crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
+                                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+                        let empty_usage = HashMap::new();
+                        let context = crate::ppr_community::CommunityBoostContext {
+                            ordered_seeds: &ordered_seeds,
+                            result_limit: self.result_limit,
+                            session_usage: self.community_session_usage.unwrap_or(&empty_usage),
+                        };
+                        let (result, diversity) =
+                            crate::ppr::ppr_expand_in_txn_with_community_diagnostics(
                                 &self.vault.store,
                                 &rtxn,
-                                &seeds,
-                                *depth,
-                                PPR_DAMPING,
-                                self.vault.config.ppr_vad_alpha,
-                                crate::ppr::SeedWeighting::Uniform,
-                            )?
-                        } else {
-                            // ID sorting for the base cache must not replace the fused
-                            // evidence order. Explicit-only seeds get zero evidence.
-                            let ordered_seeds =
-                                crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
-                                    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-                            let empty_usage = HashMap::new();
-                            let context = crate::ppr_community::CommunityBoostContext {
-                                ordered_seeds: &ordered_seeds,
-                                result_limit: self.result_limit,
-                                session_usage: self.community_session_usage.unwrap_or(&empty_usage),
-                            };
-                            let (results, write, diversity) =
-                                crate::ppr::ppr_expand_in_txn_with_community_deferred_cache(
-                                    &self.vault.store,
-                                    &rtxn,
-                                    crate::ppr::CommunityPprRequest {
-                                        seeds: &seeds,
-                                        depth: *depth,
-                                        teleport_alpha: PPR_DAMPING,
-                                        weighting: crate::ppr::SeedWeighting::Uniform,
-                                        config: &self.vault.config,
-                                        context: &context,
-                                    },
-                                )?;
-                            community_diversity = diversity;
-                            if capture_retrieval_trace {
-                                community_trace_identity = Some(self.community_trace_identity(
-                                    &ordered_seeds,
-                                    crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
-                                ));
-                            }
-                            (results, write)
-                        };
-                    if let Some(deferred_cache_write) = deferred_cache_write {
+                                crate::ppr::CommunityPprRequest {
+                                    seeds: &seeds,
+                                    depth: *depth,
+                                    teleport_alpha: PPR_DAMPING,
+                                    weighting: crate::ppr::SeedWeighting::Uniform,
+                                    config: &self.vault.config,
+                                    context: &context,
+                                },
+                            )?;
+                        community_diversity = diversity;
+                        if capture_retrieval_trace {
+                            community_trace_identity = Some(self.community_trace_identity(
+                                &ordered_seeds,
+                                crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
+                            ));
+                        }
+                        result
+                    };
+                    if !diagnostics.succeeded.contains(&RetrievalSignal::Ppr) {
+                        diagnostics.succeeded.push(RetrievalSignal::Ppr);
+                    }
+                    record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
+                    let mut ppr_results = ppr.scores;
+                    if let Some(deferred_cache_write) = ppr.deferred_cache_write {
                         deferred_ppr_cache_writes.push(deferred_cache_write);
                     }
                     // D19 claim status gate, second application: PPR
@@ -868,6 +883,7 @@ impl PipelineBuilder<'_> {
                     blend_base_scores = expanded_blend.base_scores;
                     blend_access_factors = expanded_blend.access_factors;
                 } else {
+                    record_ppr_cache_outcome(&mut diagnostics, PprCacheOutcome::Disabled);
                     // Configured but unseeded: the preliminary blend
                     // deferred the factor, so the run still owes exactly
                     // one Apply blend. Re-blend the UNCHANGED ranked lists
@@ -1303,6 +1319,7 @@ impl PipelineBuilder<'_> {
                 None
             };
             Ok(RetrievalTxnOutput {
+                diagnostics,
                 scores,
                 pending_vectors,
                 claim_gate,
@@ -1334,6 +1351,8 @@ impl PipelineBuilder<'_> {
             .is_some_and(|filter| filter.deny_all)
         {
             return Ok(PipelineOutput {
+                // No channel ran: an authority refusal is not a cache failure.
+                retrieval_quality: Default::default(),
                 scores: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -1485,6 +1504,7 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
+                retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -1496,6 +1516,7 @@ impl PipelineBuilder<'_> {
                 signals: telemetry_signals,
             });
         }
+        let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
         let mut pending_vectors = attempt.pending_vectors;
@@ -1564,6 +1585,8 @@ impl PipelineBuilder<'_> {
                     &self.vault.store,
                     &retry.deferred_ppr_cache_writes,
                 )?;
+                // A retry cache hit must not erase an earlier miss in this run.
+                merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
@@ -1623,6 +1646,7 @@ impl PipelineBuilder<'_> {
         if !ppr_search_executed && self.ppr_expand.is_some() && !ppr_expand_executed {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
+        let retrieval_quality = classify_retrieval_quality(&diagnostics);
         let run_id = RetrievalRunId::now();
         let run_record = RetrievalRunRecord::new(
             run_id,
@@ -1635,7 +1659,8 @@ impl PipelineBuilder<'_> {
             claims_suppressed,
             empty_reason.map(|reason| format!("{reason:?}")),
         )
-        .with_trace(retrieval_trace);
+        .with_trace(retrieval_trace)
+        .with_quality(&retrieval_quality);
         // ONE-1728 K10: a retrieval issued inside a room registers through the
         // room's door, which writes under the route the run captured — into
         // the room's overlay `VaultMeta` while it is off record (so the base
@@ -1675,6 +1700,7 @@ impl PipelineBuilder<'_> {
         };
 
         Ok(PipelineOutput {
+            retrieval_quality,
             scores,
             claim_bodies,
             pending_vectors,
@@ -1685,6 +1711,28 @@ impl PipelineBuilder<'_> {
             telemetry_run_id,
             signals: telemetry_signals,
         })
+    }
+
+    // Requested operations, not the legacy signal list: time filters and
+    // recency blending do not constitute a Temporal search. Empty inputs still
+    // reach their channel operation and may complete with zero candidates.
+    fn retrieval_diagnostics(&self) -> RetrievalDiagnostics {
+        let mut diagnostics = RetrievalDiagnostics::default();
+        for (requested, signal) in [
+            (self.vector_search.is_some(), RetrievalSignal::Vector),
+            (self.text_search.is_some(), RetrievalSignal::Text),
+            (self.phonetic_search.is_some(), RetrievalSignal::Phonetic),
+            (self.temporal_search.is_some(), RetrievalSignal::Temporal),
+            (
+                self.ppr_search.is_some() || self.ppr_expand.is_some(),
+                RetrievalSignal::Ppr,
+            ),
+        ] {
+            if requested {
+                diagnostics.attempted.push(signal);
+            }
+        }
+        diagnostics
     }
 
     fn telemetry_signals(&self) -> Vec<RetrievalSignal> {

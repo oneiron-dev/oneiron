@@ -1,9 +1,8 @@
 use super::check_api_auth;
 use super::default_limit;
-use super::memory_reason::DeepAdmission;
-use super::memory_reason::admit_deep_retrieval;
-use super::memory_reason::depth_search_error;
-use super::memory_reason::minimal_effort;
+use super::memory_reason::{
+    DeepAdmission, admit_deep_retrieval, depth_search_error, minimal_effort,
+};
 use super::query_params;
 use super::scoped_read_for_legacy_api;
 use crate::error::ApiError;
@@ -20,7 +19,7 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::Effort;
 use oneiron::claim::ScopedRead;
-use oneiron::retrieval_depth::{DepthSearchRequest, SearchProbe};
+use oneiron::retrieval_depth::{DepthSearchRequest, DepthSearchResult, SearchProbe};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -133,7 +132,7 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
         ),
         (
             status = 503,
-            description = "depth=deep was requested and this server has no deep retrieval backend attached.",
+            description = "Deep retrieval is unavailable without an admitted budget and host backend.",
             body = ApiError,
             content_type = "application/json"
         )
@@ -187,9 +186,9 @@ pub(crate) async fn search_vector(
         admission.as_ref(),
     )?;
 
-    let total = results.len();
-    let response = search_response(&scoped_read, results, view, params.limit)?;
-    let meta = search_meta(count_mode, total);
+    let total = results.hits.len();
+    let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
+    let response = search_response(&scoped_read, results.hits, view, params.limit)?;
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
@@ -274,7 +273,7 @@ pub(crate) struct TextSearchQuery {
         ),
         (
             status = 503,
-            description = "depth=deep was requested and this server has no deep retrieval backend attached.",
+            description = "Deep retrieval is unavailable without an admitted budget and host backend.",
             body = ApiError,
             content_type = "application/json"
         )
@@ -303,9 +302,9 @@ pub(crate) async fn search_text(
         admission.as_ref(),
     )?;
 
-    let total = results.len();
-    let response = search_response(&scoped_read, results, view, params.limit)?;
-    let meta = search_meta(count_mode, total);
+    let total = results.hits.len();
+    let meta = search_meta(count_mode, total).with_quality(&results.retrieval_quality);
+    let response = search_response(&scoped_read, results.hits, view, params.limit)?;
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
 }
@@ -332,11 +331,11 @@ fn run_depth_search(
     effort: Effort,
     limit: usize,
     admission: Option<&DeepAdmission>,
-) -> Result<Vec<oneiron::ScoredEntity>, ApiError> {
+) -> Result<DepthSearchResult, ApiError> {
     // A zero-limit page was an empty 200 on this endpoint before the dial
     // existed, and the dial is not the place to turn it into a refusal.
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok(DepthSearchResult::default());
     }
     let request = DepthSearchRequest {
         probe,
@@ -354,9 +353,7 @@ fn run_depth_search(
             |retrieved| retrieved.tokens_used,
         ));
     }
-    let result = result
-        .map(|retrieved| retrieved.hits)
-        .map_err(|failure| depth_search_error(failure.error));
+    let result = result.map_err(|failure| depth_search_error(failure.error));
     match admission {
         Some(admission) => admission.finish(result),
         None => result,

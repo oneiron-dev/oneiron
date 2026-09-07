@@ -117,7 +117,7 @@ mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
-mod memory_reason;
+pub(crate) mod memory_reason;
 mod openapi;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its

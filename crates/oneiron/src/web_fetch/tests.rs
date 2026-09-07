@@ -2113,7 +2113,7 @@ fn verify_script_runs_both_featureless_gates_alongside_the_all_features_gates() 
         );
     }
     for retained in [
-        "cargo fmt --all --check",
+        "run_stage fmt                 cargo fmt --check",
         "cargo clippy --workspace --all-targets --all-features -- -D warnings",
         "cargo nextest run --workspace --all-features --profile full",
         "cargo test --doc --workspace --exclude oneiron-bench --all-features",

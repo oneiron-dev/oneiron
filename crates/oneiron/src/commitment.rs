@@ -1417,7 +1417,21 @@ mod tests {
         let rec = record(actor, beneficiary, CommitmentStrength::Decision)?;
         vault.put_commitment_claim(&old, &rec, &envelope(actor)?, time(100, 200), 1)?;
         vault.put_commitment_claim(&successor, &rec, &envelope(actor)?, time(100, 200), 2)?;
-        vault.supersede_claim(&successor, &old, 50)?;
+        let old_raw = vault.get_raw(&old)?;
+        let successor_raw = vault.get_raw(&successor)?;
+        // A future due end does not permit closing before the occurred start.
+        assert!(matches!(
+            vault.supersede_claim(&successor, &old, 50),
+            Err(Error::InvalidTimeRange {
+                start: 100,
+                end: 50
+            })
+        ));
+        assert_eq!(vault.get_raw(&old)?, old_raw);
+        assert_eq!(vault.get_raw(&successor)?, successor_raw);
+
+        // Start 100 has occurred, while due end 200 is still in the future.
+        vault.supersede_claim(&successor, &old, 150)?;
         assert_eq!(
             vault.get_claim(&old)?.expect("old").lifecycle,
             ClaimLifecycleStatus::Superseded
@@ -1631,7 +1645,7 @@ mod tests {
         let rec = record(actor, beneficiary, CommitmentStrength::Decision)?;
         vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
         vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
-        vault.supersede_claim(&successor, &stale_id, 50)?;
+        vault.supersede_claim(&successor, &stale_id, 1_050)?;
         vault
             .require_named_claim_target_active(&stale_id)
             .expect_err("stale target");
@@ -1639,7 +1653,7 @@ mod tests {
         let successor_raw = vault.get_raw(&successor)?;
         let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
         let err = vault
-            .fulfill_commitment(&stale_id, &env, 60)
+            .fulfill_commitment(&stale_id, &env, 1_060)
             .expect_err("stale fulfill");
         assert!(
             matches!(err, Error::WriteVerbTargetStale { target, lifecycle: ClaimLifecycleStatus::Superseded, successor_short_id } if target == stale_id && successor_short_id.contains(':'))
@@ -1678,7 +1692,7 @@ mod tests {
         let rec = record(actor, beneficiary, CommitmentStrength::Decision)?;
         vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
         vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
-        vault.supersede_claim(&successor, &stale_id, 50)?;
+        vault.supersede_claim(&successor, &stale_id, 1_050)?;
         vault
             .require_named_claim_target_active(&stale_id)
             .expect_err("stale target");
@@ -1686,7 +1700,7 @@ mod tests {
         let successor_raw = vault.get_raw(&successor)?;
         let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
         let err = vault
-            .release_commitment(&stale_id, &env, 60)
+            .release_commitment(&stale_id, &env, 1_060)
             .expect_err("stale release");
         assert!(
             matches!(err, Error::WriteVerbTargetStale { target, lifecycle: ClaimLifecycleStatus::Superseded, successor_short_id } if target == stale_id && successor_short_id.contains(':'))
@@ -1725,7 +1739,7 @@ mod tests {
         let rec = record(actor, beneficiary, CommitmentStrength::Decision)?;
         vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
         vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
-        vault.supersede_claim(&successor, &stale_id, 50)?;
+        vault.supersede_claim(&successor, &stale_id, 1_050)?;
         vault
             .require_named_claim_target_active(&stale_id)
             .expect_err("stale target");
@@ -1733,7 +1747,7 @@ mod tests {
         let successor_raw = vault.get_raw(&successor)?;
         let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
         let err = vault
-            .supersede_commitment(&stale_id, &env, 60)
+            .supersede_commitment(&stale_id, &env, 1_060)
             .expect_err("stale supersede");
         assert!(
             matches!(err, Error::WriteVerbTargetStale { target, lifecycle: ClaimLifecycleStatus::Superseded, successor_short_id } if target == stale_id && successor_short_id.contains(':'))
