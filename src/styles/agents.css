@@ -104,9 +104,26 @@ html[data-roster-face="mark"] .rrow .creature-none { display: block; }
   padding: 8px 6px 14px 2px;
 }
 .rmsg { display: flex; gap: 12px; align-items: baseline; max-width: 80ch; }
-.rmsg .rwho { flex: none; width: 76px; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+/* the who column exists only in the house: face + name in ink at the head of
+   a speaker's group, an empty column under it so the voices share one margin */
+.rmsg .rwho { flex: none; width: 96px; display: flex; align-items: baseline; gap: 7px; min-width: 0; }
 .rmsg .rwho .aname { font-family: var(--serif); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rmsg .rwho .seal { transform: translateY(2px); }
+.rmsg .rwho .face { position: relative; top: 5px; flex: none; }
+.room-thread.house .rmsg.head { margin-top: 4px; }
+.room-thread.solo .rday { padding-left: 0; }
+.room-thread.house .rday { padding-left: 108px; }
+/* your voice (owner 09-08): never a name. indent by default; the tuner offers
+   right · mono · glyph. In the house the indent is measured from the shared margin. */
+.rmsg.mine { padding-left: 22%; }
+.room-thread.house .rmsg.mine { padding-left: calc(108px + 16%); }
+html[data-voice="right"] .rmsg.mine { padding-left: 0; max-width: 62ch; justify-content: flex-end; }
+html[data-voice="right"] .rmsg.mine .rbody { flex: 0 1 auto; max-width: 60%; }
+html[data-voice="mono"] .rmsg.mine { padding-left: 0; }
+html[data-voice="mono"] .room-thread.house .rmsg.mine,
+html[data-voice="glyph"] .room-thread.house .rmsg.mine { padding-left: 108px; }
+html[data-voice="mono"] .rmsg.mine .rtext { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; letter-spacing: 0.01em; }
+html[data-voice="glyph"] .rmsg.mine { padding-left: 0; }
+html[data-voice="glyph"] .rmsg.mine .rtext::before { content: "\203A\00a0"; color: var(--silver-4); }
 .rmsg .rbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .rmsg .rtext { font-family: var(--serif); font-size: 14px; line-height: 1.55; color: var(--silver-2); max-width: 62ch; }
 .rmsg.mine .rtext { color: var(--silver-1); }

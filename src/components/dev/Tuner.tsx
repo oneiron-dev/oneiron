@@ -222,6 +222,29 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* your voice in the room (owner 09-08: never a name; position or type carries it) */
+  type Voice = 'indent' | 'right' | 'mono' | 'glyph'
+  const [voice, setVoiceState] = React.useState<Voice>('indent')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-voice')
+      if (v === 'right' || v === 'mono' || v === 'glyph') setVoiceState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setVoice = React.useCallback((k: Voice) => {
+    setVoiceState(k)
+    if (k === 'indent') document.documentElement.removeAttribute('data-voice')
+    else document.documentElement.setAttribute('data-voice', k)
+    try {
+      if (k === 'indent') localStorage.removeItem('oneiron-voice')
+      else localStorage.setItem('oneiron-voice', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   /* the selected row's chrome (owner 09-07: the rounded well reads as slop; he picks by feel) */
   type SelChrome = 'rounded' | 'square' | 'gutter' | 'box'
   const [selChrome, setSelChromeState] = React.useState<SelChrome>('rounded')
@@ -322,6 +345,20 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             className={faceStyle === k ? 'act on' : 'act'}
             title={k === 'cut' ? 'linocut · solid ink, holds at 24' : k === 'base' ? 'the 08-18 riso reference' : k === 'trink' ? 'two inks · the red is lost in a mask' : 'dream print · edges dissolve'}
             onClick={() => setFaceStyle(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">your voice</div>
+      <div className="t-acts">
+        {(['indent', 'right', 'mono', 'glyph'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={voice === k ? 'act on' : 'act'}
+            title={k === 'indent' ? 'your turns start a fifth of the way in, same serif (as built)' : k === 'right' ? 'your turns sit at the right edge, no bubble' : k === 'mono' ? 'you type in mono, the agent writes in serif' : 'a silver › opens your turns at the margin'}
+            onClick={() => setVoice(k)}
           >
             {k}
           </button>

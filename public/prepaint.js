@@ -21,6 +21,8 @@ try {
   const fs = localStorage.getItem('oneiron-face-style');
   if (fs === 'base' || fs === 'trink' || fs === 'dream') document.documentElement.setAttribute('data-face-style', fs);
   /* the selected row's chrome (owner 09-07): rounded is the default, the tuner's pick restores here */
+  const vo = localStorage.getItem('oneiron-voice');
+  if (vo === 'right' || vo === 'mono' || vo === 'glyph') document.documentElement.setAttribute('data-voice', vo);
   const sc = localStorage.getItem('oneiron-select-chrome');
   if (sc === 'square' || sc === 'gutter' || sc === 'box') document.documentElement.setAttribute('data-select-chrome', sc);
 }

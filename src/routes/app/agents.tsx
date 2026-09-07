@@ -752,21 +752,28 @@ function Agents() {
   }
 
   /* ── the message ── */
-  const renderMsg = (m: Msg, c: Config | null) => {
+  /* who-marks (owner 09-08): your turns never carry a name; position or type
+     carries your voice (html[data-voice]). In a one-to-one room the agent is
+     named in the head, so no row is labelled. In the house each change of
+     speaker opens with the face + the name in ink, once; following turns by
+     the same voice fold under it. */
+  const renderMsg = (m: Msg, c: Config | null, head: boolean, house: boolean) => {
     const mine = m.who === 'o'
+    const who = house && !mine ? configs.find((x) => x.id === m.who) : null
     return (
-      <div key={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : ''].filter(Boolean).join(' ')}>
-        <span className="rwho">
-          {mine ? (
-            <span className="seal seal-human" title="o · Owen">
-              o
-            </span>
-          ) : (
-            <span className="aname" data-agent={m.who} title={NAMES[m.who as AgentKey]}>
-              {NAMES[m.who as AgentKey]}
-            </span>
-          )}
-        </span>
+      <div key={m.id} className={['rmsg', mine ? 'mine' : '', m.live ? 'live' : '', house && !mine && head ? 'head' : ''].filter(Boolean).join(' ')}>
+        {house && !mine ? (
+          <span className="rwho">
+            {head ? (
+              <>
+                <Face c={who?.creature ?? 'none'} size={20} alt={who?.fixture?.creature.alt} />
+                <span className="aname" data-agent={m.who} title={NAMES[m.who as AgentKey]}>
+                  {NAMES[m.who as AgentKey]}
+                </span>
+              </>
+            ) : null}
+          </span>
+        ) : null}
         <span className="rbody">
           {m.handoff ? (
             <span className="rhand" title="a handoff · the run tree carries it">
@@ -1674,9 +1681,9 @@ function Agents() {
             ) : layer === 'runs' ? (
               renderRuns()
             ) : (
-              <div className="room-thread" ref={threadRef} aria-live="polite">
+              <div className={room === 'house' ? 'room-thread house' : 'room-thread solo'} ref={threadRef} aria-live="polite">
                 <span className="rday">today</span>
-                {thread.map((m) => renderMsg(m, current))}
+                {thread.map((m, i) => renderMsg(m, current, i === 0 || thread[i - 1].who !== m.who, room === 'house'))}
                 {isNew && !prop ? (
                   <div className="rmsg">
                     <span className="rwho"></span>
