@@ -108,6 +108,7 @@ mod git_lfs;
 mod lease;
 mod mcp_gateway;
 mod memory;
+pub(crate) mod memory_reason;
 mod openapi;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
@@ -134,6 +135,7 @@ pub(crate) use self::entity::*;
 pub(crate) use self::lease::*;
 pub(crate) use self::mcp_gateway::*;
 pub(crate) use self::memory::*;
+pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
 pub(crate) use self::reactive::*;
 pub(crate) use self::resume::*;
@@ -168,6 +170,7 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         core_batch_short_id_hydrate,
         core_memory_timeline,
         core_memory_verb,
+        companion_memory_reason,
         list_core_outbound_capabilities,
         get_core_outbound_capability,
         get_core_outbound_verb_contract,
@@ -235,6 +238,11 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         VectorSearchQuery,
         SearchResult,
         TextSearchQuery,
+        MemoryReasonRequest,
+        MemoryReasonResponse,
+        MemoryReasonTrace,
+        MemoryReasonFormat,
+        MemoryReasonSessionContext,
         EdgeResult,
         CoreBatchRequest,
         CoreBatchEntityInput,
@@ -452,6 +460,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let companion_routes = Router::new()
+        .route("/memory/reason", post(companion_memory_reason))
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),

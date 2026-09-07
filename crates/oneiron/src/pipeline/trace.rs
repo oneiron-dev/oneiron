@@ -11,6 +11,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::fusion;
 use crate::rerank::{RerankOptions, Reranker};
+use crate::retrieval_quality::{PprCacheOutcome, RetrievalDiagnostics};
 use crate::store::{
     RetrievalBlendWeights, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTraceChannelRecord, RetrievalTraceStage, RetrievalTraceStageRecord, Store,
@@ -25,6 +26,41 @@ use super::types::{
     PipelineFilterConfig, RECENCY_DECAY_TAU_SECS, RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
     RETRIEVAL_TRACE_RRF_K, RelMode, ScoredEntity, TEMPORAL_FLOOR, TemporalSearchConfig, WorldScope,
 };
+
+/// Aggregate cache operations conservatively: a later hit cannot hide a miss
+/// or a deliberately bypassed operation in the same retrieval run.
+pub(super) fn record_ppr_cache_outcome(
+    diagnostics: &mut RetrievalDiagnostics,
+    cache: PprCacheOutcome,
+) {
+    diagnostics.ppr_cache = Some(match (diagnostics.ppr_cache, cache) {
+        (Some(PprCacheOutcome::Miss), _) | (_, PprCacheOutcome::Miss) => PprCacheOutcome::Miss,
+        (Some(PprCacheOutcome::Disabled), _) | (_, PprCacheOutcome::Disabled) => {
+            PprCacheOutcome::Disabled
+        }
+        _ => PprCacheOutcome::Hit,
+    });
+}
+
+pub(super) fn merge_retrieval_diagnostics(
+    diagnostics: &mut RetrievalDiagnostics,
+    next: RetrievalDiagnostics,
+) {
+    for signal in next.attempted {
+        if !diagnostics.attempted.contains(&signal) {
+            diagnostics.attempted.push(signal);
+        }
+    }
+    for signal in next.succeeded {
+        if !diagnostics.succeeded.contains(&signal) {
+            diagnostics.succeeded.push(signal);
+        }
+    }
+    if let Some(cache) = next.ppr_cache {
+        record_ppr_cache_outcome(diagnostics, cache);
+    }
+    diagnostics.degradation.extend(next.degradation);
+}
 
 pub(super) fn add_signal_score_components(
     components: &mut HashMap<EntityId, Vec<RetrievalScoreComponent>>,

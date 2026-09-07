@@ -37,6 +37,8 @@ pub enum ErrorCode {
     DailyBudgetExhausted,
     #[serde(rename = "MIRROR_NOT_READY")]
     MirrorNotReady,
+    #[serde(rename = "DEEP_RETRIEVAL_UNAVAILABLE")]
+    DeepRetrievalUnavailable,
     #[serde(rename = "UNSUPPORTED_FORMAT")]
     UnsupportedFormat,
     #[serde(rename = "NOT_ACCEPTABLE")]
@@ -72,6 +74,7 @@ impl ErrorCode {
         Self::SnapshotMismatch,
         Self::DailyBudgetExhausted,
         Self::MirrorNotReady,
+        Self::DeepRetrievalUnavailable,
         Self::UnsupportedFormat,
         Self::NotAcceptable,
         Self::InvalidHeader,
@@ -97,6 +100,7 @@ impl ErrorCode {
             Self::SnapshotMismatch => "SNAPSHOT_MISMATCH",
             Self::DailyBudgetExhausted => "DAILY_BUDGET_EXHAUSTED",
             Self::MirrorNotReady => "MIRROR_NOT_READY",
+            Self::DeepRetrievalUnavailable => "DEEP_RETRIEVAL_UNAVAILABLE",
             Self::UnsupportedFormat => "UNSUPPORTED_FORMAT",
             Self::NotAcceptable => "NOT_ACCEPTABLE",
             Self::InvalidHeader => "INVALID_HEADER",
@@ -125,7 +129,9 @@ impl ErrorCode {
             | Self::InvalidState
             | Self::SnapshotMismatch => StatusCode::CONFLICT,
             Self::DailyBudgetExhausted => StatusCode::TOO_MANY_REQUESTS,
-            Self::MirrorNotReady => StatusCode::SERVICE_UNAVAILABLE,
+            Self::MirrorNotReady | Self::DeepRetrievalUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
@@ -175,6 +181,8 @@ pub enum ApiErrorDetails {
     },
     #[serde(rename = "MIRROR_NOT_READY", rename_all = "camelCase")]
     MirrorNotReady { mirror: Option<String> },
+    #[serde(rename = "DEEP_RETRIEVAL_UNAVAILABLE")]
+    DeepRetrievalUnavailable,
     #[serde(rename = "UNSUPPORTED_FORMAT", rename_all = "camelCase")]
     UnsupportedFormat { format: Option<String> },
     #[serde(rename = "NOT_ACCEPTABLE", rename_all = "camelCase")]
@@ -228,6 +236,7 @@ impl ApiErrorDetails {
             Self::SnapshotMismatch { .. } => ErrorCode::SnapshotMismatch,
             Self::DailyBudgetExhausted { .. } => ErrorCode::DailyBudgetExhausted,
             Self::MirrorNotReady { .. } => ErrorCode::MirrorNotReady,
+            Self::DeepRetrievalUnavailable => ErrorCode::DeepRetrievalUnavailable,
             Self::UnsupportedFormat { .. } => ErrorCode::UnsupportedFormat,
             Self::NotAcceptable { .. } => ErrorCode::NotAcceptable,
             Self::InvalidHeader { .. } => ErrorCode::InvalidHeader,
@@ -316,6 +325,14 @@ impl ApiError {
             format!("{feature} is not implemented"),
             ApiErrorDetails::NotImplemented,
             ["Do not treat this response as a successful context pack."],
+        )
+    }
+
+    pub(crate) fn deep_retrieval_unavailable() -> Self {
+        Self::new(
+            "deep retrieval is unavailable",
+            ApiErrorDetails::DeepRetrievalUnavailable,
+            ["Use minimal or standard depth, or attach a budgeted deep retrieval host."],
         )
     }
 
@@ -690,6 +707,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "receivedVersion");
         }
         ErrorCode::Unauthorized
+        | ErrorCode::DeepRetrievalUnavailable
         | ErrorCode::NotImplemented
         | ErrorCode::InternalServerError
         | ErrorCode::CrdtAuthExpired

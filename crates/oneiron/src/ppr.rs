@@ -15,6 +15,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::retrieval_quality::PprCacheOutcome;
 use crate::store::{ManifestDbs, Store};
 
 const SEED_HASH_LEN: usize = 16;
@@ -165,6 +166,14 @@ pub(crate) struct DeferredPprCacheWrite {
     computed_at: u64,
     graph_version: u64,
     state: PprCacheState,
+}
+
+/// Cache diagnostics from the same read that produced the unchanged scores.
+#[derive(Debug, Clone)]
+pub(crate) struct PprQueryResult {
+    pub(crate) scores: Vec<ScoredEntity>,
+    pub(crate) cache: PprCacheOutcome,
+    pub(crate) deferred_cache_write: Option<DeferredPprCacheWrite>,
 }
 
 #[derive(Debug, Clone)]
@@ -678,7 +687,7 @@ pub(crate) fn ppr_query(
     depth: u32,
     alpha: f32,
 ) -> Result<Vec<ScoredEntity>> {
-    let (scores, deferred_write) = {
+    let result = {
         let rtxn = store.env.read_txn()?;
         ppr_query_in_txn_impl(
             store,
@@ -691,7 +700,7 @@ pub(crate) fn ppr_query(
         )?
     };
 
-    if let Some(deferred_write) = deferred_write {
+    if let Some(deferred_write) = result.deferred_cache_write {
         write_ppr_cache(
             store,
             &deferred_write.seed_hash,
@@ -701,7 +710,7 @@ pub(crate) fn ppr_query(
         )?;
     }
 
-    Ok(scores)
+    Ok(result.scores)
 }
 
 #[cfg(test)]
@@ -721,7 +730,7 @@ pub(crate) fn ppr_query_in_txn(
         SeedWeighting::Uniform,
         false,
     )
-    .map(|(scores, _)| scores)
+    .map(|result| result.scores)
 }
 
 pub(crate) fn ppr_query_in_txn_with_deferred_cache(
@@ -732,6 +741,18 @@ pub(crate) fn ppr_query_in_txn_with_deferred_cache(
     alpha: f32,
     weighting: SeedWeighting,
 ) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+    ppr_query_in_txn_with_diagnostics(store, txn, seeds, depth, alpha, weighting)
+        .map(|result| (result.scores, result.deferred_cache_write))
+}
+
+pub(crate) fn ppr_query_in_txn_with_diagnostics(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+    weighting: SeedWeighting,
+) -> Result<PprQueryResult> {
     ppr_query_in_txn_impl(store, txn, seeds, depth, alpha, weighting, true)
 }
 
@@ -763,6 +784,20 @@ pub(crate) fn ppr_query_scoped_in_txn(
     weighting: SeedWeighting,
     visibility: &dyn PprNodeVisibility,
 ) -> Result<Vec<ScoredEntity>> {
+    ppr_query_scoped_in_txn_with_diagnostics(store, txn, seeds, depth, alpha, weighting, visibility)
+        .map(|result| result.scores)
+}
+
+/// Scoped walks deliberately bypass the shared cache, including all-denied seeds.
+pub(crate) fn ppr_query_scoped_in_txn_with_diagnostics(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    alpha: f32,
+    weighting: SeedWeighting,
+    visibility: &dyn PprNodeVisibility,
+) -> Result<PprQueryResult> {
     validate_ppr_request(seeds, depth)?;
 
     let mut readable_seeds = Vec::with_capacity(seeds.len());
@@ -772,7 +807,11 @@ pub(crate) fn ppr_query_scoped_in_txn(
         }
     }
     if readable_seeds.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PprQueryResult {
+            scores: Vec::new(),
+            cache: PprCacheOutcome::Disabled,
+            deferred_cache_write: None,
+        });
     }
 
     let state = ppr_compute_state_weighted(
@@ -784,7 +823,11 @@ pub(crate) fn ppr_query_scoped_in_txn(
         alpha,
         Some(visibility),
     )?;
-    Ok(state.scores)
+    Ok(PprQueryResult {
+        scores: state.scores,
+        cache: PprCacheOutcome::Disabled,
+        deferred_cache_write: None,
+    })
 }
 
 pub(crate) fn flush_deferred_ppr_cache_writes(
@@ -811,11 +854,15 @@ fn ppr_query_in_txn_impl(
     alpha: f32,
     weighting: SeedWeighting,
     defer_cache_writes: bool,
-) -> Result<(Vec<ScoredEntity>, Option<DeferredPprCacheWrite>)> {
+) -> Result<PprQueryResult> {
     validate_ppr_request(seeds, depth)?;
 
     if seeds.is_empty() {
-        return Ok((Vec::new(), None));
+        return Ok(PprQueryResult {
+            scores: Vec::new(),
+            cache: PprCacheOutcome::Disabled,
+            deferred_cache_write: None,
+        });
     }
 
     let seed_hash = hash_seeds(seeds, depth, alpha, weighting);
@@ -834,7 +881,11 @@ fn ppr_query_in_txn_impl(
     if let Some(row) = read_exact_cache_row(&cache_context, &seed_hash, depth)? {
         let mut scores = row.into_scores();
         sort_scores(&mut scores);
-        return Ok((scores, None));
+        return Ok(PprQueryResult {
+            scores,
+            cache: PprCacheOutcome::Hit,
+            deferred_cache_write: None,
+        });
     }
 
     let resume = read_deepest_resume_state(&cache_context, depth)?;
@@ -845,7 +896,11 @@ fn ppr_query_in_txn_impl(
     };
     let scores = state.scores.clone();
     if !defer_cache_writes {
-        return Ok((scores, None));
+        return Ok(PprQueryResult {
+            scores,
+            cache: PprCacheOutcome::Miss,
+            deferred_cache_write: None,
+        });
     }
 
     let deferred_write = DeferredPprCacheWrite {
@@ -854,7 +909,11 @@ fn ppr_query_in_txn_impl(
         graph_version: current_graph_version,
         state,
     };
-    Ok((scores, Some(deferred_write)))
+    Ok(PprQueryResult {
+        scores,
+        cache: PprCacheOutcome::Miss,
+        deferred_cache_write: Some(deferred_write),
+    })
 }
 
 fn read_deepest_resume_state(

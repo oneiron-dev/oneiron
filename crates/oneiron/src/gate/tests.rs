@@ -1600,6 +1600,7 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
         vector: None,
     };
     let mut pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![
             entity(kept_seed, crate::registry::ENTITY_TYPE_TURN, 1.0),
             entity(denied_seed, crate::registry::ENTITY_TYPE_CLAIM, 0.9),

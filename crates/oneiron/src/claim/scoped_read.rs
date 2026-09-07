@@ -314,6 +314,7 @@ impl<'a> ScopedRead<'a> {
 
         if previous_count > 0 && pack.results.is_empty() && pack.neighbors.is_empty() {
             pack.empty = Some(EmptyContext {
+                retrieval_quality: pack.retrieval_quality.clone(),
                 reason: EmptyReason::FilterMatchedNone,
                 total_in_scope: 0,
                 hint: "scoped_read returned no actor-readable entities".to_owned(),

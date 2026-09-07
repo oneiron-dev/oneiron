@@ -61,6 +61,7 @@ fn sample_pack() -> ContextPack {
     );
 
     ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
                 id: EntityId::from_bytes_unchecked([1; 16]),
@@ -200,6 +201,7 @@ fn claim_entity_with_value(seed: u8, predicate: &str, value: Value, score: f32) 
 
 fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
     ContextPack {
+        retrieval_quality: Default::default(),
         results,
         neighbors: Vec::new(),
         stats: empty_stats(),
@@ -209,6 +211,7 @@ fn pack_with_results(results: Vec<ContextEntity>) -> ContextPack {
 
 fn token_savings_regression_pack() -> ContextPack {
     let mut pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: Vec::new(),
         neighbors: Vec::new(),
         stats: PackStats {
@@ -655,6 +658,7 @@ fn serialized_pack_stats_stamp_tokenizer_and_row_tokens() {
 #[test]
 fn split_mode_uses_shared_budget_pool() {
     let mut pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: Vec::new(),
         neighbors: Vec::new(),
         stats: empty_stats(),
@@ -776,6 +780,7 @@ fn field_profile_changes_output() {
 #[test]
 fn max_field_chars_truncates_nested_json_strings() {
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "js01".to_owned(),
@@ -864,6 +869,7 @@ fn serialization_token_savings_regressions() {
 #[test]
 fn short_id_serialization_uses_at_most_two_tokens_per_reference() {
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
@@ -1376,6 +1382,7 @@ fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
 fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
     let overlong = "overlong claim value".to_owned();
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             id: EntityId::from_bytes_unchecked([42; 16]),
             short_id: "cl42".to_owned(),
@@ -1572,6 +1579,7 @@ fn multiple_other_types_share_normalized_budget() {
 #[test]
 fn unknown_entity_types_share_single_other_group() {
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
                 id: EntityId::from_bytes_unchecked([18; 16]),
@@ -1629,6 +1637,7 @@ fn yaml_stats_are_emitted_as_comments() {
 #[test]
 fn yaml_quotes_unsafe_field_keys() {
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             id: EntityId::from_bytes_unchecked([0x92; 16]),
             short_id: "mc01".to_owned(),
@@ -1655,6 +1664,7 @@ fn yaml_quotes_unsafe_field_keys() {
 #[test]
 fn yaml_quotes_scalar_control_characters() {
     let pack = ContextPack {
+            retrieval_quality: Default::default(),
             results: vec![ContextEntity {
                 id: EntityId::from_bytes_unchecked([0x93; 16]),
                 short_id: "mc02".to_owned(),
@@ -1843,10 +1853,12 @@ fn empty_stats() -> PackStats {
 
 fn empty_pack_with_reason(reason: EmptyReason) -> ContextPack {
     ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![],
         neighbors: vec![],
         stats: empty_stats(),
         empty: Some(EmptyContext {
+            retrieval_quality: Default::default(),
             reason,
             total_in_scope: 7,
             hint: "test hint".to_owned(),
@@ -2068,6 +2080,7 @@ fn productivity_field_profiles() {
             vector: None,
         };
         let pack = ContextPack {
+            retrieval_quality: Default::default(),
             results: vec![entity],
             neighbors: vec![],
             stats: empty_stats(),
@@ -2220,6 +2233,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
         ),
     ]);
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![
             ContextEntity {
                 id: EntityId::from_bytes_unchecked([0x64; 16]),
@@ -2387,6 +2401,7 @@ fn federation_grant_member_ref_hex_projection_is_preserved() {
         ("preset".to_owned(), Value::String("admin".to_owned())),
     ]);
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![ContextEntity {
             id: EntityId::from_bytes_unchecked([ENTITY_TYPE_FEDERATION_GRANT; 16]),
             short_id: String::new(),
@@ -2445,6 +2460,7 @@ fn test_due_date_timestamp_rendering() {
     };
 
     let pack = ContextPack {
+        retrieval_quality: Default::default(),
         results: vec![entity],
         neighbors: vec![],
         stats: empty_stats(),

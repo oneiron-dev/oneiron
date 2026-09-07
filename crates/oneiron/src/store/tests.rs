@@ -14,7 +14,9 @@ use std::sync::{Arc, Barrier};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
 use crate::config::VaultConfig;
-use crate::error::{Error, Result, VaultRootProblem};
+#[cfg(target_os = "linux")]
+use crate::error::VaultRootProblem;
+use crate::error::{Error, Result};
 use crate::registry::{TypeByteZone, zone_of};
 use heed::RwTxn;
 use heed::types::Bytes;
@@ -4684,5 +4686,94 @@ fn open_existing_serves_the_bound_vault_across_an_aba_swap_of_the_caller_path() 
         decoy_vault.get(&bound_id)?.is_none(),
         "and never received the bound vault's rows",
     );
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_version_zero_named_rows_default_missing_fields() -> Result<()> {
+    // Frozen pre-quality named-field shape, not a row produced by today's encoder.
+    #[derive(serde::Serialize)]
+    struct LegacyRun {
+        version: u8,
+        run_id: RetrievalRunId,
+        action: RetrievalAction,
+        started_at: u64,
+        elapsed_us: u64,
+        signals: Vec<RetrievalSignal>,
+        result_ids: Vec<[u8; 16]>,
+        score_breakdown: Vec<RetrievalScoreBreakdown>,
+        total_in_scope: usize,
+        claims_suppressed: usize,
+        empty_reason: Option<String>,
+    }
+    let run_id = RetrievalRunId::now();
+    let legacy = LegacyRun {
+        version: 0,
+        run_id,
+        action: RetrievalAction::Pipeline,
+        started_at: 11,
+        elapsed_us: 12,
+        signals: vec![RetrievalSignal::Text],
+        result_ids: Vec::new(),
+        score_breakdown: Vec::new(),
+        total_in_scope: 0,
+        claims_suppressed: 0,
+        empty_reason: Some("NoData".to_owned()),
+    };
+    let raw = rmp_serde::to_vec_named(&legacy).expect("legacy named MessagePack");
+    let decoded = decode_retrieval_run(&raw)?;
+    assert_eq!(decoded.version, 0);
+    assert_eq!(decoded.run_id, run_id);
+    assert_eq!(decoded.signals, vec![RetrievalSignal::Text]);
+    assert_eq!(decoded.empty_reason.as_deref(), Some("NoData"));
+    assert_eq!(decoded.quality, None);
+    assert!(decoded.degradation.is_empty());
+    assert_eq!(decoded.confidence_adjustment, None);
+    assert_eq!(decoded.trace, None);
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_named_telemetry_round_trip_keeps_version_zero() -> Result<()> {
+    use crate::retrieval_quality::{
+        ConfidenceAdjustment, PprCacheOutcome, RetrievalDegradation, RetrievalDiagnostics,
+        RetrievalQuality, classify_retrieval_quality,
+    };
+
+    let report = classify_retrieval_quality(&RetrievalDiagnostics {
+        attempted: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        succeeded: vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        ppr_cache: Some(PprCacheOutcome::Miss),
+        degradation: vec![RetrievalDegradation::PprCacheMiss],
+    });
+    let record = RetrievalRunRecord::new(
+        RetrievalRunId::now(),
+        RetrievalAction::Pipeline,
+        1,
+        2,
+        vec![RetrievalSignal::Text, RetrievalSignal::Ppr],
+        Vec::new(),
+        0,
+        0,
+        Some("NoData".to_owned()),
+    )
+    .with_quality(&report);
+    let encoded = encode_retrieval_run(&record)?;
+    let decoded = decode_retrieval_run(&encoded)?;
+    assert_eq!(decoded, record);
+    assert_eq!(decoded.version, 0);
+    assert_eq!(decoded.quality, Some(RetrievalQuality::Degraded));
+    assert_eq!(
+        decoded.degradation,
+        vec![RetrievalDegradation::PprCacheMiss]
+    );
+    assert_eq!(
+        decoded.confidence_adjustment,
+        Some(ConfidenceAdjustment::DEGRADED)
+    );
+    let wire: serde_json::Value = rmp_serde::from_slice(&encoded).expect("named row");
+    assert_eq!(wire["quality"], "degraded");
+    assert_eq!(wire["degradation"], serde_json::json!(["ppr_cache_miss"]));
+    assert_eq!(wire["confidence_adjustment"], -0.15);
     Ok(())
 }

@@ -6673,3 +6673,236 @@ mod relationship_scope_filter {
         Ok(())
     }
 }
+
+#[test]
+fn retrieval_quality_counts_completed_empty_channels_without_trace() -> Result<()> {
+    use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalQuality};
+
+    let (_dir, vault) = open_test_vault();
+    let minimal = vault
+        .query()
+        .search_text("absent", 10)
+        .run_with_telemetry()?;
+    assert!(minimal.value.is_empty());
+    assert_eq!(
+        minimal.retrieval_quality.quality,
+        RetrievalQuality::Passthrough
+    );
+    assert!(minimal.retrieval_quality.degradation.is_empty());
+    assert_eq!(
+        minimal.retrieval_quality.confidence_adjustment,
+        ConfidenceAdjustment::PASSTHROUGH,
+    );
+    let combined = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .search_text("absent", 10)
+        .run_with_telemetry()?;
+    assert!(combined.value.is_empty());
+    assert_eq!(
+        combined.retrieval_quality.quality,
+        RetrievalQuality::Degraded
+    );
+    assert!(combined.retrieval_quality.degradation.is_empty());
+    let row = vault
+        .retrieval_run(combined.run_id.expect("run id"))?
+        .expect("run row");
+    assert!(
+        row.trace.is_none(),
+        "quality does not require trace capture"
+    );
+    assert!(row.score_breakdown.is_empty());
+    assert_eq!(row.quality, Some(RetrievalQuality::Degraded));
+    assert_eq!(
+        row.confidence_adjustment,
+        Some(ConfidenceAdjustment::DEGRADED)
+    );
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_time_filters_and_blend_are_not_completed_temporal_search() -> Result<()> {
+    use crate::retrieval_quality::RetrievalQuality;
+
+    let (_dir, vault) = open_test_vault();
+    let output = vault
+        .query()
+        .search_text("absent", 10)
+        .filter_occurred_range(1, 10)
+        .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+        .boost_salience()
+        .boost_confidence()
+        .run_for_pack()?;
+    assert!(output.signals.contains(&RetrievalSignal::Temporal));
+    assert_eq!(
+        output.retrieval_quality.quality,
+        RetrievalQuality::Passthrough
+    );
+    assert!(output.retrieval_quality.degradation.is_empty());
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_full_requires_real_cache_hit_and_does_not_rewrite_ranking() -> Result<()> {
+    use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
+
+    let (_dir, vault) = open_test_vault();
+    let seed = entity_id(0x71);
+    let target = entity_id(0x72);
+    put_text_and_vector(&vault, seed, "quality needle", [1.0, 0.0, 0.0, 0.0])?;
+    put_text_and_vector(&vault, target, "quality needle", [0.9, 0.1, 0.0, 0.0])?;
+    vault.put_edge(&seed, EdgeKind::Supports, &target, 1.0)?;
+    let build = || {
+        vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .search_text("quality needle", 10)
+            // Successful zero-candidate channels still count toward full.
+            .search_phonetic(&["NO_MATCH_CODE"])
+            .search_temporal(4_000_000_000, 4_000_000_001, 10)
+            .search_ppr(&[seed], 1)
+            .with_temporal_now(4_000_000_001)
+    };
+    let cold = build().run_with_telemetry()?;
+    let warm = build().run_with_telemetry()?;
+    assert!(!cold.value.is_empty());
+    assert_eq!(cold.retrieval_quality.quality, RetrievalQuality::Degraded);
+    assert_eq!(
+        cold.retrieval_quality.degradation,
+        vec![RetrievalDegradation::PprCacheMiss]
+    );
+    assert_eq!(warm.retrieval_quality.quality, RetrievalQuality::Full);
+    assert!(warm.retrieval_quality.degradation.is_empty());
+    assert_eq!(
+        warm.retrieval_quality.confidence_adjustment,
+        ConfidenceAdjustment::FULL
+    );
+    let bits = |scores: &[ScoredEntity]| {
+        scores
+            .iter()
+            .map(|score| (score.id, score.score.to_bits()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(bits(&cold.value), bits(&warm.value));
+    assert_eq!(bits(&warm.value), bits(&build().run()?));
+    let pending = build().run_with_pending_vectors()?;
+    assert_eq!(pending.retrieval_quality, warm.retrieval_quality);
+    assert_eq!(bits(&pending.value), bits(&warm.value));
+    let page = build().run_dreamer_working_set(
+        DreamerWorkingSetCursor::start(),
+        DreamerWorkingSetBudget::new(10),
+        10,
+    )?;
+    assert_eq!(page.retrieval_quality, warm.retrieval_quality);
+    assert_eq!(bits(&page.rows), bits(&warm.value));
+    let filtered = build().filter_types(&[0xFE]).run_for_pack()?;
+    assert!(filtered.scores.is_empty());
+    assert_eq!(filtered.retrieval_quality.quality, RetrievalQuality::Full);
+    assert_eq!(
+        filtered.empty_reason,
+        Some(crate::context_pack::EmptyReason::FilterMatchedNone)
+    );
+    let cold_row = vault
+        .retrieval_run(cold.run_id.expect("cold id"))?
+        .expect("cold row");
+    assert_eq!(cold_row.quality, Some(RetrievalQuality::Degraded));
+    assert_eq!(cold_row.degradation, cold.retrieval_quality.degradation);
+    assert_eq!(
+        cold_row.confidence_adjustment,
+        Some(ConfidenceAdjustment::DEGRADED)
+    );
+    let degraded_empty = build()
+        .search_ppr(&[seed], 2)
+        .filter_types(&[0xFE])
+        .run_for_pack()?;
+    assert!(degraded_empty.scores.is_empty());
+    assert_eq!(
+        degraded_empty.retrieval_quality.quality,
+        RetrievalQuality::Degraded
+    );
+    assert_eq!(
+        degraded_empty.retrieval_quality.degradation,
+        vec![RetrievalDegradation::PprCacheMiss]
+    );
+    assert_eq!(
+        degraded_empty.empty_reason,
+        Some(crate::context_pack::EmptyReason::FilterMatchedNone)
+    );
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_no_channel_fast_path_and_unseeded_expansion_stay_passthrough() -> Result<()> {
+    use crate::retrieval_quality::RetrievalQuality;
+
+    let (_dir, vault) = open_test_vault();
+    let no_channels = vault.query().run_with_telemetry()?;
+    assert!(no_channels.value.is_empty());
+    assert!(no_channels.run_id.is_none());
+    assert_eq!(
+        no_channels.retrieval_quality.quality,
+        RetrievalQuality::Passthrough
+    );
+    let unseeded = vault
+        .query()
+        .search_text("absent", 10)
+        .expand_ppr(&[], 1)
+        .run_with_telemetry()?;
+    assert!(unseeded.value.is_empty());
+    assert_eq!(
+        unseeded.retrieval_quality.quality,
+        RetrievalQuality::Passthrough
+    );
+    // No cache lookup occurred, so do not invent a cache-miss marker.
+    assert!(unseeded.retrieval_quality.degradation.is_empty());
+    Ok(())
+}
+
+#[test]
+fn retrieval_quality_hyde_retry_retains_first_ppr_cache_miss() -> Result<()> {
+    use crate::retrieval_quality::{RetrievalDegradation, RetrievalQuality};
+
+    let (_dir, vault) = open_test_vault();
+    let seed = entity_id(0x73);
+    put_text_and_vector(&vault, seed, "quality retry", [1.0, 0.0, 0.0, 0.0])?;
+    let host = StubHyde {
+        embedding: vec![1.0, 0.0, 0.0, 0.0],
+        subqueries: vec!["quality retry".to_owned()],
+        insufficient: true,
+        assess_calls: std::sync::atomic::AtomicUsize::new(0),
+    };
+    let output = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .search_text("quality retry", 10)
+        .search_phonetic(&[])
+        .search_temporal(1, 2, 10)
+        .search_ppr(&[seed], 1)
+        .hyde(
+            &host,
+            GroundingContext::default(),
+            HydeOptions {
+                channel_limit: 10,
+                retry_once: true,
+            },
+        )
+        .run_with_telemetry()?;
+    assert!(
+        output.value.is_empty(),
+        "existing HyDE abstention remains intact"
+    );
+    assert_eq!(
+        host.assess_calls.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(output.retrieval_quality.quality, RetrievalQuality::Degraded);
+    assert_eq!(
+        output.retrieval_quality.degradation,
+        vec![RetrievalDegradation::PprCacheMiss]
+    );
+    let row = vault
+        .retrieval_run(output.run_id.expect("id"))?
+        .expect("row");
+    assert_eq!(row.degradation, output.retrieval_quality.degradation);
+    Ok(())
+}

@@ -38,6 +38,8 @@ pub(crate) type BroadcastPayload = (u32, Vec<u8>);
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
+    /// Optional host and budget guard for lease-gated deep retrieval.
+    pub(crate) deep_retrieval: Option<Arc<crate::api::memory_reason::DeepRetrievalHost>>,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
@@ -205,6 +207,7 @@ impl SyncServer {
 
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
+            deep_retrieval: None,
             vault,
             root_doc,
             ephemeral_store: EphemeralStore::new(config.ephemeral_timeout_ms),

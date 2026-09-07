@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
 use crate::pipeline::Signal;
+use crate::retrieval_quality::RetrievalQualityReport;
 
 use super::empty_pack::EmptyContext;
 
@@ -170,6 +171,8 @@ impl PackItemAccounting {
 /// A fully hydrated context pack ready for serialization or programmatic use.
 #[derive(Debug, Clone)]
 pub struct ContextPack {
+    /// Channel execution health, retained even when no entities surface.
+    pub retrieval_quality: RetrievalQualityReport,
     pub results: Vec<ContextEntity>,
     pub neighbors: Vec<ContextEntity>,
     pub stats: PackStats,

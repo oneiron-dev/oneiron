@@ -1206,6 +1206,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/usage/events", "post"),
         ("/v1/usage/tenants/{tenant_id}/rollup", "get"),
         ("/api/lease/revoke", "post"),
+        ("/v1/companion/memory/reason", "post"),
         ("/v1/core/query", "post"),
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
