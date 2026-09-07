@@ -1,3 +1,5 @@
+mod pending_lookup;
+
 use super::*;
 use crate::agent_def::{AgentDefinition, AgentScope, encode_agent_definition};
 use crate::claim::{

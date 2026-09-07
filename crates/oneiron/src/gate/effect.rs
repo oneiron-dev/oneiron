@@ -546,14 +546,9 @@ pub(crate) fn record_external_effect_policy(
     };
     if decision.outcome() == GateOutcome::Pending {
         // Read the caller's txn so retries also see its uncommitted appends.
-        // Keep only the first matching id; the cursor is dropped before any write.
-        let mut existing_id = None;
-        store.for_each_gate_decision_in_txn(&*wtxn, |record| {
-            if existing_id.is_none() && gate_decision_matches_pending_candidate(&record, &candidate)
-            {
-                existing_id = Some(record.decision_id);
-            }
-            Ok(())
+        // Stop at the first match; the cursor is dropped before any write.
+        let existing_id = store.find_gate_decision_id_in_txn(&*wtxn, |record| {
+            gate_decision_matches_pending_candidate(record, &candidate)
         })?;
         if let Some(existing_id) = existing_id {
             record_gate_decision_metrics(&decision);

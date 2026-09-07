@@ -13,6 +13,8 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+mod lookup;
+
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`STORAGE_ABI_VERSION`] bump.
 pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
