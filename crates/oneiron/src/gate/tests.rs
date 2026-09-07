@@ -15490,11 +15490,11 @@ mod auto_checker {
         Ok(())
     }
 
-    // Independent preimage for the small frontier fixture below, from landed
-    // main a56c0398edbecd8126ffebac525871444b629fd8, resolution.rs:
-    // hash_policy_frontier_v0. In particular, posture follows budget exhaustion
-    // even WITHOUT a checker. This is not the older feature-only frontier.
-    fn landed_main_no_checker_frontier(posture: &str) -> [u8; 32] {
+    // Independent preimage for the small frontier fixture below: landed main
+    // a56c0398edbecd8126ffebac525871444b629fd8's hash_policy_frontier_v0,
+    // plus ONE-1453's intentional breaker-presence byte. Posture still follows
+    // budget exhaustion even WITHOUT a checker; an absent checker adds no bytes.
+    fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
         fn len(bytes: &mut Vec<u8>, value: u64) {
@@ -15537,6 +15537,7 @@ mod auto_checker {
         }
         bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
         len(&mut bytes, 0); // owner-policy rows
+        bytes.push(0); // no actor-burst-breaker override (ONE-1453 frontier domain)
         bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
         len(&mut bytes, 0); // owner-policy patterns
         len(&mut bytes, 0); // signatures
@@ -15578,7 +15579,7 @@ mod auto_checker {
                 assert_eq!(policy.comm_opt_out_posture().as_str(), resolved_posture);
                 let hash = policy.read_frontier_hash()?;
                 if checker.is_none() {
-                    assert_eq!(hash, landed_main_no_checker_frontier(resolved_posture));
+                    assert_eq!(hash, integrated_no_checker_frontier(resolved_posture));
                 }
                 let rtxn = vault.store.env.read_txn()?;
                 let consent = claim_consent_binding_parts(&vault.store, &rtxn, &body)?;
@@ -16291,6 +16292,9 @@ mod auto_checker {
         Ok(())
     }
 }
+
+#[path = "tests/breaker.rs"]
+mod breaker;
 
 #[cfg(test)]
 mod vad_vetting_tests {

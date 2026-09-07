@@ -234,6 +234,12 @@ pub(crate) enum GateReasonCode {
     /// answer as a hold, spelled differently so an owner can tell "the checker
     /// said no" from "nothing checked".
     PendingCheckerUnavailable,
+    /// ONE-1453: the per-actor burst breaker converted a would-be-`Auto`
+    /// agent-run write into owner review. Velocity, not authority — the claim
+    /// is preserved and joins the run's existing consent bundle, so this is a
+    /// pend and never a denial. An event already pending for another cause
+    /// keeps its own reason set and does not gain this one.
+    PendingActorBurstBreaker,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -279,6 +285,7 @@ impl GateReasonCode {
             Self::PendingCounterpartyOptOut => "gate.pending.counterparty_opt_out",
             Self::PendingChecker => "gate.pending.checker",
             Self::PendingCheckerUnavailable => "gate.pending.checker.unavailable",
+            Self::PendingActorBurstBreaker => "gate.pending.actor_burst_breaker",
         }
     }
 
@@ -338,6 +345,10 @@ impl GateReasonCode {
             Self::PendingChecker | Self::PendingCheckerUnavailable => {
                 GateMetricReasonClass::SourceTrust
             }
+            // ONE-1453 rides the actor-level pending class it already belongs
+            // to: the breaker is an actor ceiling that velocity lowered. No
+            // new metric class, index, or counter width.
+            Self::PendingActorBurstBreaker => GateMetricReasonClass::ActorCeiling,
         }
     }
 }
