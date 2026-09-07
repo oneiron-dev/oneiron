@@ -854,7 +854,7 @@ fn serialization_round_trip() {
     let timeline_response = in_process.memory_timeline(timeline).expect("timeline");
     assert_eq!(round_trip(&timeline_response), timeline_response);
 
-    let envelope = VaultReadResponse::Query(query_response.clone());
+    let envelope = VaultReadResponse::Query(query_response);
     assert_eq!(round_trip(&envelope), envelope);
     let error = VaultReadError::Engine {
         method: VaultReadMethod::Hydrate,

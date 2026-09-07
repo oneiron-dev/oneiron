@@ -332,6 +332,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 predicate: &body.predicate,
                 value_preview: &value_preview,
                 source,
+                lineage,
                 actor_class: &input.actor.actor_class,
                 sensitivity_band: claim_sensitivity_band(body),
             };
