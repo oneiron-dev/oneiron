@@ -4,6 +4,7 @@ mod builder;
 mod channels;
 mod execution;
 mod filters;
+pub(crate) use types::CandidateFilter;
 mod support;
 mod trace;
 mod types;

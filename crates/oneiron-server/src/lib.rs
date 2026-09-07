@@ -22,6 +22,7 @@ pub mod config;
 pub mod error;
 mod handler;
 mod idempotency;
+mod livequery;
 pub mod managed;
 pub mod mcp;
 mod oauth_relay;
