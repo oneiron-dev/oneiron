@@ -448,8 +448,8 @@ fn active_set_admits(
     active_set: &WorldAuthoritySet,
 ) -> Result<bool> {
     Ok(match claim_world(store, rtxn, id)? {
-        None => active_set.include_base,
-        Some(world) => active_set.worlds.contains(&world),
+        None => active_set.include_base(),
+        Some(world) => active_set.worlds().contains(&world),
     })
 }
 

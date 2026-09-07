@@ -381,9 +381,9 @@ const WORLD_ACCESS_VALUE_KEY_WORLDS: &str = "worlds";
 pub struct WorldAuthoritySet {
     /// Whether base reality — claims with no `world` key, and every non-claim
     /// entity — is readable under this set.
-    pub include_base: bool,
+    include_base: bool,
     /// The readable world ids. Sorted and unique by construction.
-    pub worlds: BTreeSet<EntityId>,
+    worlds: BTreeSet<EntityId>,
 }
 
 impl WorldAuthoritySet {
@@ -406,6 +406,18 @@ impl WorldAuthoritySet {
             include_base,
             worlds,
         })
+    }
+
+    /// Whether base reality is readable under this set.
+    #[must_use]
+    pub fn include_base(&self) -> bool {
+        self.include_base
+    }
+
+    /// The readable world ids in sorted, unique order.
+    #[must_use]
+    pub fn worlds(&self) -> &BTreeSet<EntityId> {
+        &self.worlds
     }
 
     /// Whether every member of `self` is also a member of `allowed`.

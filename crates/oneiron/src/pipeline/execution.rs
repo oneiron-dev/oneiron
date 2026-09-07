@@ -38,9 +38,10 @@ use super::filters::{
 };
 use super::support::normalize_range;
 use super::trace::{
-    add_signal_score_components, filter_retrieval_trace_scores, retrieval_trace_candidate_set,
-    retrieval_trace_channel_record, retrieval_trace_fork_hash, retrieval_trace_fused_scores,
-    retrieval_trace_stage_record, retrieval_trace_top_scores, telemetry_score_breakdown,
+    RetrievalTraceForkEvidence, add_signal_score_components, filter_retrieval_trace_scores,
+    retrieval_trace_candidate_set, retrieval_trace_channel_record, retrieval_trace_fork_hash,
+    retrieval_trace_fused_scores, retrieval_trace_stage_record, retrieval_trace_top_scores,
+    telemetry_score_breakdown,
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PER_SCAN_CAP_FACTOR, PPR_DAMPING,
@@ -1196,7 +1197,10 @@ impl PipelineBuilder<'_> {
                     explicit_time_dependent_now,
                     occurred_range,
                     rerank_query,
-                    &candidate_set,
+                    RetrievalTraceForkEvidence {
+                        candidate_set: &candidate_set,
+                        world_authority: world_authority.as_ref(),
+                    },
                 );
                 let fork_hash = if let Some(identity) = community_trace_identity {
                     use sha2::{Digest, Sha256};
