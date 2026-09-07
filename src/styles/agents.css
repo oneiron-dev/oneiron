@@ -23,16 +23,19 @@ main.pane {
 /* ── the grid: roster · room ── */
 .agents-grid {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: 208px minmax(0, 1fr); column-gap: 28px;
+  display: grid; grid-template-columns: 232px minmax(0, 1fr); column-gap: 22px; padding-top: 2px;
 }
 @media (max-width: 980px) {
-  .agents-grid { grid-template-columns: 160px minmax(0, 1fr); column-gap: 16px; }
+  .agents-grid { grid-template-columns: 176px minmax(0, 1fr); column-gap: 14px; }
 }
 
 /* ── the roster: one row per agent, name in ink over one mono line (what it
    does right now, or when it wakes). the house row closes the list. the
    selected row wears the well (its chrome rides the tuner, see safelight) ── */
-.roster { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; overflow-y: auto; min-height: 0; }
+/* the roster is a well column (owner 09-08: the list and the conversation on
+   different shades) — the same rule as the vault's inspector and the work
+   pane: a tinted zone divides. the picked row lifts onto the sheet tone. */
+.roster { display: flex; flex-direction: column; gap: 2px; padding: 8px 6px; overflow-y: auto; min-height: 0; background: var(--bg-well); border-radius: 6px; align-self: start; max-height: 100%; }
 .rrow {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   padding: 7px 10px 7px 8px; border-radius: 5px; cursor: pointer;
@@ -40,15 +43,19 @@ main.pane {
 }
 .rrow:hover { background: color-mix(in srgb, var(--silver-4) 10%, transparent); }
 .rrow:focus-visible { outline: 1.5px solid var(--silver-3); outline-offset: -2px; }
-.rrow.on { background: var(--bg-well); }
+.rrow.on { background: var(--bg-elevated); box-shadow: var(--shadow-sheet), inset 0 0 0 0.5px var(--rule); }
 .rrow .rtext { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .rname { font-family: var(--serif); font-size: 14.5px; color: var(--silver-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rname.aname { color: var(--p-ink); }   /* the name in its ink IS the identity in the row (A, owner 09-07) */
 .rname .unnamed { color: var(--silver-4); font-style: italic; }
 .rdoing {
-  font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; color: var(--silver-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-feature-settings: "tnum" 1;
+  font-family: var(--mono); font-size: 11px; line-height: 1.4; letter-spacing: 0.02em; color: var(--silver-3);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-feature-settings: "tnum" 1;
 }
+/* the new-agent row: a quiet last row, not a button */
+.rrow.new .rname { color: var(--silver-3); font-size: 13.5px; }
+.rrow.new .rdoing { color: var(--silver-4); }
+.rrow.new:hover .rname { color: var(--silver-1); }
 .rrow.draft .rdoing { color: var(--silver-4); }
 /* live = the doing-text shimmers (rule 36); the row never rests red */
 @keyframes ag-shimmer { to { background-position: -200% 0; } }
@@ -181,6 +188,8 @@ html[data-voice-ground="hairline"] .rmsg.mine .rbody { box-shadow: inset 0 0 0 1
 .room-line .agent-chip { cursor: default; }
 .room-line .agent-chip.switch { cursor: pointer; }
 .room-line .rhint { flex: none; font-family: var(--mono); font-size: 10.5px; color: var(--silver-4); white-space: nowrap; }
+/* pause lives at the line's end (owner 09-08): it is the agent's verb, next to where you steer */
+.room-line .line-acts { flex: none; display: flex; gap: 12px; align-items: baseline; }
 /* the switcher pops above the composer, anchored to the room */
 .room { position: relative; }
 .room .amenu { bottom: 56px; left: 0; }
