@@ -455,7 +455,7 @@ table.ledger td.mono, table.ledger td .mono { font-size: 12.5px; }
    door: click → the agent panel (jobs + pointer thread). */
 :root {
   --p-herald:    light-dark(#2E6E96, #6FA3C7);
-  --p-scout:     light-dark(#8E3B4A, #9A4255);
+  --p-scout:     light-dark(#8E3B4A, #BE687A);   /* night lifted 09-07: names in ink are text → 4.5:1 on the sheet (was #9A4255 = 2.76:1) */
   --p-loom:      light-dark(#4E4488, #857BB8);
   --p-companion: light-dark(#5E5680, #8E86A8);
 }
