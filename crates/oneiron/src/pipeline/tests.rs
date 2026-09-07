@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::*;
 use crate::codebase::CODEBASE_SCOPE_KEY_LEN;
+use crate::corpus::{CorpusId, CorpusScope, scope_with_corpus_id};
 use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
 use crate::test_util::embedding_test_config;
@@ -6673,6 +6674,9 @@ mod relationship_scope_filter {
         Ok(())
     }
 }
+
+#[path = "corpus_tests.rs"]
+mod corpus_tests;
 
 fn ppr_vad_pipeline_trace(vault: &Vault, expand: bool) -> Result<RetrievalTrace> {
     let builder = if expand {

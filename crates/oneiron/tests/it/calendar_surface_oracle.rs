@@ -44,9 +44,9 @@ use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     CalendarInviteMethod, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
     CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
-    ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    MEMORY_CODE_BAD_REQUEST, Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
-    WriteProvenance, calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
+    ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, MEMORY_CODE_BAD_REQUEST,
+    Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
     memory::CALENDAR_INVITE_OUTBOUND_VERB, memory::CalendarFreebusyIntervalDto,
 };
 use rmpv::Value;
@@ -321,7 +321,7 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
         .expect("claim row")
         .expect("the claim-candidate door stored a row");
     assert_eq!(stored.predicate, "calendar.time_kind");
-    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(stored.lifecycle, oneiron::ClaimLifecycleStatus::Active);
     assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
     assert_eq!(stored.source, Some(ClaimSource::Imported));
 

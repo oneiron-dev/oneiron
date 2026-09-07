@@ -10,6 +10,10 @@ fn tombstone_reason_wire_bytes_match_pinned_table() {
         (TombstoneReason::UserHardDelete, 2, true),
         (TombstoneReason::GdprDelete, 3, true),
         (TombstoneReason::PolicyDelete, 4, true),
+        // ONE-1931 / ARCH-0073: byte 5 joins the table as the SECOND soft
+        // reason. A transposed byte here would archive rows a peer expects
+        // to be hard-purged.
+        (TombstoneReason::ArchivedByCleanup, 5, false),
     ];
     for (reason, wire_byte, hard) in cases {
         assert_eq!(reason.wire_byte(), wire_byte, "{reason:?} wire byte");
@@ -21,13 +25,89 @@ fn tombstone_reason_wire_bytes_match_pinned_table() {
         assert_eq!(reason.is_hard(), hard, "{reason:?} effect class");
     }
     // Byte 0 is RESERVED (= hard) and every byte above the table is
-    // unknown (= hard): neither may decode to a known reason.
-    for unknown in [0_u8, 5, 17, 120, 255] {
+    // unknown (= hard): neither may decode to a known reason. Byte 6 is the
+    // new first-unknown byte — it moved up by one when byte 5 was taken, and
+    // the fail-closed law did not move at all.
+    for unknown in [0_u8, 6, 17, 120, 255] {
         assert_eq!(
             TombstoneReason::from_wire_byte(unknown),
             None,
             "byte {unknown} must not decode to a known reason"
         );
+    }
+}
+
+/// The fail-closed law stated as the receivers state it: a value the table
+/// cannot name is HARD, byte 5 notwithstanding. Byte 0 (RESERVED), byte 6
+/// (the first byte past the extended table), 255, a legacy 8-byte value and a
+/// malformed length all decode HARD; only the two soft reasons decode soft.
+#[test]
+fn unknown_reason_bytes_still_decode_hard_after_archive_byte() {
+    let value_with_reason_byte = |byte: u8| {
+        let mut raw = [0_u8; TOMBSTONE_VALUE_V2_LEN];
+        raw[0] = byte;
+        raw
+    };
+    for hard_byte in [0_u8, 6, 7, 42, 254, 255] {
+        let decoded = decode_tombstone_value(&value_with_reason_byte(hard_byte));
+        assert_eq!(decoded.reason, None, "byte {hard_byte} names no reason");
+        assert!(decoded.is_hard(), "byte {hard_byte} must decode HARD");
+    }
+    // Legacy 8-byte and malformed shapes are untouched by the new byte.
+    assert!(decode_tombstone_value(&[0_u8; TOMBSTONE_VALUE_LEGACY_LEN]).is_hard());
+    assert!(decode_tombstone_value(&[0_u8; 3]).is_hard());
+    // ...and the two soft reasons are the ONLY soft answers.
+    assert!(!decode_tombstone_value(&value_with_reason_byte(1)).is_hard());
+    assert!(!decode_tombstone_value(&value_with_reason_byte(5)).is_hard());
+}
+
+/// The ONE-1931 archive reason is soft on every row of the per-reason
+/// behavior matrix, and is the only reason that publishes nothing.
+#[test]
+fn archive_reason_is_soft_on_every_behavior_row() {
+    let archive = DeleteReason::ArchivedByCleanup;
+    assert_eq!(archive.as_str(), "archived_by_cleanup");
+    assert!(
+        !archive.writes_receipt(),
+        "archive mints no per-entity receipt"
+    );
+    assert!(
+        !archive.active_store_hard_purge_v1(),
+        "archive keeps the shell"
+    );
+    assert!(
+        !archive.queues_historical_sweep(),
+        "archive queues no sweep"
+    );
+    assert!(
+        !archive.publishes_crdt_tombstone(),
+        "archive is local hygiene, never a propagated deletion intent"
+    );
+    assert_eq!(
+        TombstoneReason::from(archive),
+        TombstoneReason::ArchivedByCleanup
+    );
+    // `user_delete` is the precedent it copies on the first three rows and
+    // deliberately DIVERGES from on the fourth.
+    let user = DeleteReason::UserDelete;
+    assert_eq!(user.writes_receipt(), archive.writes_receipt());
+    assert_eq!(
+        user.active_store_hard_purge_v1(),
+        archive.active_store_hard_purge_v1()
+    );
+    assert_eq!(
+        user.queues_historical_sweep(),
+        archive.queues_historical_sweep()
+    );
+    assert!(user.publishes_crdt_tombstone());
+    // Every destructive reason still publishes: nothing about deletion moved.
+    for hard in [
+        DeleteReason::UserHardDelete,
+        DeleteReason::GdprDelete,
+        DeleteReason::PolicyDelete,
+    ] {
+        assert!(hard.publishes_crdt_tombstone(), "{hard:?} must publish");
+        assert!(hard.active_store_hard_purge_v1(), "{hard:?} must purge");
     }
 }
 
@@ -133,9 +213,20 @@ fn decode_tombstone_value_table() {
             want_deleted_at: 0xDEAD_BEEF,
             want_request_id: Some([0xA5; 16]),
         },
+        // ONE-1931 took byte 5 for `archived_by_cleanup`, the SECOND soft
+        // reason. Byte 6 inherits this case's job: it is now the first byte
+        // past the table, and it still decodes HARD.
         Case {
-            name: "unknown reason byte 5 decodes as hard",
+            name: "archive reason byte 5 decodes as the soft archive reason",
             input: v2(5),
+            want_reason: Some(TombstoneReason::ArchivedByCleanup),
+            want_hard: false,
+            want_deleted_at: 0xDEAD_BEEF,
+            want_request_id: Some([0xA5; 16]),
+        },
+        Case {
+            name: "unknown reason byte 6 decodes as hard",
+            input: v2(6),
             want_reason: None,
             want_hard: true,
             want_deleted_at: 0xDEAD_BEEF,
