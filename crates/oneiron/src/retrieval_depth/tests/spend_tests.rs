@@ -19,6 +19,7 @@ impl DeepSearchBackend for FailingBackend {
         _query: &str,
         already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         if matches!(self.point, FailurePoint::FirstDecompose)
@@ -44,6 +45,7 @@ impl DeepSearchBackend for FailingBackend {
         &self,
         _query: &str,
         _candidates: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         if matches!(self.point, FailurePoint::MalformedRerank) {
@@ -120,6 +122,7 @@ impl DeepSearchBackend for CorruptScopeAfterDecompose<'_> {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         // Fault only after successful initial scope/channel reads. The next
@@ -141,6 +144,7 @@ impl DeepSearchBackend for CorruptScopeAfterDecompose<'_> {
         &self,
         _query: &str,
         _candidates: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         panic!("scope failure must stop before rerank")
@@ -175,4 +179,53 @@ fn deep_narrowing_error_after_decompose_retains_spend() {
         .unwrap();
     assert_eq!(guard.read().used_units, 7);
     assert_eq!(guard.read().reserved_units, 0);
+}
+
+#[test]
+fn deep_request_budget_bounds_each_round_and_rerank_without_losing_spend() {
+    let (_dir, vault, _, _, _) = seeded_vault();
+    let scoped = vault.scoped_read(ScopedReadActorKey::new("budget-reader").unwrap());
+    // Two decomposition calls cost 3 each, then reranking costs 5. Include
+    // both exhaustion before a call and a backend reporting an overrun.
+    for (budget, spent, caps) in [
+        (0, 0, vec![]),
+        (2, 3, vec![Some(2)]),
+        (3, 3, vec![Some(3)]),
+        (5, 6, vec![Some(5), Some(2)]),
+        (6, 6, vec![Some(6), Some(3)]),
+        (10, 11, vec![Some(10), Some(7), Some(4)]),
+        (11, 11, vec![Some(11), Some(8), Some(5)]),
+    ] {
+        let guard = BudgetGuard::with_reserve_units(
+            "bounded-depth",
+            100,
+            10,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let admission = guard.admit().unwrap();
+        let backend =
+            ScriptedBackend::new(vec![vec!["checklist".to_owned()], Vec::new()]).with_spend(3, 5);
+        let mut request = hosted_request(
+            "launch",
+            Effort::Deep,
+            Some(&admission.lease),
+            Some(&backend),
+        );
+        request.token_budget = Some(budget);
+        let result = scoped.search_with_effort(&request);
+        let tokens_used = if budget == 11 {
+            let result = result.unwrap();
+            assert!(!result.hits.is_empty());
+            result.tokens_used
+        } else {
+            let failure = result.unwrap_err();
+            assert!(failure.error.to_string().contains("token budget"));
+            failure.tokens_used
+        };
+        assert_eq!(tokens_used, spent, "budget={budget}");
+        assert_eq!(backend.calls().token_budgets_seen, caps, "budget={budget}");
+        guard.settle_usage(&admission.lease, tokens_used).unwrap();
+        assert_eq!(guard.read().used_units, spent);
+        assert_eq!(guard.read().reserved_units, 0);
+    }
 }

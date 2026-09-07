@@ -14500,6 +14500,7 @@ impl oneiron::retrieval_depth::DeepSearchBackend for StubReasonBackend {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         _lease: &oneiron::llm::BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         Ok(oneiron::retrieval_depth::BackendSpend {
@@ -14512,6 +14513,7 @@ impl oneiron::retrieval_depth::DeepSearchBackend for StubReasonBackend {
         &self,
         _query: &str,
         candidates: &[oneiron::rerank::RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         _lease: &oneiron::llm::BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         Ok(oneiron::retrieval_depth::BackendSpend {

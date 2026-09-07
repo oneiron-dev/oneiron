@@ -65,6 +65,7 @@ fn text_request(query: &str, effort: Effort) -> DepthSearchRequest<'static> {
         session_scope: None,
         lease: None,
         backend: None,
+        token_budget: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn hosted_request<'a>(
         session_scope: None,
         lease,
         backend,
+        token_budget: None,
     }
 }
 
@@ -110,6 +112,7 @@ struct BackendCalls {
     max_queries_seen: Vec<usize>,
     candidates_seen: usize,
     leases_seen: Vec<BudgetLease>,
+    token_budgets_seen: Vec<Option<u64>>,
     candidate_ids: Vec<EntityId>,
 }
 
@@ -158,6 +161,7 @@ impl DeepSearchBackend for ScriptedBackend {
         _query: &str,
         _already_run: &[String],
         max_queries: usize,
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         let mut calls = self.calls();
@@ -165,6 +169,7 @@ impl DeepSearchBackend for ScriptedBackend {
         calls.decompose += 1;
         calls.max_queries_seen.push(max_queries);
         calls.leases_seen.push(lease.clone());
+        calls.token_budgets_seen.push(token_budget);
         drop(calls);
         Ok(BackendSpend {
             value: self.rounds.get(round).cloned().unwrap_or_default(),
@@ -176,6 +181,7 @@ impl DeepSearchBackend for ScriptedBackend {
         &self,
         _query: &str,
         candidates: &[RerankCandidate<'_>],
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         let mut calls = self.calls();
@@ -183,6 +189,7 @@ impl DeepSearchBackend for ScriptedBackend {
         calls.candidates_seen = candidates.len();
         calls.candidate_ids = candidates.iter().map(|candidate| candidate.id).collect();
         calls.leases_seen.push(lease.clone());
+        calls.token_budgets_seen.push(token_budget);
         drop(calls);
         let value = self
             .rerank_scores
@@ -206,6 +213,7 @@ impl DeepSearchBackend for ForbiddenBackend {
         _: &str,
         _: &[String],
         _: usize,
+        _token_budget: Option<u64>,
         _: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         panic!("a model-free tier must not call the deep backend");
@@ -215,6 +223,7 @@ impl DeepSearchBackend for ForbiddenBackend {
         &self,
         _: &str,
         _: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         _: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         panic!("a model-free tier must not call the deep backend");
@@ -620,6 +629,7 @@ fn deep_vector_without_query_text_refuses() {
         session_scope: None,
         lease: Some(&lease),
         backend: Some(&backend),
+        token_budget: None,
     };
     let error = scoped
         .search_with_effort(&ungrounded)
@@ -639,6 +649,7 @@ fn deep_vector_without_query_text_refuses() {
             session_scope: None,
             lease: None,
             backend: None,
+            token_budget: None,
         };
         scoped
             .search_with_effort(&request)

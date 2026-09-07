@@ -38,6 +38,7 @@ impl DeepSearchBackend for FailingBackend {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
+        _token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         *self.lease.lock().unwrap() = Some(lease.clone());
@@ -55,6 +56,7 @@ impl DeepSearchBackend for FailingBackend {
         &self,
         _query: &str,
         candidates: &[RerankCandidate<'_>],
+        _token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         assert!(!candidates.is_empty());
@@ -175,7 +177,17 @@ async fn deep_reason_composition_errors_settle_retrieval_and_error_spend() {
         (FailurePoint::SpentCompose, 31),
     ] {
         let (_dir, server, backend) = failing_server(point);
-        let (status, response) = route_json(server, deep_request(true)).await;
+        // Retrieval costs 18, leaving only 1 for composition. A failed call's
+        // actual usage still counts, even when it exceeds that allowance.
+        let (status, response) = route_json(
+            server,
+            json_request(
+                "POST",
+                "/v1/companion/memory/reason",
+                json!({ "query": "launch", "depth": "deep", "tokenBudget": 19 }),
+            ),
+        )
+        .await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{response}");
         assert_eq!(response["error"]["code"], "INTERNAL_SERVER_ERROR");
         assert!(response.get("answer").is_none());

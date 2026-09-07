@@ -345,6 +345,7 @@ fn run_depth_search(
         session_scope: None,
         lease: admission.map(DeepAdmission::lease),
         backend: admission.map(DeepAdmission::search_backend),
+        token_budget: None,
     };
     let result = scoped_read.search_with_effort(&request);
     if let Some(admission) = admission {

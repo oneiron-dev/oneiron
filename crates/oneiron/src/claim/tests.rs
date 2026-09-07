@@ -4794,6 +4794,7 @@ fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door()
         session_scope: None,
         lease: None,
         backend: None,
+        token_budget: None,
     };
 
     let dialed = scoped.search_with_effort(&request)?;

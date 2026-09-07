@@ -150,6 +150,9 @@ pub struct DepthSearchRequest<'a> {
     pub lease: Option<&'a BudgetLease>,
     /// Host-injected deep executor. Deep only.
     pub backend: Option<&'a dyn DeepSearchBackend>,
+    /// Total token cap for all deep calls in this search. `None` adds no cap
+    /// beyond the host's lease policy. Ignored by the model-free tiers.
+    pub token_budget: Option<u64>,
 }
 
 /// The result of one effort-dialed read, plus what it cost to produce.
@@ -211,6 +214,11 @@ impl<T> BackendSpend<T> {
 /// same admitted lease that pays for this read. On failure, report any tokens
 /// this call consumed in [`RetrievalError`]; a plain engine error converts to
 /// zero usage only. The host, not the backend, settles the shared lease.
+///
+/// `token_budget` is the remaining request allowance, not a fresh per-call cap.
+/// A backend must bound its total input and output tokens (including retries)
+/// to this allowance, or refuse with actual usage. `None` adds no request cap.
+/// The engine rejects reported overruns and stops before any subsequent call.
 pub trait DeepSearchBackend: Send + Sync {
     /// Proposes follow-up queries for one deep round.
     ///
@@ -224,6 +232,7 @@ pub trait DeepSearchBackend: Send + Sync {
         query: &str,
         already_run: &[String],
         max_queries: usize,
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<String>>>;
 
@@ -237,6 +246,7 @@ pub trait DeepSearchBackend: Send + Sync {
         &self,
         query: &str,
         candidates: &[RerankCandidate<'_>],
+        token_budget: Option<u64>,
         lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>>;
 }
@@ -488,12 +498,16 @@ fn run_deep_rounds(
     acc: &mut DepthAccumulator,
 ) -> RetrievalResult<()> {
     for _ in 0..DEEP_MAX_ROUNDS {
-        let proposed = backend.decompose(
-            query,
-            &acc.queries_run,
-            DEEP_QUERIES_PER_ROUND,
-            request.lease.expect("deep preflight requires a lease"),
-        )?;
+        let token_budget = request.remaining_token_budget(acc.tokens_used)?;
+        let proposed = backend
+            .decompose(
+                query,
+                &acc.queries_run,
+                DEEP_QUERIES_PER_ROUND,
+                token_budget,
+                request.lease.expect("deep preflight requires a lease"),
+            )?
+            .enforce_token_budget(token_budget)?;
         acc.charge_backend(SIGNAL_BACKEND_DECOMPOSE, proposed.tokens_used);
         let round = acc.admissible_round_queries(proposed.value);
         if round.is_empty() {
@@ -526,11 +540,15 @@ fn run_deep_rerank(
     }
     let bodies = acc.candidate_claim_bodies(scoped)?;
     let candidates = acc.rerank_candidates(&bodies);
-    let scored = backend.rerank(
-        query,
-        &candidates,
-        request.lease.expect("deep preflight requires a lease"),
-    )?;
+    let token_budget = request.remaining_token_budget(acc.tokens_used)?;
+    let scored = backend
+        .rerank(
+            query,
+            &candidates,
+            token_budget,
+            request.lease.expect("deep preflight requires a lease"),
+        )?
+        .enforce_token_budget(token_budget)?;
     acc.charge_backend(SIGNAL_BACKEND_RERANK, scored.tokens_used);
     if scored.value.len() != acc.order.len() {
         return Err(Error::InvalidConfig(

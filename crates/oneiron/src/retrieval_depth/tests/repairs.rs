@@ -18,6 +18,7 @@ fn vector_grounding_does_not_run_standard_lexical_channels() -> TestResult {
             session_scope: None,
             lease: Some(&lease),
             backend: Some(&backend),
+            token_budget: None,
         };
         let result = scoped.search_with_effort(&request)?;
         // There are text hits but no vectors. Grounding must not retrieve them.
@@ -193,6 +194,7 @@ fn session_scope_precedes_text_topk_and_deep_candidate_bodies() -> TestResult {
                 session_scope: Some(scope),
                 lease: Some(&lease),
                 backend: Some(&backend),
+                token_budget: None,
             };
             let result = scoped.search_with_effort(&request)?;
             assert_eq!(hit_ids(&result), vec![inside], "{effort:?}, {scope:?}");
@@ -237,6 +239,7 @@ fn session_scope_precedes_vector_topk() -> TestResult {
         session_scope: Some(&scope),
         lease: None,
         backend: None,
+        token_budget: None,
     };
     assert_eq!(hit_ids(&scoped.search_with_effort(&request)?), vec![inside]);
     Ok(())
@@ -320,6 +323,7 @@ fn session_scope_cannot_admit_a_hidden_document_at_any_effort() -> TestResult {
             session_scope: Some(&scope),
             lease: Some(&lease),
             backend: Some(&backend),
+            token_budget: None,
         };
         assert!(scoped.search_with_effort(&request)?.hits.is_empty());
         assert_eq!(backend.calls().rerank, 0);

@@ -69,10 +69,10 @@ pub(crate) const MEMORY_REASON_DEFAULT_LIMIT: usize = 10;
 /// it can cite, and a caller asking for a thousand rows is asking for a dump.
 pub(crate) const MEMORY_REASON_MAX_LIMIT: usize = 100;
 
-/// Default composition budget, matching the engine's own recall budget.
+/// Default request budget, matching the engine's own recall budget.
 pub(crate) const MEMORY_REASON_DEFAULT_TOKEN_BUDGET: usize = 4_000;
 
-/// Ceiling on the composition budget a caller may request.
+/// Ceiling on the complete request budget a caller may request.
 pub(crate) const MEMORY_REASON_MAX_TOKEN_BUDGET: usize = 65_536;
 
 /// The wire values `depth` accepts, derived from the engine enum so the
@@ -150,7 +150,7 @@ pub(crate) struct MemoryReasonRequest {
     /// Evidence rows to retrieve. Omitted means `10`; must be at least 1.
     #[schema(example = 10)]
     pub(crate) limit: Option<usize>,
-    /// Composition budget in tokens, `1..=65536`. Omitted means `4000`.
+    /// Total decompose + rerank + compose budget, `1..=65536` tokens; default `4000`.
     ///
     /// A BUDGET, never the reported spend: `tokensUsed` in the response is
     /// what the backend actually spent, which for the model-free tiers is 0
@@ -242,8 +242,8 @@ pub(crate) struct MemoryReasonComposeRequest<'a> {
     pub(crate) depth: Effort,
     /// The rendering the caller asked for.
     pub(crate) format: MemoryReasonFormat,
-    /// The caller's composition budget, in tokens.
-    pub(crate) token_budget: usize,
+    /// Tokens left after retrieval, covering composition input, output and retries.
+    pub(crate) token_budget: u64,
     /// The evidence, already actor-admitted and session-narrowed.
     pub(crate) evidence: &'a [MemoryReasonEvidence],
 }
@@ -267,6 +267,7 @@ pub(crate) trait MemoryReasonBackend: DeepSearchBackend {
     /// Composes one answer from the retrieved evidence, under the lease the
     /// budget guard minted for this read. Errors report this call's spent
     /// tokens, just like the deep search methods; the host settles the total.
+    /// Bound all spend to `request.token_budget`, or refuse with actual usage.
     fn compose(
         &self,
         request: &MemoryReasonComposeRequest<'_>,
@@ -363,6 +364,7 @@ pub(crate) async fn companion_memory_reason(
         session_scope: Some(&scope),
         lease: admission.as_ref().map(DeepAdmission::lease),
         backend: admission.as_ref().map(DeepAdmission::search_backend),
+        token_budget: Some(token_budget as u64),
     };
     let result = (|| {
         let retrieved = scoped_read.search_with_effort(&depth_request);
@@ -373,14 +375,13 @@ pub(crate) async fn companion_memory_reason(
             ));
         }
         let retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
+        let remaining = (token_budget as u64)
+            .checked_sub(retrieved.tokens_used)
+            .ok_or_else(|| {
+                ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
+            })?;
         let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
-        let answered = answer_from(
-            &request,
-            &query,
-            token_budget,
-            &evidence,
-            admission.as_ref(),
-        )?;
+        let answered = answer_from(&request, &query, remaining, &evidence, admission.as_ref())?;
         let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
         Ok(Json(MemoryReasonResponse {
             answer: answered.answer,
@@ -542,7 +543,7 @@ struct AnsweredRead {
 fn answer_from(
     request: &MemoryReasonRequest,
     query: &str,
-    token_budget: usize,
+    token_budget: u64,
     evidence: &[MemoryReasonEvidence],
     admission: Option<&DeepAdmission>,
 ) -> Result<AnsweredRead, ApiError> {
@@ -594,10 +595,16 @@ fn extractive_read(format: MemoryReasonFormat, evidence: &[MemoryReasonEvidence]
 fn compose_read(
     request: &MemoryReasonRequest,
     query: &str,
-    token_budget: usize,
+    token_budget: u64,
     evidence: &[MemoryReasonEvidence],
     admission: &DeepAdmission,
 ) -> Result<AnsweredRead, ApiError> {
+    if token_budget == 0 {
+        return Err(ApiError::bad_request(
+            "tokenBudget exhausted before composition",
+            Some("tokenBudget"),
+        ));
+    }
     let composed = admission.host.backend.compose(
         &MemoryReasonComposeRequest {
             question: query,
@@ -612,10 +619,12 @@ fn compose_read(
         |failure| failure.tokens_used,
         |composed| composed.tokens_used,
     ));
-    let composed = composed.map_err(|failure| {
-        tracing::error!(error = %failure.error, "memory reason composition failed");
-        ApiError::internal_server_error("memory reason composition failed")
-    })?;
+    let composed = composed
+        .and_then(|composed| composed.enforce_token_budget(Some(token_budget)))
+        .map_err(|failure| {
+            tracing::error!(error = %failure.error, "memory reason composition failed");
+            ApiError::internal_server_error("memory reason composition failed")
+        })?;
     let tokens_used = composed.tokens_used;
     let composed = composed.value;
 
