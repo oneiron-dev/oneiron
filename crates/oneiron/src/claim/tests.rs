@@ -4768,7 +4768,8 @@ fn unrecognized_scope_entries_stay_opaque() -> Result<()> {
 /// future tier that quietly fetched through anything else would show up here
 /// as a difference, not as a passing test with a wider read behind it.
 #[test]
-fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door() -> Result<()> {
+fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_temp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let note = crate::test_util::entity(0x24);
     vault
@@ -4790,12 +4791,13 @@ fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door() ->
         },
         effort: crate::Effort::Minimal,
         limit: 10,
+        session_scope: None,
         lease: None,
         backend: None,
     };
 
     let dialed = scoped.search_with_effort(&request)?;
-    let direct = scoped.search_text("ledger", 10)?;
+    let direct = scoped.search_text("ledger", 10, None)?;
     assert_eq!(
         dialed.hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
         direct.iter().map(|hit| hit.id).collect::<Vec<_>>(),

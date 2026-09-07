@@ -1,7 +1,11 @@
 use super::*;
+
+mod depth_spend;
+mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use oneiron::retrieval_depth::{BackendSpend, RetrievalResult};
 use serde_json::Map;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -10017,7 +10021,6 @@ async fn text_search_response_shape_still_deserializes() {
             // ONE-207: the omission defaults, spelled out because this row
             // constructs the params struct directly and so bypasses serde.
             depth: minimal_effort(),
-            query_text: None,
         })),
     )
     .await
@@ -14497,7 +14500,8 @@ impl oneiron::retrieval_depth::DeepSearchBackend for StubReasonBackend {
         _query: &str,
         _already_run: &[String],
         _max_queries: usize,
-    ) -> oneiron::Result<oneiron::retrieval_depth::BackendSpend<Vec<String>>> {
+        _lease: &oneiron::llm::BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         Ok(oneiron::retrieval_depth::BackendSpend {
             value: Vec::new(),
             tokens_used: self.decompose_tokens,
@@ -14508,7 +14512,8 @@ impl oneiron::retrieval_depth::DeepSearchBackend for StubReasonBackend {
         &self,
         _query: &str,
         candidates: &[oneiron::rerank::RerankCandidate<'_>],
-    ) -> oneiron::Result<oneiron::retrieval_depth::BackendSpend<Vec<f32>>> {
+        _lease: &oneiron::llm::BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         Ok(oneiron::retrieval_depth::BackendSpend {
             value: vec![0.0; candidates.len()],
             tokens_used: self.rerank_tokens,
@@ -14521,7 +14526,7 @@ impl MemoryReasonBackend for StubReasonBackend {
         &self,
         request: &MemoryReasonComposeRequest<'_>,
         _lease: &oneiron::llm::BudgetLease,
-    ) -> oneiron::Result<oneiron::retrieval_depth::BackendSpend<MemoryReasonComposition>> {
+    ) -> RetrievalResult<BackendSpend<MemoryReasonComposition>> {
         let source_short_ids = self.sources.clone().unwrap_or_else(|| {
             request
                 .evidence
@@ -14544,6 +14549,20 @@ impl MemoryReasonBackend for StubReasonBackend {
 
 fn memory_reason_server(
     backend: Option<Arc<dyn MemoryReasonBackend>>,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    memory_reason_server_with_guard(
+        backend,
+        oneiron::llm::BudgetGuard::new(
+            "one-207-server-tests",
+            10_000,
+            oneiron::llm::BudgetExhaustionPolicy::Suspend,
+        ),
+    )
+}
+
+fn memory_reason_server_with_guard(
+    backend: Option<Arc<dyn MemoryReasonBackend>>,
+    guard: oneiron::llm::BudgetGuard,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
@@ -14579,14 +14598,9 @@ fn memory_reason_server(
     )
     .expect("sync server");
     let server = match backend {
-        Some(backend) => server.with_deep_retrieval_host(Arc::new(DeepRetrievalHost::new(
-            backend,
-            oneiron::llm::BudgetGuard::new(
-                "one-207-server-tests",
-                10_000,
-                oneiron::llm::BudgetExhaustionPolicy::Suspend,
-            ),
-        ))),
+        Some(backend) => {
+            server.with_deep_retrieval_host(Arc::new(DeepRetrievalHost::new(backend, guard)))
+        }
         None => server,
     };
     (dir, Arc::new(server))

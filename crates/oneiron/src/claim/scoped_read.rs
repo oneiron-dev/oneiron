@@ -15,6 +15,8 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFi
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod retrieval_visibility;
+
 /// Actor key bound to a scoped read lane over the `core:read` surface.
 ///
 /// The fields are private and construction rejects blank actor refs, so a
@@ -221,7 +223,15 @@ impl<'a> ScopedRead<'a> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
         let txn = self.vault.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
+        self.resolve_retrieval_filter_in(&txn, requested)
+    }
+
+    fn resolve_retrieval_filter_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             requested,
@@ -242,39 +252,9 @@ impl<'a> ScopedRead<'a> {
             if kept.len() >= limit {
                 break;
             }
-            let Some(raw) = self.entities().get(&txn, result.id.as_bytes())? else {
-                continue;
-            };
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if filter.deny_all
-                || self
-                    .vault
-                    .store
-                    .validate_entity_type(header.entity_type)
-                    .is_err()
-                || filter
-                    .entity_types
-                    .as_ref()
-                    .is_some_and(|types| !types.contains(&header.entity_type))
-            {
-                continue;
+            if self.is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)? {
+                kept.push(result);
             }
-            if header.entity_type == ENTITY_TYPE_CLAIM {
-                let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-                let facets = self.claim_facet_refs_in(&txn, &result.id)?;
-                if !crate::pipeline::retrieval_claim_allowed(filter, &body)
-                    || !crate::gate::scoped_read_claim_allowed(
-                        policy,
-                        &self.actor_key,
-                        &body,
-                        &facets,
-                    )
-                {
-                    continue;
-                }
-            }
-            kept.push(result);
         }
         Ok(kept)
     }
@@ -285,19 +265,21 @@ impl<'a> ScopedRead<'a> {
     /// a THIN one: `retrieval_depth` owns the tier policy, the caps and the
     /// deep-lease rule, while every channel it runs comes back through the
     /// three search doors above and through
-    /// [`crate::ppr::PprNodeVisibility`] — which is
-    /// [`Self::is_entity_readable_with_policy_in`], the same predicate those
-    /// doors filter on, used as a traversal gate.
+    /// [`crate::ppr::PprNodeVisibility`], which conjoins
+    /// [`Self::is_entity_readable_with_policy_in`] with the resolved retrieval
+    /// floor so graph expansion cannot bypass the direct-search constraints.
     ///
     /// So the effort dial cannot widen admission. It changes how many
     /// admitted channels run, never which entities an admitted channel is
     /// allowed to return, and the deep tier's host-proposed queries are
     /// ordinary text searches on this same lane rather than a second read
     /// path that would need its own gate.
+    ///
+    /// Errors retain actual reported spend; settle it just as on success.
     pub fn search_with_effort(
         &self,
         request: &crate::retrieval_depth::DepthSearchRequest<'_>,
-    ) -> Result<crate::retrieval_depth::DepthSearchResult> {
+    ) -> crate::retrieval_depth::RetrievalResult<crate::retrieval_depth::DepthSearchResult> {
         crate::retrieval_depth::execute(self, request)
     }
 

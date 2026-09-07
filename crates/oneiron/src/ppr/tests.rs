@@ -2,6 +2,8 @@ use rmpv::Value;
 use tempfile::tempdir;
 
 use super::*;
+
+mod specificity_visibility;
 use crate::batch::EdgeValueFields;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
@@ -1801,7 +1803,7 @@ fn seed_specificity_weights_match_derived_values() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
 
-    let weights = specificity_seed_weights(&vault.store, &rtxn, &[a, b, c])?;
+    let weights = specificity_seed_weights(&vault.store, &rtxn, &[a, b, c], None)?;
     let expected_weights = [0.2_f32, 0.4, 0.4];
     for (got, expected) in weights.iter().zip(expected_weights) {
         assert!(

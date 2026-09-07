@@ -1,5 +1,10 @@
 use super::*;
 
+mod repairs;
+mod spend_tests;
+
+type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
 use std::sync::Mutex;
 
 use rmpv::Value;
@@ -57,6 +62,7 @@ fn text_request(query: &str, effort: Effort) -> DepthSearchRequest<'static> {
         },
         effort,
         limit: 10,
+        session_scope: None,
         lease: None,
         backend: None,
     }
@@ -74,6 +80,7 @@ fn hosted_request<'a>(
         },
         effort,
         limit: 10,
+        session_scope: None,
         lease,
         backend,
     }
@@ -102,6 +109,8 @@ struct BackendCalls {
     rerank: usize,
     max_queries_seen: Vec<usize>,
     candidates_seen: usize,
+    leases_seen: Vec<BudgetLease>,
+    candidate_ids: Vec<EntityId>,
 }
 
 /// A host backend that records what the engine asked for and answers with
@@ -149,11 +158,13 @@ impl DeepSearchBackend for ScriptedBackend {
         _query: &str,
         _already_run: &[String],
         max_queries: usize,
-    ) -> Result<BackendSpend<Vec<String>>> {
+        lease: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         let mut calls = self.calls();
         let round = calls.decompose;
         calls.decompose += 1;
         calls.max_queries_seen.push(max_queries);
+        calls.leases_seen.push(lease.clone());
         drop(calls);
         Ok(BackendSpend {
             value: self.rounds.get(round).cloned().unwrap_or_default(),
@@ -165,10 +176,13 @@ impl DeepSearchBackend for ScriptedBackend {
         &self,
         _query: &str,
         candidates: &[RerankCandidate<'_>],
-    ) -> Result<BackendSpend<Vec<f32>>> {
+        lease: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         let mut calls = self.calls();
         calls.rerank += 1;
         calls.candidates_seen = candidates.len();
+        calls.candidate_ids = candidates.iter().map(|candidate| candidate.id).collect();
+        calls.leases_seen.push(lease.clone());
         drop(calls);
         let value = self
             .rerank_scores
@@ -187,11 +201,22 @@ impl DeepSearchBackend for ScriptedBackend {
 struct ForbiddenBackend;
 
 impl DeepSearchBackend for ForbiddenBackend {
-    fn decompose(&self, _: &str, _: &[String], _: usize) -> Result<BackendSpend<Vec<String>>> {
+    fn decompose(
+        &self,
+        _: &str,
+        _: &[String],
+        _: usize,
+        _: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<String>>> {
         panic!("a model-free tier must not call the deep backend");
     }
 
-    fn rerank(&self, _: &str, _: &[RerankCandidate<'_>]) -> Result<BackendSpend<Vec<f32>>> {
+    fn rerank(
+        &self,
+        _: &str,
+        _: &[RerankCandidate<'_>],
+        _: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
         panic!("a model-free tier must not call the deep backend");
     }
 }
@@ -255,7 +280,7 @@ fn deterministic_subqueries_drop_stop_words_and_halve_the_remainder() {
 // ── Minimal ─────────────────────────────────────────────────────────────
 
 #[test]
-fn minimal_runs_one_direct_channel_and_touches_no_host() -> Result<()> {
+fn minimal_runs_one_direct_channel_and_touches_no_host() -> TestResult {
     let (_dir, vault, anchor, sibling, neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
 
@@ -290,11 +315,11 @@ fn minimal_runs_one_direct_channel_and_touches_no_host() -> Result<()> {
 }
 
 #[test]
-fn minimal_returns_exactly_the_actor_keyed_direct_door() -> Result<()> {
+fn minimal_returns_exactly_the_actor_keyed_direct_door() -> TestResult {
     let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
 
-    let direct = scoped.search_text("launch", 10)?;
+    let direct = scoped.search_text("launch", 10, None)?;
     let dialed = scoped.search_with_effort(&text_request("launch", Effort::Minimal))?;
     assert_eq!(
         hit_ids(&dialed),
@@ -307,7 +332,7 @@ fn minimal_returns_exactly_the_actor_keyed_direct_door() -> Result<()> {
 // ── Standard ────────────────────────────────────────────────────────────
 
 #[test]
-fn standard_expands_one_hop_and_fans_out_deterministically() -> Result<()> {
+fn standard_expands_one_hop_and_fans_out_deterministically() -> TestResult {
     let (_dir, vault, anchor, _sibling, neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
 
@@ -351,7 +376,7 @@ fn standard_expands_one_hop_and_fans_out_deterministically() -> Result<()> {
 }
 
 #[test]
-fn standard_is_reproducible_across_calls() -> Result<()> {
+fn standard_is_reproducible_across_calls() -> TestResult {
     let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let query = "what did we decide about the launch date";
@@ -365,7 +390,7 @@ fn standard_is_reproducible_across_calls() -> Result<()> {
 // ── Deep ────────────────────────────────────────────────────────────────
 
 #[test]
-fn deep_truncates_and_dedups_an_over_eager_backend() -> Result<()> {
+fn deep_truncates_and_dedups_an_over_eager_backend() -> TestResult {
     let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let lease = minted_lease();
@@ -453,7 +478,7 @@ fn deep_truncates_and_dedups_an_over_eager_backend() -> Result<()> {
 }
 
 #[test]
-fn deep_reports_the_summed_backend_spend_not_a_budget() -> Result<()> {
+fn deep_reports_the_summed_backend_spend_not_a_budget() -> TestResult {
     let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let lease = minted_lease();
@@ -479,7 +504,7 @@ fn deep_reports_the_summed_backend_spend_not_a_budget() -> Result<()> {
 }
 
 #[test]
-fn deep_rerank_reorders_without_rewriting_engine_scores() -> Result<()> {
+fn deep_rerank_reorders_without_rewriting_engine_scores() -> TestResult {
     let (_dir, vault, _anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let lease = minted_lease();
@@ -560,6 +585,7 @@ fn deep_without_a_lease_is_the_existing_lease_required_refusal() {
         error.to_string().contains(MEMORY_CODE_LEASE_REQUIRED),
         "the refusal reuses the landed lease vocabulary: {error}"
     );
+    assert_eq!(error.tokens_used, 0);
     assert_eq!(backend.calls().decompose, 0, "no lease, no host call");
 }
 
@@ -591,6 +617,7 @@ fn deep_vector_without_query_text_refuses() {
         },
         effort: Effort::Deep,
         limit: 10,
+        session_scope: None,
         lease: Some(&lease),
         backend: Some(&backend),
     };
@@ -609,6 +636,7 @@ fn deep_vector_without_query_text_refuses() {
             },
             effort,
             limit: 10,
+            session_scope: None,
             lease: None,
             backend: None,
         };
@@ -644,7 +672,7 @@ fn every_effort_refuses_a_zero_limit() {
 /// admitted channels, so no tier can be dialed into a read that minimal would
 /// not have allowed.
 #[test]
-fn no_effort_widens_what_the_actor_keyed_door_admits() -> Result<()> {
+fn no_effort_widens_what_the_actor_keyed_door_admits() -> TestResult {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     let subject = entity(0x31);
     let surfaceable = entity(0x32);
@@ -703,7 +731,7 @@ fn no_effort_widens_what_the_actor_keyed_door_admits() -> Result<()> {
 }
 
 #[test]
-fn session_scope_only_ever_narrows() -> Result<()> {
+fn session_scope_only_ever_narrows() -> TestResult {
     let (_dir, vault, anchor, _sibling, _neighbor) = seeded_vault();
     let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
     let wide = scoped.search_with_effort(&text_request("launch", Effort::Standard))?;

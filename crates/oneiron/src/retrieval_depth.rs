@@ -35,7 +35,6 @@
 use std::collections::HashMap;
 
 use crate::claim::{ScopedRead, decode_claim_body};
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::BudgetLease;
@@ -45,6 +44,11 @@ use crate::ppr::{SeedWeighting, ppr_query_scoped_in_txn};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::rerank::RerankCandidate;
 use crate::vault::Vault;
+
+mod session_scope;
+mod spend;
+pub use session_scope::{SessionScope, narrow_to_session_scope};
+pub use spend::{RetrievalError, RetrievalResult};
 
 /// Deterministic subqueries a [`Effort::Standard`] text pass may run,
 /// INCLUDING the caller's own query. Four is the whole fan-out: the tier's
@@ -140,6 +144,8 @@ pub struct DepthSearchRequest<'a> {
     pub effort: Effort,
     /// Maximum hits returned. Must be at least 1.
     pub limit: usize,
+    /// Optional narrowing, applied before each channel's top-k and backend calls.
+    pub session_scope: Option<&'a SessionScope>,
     /// Budget lease minted by [`crate::llm::BudgetGuard`]. Deep only.
     pub lease: Option<&'a BudgetLease>,
     /// Host-injected deep executor. Deep only.
@@ -201,7 +207,10 @@ impl<T> BackendSpend<T> {
 /// Implemented app-side, like `LlmBackend`: no provider SDK, model id, prompt
 /// text or persona enters this crate. The engine calls these methods under its
 /// own caps and truncates whatever comes back, so an implementation is free to
-/// be sloppy about limits without widening the read.
+/// be sloppy about limits without widening the read. Both calls receive the
+/// same admitted lease that pays for this read. On failure, report any tokens
+/// this call consumed in [`RetrievalError`]; a plain engine error converts to
+/// zero usage only. The host, not the backend, settles the shared lease.
 pub trait DeepSearchBackend: Send + Sync {
     /// Proposes follow-up queries for one deep round.
     ///
@@ -215,7 +224,8 @@ pub trait DeepSearchBackend: Send + Sync {
         query: &str,
         already_run: &[String],
         max_queries: usize,
-    ) -> Result<BackendSpend<Vec<String>>>;
+        lease: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<String>>>;
 
     /// Cross-encoder scoring over the merged candidate set.
     ///
@@ -227,32 +237,8 @@ pub trait DeepSearchBackend: Send + Sync {
         &self,
         query: &str,
         candidates: &[RerankCandidate<'_>],
-    ) -> Result<BackendSpend<Vec<f32>>>;
-}
-
-/// Session scope for a depth read: NARROWING ONLY.
-///
-/// Every field can drop hits and none can add one. That direction is the whole
-/// point — a session context is a caller-supplied hint, and a hint that could
-/// widen an actor-keyed read would be a way to ask for someone else's memory
-/// by naming their world.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SessionScope {
-    /// Keep only claims scoped to this WORLD.
-    pub world_ref: Option<EntityId>,
-    /// Keep only entities carrying a `facet_of` edge to this facet.
-    pub facet_ref: Option<EntityId>,
-    /// Keep only these short ids (`short_id` or `short_id:hash`). Empty means
-    /// "no document narrowing", not "narrow to nothing".
-    pub document_short_ids: Vec<String>,
-}
-
-impl SessionScope {
-    /// Whether this scope narrows anything at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.world_ref.is_none() && self.facet_ref.is_none() && self.document_short_ids.is_empty()
-    }
+        lease: &BudgetLease,
+    ) -> RetrievalResult<BackendSpend<Vec<f32>>>;
 }
 
 /// The `short_id:hash` reference for an entity, or its hex id when the entity
@@ -326,96 +312,17 @@ fn is_stopword(token: &str) -> bool {
     !folded.is_empty() && SUBQUERY_STOPWORDS.contains(&folded.as_str())
 }
 
-/// Narrows `hits` to a session scope. See [`SessionScope`]: this can only
-/// remove hits.
-pub fn narrow_to_session_scope(
-    scoped: &ScopedRead<'_>,
-    hits: Vec<ScoredEntity>,
-    scope: &SessionScope,
-) -> Result<Vec<ScoredEntity>> {
-    if scope.is_empty() {
-        return Ok(hits);
-    }
-    let mut kept = Vec::with_capacity(hits.len());
-    for hit in hits {
-        if hit_in_session_scope(scoped, &hit.id, scope)? {
-            kept.push(hit);
-        }
-    }
-    Ok(kept)
-}
-
-fn hit_in_session_scope(
-    scoped: &ScopedRead<'_>,
-    id: &EntityId,
-    scope: &SessionScope,
-) -> Result<bool> {
-    if let Some(world) = &scope.world_ref
-        && claim_world(scoped, id)? != Some(*world)
-    {
-        return Ok(false);
-    }
-    if let Some(facet) = &scope.facet_ref
-        && !carries_facet(scoped, id, facet)?
-    {
-        return Ok(false);
-    }
-    if !scope.document_short_ids.is_empty() {
-        let short_ref = short_ref_or_hex(scoped.vault(), id)?;
-        if !scope
-            .document_short_ids
-            .iter()
-            .any(|requested| short_ref_matches(&short_ref, requested))
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-/// Compares a stored `short_id:hash` ref against a caller-supplied one,
-/// accepting either form on either side. The hash suffix is a content stamp,
-/// not part of the identity being narrowed to.
-fn short_ref_matches(stored: &str, requested: &str) -> bool {
-    let stored_id = stored.split(':').next().unwrap_or(stored);
-    let requested_id = requested.trim();
-    let requested_id = requested_id.split(':').next().unwrap_or(requested_id);
-    !requested_id.is_empty() && stored_id == requested_id
-}
-
-/// The claim's world, read through the actor-keyed door. A non-CLAIM entity,
-/// or one this actor cannot read, has no world and therefore never satisfies
-/// a world narrowing.
-fn claim_world(scoped: &ScopedRead<'_>, id: &EntityId) -> Result<Option<EntityId>> {
-    let Some((entity_type, _, body)) = scoped.get_entity_parts(id)? else {
-        return Ok(None);
-    };
-    if entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(None);
-    }
-    Ok(decode_claim_body(&body, true)?.world)
-}
-
-fn carries_facet(scoped: &ScopedRead<'_>, id: &EntityId, facet: &EntityId) -> Result<bool> {
-    let Some(edges) = scoped.edges_out(id)? else {
-        return Ok(false);
-    };
-    Ok(edges
-        .iter()
-        .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == *facet))
-}
-
 /// Runs one effort-dialed read against an actor-keyed lane.
 ///
 /// Every channel here goes through `scoped`, so the tier changes HOW MUCH is
 /// retrieved and never WHAT is admissible: the direct channels filter through
 /// the same predicate `ScopedRead::search_text` already applies, and the
-/// expansion walks under [`crate::ppr::PprNodeVisibility`], which is that same
-/// predicate used as a traversal gate.
+/// expansion walks under [`crate::ppr::PprNodeVisibility`], conjoining the
+/// actor-read gate with the same resolved retrieval floor before traversal.
 pub(crate) fn execute(
     scoped: &ScopedRead<'_>,
     request: &DepthSearchRequest<'_>,
-) -> Result<DepthSearchResult> {
+) -> RetrievalResult<DepthSearchResult> {
     validate(request)?;
     let mut acc = DepthAccumulator::default();
     run_direct_channel(scoped, request, &mut acc)?;
@@ -426,6 +333,7 @@ pub(crate) fn execute(
 
     run_subquery_channels(scoped, request, &mut acc)?;
     run_graph_expansion(scoped, request, &mut acc)?;
+    acc.fuse();
 
     if request.effort == Effort::Standard {
         return Ok(acc.finish(request.limit));
@@ -435,8 +343,14 @@ pub(crate) fn execute(
         .backend
         .ok_or_else(|| Error::InvalidConfig("deep retrieval requires a backend".to_owned()))?;
     let query = deep_query(request)?.to_owned();
-    run_deep_rounds(scoped, request, backend, &query, &mut acc)?;
-    run_deep_rerank(scoped, backend, &query, &mut acc)?;
+    run_deep_rounds(scoped, request, backend, &query, &mut acc)
+        .and_then(|()| run_deep_rerank(scoped, request, backend, &query, &mut acc))
+        .map_err(|mut failure| {
+            // Successful calls were charged before later fallible work. A
+            // failed backend call reports only its own additional spend.
+            failure.tokens_used = failure.tokens_used.saturating_add(acc.tokens_used);
+            failure
+        })?;
     Ok(acc.finish(request.limit))
 }
 
@@ -480,14 +394,17 @@ fn run_direct_channel(
     match &request.probe {
         SearchProbe::Text { query } => {
             acc.mark(SIGNAL_TEXT);
-            let hits = scoped.search_text(query, request.limit)?;
-            acc.merge(hits);
+            // No extra RetrievalFilter: inherit the actor's authority floor.
+            // SessionScope is separate, conjunctive narrowing below.
+            let hits = scoped.search_text(query, request.channel_limit(scoped, true)?, None)?;
+            acc.merge(request.narrow_hits(scoped, hits)?);
             acc.record_query(query.clone());
         }
         SearchProbe::Vector { embedding, .. } => {
             acc.mark(SIGNAL_VECTOR);
-            let hits = scoped.search_vector(embedding, request.limit)?;
-            acc.merge(hits);
+            let hits =
+                scoped.search_vector(embedding, request.channel_limit(scoped, false)?, None)?;
+            acc.merge(request.narrow_hits(scoped, hits)?);
             // No query recorded: a float vector is not a string a later
             // channel could compare against, and `signals_used` is where a
             // dense channel is reported.
@@ -497,14 +414,14 @@ fn run_direct_channel(
 }
 
 /// The standard tier's lexical fan-out. Text probes only: a subquery is a
-/// rewriting of the caller's WORDS, and a dense probe has none to rewrite
-/// unless it carried text, in which case that text is what gets rewritten.
+/// rewriting of the caller's WORDS. Vector query text grounds deep backend
+/// calls only; it must not turn standard vector retrieval into lexical search.
 fn run_subquery_channels(
     scoped: &ScopedRead<'_>,
     request: &DepthSearchRequest<'_>,
     acc: &mut DepthAccumulator,
 ) -> Result<()> {
-    let Some(query) = request.probe.query_text() else {
+    let SearchProbe::Text { query } = &request.probe else {
         return Ok(());
     };
     for subquery in deterministic_subqueries(query) {
@@ -515,8 +432,8 @@ fn run_subquery_channels(
         // variants all collapse onto the direct query runs no subquery
         // channel, and must not claim the signal.
         acc.mark(SIGNAL_SUBQUERIES);
-        let hits = scoped.search_text(&subquery, request.limit)?;
-        acc.merge(hits);
+        let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
+        acc.merge(request.narrow_hits(scoped, hits)?);
         acc.record_query(subquery);
     }
     Ok(())
@@ -544,17 +461,21 @@ fn run_graph_expansion(
     acc.mark(SIGNAL_PPR);
     let vault = scoped.vault();
     let rtxn = vault.store.env.read_txn()?;
+    // Graph candidates must inherit the same retrieval floor as direct hits;
+    // actor readability alone does not enforce entity-type and numeric limits.
+    let visibility = scoped.retrieval_visibility_in(&rtxn, None)?;
     let expanded = ppr_query_scoped_in_txn(
         &vault.store,
         &rtxn,
         &seeds,
         STANDARD_PPR_DEPTH,
         STANDARD_PPR_ALPHA,
+        vault.config.ppr_vad_alpha,
         SeedWeighting::Specificity,
-        scoped,
+        &visibility,
     )?;
     drop(rtxn);
-    acc.merge(expanded.into_iter().take(request.limit).collect());
+    acc.merge(request.narrow_hits(scoped, expanded)?);
     Ok(())
 }
 
@@ -565,17 +486,22 @@ fn run_deep_rounds(
     backend: &dyn DeepSearchBackend,
     query: &str,
     acc: &mut DepthAccumulator,
-) -> Result<()> {
+) -> RetrievalResult<()> {
     for _ in 0..DEEP_MAX_ROUNDS {
-        let proposed = backend.decompose(query, &acc.queries_run, DEEP_QUERIES_PER_ROUND)?;
+        let proposed = backend.decompose(
+            query,
+            &acc.queries_run,
+            DEEP_QUERIES_PER_ROUND,
+            request.lease.expect("deep preflight requires a lease"),
+        )?;
         acc.charge_backend(SIGNAL_BACKEND_DECOMPOSE, proposed.tokens_used);
         let round = acc.admissible_round_queries(proposed.value);
         if round.is_empty() {
             return Ok(());
         }
         for subquery in round {
-            let hits = scoped.search_text(&subquery, request.limit)?;
-            acc.merge(hits);
+            let hits = scoped.search_text(&subquery, request.channel_limit(scoped, true)?, None)?;
+            acc.merge(request.narrow_hits(scoped, hits)?);
             acc.record_query(subquery);
         }
     }
@@ -590,21 +516,27 @@ fn run_deep_rounds(
 /// candidates, which is worse than no rerank at all.
 fn run_deep_rerank(
     scoped: &ScopedRead<'_>,
+    request: &DepthSearchRequest<'_>,
     backend: &dyn DeepSearchBackend,
     query: &str,
     acc: &mut DepthAccumulator,
-) -> Result<()> {
+) -> RetrievalResult<()> {
     if acc.order.is_empty() {
         return Ok(());
     }
     let bodies = acc.candidate_claim_bodies(scoped)?;
     let candidates = acc.rerank_candidates(&bodies);
-    let scored = backend.rerank(query, &candidates)?;
+    let scored = backend.rerank(
+        query,
+        &candidates,
+        request.lease.expect("deep preflight requires a lease"),
+    )?;
     acc.charge_backend(SIGNAL_BACKEND_RERANK, scored.tokens_used);
     if scored.value.len() != acc.order.len() {
         return Err(Error::InvalidConfig(
             "deep rerank backend returned one score per candidate".to_owned(),
-        ));
+        )
+        .into());
     }
     acc.reorder_by(&scored.value);
     Ok(())
@@ -636,6 +568,12 @@ impl DepthAccumulator {
                 }
             }
         }
+    }
+
+    /// Fuse channel scores before truncation; stable ties keep first-seen order.
+    fn fuse(&mut self) {
+        self.order
+            .sort_by(|left, right| self.scores[right].total_cmp(&self.scores[left]));
     }
 
     fn mark(&mut self, signal: &str) {

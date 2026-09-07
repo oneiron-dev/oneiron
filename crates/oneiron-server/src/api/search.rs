@@ -228,13 +228,6 @@ pub(crate) struct TextSearchQuery {
     #[schema(value_type = String, default = "minimal", example = "standard")]
     #[param(value_type = String, default = "minimal", example = "standard")]
     pub(crate) depth: Effort,
-    /// Overrides the text handed to deep decomposition. Omitted means `query`,
-    /// which is already this endpoint's probe text; the parameter exists so the
-    /// two search endpoints take the same depth arguments.
-    #[serde(default, rename = "queryText")]
-    #[schema(example = "project kickoff notes")]
-    #[param(example = "project kickoff notes")]
-    pub(crate) query_text: Option<String>,
 }
 
 /// BM25 text search.
@@ -303,9 +296,7 @@ pub(crate) async fn search_text(
     let results = run_depth_search(
         &scoped_read,
         SearchProbe::Text {
-            query: probe_text(params.query_text.as_deref())
-                .unwrap_or(params.query.as_str())
-                .to_owned(),
+            query: params.query,
         },
         params.depth,
         fetch_limit,
@@ -351,16 +342,24 @@ fn run_depth_search(
         probe,
         effort,
         limit,
+        session_scope: None,
         lease: admission.map(DeepAdmission::lease),
         backend: admission.map(DeepAdmission::search_backend),
     };
-    let result = scoped_read
-        .search_with_effort(&request)
-        .map_err(depth_search_error)?;
+    let result = scoped_read.search_with_effort(&request);
     if let Some(admission) = admission {
-        admission.settle(result.tokens_used);
+        admission.record_usage(result.as_ref().map_or_else(
+            |failure| failure.tokens_used,
+            |retrieved| retrieved.tokens_used,
+        ));
     }
-    Ok(result.hits)
+    let result = result
+        .map(|retrieved| retrieved.hits)
+        .map_err(|failure| depth_search_error(failure.error));
+    match admission {
+        Some(admission) => admission.finish(result),
+        None => result,
+    }
 }
 
 pub(crate) fn search_fetch_limit(count_mode: CountMode, page_limit: usize) -> usize {

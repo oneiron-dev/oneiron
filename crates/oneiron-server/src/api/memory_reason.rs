@@ -38,10 +38,10 @@ use oneiron::Effort;
 use oneiron::EntityId;
 use oneiron::ScoredEntity;
 use oneiron::claim::ScopedRead;
-use oneiron::llm::{BudgetAdmission, BudgetGuard, BudgetLease};
+use oneiron::llm::BudgetLease;
 use oneiron::retrieval_depth::{
-    BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, SearchProbe,
-    SessionScope, narrow_to_session_scope, short_ref_or_hex,
+    BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, RetrievalResult,
+    SearchProbe, SessionScope, short_ref_or_hex,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -55,6 +55,12 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::projection::View;
 use crate::server::SyncServer;
+
+mod deep_admission;
+pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
+
+#[cfg(test)]
+mod render_tests;
 
 /// Evidence rows a reasoning read retrieves when the caller names no limit.
 pub(crate) const MEMORY_REASON_DEFAULT_LIMIT: usize = 10;
@@ -259,92 +265,13 @@ pub(crate) struct MemoryReasonComposition {
 /// Host-injected deep reasoning: the deep search seam plus composition.
 pub(crate) trait MemoryReasonBackend: DeepSearchBackend {
     /// Composes one answer from the retrieved evidence, under the lease the
-    /// budget guard minted for this read.
+    /// budget guard minted for this read. Errors report this call's spent
+    /// tokens, just like the deep search methods; the host settles the total.
     fn compose(
         &self,
         request: &MemoryReasonComposeRequest<'_>,
         lease: &BudgetLease,
-    ) -> oneiron::Result<BackendSpend<MemoryReasonComposition>>;
-}
-
-/// The deep-retrieval attachment: a host backend AND the budget that pays for
-/// it.
-///
-/// The two are one value because they are one decision. A backend without a
-/// guard would be a second executor spending outside the meter; a guard
-/// without a backend would gate a tier that cannot run. `SyncServer::new`
-/// attaches neither.
-pub(crate) struct DeepRetrievalHost {
-    backend: Arc<dyn MemoryReasonBackend>,
-    guard: BudgetGuard,
-}
-
-impl DeepRetrievalHost {
-    /// Binds a backend to the budget guard that leases its spend.
-    #[allow(dead_code)] // No in-tree production host yet; the tests are its only caller.
-    pub(crate) fn new(backend: Arc<dyn MemoryReasonBackend>, guard: BudgetGuard) -> Self {
-        Self { backend, guard }
-    }
-}
-
-/// One admitted deep read: the lease, plus the host it was minted for.
-pub(crate) struct DeepAdmission {
-    host: Arc<DeepRetrievalHost>,
-    admission: BudgetAdmission,
-}
-
-impl DeepAdmission {
-    pub(crate) fn lease(&self) -> &BudgetLease {
-        &self.admission.lease
-    }
-
-    /// The retrieval half of the host, upcast to the seam the engine takes.
-    pub(crate) fn search_backend(&self) -> &dyn DeepSearchBackend {
-        self.host.backend.as_ref()
-    }
-
-    /// Settles the lease against what the read ACTUALLY spent.
-    ///
-    /// Settlement is absolute, so a read that spent less than its reserve
-    /// returns the difference to the meter rather than burning it.
-    pub(crate) fn settle(&self, tokens_used: u64) {
-        if let Err(error) = self
-            .host
-            .guard
-            .settle_absolute(&self.admission.lease, tokens_used)
-        {
-            tracing::warn!(?error, "deep retrieval lease settlement failed");
-        }
-    }
-}
-
-/// Admits a deep read, or refuses it.
-///
-/// The non-deep tiers admit trivially with no host and no lease, which is what
-/// makes `tokensUsed: 0` on those tiers a structural fact rather than a
-/// promise: there is no meter to draw on.
-pub(crate) fn admit_deep_retrieval(
-    server: &SyncServer,
-    effort: Effort,
-) -> Result<Option<DeepAdmission>, ApiError> {
-    if effort != Effort::Deep {
-        return Ok(None);
-    }
-    let host = server
-        .deep_retrieval
-        .clone()
-        .ok_or_else(ApiError::deep_retrieval_unavailable)?;
-    // A guard that refuses admission mints no lease, and the engine's own
-    // preflight refuses a leaseless deep read. Reported as the same
-    // capability-absent 503 rather than as a budget code, because from the
-    // caller's side the two are one fact — deep is not servable right now —
-    // and the alternative would describe this server's spend state to a
-    // caller that has no standing to know it.
-    let admission = host.guard.admit().map_err(|error| {
-        tracing::warn!(?error, "deep retrieval budget refused admission");
-        ApiError::deep_retrieval_unavailable()
-    })?;
-    Ok(Some(DeepAdmission { host, admission }))
+    ) -> RetrievalResult<BackendSpend<MemoryReasonComposition>>;
 }
 
 /// Maps an engine refusal from the depth executor onto the wire.
@@ -372,6 +299,7 @@ pub(crate) fn depth_search_error(error: oneiron::Error) -> ApiError {
 #[utoipa::path(
     post,
     path = "/v1/companion/memory/reason",
+    security(("CoreBearer" = [])),
     request_body(content = MemoryReasonRequest, content_type = "application/json"),
     responses(
         (
@@ -432,36 +360,44 @@ pub(crate) async fn companion_memory_reason(
         },
         effort: request.depth,
         limit,
+        session_scope: Some(&scope),
         lease: admission.as_ref().map(DeepAdmission::lease),
         backend: admission.as_ref().map(DeepAdmission::search_backend),
     };
-    let retrieved = scoped_read
-        .search_with_effort(&depth_request)
-        .map_err(depth_search_error)?;
-    let hits = narrow_to_session_scope(&scoped_read, retrieved.hits.clone(), &scope)
-        .map_err(depth_search_error)?;
-    let evidence = collect_evidence(&server.vault, &scoped_read, hits)?;
-
-    let answered = answer_from(
-        &request,
-        &query,
-        token_budget,
-        &evidence,
-        admission.as_ref(),
-    )?;
-    let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
-    if let Some(admission) = admission.as_ref() {
-        admission.settle(tokens_used);
+    let result = (|| {
+        let retrieved = scoped_read.search_with_effort(&depth_request);
+        if let Some(admission) = admission.as_ref() {
+            admission.record_usage(retrieved.as_ref().map_or_else(
+                |failure| failure.tokens_used,
+                |retrieved| retrieved.tokens_used,
+            ));
+        }
+        let retrieved = retrieved.map_err(|failure| depth_search_error(failure.error))?;
+        let evidence = collect_evidence(&server.vault, &scoped_read, retrieved.hits.clone())?;
+        let answered = answer_from(
+            &request,
+            &query,
+            token_budget,
+            &evidence,
+            admission.as_ref(),
+        )?;
+        let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
+        Ok(Json(MemoryReasonResponse {
+            answer: answered.answer,
+            sources: answered.sources,
+            confidence: answered.confidence,
+            gaps: answered.gaps,
+            reasoning: trace_for(request.depth, &retrieved),
+            tokens_used,
+        }))
+    })();
+    // The closure contains every fallible step after retrieval starts. Even
+    // projection or composition errors must settle the usage already recorded.
+    match admission.as_ref() {
+        Some(admission) => admission.finish(result),
+        None => result,
     }
-
-    Ok(Json(MemoryReasonResponse {
-        answer: answered.answer,
-        sources: answered.sources,
-        confidence: answered.confidence,
-        gaps: answered.gaps,
-        reasoning: trace_for(request.depth, &retrieved),
-        tokens_used,
-    }))
+    .map_err(Into::into)
 }
 
 fn validate_limit(limit: Option<usize>) -> Result<usize, ApiError> {
@@ -662,23 +598,24 @@ fn compose_read(
     evidence: &[MemoryReasonEvidence],
     admission: &DeepAdmission,
 ) -> Result<AnsweredRead, ApiError> {
-    let composed = admission
-        .host
-        .backend
-        .compose(
-            &MemoryReasonComposeRequest {
-                question: query,
-                depth: request.depth,
-                format: request.format,
-                token_budget,
-                evidence,
-            },
-            admission.lease(),
-        )
-        .map_err(|error| {
-            tracing::error!(error = %error, "memory reason composition failed");
-            ApiError::internal_server_error("memory reason composition failed")
-        })?;
+    let composed = admission.host.backend.compose(
+        &MemoryReasonComposeRequest {
+            question: query,
+            depth: request.depth,
+            format: request.format,
+            token_budget,
+            evidence,
+        },
+        admission.lease(),
+    );
+    admission.record_usage(composed.as_ref().map_or_else(
+        |failure| failure.tokens_used,
+        |composed| composed.tokens_used,
+    ));
+    let composed = composed.map_err(|failure| {
+        tracing::error!(error = %failure.error, "memory reason composition failed");
+        ApiError::internal_server_error("memory reason composition failed")
+    })?;
     let tokens_used = composed.tokens_used;
     let composed = composed.value;
 
@@ -827,6 +764,13 @@ fn quoted(value: &str) -> String {
             '\t' => out.push_str("\\t"),
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
+            // JSON-compatible Unicode escapes work in both quoted formats.
+            // Escape YAML line separators too, to avoid scalar normalization.
+            ch if ch.is_control()
+                || matches!(ch, '\u{2028}' | '\u{2029}' | '\u{fffe}' | '\u{ffff}') =>
+            {
+                out.push_str(&format!("\\u{:04x}", ch as u32));
+            }
             _ => out.push(ch),
         }
     }
