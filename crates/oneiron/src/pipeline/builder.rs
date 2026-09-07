@@ -40,6 +40,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) apply_gravity: bool,
     pub(super) apply_contiguity: bool,
     pub(super) type_filter: Option<Vec<u8>>,
+    pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -85,6 +86,7 @@ impl<'a> PipelineBuilder<'a> {
             apply_gravity: false,
             apply_contiguity: false,
             type_filter: None,
+            authority_filter: None,
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -125,6 +127,12 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
         self.telemetry_action = action;
+        self
+    }
+
+    /// Installs only gate-resolved authority. Public callers use scoped search.
+    pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
+        self.authority_filter = Some(filter);
         self
     }
 

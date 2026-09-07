@@ -138,7 +138,7 @@ pub(crate) async fn search_vector(
 
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
     let results = scoped_read
-        .search_vector(&query, fetch_limit)
+        .search_vector(&query, fetch_limit, None)
         .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
         })
@@ -237,7 +237,7 @@ pub(crate) async fn search_text(
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
     let results = scoped_read
-        .search_text(&params.query, fetch_limit)
+        .search_text(&params.query, fetch_limit, None)
         .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
         })

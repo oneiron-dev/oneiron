@@ -72,7 +72,10 @@ pub(super) fn scoped_read_grant_has_read_effector(grant: &PolicyScopedGrant) -> 
         || grant.effector.trim() == SCOPED_READ_EFFECTOR_ONEIRON_READ
 }
 
-fn scoped_read_actor_matches(grant: &PolicyScopedGrant, actor_key: &ScopedReadActorKey) -> bool {
+pub(super) fn scoped_read_actor_matches(
+    grant: &PolicyScopedGrant,
+    actor_key: &ScopedReadActorKey,
+) -> bool {
     if let Some(actor_ref) = grant.actor_ref.as_deref()
         && actor_ref != actor_key.actor_ref()
     {
@@ -111,6 +114,26 @@ fn scoped_read_scope_matches_claim(
                     }
                     "facet" | "facet_ref" | "facetRef" => {
                         scoped_read_claim_facet_matches(value, body.scope.as_ref(), claim_facets)
+                    }
+                    "entity_types"
+                    | "max_sensitivity_band"
+                    | "include_stale"
+                    | "min_confidence"
+                    | "min_salience" => {
+                        // Recognize and enforce authority conjuncts without
+                        // changing any relationship/world/facet matcher.
+                        super::retrieval_filter::RetrievalPolicyFloor::from_scope(Some(scope))
+                            .is_some_and(|floor| {
+                                !floor.deny_all
+                                    && floor.allowed_entity_types.as_ref().is_none_or(|types| {
+                                        types.contains(&crate::registry::ENTITY_TYPE_CLAIM)
+                                    })
+                                    && crate::claim::claim_sensitivity_band(body)
+                                        .is_some_and(|band| band <= floor.max_sensitivity_band)
+                                    && (floor.include_stale || !body.stale)
+                                    && body.confidence >= floor.min_confidence
+                                    && body.salience.unwrap_or(0.0) >= floor.min_salience
+                            })
                     }
                     _ => false,
                 };
