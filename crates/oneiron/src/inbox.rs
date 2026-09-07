@@ -38,6 +38,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_CONFLICT_OPEN,
 };
+use crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL;
 #[cfg(test)]
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
@@ -140,6 +141,14 @@ pub enum InboxExceptionClass {
     /// A meeting-class EVENT's post-end check-in is still unanswered (CAL-07).
     /// The only class not produced by the dreamer-run classifier.
     MeetingOutcomeCheckIn,
+    /// The proposal is a plugin-section install (ONE-1707), whether the
+    /// Dreamer suggested it or conversation initiated it.
+    ///
+    /// A PROJECTION rule, never a second approval mechanism: accept/reject
+    /// still runs through `resolve_inbox_group[_at]` on the same bound
+    /// pending-consent row. Installing a pack is always consent-required, so
+    /// this class joins `ManifestCritical` as one the dial cannot waive.
+    PluginInstall,
 }
 
 /// B2 RS6 bulk verbs over one dreamer-run group.
@@ -739,6 +748,12 @@ fn classify_member(
     {
         classes.push(InboxExceptionClass::ManifestCritical);
     }
+    // ONE-1707: the install predicate classifies additively. The row keeps
+    // whatever verb class it would otherwise have had (a first install is a
+    // `new_claim`), so the existing bundle verbs keep working on it unchanged.
+    if member.body.predicate == PREDICATE_PLUGIN_SECTION_INSTALL {
+        classes.push(InboxExceptionClass::PluginInstall);
+    }
 
     let verb_class = if member.body.predicate == PREDICATE_CONFLICT_OPEN {
         classes.push(InboxExceptionClass::Conflict);
@@ -798,11 +813,22 @@ fn would_supersede_active_truth(vault: &Vault, member: &OpenMember) -> Result<Op
     Ok(supersedes_any.then_some(supersedes_user_stated))
 }
 
+/// The dial rule, stated exactly.
+///
+/// `ApproveAll` is spelled as an explicit match over the non-waivable classes
+/// rather than a single `contains`: manifest-critical and plugin-install rows
+/// both REQUIRE an owner decision, and listing them here is what stops a
+/// future class from being waived by accident.
 fn member_surfaces(dial: InboxReviewDial, classes: &[InboxExceptionClass]) -> bool {
     match dial {
         InboxReviewDial::ReviewEverything => true,
         InboxReviewDial::ExceptionsOnly => !classes.is_empty(),
-        InboxReviewDial::ApproveAll => classes.contains(&InboxExceptionClass::ManifestCritical),
+        InboxReviewDial::ApproveAll => classes.iter().any(|class| {
+            matches!(
+                class,
+                InboxExceptionClass::ManifestCritical | InboxExceptionClass::PluginInstall
+            )
+        }),
     }
 }
 

@@ -42,8 +42,11 @@ pub use generated_ui::{
     GeneratedUiCardPhase, GeneratedUiCardStart, GeneratedUiCardStateUpdate, GeneratedUiCatalog,
     GeneratedUiDataModel, GeneratedUiNode, GeneratedUiPrebuilt, GeneratedUiPrimitive,
     GeneratedUiRender, GeneratedUiSegment, GeneratedUiStatePatch, GeneratedUiStateSnapshot,
-    GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities, SelfUiBindableProperty,
-    SelfUiBinding, SelfUiStateValue,
+    GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities, LENS_APPS_CONTRACT_VERSION,
+    LensAtomInventoryChange, LensBehaviorDiff, LensBehaviorFingerprint, LensBehaviorHandle,
+    LensEvaluatedRevision, LensHandleRoleChange, LensLoadAction, LensRegenFailure,
+    LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp,
+    SelfUiBindableProperty, SelfUiBinding, SelfUiStateValue, lens_load_action, regenerate_lens,
 };
 pub use mediation::{
     GeneratedUiAgentCallback, GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan,

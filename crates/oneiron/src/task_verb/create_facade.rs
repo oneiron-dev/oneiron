@@ -12,6 +12,9 @@ use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
 use crate::memory::{Memory, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::task_authority::{
+    TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+};
 use crate::temporal::TimeRange;
 use crate::unix_seconds_now;
 
@@ -25,10 +28,7 @@ use super::create_validation::{
     ValidatedTaskCreate, human_route_refusal, task_create_proposal_value, task_route_dedupe_key,
     validate_task_create,
 };
-use super::rate_limit::{
-    consume_create_rate_slot, record_task_create_owner_in_txn, task_actor_ceiling,
-    task_verb_contract,
-};
+use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::terminal_state::TaskExecutionState;
 use super::verb_kind::{TaskAssignee, TasksVerb};
@@ -213,7 +213,13 @@ impl Memory<'_> {
             })?)
     }
 
-    /// Mints one TASK entity plus its create-time owner record.
+    /// Mints one TASK entity plus the Owner authority fact proving who created
+    /// it — one transaction, so a task can never exist without its proof.
+    ///
+    /// The proof is a companion entity, not the body's `owner_ref` field: that
+    /// field is mutable display, and it replicates as ONE register with the
+    /// rest of the body. The fact replicates as its own row, so the peer that
+    /// receives the task receives the authority to cancel it with it.
     ///
     /// The realizing attempt is deliberately NOT part of this: a consult mints
     /// the CRDT-synced entity and nothing else, because a node-local lease can
@@ -244,7 +250,16 @@ impl Memory<'_> {
             created_at: now,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
-        record_task_create_owner_in_txn(self.vault(), wtxn, task_ref, owner_ref)?;
+        put_task_authority_fact_in_txn(
+            self.vault(),
+            wtxn,
+            TaskAuthorityFact {
+                task_ref,
+                kind: TaskAuthorityFactKind::Owner,
+                actor_ref: owner_ref,
+                occurred_at: now,
+            },
+        )?;
         Ok(task_ref)
     }
 
