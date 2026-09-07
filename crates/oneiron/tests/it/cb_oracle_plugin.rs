@@ -389,14 +389,317 @@ mod cb_x {
     /// and suggests the CRM pack; owner accepts; rerun with the knob
     /// explicitly OFF; then check the next digest window for repeats.
     fn arm_plugin_suggestion_flow() -> PluginSuggestionFlow {
-        unimplemented!("armed by ONE-1707: Dreamer proactive-help x pack catalog")
+        use oneiron::context_board::{PLUGIN_PROPOSALS_SECTION_NAME, SectionPolicy, ShedRank};
+        use oneiron::dreamer_plugin_suggest::{PluginSuggestionDisposition, TestPackCatalog};
+        use oneiron::inbox::InboxReviewDial;
+
+        let fixture = PluginFixture::open();
+
+        // ── The knob on a FRESH, untouched configuration. Read FIRST, before
+        //    any setter has ever run, so this is the real default and not a
+        //    value the fixture arranged. ──────────────────────────────────
+        let knob_on_in_fresh_config = fixture.suggestions_knob();
+
+        let evidence = fixture.seed_workflow_evidence();
+        let catalog = TestPackCatalog {
+            entries: vec![fixture.pack_candidate()],
+            calls: std::cell::Cell::new(0),
+        };
+
+        // ── Dreamer notices the pattern and SUGGESTS the pack. ───────────
+        let job = fixture.suggestion_job(evidence, "2026-08-19");
+        let disposition = fixture.run_suggestion(&catalog, &job, 2_000);
+        let PluginSuggestionDisposition::Proposed {
+            suggestion_key,
+            install_claim_id,
+            board_row,
+        } = disposition
+        else {
+            panic!("an eligible catalog match must reach Proposed, got {disposition:?}");
+        };
+        assert_eq!(catalog.calls.get(), 1, "the catalog was consulted once");
+        // The one canonical boundary form, round-trippable back to the
+        // internal key and never a second encoding.
+        assert_eq!(suggestion_key.len(), 64);
+        assert_eq!(suggestion_key, suggestion_key.to_lowercase());
+        assert_eq!(
+            oneiron::context_board::PluginSuggestionKey::parse_hex(&suggestion_key)
+                .expect("the boundary form parses back")
+                .to_hex(),
+            suggestion_key
+        );
+
+        // ── The job PROPOSED and nothing more: one claim, one bound consent
+        //    record, and not one package byte moved. ────────────────────
+        assert!(fixture.claim_is_proposed(&install_claim_id));
+        assert_eq!(fixture.pending_consents_for(&install_claim_id), 1);
+        assert_eq!(fixture.total_pending_consents(), 1);
+        assert!(
+            fixture.skill_record_is_absent(),
+            "the suggestion job imports zero bytes"
+        );
+        assert!(
+            fixture.rebuild_registry().is_empty(),
+            "the suggestion job mutates no registry"
+        );
+        // A pre-consent install attempt is refused, so nothing can slip past
+        // the gate between suggestion and consent.
+        let installs_bypassing_gate = usize::from(fixture.execute_install(&install_claim_id))
+            + usize::from(!fixture.skill_record_is_absent());
+
+        // ── Board surface: the fixed PROPOSALS section. ──────────────────
+        let rows = fixture.proposal_rows();
+        let board_proposal_rows = rows.len();
+        assert_eq!(rows[0].install_claim_id, install_claim_id);
+        assert_eq!(rows[0], board_row, "the board row IS the projected claim");
+        assert!(rows[0].awaiting_owner_consent);
+        let section = fixture.proposals_section();
+        assert_eq!(section.name(), PLUGIN_PROPOSALS_SECTION_NAME);
+        assert!(section.pinned_rows().is_empty());
+        assert_eq!(section.detail_rows().len(), 1);
+        assert_eq!(section.count_rows(), ["count: 1".to_owned()]);
+        assert_eq!(
+            section.policy(),
+            SectionPolicy {
+                pinned: false,
+                shed_rank: Some(ShedRank::PluginSections),
+            }
+        );
+
+        // ── App surface: the SAME claim as one owner-visible Inbox member.
+        //    ApproveAll cannot hide a plugin install. ──────────────────────
+        let group_keys = fixture.plugin_install_inbox_members(InboxReviewDial::ApproveAll);
+        let app_surface_proposals = group_keys.len();
+        assert_eq!(
+            fixture
+                .plugin_install_inbox_members(InboxReviewDial::ExceptionsOnly)
+                .len(),
+            app_surface_proposals,
+            "exceptions-only surfaces it too"
+        );
+        assert_eq!(
+            fixture
+                .plugin_install_inbox_members(InboxReviewDial::ReviewEverything)
+                .len(),
+            app_surface_proposals,
+            "review-everything surfaces it too"
+        );
+        // One claim, one board row, one Inbox member — no duplicate record.
+        assert_eq!(board_proposal_rows, app_surface_proposals);
+
+        // ── Accept = the SAME gated install. ─────────────────────────────
+        assert_eq!(fixture.accept_inbox_group(&group_keys[0]), 1);
+        assert!(fixture.claim_is_approved(&install_claim_id));
+        let installs_via_gate_on_accept = usize::from(fixture.execute_install(&install_claim_id));
+        assert_eq!(
+            fixture.rebuild_registry().len(),
+            1,
+            "one consent covered install PLUS section admission"
+        );
+        assert!(
+            fixture.proposal_rows().is_empty(),
+            "a resolved proposal stops asking"
+        );
+
+        // ── Digest-not-nag: the SAME unchanged suggestion in the NEXT
+        //    digest window is suppressed. ──────────────────────────────────
+        let next_window = fixture.suggestion_job(evidence, "2026-08-26");
+        let repeat = fixture.run_suggestion(&catalog, &next_window, 8_000);
+        assert_eq!(
+            repeat,
+            PluginSuggestionDisposition::SuppressedDuplicate { suggestion_key },
+            "an unchanged suggestion carries the same key and stays quiet"
+        );
+        let nag_repeats = fixture.proposal_rows().len();
+
+        // Suppression survives REJECTION too, and changed manifest bytes are
+        // eligible again — both on their own vaults so neither leans on the
+        // state above.
+        assert_rejected_suggestion_stays_quiet();
+        assert_changed_manifest_is_eligible_again();
+
+        // Concurrent identical jobs collapse on the attempt dedupe key.
+        let (first_enqueued, second_collapsed) = fixture.enqueue_twice(&job);
+        assert!(first_enqueued && second_collapsed);
+
+        // ── The knob OFF, on its own untouched vault so "no claim, no row,
+        //    no install" is unambiguous. ──────────────────────────────────
+        let suggestions_with_knob_off = knob_off_suggestion_count();
+
+        PluginSuggestionFlow {
+            board_proposal_rows,
+            app_surface_proposals,
+            installs_via_gate_on_accept,
+            installs_bypassing_gate,
+            suggestions_with_knob_off,
+            nag_repeats,
+            knob_on_in_fresh_config,
+        }
+    }
+
+    /// Knob OFF short-circuits BEFORE catalog access: no discovery, no
+    /// claim, no consent row, no board row, no install. Returns how many
+    /// suggestions surfaced (must be none).
+    fn knob_off_suggestion_count() -> usize {
+        use oneiron::dreamer_plugin_suggest::{PluginSuggestionDisposition, TestPackCatalog};
+
+        let fixture = PluginFixture::open();
+        let evidence = fixture.seed_workflow_evidence();
+        fixture.set_suggestions_knob(false);
+
+        let catalog = TestPackCatalog {
+            entries: vec![fixture.pack_candidate()],
+            calls: std::cell::Cell::new(0),
+        };
+        let job = fixture.suggestion_job(evidence, "2026-08-19");
+        assert_eq!(
+            fixture.run_suggestion(&catalog, &job, 2_000),
+            PluginSuggestionDisposition::Disabled
+        );
+        assert_eq!(
+            catalog.calls.get(),
+            0,
+            "the knob short-circuits BEFORE the catalog is touched"
+        );
+        assert_eq!(fixture.total_pending_consents(), 0);
+        assert!(fixture.skill_record_is_absent());
+        assert!(fixture.rebuild_registry().is_empty());
+        fixture.proposal_rows().len()
+    }
+
+    /// A REJECTED suggestion whose bytes did not change stays suppressed:
+    /// digest-not-nag is about the question, not the answer.
+    fn assert_rejected_suggestion_stays_quiet() {
+        use oneiron::dreamer_plugin_suggest::{PluginSuggestionDisposition, TestPackCatalog};
+
+        let fixture = PluginFixture::open();
+        let evidence = fixture.seed_workflow_evidence();
+        let catalog = TestPackCatalog {
+            entries: vec![fixture.pack_candidate()],
+            calls: std::cell::Cell::new(0),
+        };
+        let job = fixture.suggestion_job(evidence, "2026-08-19");
+        let PluginSuggestionDisposition::Proposed {
+            install_claim_id, ..
+        } = fixture.run_suggestion(&catalog, &job, 2_000)
+        else {
+            panic!("the first window proposes");
+        };
+
+        fixture.owner_rejects(&install_claim_id);
+        assert!(
+            fixture.skill_record_is_absent(),
+            "rejection imports nothing"
+        );
+        assert!(fixture.rebuild_registry().is_empty());
+
+        let next_window = fixture.suggestion_job(evidence, "2026-08-26");
+        assert!(
+            matches!(
+                fixture.run_suggestion(&catalog, &next_window, 8_000),
+                PluginSuggestionDisposition::SuppressedDuplicate { .. }
+            ),
+            "a rejected, unchanged suggestion is not asked again"
+        );
+        assert!(fixture.proposal_rows().is_empty());
+    }
+
+    /// Changed manifest bytes produce a new digest, therefore a new key, and
+    /// the suggestion becomes eligible again.
+    fn assert_changed_manifest_is_eligible_again() {
+        use oneiron::dreamer_plugin_suggest::{PluginSuggestionDisposition, TestPackCatalog};
+
+        let fixture = PluginFixture::open();
+        let evidence = fixture.seed_workflow_evidence();
+        let catalog = TestPackCatalog {
+            entries: vec![fixture.pack_candidate()],
+            calls: std::cell::Cell::new(0),
+        };
+        let job = fixture.suggestion_job(evidence, "2026-08-19");
+        let PluginSuggestionDisposition::Proposed {
+            suggestion_key: first_key,
+            install_claim_id,
+            ..
+        } = fixture.run_suggestion(&catalog, &job, 2_000)
+        else {
+            panic!("the first window proposes");
+        };
+        fixture.owner_rejects(&install_claim_id);
+
+        // One byte of manifest difference — a renamed section display name.
+        let mut changed = fixture.pack_candidate();
+        changed.manifest.manifest.name = "CRM v2".to_owned();
+        changed.label = "CRM v2".to_owned();
+        let changed_catalog = TestPackCatalog {
+            entries: vec![changed],
+            calls: std::cell::Cell::new(0),
+        };
+        let next_window = fixture.suggestion_job(evidence, "2026-08-26");
+        let PluginSuggestionDisposition::Proposed { suggestion_key, .. } =
+            fixture.run_suggestion(&changed_catalog, &next_window, 8_000)
+        else {
+            panic!("changed manifest bytes are eligible again");
+        };
+        assert_ne!(suggestion_key, first_key, "new bytes ⇒ new key");
+    }
+
+    /// Conversation-origin and Dreamer-origin pending installs BOTH render in
+    /// PROPOSALS. Origin controls provenance and dedupe, never whether the
+    /// agent may see an unresolved install.
+    #[test]
+    fn proposals_section_carries_every_pending_origin() {
+        use oneiron::context_board::PluginInstallOrigin;
+        use oneiron::dreamer_plugin_suggest::{PluginSuggestionDisposition, TestPackCatalog};
+
+        let fixture = PluginFixture::open();
+        let evidence = fixture.seed_workflow_evidence();
+        let catalog = TestPackCatalog {
+            entries: vec![fixture.pack_candidate()],
+            calls: std::cell::Cell::new(0),
+        };
+        let job = fixture.suggestion_job(evidence, "2026-08-19");
+        assert!(matches!(
+            fixture.run_suggestion(&catalog, &job, 2_000),
+            PluginSuggestionDisposition::Proposed { .. }
+        ));
+        fixture.propose_from_conversation("turn_install_crm");
+
+        let rows = fixture.proposal_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| matches!(row.origin, PluginInstallOrigin::DreamerSuggestion { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| matches!(row.origin, PluginInstallOrigin::Conversation { .. }))
+                .count(),
+            1,
+            "a conversation-initiated install must not vanish from the board"
+        );
+        let section = fixture.proposals_section();
+        assert_eq!(section.detail_rows().len(), 2);
+        assert_eq!(section.count_rows(), ["count: 2".to_owned()]);
+    }
+
+    /// The PROPOSALS section keeps a non-empty count fallback even with no
+    /// pending proposals, so the shed ladder always has something to degrade
+    /// to.
+    #[test]
+    fn empty_proposals_section_still_has_a_count_fallback() {
+        let fixture = PluginFixture::open();
+        assert!(fixture.proposal_rows().is_empty());
+        let section = fixture.proposals_section();
+        assert!(section.detail_rows().is_empty());
+        assert_eq!(section.count_rows(), ["count: 0".to_owned()]);
     }
 
     /// ONE-1707 · 08b §7 (r11): suggestion = proposal row on board + app;
     /// accept = the gated install; knob disableable, DEFAULT ON on a fresh
     /// config; digest-not-nag.
     #[test]
-    #[ignore = "armed by ONE-1707"]
     fn plugin_suggestion_is_gated_proposal_knob_off_silences() {
         let flow = arm_plugin_suggestion_flow();
         assert!(flow.knob_on_in_fresh_config);
@@ -511,8 +814,18 @@ mod plugin_fixture {
         assemble_task_agent_sections, execute_approved_plugin_section_install,
         propose_plugin_section_install, render_board_block, render_plugin_sections,
     };
-    use oneiron::context_board::{AuthorityLaneRef, BudgetPolicyRef};
+    use oneiron::context_board::{
+        AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow, pending_plugin_proposal_rows,
+        render_plugin_proposal_section,
+    };
+    use oneiron::dreamer_plugin_suggest::{
+        PackCandidate, PluginSuggestJob, PluginSuggestionDisposition, TestPackCatalog,
+        WorkflowPatternNotice, enqueue_plugin_suggestion, plugin_suggestion_key,
+        run_plugin_suggestion_job,
+    };
+    use oneiron::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
     use oneiron::edge::EdgeActorClass;
+    use oneiron::inbox::{InboxBulkVerb, InboxExceptionClass, InboxQuery, InboxReviewDial};
     use oneiron::skill::{SkillLifecycle, SkillRecord};
     use oneiron::skill_hub::{
         HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillCapabilitySurface,
@@ -1254,6 +1567,168 @@ mod plugin_fixture {
                 }],
             }];
             render_plugin_sections(registry, &snapshots, &self.lifecycle())
+        }
+
+        // ── ONE-1707 suggestion-flow support ────────────────────────────
+
+        /// The knob as a FRESH, untouched configuration reports it. Reads
+        /// through the production door and writes nothing, so calling it
+        /// first is a genuine default observation rather than a seeded one.
+        pub(crate) fn suggestions_knob(&self) -> bool {
+            self.vault
+                .plugin_suggestions_enabled()
+                .expect("read the suggestion knob")
+        }
+
+        pub(crate) fn set_suggestions_knob(&self, enabled: bool) {
+            self.vault
+                .set_plugin_suggestions_enabled(enabled)
+                .expect("persist the suggestion knob");
+        }
+
+        /// Seeds the entity the workflow notice cites. GATE-12's evidence
+        /// floor requires a Dreamer-authored claim to cite at least one ref
+        /// that still resolves, so this is the observation the suggestion
+        /// rests on — not decoration.
+        pub(crate) fn seed_workflow_evidence(&self) -> EntityId {
+            let evidence = EntityId::from_bytes([0x55; 16]).expect("evidence id");
+            self.vault
+                .put_entity(
+                    &evidence,
+                    4,
+                    TimeRange {
+                        start: 1_500,
+                        end: 1_500,
+                    },
+                    1_500,
+                    b"hand-tracked contacts observation",
+                )
+                .expect("seed the observed evidence");
+            evidence
+        }
+
+        /// The catalog row for the CRM pack, carrying EXACT package identity
+        /// plus the ONE-1706 manifest. The pack is a test fixture only.
+        pub(crate) fn pack_candidate(&self) -> PackCandidate {
+            PackCandidate {
+                hub_ref: self.hub_ref(),
+                target_skill_ref: self.skill_ref,
+                pack_id: CRM_PACK_ID.to_owned(),
+                label: "CRM".to_owned(),
+                description: "contact tracking".to_owned(),
+                version: CRM_SKILL_VERSION.to_owned(),
+                content_hash_hex: self.content_hash_hex.clone(),
+                manifest: self.manifest(),
+            }
+        }
+
+        /// The Dreamer notices the owner tracking contacts by hand. Typed:
+        /// the stable pattern key is what matching and the suggestion key use
+        /// — the prose summary is never parsed.
+        pub(crate) fn contacts_notice(&self, evidence: EntityId) -> WorkflowPatternNotice {
+            WorkflowPatternNotice {
+                pattern_key: "crm.contacts".to_owned(),
+                summary: "tracking contacts by hand across notes".to_owned(),
+                evidence_refs: vec![evidence],
+                observed_at: 1_600,
+            }
+        }
+
+        pub(crate) fn suggestion_job(
+            &self,
+            evidence: EntityId,
+            digest_window: &str,
+        ) -> PluginSuggestJob {
+            PluginSuggestJob {
+                run_id: "run_plugin_suggest_1".to_owned(),
+                digest_window: digest_window.to_owned(),
+                notice: self.contacts_notice(evidence),
+            }
+        }
+
+        /// Runs the suggestion job through the production door.
+        pub(crate) fn run_suggestion(
+            &self,
+            catalog: &TestPackCatalog,
+            job: &PluginSuggestJob,
+            now: u64,
+        ) -> PluginSuggestionDisposition {
+            let source = self.source(true);
+            run_plugin_suggestion_job(
+                &self.vault,
+                catalog,
+                &source,
+                job,
+                WriteActor::new(self.actor, EdgeActorClass::Agent),
+                &CrmBindings,
+                now,
+            )
+            .expect("the suggestion job runs")
+        }
+
+        /// Pending proposals as the agent board sees them — every origin.
+        pub(crate) fn proposal_rows(&self) -> Vec<PluginProposalRow> {
+            pending_plugin_proposal_rows(&self.vault, 64).expect("project pending proposals")
+        }
+
+        /// The fixed PROPOSALS board section over those rows.
+        pub(crate) fn proposals_section(&self) -> BoardSection {
+            render_plugin_proposal_section(&self.proposal_rows()).expect("PROPOSALS renders")
+        }
+
+        /// Owner-visible Inbox members classified as a plugin install, with
+        /// the group key the bulk verbs act on.
+        pub(crate) fn plugin_install_inbox_members(&self, dial: InboxReviewDial) -> Vec<String> {
+            self.vault
+                .set_inbox_review_dial(dial)
+                .expect("persist the review dial");
+            self.vault
+                .inbox_groups(InboxQuery::at(6_000, 32))
+                .expect("project inbox groups")
+                .into_iter()
+                .flat_map(|group| {
+                    let group_key = group.group_key.clone();
+                    group.members.into_iter().filter_map(move |member| {
+                        member
+                            .exception_classes
+                            .contains(&InboxExceptionClass::PluginInstall)
+                            .then(|| group_key.clone())
+                    })
+                })
+                .collect()
+        }
+
+        /// Owner acceptance through the EXISTING Inbox bundle door — the
+        /// same consent surface every other Dreamer proposal uses.
+        pub(crate) fn accept_inbox_group(&self, group_key: &str) -> usize {
+            self.vault
+                .resolve_inbox_group_at(group_key, InboxBulkVerb::AcceptAll, None, 6_500)
+                .expect("owner accepts the group")
+                .item_receipts
+                .len()
+        }
+
+        pub(crate) fn claim_is_approved(&self, claim_id: &EntityId) -> bool {
+            self.vault
+                .get_claim(claim_id)
+                .expect("read claim")
+                .is_some_and(|body| body.approval == ClaimApprovalStatus::Approved)
+        }
+
+        /// Two identical jobs racing: the second must collapse onto the
+        /// first through the attempt queue's dedupe key.
+        pub(crate) fn enqueue_twice(&self, job: &PluginSuggestJob) -> (bool, bool) {
+            let store = DreamerRunnerStore::new(&self.vault);
+            let key = plugin_suggestion_key(&job.notice, &self.pack_candidate())
+                .expect("suggestion key computes");
+            let first =
+                enqueue_plugin_suggestion(&store, job, &key, 7_000).expect("first enqueue lands");
+            let second = enqueue_plugin_suggestion(&store, job, &key, 7_001)
+                .expect("second enqueue collapses");
+            (
+                matches!(first, EnqueueDreamerAttemptOutcome::Enqueued(_)),
+                matches!(second, EnqueueDreamerAttemptOutcome::Existing(_)),
+            )
         }
 
         /// Everything a render must leave untouched.

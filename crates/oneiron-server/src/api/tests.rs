@@ -10023,7 +10023,7 @@ fn seed_surface_identity(server: &SyncServer, counter: u128, address: &str) -> S
     let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
-        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
         1_782_357_000,
     );
@@ -10280,7 +10280,7 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
     let mut identity = oneiron::channel_identity::ChannelIdentity::requested(
         "email",
         address,
-        oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+        oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
         oneiron::channel_identity::ChannelIdentityBinding::vault(7),
         1_782_357_000,
     );
@@ -10490,7 +10490,7 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
             &oneiron::channel_identity::ChannelIdentity::requested(
                 "email",
                 address,
-                oneiron::channel_identity::ChannelIdentityShape::DedicatedAddress,
+                oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
                 oneiron::channel_identity::ChannelIdentityBinding::agent(agent_ref),
                 1_782_357_000,
             ),
@@ -14388,5 +14388,59 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
     assert!(
         after_setup["result"].get("carrier").is_none(),
         "setup superseded and drained the older queue: {after_setup:?}"
+    );
+}
+
+/// ONE-1705 — the SERVED skill pack is the committed artifact, lane tree and
+/// all. The route is unchanged (same path, same media type, same bytes); what
+/// this row adds is that an agent fetching the pack over HTTP receives the
+/// four-lane onramp, ahead of the endpoint catalog it is meant to choose
+/// against. A pack whose lanes only existed in the repository copy would leave
+/// every remote agent reading the old first screen.
+#[tokio::test]
+async fn served_skills_pack_carries_the_four_lane_onramp_before_the_catalog() {
+    let (_dir, server) = test_server();
+
+    let (status, headers, body) = route_bytes(
+        server,
+        Request::builder()
+            .uri("/api/skills/oneiron.skills.md")
+            .body(Body::empty())
+            .expect("skills pack request"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some(skills_pack_artifact::MEDIA_TYPE)
+    );
+
+    let served = std::str::from_utf8(body.as_ref()).expect("skill pack is UTF-8");
+    let lanes = [
+        "## Lane: code-mode-repl",
+        "## Lane: thin-client",
+        "## Lane: curl-cli",
+        "## Lane: tool-first-mcp",
+    ];
+    for lane in lanes {
+        assert_eq!(
+            served.matches(lane).count(),
+            1,
+            "the served pack must carry {lane} exactly once"
+        );
+    }
+
+    let last_lane = served
+        .find("## Lane: tool-first-mcp")
+        .expect("served pack must carry the tool-first lane");
+    let catalog = served
+        .find("## Tier-1")
+        .expect("served pack must keep the endpoint index");
+    assert!(
+        last_lane < catalog,
+        "the onramp must arrive before the endpoint catalog it routes into"
     );
 }

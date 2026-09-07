@@ -5,7 +5,7 @@
 //! or a lease runs out. RUNG 1 and the reserve dial live in [`super::ops`].
 
 use crate::attempt_queue::encoding::{
-    decode_record, dedupe_index_key, encode_record, lease_expired, ready_at, ready_key,
+    DedupeIndexKeys, decode_record, encode_record, lease_expired, ready_at, ready_key,
 };
 use crate::attempt_queue::engine::AttemptQueue;
 use crate::attempt_queue::telemetry::invalid_transition;
@@ -132,11 +132,17 @@ impl AttemptQueue<'_> {
             successor.run_id.as_deref(),
             successor.id.as_bytes(),
         )?;
+        // Same rule a retry uses, so a landed handoff cannot invent a second
+        // scoping scheme: the successor's entry comes from the scope it copied.
         if let Some(dedupe_key) = successor.dedupe_key.as_deref() {
-            let index_key = dedupe_index_key(&successor.kind, dedupe_key);
+            let keys = DedupeIndexKeys::new(
+                &successor.kind,
+                successor.dedupe_actor_ref.as_deref(),
+                dedupe_key,
+            );
             self.store
                 .attempt_dedupe
-                .put(&mut wtxn, &index_key[..], successor.id.as_bytes())?;
+                .put(&mut wtxn, &keys.primary[..], successor.id.as_bytes())?;
         }
         wtxn.commit()?;
         Ok(FinishLandingOutcome::HandedOff {
@@ -509,6 +515,7 @@ fn landing_successor(source: &AttemptRecord, scheduled_at: Option<u64>, now: u64
         task_ref: source.task_ref.clone(),
         run_id: source.run_id.clone(),
         dedupe_key: source.dedupe_key.clone(),
+        dedupe_actor_ref: source.dedupe_actor_ref.clone(),
         created_at: now,
         updated_at: now,
         events: Vec::new(),
