@@ -7,6 +7,7 @@ use crate::analyzer::AnalyzerChannel;
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
+use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::fusion;
@@ -196,6 +197,10 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
+    fork_hash_f32(
+        &mut hasher,
+        crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+    );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
     fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
@@ -214,6 +219,8 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_facet_filter(&mut hasher, builder.facet_filter);
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
     fork_hash_world_scope(&mut hasher, builder.world_scope);
+    fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
+    fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
@@ -279,6 +286,29 @@ fn fork_hash_rerank(
     fork_hash_str(hasher, reranker.id());
     fork_hash_u64(hasher, options.top_n as u64);
     fork_hash_str(hasher, effective_query.unwrap_or_default());
+}
+
+fn fork_hash_authority_filter(
+    hasher: &mut Sha256,
+    filter: Option<&crate::gate::ResolvedRetrievalFilter>,
+) {
+    let Some(filter) = filter else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_bool(hasher, filter.deny_all);
+    fork_hash_bool(hasher, filter.entity_types.is_some());
+    if let Some(types) = &filter.entity_types {
+        fork_hash_len(hasher, types.len());
+        for kind in types {
+            fork_hash_u8(hasher, *kind);
+        }
+    }
+    fork_hash_u8(hasher, filter.max_sensitivity_band);
+    fork_hash_bool(hasher, filter.include_stale);
+    fork_hash_f32(hasher, filter.min_confidence);
+    fork_hash_f32(hasher, filter.min_salience);
 }
 
 fn fork_hash_vector_query(
@@ -461,6 +491,30 @@ fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
     }
 }
 
+/// Query validation still rejects empty AnyOf before channel work. Hashing only
+/// normalizes ordering/duplicates; it neither admits nor repairs invalid input.
+fn fork_hash_corpus_scope(hasher: &mut Sha256, scope: &CorpusScope) {
+    fork_hash_str(hasher, "corpus_scope");
+    match scope {
+        CorpusScope::All => fork_hash_str(hasher, "all"),
+        CorpusScope::Unscoped => fork_hash_str(hasher, "unscoped"),
+        CorpusScope::Corpus(id) => {
+            fork_hash_str(hasher, "corpus");
+            fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+        }
+        CorpusScope::AnyOf(ids) => {
+            fork_hash_str(hasher, "any_of");
+            let mut ids = ids.clone();
+            ids.sort_unstable();
+            ids.dedup();
+            fork_hash_len(hasher, ids.len());
+            for id in ids {
+                fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+            }
+        }
+    }
+}
+
 fn fork_hash_context_pack_budget(hasher: &mut Sha256, budget: Option<ContextPackRetrievalBudget>) {
     let Some(budget) = budget else {
         fork_hash_bool(hasher, false);
@@ -618,6 +672,13 @@ pub(super) fn filter_retrieval_trace_scores(
             rtxn,
             &scored.id,
             filters,
+            metadata_cache,
+            claim_gate,
+        )? && super::authority::candidate_allowed(
+            filters.authority_filter,
+            store,
+            rtxn,
+            &scored.id,
             metadata_cache,
             claim_gate,
         )? {

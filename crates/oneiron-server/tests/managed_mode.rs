@@ -805,14 +805,25 @@ async fn a_socket_bind_replaces_a_stale_socket_and_refuses_a_regular_file() {
     // A socket left behind by a previous run: ours to replace.
     let stale = run.join("ctl.sock");
     let previous = std::os::unix::net::UnixListener::bind(&stale).unwrap();
-    let stale_inode = std::fs::metadata(&stale).unwrap().ino();
     drop(previous);
-    let _ctl = ManagedCtl::bind(&stale).unwrap();
-    assert_ne!(
-        std::fs::metadata(&stale).unwrap().ino(),
-        stale_inode,
-        "a stale socket must be replaced by this process's own"
-    );
+    let error = tokio::net::UnixStream::connect(&stale)
+        .await
+        .expect_err("the stale socket must have no live listener");
+    assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+
+    // An unlinked inode can be recycled immediately. Prove replacement by
+    // connecting, then prove that the returned ctl owns the new listener.
+    let ctl = ManagedCtl::bind(&stale).unwrap();
+    assert_eq!(ctl.path(), stale.as_path());
+    let client = tokio::net::UnixStream::connect(&stale)
+        .await
+        .expect("the replacement socket must accept connections");
+    drop(client);
+    drop(ctl);
+    let error = tokio::net::UnixStream::connect(&stale)
+        .await
+        .expect_err("dropping ctl must close its replacement listener");
+    assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
 
     // A mistyped path landing on real data: not ours, and not recoverable if
     // this gets it wrong.

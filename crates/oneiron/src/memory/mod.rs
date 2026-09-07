@@ -26,7 +26,9 @@
 mod booking;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
+pub(crate) mod booking_publication;
 mod campaign;
+pub mod caps;
 mod chat;
 mod claims;
 mod dreamer;
@@ -57,7 +59,8 @@ pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptVi
 pub use error::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MemoryError, MemoryGateDenial, MemoryResult,
+    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
+    MemoryGateDenial, MemoryResult,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
@@ -81,6 +84,8 @@ pub use structural::{
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
+pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use support::{
-    facade_provenance, verify_actor_binding, verify_deletion_authority_in_txn,
+    facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_deletion_authority_in_txn,
 };
+pub(crate) use witness::sole_edge_target;

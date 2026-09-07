@@ -46,6 +46,18 @@ pub const DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND: &str = "dreamer.consolidatio
 /// `dreamer.edit_distance.substitution_mine` already use — so the kind gate
 /// and the payload discriminator can never drift apart.
 pub const DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND: &str = "dreamer.skill_optimize";
+/// ARCH-0073 vault auto-cleanup queue kind (ONE-1931). Private per-device
+/// attempt rows, like MICRO/MESO and SKILL-OPT: the pass reads one vault's own
+/// rows and, in the default propose-first posture, only DRAFTS a proposal, so
+/// a second device running it is a second question for a human, never a
+/// second archive.
+///
+/// Doubles as the payload `job_type` this attempt carries, following the same
+/// dotted-name convention as [`DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND`], so the
+/// kind gate and the payload discriminator cannot drift apart. Registered on
+/// the TIMER wake (Macro scope) alone — see
+/// [`crate::dreamer_runner::EnqueueDreamerVaultCleanupAttempt`].
+pub const DREAMER_VAULT_CLEANUP_ATTEMPT_KIND: &str = "dreamer.vault_cleanup";
 /// Current pinned home-node designation schema version.
 pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for the private home-node designation.

@@ -78,7 +78,8 @@ echo "== check 7: WORKFLOW.md gate =="
 cd "$ROOT"
 export CARGO_TARGET_DIR="$ROOT/target"
 run() { echo "+ $*"; "$@"; }
-run cargo fmt --all --check
+# Honor the workspace's heed exclusion; --all also follows local path dependencies.
+run cargo fmt --check
 run cargo clippy --workspace --all-targets --all-features -- -D warnings
 run cargo nextest run --workspace --all-features --profile full
 run cargo test --doc --workspace --exclude oneiron-bench --all-features

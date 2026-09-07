@@ -1,9 +1,13 @@
+mod authority;
 mod blend;
 mod budget;
 mod builder;
 mod channels;
+mod corpus_filter;
 mod execution;
 mod filters;
+mod scoped_channels;
+pub(crate) use types::CandidateFilter;
 mod support;
 mod trace;
 mod types;
@@ -15,6 +19,7 @@ pub use self::types::{
     RelMode, RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
 };
 
+pub(crate) use self::authority::claim_allowed as retrieval_claim_allowed;
 pub(crate) use self::types::DEFAULT_RESULT_LIMIT;
 
 #[cfg(test)]
@@ -26,6 +31,9 @@ mod tests;
 // its home.
 #[cfg(test)]
 mod decay_tests;
+
+#[cfg(test)]
+mod authority_tests;
 
 // The flat pipeline.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and
