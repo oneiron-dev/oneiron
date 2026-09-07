@@ -1,0 +1,33 @@
+[package]
+name = "oneiron-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+oneiron = { path = "../oneiron" }
+# ONE-1441 D2 — the ONE HTTP stack the SDK owns.
+#
+# Blocking + rustls + JSON, and already resolved in this workspace at these
+# exact features by `oneiron-server` (its `Cargo.toml:50`), so the SDK adds no
+# new tree and no second TLS backend. `ureq` — the blueprint's illustrative
+# sketch — is in neither `Cargo.lock` nor the local registry cache, so choosing
+# it would add a fetch and a second TLS stack to buy nothing.
+#
+# `json` is deliberately NOT enabled: every body on this client is serialized
+# and deserialized by hand so the 64 MiB request and response ceilings are
+# enforced BEFORE any decode allocation (I13). A convenience `.json()` would
+# decode first and measure never.
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "rustls-tls",
+] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

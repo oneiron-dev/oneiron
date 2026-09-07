@@ -1,23 +1,31 @@
+mod authority;
 mod blend;
 mod budget;
 mod builder;
 mod channels;
 mod corpus_filter;
 mod execution;
+mod execution_binding;
 mod filters;
 mod scoped_channels;
 pub(crate) use types::CandidateFilter;
 mod support;
 mod trace;
 mod types;
+mod world_authority;
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{
-    DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet, DreamerWorkingSetBudget,
-    DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding,
-    RelMode, RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
+    ActiveWorldSelection, DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet,
+    DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode,
+    MAX_WORLD_ACCESS_MEMBERS, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, PendingVectorEmbedding, RelMode, ResolvedWorldAuthority,
+    RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal,
+    WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, WorldScope, decode_world_access_claim_value,
+    world_access_claim_body,
 };
 
+pub(crate) use self::authority::claim_allowed as retrieval_claim_allowed;
 pub(crate) use self::types::DEFAULT_RESULT_LIMIT;
 
 #[cfg(test)]
@@ -29,6 +37,9 @@ mod tests;
 // its home.
 #[cfg(test)]
 mod decay_tests;
+
+#[cfg(test)]
+mod authority_tests;
 
 // The flat pipeline.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and

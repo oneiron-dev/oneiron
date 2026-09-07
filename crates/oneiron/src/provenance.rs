@@ -2051,6 +2051,7 @@ impl Vault {
 }
 
 mod imported;
+pub(crate) use imported::ImportedEdgeProvenance;
 
 #[cfg(test)]
 mod tests;

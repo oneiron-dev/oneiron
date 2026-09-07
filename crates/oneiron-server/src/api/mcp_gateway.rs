@@ -1073,7 +1073,7 @@ pub(crate) fn execute_mcp_nav(
                 .with_field("query")
             })?;
             let results = scoped_read
-                .search_text(query, limit)
+                .search_text(query, limit, None)
                 .map_err(|error| mcp_engine_error("mcp nav search failed", error))?;
             let items = results
                 .into_iter()

@@ -18,6 +18,7 @@ mod effect;
 mod grants;
 mod input;
 mod resolution;
+mod retrieval_filter;
 mod share;
 mod witness_message;
 
@@ -25,10 +26,6 @@ mod witness_message;
 mod tests;
 
 pub(crate) use self::breaker::undo_gate_breaker_in_txn;
-pub use self::breaker::{
-    GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS, GateBreakerRunProjection,
-    GateBreakerThresholds,
-};
 pub use self::bundle::{
     GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
     GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
@@ -90,6 +87,10 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
+pub use self::retrieval_filter::RetrievalFilter;
+pub(crate) use self::retrieval_filter::{
+    ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
+};
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;

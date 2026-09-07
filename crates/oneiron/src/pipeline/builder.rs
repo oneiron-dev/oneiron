@@ -19,10 +19,10 @@ use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 use super::corpus_filter::claim_matches_corpus;
 use super::support::normalize_range;
 use super::types::{
-    DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, DreamerWorkingSet, DreamerWorkingSetBudget,
-    DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding,
-    RelMode, RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity,
-    TemporalSearchConfig, WorldScope,
+    ActiveWorldSelection, DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, DreamerWorkingSet,
+    DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode,
+    PendingVectorEmbedding, RelMode, RetrievalWithPendingVectors, RetrievalWithTelemetry,
+    ScoredEntity, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
 };
 
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
@@ -43,6 +43,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) apply_contiguity: bool,
     pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
     pub(super) type_filter: Option<Vec<u8>>,
+    pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -51,6 +52,16 @@ pub struct PipelineBuilder<'a> {
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
     pub(super) world_scope: WorldScope,
+    /// The per-turn ActiveSet selection (ONE-1420). A SIDECAR rather than a
+    /// payload on [`WorldScope::ActiveSet`], because the selection is in-memory
+    /// turn state that is never stored, while `WorldScope` is a `Copy` scope
+    /// token shared with the context pack and the agent-scope mapping. `None`
+    /// under every other scope: [`PipelineBuilder::world`] clears it, so a
+    /// stale selection can never leak into another scope's run.
+    pub(super) active_world_selection: Option<ActiveWorldSelection>,
+    /// Captured only from a host-bound execution capability, never from a
+    /// selection's caller-supplied agent id. Bare `Vault::query` has none.
+    pub(super) execution_actor: Option<crate::write_envelope::WriteActor>,
     pub(super) corpus_scope: CorpusScope,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
     pub(super) result_limit: usize,
@@ -90,6 +101,7 @@ impl<'a> PipelineBuilder<'a> {
             apply_contiguity: false,
             candidate_filter: None,
             type_filter: None,
+            authority_filter: None,
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -98,6 +110,8 @@ impl<'a> PipelineBuilder<'a> {
             facet_filter: None,
             relationship_filter: None,
             world_scope: WorldScope::All,
+            active_world_selection: None,
+            execution_actor: None,
             corpus_scope: CorpusScope::All,
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
@@ -131,6 +145,12 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
         self.telemetry_action = action;
+        self
+    }
+
+    /// Installs only gate-resolved authority. Public callers use scoped search.
+    pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
+        self.authority_filter = Some(filter);
         self
     }
 
@@ -497,8 +517,59 @@ impl<'a> PipelineBuilder<'a> {
     /// read transaction — in the same stage as the facet filter — so claims
     /// excluded by scope never consume result slots. Scoring and fusion are
     /// untouched.
+    ///
+    /// Setting any scope OTHER than [`WorldScope::ActiveSet`] clears the
+    /// per-turn ActiveSet sidecar (ONE-1420): a selection made earlier on this
+    /// builder must not silently keep restricting — or worse, be re-read as
+    /// authority for — a run that has since asked for a different scope.
+    /// Setting `ActiveSet` here WITHOUT [`PipelineBuilder::active_worlds`] or
+    /// [`PipelineBuilder::default_active_worlds`] leaves no selection behind
+    /// and fails the run closed with [`Error::InvalidConfig`].
     pub fn world(mut self, scope: WorldScope) -> Self {
+        if !matches!(scope, WorldScope::ActiveSet) {
+            self.active_world_selection = None;
+        }
         self.world_scope = scope;
+        self
+    }
+
+    /// Restricts this ONE turn to an explicit base/world selection made by
+    /// `agent_ref` (ONE-1420 tier 3).
+    ///
+    /// The selection is never persisted and never widens: at execution time it
+    /// is checked against the owner-granted ALLOWED-SET claims about
+    /// `agent_ref` (`core.world_access.allowed_set`), and a member outside that
+    /// grant fails the run closed with [`Error::InvalidConfig`] rather than
+    /// falling back to [`WorldScope::All`] or dropping the offending member.
+    /// Base reality — base claims and every non-claim entity — survives only
+    /// when the selection sets `include_base`.
+    ///
+    /// Requires [`Vault::query_for_execution`]. `agent_ref` must match that
+    /// capability's executing actor; it is an assertion, not an identity setter.
+    /// A bare [`Vault::query`] has no principal and fails closed.
+    pub fn active_worlds(mut self, agent_ref: EntityId, selected: WorldAuthoritySet) -> Self {
+        self.world_scope = WorldScope::ActiveSet;
+        self.active_world_selection = Some(ActiveWorldSelection {
+            agent_ref,
+            selected: Some(selected),
+        });
+        self
+    }
+
+    /// Restricts this turn to `agent_ref`'s stored DEFAULT-SUBSET
+    /// (`core.world_access.default_subset`, ONE-1420 tier 2).
+    ///
+    /// Same enforcement as [`PipelineBuilder::active_worlds`] with the
+    /// selection left implicit: the newest active default row is resolved at
+    /// execution time and must itself sit inside the owner's ALLOWED-SET. With
+    /// no default row the turn reads NOTHING — never everything. Requires the
+    /// same execution capability and actor match as the explicit selection.
+    pub fn default_active_worlds(mut self, agent_ref: EntityId) -> Self {
+        self.world_scope = WorldScope::ActiveSet;
+        self.active_world_selection = Some(ActiveWorldSelection {
+            agent_ref,
+            selected: None,
+        });
         self
     }
 

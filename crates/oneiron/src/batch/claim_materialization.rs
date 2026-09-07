@@ -90,6 +90,12 @@ impl ClaimMaterialization {
         let Some(valid_to) = next.valid_to else {
             return Err(binding_error());
         };
+        if valid_to < header.occurred_start {
+            return Err(Error::InvalidTimeRange {
+                start: header.occurred_start,
+                end: valid_to,
+            });
+        }
         let mut expected = prior.clone();
         expected.lifecycle = next.lifecycle;
         expected.valid_to = next.valid_to;
@@ -100,7 +106,7 @@ impl ClaimMaterialization {
             )
             || encode_claim_body(&expected)? != *data
             || occurred.start != header.occurred_start
-            || occurred.end != valid_to.max(header.occurred_start)
+            || occurred.end != valid_to
             || *learned_at != header.learned_at
         {
             return Err(binding_error());
@@ -222,6 +228,41 @@ impl ClaimMaterialization {
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+    }
+}
+
+/// Consumes only the next exact binding, then validates its current authority.
+pub(super) fn consume_claim_materialization(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim_materializations: &mut VecDeque<ClaimMaterialization>,
+    op: &BatchOp,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<Option<ClaimMaterialization>> {
+    if claim_materializations
+        .front()
+        .is_some_and(|binding| binding.matches_op(op))
+    {
+        let binding = claim_materializations
+            .pop_front()
+            .expect("matched front binding");
+        binding.validate_actor(store, txn)?;
+        reject_overlay_member_base_write(store, &binding.envelope().actor().entity_ref(), origin)?;
+        Ok(Some(binding))
+    } else if !claim_materializations.is_empty()
+        && matches!(
+            op,
+            BatchOp::Put {
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                ..
+            }
+        )
+    {
+        Err(Error::InvalidClaimBody(
+            "claim materialization operation mismatch",
+        ))
+    } else {
+        Ok(None)
     }
 }
 
@@ -530,7 +571,7 @@ mod tests {
 
     use super::*;
     use crate::claim::{ClaimApprovalStatus, ClaimSubject};
-    use crate::edge::EdgeActorClass;
+    use crate::edge::{EdgeActorClass, EdgeKind};
     use crate::temporal::TimeRange;
     use crate::test_util::entity;
     use crate::write_envelope::ClaimCandidate;
@@ -716,6 +757,71 @@ mod tests {
             assert!(!binding.matches_op(&wrong));
             assert!(ClaimMaterialization::lifecycle(&vault.store, &txn, &wrong).is_err());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -> Result<()> {
+        let (_dir, vault, actor) = fixture()?;
+        let subject =
+            crate::provenance::EdgeRef::new(entity(0x62), EdgeKind::EmployedBy, entity(0x63));
+        let first = entity(0x64);
+        let second = entity(0x65);
+        assert!(vault.resolve_imported_edge_provenance(
+            crate::provenance::ImportedEdgeProvenance {
+                claim_id: first,
+                subject,
+                actor,
+                evidence: Value::from("external record"),
+                weight: 0.8,
+                learned_at: 10,
+            }
+        )?);
+        // The canonical replacement closes the Imported prior under its OWN actor.
+        vault.supersede_edge_provenance(
+            &first,
+            &second,
+            &subject,
+            &crate::provenance::EdgeProvenanceClaimBody::new(
+                actor.entity_ref(),
+                1.0,
+                crate::provenance::SupersessionStatus::Confirmed,
+            ),
+            actor.actor_class(),
+            20,
+        )?;
+        let closed = vault.get_claim(&first)?.expect("prior");
+        assert_eq!(closed.source, Some(ClaimSource::Imported));
+        assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Superseded);
+        let record = crate::provenance::decode_edge_provenance_body(&closed.value)?;
+        assert_eq!(record.actor_entity_ref, actor.entity_ref());
+        assert_eq!(record.actor_class, Some(actor.actor_class()));
+        let third = entity(0x66);
+        let other_subject =
+            crate::provenance::EdgeRef::new(entity(0x63), EdgeKind::EmployedBy, entity(0x62));
+        vault.resolve_imported_edge_provenance(crate::provenance::ImportedEdgeProvenance {
+            claim_id: third,
+            subject: other_subject,
+            actor,
+            evidence: Value::from("other record"),
+            weight: 0.8,
+            learned_at: 10,
+        })?;
+        permit(&vault, entity(0x63), &[ClaimSource::Imported])?;
+        assert!(vault.retract_edge_provenance(&third, 30).is_err());
+        assert_eq!(
+            vault.get_claim(&third)?.expect("unchanged").lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        permit(&vault, actor.entity_ref(), &[ClaimSource::Imported])?;
+        vault.retract_edge_provenance(&third, 30)?;
+        let closed = vault.get_claim(&third)?.expect("closed");
+        assert_eq!(closed.source, Some(ClaimSource::Imported));
+        assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert_eq!(
+            crate::provenance::decode_edge_provenance_body(&closed.value)?.actor_entity_ref,
+            actor.entity_ref()
+        );
         Ok(())
     }
 }
