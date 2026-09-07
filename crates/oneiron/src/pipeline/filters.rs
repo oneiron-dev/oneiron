@@ -88,7 +88,16 @@ pub(super) fn claim_status_gate_allows(
             raw.get(ENTITY_METADATA_HEADER_LEN..)
                 .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
         })
-        .filter(claim_surfaceable);
+        .filter(|body| {
+            claim_surfaceable(body)
+                || (gate.include_stale
+                    && matches!(
+                        body.approval,
+                        crate::claim::ClaimApprovalStatus::Auto
+                            | crate::claim::ClaimApprovalStatus::Approved
+                    )
+                    && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+        });
     let allowed = decision.is_some();
     gate.decisions.insert(*id, decision);
     Ok(allowed)
@@ -437,6 +446,9 @@ pub(super) fn apply_filters(
             continue;
         };
 
+        if !super::authority::type_allowed(filters.authority_filter, store, meta.entity_type) {
+            continue;
+        }
         if let Some(types) = filters.type_filter
             && !types.contains(&meta.entity_type)
         {
@@ -493,7 +505,10 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
     // Scoped text scans can visit the whole corpus. Do not memoize that corpus.
     let mut local_metadata = EntityMetadataCache::default();
-    let mut local_gate = ClaimStatusGateCache::default();
+    let mut local_gate = ClaimStatusGateCache {
+        include_stale: filters.authority_filter.include_stale,
+        ..ClaimStatusGateCache::default()
+    };
     let (metadata_cache, claim_gate) = if filters.candidate_filter.is_some() {
         (&mut local_metadata, &mut local_gate)
     } else {
@@ -503,6 +518,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     };
 
+    if !super::authority::type_allowed(filters.authority_filter, store, meta.entity_type) {
+        return Ok(false);
+    }
     if let Some(types) = filters.type_filter
         && !types.contains(&meta.entity_type)
     {
@@ -538,6 +556,15 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
 
     if !claim_status_gate_allows(store, rtxn, id, metadata_cache, claim_gate)? {
+        return Ok(false);
+    }
+    // Bounded corpus channels truncate through this predicate before fusion.
+    // Apply the scalar clamp to the decoded D19 body so an authority-excluded
+    // claim cannot consume an in-corpus slot. Keep the gate above for every type,
+    // including archived non-claims; only claims have cached bodies here.
+    if let Some(Some(body)) = claim_gate.decisions.get(id)
+        && !super::authority::claim_allowed(filters.authority_filter, body)
+    {
         return Ok(false);
     }
 

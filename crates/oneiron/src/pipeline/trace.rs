@@ -220,6 +220,7 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
     fork_hash_world_scope(&mut hasher, builder.world_scope);
     fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
+    fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
@@ -285,6 +286,29 @@ fn fork_hash_rerank(
     fork_hash_str(hasher, reranker.id());
     fork_hash_u64(hasher, options.top_n as u64);
     fork_hash_str(hasher, effective_query.unwrap_or_default());
+}
+
+fn fork_hash_authority_filter(
+    hasher: &mut Sha256,
+    filter: Option<&crate::gate::ResolvedRetrievalFilter>,
+) {
+    let Some(filter) = filter else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_bool(hasher, filter.deny_all);
+    fork_hash_bool(hasher, filter.entity_types.is_some());
+    if let Some(types) = &filter.entity_types {
+        fork_hash_len(hasher, types.len());
+        for kind in types {
+            fork_hash_u8(hasher, *kind);
+        }
+    }
+    fork_hash_u8(hasher, filter.max_sensitivity_band);
+    fork_hash_bool(hasher, filter.include_stale);
+    fork_hash_f32(hasher, filter.min_confidence);
+    fork_hash_f32(hasher, filter.min_salience);
 }
 
 fn fork_hash_vector_query(
@@ -648,6 +672,13 @@ pub(super) fn filter_retrieval_trace_scores(
             rtxn,
             &scored.id,
             filters,
+            metadata_cache,
+            claim_gate,
+        )? && super::authority::candidate_allowed(
+            filters.authority_filter,
+            store,
+            rtxn,
+            &scored.id,
             metadata_cache,
             claim_gate,
         )? {

@@ -24,8 +24,10 @@ impl CorpusFilter {
         &'a self,
         builder: &'a PipelineBuilder<'_>,
         occurred_range: Option<(u64, u64)>,
+        authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     ) -> PipelineFilterConfig<'a> {
         PipelineFilterConfig {
+            authority_filter,
             candidate_filter: builder.candidate_filter,
             type_filter: builder.type_filter.as_deref(),
             since_filter: builder.since_filter,

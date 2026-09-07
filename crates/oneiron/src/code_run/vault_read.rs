@@ -1615,9 +1615,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         limit: usize,
     ) -> VaultReadResult<Vec<ScoredEntity>> {
         let results = match (query, vector) {
-            (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit),
-            (Some(query), None) => self.scoped_read.search_text(query, limit),
-            (None, Some(vector)) => self.scoped_read.search_vector(vector, limit),
+            (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
+            (Some(query), None) => self.scoped_read.search_text(query, limit, None),
+            (None, Some(vector)) => self.scoped_read.search_vector(vector, limit, None),
             (None, None) => Ok(Vec::new()),
         };
         results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))

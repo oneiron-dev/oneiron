@@ -817,7 +817,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut total = 0;
         for hit in self
             .scoped_read
-            .search_text(pattern, self.coreutils_result_cap())?
+            .search_text(pattern, self.coreutils_result_cap(), None)?
         {
             let id_hex = hit.id.to_hex();
             if skipping {
