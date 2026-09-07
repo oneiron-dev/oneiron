@@ -8,6 +8,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN};
 use serde_json::json;
 
+#[path = "regressions.rs"]
+mod regressions;
+
 fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("id")
 }
@@ -23,30 +26,7 @@ fn open() -> (tempfile::TempDir, Vault) {
             .put_entity(&entity, kind, TimeRange { start: 1, end: 1 }, 1, b"fixture")
             .expect("entity");
     }
-    let config = EventTypeConfig {
-        key: EventTypeKey("event".to_owned()),
-        duration_min: 30,
-        slot_step_min: 30,
-        pre_buffer_min: 0,
-        post_buffer_min: 0,
-        min_notice_secs: 0,
-        booking_window_secs: 7 * 86_400,
-        daily_cap: None,
-        weekly_cap: None,
-        routing: RoutingMode::Either,
-        hosts: vec![HostAvailabilityConfig {
-            host_ref: id(3),
-            calendar_refs: vec![id(4)],
-            host_tz: "UTC".to_owned(),
-            working_hours: vec![WeeklyWallWindow {
-                weekday: 0,
-                start_minute: 0,
-                end_minute: 1_440,
-            }],
-            preferred_hours: Vec::new(),
-        }],
-        flex_windows: Vec::new(),
-    };
+    let config = fixture_config();
     vault
         .put_claim(
             &id(5),
@@ -70,10 +50,38 @@ fn open() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+fn fixture_config() -> EventTypeConfig {
+    EventTypeConfig {
+    key: EventTypeKey("event".to_owned()),
+    duration_min: 30,
+    slot_step_min: 30,
+    pre_buffer_min: 0,
+    post_buffer_min: 0,
+    min_notice_secs: 0,
+    booking_window_secs: 7 * 86_400,
+    daily_cap: None,
+    weekly_cap: None,
+    routing: RoutingMode::Either,
+    hosts: vec![HostAvailabilityConfig {
+        host_ref: id(3),
+        calendar_refs: vec![id(4)],
+        host_tz: "UTC".to_owned(),
+        working_hours: vec![WeeklyWallWindow {
+            weekday: 0,
+            start_minute: 0,
+            end_minute: 1_440,
+        }],
+        preferred_hours: Vec::new(),
+    }],
+    flex_windows: Vec::new(),
+}
+}
+
 fn publication() -> BookingPagePublication {
     BookingPagePublication {
         schema_version: BOOKING_PUBLIC_PAGE_SCHEMA_VERSION,
         published: true,
+        event_config_hashes: [("event".to_owned(), booking_config_hash(&fixture_config()).expect("hash"))].into(),
         owner_display: "Owner supplied display".to_owned(),
         event_types: vec![EventTypeCard {
             key: EventTypeKey("event".to_owned()),
@@ -311,22 +319,8 @@ fn public_booking_publication_rechecks_configuration_and_ambiguous_heads() {
     let mut value = publication();
     value.published = false;
     denial.value = encode_public_booking_page_value(&value).expect("deny");
-    vault
-        .put_claim(&id(6), &denial, TimeRange { start: 1, end: 1 }, 1)
-        .expect("concurrent owner head");
-    assert!(
-        load_public_booking_page(&vault, id(1), 150)
-            .expect("ambiguous")
-            .is_none()
-    );
-    owner
-        .claim_retract(&id(6).to_hex())
-        .expect("resolve conflict");
-    assert!(
-        load_public_booking_page(&vault, id(1), 150)
-            .expect("one head")
-            .is_some()
-    );
+    assert!(vault.put_claim(&id(6), &denial, TimeRange { start: 1, end: 1 }, 1).is_err());
+    assert!(load_public_booking_page(&vault, id(1), 150).expect("original owner head").is_some());
     let mut config = vault.get_claim(&id(5)).expect("config").expect("body");
     config.approval = ClaimApprovalStatus::Proposed;
     vault

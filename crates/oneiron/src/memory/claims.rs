@@ -291,7 +291,11 @@ impl Memory<'_> {
                 }
                 verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
             }
+            if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
+                super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
+            }
             let consent_receipt = self.vault.retract_claim_in_txn(wtxn, &id, now)?;
+            super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
             let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
                 || "retracted".to_owned(),
                 |body| body.approval.as_str().to_owned(),
@@ -556,6 +560,13 @@ impl Memory<'_> {
                 {
                     return Ok(true);
                 }
+                let publication_write = input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+                if publication_write {
+                    super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
+                    if let Some(old_id) = prior {
+                        super::booking_publication::stage_publication_write(self.vault, wtxn, old_id)?;
+                    }
+                }
                 apply_ops_with_gate_mode(
                     &self.vault.store,
                     &self.vault.config,
@@ -575,6 +586,13 @@ impl Memory<'_> {
                 if let Some(old_id) = prior {
                     self.vault
                         .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)?;
+                }
+                if publication_write {
+                    crate::booking::publication::index_publication_in_txn(self.vault, wtxn, subject, id)?;
+                    super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
+                    if let Some(old_id) = prior {
+                        super::booking_publication::finish_publication_write(self.vault, wtxn, old_id)?;
+                    }
                 }
                 Ok(false)
             })

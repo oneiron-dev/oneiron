@@ -7,9 +7,9 @@ use axum::extract::rejection::PathRejection;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
-    BookingPageLens, BookingPageModel, BookingPagePublication, BookingVerb, DisclosureRung,
-    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, SurfaceClass,
-    load_public_booking_page, project_at_rung, slot_mask,
+    BookingPageLens, BookingPageModel, BookingPagePublication, BookingVerb,
+    PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken,
+    load_public_booking_page, slot_mask,
 };
 
 use super::*;
@@ -28,6 +28,10 @@ pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
                 .fallback(public_booking_not_found_response),
         )
         .route(
+            "/{page_token}/availability",
+            post(public_booking_availability).fallback(public_booking_not_found_response),
+        )
+        .route(
             "/{page_token}/verbs/{verb}",
             post(invoke_public_booking_verb).fallback(public_booking_not_found_response),
         )
@@ -38,7 +42,7 @@ pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
     Router::new().nest(PUBLIC_BOOKING_ROUTE_PREFIX, routes)
 }
 
-fn public_booking_not_found() -> ApiError {
+pub(super) fn public_booking_not_found() -> ApiError {
     ApiError::not_found("booking page", None)
 }
 
@@ -48,12 +52,12 @@ async fn public_booking_not_found_response() -> ApiError {
 
 /// Configuration locates the internal subject; only the durable owner claim
 /// grants public access. Every miss has the same response and no token echo.
-fn resolve_public_booking_page(
+pub(super) fn resolve_public_booking_page(
     server: &SyncServer,
     page_token: &str,
 ) -> Result<(EntityId, BookingPagePublication), ApiError> {
-    let page_ref =
-        resolve_booking_page(server, page_token).map_err(|_| public_booking_not_found())?;
+    let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
+        .map_err(|_| public_booking_not_found())?.ok_or_else(public_booking_not_found)?;
     let publication = load_public_booking_page(&server.vault, page_ref, now_secs()?)
         .map_err(|_| public_booking_not_found())?
         .ok_or_else(public_booking_not_found)?;
@@ -74,7 +78,7 @@ pub(crate) async fn render_public_booking_page(
     );
     let input = publication
         .initial_availability
-        .request(now_secs()?, session)?;
+        .request(now_secs()?.div_ceil(30) * 30, session)?;
     let request = SolveRequest {
         event_type: input.event_type.clone(),
         window: input.window,
@@ -96,12 +100,7 @@ pub(crate) async fn render_public_booking_page(
     // The shared solver produces the data; the existing disclosure seam owns
     // the public clamp and validates its final half-open mask.
     let mask = slot_mask(&request, SolveResult { slots, flex_used });
-    let slots = project_at_rung(
-        &[],
-        DisclosureRung::Slots,
-        SurfaceClass::Public,
-        Some(&mask),
-    )?;
+    let slots = oneiron::booking::bounded_public_slots(mask).map_err(booking_error)?;
     // Do not emit an obsolete snapshot after an owner revokes or edits it
     // while admission is awaiting. No second admission or solver call.
     let (_, current) = resolve_public_booking_page(&server, &page_token)?;
@@ -129,6 +128,19 @@ fn public_booking_page_json(
     let card = BookingPageLens::card_with_actions(&model, &token, &[PublicBookingAction::Hold])
         .map_err(|_| ApiError::internal_server_error("public booking lens assembly failed"))?;
     Ok(serde_json::json!({ "model": model, "card": card }))
+}
+
+async fn public_booking_availability(
+    State(server): State<Arc<SyncServer>>,
+    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
+    path: Result<Path<String>, PathRejection>,
+    payload: Result<Json<BookingAvailabilityInput>, JsonRejection>,
+) -> Result<Json<BookingOperationResponse>, ApiError> {
+    let Path(token) = path.map_err(|_| public_booking_not_found())?;
+    resolve_public_booking_page(&server, &token)?;
+    let input = json_payload(payload)?;
+    let transport = public_http_transport_context(peer)?;
+    execute_booking_operation(&server, &token, BookingOperationRequest::Availability(input), &transport).await.map(Json)
 }
 
 /// A parser-backed allowlist, not a second verb registry.
@@ -209,7 +221,7 @@ fn public_http_transport_context(
     Ok(BookingTransportContext {
         source_ip: peer.ip(),
         authenticated_actor_ref: None,
-        transport: BookingTransport::PublicHttp,
+        transport: BookingTransport::AnonymousHttp,
     })
 }
 
@@ -266,3 +278,6 @@ mod lifecycle_tests;
 #[cfg(test)]
 #[path = "public_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "public_availability_tests.rs"]
+mod availability_tests;

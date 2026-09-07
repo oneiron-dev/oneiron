@@ -23,7 +23,7 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
-mod booking_publication;
+pub(crate) mod booking_publication;
 mod campaign;
 mod chat;
 mod claims;

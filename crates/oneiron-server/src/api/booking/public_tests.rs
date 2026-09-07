@@ -55,7 +55,7 @@ async fn public_booking_render_requires_no_authentication() {
         public_http_transport_context(Ok(ConnectInfo("127.0.0.1:43123".parse().expect("peer"))))
             .expect("context");
     assert_eq!(context.authenticated_actor_ref, None);
-    assert_eq!(context.transport, BookingTransport::PublicHttp);
+    assert_eq!(context.transport, BookingTransport::AnonymousHttp);
     assert_eq!(
         context.source_ip,
         "127.0.0.1".parse::<IpAddr>().expect("IP")
@@ -179,6 +179,46 @@ async fn public_booking_disallowed_verb_is_404_or_405() {
     let missing = fixture.route("GET", "/public/booking/", Value::Null).await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     assert_public_denial(missing).await;
+}
+
+#[tokio::test]
+async fn public_slot_projection_errors_remain_non_disclosing_server_errors() {
+    use oneiron::booking::{RungProjection, SlotMask, bounded_public_slots};
+
+    let valid = SlotMask {
+        event_type: EventTypeKey("intro".to_owned()),
+        window_start_utc: 100,
+        window_end_utc: 700,
+        slots: vec![RankedSlot {
+            start_utc: 100,
+            end_utc: 700,
+            rank: 0.5,
+        }],
+        flex_used: false,
+    };
+    let mut invalid_interval = valid.clone();
+    invalid_interval.slots[0].end_utc = 100;
+    let mut oversized_metadata = valid;
+    oversized_metadata.event_type = EventTypeKey("x".repeat(16 * 1024 + 1));
+    for mask in [invalid_interval, oversized_metadata] {
+        let result: Result<RungProjection, ApiError> =
+            bounded_public_slots(mask).map_err(booking_error);
+        let error = result.expect_err("invalid public projection");
+        assert_eq!(
+            error,
+            ApiError::internal_server_error("booking surface assembly failed"),
+        );
+        let response = public_booking_response(error.into_response()).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_inline(&response);
+        assert_eq!(
+            bytes(response).await,
+            serde_json::to_vec(&ApiError::internal_server_error(
+                "public booking operation unavailable",
+            ))
+            .expect("public error body"),
+        );
+    }
 }
 
 #[tokio::test]
@@ -490,25 +530,13 @@ async fn public_booking_needs_live_surfaceable_publication_and_matching_configur
         (ClaimApprovalStatus::Rejected, false),
         (ClaimApprovalStatus::Auto, true),
     ] {
-        // Existing low-level claim door models replicated/status-updated rows;
-        // successful setup and publication still went through the owner facade.
+        // Generic status/replay writes cannot edit an owner publication.
         let mut body = original.clone();
         body.approval = approval;
         body.stale = stale;
-        fixture
-            .server
-            .vault
-            .put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)
-            .expect("status");
-        let response = fixture.route("GET", &path, Value::Null).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(bytes(response).await, unknown);
+        assert!(fixture.server.vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1).is_err());
+        assert_eq!(fixture.route("GET", &path, Value::Null).await.status(), StatusCode::OK);
     }
-    fixture
-        .server
-        .vault
-        .put_claim(&claim_id, &original, TimeRange { start: 1, end: 1 }, 1)
-        .expect("restore owner head");
     let mut config = fixture
         .server
         .vault
