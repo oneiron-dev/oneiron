@@ -828,6 +828,7 @@ fn abandoned_record(seed: u8, kind: &str, result_ref: &str) -> AttemptRecord {
         task_ref: None,
         run_id: Some("run-abandoned".to_owned()),
         dedupe_key: None,
+        dedupe_actor_ref: None,
         created_at: 10,
         updated_at: 30,
         events: Vec::new(),
