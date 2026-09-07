@@ -13,6 +13,7 @@
 //! cleanup counters and span emission.
 
 mod cancel;
+mod completion;
 mod encoding;
 mod engine;
 mod telemetry;

@@ -2,14 +2,15 @@
 
 use super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER;
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, RetryAttempt};
+use crate::attempt_queue::{AttemptQueue, CompleteAttempt, RetryAttempt};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::receipt::{SendReceiptOutcome, persist_send_receipt_in_txn};
 
 /// Commits the audit row, source finalization, successor and indexes together.
 /// No receipt may advertise a retry edge unless that retry also commits. A
-/// delivered TASK is sticky: losing that race must not re-arm it.
+/// delivered TASK is sticky: losing that race completes the source in the same
+/// transaction without persisting the failed receipt or arming a successor.
 pub(super) fn persist_failed_send_receipt_and_retry(
     vault: &Vault,
     attempt: &crate::attempt_queue::AttemptRecord,
@@ -33,6 +34,15 @@ pub(super) fn persist_failed_send_receipt_and_retry(
             false,
             None,
         )? {
+            queue.complete_in_txn(
+                wtxn,
+                CompleteAttempt {
+                    id: attempt.id,
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    attempt_count: attempt.attempt_count,
+                    now,
+                },
+            )?;
             return Ok(false);
         }
         queue.retry_in_txn(

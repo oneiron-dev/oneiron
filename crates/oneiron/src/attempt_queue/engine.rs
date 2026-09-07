@@ -604,41 +604,11 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("complete", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "complete",
-                )?;
-                record.state = AttemptState::Completed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = None;
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(CompleteOutcome::Completed(record))
-            }
-            state => Err(invalid_transition("complete", state.as_str())),
+        let outcome = self.complete_in_txn(&mut wtxn, input)?;
+        if matches!(outcome, CompleteOutcome::Completed(_)) {
+            wtxn.commit()?;
         }
+        Ok(outcome)
     }
 
     /// Marks a leased attempt terminally failed. Failing an already-failed attempt is

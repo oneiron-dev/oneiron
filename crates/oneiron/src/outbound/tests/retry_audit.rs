@@ -2,8 +2,9 @@
 
 use super::*;
 use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
-    EnqueueOutcome, RetryAttempt,
+    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
+    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, ManifestEntry, ManifestKind,
+    RetryAttempt,
 };
 use crate::outbound::retry_audit::persist_failed_send_receipt_and_retry;
 use crate::receipt::{
@@ -360,10 +361,159 @@ fn receipt_and_retry_caller_abort_rolls_back_every_index() -> crate::Result<()> 
 
 #[test]
 fn already_delivered_does_not_rearm() -> crate::Result<()> {
+    for reason in ["held", "degraded", "transport_failed_pending"] {
+        let (_tmp, vault) = temp_vault();
+        let task_ref = entity(0xE6);
+        let actor = entity(0xE7);
+        let source = leased_retry_source(&vault, task_ref)?;
+        let queue = AttemptQueue::new(&vault);
+        assert!(persist_send_receipt(
+            &vault,
+            task_ref,
+            audit_receipt("outbound:delivered-winner", "delivered_to_channel"),
+            SendReceiptOutcome::Delivered,
+            true,
+            Some((actor, "delivered-winner")),
+        )?);
+        let delivered = delivered_send_receipt_for_task(&vault, task_ref)?;
+        let before = retry_storage_snapshot(&vault)?;
+        assert_eq!(before[3].len(), 1, "the leased source owns its dedupe entry");
+        assert!(!persist_failed_send_receipt_and_retry(
+            &vault,
+            &source,
+            task_ref,
+            audit_receipt("outbound:late-failed-audit", "failed"),
+            reason,
+            1_001,
+            102,
+        )?);
+        let mut completed = source.clone();
+        completed.state = AttemptState::Completed;
+        completed.lease_owner = None;
+        completed.backoff_until = None;
+        completed.last_error = None;
+        completed.updated_at = 102;
+        assert_eq!(queue.list()?, vec![completed.clone()]);
+        assert_eq!(queue.list_run("run:atomic-audit")?, vec![completed]);
+        let after = retry_storage_snapshot(&vault)?;
+        assert_eq!(after[0], before[0], "delivery evidence and indexes are sticky");
+        assert!(after[2].is_empty(), "no ready source or successor");
+        assert!(after[3].is_empty(), "completion retires the source dedupe entry");
+        assert_eq!(
+            delivered_send_receipt_for_task(&vault, task_ref)?,
+            delivered
+        );
+        assert_eq!(vault.store.send_receipt_rows()?.len(), 1);
+        assert_eq!(audit_receipts(&vault)?.len(), 1);
+        assert_eq!(
+            vault
+                .store
+                .get_delivered_send_task_by_idempotency(&actor, "delivered-winner")?,
+            Some(task_ref)
+        );
+        assert_eq!(
+            queue.claim(ClaimAttempt {
+                lease_owner: "connector-task-executor".to_owned(),
+                now: 1_001,
+            })?,
+            ClaimOutcome::Empty
+        );
+        // A repeated losing result is idempotent, including its timestamp.
+        assert!(!persist_failed_send_receipt_and_retry(
+            &vault,
+            &source,
+            task_ref,
+            audit_receipt("outbound:late-failed-audit", "failed"),
+            reason,
+            2_001,
+            103,
+        )?);
+        assert_eq!(retry_storage_snapshot(&vault)?, after);
+    }
+    Ok(())
+}
+
+#[test]
+fn already_delivered_completion_rejects_stale_or_foreign_leases() -> crate::Result<()> {
+    for (lease_owner, expected_state) in [
+        ("connector-task-executor", "stale_attempt"),
+        ("another-executor", "leased_by_other"),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let task_ref = entity(0xED);
+        let actor = entity(0xEE);
+        let source = leased_retry_source(&vault, task_ref)?;
+        let queue = AttemptQueue::new(&vault);
+        assert!(persist_send_receipt(
+            &vault,
+            task_ref,
+            audit_receipt("outbound:delivered-winner", "delivered_to_channel"),
+            SendReceiptOutcome::Delivered,
+            true,
+            Some((actor, "delivered-winner")),
+        )?);
+        let delivered = delivered_send_receipt_for_task(&vault, task_ref)?;
+        queue.cleanup_leases(CleanupAttemptLeases {
+            now: 102,
+            lease_timeout_secs: 1,
+        })?;
+        let ClaimOutcome::Claimed(current) = queue.claim(ClaimAttempt {
+            lease_owner: lease_owner.to_owned(),
+            now: 103,
+        })?
+        else {
+            panic!("the expired source must be reclaimable");
+        };
+        assert_eq!(current.id, source.id);
+        assert_eq!(current.attempt_count, source.attempt_count + 1);
+        let before = retry_storage_snapshot(&vault)?;
+        let error = persist_failed_send_receipt_and_retry(
+            &vault,
+            &source,
+            task_ref,
+            audit_receipt("outbound:late-failed-audit", "failed"),
+            "transport_failed_pending",
+            1_001,
+            104,
+        )
+        .expect_err("a delivered winner does not bypass the completion lease CAS");
+        assert!(matches!(
+            error,
+            Error::InvalidAttemptQueueTransition {
+                action: "complete",
+                state,
+            } if state == expected_state
+        ));
+        assert_eq!(retry_storage_snapshot(&vault)?, before);
+        assert_eq!(queue.list()?, vec![current]);
+        assert_eq!(
+            delivered_send_receipt_for_task(&vault, task_ref)?,
+            delivered
+        );
+        assert_eq!(vault.store.send_receipt_rows()?.len(), 1);
+        assert_eq!(audit_receipts(&vault)?.len(), 1);
+        assert_eq!(
+            vault
+                .store
+                .get_delivered_send_task_by_idempotency(&actor, "delivered-winner")?,
+            Some(task_ref)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn already_delivered_completion_caller_abort_rolls_back_every_index() -> crate::Result<()> {
     let (_tmp, vault) = temp_vault();
-    let task_ref = entity(0xE6);
-    let actor = entity(0xE7);
+    let task_ref = entity(0xEF);
+    let actor = entity(0xF0);
     let source = leased_retry_source(&vault, task_ref)?;
+    let queue = AttemptQueue::new(&vault);
+    let source = queue.append_manifest_entry(
+        source.id,
+        ManifestEntry::new(ManifestKind::Skill, "skill:atomic-audit", "v1", 101),
+    )?;
+    let pack_receipt_id = crate::receipt::attempt_pack_receipt_id(&source.id);
     assert!(persist_send_receipt(
         &vault,
         task_ref,
@@ -374,23 +524,50 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
     )?);
     let delivered = delivered_send_receipt_for_task(&vault, task_ref)?;
     let before = retry_storage_snapshot(&vault)?;
-    for reason in ["held", "degraded", "transport_failed_pending"] {
-        assert!(!persist_failed_send_receipt_and_retry(
-            &vault,
-            &source,
+    let result: crate::Result<()> = vault.with_write_txn(|wtxn| {
+        assert!(!persist_send_receipt_in_txn(
+            &vault.store,
+            wtxn,
             task_ref,
             audit_receipt("outbound:late-failed-audit", "failed"),
-            reason,
-            1_001,
-            101,
+            SendReceiptOutcome::Failed,
+            false,
+            None,
         )?);
-        assert_eq!(retry_storage_snapshot(&vault)?, before);
-    }
-    assert_eq!(AttemptQueue::new(&vault).list()?, vec![source]);
+        let CompleteOutcome::Completed(completed) = queue.complete_in_txn(
+            wtxn,
+            CompleteAttempt {
+                id: source.id,
+                lease_owner: "connector-task-executor".to_owned(),
+                attempt_count: source.attempt_count,
+                now: 102,
+            },
+        )?
+        else {
+            panic!("the losing source must complete in this transaction");
+        };
+        assert_eq!(completed.state, AttemptState::Completed);
+        assert_eq!(completed.lease_owner, None);
+        assert_eq!(
+            queue.list_task_in_write_txn(wtxn, &task_ref.to_hex())?,
+            vec![completed]
+        );
+        assert!(vault.store.attempt_ready.iter(wtxn)?.next().is_none());
+        assert!(vault.store.attempt_dedupe.iter(wtxn)?.next().is_none());
+        Err(Error::InvariantViolation("forced abort after completion writes"))
+    });
+    assert!(matches!(
+        result,
+        Err(Error::InvariantViolation("forced abort after completion writes"))
+    ));
+    assert_eq!(retry_storage_snapshot(&vault)?, before);
+    assert_eq!(queue.list()?, vec![source.clone()]);
     assert_eq!(
-        delivered_send_receipt_for_task(&vault, task_ref)?,
-        delivered
+        crate::receipt::attempt_pack_receipt(&vault, &pack_receipt_id)?,
+        None
     );
+    assert_eq!(delivered_send_receipt_for_task(&vault, task_ref)?, delivered);
+    assert_eq!(vault.store.send_receipt_rows()?.len(), 1);
     assert_eq!(audit_receipts(&vault)?.len(), 1);
     assert_eq!(
         vault
@@ -398,6 +575,27 @@ fn already_delivered_does_not_rearm() -> crate::Result<()> {
             .get_delivered_send_task_by_idempotency(&actor, "delivered-winner")?,
         Some(task_ref)
     );
+
+    // Committing the same losing result also seals the terminal pack receipt.
+    assert!(!persist_failed_send_receipt_and_retry(
+        &vault,
+        &source,
+        task_ref,
+        audit_receipt("outbound:late-failed-audit", "failed"),
+        "held",
+        1_001,
+        102,
+    )?);
+    let pack = crate::receipt::attempt_pack_receipt(&vault, &pack_receipt_id)?
+        .expect("completion stamps the source's pack receipt");
+    assert_eq!(pack.outcome, "completed");
+    assert_eq!(pack.pack_manifest_skills(), Some(vec!["skill:atomic-audit@v1".to_owned()]));
+    let attempts = queue.list()?;
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].id, source.id);
+    assert_eq!(attempts[0].state, AttemptState::Completed);
+    assert_eq!(delivered_send_receipt_for_task(&vault, task_ref)?, delivered);
+    assert_eq!(vault.store.send_receipt_rows()?.len(), 1);
     Ok(())
 }
 
