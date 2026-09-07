@@ -1,3 +1,12 @@
+use std::collections::BTreeMap;
+
+#[path = "admission_tests.rs"]
+mod admission_tests;
+#[path = "canonical_tests.rs"]
+mod canonical_tests;
+#[path = "repair/tests.rs"]
+mod repair_tests;
+
 use super::*;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -5,7 +14,8 @@ use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::registry::{
-    ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone, entity_type_registry_entry,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteZone,
+    entity_type_registry_entry,
 };
 use crate::store::Store;
 use crate::test_util::open_test_vault_with;
@@ -81,11 +91,40 @@ impl DeterministicDetector for StubDetector {
     }
 }
 
+/// Emits the SAME draft twice, so deduplication has something to do.
+struct DoubleDetector;
+
+impl DeterministicDetector for DoubleDetector {
+    fn detector_id(&self) -> &'static str {
+        "test.double_detector"
+    }
+
+    fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
+        let Some(first) = input.observations.first() else {
+            return Vec::new();
+        };
+        let mut draft = event_for(input.scope_ref, first);
+        draft.detector_id = self.detector_id().to_owned();
+        vec![draft.clone(), draft]
+    }
+}
+
 fn stored_body(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let raw = vault.get_raw(id)?.expect("diagnostic entity is stored");
     let header = EntityMetadataHeader::parse(&raw).expect("entity header parses");
     assert_eq!(header.entity_type, ENTITY_TYPE_DIAGNOSTIC);
     Ok(raw[ENTITY_METADATA_HEADER_LEN..].to_vec())
+}
+
+fn type_census(vault: &Vault) -> Result<BTreeMap<u8, usize>> {
+    let mut census = BTreeMap::new();
+    for byte in 0..=u8::MAX {
+        let count = vault.entities_by_type(byte)?.len();
+        if count > 0 {
+            census.insert(byte, count);
+        }
+    }
+    Ok(census)
 }
 
 fn stored_header(vault: &Vault, id: &EntityId) -> Result<EntityMetadataHeader> {
@@ -127,6 +166,97 @@ fn assert_rejected(bytes: &[u8], what: &str) {
     }
 }
 
+// ── 1. every emitted event is fully typed ───────────────────────────────────
+
+/// Done-means 1: an emitted event carries a closed class plus actor, source,
+/// criticality, expected/actual/delta, replay coordinate, evidence refs, and
+/// bitemporal validity — read back off disk, not off the draft.
+#[test]
+fn detector_emits_typed_event() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let observations = [observation(2, 1_000), observation(3, 2_000)];
+    let input = DiagnosticWorkingSet {
+        scope_ref: "scope.gate14",
+        observations: &observations,
+    };
+    let detector = StubDetector;
+    let detectors: [&dyn DeterministicDetector; 1] = [&detector];
+
+    let ids = run_deterministic_detectors(&vault, &input, &detectors)?;
+    assert_eq!(ids.len(), 2, "one event per observation");
+
+    for id in &ids {
+        let event = decode_diagnostic_event_body(&stored_body(&vault, id)?)?;
+        assert_eq!(event.event_class, DiagnosticEventClass::TestFailure);
+        assert_eq!(event.actor_class, "system");
+        assert!(event.actor_ref.is_some(), "actor is addressable");
+        assert_eq!(event.source, DiagnosticSourceKind::Receipt);
+        assert_eq!(event.criticality, DiagnosticCriticality::Normal);
+        assert_eq!(event.expected, Value::from("green"));
+        assert_eq!(event.actual, Value::from("red"));
+        assert_eq!(event.delta, Value::Integer(Integer::from(1_u64)));
+        assert_ne!(event.replay.content_hash, [0_u8; 32], "replay is addressed");
+        assert_eq!(event.replay.run_ref.as_deref(), Some("scope.gate14"));
+        assert_eq!(event.evidence_refs.len(), 1, "evidence is cited");
+        assert!(event.valid_to.is_some_and(|end| end > event.valid_from));
+
+        // The untrusted leaf arrived ESCAPED: the raw tab never reached disk.
+        let detail = event.untrusted_detail.expect("untrusted detail survives");
+        assert!(!detail.contains('\t'), "raw control data must not persist");
+        assert!(detail.contains("\\u{0009}"), "control data is escaped");
+    }
+    Ok(())
+}
+
+// ── 2. determinism ──────────────────────────────────────────────────────────
+
+/// Done-means 2: the same scoped ordered working set and detector set produce
+/// byte-identical canonical bodies, identical event ids, identical ordering,
+/// and identical deduplication — across two independent vaults, so nothing
+/// ambient (clock, insertion order, id minting) can be smuggled in.
+#[test]
+fn deterministic_detection() -> Result<()> {
+    let observations = [observation(2, 1_000), observation(3, 2_000)];
+    let input = DiagnosticWorkingSet {
+        scope_ref: "scope.gate14",
+        observations: &observations,
+    };
+    let stub = StubDetector;
+    let double = DoubleDetector;
+    let detectors: [&dyn DeterministicDetector; 2] = [&stub, &double];
+
+    let (_dir_a, vault_a) = open_vault();
+    let first = run_deterministic_detectors(&vault_a, &input, &detectors)?;
+    let (_dir_b, vault_b) = open_vault();
+    let second = run_deterministic_detectors(&vault_b, &input, &detectors)?;
+
+    assert_eq!(first, second, "ids and their order must be identical");
+    // Stub emits one event per observation (2); Double emits the SAME draft
+    // twice and must collapse to one. Four drafts, three persisted events.
+    assert_eq!(first.len(), 3, "identical drafts must deduplicate");
+    let ascending = first.windows(2).all(|pair| pair[0] < pair[1]);
+    assert!(ascending, "ids must be returned sorted");
+
+    for id in &first {
+        let left = stored_body(&vault_a, id)?;
+        let right = stored_body(&vault_b, id)?;
+        assert_eq!(left, right, "canonical bodies must be byte-identical");
+
+        // The id is a function of `(detector_id, canonical body)` and nothing
+        // else, so it re-derives from the stored bytes alone. Folding the
+        // detector id in is what keeps two detectors that observe the same
+        // fact from overwriting each other's finding.
+        let event = decode_diagnostic_event_body(&left)?;
+        assert_eq!(*id, diagnostic_event_id(&event.detector_id, &left));
+        assert_ne!(
+            *id,
+            diagnostic_event_id("another.detector", &left),
+            "detector identity separates ids"
+        );
+    }
+    Ok(())
+}
+
 /// The working-set order is CHECKED, never imposed: a caller that hands over an
 /// unsorted slice gets a rejection instead of a deterministic-looking result
 /// built on a non-deterministic read.
@@ -153,6 +283,49 @@ fn working_set_order_is_checked_not_imposed() {
         observations: &duplicated,
     };
     assert!(run_deterministic_detectors(&vault, &input, &detectors).is_err());
+}
+
+// ── 3. detection has no repair path ─────────────────────────────────────────
+
+/// Done-means 3: a detector run writes DIAGNOSTIC entities and NOTHING else.
+/// It does not propose, authorize or apply a repair — there is no repair type
+/// to write — and it does not mutate the records it observed.
+#[test]
+fn no_repair_side_effect() -> Result<()> {
+    let (_dir, vault) = open_vault();
+
+    let observed = seed_id(2);
+    vault.put_entity(&observed, ENTITY_TYPE_PERSON, at(1_000), 1_001, b"observed")?;
+    let before_bytes = vault.get(&observed)?.expect("observed record exists");
+    let before = type_census(&vault)?;
+
+    let observations = [observation(2, 1_000), observation(3, 2_000)];
+    let input = DiagnosticWorkingSet {
+        scope_ref: "scope.gate14",
+        observations: &observations,
+    };
+    let detector = StubDetector;
+    let detectors: [&dyn DeterministicDetector; 1] = [&detector];
+    let ids = run_deterministic_detectors(&vault, &input, &detectors)?;
+
+    let after = type_census(&vault)?;
+    let observed_now = vault.get(&observed)?.expect("observed record survives");
+    assert_eq!(observed_now, before_bytes, "observed record not mutated");
+
+    let mut bytes: Vec<u8> = before.keys().copied().collect();
+    bytes.extend(after.keys().copied());
+    bytes.sort_unstable();
+    bytes.dedup();
+    for byte in bytes {
+        let was = before.get(&byte).copied().unwrap_or(0);
+        let now = after.get(&byte).copied().unwrap_or(0);
+        if byte == ENTITY_TYPE_DIAGNOSTIC {
+            assert_eq!(now, was + ids.len(), "only diagnostics were added");
+        } else {
+            assert_eq!(now, was, "byte {byte} population must not change");
+        }
+    }
+    Ok(())
 }
 
 // ── 4. only the engine-authored door writes byte 69 ─────────────────────────
@@ -435,111 +608,6 @@ fn stored_untrusted_leaf_is_terminal() {
     assert!(!detail.contains('\t'), "the raw tab is gone");
     assert!(detail.contains("\\u{0009}"), "the tab is visibly escaped");
     assert!(detail.contains("\\\\"), "the literal backslash is escaped");
-}
-
-/// Escaping is TOTAL, so it is injective: a RAW control scalar and the literal
-/// text of its escape are two different findings and must not be able to
-/// collide on one stored body and one content-addressed id. A passthrough for
-/// already-escaped-looking input is exactly how they would collide, so there
-/// is none.
-#[test]
-fn raw_control_and_literal_escape_text_do_not_collide() {
-    let detector = "test.stub_detector";
-
-    let mut raw_tab = sample_event();
-    raw_tab.untrusted_detail = Some("a\tb".to_owned());
-    let mut escape_text = sample_event();
-    // The eight literal characters `\u{0009}`, not a tab.
-    escape_text.untrusted_detail = Some("a\\u{0009}b".to_owned());
-
-    let tab_body = encode_diagnostic_event_body(&raw_tab).expect("raw tab encodes");
-    let text_body = encode_diagnostic_event_body(&escape_text).expect("escape text encodes");
-    assert_ne!(tab_body, text_body, "distinct inputs, distinct bodies");
-    assert_ne!(
-        diagnostic_event_id(detector, &tab_body),
-        diagnostic_event_id(detector, &text_body),
-        "distinct bodies, distinct event ids"
-    );
-
-    // Both are canonical, and each round-trips back to the leaf it names: the
-    // tab is escaped, and the input that already looked escaped has its
-    // backslash escaped instead of being waved through.
-    for (body, expected) in [(&tab_body, "a\\u{0009}b"), (&text_body, "a\\\\u{0009}b")] {
-        validate_diagnostic_event_body_bytes(body).expect("canonical body is accepted");
-        let decoded = decode_diagnostic_event_body(body).expect("body decodes");
-        assert_eq!(decoded.untrusted_detail.as_deref(), Some(expected));
-        assert_eq!(
-            encode_stored_diagnostic_event_body(&decoded).expect("stored re-encode"),
-            *body,
-            "the stored leaf is terminal"
-        );
-    }
-}
-
-/// A content address has to pin BYTES, not just values: the write door
-/// re-encodes what it decoded and demands byte equality, so a body that means
-/// the right thing in the wrong spelling — re-ordered keys, a wider
-/// MessagePack marker than the value needs, an uppercase ref — is refused
-/// instead of being stored as a second byte string for one event.
-#[test]
-fn non_canonical_spellings_are_refused() {
-    let canonical = encode_diagnostic_event_body(&sample_event()).expect("sample encodes");
-    validate_diagnostic_event_body_bytes(&canonical).expect("the canonical body is accepted");
-
-    // 1. Re-ordered keys: the same 17 pairs, spelled in a different order.
-    let mut entries = body_entries(&canonical);
-    entries.swap(0, 1);
-    let reordered = encode_entries(entries);
-    assert_ne!(reordered, canonical, "the fixture really is re-ordered");
-    assert_rejected(&reordered, "re-ordered body keys");
-    assert_eq!(
-        validate_diagnostic_event_body_bytes(&reordered)
-            .expect_err("re-ordered keys must be refused")
-            .kind(),
-        ErrorKind::InvalidDiagnosticBody
-    );
-
-    // 2. An alternate wire marker: `schema_version`'s 1 written as a uint8
-    // (0xCC 0x01) instead of the positive fixint it canonically is. This
-    // decodes to the same value, so only the byte-equality gate catches it.
-    let mut key_bytes = Vec::new();
-    rmpv::encode::write_value(&mut key_bytes, &Value::from("schema_version")).expect("key encodes");
-    let at = canonical
-        .windows(key_bytes.len())
-        .position(|window| window == key_bytes)
-        .expect("the schema_version key is present")
-        + key_bytes.len();
-    assert_eq!(canonical[at], 0x01, "1 is canonically a positive fixint");
-    let mut wide_marker = canonical[..at].to_vec();
-    wide_marker.extend_from_slice(&[0xCC, 0x01]);
-    wide_marker.extend_from_slice(&canonical[at + 1..]);
-    assert_ne!(wide_marker, canonical, "the fixture really is re-marked");
-    decode_diagnostic_event_body(&wide_marker).expect("a marker alias still decodes");
-    assert_eq!(
-        validate_diagnostic_event_body_bytes(&wide_marker)
-            .expect_err("an alternate wire marker must be refused")
-            .kind(),
-        ErrorKind::InvalidDiagnosticBody
-    );
-
-    // 3. Uppercase refs: `EntityId::from_hex` is case-insensitive, so decode
-    // pins the lowercase spelling itself rather than leaning on the gate.
-    // Seed 0xAB, so the hex actually carries letters to upcase.
-    let lettered = seed_id(0xAB).to_hex();
-    let shouted = lettered.to_uppercase();
-    assert_ne!(lettered, shouted, "the fixture ref really has letters");
-
-    let mut entries = body_entries(&canonical);
-    set_key(&mut entries, "actor_ref", Value::from(shouted.clone()));
-    assert_rejected(&encode_entries(entries), "an uppercase actor ref");
-
-    let mut entries = body_entries(&canonical);
-    set_key(
-        &mut entries,
-        "evidence_refs",
-        Value::Array(vec![Value::from(shouted)]),
-    );
-    assert_rejected(&encode_entries(entries), "an uppercase evidence ref");
 }
 
 /// Drafts are CANONICALIZED, so two detectors that mean the same thing produce

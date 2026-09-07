@@ -1,4 +1,4 @@
-//! T1 projection of explicit consent refusals from the existing receipt family.
+//! Receipt-backed consent diagnostics; this detector never proposes or applies repairs.
 
 use super::{
     DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
