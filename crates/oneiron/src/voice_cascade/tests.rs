@@ -14,6 +14,7 @@ use crate::interlocutor::InterlocutorResolutionInput;
 use crate::speculative::SpeculativeSessionConfig;
 use crate::temporal::TimeRange;
 
+mod preparation;
 mod retrieval;
 mod safeguard;
 mod session;

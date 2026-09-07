@@ -3,7 +3,7 @@ use std::sync::Arc;
 use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     BookingSolver, BookingVerbReceipt, BookingVerbRequest, SessionKey, SlotOracle, SolveRequest,
-    SolveResult, VaultActiveHoldSource, enqueue_booking_verb, run_booking_lifecycle_once,
+    SolveResult, VaultActiveHoldSource, run_booking_lifecycle_once,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
 use oneiron::{CalendarSel, DreamerRunnerStore, EntityId, Vault};
@@ -29,10 +29,11 @@ pub(super) async fn run_booking_verb(
     request: BookingVerbRequest,
     exclude_session: Option<SessionKey>,
     now: u64,
+    public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingVerbReceipt, ApiError> {
     let vault: &Vault = &server.vault;
     let local_node_id = local_booking_node_id(server)?;
-    enqueue_booking_verb(vault, request, now)?;
+    oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(vault, request, now, public_authority)?;
     let turn = run_booking_lifecycle_once(
         vault,
         |oracle_request: &BookingOracleRequest| {

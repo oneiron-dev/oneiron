@@ -155,6 +155,7 @@ fn disposition_from_verdict(
 pub(crate) async fn enforce_slot_list(
     State(server): State<Arc<SyncServer>>,
     facts: BookingRequestFacts,
+    cache_hit: bool,
 ) -> std::result::Result<BookingHttpDisposition, ApiError> {
     let vault = &server.vault;
     let rows = load_rows(vault, &facts)?;
@@ -166,10 +167,7 @@ pub(crate) async fn enforce_slot_list(
     let now = now_secs()?;
     // A fresh cached listing answers without spending quota; the handler
     // serves the body through `cached_slot_list_body`.
-    if read_slot_list_cache(vault, &facts.page_ref, facts.event_type.as_ref(), now)
-        .map_err(engine_error)?
-        .is_some()
-    {
+    if cache_hit {
         return Ok(BookingHttpDisposition::Continue);
     }
     match observe_slot_list_request(vault, &facts.ip_hash, per_minute_per_ip, now)
@@ -608,7 +606,7 @@ mod tests {
         listing.submitted_at_millis = 0;
         listing.email_hash = None;
 
-        let first = enforce_slot_list(State(server.clone()), listing.clone())
+        let first = enforce_slot_list(State(server.clone()), listing.clone(), false)
             .await
             .expect("ordinary slot list");
         assert_eq!(first, BookingHttpDisposition::Continue);
@@ -616,13 +614,13 @@ mod tests {
 
         for _ in 0..119 {
             assert_eq!(
-                enforce_slot_list(State(server.clone()), listing.clone())
+                enforce_slot_list(State(server.clone()), listing.clone(), false)
                     .await
                     .expect("slot-list quota"),
                 BookingHttpDisposition::Continue
             );
         }
-        let exhausted = enforce_slot_list(State(server.clone()), listing)
+        let exhausted = enforce_slot_list(State(server.clone()), listing, false)
             .await
             .expect("slot-list exhaustion");
         assert!(
@@ -641,12 +639,12 @@ mod tests {
         ip_one.email_hash = None;
         // 120 allowed, the 121st limited — in ONE sixty-second window.
         for _ in 0..120 {
-            let disposition = enforce_slot_list(State(server.clone()), ip_one.clone())
+            let disposition = enforce_slot_list(State(server.clone()), ip_one.clone(), false)
                 .await
                 .expect("slot list");
             assert_eq!(disposition, BookingHttpDisposition::Continue);
         }
-        let limited = enforce_slot_list(State(server.clone()), ip_one.clone())
+        let limited = enforce_slot_list(State(server.clone()), ip_one.clone(), false)
             .await
             .expect("limit answer");
         let BookingHttpDisposition::RetryAfter { seconds } = limited else {
@@ -658,7 +656,7 @@ mod tests {
         let mut ip_two = facts();
         ip_two.ip_hash = booking_ip_hash("203.0.113.61");
         ip_two.email_hash = None;
-        let disposition = enforce_slot_list(State(server.clone()), ip_two)
+        let disposition = enforce_slot_list(State(server.clone()), ip_two, false)
             .await
             .expect("fresh ip");
         assert_eq!(disposition, BookingHttpDisposition::Continue);
@@ -675,7 +673,7 @@ mod tests {
             Some(body.clone())
         );
         // The spent IP keeps answering from cache — no quota movement.
-        let cached = enforce_slot_list(State(server.clone()), ip_one.clone())
+        let cached = enforce_slot_list(State(server.clone()), ip_one.clone(), true)
             .await
             .expect("cached answer");
         assert_eq!(cached, BookingHttpDisposition::Continue);
@@ -979,7 +977,7 @@ mod tests {
         let good = facts();
         for call in ["slot", "hold", "book"] {
             let disposition = match call {
-                "slot" => enforce_slot_list(State(server.clone()), good.clone())
+                "slot" => enforce_slot_list(State(server.clone()), good.clone(), false)
                     .await
                     .expect("slot adapter"),
                 "hold" => enforce_hold(State(server.clone()), good.clone())
@@ -1057,12 +1055,12 @@ mod tests {
         // seeded event-scoped.
         let good = facts();
         for _ in 0..120 {
-            let disposition = enforce_slot_list(State(server.clone()), good.clone())
+            let disposition = enforce_slot_list(State(server.clone()), good.clone(), false)
                 .await
                 .expect("slot list");
             assert_eq!(disposition, BookingHttpDisposition::Continue);
         }
-        let limited = enforce_slot_list(State(server.clone()), good)
+        let limited = enforce_slot_list(State(server.clone()), good, false)
             .await
             .expect("slot-list limit");
         assert!(

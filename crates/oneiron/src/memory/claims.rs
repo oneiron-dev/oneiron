@@ -268,6 +268,9 @@ impl Memory<'_> {
                     ],
                 ));
             }
+            if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
+                self.verify_public_booking_writer_in_txn(wtxn)?;
+            }
             // Retracting your OWN claim is not an owner power and needs no
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.
@@ -288,7 +291,11 @@ impl Memory<'_> {
                 }
                 verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
             }
+            if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
+                super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
+            }
             let consent_receipt = self.vault.retract_claim_in_txn(wtxn, &id, now)?;
+            super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
             let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
                 || "retracted".to_owned(),
                 |body| body.approval.as_str().to_owned(),
@@ -500,6 +507,9 @@ impl Memory<'_> {
         };
         before_txn();
 
+        // Preserve the owner's typed refusal across the engine transaction
+        // closure, whose error type is the storage API's rather than MemoryError.
+        let publication_refusal = std::cell::RefCell::new(None);
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
         // Every commit is ONE engine transaction: gate decision, claim
@@ -536,11 +546,26 @@ impl Memory<'_> {
                 end: occurred_at,
             };
             self.vault.with_write_txn(|wtxn| {
+                if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
+                    && let Err(error) = self.verify_public_booking_writer_in_txn(wtxn)
+                {
+                    *publication_refusal.borrow_mut() = Some(error);
+                    return Err(Error::InvalidClaimBody(
+                        "booking publication owner authority refused",
+                    ));
+                }
                 if self
                     .vault
                     .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
                 {
                     return Ok(true);
+                }
+                let publication_write = input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+                if publication_write {
+                    super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
+                    if let Some(old_id) = prior {
+                        super::booking_publication::stage_publication_write(self.vault, wtxn, old_id)?;
+                    }
                 }
                 apply_ops_with_gate_mode(
                     &self.vault.store,
@@ -562,6 +587,13 @@ impl Memory<'_> {
                     self.vault
                         .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)?;
                 }
+                if publication_write {
+                    crate::booking::publication::index_publication_in_txn(self.vault, wtxn, subject, id)?;
+                    super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
+                    if let Some(old_id) = prior {
+                        super::booking_publication::finish_publication_write(self.vault, wtxn, old_id)?;
+                    }
+                }
                 Ok(false)
             })
         };
@@ -572,9 +604,10 @@ impl Memory<'_> {
                     && err.kind() == ErrorKind::GateWriteRejected =>
             {
                 approval = ClaimApprovalStatus::Proposed;
-                write(approval)?
+                write(approval)
+                    .map_err(|err| publication_refusal.take().unwrap_or_else(|| err.into()))?
             }
-            Err(err) => return Err(err.into()),
+            Err(err) => return Err(publication_refusal.take().unwrap_or_else(|| err.into())),
         };
         if refused {
             return Err(hard_deleted_refusal(&id));

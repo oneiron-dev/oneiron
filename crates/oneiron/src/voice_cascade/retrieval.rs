@@ -179,7 +179,7 @@ impl SpeculativeRetrievalBridge {
         }
     }
 
-    fn check_revision(&self, handle: &UtteranceHandle, revision: u64) -> Result<()> {
+    pub(super) fn check_revision(&self, handle: &UtteranceHandle, revision: u64) -> Result<()> {
         self.check_handle(handle)?;
         if self
             .open

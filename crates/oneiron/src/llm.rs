@@ -116,9 +116,33 @@ pub trait LlmBackend: Send + Sync {
 }
 
 /// Opaque admission token issued by the budget guard.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 pub struct BudgetLease {
     pub(crate) id: String,
+    // Allocation identity, not the caller's diagnostic ID, proves provenance.
+    // Keeping it alive in leases prevents reuse after the issuing guard drops.
+    guard_identity: Arc<()>,
+}
+
+impl fmt::Debug for BudgetLease {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BudgetLease").field("id", &self.id).finish()
+    }
+}
+
+impl PartialEq for BudgetLease {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Arc::ptr_eq(&self.guard_identity, &other.guard_identity)
+    }
+}
+
+impl Eq for BudgetLease {}
+
+impl std::hash::Hash for BudgetLease {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.id, state);
+        std::hash::Hash::hash(&Arc::as_ptr(&self.guard_identity), state);
+    }
 }
 
 impl BudgetLease {
@@ -127,13 +151,16 @@ impl BudgetLease {
         &self.id
     }
 
-    pub(crate) fn issued(id: impl Into<String>) -> Self {
-        Self { id: id.into() }
+    pub(crate) fn issued(id: impl Into<String>, guard_identity: Arc<()>) -> Self {
+        Self {
+            id: id.into(),
+            guard_identity,
+        }
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn for_test(id: impl Into<String>) -> Self {
-        Self { id: id.into() }
+        Self::issued(id, Arc::new(()))
     }
 }
 

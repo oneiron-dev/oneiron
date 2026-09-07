@@ -116,7 +116,7 @@ fn event_body(name: &str) -> Vec<u8> {
 }
 
 /// One calendar EVENT and its `calendar.*` family, written through the ordinary
-/// claim-candidate door at `approval`, exactly as CAL's ingest would.
+/// claim-candidate door with Auto so preflight can match the actor's Imported permit.
 fn store_event(
     vault: &Vault,
     actor: EntityId,
@@ -140,7 +140,7 @@ fn store_event(
         WriteActor::new(actor, EdgeActorClass::Human),
         ClaimSource::Imported,
         WriteProvenance::new(Value::from("one-1823-oracle")).expect("provenance"),
-        ClaimApprovalStatus::Approved,
+        ClaimApprovalStatus::Auto,
     );
     let mut family = vec![
         ("calendar.origin", Value::from("imported")),
