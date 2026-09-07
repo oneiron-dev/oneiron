@@ -223,23 +223,46 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
   }, [])
 
   /* your voice in the room (owner 09-08: never a name; position or type carries it) */
-  type Voice = 'indent' | 'right' | 'mono' | 'glyph'
-  const [voice, setVoiceState] = React.useState<Voice>('indent')
+  type Voice = 'right' | 'indent' | 'mono' | 'glyph'
+  const [voice, setVoiceState] = React.useState<Voice>('right')
   React.useEffect(() => {
     try {
       const v = localStorage.getItem('oneiron-voice')
-      if (v === 'right' || v === 'mono' || v === 'glyph') setVoiceState(v)
+      if (v === 'indent' || v === 'mono' || v === 'glyph') setVoiceState(v)
     } catch {
       /* default */
     }
   }, [])
   const setVoice = React.useCallback((k: Voice) => {
     setVoiceState(k)
-    if (k === 'indent') document.documentElement.removeAttribute('data-voice')
+    if (k === 'right') document.documentElement.removeAttribute('data-voice')
     else document.documentElement.setAttribute('data-voice', k)
     try {
-      if (k === 'indent') localStorage.removeItem('oneiron-voice')
+      if (k === 'right') localStorage.removeItem('oneiron-voice')
       else localStorage.setItem('oneiron-voice', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
+  /* the ground under your turns: none · well · hairline (the surface ladder's rungs) */
+  type Ground = 'none' | 'well' | 'hairline'
+  const [ground, setGroundState] = React.useState<Ground>('none')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-voice-ground')
+      if (v === 'well' || v === 'hairline') setGroundState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setGround = React.useCallback((k: Ground) => {
+    setGroundState(k)
+    if (k === 'none') document.documentElement.removeAttribute('data-voice-ground')
+    else document.documentElement.setAttribute('data-voice-ground', k)
+    try {
+      if (k === 'none') localStorage.removeItem('oneiron-voice-ground')
+      else localStorage.setItem('oneiron-voice-ground', k)
     } catch {
       /* session only */
     }
@@ -352,13 +375,27 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
       </div>
       <div className="t-sec">your voice</div>
       <div className="t-acts">
-        {(['indent', 'right', 'mono', 'glyph'] as const).map((k) => (
+        {(['right', 'indent', 'mono', 'glyph'] as const).map((k) => (
           <button
             key={k}
             type="button"
             className={voice === k ? 'act on' : 'act'}
-            title={k === 'indent' ? 'your turns start a fifth of the way in, same serif (as built)' : k === 'right' ? 'your turns sit at the right edge, no bubble' : k === 'mono' ? 'you type in mono, the agent writes in serif' : 'a silver › opens your turns at the margin'}
+            title={k === 'right' ? 'your turns end at the text column’s right edge (his pick)' : k === 'indent' ? 'your turns start a fifth of the way in, same serif' : k === 'mono' ? 'you type in mono, the agent writes in serif' : 'a silver › opens your turns at the margin'}
             onClick={() => setVoice(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">your ground</div>
+      <div className="t-acts">
+        {(['none', 'well', 'hairline'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={ground === k ? 'act on' : 'act'}
+            title={k === 'none' ? 'position alone carries your turns' : k === 'well' ? 'a tinted zone under your turns · flat, 3px, no tail' : 'a hairline frame under your turns'}
+            onClick={() => setGround(k)}
           >
             {k}
           </button>
