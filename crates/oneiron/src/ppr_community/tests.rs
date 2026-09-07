@@ -980,3 +980,157 @@ fn deferred_diversity_uses_only_final_pool_and_keeps_fused_score_bits() {
     assert!(report.fine_entropy_bits > 0.0);
     assert!(report.coarse_entropy_bits > 0.0);
 }
+
+
+// Frozen pre-optimization selector: exact order and score-bit oracle.
+fn reference_diversify(mut pool: Vec<Ranked>, limit: usize, fraction: f32) -> Vec<Ranked> {
+    let k = limit.min(pool.len());
+    if k == 0 {
+        return Vec::new();
+    }
+    // Exact rational default avoids floor(10 * f64::from(0.7_f32)) == 6.
+    let cap = if fraction == PPR_COMMUNITY_MAX_TOP_K_FRACTION {
+        (k / 10 * 7 + k % 10 * 7 / 10).max(1)
+    } else {
+        ((k as f64 * f64::from(fraction)).floor() as usize).max(1)
+    };
+    let mut fine = BTreeMap::new();
+    let mut coarse = BTreeMap::new();
+    // Reserve capacity BEFORE selecting boosted rows. A last-slot replacement
+    // could exceed the fine cap when the only unboosted row shares that community.
+    let protected = pool
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.boosted)
+        .min_by(|(_, a), (_, b)| {
+            b.entity
+                .score
+                .total_cmp(&a.entity.score)
+                .then_with(|| a.entity.id.cmp(&b.entity.id))
+        })
+        .map(|(i, _)| i)
+        .map(|i| pool.remove(i));
+    if let Some(m) = protected.and_then(|r| r.membership) {
+        fine.insert(m.fine, 1);
+        coarse.insert(m.coarse, 1);
+    }
+    let mut selected: Vec<Ranked> = Vec::with_capacity(k);
+    while selected.len() + usize::from(protected.is_some()) < k {
+        let under_cap = |r: &Ranked| {
+            r.membership
+                .is_none_or(|m| *fine.get(&m.fine).unwrap_or(&0) < cap)
+        };
+        let enforce = pool.iter().any(under_cap);
+        let novelty = |r: &Ranked| {
+            r.membership.map_or((0, 0), |m| {
+                (
+                    *fine.get(&m.fine).unwrap_or(&0),
+                    *coarse.get(&m.coarse).unwrap_or(&0),
+                )
+            })
+        };
+        // Community MMR is a score-tie breaker: prefer fewer fine matches, then
+        // fewer coarse matches, then entity ID. It never changes score bits.
+        let best = pool
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| !enforce || under_cap(r))
+            .min_by(|(_, a), (_, b)| {
+                b.entity
+                    .score
+                    .total_cmp(&a.entity.score)
+                    .then_with(|| novelty(a).cmp(&novelty(b)))
+                    .then_with(|| a.entity.id.cmp(&b.entity.id))
+            })
+            .map(|(i, _)| i);
+        let Some(best) = best else {
+            break;
+        };
+        let row = pool.remove(best);
+        if let Some(m) = row.membership {
+            *fine.entry(m.fine).or_insert(0) += 1;
+            *coarse.entry(m.coarse).or_insert(0) += 1;
+        }
+        selected.push(row);
+    }
+    if let Some(row) = protected {
+        let position = selected
+            .iter()
+            .position(|r| r.entity.score < row.entity.score)
+            .unwrap_or(selected.len());
+        selected.insert(position, row);
+    }
+    selected
+}
+
+#[test]
+fn diversity_tree_matches_scan_oracle() {
+    let snapshot = fixture();
+    for count in [1, 2, 8, 17, 60, 105] {
+        for mode in 0..12 {
+            let pool: Vec<_> = (1..=count)
+                .map(|n| Ranked {
+                    entity: scored(
+                        n,
+                        match mode % 4 {
+                            0 => 1.0,
+                            1 => (n % 7) as f32,
+                            2 => {
+                                if n % 2 == 0 { -0.0 } else { 0.0 }
+                            }
+                            _ => (count - n) as f32,
+                        },
+                    ),
+                    membership: snapshot.nodes.get(&id(n)).copied(),
+                    boosted: mode < 4 || (mode < 8 && n % 3 != 0),
+                })
+                .rev()
+                .collect();
+            for limit in [0, 1, 2, 7, 10, 30, 105, usize::MAX] {
+                for fraction in [0.0, 0.1, 0.5, PPR_COMMUNITY_MAX_TOP_K_FRACTION] {
+                    let expected = reference_diversify(pool.clone(), limit, fraction);
+                    let actual = diversify(pool.clone(), limit, fraction);
+                    let bits = |rows: &[Ranked]| {
+                        rows.iter()
+                            .map(|r| (r.entity.id, r.entity.score.to_bits()))
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(
+                        bits(&actual),
+                        bits(&expected),
+                        "count={count} mode={mode} limit={limit} fraction={fraction}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn diversity_large_limit_has_logarithmic_selection_work() {
+    for shared_coarse in [false, true] {
+        let n = 16_384u32;
+        let coarse = CommunityId::from_members(&[id(n + 1)]).expect("coarse id");
+        let pool: Vec<_> = (1..=n)
+            .map(|i| {
+                let fine = CommunityId::from_members(&[id(i)]).expect("fine id");
+                Ranked {
+                    entity: scored(i, 1.0),
+                    membership: Some(CommunityMembership {
+                        fine,
+                        coarse: if shared_coarse { coarse } else { fine },
+                    }),
+                    boosted: true,
+                }
+            })
+            .collect();
+        DIVERSITY_SELECTION_WORK.with(|count| count.set(0));
+        let rows = diversify(pool, usize::MAX, PPR_COMMUNITY_MAX_TOP_K_FRACTION);
+        assert_eq!(rows.len(), n as usize);
+        assert!(rows.windows(2).all(|pair| pair[0].entity.id < pair[1].entity.id));
+        // Count tree navigation as well as comparisons. A shared coarse group
+        // must not force an update of every remaining fine-group head.
+        let work = DIVERSITY_SELECTION_WORK.with(std::cell::Cell::get);
+        assert!(work < n as usize * 256, "selection work={work}");
+    }
+}

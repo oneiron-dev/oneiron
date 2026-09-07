@@ -1012,6 +1012,119 @@ struct Ranked {
     boosted: bool,
 }
 
+#[derive(Clone, Copy)]
+struct DiversityHead {
+    row: Ranked,
+    group: usize,
+    fine: usize,
+    coarse: usize,
+}
+
+impl DiversityHead {
+    fn before(self, other: Self) -> bool {
+        diversity_selection_work();
+        other
+            .row
+            .entity
+            .score
+            .total_cmp(&self.row.entity.score)
+            .then_with(|| self.fine.cmp(&other.fine))
+            .then_with(|| self.coarse.cmp(&other.coarse))
+            .then_with(|| self.row.entity.id.cmp(&other.row.entity.id))
+            .is_lt()
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static DIVERSITY_SELECTION_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn diversity_selection_work() {
+    #[cfg(test)]
+    DIVERSITY_SELECTION_WORK.with(|count| count.set(count.get() + 1));
+}
+
+/// Fine groups occupy leaves, contiguous within each coarse community. A coarse
+/// increment is uniform over its range, so it cannot change an internal winner.
+/// Lazy range updates and point replacements each take O(log(groups)) work.
+struct DiversityTree {
+    size: usize,
+    best: Vec<Option<DiversityHead>>,
+    lazy: Vec<usize>,
+}
+
+impl DiversityTree {
+    fn new(groups: usize) -> Self {
+        let size = groups.max(1).next_power_of_two();
+        Self {
+            size,
+            best: vec![None; size * 2],
+            lazy: vec![0; size * 2],
+        }
+    }
+
+    fn add(&mut self, node: usize, delta: usize) {
+        if let Some(head) = &mut self.best[node] {
+            head.coarse += delta;
+        }
+        self.lazy[node] += delta;
+    }
+
+    fn push(&mut self, node: usize) {
+        let delta = std::mem::take(&mut self.lazy[node]);
+        self.add(node * 2, delta);
+        self.add(node * 2 + 1, delta);
+    }
+
+    fn pull(&mut self, node: usize) {
+        self.best[node] = match (self.best[node * 2], self.best[node * 2 + 1]) {
+            (Some(a), Some(b)) => Some(if a.before(b) { a } else { b }),
+            (a, b) => a.or(b),
+        };
+    }
+
+    fn set(&mut self, group: usize, head: Option<DiversityHead>) {
+        let leaf = self.size + group;
+        for shift in (1..=self.size.trailing_zeros()).rev() {
+            diversity_selection_work();
+            self.push(leaf >> shift);
+        }
+        self.best[leaf] = head;
+        self.lazy[leaf] = 0;
+        let mut node = leaf / 2;
+        while node > 0 {
+            diversity_selection_work();
+            self.pull(node);
+            node /= 2;
+        }
+    }
+
+    fn increment(&mut self, start: usize, end: usize) {
+        self.increment_range(1, 0, self.size, start, end);
+    }
+
+    fn increment_range(&mut self, node: usize, left: usize, right: usize, start: usize, end: usize) {
+        diversity_selection_work();
+        if end <= left || right <= start {
+            return;
+        }
+        if start <= left && right <= end {
+            self.add(node, 1);
+            return;
+        }
+        self.push(node);
+        let middle = left + (right - left) / 2;
+        self.increment_range(node * 2, left, middle, start, end);
+        self.increment_range(node * 2 + 1, middle, right, start, end);
+        self.pull(node);
+    }
+}
+
+/// Select in O(n log n + k log n) time and O(n) space. The eligible tree
+/// enforces the cap while any alternative remains; the all-rows tree supplies
+/// the exact fallback. Both use score, fine novelty, coarse novelty, then ID.
 fn diversify(mut pool: Vec<Ranked>, limit: usize, fraction: f32) -> Vec<Ranked> {
     let k = limit.min(pool.len());
     if k == 0 {
@@ -1023,10 +1136,6 @@ fn diversify(mut pool: Vec<Ranked>, limit: usize, fraction: f32) -> Vec<Ranked> 
     } else {
         ((k as f64 * f64::from(fraction)).floor() as usize).max(1)
     };
-    let mut fine = BTreeMap::new();
-    let mut coarse = BTreeMap::new();
-    // Reserve capacity BEFORE selecting boosted rows. A last-slot replacement
-    // could exceed the fine cap when the only unboosted row shares that community.
     let protected = pool
         .iter()
         .enumerate()
@@ -1038,48 +1147,73 @@ fn diversify(mut pool: Vec<Ranked>, limit: usize, fraction: f32) -> Vec<Ranked> 
                 .then_with(|| a.entity.id.cmp(&b.entity.id))
         })
         .map(|(i, _)| i)
-        .map(|i| pool.remove(i));
-    if let Some(m) = protected.and_then(|r| r.membership) {
-        fine.insert(m.fine, 1);
-        coarse.insert(m.coarse, 1);
+        .map(|i| pool.swap_remove(i));
+    let mut groups = BTreeMap::<_, Vec<Ranked>>::new();
+    for row in pool {
+        groups
+            .entry(row.membership.map(|m| (m.coarse, m.fine)))
+            .or_default()
+            .push(row);
     }
-    let mut selected: Vec<Ranked> = Vec::with_capacity(k);
+    let mut groups: Vec<_> = groups.into_values().collect();
+    let mut ranges = BTreeMap::new();
+    for (group, rows) in groups.iter_mut().enumerate() {
+        // Pop the highest score, then lowest ID, without shifting any rows.
+        rows.sort_unstable_by(|a, b| {
+            a.entity
+                .score
+                .total_cmp(&b.entity.score)
+                .then_with(|| b.entity.id.cmp(&a.entity.id))
+        });
+        if let Some(m) = rows[0].membership {
+            ranges.entry(m.coarse).or_insert((group, group)).1 = group + 1;
+        }
+    }
+    let mut all = DiversityTree::new(groups.len());
+    let mut eligible = DiversityTree::new(groups.len());
+    let mut fine = BTreeMap::new();
+    let mut coarse = BTreeMap::new();
+    if let Some(m) = protected.and_then(|r| r.membership) {
+        fine.insert(m.fine, 1usize);
+        coarse.insert(m.coarse, 1usize);
+    }
+    for (group, rows) in groups.iter().enumerate() {
+        let row = *rows.last().expect("nonempty fine group");
+        let head = DiversityHead {
+            row,
+            group,
+            fine: row.membership.map_or(0, |m| *fine.get(&m.fine).unwrap_or(&0)),
+            coarse: row.membership.map_or(0, |m| *coarse.get(&m.coarse).unwrap_or(&0)),
+        };
+        all.set(group, Some(head));
+        if row.membership.is_none() || head.fine < cap {
+            eligible.set(group, Some(head));
+        }
+    }
+    let mut selected = Vec::with_capacity(k);
     while selected.len() + usize::from(protected.is_some()) < k {
-        let under_cap = |r: &Ranked| {
-            r.membership
-                .is_none_or(|m| *fine.get(&m.fine).unwrap_or(&0) < cap)
-        };
-        let enforce = pool.iter().any(under_cap);
-        let novelty = |r: &Ranked| {
-            r.membership.map_or((0, 0), |m| {
-                (
-                    *fine.get(&m.fine).unwrap_or(&0),
-                    *coarse.get(&m.coarse).unwrap_or(&0),
-                )
-            })
-        };
-        // Community MMR is a score-tie breaker: prefer fewer fine matches, then
-        // fewer coarse matches, then entity ID. It never changes score bits.
-        let best = pool
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| !enforce || under_cap(r))
-            .min_by(|(_, a), (_, b)| {
-                b.entity
-                    .score
-                    .total_cmp(&a.entity.score)
-                    .then_with(|| novelty(a).cmp(&novelty(b)))
-                    .then_with(|| a.entity.id.cmp(&b.entity.id))
-            })
-            .map(|(i, _)| i);
-        let Some(best) = best else {
+        let Some(head) = eligible.best[1].or(all.best[1]) else {
             break;
         };
-        let row = pool.remove(best);
+        let row = groups[head.group].pop().expect("selected group head");
         if let Some(m) = row.membership {
             *fine.entry(m.fine).or_insert(0) += 1;
             *coarse.entry(m.coarse).or_insert(0) += 1;
+            let (start, end) = ranges[&m.coarse];
+            all.increment(start, end);
+            eligible.increment(start, end);
         }
+        let next = groups[head.group].last().map(|&row| DiversityHead {
+            row,
+            group: head.group,
+            fine: row.membership.map_or(0, |m| fine[&m.fine]),
+            coarse: row.membership.map_or(0, |m| coarse[&m.coarse]),
+        });
+        all.set(head.group, next);
+        eligible.set(
+            head.group,
+            next.filter(|h| h.row.membership.is_none() || h.fine < cap),
+        );
         selected.push(row);
     }
     if let Some(row) = protected {
