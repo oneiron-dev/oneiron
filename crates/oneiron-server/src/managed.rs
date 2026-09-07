@@ -286,11 +286,10 @@ impl ManagedArgs {
 
     /// Serve configuration for managed mode, built from argv alone.
     ///
-    /// The fields read here are exactly the [`ArgvUse::Read`] rows of
-    /// [`MANAGED_ARGV`] that are not part of the managed group — dimensions,
-    /// map size, dictionary roots and log level. Everything else on
-    /// `ServeArgs` is refused before this runs, so nothing reaches here to be
-    /// quietly dropped.
+    /// Outside the managed group, the argv allowlist permits exactly the
+    /// fields read here: dimensions, map size, dictionary roots and log level.
+    /// Everything else on `ServeArgs` is refused before this runs, so nothing
+    /// reaches here to be quietly dropped.
     ///
     /// `auth_secret` stays `None` and unauthenticated requests are allowed:
     /// bearer auth terminates at the supervisor, which owns the listening
@@ -1414,7 +1413,8 @@ impl ManagedState {
     /// as it runs, and it subscribes before it can import a single update, so
     /// the receiver count covers every session that is able to write. A
     /// session that upgraded and has not spoken yet holds nothing to count, so
-    /// [`SYNC_UPGRADE_SETTLE_SECS`] covers that blind window instead.
+    /// a 15-second settle window (the protocol hello deadline plus margin)
+    /// covers that blind window instead.
     ///
     /// Fail-closed on both halves: an upgrade that was refused after this gate
     /// (401, no such route) still counts for the settle window, and a clock
