@@ -42,6 +42,7 @@ use crate::calendar::{
     CalendarInviteMethod, CalendarInvitePayload, ImipEmitRequest, admit_calendar_invite,
     decode_frozen_calendar_invite, emit_imip_ics, persist_imip_blob,
 };
+#[cfg(test)]
 use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
 use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeActorClass;
@@ -787,7 +788,6 @@ fn active_identity_address(
     channel_class: &str,
 ) -> Result<Option<String>, BookingError> {
     let wanted = crate::counterparty_contact::normalize_channel_class(channel_class);
-    let binding = ChannelIdentityBinding::agent(actor);
     let mut found: Option<String> = None;
     for id in vault
         .entities_by_type(ENTITY_TYPE_CHANNEL_IDENTITY)
@@ -799,14 +799,14 @@ fn active_identity_address(
         else {
             continue;
         };
-        if identity.state != ChannelIdentityState::Active
+        if !identity.may_send()
             || crate::counterparty_contact::normalize_channel_class(&identity.channel) != wanted
-            || identity.binding != binding
+            || identity.binding.actor_ref() != Some(actor)
         {
             continue;
         }
         if found.is_some() {
-            return Ok(None);
+            return Err(refused("multiple sending identities on this channel"));
         }
         found = Some(identity.address_or_handle.clone());
     }
@@ -853,6 +853,8 @@ fn calendar_wrap(error: CalendarError) -> BookingError {
 
 #[cfg(test)]
 mod tests {
+    mod faceted_sender;
+
     use super::*;
 
     use rmpv::Value;

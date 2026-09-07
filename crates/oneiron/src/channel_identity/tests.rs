@@ -15,6 +15,9 @@ use crate::test_util::open_test_vault_with;
 
 use crate::test_util::entity;
 
+mod codec;
+mod subject_binding;
+
 /// Registers the OAuth grant a delegated `email` row is made true by: a live
 /// custody record whose `connector:gmail` binding grants read AND names this
 /// mailbox as its subject.
@@ -89,7 +92,7 @@ fn channel_identity_codec_and_claim_family_round_trip() -> Result<()> {
     }));
     assert!(claims.iter().any(|claim| {
         claim.predicate == PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE
-            && claim.value.as_str() == Some("agent")
+            && claim.value.as_str() == Some("actor")
     }));
     assert!(claims.iter().any(|claim| {
         claim.predicate == PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT

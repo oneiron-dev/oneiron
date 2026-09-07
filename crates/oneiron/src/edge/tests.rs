@@ -159,8 +159,8 @@ fn strict_edge_record_parser_normalizes_corruption_errors() {
 
     key[ENTITY_ID_LEN + 1..].fill(0xFF);
     let value = encode_edge_value(EdgeKind::Supports, 0.5, 1, Vad::NEUTRAL, None).unwrap();
-    let err = parse_strict_edge_record(&key, &value)
-        .expect_err("reserved target id must fail closed");
+    let err =
+        parse_strict_edge_record(&key, &value).expect_err("reserved target id must fail closed");
     assert!(matches!(
         err,
         crate::error::Error::CorruptedIndex("edge record")
