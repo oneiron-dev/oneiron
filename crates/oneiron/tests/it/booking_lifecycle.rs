@@ -95,14 +95,23 @@ struct Fixture {
 
 impl Fixture {
     fn open() -> Self {
+        let fixture = Self::open_without_imported_source_permit();
+        oneiron::calendar::transcript::permit_imported_calendar_source_for_test(
+            &fixture.vault,
+            fixture.actor,
+        )
+        .expect("authorize this CAL ingest actor's Imported source");
+        fixture
+    }
+
+    /// Source-trust oracles must install only the permit their case specifies.
+    fn open_without_imported_source_permit() -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
         let actor = test_id(ACTOR_SEED);
         vault
             .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"booking actor")
             .expect("put actor");
-        oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
-            .expect("authorize this CAL ingest actor's Imported source");
         let page = test_id(PAGE_SEED);
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")

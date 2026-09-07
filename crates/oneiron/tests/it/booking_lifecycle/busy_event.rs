@@ -67,7 +67,9 @@ fn busy_event_requires_matching_imported_source_permit() {
         ("wrong actor permit", Some(BOOKER_SEED)),
         ("matching actor permit", Some(ACTOR_SEED)),
     ] {
-        let fixture = Fixture::open();
+        // Normal lifecycle fixtures already authorize this actor's CAL ingest.
+        // Start without that permit so each case controls all Imported authority.
+        let fixture = Fixture::open_without_imported_source_permit();
         if let Some(seed) = permit_seed {
             fixture
                 .vault
