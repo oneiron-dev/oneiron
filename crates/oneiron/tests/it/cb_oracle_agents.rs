@@ -998,9 +998,6 @@ mod cb_a {
         let stored_turns = usize::from(fixture.entity_exists(answer.answer_turn_ref));
         let storage_gate_prompts = fixture.pending_gate_consents();
 
-        // Storage above needs no permit. Only the Dreamer's generative hop
-        // needs this actor-bound test grant in addition to ToolOutput.
-        fixture.permit_generated_source();
         let (outcome, _) = fixture.consolidate_peer_answer(&answer, "ACME", 0.7, None);
         let derived_claims = outcome.landed.len();
 
@@ -1067,11 +1064,11 @@ mod cb_a {
         use oneiron::edge::EdgeActorClass;
         use oneiron::{ClaimApprovalStatus, ClaimSource};
 
-        let fixture = super::peer_fixture::PeerFixture::open();
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
         let run = fixture.run();
         assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
         let answer = fixture.land_peer_answer("ACME");
-        let candidate = fixture.peer_candidate(&answer, "ACME", 0.7, None);
+        let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
         let claim_id = candidate.claim_id;
         let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate.clone()])
             .expect("promotion runs without a test permit");
@@ -1114,7 +1111,7 @@ mod cb_a {
         use oneiron::dreamer_promotion::promote_consolidated_claims;
         use oneiron::edge::EdgeActorClass;
 
-        let fixture = super::peer_fixture::PeerFixture::open();
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
         let run = fixture.run();
         let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
         assert_ne!(wrong_actor, run.agent_actor.entity_ref());
@@ -1124,7 +1121,7 @@ mod cb_a {
             .install_generated_source_permit_for_test(wrong_actor)
             .expect("permit the peer, not the Dreamer");
         let answer = fixture.land_peer_answer("ACME");
-        let candidate = fixture.peer_candidate(&answer, "ACME", 0.7, None);
+        let candidate = fixture.public_peer_candidate(&answer, "ACME", 0.7);
         let claim_id = candidate.claim_id;
         // Keep the writer (and its Auto ceiling) identical to the positive
         // case. Only the permit's actor binding is wrong.
@@ -1154,12 +1151,12 @@ mod cb_a {
         use oneiron::dreamer_promotion::promote_consolidated_claims;
         use oneiron::edge::EdgeActorClass;
 
-        let fixture = super::peer_fixture::PeerFixture::open();
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
         fixture.permit_generated_source();
         let run = fixture.run();
         assert_eq!(run.agent_actor.actor_class(), EdgeActorClass::Agent);
         let answer = fixture.land_peer_answer("ACME");
-        let candidate = fixture.peer_candidate(&answer, "I will check", 0.7, None);
+        let candidate = fixture.public_peer_candidate(&answer, "I will check", 0.7);
         let claim_id = candidate.claim_id;
         let outcome = promote_consolidated_claims(&fixture.vault, &run, vec![candidate])
             .expect("promotion runs through Dreamer precommit");
@@ -1186,7 +1183,7 @@ mod cb_a {
         use oneiron::{EntityId, Error};
         use rmpv::Value;
 
-        let fixture = super::peer_fixture::PeerFixture::open();
+        let fixture = super::peer_fixture::PeerFixture::open_stock_policy();
         let ids = fixture
             .vault
             .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
@@ -1333,7 +1330,6 @@ mod cb_a {
         // The peer answers the same question differently, at LOWER
         // confidence. Storage is ungated and consolidation lands the claim.
         let answer = fixture.land_peer_answer("ACME");
-        fixture.permit_generated_source();
         let (outcome, candidate) = fixture.consolidate_peer_answer(&answer, "ACME", 0.4, None);
         let peer_claim = *outcome
             .landed
@@ -1543,12 +1539,23 @@ mod peer_fixture {
 
     impl PeerFixture {
         pub(crate) fn open() -> Self {
+            Self::open_with_policy(open_peer_policy_vault)
+        }
+
+        /// Exact stock policy: Generated is not permitted for this Dreamer.
+        pub(crate) fn open_stock_policy() -> Self {
+            Self::open_with_policy(|path, config| {
+                Vault::open(path, config).expect("open the fixture vault")
+            })
+        }
+
+        fn open_with_policy(open_vault: fn(&std::path::Path, VaultConfig) -> Vault) -> Self {
             let dir = tempfile::tempdir().expect("temporary vault directory");
             let mut config = VaultConfig::device();
             config.map_size = 32 * 1024 * 1024;
             config.dimensions = 4;
             config.embedding_model = None;
-            let vault = open_peer_policy_vault(dir.path(), config);
+            let vault = open_vault(dir.path(), config);
 
             let owner = EntityId::from_bytes(OWNER_BYTES).expect("owner id");
             let peer = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
@@ -1693,6 +1700,22 @@ mod peer_fixture {
                 },
                 learned_at: PEER_NOW,
             }
+        }
+
+        /// Public input isolates Generated actor binding under the stock
+        /// ToolOutput cap (0). Pregranted callers keep unstamped candidates.
+        pub(crate) fn public_peer_candidate(
+            &self,
+            answer: &LandedPeerAnswer,
+            value: &str,
+            confidence: f32,
+        ) -> PromotionCandidate {
+            let mut candidate = self.peer_candidate(answer, value, confidence, None);
+            candidate.candidate = candidate.candidate.with_scope(Value::Map(vec![(
+                Value::from("sensitivity"),
+                Value::from("public"),
+            )]));
+            candidate
         }
 
         pub(crate) fn consolidate_peer_answer(
