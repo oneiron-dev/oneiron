@@ -1283,7 +1283,7 @@ function Agents() {
     const live = runRows.filter((r) => !stopped[r.agent])
     const one = !isHouse && live.length === 1 ? live[0] : null
     const head = one ? `working · ${one.elapsed}` : `${liveCount} running`
-    const words = `${head}${needsCount ? ` · ${needsCount} needs you` : ''}`
+    const words = `${head}${needsCount ? ' · needs you' : ''}`
     return (
       <aside className={pane ? 'rpane open' : 'rpane'} aria-label="work">
         {pane ? (
@@ -1344,7 +1344,7 @@ function Agents() {
               <>
                 {' · '}
                 <i className="pm-dot" aria-hidden="true" />
-                {needsCount} needs you
+                needs you
               </>
             ) : null}
             <span className="pm-chev" aria-hidden="true">

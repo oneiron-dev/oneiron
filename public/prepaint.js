@@ -4,7 +4,7 @@ if (localStorage.getItem('oneiron-mock-rail') === 'folded')
 /* restore pack-group folds before first paint · default expanded */
 try {
   const rg = JSON.parse(localStorage.getItem('oneiron-rail-groups') || '{}');
-  for (const p of ['crm', 'office', 'channels', 'lenses'])
+  for (const p of ['rooms', 'crm', 'office', 'channels', 'lenses'])
     if (rg[p] === 'folded') document.documentElement.classList.add('rg-' + p);
 } catch (e) { /* bad JSON → default expanded */ }
 /* the room, same pass — the theme cannot flash either. three states:
@@ -27,7 +27,7 @@ try {
   if (vg === 'none' || vg === 'hairline') document.documentElement.setAttribute('data-voice-ground', vg);
   /* the picker + the work (owner 09-08): well/thread are the defaults, the tuner's pick restores here */
   const pk = localStorage.getItem('oneiron-picker');
-  if (pk === 'sidebar' || pk === 'rail' || pk === 'ground') document.documentElement.setAttribute('data-picker', pk);
+  if (pk === 'well' || pk === 'sidebar' || pk === 'ground') document.documentElement.setAttribute('data-picker', pk);
   const rc = localStorage.getItem('oneiron-room-column');
   if (rc === 'center' || rc === 'dock') document.documentElement.setAttribute('data-room-column', rc);
   const wk = localStorage.getItem('oneiron-work');

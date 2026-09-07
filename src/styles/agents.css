@@ -23,10 +23,13 @@ main.pane {
 /* ── the grid: roster · room ── */
 .agents-grid {
   flex: 1; min-height: 0;
-  display: grid; grid-template-columns: 248px minmax(0, 1fr); column-gap: 22px; padding-top: 2px;
+  display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 22px; padding-top: 2px;
 }
+/* the picker lives in the rail (owner 09-08, both auditors); the roster column
+   below stays only as a bench shape behind the tuner (well · sidebar) */
+html[data-picker="well"] .agents-grid, html[data-picker="sidebar"] .agents-grid { grid-template-columns: 248px minmax(0, 1fr); }
 @media (max-width: 980px) {
-  .agents-grid { grid-template-columns: 220px minmax(0, 1fr); column-gap: 14px; }
+  html[data-picker="well"] .agents-grid, html[data-picker="sidebar"] .agents-grid { grid-template-columns: 220px minmax(0, 1fr); column-gap: 14px; }
 }
 
 /* ── the roster: one row per agent, name in ink over one mono line (what it
@@ -35,7 +38,7 @@ main.pane {
 /* the roster is a well column (owner 09-08: the list and the conversation on
    different shades) — the same rule as the vault's inspector and the work
    pane: a tinted zone divides. the picked row lifts onto the sheet tone. */
-.roster { display: flex; flex-direction: column; gap: 2px; padding: 8px 6px; overflow-y: auto; min-height: 0; background: var(--bg-well); border-radius: 6px; align-self: start; max-height: 100%; }
+.roster { display: none; flex-direction: column; gap: 2px; padding: 8px 6px; overflow-y: auto; min-height: 0; background: var(--bg-well); border-radius: 6px; align-self: start; max-height: 100%; }
 .rrow {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   padding: 7px 10px 7px 8px; border-radius: 5px; cursor: pointer;
@@ -419,8 +422,7 @@ html[data-picker="sidebar"] .roster {
   margin: calc(-1 * var(--pane-pad-y)) 0 0 calc(-1 * var(--pane-pad-x));
   padding: 16px 8px 16px calc(var(--pane-pad-x) - 6px);
 }
-html[data-picker="rail"] .agents-grid, html[data-picker="ground"] .agents-grid { grid-template-columns: minmax(0, 1fr); }
-html[data-picker="rail"] .roster, html[data-picker="ground"] .roster { display: none; }
+html[data-picker="well"] .roster, html[data-picker="sidebar"] .roster { display: flex; }
 
 /* ── the work pane (owner 09-08, html[data-work="pane"]): closed = one mono
    mark at the room's top-right corner, in the air (the Codex floatie); open =
