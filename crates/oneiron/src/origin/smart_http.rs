@@ -1436,7 +1436,7 @@ pub struct PackStats {
     pub request_bytes: u64,
     /// Response bytes streamed back out.
     pub response_bytes: u64,
-    /// How many refs the push proposed to move.
+    /// How many ref updates this outcome carries.
     pub ref_update_count: usize,
 }
 
@@ -2046,6 +2046,9 @@ struct ReceivePackIntent {
     actor_id: String,
     repo_root: String,
     admitted_at: u64,
+    // Written once after the exchange, before any outcome evidence. Recovery
+    // without this checkpoint has no measured transport totals.
+    transport_bytes: Option<(u64, u64)>,
     refs: Vec<ReceivePackIntentRef>,
     pointers: Vec<(String, String, u64)>,
 }
@@ -2094,6 +2097,7 @@ impl Vault {
             actor_id: stamp.principal_ref().to_owned(),
             repo_root: root_text,
             admitted_at: stamp.admitted_at(),
+            transport_bytes: None,
             refs: door
                 .ref_updates
                 .iter()
@@ -2176,7 +2180,7 @@ impl Vault {
         &self,
         key: &[u8],
         intent: &mut ReceivePackIntent,
-    ) -> Result<Option<ReceivePackLanding>> {
+    ) -> Result<(Option<ReceivePackOutcome>, Option<ReceivePackLanding>)> {
         let root = Path::new(&intent.repo_root);
         let stamp = DoorAdmissionStamp {
             principal_ref: intent.actor_id.clone(),
@@ -2197,7 +2201,9 @@ impl Vault {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let mut replay_outcome = None;
         let mut landing: Option<ReceivePackLanding> = None;
+        let (request_bytes, response_bytes) = intent.transport_bytes.unwrap_or((0, 0));
         for index in 0..intent.refs.len() {
             if intent.refs[index].status != ReceivePackRefStatus::Pending {
                 continue;
@@ -2227,11 +2233,12 @@ impl Vault {
                 ref_updates: vec![update.clone()],
                 lfs_pointers: pointers.clone(),
                 staged_objects_dir: root.join("objects"),
-                // Recovery cannot reconstruct transport counters. Zero means
-                // unmeasured; it is not a claim that a new backend completed.
+                // These are whole-exchange totals, not a per-ref allocation.
+                // Only a crash before the checkpoint leaves them unmeasured:
+                // zero then means unknown, not newly measured recovery traffic.
                 pack_stats: PackStats {
-                    request_bytes: 0,
-                    response_bytes: 0,
+                    request_bytes,
+                    response_bytes,
                     ref_update_count: 1,
                 },
             };
@@ -2250,6 +2257,9 @@ impl Vault {
                     EntityId::from_hex(&intent.refs[index].outcome_id)
                         .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
                 )?;
+                if replay_outcome.is_none() {
+                    replay_outcome = Some(outcome.clone());
+                }
                 self.apply_receive_pack_update_with_attribution(
                     &outcome.pinned_repo_ref()?,
                     &outcome,
@@ -2262,13 +2272,16 @@ impl Vault {
                 if let Some(previous) = &mut landing {
                     previous.replayed &= receipt.replayed;
                 } else {
+                    // The exposed replay outcome must name the same ref and
+                    // source as the first receipt, not an uncertified aggregate.
+                    replay_outcome = Some(outcome);
                     landing = Some(receipt);
                 }
             }
             // Do not stop after a failed ref: retain its Pending disposition
             // and recover the other refs independently.
         }
-        Ok(landing)
+        Ok((replay_outcome, landing))
     }
 }
 
@@ -2858,7 +2871,10 @@ pub struct ServeReport {
     pub admission: Option<DoorAdmissionStamp>,
     /// The door window, when one opened.
     pub door: DoorWindowReport,
-    /// What the push left behind, when refs moved.
+    /// The first certified ref's exact observer-backed outcome, or the first
+    /// durable observation if none certified. Byte counters cover the whole
+    /// exchange; ref counters cover this outcome only. This is not an atomic
+    /// multi-ref replay token: `ref_results` describes the complete operation.
     pub outcome: Option<ReceivePackOutcome>,
     /// The journaled landing, when one happened.
     pub landing: Option<ReceivePackLanding>,
@@ -3689,9 +3705,18 @@ fn finish_serve(
         .into_iter()
         .find(|(_, intent)| intent.operation_id == stamp.operation_id.to_hex())
         .ok_or_else(|| receive_pack_provenance_refused("pre-effect intent is absent"))?;
-    report.landing = vault
+    // Never replace the counters of an already-observed operation. Commit the
+    // measured totals before the observer so every recovery uses the same bytes.
+    if intent.transport_bytes.is_some() || intent.refs.iter().any(|entry| entry.observed) {
+        return Err(receive_pack_provenance_refused(
+            "transport already finalized",
+        ));
+    }
+    intent.transport_bytes = Some((exchange.request_bytes, exchange.response_bytes));
+    vault.save_receive_pack_intent(&key, &intent)?;
+    (report.outcome, report.landing) = vault
         .resume_receive_pack_intent(&key, &mut intent)
-        .unwrap_or(None);
+        .unwrap_or_default();
     report.ref_results = intent
         .refs
         .iter()
@@ -3708,25 +3733,6 @@ fn finish_serve(
         // This is not a whole-push success. The server rewrites Git's statuses
         // using ref_results, while the operation retains every unfinished ref.
         report.landing = None;
-    }
-    let moved = intent
-        .refs
-        .iter()
-        .filter(|entry| entry.observed)
-        .map(ReceivePackIntentRef::update)
-        .collect::<Result<Vec<_>>>()?;
-    if !moved.is_empty() {
-        report.outcome = Some(ReceivePackOutcome {
-            repo_root: repo_dir.to_path_buf(),
-            pack_stats: PackStats {
-                request_bytes: exchange.request_bytes,
-                response_bytes: exchange.response_bytes,
-                ref_update_count: moved.len(),
-            },
-            ref_updates: moved,
-            lfs_pointers: report.door.lfs_pointers.clone(),
-            staged_objects_dir: repo_dir.join("objects"),
-        });
     }
     Ok(report)
 }
@@ -3786,6 +3792,23 @@ mod tests {
             .expect("no-op retry recovery");
         let rows = reopened.receive_pack_intents(&root).expect("operation");
         assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
+        assert_eq!(
+            rows[0].1.transport_bytes, None,
+            "no exchange checkpoint survived"
+        );
+        let source_id = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("source id");
+        let source = reopened
+            .get_claim(&source_id)
+            .expect("source")
+            .expect("claim");
+        assert_eq!(
+            receive_pack_field(&source, "pack_stats").expect("unmeasured counters"),
+            &receive_pack_stats_value(PackStats {
+                request_bytes: 0,
+                response_bytes: 0,
+                ref_update_count: 1,
+            })
+        );
         let ids = reopened.origin_publication_ids(None).expect("ids");
         assert_eq!(ids.len(), 1);
         reopened
@@ -3894,6 +3917,133 @@ mod tests {
             reopened.get_raw(&first_claim).expect("unchanged claim"),
             claim_bytes
         );
+    }
+
+    #[test]
+    fn receive_pack_measured_partial_outcome_survives_recovery() {
+        let (vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, first) = seeded_repo();
+        let second = commit_file(&root, "second.txt", "second\n");
+        let updates = vec![
+            ref_update("refs/heads/pending", None, Some(&first)),
+            ref_update("refs/heads/published", None, Some(&second)),
+            ref_update("refs/heads/declined", None, Some(&first)),
+        ];
+        let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+        vault
+            .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
+            .expect("admission");
+        let door = DoorWindowReport {
+            verdict: DoorWindowVerdict::Clean,
+            ref_updates: updates,
+            lfs_pointers: Vec::new(),
+            quarantine_path: None,
+        };
+        vault
+            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+            .expect("pre-effect intent");
+        git(&root, &["update-ref", "refs/heads/pending", first.as_str()]);
+        git(
+            &root,
+            &["update-ref", "refs/heads/published", second.as_str()],
+        );
+        let keep = super::super::publication::origin_keep_ref_name(&first).expect("keep");
+        let blocked = root.join(".git").join(format!("{}.lock", keep.as_str()));
+        fs::create_dir_all(blocked.parent().expect("parent")).expect("directory");
+        fs::write(&blocked, b"block first publication").expect("lock");
+        let request = ServeRequest {
+            method: "POST".to_owned(),
+            path_info: "/demo.git/git-receive-pack".to_owned(),
+            query_string: String::new(),
+            content_type: Some("application/x-git-receive-pack-request".to_owned()),
+            content_length: None,
+            content_encoding: None,
+            git_protocol: None,
+            remote_user: Some(stamp.principal_ref().to_owned()),
+            remote_addr: None,
+        };
+        // Synthetic exchange input for this crash-window test. The stock-client
+        // fixture separately checks these fields against actual streamed bytes.
+        let report = finish_serve(
+            &vault,
+            &request,
+            &root,
+            Some(stamp),
+            ServeExchange {
+                status: 200,
+                request_bytes: 1234,
+                response_bytes: 567,
+                door,
+                stderr: String::new(),
+            },
+        )
+        .expect("finish partial exchange");
+        assert!(report.landing.is_none(), "not a whole-push success");
+        assert_eq!(
+            report
+                .ref_results
+                .iter()
+                .map(|entry| entry.status)
+                .collect::<Vec<_>>(),
+            vec![
+                ReceivePackRefStatus::Pending,
+                ReceivePackRefStatus::Published,
+                ReceivePackRefStatus::NotApplied,
+            ]
+        );
+        let outcome = report.outcome.as_ref().expect("certified ref outcome");
+        assert_eq!(outcome.ref_updates.len(), 1, "no aggregate replay token");
+        assert_eq!(outcome.ref_updates[0].name, "refs/heads/published");
+        assert_eq!(
+            outcome.pack_stats,
+            PackStats {
+                request_bytes: 1234,
+                response_bytes: 567,
+                ref_update_count: 1,
+            }
+        );
+        let repo = outcome.pinned_repo_ref().expect("repo");
+        let replay = vault
+            .apply_receive_pack_update(&repo, outcome)
+            .expect("exact replay");
+        assert!(replay.replayed);
+        let rows = vault.receive_pack_intents(&root).expect("checkpoint");
+        assert_eq!(rows[0].1.transport_bytes, Some((1234, 567)));
+        let pending_id = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("pending source");
+        let evidence = vault.get_raw(&pending_id).expect("original evidence");
+        assert!(evidence.is_some());
+        drop(rows);
+        drop(vault);
+        fs::remove_file(blocked).expect("unblock");
+        let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
+        reopened
+            .reconcile_receive_pack_operations(&root)
+            .expect("recover");
+        let rows = reopened
+            .receive_pack_intents(&root)
+            .expect("recovered intent");
+        assert_eq!(rows[0].1.transport_bytes, Some((1234, 567)));
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
+        assert_eq!(rows[0].1.refs[1].status, ReceivePackRefStatus::Published);
+        assert_eq!(rows[0].1.refs[2].status, ReceivePackRefStatus::NotApplied);
+        assert_eq!(
+            reopened.get_raw(&pending_id).expect("same evidence"),
+            evidence
+        );
+        let source = reopened
+            .get_claim(&pending_id)
+            .expect("source")
+            .expect("claim");
+        assert_eq!(
+            receive_pack_field(&source, "pack_stats").expect("durable counters"),
+            &receive_pack_stats_value(outcome.pack_stats)
+        );
+        let again = reopened
+            .apply_receive_pack_update(&repo, outcome)
+            .expect("replay after reopen");
+        assert!(again.replayed);
+        assert_eq!(again.receipt.record_key, replay.receipt.record_key);
+        assert!(git(&root, &["for-each-ref", "refs/heads/declined"]).is_empty());
     }
 
     #[test]
@@ -5809,7 +5959,7 @@ mod tests {
         };
         let mut body = reader.take(length.unwrap_or(0));
         let mut captured = CapturingSink::default();
-        serve(
+        let report = serve(
             vault,
             "demo",
             &request,
@@ -5818,6 +5968,40 @@ mod tests {
             &mut captured,
         )
         .expect("serve stock client");
+        if request.is_receive_pack() {
+            let outcome = report.outcome.as_ref().expect("served push outcome");
+            // Independent wire counts, not constants copied from the producer.
+            assert_eq!(
+                outcome.pack_stats.request_bytes,
+                length.unwrap_or(0) - body.limit()
+            );
+            assert!(outcome.pack_stats.request_bytes > 0);
+            assert_eq!(
+                outcome.pack_stats.response_bytes,
+                captured.body.len() as u64
+            );
+            assert!(outcome.pack_stats.response_bytes > 0);
+            assert_eq!(
+                outcome.pack_stats.ref_update_count,
+                outcome.ref_updates.len()
+            );
+            let repo = outcome.pinned_repo_ref().expect("replay repo");
+            let first = report.landing.as_ref().expect("certified push");
+            let replay = vault
+                .apply_receive_pack_update(&repo, outcome)
+                .expect("the actual served outcome is journal-backed");
+            assert!(replay.replayed);
+            assert_eq!(replay.receipt.record_key, first.receipt.record_key);
+            for field in 0..3 {
+                let mut tampered = outcome.clone();
+                match field {
+                    0 => tampered.pack_stats.request_bytes += 1,
+                    1 => tampered.pack_stats.response_bytes += 1,
+                    _ => tampered.pack_stats.ref_update_count += 1,
+                }
+                assert!(vault.apply_receive_pack_update(&repo, &tampered).is_err());
+            }
+        }
         let mut response = format!("HTTP/1.1 {} OK\r\n", captured.status);
         for (name, value) in captured.headers {
             if !name.eq_ignore_ascii_case("content-length") {
