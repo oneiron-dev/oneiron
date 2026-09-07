@@ -2707,6 +2707,9 @@ fn restamp_cannot_ride_auto_lane() -> Result<()> {
     let actor = seed_person(&vault, 0x71);
     let subject = seed_person(&vault, 0x72);
     let claim = EntityId::from_bytes([0x73; 16]).expect("claim id");
+    // Generated alone is permitted at this candidate's sensitivity. Only
+    // the observed ToolOutput member lacks authority; no other gate can mask it.
+    install_self_memory_allow_policy(&vault, actor)?;
 
     let dispatcher = HostSelfDispatcher::new(
         &vault,
@@ -2719,8 +2722,29 @@ fn restamp_cannot_ride_auto_lane() -> Result<()> {
         outbound_bridge_call(1, 1_001)?,
     ]);
     put_claim_through(&dispatcher, claim, subject)?;
+    assert_latest_gate_decision_reasons(&vault, claim, "pending", &["gate.pending.source_trust"])?;
+    assert_gate_receipts_for_claim(&vault, claim, actor, "allow", 0)?;
+    let pending = vault.pending_gate_consents(10)?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].claim_id, *claim.as_bytes());
+    assert_eq!(pending[0].reason_codes, vec!["gate.pending.source_trust"]);
+    let decisions = vault.store.gate_decisions(20)?;
+    let claim_decisions = decisions
+        .iter()
+        .filter(|decision| decision.claim_id == Some(*claim.as_bytes()))
+        .collect::<Vec<_>>();
+    assert!(!claim_decisions.is_empty());
+    assert!(claim_decisions.iter().all(|decision| {
+        decision.outcome == "pending" && decision.reason_codes == vec!["gate.pending.source_trust"]
+    }));
+    assert!(
+        claim_decisions
+            .iter()
+            .any(|decision| decision.decision_id == pending[0].decision_id)
+    );
 
     let stored = vault.get_claim(&claim)?.expect("stored claim");
+    assert_eq!(stored.approval, ClaimApprovalStatus::Proposed);
     assert_eq!(
         stored.source,
         Some(ClaimSource::Generated),
@@ -2756,6 +2780,11 @@ fn restamp_cannot_ride_auto_lane() -> Result<()> {
         "run-lineage-restamp",
     )?;
     put_claim_through(&unobserved, unobserved_claim, subject)?;
+    assert_latest_gate_decision_reasons(&vault, unobserved_claim, "allow", &["gate.allow"])?;
+    assert_gate_receipts_for_claim(&vault, unobserved_claim, actor, "allow", 1)?;
+    let pending = vault.pending_gate_consents(10)?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].claim_id, *claim.as_bytes());
     assert!(
         evidence_lineage(&stored_evidence(&vault, unobserved_claim)?).is_none(),
         "an unobserved run stamps no lineage entry at all"
