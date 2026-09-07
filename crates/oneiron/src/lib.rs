@@ -146,6 +146,7 @@ pub mod serialize;
 pub mod session_lifecycle;
 pub(crate) mod session_overlay;
 pub mod settings;
+pub mod share;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
@@ -451,6 +452,7 @@ pub use crate::self_heal::{
 pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
+pub use crate::share::{ResolvedShare, Share, ShareViewerScope};
 pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
 pub use crate::slim::{
     HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,

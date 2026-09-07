@@ -19,37 +19,55 @@ use super::support::invalid_bound;
 // Adapters — fold existing shapes, never migrate them
 // ---------------------------------------------------------------------------
 
-/// Projects an [`AccessGrant`] into a [`DisclosureGrant`].
+/// Projects a legacy [`AccessGrant`] into a [`DisclosureGrant`].
 ///
 /// `principal_ref` becomes the singleton audience, `AccessGrantCapability`
 /// becomes the disclosure class, and `AccessGrantScope` becomes the data
 /// envelope. The source record's bytes, status vocabulary, and codec are
-/// untouched — a revoked grant simply projects into a bound the caller will
-/// not treat as live.
+/// untouched — a revoked legacy grant simply projects into a bound the caller
+/// will not treat as live.
+///
+/// Shared brief scopes and capabilities are rejected, even when active. Their
+/// view authority must resolve only through [`crate::Vault::resolve_share_for_view`],
+/// which rereads grant status and current recipient/claim scope for each view.
+/// A static disclosure bound cannot enforce that live redaction boundary.
 pub fn disclosure_grant_from_access_grant(grant: &AccessGrant) -> Result<DisclosureGrant> {
+    // Reject the capability too: an unvalidated legacy scope must not project
+    // a shared-brief read class that bypasses the live resolver.
+    if grant.capability == AccessGrantCapability::SharedBriefRead {
+        return Err(invalid_bound(
+            "shared brief reads require Vault::resolve_share_for_view",
+        ));
+    }
     let audience = AudienceBound::singleton(grant.principal_ref.to_hex())?;
     let class = DisclosureClass::new(grant.capability.as_str())?;
-    let envelope = DisclosureEnvelope::new(access_grant_scope_selectors(grant.scope))?;
+    let envelope = DisclosureEnvelope::new(access_grant_scope_selectors(&grant.scope)?)?;
     DisclosureGrant::new(GrantBound::disclosure(audience, class, envelope)?)
 }
 
-fn access_grant_scope_selectors(scope: AccessGrantScope) -> Vec<String> {
+fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>> {
     match scope {
         AccessGrantScope::CompanionProfile {
             person_ref,
             persona_ref,
-        } => vec![
+        } => Ok(vec![
             format!("person:{}", person_ref.to_hex()),
             format!("persona:{}", persona_ref.to_hex()),
-        ],
-        AccessGrantScope::Calendar { calendar_ref, rung } => vec![
+        ]),
+        AccessGrantScope::Calendar { calendar_ref, rung } => Ok(vec![
             format!("calendar:{}", calendar_ref.to_hex()),
             format!("rung:{}", rung.as_str()),
-        ],
+        ]),
+        AccessGrantScope::SharedBrief { .. } => Err(invalid_bound(
+            "shared brief scopes require Vault::resolve_share_for_view",
+        )),
     }
 }
 
-/// Whether an [`AccessGrant`] projection is currently live.
+/// Whether a legacy [`AccessGrant`] projection is currently live.
+///
+/// `SharedBriefRead` is deliberately excluded even for an active record:
+/// only [`crate::Vault::resolve_share_for_view`] can resolve its live view authority.
 #[must_use]
 pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
     grant.status == AccessGrantStatus::Active
