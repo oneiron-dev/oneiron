@@ -4264,7 +4264,10 @@ fn an_absent_profile_assembles_the_pack_byte_for_byte() -> Result<()> {
          byte-for-byte the pack it assembled before the lift"
     );
     assert_eq!(
-        vault.context_pack().memory_profile(None).effective_token_budget(),
+        vault
+            .context_pack()
+            .memory_profile(None)
+            .effective_token_budget(),
         4_000
     );
     Ok(())
@@ -4274,9 +4277,8 @@ fn an_absent_profile_assembles_the_pack_byte_for_byte() -> Result<()> {
 fn a_profile_carries_its_budget_and_split_end_to_end() {
     let (_dir, vault) = open_test_vault();
 
-    let profile = rt05_profile(1_234).with_budget_split(ContextBudgetSplit::new(
-        0.10, 0.60, 0.20, 0.10,
-    ));
+    let profile =
+        rt05_profile(1_234).with_budget_split(ContextBudgetSplit::new(0.10, 0.60, 0.20, 0.10));
     let builder = vault.context_pack().memory_profile(Some(&profile));
     assert_eq!(builder.effective_token_budget(), 1_234);
 
@@ -4330,8 +4332,7 @@ fn a_raw_pack_carries_no_token_accounting_to_drive_a_threshold() -> Result<()> {
         .include_stats(true)
         .run()?;
     assert_eq!(
-        raw.stats.tokens.total_tokens,
-        0,
+        raw.stats.tokens.total_tokens, 0,
         "raw run() products carry default-zero token accounting"
     );
 
