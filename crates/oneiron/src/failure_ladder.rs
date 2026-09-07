@@ -328,23 +328,20 @@ fn retry_lineage_walk(
     }
 }
 
-/// Revalidates a public card's optional pathology through the policy walker.
+/// Revalidates a public card's ordinal and pathology through the policy walker.
 /// This is read-only and preserves the same threshold and every-link semantics.
 /// The caller must supply the same policy bound used by the failure ladder;
 /// this helper has no stored policy authority against which to verify it.
-pub(crate) fn retry_lineage_pathology(
+pub(crate) fn retry_lineage_ordinal(
     vault: &Vault,
     failing_attempt_id: AttemptId,
     limit: NonZeroU16,
-) -> Result<Option<RetryLineagePathology>> {
+) -> Result<RetryOrdinal> {
     let queue = AttemptQueue::new(vault);
     let current = queue.get(failing_attempt_id)?.ok_or_else(|| {
-        Error::InvalidConfig("failure card pathology requires a stored failing attempt".to_owned())
+        Error::InvalidConfig("failure card lineage requires a stored failing attempt".to_owned())
     })?;
-    match retry_lineage_walk(&queue, &current, limit)? {
-        RetryOrdinal::Pathology(pathology) => Ok(Some(pathology)),
-        RetryOrdinal::BelowLimit(_) | RetryOrdinal::AtLimit(_) => Ok(None),
-    }
+    retry_lineage_walk(&queue, &current, limit)
 }
 
 /// The healer's read-only view of one failure. Its identifiers are context;

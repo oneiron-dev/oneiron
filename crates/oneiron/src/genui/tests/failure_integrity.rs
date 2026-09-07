@@ -178,12 +178,14 @@ fn surfaced_failure_card_validates_failure_class_and_transient_count() -> Result
         FailureClass::Permanent,
         FailureClass::Ambiguous,
     ] {
-        for count in [0, 1, 3, u16::MAX] {
+        for count in [0, 1, 2, 3, u16::MAX] {
             let mut input = card_input(failing, tree.clone(), feed.clone());
             input.failure_class = class;
             input.consecutive_transients = count;
             let result = surfaced_failure_card(&vault, input);
-            if class != FailureClass::Transient && count != 0 {
+            // The stored root has ordinal one; other classes still require zero.
+            let expected = u16::from(class == FailureClass::Transient);
+            if count != expected {
                 assert!(
                     matches!(result, Err(Error::InvalidConfig(_))),
                     "{class:?} with {count} transients must be rejected, not normalized"
