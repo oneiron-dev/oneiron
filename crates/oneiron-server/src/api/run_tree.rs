@@ -146,6 +146,13 @@ pub(crate) struct CoreRunTreeNode {
     /// Child attempts ordered deterministically by creation time and attempt id.
     #[schema(no_recursion)]
     children: Vec<CoreRunTreeNode>,
+    /// Durable consent-breaker pause, independent of attempt lifecycle status.
+    #[serde(skip_serializing_if = "is_false")]
+    gate_breaker_paused: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Surface lifecycle state for a runtime attempt.
@@ -412,6 +419,7 @@ pub(crate) fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode 
         }),
         events: node.events.into_iter().map(core_run_tree_event).collect(),
         children: node.children.into_iter().map(core_run_tree_node).collect(),
+        gate_breaker_paused: node.gate_breaker_paused,
     }
 }
 
@@ -531,3 +539,7 @@ pub(crate) fn parse_attempt_id_param(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "run_tree/breaker_tests.rs"]
+mod breaker_tests;

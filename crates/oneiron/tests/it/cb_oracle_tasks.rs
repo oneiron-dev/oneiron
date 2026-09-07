@@ -69,6 +69,7 @@ mod cb_t {
             failure: None,
             events: Vec::new(),
             children: Vec::new(),
+            gate_breaker_paused: false,
         };
         let realizing_nodes = [observed_running_job("jb_1"), observed_running_job("jb_2")];
         let realizing_jobs: Vec<JobPresence> = realizing_nodes

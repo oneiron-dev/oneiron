@@ -1130,3 +1130,6 @@ fn consent_bundle_label_does_not_mutate_run_state() -> Result<()> {
     );
     Ok(())
 }
+
+#[path = "tests/breaker.rs"]
+mod breaker;
