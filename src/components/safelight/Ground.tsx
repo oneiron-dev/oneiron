@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { Chevron, IconHistory } from './icons'
 import { Cwidget, Throbber } from './Widgets'
 import { cue, useDocumentEvent, useEscape } from './hooks'
@@ -65,6 +65,14 @@ const HISTORY: Array<{ label: string; rows: Array<{ title: string; age: string }
 
 export function Ground() {
   const inputRef = React.useRef<HTMLInputElement>(null)
+  /* the ground line as the picker (owner 09-08, html[data-picker="ground"]):
+     on the agents page a name on the line switches the ROOM; anywhere else
+     it opens the panel as before. The page and the picked room come from
+     the router; the html attribute is read at click time. */
+  const loc = useRouterState({ select: (st) => st.location })
+  const navigate = useNavigate()
+  const onAgents = loc.pathname.startsWith('/app/agents')
+  const roomKey = (loc.search as { with?: string }).with ?? 'eiri'
   const [openRun, setOpenRun] = React.useState<string | null>(null)
   const openRunRef = React.useRef<string | null>(null)
   /* the threads keep their last scope through the close, exactly as the
@@ -132,6 +140,27 @@ export function Ground() {
     setOpenRun(null)
     cue('toggle')
   }, [])
+
+  const groundPicks = () => document.documentElement.getAttribute('data-picker') === 'ground'
+  const pickOrShow = (key: 'eiri' | 'tory' | 'antevon' | 'house' | 'new') => {
+    if (onAgents && groundPicks()) {
+      closeRun()
+      navigate({ to: '/app/agents', search: { with: key } })
+      cue('toggle')
+      return
+    }
+    if (key === 'house' || key === 'new') {
+      navigate({ to: '/app/agents', search: { with: key } })
+      return
+    }
+    if (RUNS[key]) {
+      showRun(key)
+      return
+    }
+    setChip(key)
+    setPastOpen(null)
+    showRun('ask')
+  }
 
   /* esc peels one layer at a time: popover first, then the panel */
   useEscape(() => {
@@ -470,31 +499,57 @@ export function Ground() {
           </React.Fragment>
         ))}
       </div>
-      <div className="gline">
+      <div className="gline" data-on={onAgents ? 'agents' : undefined}>
         <span className="gspacer"></span>
         {/* ONE mark per agent (owner 08-15): the name in its ink IS the
             presence — the separate dot is dead. live = the doing-text
             shimmers; stopped = still and dimmed. */}
         <button
-          className={stoppedRuns.eiri ? 'grun gstill' : 'grun glive'}
+          className={[stoppedRuns.eiri ? 'grun gstill' : 'grun glive', onAgents && roomKey === 'eiri' ? 'on' : ''].filter(Boolean).join(' ')}
           data-agent="eiri"
           title="Eiri · drafting the COO intro · click: open the run"
-          onClick={() => showRun('eiri')}
+          onClick={() => pickOrShow('eiri')}
         >
           <span className="gname">eiri</span>
           <span className="gdoing">· drafting the COO intro</span>
         </button>
         <button
-          className={stoppedRuns.tory ? 'grun gstill' : 'grun glive'}
+          className={[stoppedRuns.tory ? 'grun gstill' : 'grun glive', onAgents && roomKey === 'tory' ? 'on' : ''].filter(Boolean).join(' ')}
           data-agent="tory"
           title="Tory · checking the supplier rumor · click: open the run"
-          onClick={() => showRun('tory')}
+          onClick={() => pickOrShow('tory')}
         >
           <span className="gname">tory</span>
           <span className="gdoing">· checking filings</span>
         </button>
+        {/* the picker rows (owner 09-08): only on the agents page under
+            html[data-picker="ground"] — the idle agent, the house, a new
+            agent in place of a new chat (you are already in the chat) */}
         <button
-          className="grun"
+          className={onAgents && roomKey === 'antevon' ? 'grun gpick on' : 'grun gpick'}
+          data-agent="antevon"
+          title="Antevon · nights · open the room"
+          onClick={() => pickOrShow('antevon')}
+        >
+          <span className="gname">antevon</span>
+        </button>
+        <button
+          className={onAgents && roomKey === 'house' ? 'grun gpick on' : 'grun gpick'}
+          title="the house · every agent and you in one room"
+          onClick={() => pickOrShow('house')}
+        >
+          <span className="gname">the house</span>
+        </button>
+        <button
+          className={onAgents && roomKey === 'new' ? 'grun gpick on' : 'grun gpick'}
+          title="a new agent · by conversation with Antevon"
+          onClick={() => pickOrShow('new')}
+        >
+          <span className="gplus">+</span>
+          <span>new agent</span>
+        </button>
+        <button
+          className="grun gnew-chat"
           data-agent="ask"
           title="start a new chat"
           onClick={() => {

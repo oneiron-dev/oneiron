@@ -419,8 +419,8 @@ html[data-picker="sidebar"] .roster {
   margin: calc(-1 * var(--pane-pad-y)) 0 0 calc(-1 * var(--pane-pad-x));
   padding: 16px 8px 16px calc(var(--pane-pad-x) - 6px);
 }
-html[data-picker="rail"] .agents-grid { grid-template-columns: minmax(0, 1fr); }
-html[data-picker="rail"] .roster { display: none; }
+html[data-picker="rail"] .agents-grid, html[data-picker="ground"] .agents-grid { grid-template-columns: minmax(0, 1fr); }
+html[data-picker="rail"] .roster, html[data-picker="ground"] .roster { display: none; }
 
 /* ── the work pane (owner 09-08, html[data-work="pane"]): closed = one mono
    mark at the room's top-right corner, in the air (the Codex floatie); open =

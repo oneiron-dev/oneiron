@@ -613,3 +613,15 @@ html[data-picker="rail"] .rail .agent-rows { display: flex; flex-direction: colu
 .rail .agent-rows .txt.aname { color: var(--p-ink); }
 .rail .agent-rows .live-dot { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--silver-3); }
 html[data-picker="rail"] .rail .group:has(.agent-rows a.active) > a.agents-head.active { color: var(--silver-3); background: none; }
+
+/* ── the ground line as the picker (owner 09-08, html[data-picker="ground"]):
+   on the agents page the line carries every agent, the house and a new
+   agent; the picked room wears the well under its word (selection = shade,
+   his pick). Elsewhere the line is the run line it was. ── */
+.gline .gpick { display: none; }
+html[data-picker="ground"] .gline[data-on="agents"] .gpick { display: inline-flex; }
+html[data-picker="ground"] .gline[data-on="agents"] .gnew-chat { display: none; }
+html[data-picker="ground"] .gline[data-on="agents"] .grun.on {
+  color: var(--silver-1); background: var(--bg-well); border-radius: 4px; padding: 3px 7px; margin: -3px -7px;
+}
+html[data-picker="ground"] .gline[data-on="agents"] .grun.on .gdoing { animation: none; background: none; color: var(--silver-2); }
