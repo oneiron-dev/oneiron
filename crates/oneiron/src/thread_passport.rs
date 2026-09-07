@@ -9,18 +9,21 @@
 //! * [`PREDICATE_THREAD_PASSPORT`] — one active row per
 //!   `(identity_ref × canonical Message-ID)` carrying the resolved
 //!   `thread_ref` and the [`ThreadMask`] the receiving identity wore.
-//! * [`PREDICATE_THREAD_ALIAS`] — one row per previously separate thread root
-//!   that a later bridging message converged onto a surviving root.
+//! * [`PREDICATE_THREAD_ALIAS`] — observed convergence receipts. Offline forks
+//!   are valid. An alias affects resolution only with independent passport
+//!   reference evidence connecting its endpoints; it cannot redirect a thread
+//!   merely by asserting two root strings.
 //!
 //! Threading follows provider `References` / `In-Reply-To` physics and nothing
 //! else. Resolution is deterministic and order-independent:
 //!
 //! 1. Canonicalize the current `Message-ID` and every reference with the SAME
 //!    [`canonical_message_id`] function.
-//! 2. Look up active passport rows for the current Message-ID AND for every
-//!    normalized reference, canonicalizing each hit's `thread_ref` through the
-//!    alias graph. The current Message-ID counts because another identity on
-//!    the same vault may already have landed this message.
+//! 2. Read passport evidence through the ChannelIdentity and ClaimOf indexes.
+//!    Persist References and In-Reply-To, including unknown tokens. Their
+//!    connected components support both forward and reverse arrival lookup.
+//!    Duplicate logical passports share one deterministic winner; every row's
+//!    reference evidence still participates in convergence.
 //! 3. Nothing known mints
 //!    `"mail:v1:" + hex(sha256(canonical current Message-ID bytes))`.
 //! 4. Exactly one known thread reuses it.
@@ -59,7 +62,7 @@
 //! [`ChannelIdentity`]: crate::channel_identity::ChannelIdentity
 
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
+use std::collections::BTreeSet;
 
 use rmpv::Value;
 use sha2::{Digest, Sha256};
@@ -106,16 +109,14 @@ pub const THREAD_REF_PREFIX: &str = "mail:v1:";
 /// the selection resolver accepts for a [`ChannelIdentityThreadPin`].
 pub const MAX_THREAD_REF_BYTES: usize = 512;
 
-/// Maximum alias hops a read will follow before declaring corruption.
+/// Historical alias-hop bound, retained for source compatibility.
 ///
-/// Convergence writes aliases only from roots that are already fixed points to
-/// a root that is also a fixed point, so a healthy graph is a forest of depth
-/// well under this bound. Exceeding it means the alias rows were not written
-/// by this module.
+/// Reads now flatten evidenced components. Valid long offline histories do not
+/// fail at this bound; cycle protection is independent of component size.
 pub const MAX_THREAD_ALIAS_HOPS: usize = 32;
 
 /// Pinned on-disk MessagePack key set for a `thread_passport` claim value.
-pub const THREAD_PASSPORT_BODY_KEYS: [&str; 7] = [
+pub const THREAD_PASSPORT_BODY_KEYS: [&str; 9] = [
     "schema_version",
     "identity_ref",
     "message_id",
@@ -123,6 +124,8 @@ pub const THREAD_PASSPORT_BODY_KEYS: [&str; 7] = [
     "actor_ref",
     "facet_ref",
     "observed_at",
+    "references",
+    "in_reply_to",
 ];
 
 /// Pinned on-disk MessagePack key set for a `thread_alias` claim value.
@@ -141,6 +144,8 @@ const KEY_THREAD_REF: &str = THREAD_PASSPORT_BODY_KEYS[3];
 const KEY_ACTOR_REF: &str = THREAD_PASSPORT_BODY_KEYS[4];
 const KEY_FACET_REF: &str = THREAD_PASSPORT_BODY_KEYS[5];
 const KEY_OBSERVED_AT: &str = THREAD_PASSPORT_BODY_KEYS[6];
+const KEY_REFERENCES: &str = THREAD_PASSPORT_BODY_KEYS[7];
+const KEY_IN_REPLY_TO: &str = THREAD_PASSPORT_BODY_KEYS[8];
 const KEY_FROM_THREAD_REF: &str = THREAD_ALIAS_BODY_KEYS[2];
 const KEY_TO_THREAD_REF: &str = THREAD_ALIAS_BODY_KEYS[3];
 
@@ -467,7 +472,8 @@ pub struct ThreadPassportResolution {
     /// [`ThreadMask::thread_pin`].
     pub canonical_thread_ref: String,
     /// Roots THIS call converged onto `canonical_thread_ref`, ascending.
-    /// Empty for a mint, a single-root join, and every replay.
+    /// Empty for a mint or a single-root join. A replay with new reference
+    /// evidence can converge previously separate roots.
     pub aliased_thread_refs: Vec<String>,
 }
 
@@ -490,603 +496,17 @@ pub enum StickyMaskDecision {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Claim value codec
-// ---------------------------------------------------------------------------
+mod codec;
+mod graph;
+mod storage;
+mod vault_doors;
 
-fn encode_passport_value(passport: &ThreadPassport) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(THREAD_PASSPORT_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_IDENTITY_REF),
-            Value::from(passport.identity_ref.to_hex()),
-        ),
-        (
-            Value::from(KEY_MESSAGE_ID),
-            Value::from(passport.message_id.as_str()),
-        ),
-        (
-            Value::from(KEY_THREAD_REF),
-            Value::from(passport.thread_ref.as_str()),
-        ),
-        (
-            Value::from(KEY_ACTOR_REF),
-            Value::from(passport.mask.actor_ref.to_hex()),
-        ),
-        (
-            Value::from(KEY_FACET_REF),
-            encode_optional_ref(passport.mask.facet_ref),
-        ),
-        (
-            Value::from(KEY_OBSERVED_AT),
-            Value::from(passport.observed_at),
-        ),
-    ])
-}
-
-fn encode_alias_value(
-    identity_ref: EntityId,
-    from_thread_ref: &str,
-    to_thread_ref: &str,
-    observed_at: u64,
-) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(THREAD_PASSPORT_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_IDENTITY_REF),
-            Value::from(identity_ref.to_hex()),
-        ),
-        (
-            Value::from(KEY_FROM_THREAD_REF),
-            Value::from(from_thread_ref),
-        ),
-        (Value::from(KEY_TO_THREAD_REF), Value::from(to_thread_ref)),
-        (Value::from(KEY_OBSERVED_AT), Value::from(observed_at)),
-    ])
-}
-
-fn encode_optional_ref(id: Option<EntityId>) -> Value {
-    id.map_or(Value::Nil, |id| Value::from(id.to_hex()))
-}
-
-/// Every decode failure below is [`Error::CorruptedIndex`] on purpose: these
-/// bytes came out of the store, so a shape the typed doors cannot have written
-/// is a corrupt row, not a bad argument.
-fn corrupt(reason: &'static str) -> Error {
-    Error::CorruptedIndex(reason)
-}
-
-fn map_entries<'a>(value: &'a Value, reason: &'static str) -> Result<&'a [(Value, Value)]> {
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(corrupt(reason)),
-    }
-}
-
-fn map_entry<'a>(
-    entries: &'a [(Value, Value)],
-    key: &str,
-    reason: &'static str,
-) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
-        .map(|(_, value)| value)
-        .ok_or_else(|| corrupt(reason))
-}
-
-fn decode_ref(value: &Value, reason: &'static str) -> Result<EntityId> {
-    value
-        .as_str()
-        .and_then(|hex| EntityId::from_hex(hex).ok())
-        .ok_or_else(|| corrupt(reason))
-}
-
-fn decode_optional_ref(value: &Value, reason: &'static str) -> Result<Option<EntityId>> {
-    if matches!(value, Value::Nil) {
-        Ok(None)
-    } else {
-        decode_ref(value, reason).map(Some)
-    }
-}
-
-fn decode_thread_ref(value: &Value, reason: &'static str) -> Result<String> {
-    let raw = value.as_str().ok_or_else(|| corrupt(reason))?;
-    validate_thread_ref(raw).map_err(|_| corrupt(reason))?;
-    Ok(raw.to_owned())
-}
-
-fn decode_schema_version(entries: &[(Value, Value)], reason: &'static str) -> Result<()> {
-    let version = map_entry(entries, KEY_SCHEMA_VERSION, reason)?
-        .as_u64()
-        .ok_or_else(|| corrupt(reason))?;
-    if version == THREAD_PASSPORT_SCHEMA_VERSION {
-        Ok(())
-    } else {
-        Err(corrupt(reason))
-    }
-}
-
-fn decode_passport_value(subject: EntityId, value: &Value) -> Result<ThreadPassport> {
-    const REASON: &str = "thread passport claim value is malformed";
-    let entries = map_entries(value, REASON)?;
-    decode_schema_version(entries, "thread passport claim schema version is unknown")?;
-    let identity_ref = decode_ref(map_entry(entries, KEY_IDENTITY_REF, REASON)?, REASON)?;
-    if identity_ref != subject {
-        return Err(corrupt(
-            "thread passport identity_ref disagrees with its claim subject",
-        ));
-    }
-    let raw_message_id = map_entry(entries, KEY_MESSAGE_ID, REASON)?
-        .as_str()
-        .ok_or_else(|| corrupt(REASON))?;
-    validate_canonical_message_id(raw_message_id)
-        .map_err(|_| corrupt("stored thread passport message id is not canonical"))?;
-    Ok(ThreadPassport {
-        identity_ref,
-        message_id: CanonicalMessageId(raw_message_id.to_owned()),
-        thread_ref: decode_thread_ref(map_entry(entries, KEY_THREAD_REF, REASON)?, REASON)?,
-        mask: ThreadMask {
-            identity_ref,
-            actor_ref: decode_ref(map_entry(entries, KEY_ACTOR_REF, REASON)?, REASON)?,
-            facet_ref: decode_optional_ref(map_entry(entries, KEY_FACET_REF, REASON)?, REASON)?,
-        },
-        observed_at: map_entry(entries, KEY_OBSERVED_AT, REASON)?
-            .as_u64()
-            .ok_or_else(|| corrupt(REASON))?,
-    })
-}
-
-fn decode_alias_value(value: &Value) -> Result<(String, String)> {
-    const REASON: &str = "thread alias claim value is malformed";
-    let entries = map_entries(value, REASON)?;
-    decode_schema_version(entries, "thread alias claim schema version is unknown")?;
-    let from = decode_thread_ref(map_entry(entries, KEY_FROM_THREAD_REF, REASON)?, REASON)?;
-    let to = decode_thread_ref(map_entry(entries, KEY_TO_THREAD_REF, REASON)?, REASON)?;
-    Ok((from, to))
-}
-
-// ---------------------------------------------------------------------------
-// Row readers and alias resolution
-// ---------------------------------------------------------------------------
-
-/// One active passport CLAIM as read back out of the store.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PassportRow {
-    claim_id: EntityId,
-    passport: ThreadPassport,
-}
-
-/// Total order deciding which passport PINS a thread's mask.
-///
-/// Earliest observation wins; the canonical Message-ID and then the claim id
-/// break ties so two rows stamped the same second still pin deterministically
-/// on every replica.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct PassportPinKey {
-    observed_at: u64,
-    message_id: String,
-    claim_id: EntityId,
-}
-
-impl PassportRow {
-    fn pin_key(&self) -> PassportPinKey {
-        PassportPinKey {
-            observed_at: self.passport.observed_at,
-            message_id: self.passport.message_id.0.clone(),
-            claim_id: self.claim_id,
-        }
-    }
-}
-
-fn active_passport_rows(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Vec<PassportRow>> {
-    let mut rows = Vec::new();
-    for (claim_id, body) in vault.claims_with_predicate_in_txn(rtxn, PREDICATE_THREAD_PASSPORT)? {
-        if body.lifecycle != ClaimLifecycleStatus::Active {
-            continue;
-        }
-        let ClaimSubject::Entity(subject) = body.subject else {
-            return Err(corrupt("thread passport subject must be an entity"));
-        };
-        rows.push(PassportRow {
-            claim_id,
-            passport: decode_passport_value(subject, &body.value)?,
-        });
-    }
-    Ok(rows)
-}
-
-/// The alias graph as `from_thread_ref -> to_thread_ref`.
-///
-/// Two active rows naming the same `from` must agree; a fork means two reads
-/// of the same thread could answer differently, which is corruption.
-fn thread_alias_edges(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<BTreeMap<String, String>> {
-    let mut edges: BTreeMap<String, String> = BTreeMap::new();
-    for (_, body) in vault.claims_with_predicate_in_txn(rtxn, PREDICATE_THREAD_ALIAS)? {
-        if body.lifecycle != ClaimLifecycleStatus::Active {
-            continue;
-        }
-        let (from, to) = decode_alias_value(&body.value)?;
-        match edges.entry(from) {
-            Entry::Vacant(slot) => {
-                slot.insert(to);
-            }
-            Entry::Occupied(slot) => {
-                if *slot.get() != to {
-                    return Err(corrupt("thread alias forks to two different threads"));
-                }
-            }
-        }
-    }
-    Ok(edges)
-}
-
-/// Follows `start` through the alias graph to its fixed point.
-///
-/// Bounded twice over — a visited set and [`MAX_THREAD_ALIAS_HOPS`] — so a
-/// cycle or an absurdly long chain fails typed instead of spinning.
-fn resolve_thread_alias<'a>(edges: &'a BTreeMap<String, String>, start: &'a str) -> Result<String> {
-    let mut seen: Vec<&str> = Vec::new();
-    let mut current = start;
-    loop {
-        if seen.contains(&current) {
-            return Err(corrupt("thread alias chain contains a cycle"));
-        }
-        seen.push(current);
-        let Some(next) = edges.get(current) else {
-            return Ok(current.to_owned());
-        };
-        if seen.len() > MAX_THREAD_ALIAS_HOPS {
-            return Err(corrupt("thread alias chain exceeds the hop bound"));
-        }
-        current = next.as_str();
-    }
-}
-
-/// Every active passport resolving to `canonical`, in pin order.
-fn passports_on_thread(
-    rows: Vec<PassportRow>,
-    edges: &BTreeMap<String, String>,
-    canonical: &str,
-) -> Result<BTreeMap<PassportPinKey, ThreadPassport>> {
-    let mut ordered = BTreeMap::new();
-    for row in rows {
-        if resolve_thread_alias(edges, &row.passport.thread_ref)? != canonical {
-            continue;
-        }
-        ordered.insert(row.pin_key(), row.passport);
-    }
-    Ok(ordered)
-}
-
-// ---------------------------------------------------------------------------
-// Claim writers
-// ---------------------------------------------------------------------------
-
-/// Refuses a passport whose subject is not a live `ChannelIdentity` record.
-///
-/// `put_claim_in_txn` already refuses a missing subject; this adds the TYPE
-/// check, so a passport can never be filed against an arbitrary entity that
-/// merely happens to exist.
-fn require_channel_identity(vault: &Vault, wtxn: &heed::RwTxn<'_>, id: EntityId) -> Result<()> {
-    let raw = vault
-        .store
-        .entities
-        .get(wtxn, id.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or_else(|| corrupt("entity header"))?;
-    if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
-        Ok(())
-    } else {
-        Err(Error::InvalidEntityType(header.entity_type))
-    }
-}
-
-fn put_passport_claim(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    passport: &ThreadPassport,
-) -> Result<()> {
-    let mut body = ClaimBody::new(
-        PREDICATE_THREAD_PASSPORT,
-        ClaimSubject::Entity(passport.identity_ref),
-        encode_passport_value(passport),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    body.valid_from = Some(passport.observed_at);
-    // Observed: a passport records what a provider event did, not a belief the
-    // engine inferred.
-    body.source = Some(ClaimSource::Observed);
-    vault.put_claim_in_txn(
-        wtxn,
-        &EntityId::now(),
-        &body,
-        TimeRange {
-            start: passport.observed_at,
-            end: passport.observed_at,
-        },
-        passport.observed_at,
-    )
-}
-
-fn put_alias_claim(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    identity_ref: EntityId,
-    from_thread_ref: &str,
-    to_thread_ref: &str,
-    observed_at: u64,
-) -> Result<()> {
-    let mut body = ClaimBody::new(
-        PREDICATE_THREAD_ALIAS,
-        ClaimSubject::Entity(identity_ref),
-        encode_alias_value(identity_ref, from_thread_ref, to_thread_ref, observed_at),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    );
-    body.valid_from = Some(observed_at);
-    body.source = Some(ClaimSource::Observed);
-    vault.put_claim_in_txn(
-        wtxn,
-        &EntityId::now(),
-        &body,
-        TimeRange {
-            start: observed_at,
-            end: observed_at,
-        },
-        observed_at,
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Typed Vault doors
-// ---------------------------------------------------------------------------
-
-impl Vault {
-    /// Lands one inbound message in exactly one durable thread.
-    ///
-    /// The passport row, and every alias row the same message's references
-    /// force, are written in ONE transaction: a bridging message that
-    /// converges two roots must never leave a vault where the passport exists
-    /// but the convergence does not.
-    ///
-    /// Idempotent by construction. Replaying the same provider event finds the
-    /// active `(identity_ref × Message-ID)` row, returns it with its thread
-    /// re-resolved through today's aliases, and writes nothing — so a replay
-    /// can neither duplicate the active row nor restamp the mask.
-    ///
-    /// A first write by a SECOND identity of a Message-ID the vault already
-    /// threaded still writes its own passport row, but lands on the thread the
-    /// first identity's row resolves to today rather than minting a parallel
-    /// one. Whatever thread this call settles on, the returned
-    /// [`ThreadPassportResolution::canonical_thread_ref`] is a fixed point of
-    /// the alias graph and is therefore always safe to pin.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::EntityNotFound`] or [`Error::InvalidEntityType`] when
-    /// `identity_ref` is not a live `ChannelIdentity` record, and
-    /// [`Error::CorruptedIndex`] when a stored passport or alias row cannot be
-    /// decoded or the alias graph cycles.
-    pub fn record_thread_passport(
-        &self,
-        input: ThreadPassportInput,
-    ) -> Result<ThreadPassportResolution> {
-        self.with_write_txn(|wtxn| {
-            require_channel_identity(self, wtxn, input.identity_ref)?;
-            let edges = thread_alias_edges(self, wtxn)?;
-            let rows = active_passport_rows(self, wtxn)?;
-
-            if let Some(existing) = rows.iter().find(|row| {
-                row.passport.identity_ref == input.identity_ref
-                    && row.passport.message_id == input.message_id
-            }) {
-                return Ok(ThreadPassportResolution {
-                    canonical_thread_ref: resolve_thread_alias(
-                        &edges,
-                        &existing.passport.thread_ref,
-                    )?,
-                    passport: existing.passport.clone(),
-                    aliased_thread_refs: Vec::new(),
-                });
-            }
-
-            // The current Message-ID is looked up ALONGSIDE its references.
-            // Another identity on this vault may already have landed this very
-            // message — the replay arm above only covers the same identity —
-            // and that row's thread is exactly as known as a reference hit.
-            // Without this the second identity would mint a parallel thread
-            // for mail the vault has already threaded.
-            let mut known: Vec<&CanonicalMessageId> =
-                Vec::with_capacity(input.references.len() + 2);
-            known.push(&input.message_id);
-            for reference in input.reference_chain() {
-                if !known.contains(&reference) {
-                    known.push(reference);
-                }
-            }
-
-            // A BTreeSet would do, but the map is already ordered and the
-            // ascending first key IS the lexicographically smallest root —
-            // which is what makes convergence independent of arrival order.
-            let mut roots: BTreeMap<String, ()> = BTreeMap::new();
-            for message_id in known {
-                for row in &rows {
-                    if row.passport.message_id == *message_id {
-                        roots.insert(resolve_thread_alias(&edges, &row.passport.thread_ref)?, ());
-                    }
-                }
-            }
-
-            let mut roots_iter = roots.into_keys();
-            let (chosen, aliased_thread_refs) = match roots_iter.next() {
-                None => (input.message_id.minted_thread_ref(), Vec::new()),
-                Some(smallest) => (smallest, roots_iter.collect::<Vec<_>>()),
-            };
-            // Resolve once more before ANY write and before the ref is handed
-            // back. Known roots arrived already resolved, so this only ever
-            // moves the mint arm — but a minted name can itself be a
-            // converged-away `from` alias, and the pin token this call returns
-            // has to be a fixed point or selection would strand the reply on a
-            // dead thread (see `ThreadMask::thread_pin`).
-            let canonical_thread_ref = resolve_thread_alias(&edges, &chosen)?;
-
-            for from in &aliased_thread_refs {
-                put_alias_claim(
-                    self,
-                    wtxn,
-                    input.identity_ref,
-                    from,
-                    &canonical_thread_ref,
-                    input.observed_at,
-                )?;
-            }
-
-            let passport = ThreadPassport {
-                identity_ref: input.identity_ref,
-                message_id: input.message_id.clone(),
-                thread_ref: canonical_thread_ref.clone(),
-                mask: input.mask(),
-                observed_at: input.observed_at,
-            };
-            put_passport_claim(self, wtxn, &passport)?;
-            Ok(ThreadPassportResolution {
-                passport,
-                canonical_thread_ref,
-                aliased_thread_refs,
-            })
-        })
-    }
-
-    /// The active passport for one `(identity_ref × Message-ID)`, if any.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::CorruptedIndex`] when a stored passport row cannot be
-    /// decoded.
-    pub fn thread_passport(
-        &self,
-        identity_ref: &EntityId,
-        message_id: &CanonicalMessageId,
-    ) -> Result<Option<ThreadPassport>> {
-        let rtxn = self.store.env.read_txn()?;
-        Ok(active_passport_rows(self, &rtxn)?
-            .into_iter()
-            .find(|row| {
-                row.passport.identity_ref == *identity_ref && row.passport.message_id == *message_id
-            })
-            .map(|row| row.passport))
-    }
-
-    /// Follows `thread_ref` through the alias graph to its fixed point.
-    ///
-    /// An unknown ref is its own fixed point: aliases record convergence, not
-    /// existence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidClaimBody`] for a malformed `thread_ref` and
-    /// [`Error::CorruptedIndex`] when the alias graph cycles, forks, or
-    /// exceeds [`MAX_THREAD_ALIAS_HOPS`].
-    pub fn canonical_thread_ref(&self, thread_ref: &str) -> Result<String> {
-        validate_thread_ref(thread_ref)?;
-        let rtxn = self.store.env.read_txn()?;
-        let edges = thread_alias_edges(self, &rtxn)?;
-        resolve_thread_alias(&edges, thread_ref)
-    }
-
-    /// Every active passport on `thread_ref`'s canonical thread, in pin order.
-    ///
-    /// The first element is the row whose mask the thread wears.
-    ///
-    /// # Errors
-    ///
-    /// As [`Vault::canonical_thread_ref`], plus decode failures on stored
-    /// passport rows.
-    pub fn thread_passports(&self, thread_ref: &str) -> Result<Vec<ThreadPassport>> {
-        validate_thread_ref(thread_ref)?;
-        let rtxn = self.store.env.read_txn()?;
-        let edges = thread_alias_edges(self, &rtxn)?;
-        let canonical = resolve_thread_alias(&edges, thread_ref)?;
-        let rows = active_passport_rows(self, &rtxn)?;
-        Ok(passports_on_thread(rows, &edges, &canonical)?
-            .into_values()
-            .collect())
-    }
-
-    /// The mask a thread already wears, judged against what a caller wants.
-    ///
-    /// The thread's FIRST passport pins the mask and nothing later moves it.
-    /// A `requested` mask that disagrees comes back as
-    /// [`StickyMaskDecision::Conflict`] carrying both sides — the composer
-    /// decides what to say about it, and a human handoff stays message
-    /// content. There is no arm that changes the pin, because changing the
-    /// From address mid-thread breaks client threading, reply-history scoring,
-    /// and allow-list continuity all at once.
-    ///
-    /// # Errors
-    ///
-    /// As [`Vault::canonical_thread_ref`], plus decode failures on stored
-    /// passport rows.
-    pub fn sticky_thread_mask(
-        &self,
-        thread_ref: &str,
-        requested: Option<ThreadMask>,
-    ) -> Result<StickyMaskDecision> {
-        validate_thread_ref(thread_ref)?;
-        let rtxn = self.store.env.read_txn()?;
-        let edges = thread_alias_edges(self, &rtxn)?;
-        let canonical = resolve_thread_alias(&edges, thread_ref)?;
-        let rows = active_passport_rows(self, &rtxn)?;
-        let ordered = passports_on_thread(rows, &edges, &canonical)?;
-        let Some(pinning) = ordered.into_values().next() else {
-            return Ok(StickyMaskDecision::Unset);
-        };
-        let pinned = pinning.mask;
-        Ok(match requested {
-            None => StickyMaskDecision::Keep(pinned),
-            Some(requested) if requested == pinned => StickyMaskDecision::Keep(pinned),
-            Some(requested) => StickyMaskDecision::Conflict { pinned, requested },
-        })
-    }
-
-    /// Joins (or parts) `party` on `thread_ref`'s CANONICAL thread.
-    ///
-    /// A thin, alias-aware wrapper over the existing public
-    /// [`crate::comm::record_comm_thread_event`]: membership stays a
-    /// `comm.thread_member` claim with comm's own value shape, and this module
-    /// adds only the guarantee that a party never lands on a thread ref that
-    /// has since been converged away.
-    ///
-    /// # Errors
-    ///
-    /// As [`Vault::canonical_thread_ref`], plus
-    /// [`Error::InvalidClaimBody`] when comm rejects the party or thread key.
-    pub fn join_thread_party(
-        &self,
-        thread_ref: &str,
-        party: &str,
-        joined: bool,
-        occurred_at: u64,
-    ) -> Result<()> {
-        let canonical = self.canonical_thread_ref(thread_ref)?;
-        record_comm_thread_event(self, &canonical, party, joined, occurred_at).map_err(|err| {
-            match err {
-                CommError::Engine(inner) => inner,
-                _ => Error::InvalidClaimBody("comm rejected the thread membership event"),
-            }
-        })
-    }
-}
+pub(crate) use codec::validate_thread_claim_structure;
+use codec::*;
+use graph::*;
+pub(crate) use graph::{canonical_thread_ref_in_txn, thread_aliases_in_txn};
+use storage::*;
+pub(crate) use storage::{is_thread_claim_predicate, validate_thread_claim_in_txn};
 
 #[cfg(test)]
 mod tests;

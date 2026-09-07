@@ -237,6 +237,7 @@ pub(super) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
+        crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
             if !id
@@ -827,6 +828,11 @@ pub(super) fn apply_put(
         )?;
     }
     if let Some(body) = decoded_claim_body.as_ref() {
+        // Thread readers reuse ClaimOf, not a private unsynchronized cache.
+        // Raw puts and replicated materialization must maintain that same index.
+        if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+            index_thread_claim_subject(store, wtxn, &id, body, learned_at)?;
+        }
         crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
             store, wtxn, &id, body, learned_at,
         )?;
