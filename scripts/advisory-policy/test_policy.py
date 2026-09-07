@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -78,6 +79,18 @@ def write_advisory(database, entry, informational="unmaintained", extra=""):
         + classification + extra + '\n[versions]\npatched = []\n```\n'
         '# Fixture maintenance risk\n\nNot a remediation.\n', encoding="utf-8")
     return path
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_manual_dispatch_reaches_deny_job(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        # Pin the current simple YAML shape without adding a YAML dependency.
+        self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:\n\n(?=\S)")
+        job = re.search(r"(?m)^  deny:\n((?:    .*\n|\n)*)", workflow)
+        self.assertIsNotNone(job)
+        conditions = [line for line in job[1].splitlines() if line.startswith("    if:")]
+        self.assertEqual(conditions, ["    if: github.event_name == 'workflow_dispatch'"])
+        self.assertNotRegex(job[1], r"(?m)^    needs:")
 
 
 class PolicyTests(unittest.TestCase):

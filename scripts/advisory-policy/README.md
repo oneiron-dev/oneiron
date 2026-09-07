@@ -36,9 +36,11 @@ python3 scripts/advisory-policy/check.py
 python3 scripts/advisory-policy/check.py --offline
 ```
 
-The existing CI deny job runs the tests and the first command. It still checks
-advisories, licenses, bans, and sources. No triggers, job conditions, or runner
-platforms are changed.
+The existing CI deny job runs the tests and the first command on manual
+`workflow_dispatch` runs. Only its job condition changes from `pull_request` to
+`workflow_dispatch`, so the checks are reachable under the existing manual-only
+workflow policy. Triggers, other jobs, and runner platforms are unchanged. It
+still checks advisories, licenses, bans, and sources.
 
 The wrapper:
 
@@ -91,6 +93,10 @@ python3 scripts/advisory-policy/check.py --offline
 # When fresh network-backed validation is authorized (also the CI command):
 python3 scripts/advisory-policy/check.py
 ```
+
+A standard-library regression pins the manual-only trigger and the deny job's
+matching condition, with no upstream job dependency that could skip it. The
+existing 22 substantive tests are unchanged.
 
 The deterministic suite includes all 16 exact entries, version/source/context
 changes, extra/new/unlisted IDs, vulnerabilities, classification changes,

@@ -207,7 +207,7 @@ jobs:
   deny:
     name: cargo-deny
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       # The policy wrapper and tests must use the same inspected cargo-deny version.
