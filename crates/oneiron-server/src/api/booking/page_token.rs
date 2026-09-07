@@ -6,8 +6,8 @@ use oneiron::booking::{BookingError, EventTypeConfig};
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::{ClaimLifecycleStatus, ClaimSubject, EntityId, Vault};
 
-use super::constants::{PAGE_TOKEN_BYTES, PAGE_TOKEN_DOMAIN, PAGE_TOKEN_PREFIX};
-use super::helpers::{booking_error, domain_digest, engine_read_error, hex_lower};
+use super::constants::{PAGE_TOKEN_BYTES, PAGE_TOKEN_PREFIX};
+use super::helpers::{booking_error, engine_read_error};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -23,11 +23,7 @@ use crate::server::SyncServer;
 /// from public data without ever accepting an `EntityId`.
 #[must_use]
 pub(crate) fn booking_page_token(page_ref: EntityId) -> String {
-    let digest = domain_digest(PAGE_TOKEN_DOMAIN, page_ref.as_bytes());
-    format!(
-        "{PAGE_TOKEN_PREFIX}{}",
-        hex_lower(&digest[..PAGE_TOKEN_BYTES])
-    )
+    oneiron::booking::PublicBookingPageToken::for_page(page_ref).0
 }
 
 /// Resolves an opaque page token to the booking page it names.
