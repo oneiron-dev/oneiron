@@ -14,7 +14,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::ppr::{
-    SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_deferred_cache,
+    SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_vad_deferred_cache,
 };
 use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::Store;
@@ -920,6 +920,7 @@ impl Vault {
         depth: u32,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
+        crate::config::validate_ppr_vad_alpha(self.config.ppr_vad_alpha)?;
         let definitions = self.code_symbol_definitions(code_artifact_id, seed_name)?;
         if definitions.is_empty() || limit == 0 {
             return Ok(Vec::new());
@@ -929,12 +930,13 @@ impl Vault {
             .map(|definition| definition.entity_id)
             .collect::<Vec<_>>();
         let rtxn = self.store.env.read_txn()?;
-        let (scores, deferred) = ppr_query_in_txn_with_deferred_cache(
+        let (scores, deferred) = ppr_query_in_txn_with_vad_deferred_cache(
             &self.store,
             &rtxn,
             &seeds,
             depth,
             0.15,
+            self.config.ppr_vad_alpha,
             SeedWeighting::Specificity,
         )?;
         let mut filtered = Vec::new();
