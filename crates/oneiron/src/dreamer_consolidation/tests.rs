@@ -284,9 +284,9 @@ fn working_set_selects_only_new_admissible_turns() -> Result<()> {
     user_claim(&vault, "profile.name", 150); // claims never enter
 
     let watermark = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 100,
         last_turn_id: None,
+        ..ConsolidationWatermark::bootstrap()
     };
     let turns = scan_dirty_turns(&vault, scope, &watermark, 100)?;
     assert_eq!(turns.len(), 2, "only admissible post-watermark turns");
@@ -525,9 +525,9 @@ fn watermark_v1_decodes_as_complete_second_boundary() -> Result<()> {
 fn watermark_v2_roundtrips_compound_position() -> Result<()> {
     let turn_id = ordered_turn_id(0x42, 7);
     let exact = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 900,
         last_turn_id: Some(turn_id),
+        ..ConsolidationWatermark::bootstrap()
     };
     assert_eq!(decode_watermark(&encode_watermark(&exact)?)?, exact);
     let boundary = ConsolidationWatermark::bootstrap();
@@ -759,9 +759,9 @@ fn resume_is_strictly_after_compound_key() -> Result<()> {
     let later_second = seed_turn(&vault, &conversation, "user", "later second", 901);
 
     let inside = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 900,
         last_turn_id: Some(same_second[1]),
+        ..ConsolidationWatermark::bootstrap()
     };
     assert_eq!(
         scan_dirty_turns(&vault, scope, &inside, usize::MAX)?
@@ -773,9 +773,9 @@ fn resume_is_strictly_after_compound_key() -> Result<()> {
     );
 
     let boundary = ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
         last_learned_at: 900,
         last_turn_id: None,
+        ..ConsolidationWatermark::bootstrap()
     };
     assert_eq!(
         scan_dirty_turns(&vault, scope, &boundary, usize::MAX)?
@@ -879,9 +879,9 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert_eq!(
         settled,
         ConsolidationWatermark {
-            schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: SECOND,
             last_turn_id: Some(seeded[DEFAULT_MESO_ROUND_TURN_CAP - 1]),
+            ..ConsolidationWatermark::bootstrap()
         },
         "the stored row is the exact within-second position"
     );
@@ -903,9 +903,9 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert_eq!(
         read_watermark(&vault, scope)?,
         ConsolidationWatermark {
-            schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: SECOND,
             last_turn_id: Some(seeded[total - 1]),
+            ..ConsolidationWatermark::bootstrap()
         }
     );
 
@@ -942,9 +942,9 @@ fn empty_matched_round_still_commits_close() -> Result<()> {
     assert_eq!(
         read_watermark(&vault, scope)?,
         ConsolidationWatermark {
-            schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: 900,
             last_turn_id: None,
+            ..ConsolidationWatermark::bootstrap()
         }
     );
     Ok(())

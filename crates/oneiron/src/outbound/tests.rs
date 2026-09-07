@@ -6677,7 +6677,14 @@ fn missing_retry_after_rejects_injected_provider_retry_after() -> crate::Result<
 
 #[test]
 fn malformed_retry_after_rejects_injected_provider_retry_after() -> crate::Result<()> {
-    for raw in ["", " \t ", "-1", "1.5", "not-a-number", "18446744073709551616"] {
+    for raw in [
+        "",
+        " \t ",
+        "-1",
+        "1.5",
+        "not-a-number",
+        "18446744073709551616",
+    ] {
         exercise_provider_retry_after_collision(Some(raw), None)?;
     }
     Ok(())

@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_consolidation::{
-    WorkingSetTurn, advance_watermark, decode_turn_body, partition_round_hash,
+    WorkingSetTurn, decode_turn_body, partition_round_hash, reopen_watermark_from,
 };
 use crate::dreamer_runner::{DreamerConsolidationScope, DreamerTurnRole, dreamer_turn_role};
 use crate::entity_id::EntityId;
@@ -825,12 +825,12 @@ pub(crate) fn prefilter_partition_input_in_txn(
 /// an earlier threshold dropped — this door is how an operator asks for that
 /// re-sweep explicitly.
 ///
-/// It writes an ABSOLUTE cursor position through
-/// [`advance_watermark`], which is the one settlement path that does not
-/// refuse a backwards move (the in-transaction settler
-/// `advance_watermark_in_txn` fail-closes on rewind, exactly so that a round
-/// cannot quietly re-plan consumed work). `from_learned_at` is INCLUSIVE: the
-/// next round re-scans every admissible turn at or after that second, and
+/// It writes an ABSOLUTE cursor position through the administrative rescan
+/// path, including an explicit before-first position for zero. The normal
+/// in-transaction settler `advance_watermark_in_txn` still fail-closes on
+/// rewind so that a round cannot quietly re-plan consumed work.
+/// `from_learned_at` is INCLUSIVE: the next round re-scans every admissible
+/// turn at or after that second, and
 /// `0` is a full re-sweep from the beginning of the log.
 ///
 /// Re-planning is safe rather than duplicative because a consolidation attempt
@@ -845,7 +845,7 @@ pub fn reopen_prefilter_rescan(
     scope: DreamerConsolidationScope,
     from_learned_at: u64,
 ) -> Result<()> {
-    advance_watermark(vault, scope, from_learned_at.saturating_sub(1))
+    reopen_watermark_from(vault, scope, from_learned_at)
 }
 
 // ---------------------------------------------------------------------------

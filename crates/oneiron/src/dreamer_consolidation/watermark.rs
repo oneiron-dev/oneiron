@@ -19,6 +19,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
 
+#[cfg(test)]
+mod rescan_tests;
+
 // ---------------------------------------------------------------------------
 // Phase 0 — global watermark scan (dirty-turn selection)
 // ---------------------------------------------------------------------------
@@ -32,10 +35,14 @@ use crate::registry::ENTITY_TYPE_TURN;
 pub struct ConsolidationWatermark {
     pub schema_version: u64,
     pub last_learned_at: u64,
-    /// None = end-of-second boundary; Some(id) = exact temporal-index key.
+    /// Explicit full-rescan position, before every temporal key, including zero.
+    /// When true, `last_learned_at` is zero and `last_turn_id` is None.
+    pub before_first: bool,
+    /// Unless `before_first`, None = end-of-second; Some(id) = exact index key.
     ///
-    /// The sentinel is deliberate, NOT Rust tuple ordering: `None` means every
-    /// key at `last_learned_at` is behind the cursor, which is what bootstrap
+    /// The sentinel is deliberate, NOT Rust tuple ordering: outside a full
+    /// rescan, `None` puts every key at `last_learned_at` behind the cursor,
+    /// which is what bootstrap
     /// (`(0, None)` starts at learned-at 1) and a decoded schema-1 row
     /// ("through second X") both mean.
     pub last_turn_id: Option<EntityId>,
@@ -48,6 +55,7 @@ impl ConsolidationWatermark {
         Self {
             schema_version: WATERMARK_SCHEMA_VERSION,
             last_learned_at: 0,
+            before_first: false,
             last_turn_id: None,
         }
     }
@@ -114,6 +122,25 @@ pub fn advance_watermark(
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     write_watermark_position_in_txn(vault, &mut wtxn, scope, last_learned_at, None)?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// Administrative inclusive rescan, distinct from normal round settlement.
+/// Zero needs a before-first position: completing second zero would skip it.
+pub(crate) fn reopen_watermark_from(
+    vault: &Vault,
+    scope: DreamerConsolidationScope,
+    from_learned_at: u64,
+) -> Result<()> {
+    let previous = from_learned_at.checked_sub(1);
+    let watermark = ConsolidationWatermark {
+        last_learned_at: previous.unwrap_or(0),
+        before_first: previous.is_none(),
+        ..ConsolidationWatermark::bootstrap()
+    };
+    let mut wtxn = vault.store.env.write_txn()?;
+    write_watermark_in_txn(vault, &mut wtxn, scope, &watermark)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -193,11 +220,26 @@ fn write_watermark_position_in_txn(
     learned_at: u64,
     turn_id: Option<EntityId>,
 ) -> Result<()> {
-    let encoded = encode_watermark(&ConsolidationWatermark {
-        schema_version: WATERMARK_SCHEMA_VERSION,
-        last_learned_at: learned_at,
-        last_turn_id: turn_id,
-    })?;
+    write_watermark_in_txn(
+        vault,
+        wtxn,
+        scope,
+        &ConsolidationWatermark {
+            schema_version: WATERMARK_SCHEMA_VERSION,
+            last_learned_at: learned_at,
+            before_first: false,
+            last_turn_id: turn_id,
+        },
+    )
+}
+
+fn write_watermark_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    watermark: &ConsolidationWatermark,
+) -> Result<()> {
+    let encoded = encode_watermark(watermark)?;
     vault
         .store
         .vault_meta
@@ -206,8 +248,16 @@ fn write_watermark_position_in_txn(
 }
 
 /// Encodes a watermark row. Every emitted row is schema v2 (no bulk rewrite
-/// runs: a landed v1 row upgrades on its next advance).
+/// runs: a landed v1 row upgrades on its next advance). A nil learned-at in
+/// schema v2 records the before-first position, never a completed second zero.
 pub(super) fn encode_watermark(watermark: &ConsolidationWatermark) -> Result<Vec<u8>> {
+    if watermark.before_first
+        && (watermark.last_learned_at != 0 || watermark.last_turn_id.is_some())
+    {
+        return Err(invalid_consolidation(
+            "invalid before-first dreamer watermark",
+        ));
+    }
     encode_value(&Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -215,7 +265,11 @@ pub(super) fn encode_watermark(watermark: &ConsolidationWatermark) -> Result<Vec
         ),
         (
             Value::from(KEY_LAST_LEARNED_AT),
-            Value::from(watermark.last_learned_at),
+            if watermark.before_first {
+                Value::Nil
+            } else {
+                Value::from(watermark.last_learned_at)
+            },
         ),
         (
             Value::from(KEY_LAST_TURN_ID),
@@ -230,8 +284,9 @@ pub(super) fn decode_watermark(raw: &[u8]) -> Result<ConsolidationWatermark> {
     let value = decode_value(raw)?;
     let entries = expect_map(&value, "dreamer watermark row must be a MessagePack map")?;
     let mut schema_version = None;
-    let mut last_learned_at = None;
-    // Outer Option = "the pinned key was present"; inner = the sentinel.
+    // Outer Options track key presence; inner None means before-first for
+    // learned-at, or the complete-second sentinel for turn-id.
+    let mut last_learned_at: Option<Option<u64>> = None;
     let mut last_turn_id: Option<Option<EntityId>> = None;
     for (key, value) in entries {
         match expect_key(key)? {
@@ -245,7 +300,10 @@ pub(super) fn decode_watermark(raw: &[u8]) -> Result<ConsolidationWatermark> {
                 if last_learned_at.is_some() {
                     return Err(duplicate_watermark_key());
                 }
-                last_learned_at = Some(expect_watermark_u64(value)?);
+                last_learned_at = Some(match value {
+                    Value::Nil => None,
+                    _ => Some(expect_watermark_u64(value)?),
+                });
             }
             KEY_LAST_TURN_ID => {
                 if last_turn_id.is_some() {
@@ -276,11 +334,19 @@ pub(super) fn decode_watermark(raw: &[u8]) -> Result<ConsolidationWatermark> {
             ));
         }
     };
+    let last_learned_at = last_learned_at.ok_or(invalid_consolidation(
+        "missing dreamer watermark learned_at",
+    ))?;
+    let before_first = last_learned_at.is_none();
+    if before_first && (schema_version != WATERMARK_SCHEMA_VERSION || last_turn_id.is_some()) {
+        return Err(invalid_consolidation(
+            "invalid before-first dreamer watermark",
+        ));
+    }
     Ok(ConsolidationWatermark {
         schema_version,
-        last_learned_at: last_learned_at.ok_or(invalid_consolidation(
-            "missing dreamer watermark learned_at",
-        ))?,
+        last_learned_at: last_learned_at.unwrap_or(0),
+        before_first,
         last_turn_id,
     })
 }
@@ -365,9 +431,9 @@ const fn effective_dirty_turn_limit(scope: DreamerConsolidationScope, requested:
 }
 
 /// The ONE seek/filter/cap body: every admissible TURN strictly after
-/// `watermark`'s compound position, in temporal-key `(learned_at, id)` order,
-/// through `upper_inclusive_second` (unbounded above when `None`), stopping at
-/// `limit`.
+/// `watermark`'s compound position (unbounded below for a before-first rescan),
+/// in temporal-key `(learned_at, id)` order, through `upper_inclusive_second`
+/// (unbounded above when `None`), stopping at `limit`.
 ///
 /// Selection ORDER and ADMISSIBILITY are scope-independent — type-filtered to
 /// TURN (claims NEVER enter the working set, GATE-11) and role-filtered by
@@ -387,15 +453,14 @@ fn enumerate_admissible_turns(
         key[..8].copy_from_slice(&second.to_be_bytes());
         key
     });
+    let lower_bound = if watermark.before_first {
+        std::ops::Bound::Unbounded
+    } else {
+        std::ops::Bound::Excluded(&lower[..])
+    };
     let range: (std::ops::Bound<&[u8]>, std::ops::Bound<&[u8]>) = match upper.as_ref() {
-        Some(upper) => (
-            std::ops::Bound::Excluded(&lower[..]),
-            std::ops::Bound::Included(&upper[..]),
-        ),
-        None => (
-            std::ops::Bound::Excluded(&lower[..]),
-            std::ops::Bound::Unbounded,
-        ),
+        Some(upper) => (lower_bound, std::ops::Bound::Included(&upper[..])),
+        None => (lower_bound, std::ops::Bound::Unbounded),
     };
 
     let mut admissible = Vec::new();
@@ -442,8 +507,8 @@ fn enumerate_admissible_turns(
 }
 
 /// Scans dirty turns: TURN entities (type 1) at temporal keys STRICTLY AFTER
-/// the watermark's compound position `(last_learned_at, last_turn_id)`, in
-/// temporal-key `(learned_at, id)` order, each passing the GATE-10 role
+/// the watermark's compound position `(last_learned_at, last_turn_id)` (or all
+/// keys for a before-first rescan), in temporal-key order, passing the GATE-10 role
 /// filter. Claims NEVER enter the working set (GATE-11 structural invariant —
 /// the scan is type-filtered).
 ///

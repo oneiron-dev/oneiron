@@ -89,7 +89,8 @@ fn blank_finals_have_no_effects_and_the_same_revision_is_retryable() -> Result<(
         for warm in [false, true] {
             let (_dir, vault) = vault();
             let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
-            let handle = session.open_utterance("blank-final", SpeculativeSessionConfig::default())?;
+            let handle =
+                session.open_utterance("blank-final", SpeculativeSessionConfig::default())?;
             let mut enricher = Enricher::default();
             let warm_context = if warm {
                 let update = session.handle_asr(
