@@ -157,28 +157,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.sort_unstable();
     neighbors.dedup();
 
-    let type_key = Store::encode_type_key(entity_type, id);
-    store.type_index.delete(wtxn, &type_key)?;
-
-    let occurred_start_key = Store::encode_temporal_key(occurred.start, id);
-    store
-        .temporal_occurred_start
-        .delete(wtxn, &occurred_start_key)?;
-    if occurred.start != occurred.end {
-        let occurred_end_key = Store::encode_temporal_key(occurred.end, id);
-        store
-            .temporal_occurred_end
-            .delete(wtxn, &occurred_end_key)?;
-    }
-    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
-        store
-            .temporal_long_intervals
-            .delete(wtxn, &long_interval_key)?;
-    }
-
-    let learned_key = Store::encode_temporal_key(learned_at, id);
-    store.temporal_learned.delete(wtxn, &learned_key)?;
+    delete_entity_index_rows(store, wtxn, id, entity_type, occurred, learned_at)?;
 
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;

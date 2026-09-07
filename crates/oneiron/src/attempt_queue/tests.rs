@@ -1,8 +1,11 @@
 use super::encoding::{
-    DEDUPE_DOMAIN, DEDUPE_INDEX_KEY_LEN, decode_ready_key, dedupe_index_key, encode_record,
-    legacy_dedupe_index_key, ready_at, ready_key,
+    DEDUPE_DOMAIN_V1, DEDUPE_INDEX_KEY_LEN, decode_ready_key, dedupe_index_key,
+    dedupe_index_key_v2, encode_record, legacy_dedupe_index_key, ready_at, ready_key,
 };
-use super::engine::RETRY_REASON_UNSPECIFIED;
+use super::engine::{
+    ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW,
+    RETRY_CHAIN_DEPTH_LIMIT, RETRY_REASON_UNSPECIFIED,
+};
 use super::telemetry::emit_attempt_queue_cleanup_span;
 use super::types::MAX_ATTEMPT_EVENTS_PER_RECORD;
 use super::validate::{
@@ -10,12 +13,13 @@ use super::validate::{
     ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN, ERR_CANCEL_RECEIPT_MISSING_GROUNDS,
     ERR_CANCEL_RECEIPT_MISSING_REASON, ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF,
     ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT, ERR_CANCEL_RECEIPT_MISSING_TRIGGER,
-    ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPTS_FULL, ERR_FAILURE_REASON_EMPTY,
-    ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITHOUT_LEASE,
-    ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL, ERR_MANIFEST_REFERENCE_EMPTY,
-    ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG, ERR_MANIFEST_VERSION_EMPTY,
-    ERR_MANIFEST_VERSION_TOO_LONG, ERR_RUN_ID_TOO_LONG, MAX_FAILURE_REASON_LEN,
-    MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN, append_cancel_receipt,
+    ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPTS_FULL, ERR_DEDUPE_ACTOR_WITHOUT_KEY,
+    ERR_FAILURE_REASON_EMPTY, ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LANDING_RECORD_MISPLACED,
+    ERR_LANDING_WITHOUT_LEASE, ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL,
+    ERR_MANIFEST_REFERENCE_EMPTY, ERR_MANIFEST_REFERENCE_HAS_AT, ERR_MANIFEST_REFERENCE_TOO_LONG,
+    ERR_MANIFEST_VERSION_EMPTY, ERR_MANIFEST_VERSION_TOO_LONG, ERR_RUN_ID_TOO_LONG,
+    MAX_FAILURE_REASON_LEN, MAX_MANIFEST_REFERENCE_LEN, MAX_MANIFEST_VERSION_LEN, MAX_RUN_ID_LEN,
+    append_cancel_receipt,
 };
 use super::*;
 use crate::error::{Error, Result};
@@ -1397,6 +1401,310 @@ fn attempt_queue_retry_chain_keeps_every_try_independently_queryable() -> Result
     Ok(())
 }
 
+/// A stable id for rows written straight into storage below.
+fn synthetic_attempt_id(index: u32) -> AttemptId {
+    let mut bytes = [0_u8; 16];
+    bytes[..4].copy_from_slice(&index.to_be_bytes());
+    // Never the all-zero key, which no minted id can be either.
+    bytes[15] = 0x79;
+    AttemptId::from_bytes(&bytes).expect("synthetic id")
+}
+
+/// Writes attempt rows past the state machine, in one transaction.
+///
+/// Nothing this queue offers can mint a cycle or a dangling `retry_of`, so a
+/// test of what happens when storage carries one has to write the rows itself.
+fn put_raw_attempts(vault: &Vault, records: &[AttemptRecord]) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    for record in records {
+        let encoded = encode_record(record)?;
+        vault
+            .store
+            .attempt_records
+            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+    }
+    wtxn.commit()?;
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_counts_the_lineage_not_the_lease() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:depth"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+    // A first try is depth 0: nothing precedes it.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    let mut chain = vec![root.id];
+    let mut now = 20;
+    for expected_depth in 1..4_u32 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some("retryable".to_owned()),
+            now: now + 1,
+        })?;
+        // The fresh row restarts the lease fence at zero while the lineage
+        // keeps counting: that gap is exactly why depth is read from
+        // `retry_of` and never from `attempt_count`.
+        assert_eq!(claimed.attempt_count, 1);
+        assert_eq!(next.attempt_count, 0);
+        assert_eq!(queue.retry_chain_depth(next.id)?, expected_depth);
+        chain.push(next.id);
+        now += 10;
+    }
+
+    // Each ancestor keeps its own depth — the walk is per row, not per chain.
+    for (index, id) in chain.iter().enumerate() {
+        let expected = u32::try_from(index).expect("a four-row chain fits");
+        assert_eq!(queue.retry_chain_depth(*id)?, expected);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_saturates_at_the_bounded_limit() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:bound"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // A lineage longer than any backoff curve could ever read. The walk stops
+    // spending point reads at the limit and reports it, rather than growing
+    // with the row set — a bound, not an error.
+    let mut rows = Vec::new();
+    let mut template = root.clone();
+    let mut parent = root.id;
+    for index in 0..RETRY_CHAIN_DEPTH_LIMIT + 6 {
+        template.id = synthetic_attempt_id(index);
+        template.retry_of = Some(parent);
+        parent = template.id;
+        rows.push(template.clone());
+    }
+    put_raw_attempts(&vault, &rows)?;
+
+    assert_eq!(queue.retry_chain_depth(parent)?, RETRY_CHAIN_DEPTH_LIMIT);
+    // A short lineage inside that same store is still counted exactly.
+    assert_eq!(queue.retry_chain_depth(synthetic_attempt_id(0))?, 1);
+    assert_eq!(queue.retry_chain_depth(synthetic_attempt_id(3))?, 4);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_fails_closed_on_a_corrupt_lineage() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:corrupt"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // A link naming a row this queue does not hold. Counting it as the end of
+    // the chain would silently restart a caller's backoff at its first rung.
+    let orphan_id = synthetic_attempt_id(1);
+    let mut orphan = root.clone();
+    orphan.id = orphan_id;
+    orphan.retry_of = Some(synthetic_attempt_id(404));
+    put_raw_attempts(&vault, &[orphan])?;
+    assert!(matches!(
+        queue.retry_chain_depth(orphan_id).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW)
+    ));
+    // An id this queue never held at all is that same broken read.
+    assert!(matches!(
+        queue
+            .retry_chain_depth(synthetic_attempt_id(404))
+            .unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISSING_ROW)
+    ));
+
+    // A lineage that returns to a row already on the walk.
+    let first_id = synthetic_attempt_id(2);
+    let second_id = synthetic_attempt_id(3);
+    let mut first = root.clone();
+    first.id = first_id;
+    first.retry_of = Some(second_id);
+    let mut second = root.clone();
+    second.id = second_id;
+    second.retry_of = Some(first_id);
+    put_raw_attempts(&vault, &[first, second])?;
+    assert!(matches!(
+        queue.retry_chain_depth(first_id).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE)
+    ));
+
+    // A row naming ITSELF is the shortest cycle there is.
+    let selfish_id = synthetic_attempt_id(4);
+    let mut selfish = root.clone();
+    selfish.id = selfish_id;
+    selfish.retry_of = Some(selfish_id);
+    put_raw_attempts(&vault, &[selfish])?;
+    assert!(matches!(
+        queue.retry_chain_depth(selfish_id).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE)
+    ));
+
+    // None of it reached the honest row beside them.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_fails_closed_on_a_cross_chain_link() -> Result<()> {
+    type AttemptMutation = fn(&mut AttemptRecord);
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:cross"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // One case per field both `retry_of` writers copy verbatim from a source
+    // row to the row superseding it. Each parent is otherwise a perfect clone
+    // of its child, so the single mutated field is the only thing the walk can
+    // be rejecting — a link naming an EXISTING but unrelated attempt.
+    let cases: [(&str, AttemptMutation); 6] = [
+        ("kind", |record| record.kind = "dreamer_runner".to_owned()),
+        ("payload", |record| {
+            record.payload = b"payload-of-another-attempt".to_vec();
+        }),
+        ("task_ref", |record| {
+            record.task_ref = Some("task:other".to_owned());
+        }),
+        ("run_id", |record| {
+            record.run_id = Some("run-other".to_owned());
+        }),
+        ("dedupe_key", |record| {
+            record.dedupe_key = Some("turn:other".to_owned());
+        }),
+        // Same dedupe key, different scope: two actors sharing one client key
+        // hold disjoint attempts, so a link across them is no lineage either.
+        ("dedupe_actor_ref", |record| {
+            record.dedupe_actor_ref = Some("actor:other".to_owned());
+        }),
+    ];
+
+    for (index, (field, mutate)) in cases.into_iter().enumerate() {
+        let step = u32::try_from(index).expect("six cases fit") * 2;
+        let mut parent = root.clone();
+        parent.id = synthetic_attempt_id(step + 10);
+        mutate(&mut parent);
+        let child_id = synthetic_attempt_id(step + 11);
+        let mut child = root.clone();
+        child.id = child_id;
+        child.retry_of = Some(parent.id);
+        put_raw_attempts(&vault, &[parent, child])?;
+
+        // Counting this hop would hand the caller a backoff rung measured on
+        // somebody else's history, so it is corruption, not a short chain.
+        let err = queue.retry_chain_depth(child_id).expect_err(field);
+        assert!(
+            matches!(
+                err,
+                Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+            ),
+            "a differing {field} must fail closed, got {err:?}"
+        );
+    }
+
+    // None of it reached the honest row beside them.
+    assert_eq!(queue.retry_chain_depth(root.id)?, 0);
+
+    Ok(())
+}
+
+#[test]
+fn attempt_queue_retry_chain_depth_counts_real_successors_but_not_a_deep_cross_link() -> Result<()>
+{
+    let (_dir, vault) = open_queue();
+    let queue = AttemptQueue::new(&vault);
+
+    let EnqueueOutcome::Enqueued(root) =
+        queue.enqueue(enqueue("claim_extraction", Some("turn:deep"), 10))?
+    else {
+        panic!("expected enqueue");
+    };
+
+    // ANTI-OVER-MATCH: a genuine successor differs from its source on state,
+    // lease owner, lease counter, timestamps and the stamped failure reason.
+    // The identity check must ignore every one of those and still count.
+    let mut now = 20;
+    let mut head = root.id;
+    for expected_depth in 1..4_u32 {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected claim at {now}");
+        };
+        let RetryOutcome::Retried(next) = queue.retry(RetryAttempt {
+            id: claimed.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: now + 10,
+            last_error: Some("retryable".to_owned()),
+            now: now + 1,
+        })?;
+        assert_eq!(queue.retry_chain_depth(next.id)?, expected_depth);
+        head = next.id;
+        now += 10;
+    }
+    assert_eq!(queue.retry_chain_depth(head)?, 3);
+
+    // A cross-chain link buried DEEP in an otherwise honest lineage: three
+    // truthful hops, then one that leaves the attempt entirely. Validating
+    // only the first hop would have counted the whole chain.
+    let foreign_id = synthetic_attempt_id(20);
+    let mut foreign = root.clone();
+    foreign.id = foreign_id;
+    foreign.run_id = Some("run-foreign".to_owned());
+    let mut rows = vec![foreign];
+    let mut parent = foreign_id;
+    for index in 0..4_u32 {
+        let mut row = root.clone();
+        row.id = synthetic_attempt_id(21 + index);
+        row.retry_of = Some(parent);
+        parent = row.id;
+        rows.push(row);
+    }
+    put_raw_attempts(&vault, &rows)?;
+
+    assert!(matches!(
+        queue.retry_chain_depth(parent).unwrap_err(),
+        Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH)
+    ));
+    // The honest lineage beside it still counts exactly.
+    assert_eq!(queue.retry_chain_depth(head)?, 3);
+
+    Ok(())
+}
+
 #[test]
 fn attempt_queue_retry_omitting_a_reason_stamps_a_stable_token() -> Result<()> {
     let (_dir, vault) = open_queue();
@@ -2680,7 +2988,302 @@ fn legacy_backoff_row_stays_claimable_at_its_original_instant() -> Result<()> {
 #[test]
 fn dedupe_hash_domain_stays_pinned() {
     // Changing this silently orphans every live dedupe entry.
-    assert_eq!(DEDUPE_DOMAIN, b"oneiron.job_queue.dedupe.v1\0");
+    assert_eq!(DEDUPE_DOMAIN_V1, b"oneiron.job_queue.dedupe.v1\0");
+}
+
+/// ONE-1876: the advisory dedupe index gains an ACTOR axis.
+///
+/// The generic kind-scoped cases above are deliberately untouched — they are
+/// the proof that an actorless caller keeps byte-identical keys and behavior —
+/// so everything here is about the second axis and its bounded legacy window.
+mod one_1876_tests {
+    use super::*;
+
+    const KIND: &str = "claim_extraction";
+    const ACTOR_A: &str = "actor-a";
+    const ACTOR_B: &str = "actor-b";
+
+    /// A row written before the actor axis existed, at the unchanged record
+    /// version: every ONE-1795 field present, `dedupe_actor_ref` absent.
+    #[derive(serde::Serialize)]
+    struct Pre1876AttemptRecord {
+        id: AttemptId,
+        kind: String,
+        payload: Vec<u8>,
+        state: AttemptState,
+        lease_owner: Option<String>,
+        attempt_count: u32,
+        claimed_at: Option<u64>,
+        scheduled_at: Option<u64>,
+        retry_of: Option<AttemptId>,
+        backoff_until: Option<u64>,
+        last_error: Option<String>,
+        task_ref: Option<String>,
+        run_id: Option<String>,
+        dedupe_key: Option<String>,
+        created_at: u64,
+        updated_at: u64,
+        events: Vec<AttemptEvent>,
+        manifest: Vec<ManifestEntry>,
+        cancel_state: AttemptCancelState,
+    }
+
+    /// Enqueues through the actor-scoped seam the outbound schedule path uses.
+    fn enqueue_for_actor(
+        vault: &Vault,
+        queue: &AttemptQueue<'_>,
+        input: EnqueueAttempt,
+        actor_ref: &str,
+    ) -> Result<EnqueueOutcome> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let outcome = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
+            &mut wtxn,
+            input,
+            None,
+            Some(actor_ref),
+        )?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    fn enqueued(outcome: EnqueueOutcome) -> AttemptRecord {
+        match outcome {
+            EnqueueOutcome::Enqueued(record) => record,
+            EnqueueOutcome::Existing(_) => panic!("expected a new row, got a dedupe hit"),
+        }
+    }
+
+    fn existing(outcome: EnqueueOutcome) -> AttemptRecord {
+        match outcome {
+            EnqueueOutcome::Existing(record) => record,
+            EnqueueOutcome::Enqueued(_) => panic!("expected a dedupe hit, got a new row"),
+        }
+    }
+
+    fn owner_of(vault: &Vault, index_key: &[u8]) -> Result<Option<AttemptId>> {
+        let rtxn = vault.store.env.read_txn()?;
+        let Some(raw) = vault.store.attempt_dedupe.get(&rtxn, index_key)? else {
+            return Ok(None);
+        };
+        Ok(Some(AttemptId::from_bytes(&raw)?))
+    }
+
+    fn v1_owner(vault: &Vault, dedupe_key: &str) -> Result<Option<AttemptId>> {
+        owner_of(vault, &dedupe_index_key(KIND, dedupe_key))
+    }
+
+    fn v2_owner(vault: &Vault, actor_ref: &str, dedupe_key: &str) -> Result<Option<AttemptId>> {
+        owner_of(vault, &dedupe_index_key_v2(KIND, actor_ref, dedupe_key))
+    }
+
+    #[test]
+    fn attempt_queue_actor_scoped_dedupe_separates_actors() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = AttemptQueue::new(&vault);
+
+        let input = |now| enqueue(KIND, Some("idem"), now);
+        let first = enqueued(enqueue_for_actor(&vault, &queue, input(10), ACTOR_A)?);
+        // The whole defect: this second actor used to receive actor A's row.
+        let second = enqueued(enqueue_for_actor(&vault, &queue, input(20), ACTOR_B)?);
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.dedupe_actor_ref.as_deref(), Some(ACTOR_A));
+        assert_eq!(second.dedupe_actor_ref.as_deref(), Some(ACTOR_B));
+
+        // The axis narrows nothing else: the same actor still coalesces.
+        let replay = existing(enqueue_for_actor(&vault, &queue, input(30), ACTOR_A)?);
+        assert_eq!(replay.id, first.id);
+
+        // Two disjoint v2 entries, and an actor-scoped row never writes the
+        // actor-blind v1 key.
+        let key_a = dedupe_index_key_v2(KIND, ACTOR_A, "idem");
+        let key_b = dedupe_index_key_v2(KIND, ACTOR_B, "idem");
+        assert_ne!(key_a, key_b);
+        assert_eq!(v2_owner(&vault, ACTOR_A, "idem")?, Some(first.id));
+        assert_eq!(v2_owner(&vault, ACTOR_B, "idem")?, Some(second.id));
+        assert_eq!(v1_owner(&vault, "idem")?, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_queue_actor_scoped_dedupe_reads_v1_without_rewrite() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = AttemptQueue::new(&vault);
+
+        // A pre-1876 actorless pending row owns the v1 entry.
+        let legacy = enqueued(queue.enqueue(enqueue(KIND, Some("shared"), 10))?);
+        assert_eq!(legacy.dedupe_actor_ref, None);
+
+        let input = enqueue(KIND, Some("shared"), 20);
+        let hit = existing(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        assert_eq!(hit.id, legacy.id);
+
+        // Read-only compatibility: the row is untouched, no actor was invented
+        // for it, and no v2 entry was manufactured on its behalf.
+        assert_eq!(queue.get(legacy.id)?.expect("legacy row"), legacy);
+        assert_eq!(v1_owner(&vault, "shared")?, Some(legacy.id));
+        assert_eq!(v2_owner(&vault, ACTOR_A, "shared")?, None);
+
+        // The window is bounded: once the legacy chain terminalizes, the next
+        // actor-scoped enqueue takes its own v2 entry.
+        queue.intervene(InterveneAttempt {
+            id: legacy.id,
+            kind: AttemptInterventionKind::Cancel,
+            actor: "operator".to_owned(),
+            note: None,
+            now: 30,
+        })?;
+        let input = enqueue(KIND, Some("shared"), 40);
+        let fresh = enqueued(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        assert_eq!(fresh.dedupe_actor_ref.as_deref(), Some(ACTOR_A));
+        assert_eq!(v2_owner(&vault, ACTOR_A, "shared")?, Some(fresh.id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_queue_actor_scoped_dedupe_reads_raw_legacy_without_rewrite() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = AttemptQueue::new(&vault);
+
+        let legacy = enqueued(queue.enqueue(enqueue(KIND, Some("raw"), 10))?);
+        // Demote the entry to the pre-v1 raw key, where a row written before
+        // the hashed index existed would still sit.
+        let v1_key = dedupe_index_key(KIND, "raw");
+        let raw_key = legacy_dedupe_index_key(KIND, "raw");
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.attempt_dedupe.delete(&mut wtxn, &v1_key)?;
+            vault
+                .store
+                .attempt_dedupe
+                .put(&mut wtxn, &raw_key, legacy.id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let input = enqueue(KIND, Some("raw"), 20);
+        let hit = existing(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        assert_eq!(hit.id, legacy.id);
+
+        // No duplicate row, no rewrite, no index promotion, and none of the
+        // actorless raw -> v1 self-heal.
+        assert_eq!(queue.get(legacy.id)?.expect("legacy row"), legacy);
+        assert_eq!(owner_of(&vault, &raw_key)?, Some(legacy.id));
+        assert_eq!(owner_of(&vault, &v1_key)?, None);
+        assert_eq!(v2_owner(&vault, ACTOR_A, "raw")?, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_queue_retry_moves_actor_scoped_index_to_newest_pending() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = AttemptQueue::new(&vault);
+
+        let input = enqueue(KIND, Some("retried"), 10);
+        let source = enqueued(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected the actor-scoped row to claim");
+        };
+        assert_eq!(claimed.id, source.id);
+
+        let RetryOutcome::Retried(child) = queue.retry(RetryAttempt {
+            id: source.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: 100,
+            last_error: Some("transient".to_owned()),
+            now: 30,
+        })?;
+
+        // The scope travels with the key it scopes, so the entry moves to the
+        // newest pending member of the chain — still in the v2 family.
+        assert_eq!(child.retry_of, Some(source.id));
+        assert_eq!(child.dedupe_actor_ref.as_deref(), Some(ACTOR_A));
+        assert_eq!(v2_owner(&vault, ACTOR_A, "retried")?, Some(child.id));
+        assert_eq!(v1_owner(&vault, "retried")?, None);
+
+        let input = enqueue(KIND, Some("retried"), 40);
+        let hit = existing(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        assert_eq!(hit.id, child.id);
+
+        // Terminalizing one actor's source never spent another actor's key
+        // space: actor B still enqueues its own row.
+        let input = enqueue(KIND, Some("retried"), 50);
+        let other = enqueued(enqueue_for_actor(&vault, &queue, input, ACTOR_B)?);
+        assert_ne!(other.id, child.id);
+        assert_eq!(v2_owner(&vault, ACTOR_B, "retried")?, Some(other.id));
+
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_queue_actor_scope_without_dedupe_key_is_corruption() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = AttemptQueue::new(&vault);
+
+        // The write side never mints such a row: with no key to scope, an
+        // offered scope is normalized away instead of persisted.
+        let input = enqueue(KIND, None, 10);
+        let mut record = enqueued(enqueue_for_actor(&vault, &queue, input, ACTOR_A)?);
+        assert_eq!(record.dedupe_actor_ref, None);
+
+        // And the read side refuses one that reached storage anyway.
+        record.dedupe_actor_ref = Some(ACTOR_A.to_owned());
+        let encoded = encode_record(&record)?;
+        let err = decode_record(&encoded, record.id)
+            .expect_err("an actor scope with no key is corruption");
+        assert!(matches!(
+            err,
+            Error::InvalidAttemptQueueRecord(reason) if reason == ERR_DEDUPE_ACTOR_WITHOUT_KEY
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn pre_1876_row_decodes_with_no_actor_scope() -> Result<()> {
+        // No version bump and no migration: the field is additive and
+        // defaulted, exactly like ONE-1795's.
+        assert_eq!(ATTEMPT_RECORD_VERSION, 2);
+
+        let id = AttemptId::from_bytes(&[0x8C; 16])?;
+        let legacy = Pre1876AttemptRecord {
+            id,
+            kind: KIND.to_owned(),
+            payload: b"legacy-payload".to_vec(),
+            state: AttemptState::Queued,
+            lease_owner: None,
+            attempt_count: 0,
+            claimed_at: None,
+            scheduled_at: None,
+            retry_of: None,
+            backoff_until: None,
+            last_error: None,
+            task_ref: Some("tk_legacy".to_owned()),
+            run_id: Some("run-legacy".to_owned()),
+            dedupe_key: Some("turn:legacy".to_owned()),
+            created_at: 10,
+            updated_at: 10,
+            events: Vec::new(),
+            manifest: Vec::new(),
+            cancel_state: AttemptCancelState::default(),
+        };
+        let mut encoded = vec![ATTEMPT_RECORD_VERSION];
+        encoded.extend(rmp_serde::to_vec_named(&legacy).expect("serialize pre-1876 row"));
+
+        let decoded = decode_record(&encoded, id)?;
+        assert_eq!(decoded.dedupe_actor_ref, None);
+        assert_eq!(decoded.dedupe_key.as_deref(), Some("turn:legacy"));
+        // A defaulted row re-encodes and decodes unchanged.
+        assert_eq!(decode_record(&encode_record(&decoded)?, id)?, decoded);
+
+        Ok(())
+    }
 }
 
 mod one_1695_tests {
@@ -2720,6 +3323,7 @@ mod one_1695_tests {
             task_ref: task_ref.map(str::to_owned),
             run_id: Some("run-owner".to_owned()),
             dedupe_key: Some("owner-job".to_owned()),
+            dedupe_actor_ref: None,
             created_at: 10,
             updated_at: 10,
             events: Vec::new(),

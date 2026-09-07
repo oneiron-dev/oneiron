@@ -5,6 +5,7 @@ use super::support::*;
 use super::*;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
 use crate::calendar::{
@@ -27,6 +28,14 @@ use crate::temporal::TimeRange;
 /// use the queue's kind-scoped dedupe index; delivered sends use the additive
 /// durable client-idempotency index.
 pub const BRIDGE_OUTBOUND_ATTEMPT_KIND: &str = "bridge.outbound.schedule";
+
+/// Bound on the `retry_of` climb behind an `already_scheduled` receipt, the
+/// same 64 steps the run-root climb uses.
+///
+/// The walk is infallible by construction — the dedupe hit itself is the floor
+/// — so this cap only decides how far back a receipt may recover an origin, and
+/// guarantees a fabricated chain can never make a replay hang.
+const RETRY_LINEAGE_WALK_LIMIT: usize = 64;
 
 /// One outbound schedule request (BRIDGE-03; rides OF-327 — the bridge
 /// never implements delivery).
@@ -483,6 +492,12 @@ impl Memory<'_> {
         let queue = AttemptQueue::new(self.vault);
         let task_ref = EntityId::now();
         let payload = connector_send_attempt_payload(task_ref)?;
+        // The queue's live-schedule dedupe is scoped by the BOUND EFFECT ACTOR
+        // — never `on_behalf_of`, the target, the trigger, the TASK, or any
+        // client-controlled content — matching the actor-scoped contract the
+        // delivered-send index already keeps. Computed once so the abort-only
+        // preflight and the durable enqueue below cannot disagree by a byte.
+        let dedupe_actor_ref = self.actor.to_hex();
 
         // Abort-only enqueue preflight validates queue inputs and recovers an
         // existing live schedule without appending a second Gate decision. A
@@ -490,7 +505,7 @@ impl Memory<'_> {
         // therefore neither durable nor claimable.
         let mut preflight_txn = self.vault.store.env.write_txn().map_err(Error::from)?;
         verify_actor_binding_in_txn(self.vault, &preflight_txn, self.actor, self.actor_class)?;
-        let preflight = queue.enqueue_in_txn(
+        let preflight = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
             &mut preflight_txn,
             EnqueueAttempt {
                 kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -499,6 +514,8 @@ impl Memory<'_> {
                 run_id: draft.job_ref.clone(),
                 now,
             },
+            None,
+            Some(dedupe_actor_ref.as_str()),
         )?;
         drop(preflight_txn);
         if let EnqueueOutcome::Existing(attempt) = preflight {
@@ -571,7 +588,7 @@ impl Memory<'_> {
         }
 
         let outcome = self.with_verified_actor_write_txn(|wtxn| {
-            let outcome = queue.enqueue_with_task_ref_in_txn(
+            let outcome = queue.enqueue_with_task_ref_and_dedupe_actor_in_txn(
                 wtxn,
                 EnqueueAttempt {
                     kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -581,6 +598,7 @@ impl Memory<'_> {
                     now,
                 },
                 Some(task_ref.to_hex()),
+                Some(dedupe_actor_ref.as_str()),
             )?;
             if matches!(&outcome, EnqueueOutcome::Enqueued(_)) {
                 put_connector_send_task_in_txn(
@@ -634,11 +652,15 @@ impl Memory<'_> {
     }
 
     fn already_scheduled_outbound_receipt(&self, attempt_id: AttemptId) -> OutboundIntentReceipt {
-        // Re-surface the ORIGINAL gate decision the first schedule persisted,
-        // keyed by attempt id, so an idempotent retry recovers its receipt.
-        let binding = self.outbound_gate_binding(attempt_id);
+        // The live index owner may be a retry CHILD of the row that was
+        // actually scheduled, and only the schedule-time row carries the intent
+        // ref and Gate binding this receipt owes the caller. So resolve the
+        // originating attempt first, then re-surface the ORIGINAL gate decision
+        // it persisted. Ownership of the dedupe index never moves back.
+        let origin_id = self.outbound_schedule_origin_id(attempt_id);
+        let binding = self.outbound_gate_binding(origin_id);
         OutboundIntentReceipt {
-            intent_ref: outbound_intent_ref(attempt_id),
+            intent_ref: outbound_intent_ref(origin_id),
             outcome: "already_scheduled".to_owned(),
             gate_outcome: binding.as_ref().map(|binding| binding.gate_outcome.clone()),
             gate_decision_ref: binding
@@ -649,6 +671,43 @@ impl Memory<'_> {
                 .unwrap_or_default(),
             deduped: true,
         }
+    }
+
+    /// Walks `retry_of` back from a dedupe hit to the attempt that was
+    /// originally scheduled.
+    ///
+    /// Infallible and bounded by construction: the hit itself is the floor, a
+    /// visited set refuses a cycle, and [`RETRY_LINEAGE_WALK_LIMIT`] caps the
+    /// climb. A missing parent, a decode failure, or a parent that disagrees
+    /// with its child on kind, dedupe key, TASK backlink, or dedupe actor scope
+    /// stops the walk at the deepest ancestor already verified — a receipt
+    /// never crosses from one schedule's lineage into another's.
+    fn outbound_schedule_origin_id(&self, attempt_id: AttemptId) -> AttemptId {
+        let queue = AttemptQueue::new(self.vault);
+        let Ok(Some(hit)) = queue.get(attempt_id) else {
+            return attempt_id;
+        };
+        let mut origin_id = attempt_id;
+        let mut child = hit;
+        let mut visited = HashSet::from([attempt_id]);
+        while let Some(parent_id) = child.retry_of {
+            if visited.len() >= RETRY_LINEAGE_WALK_LIMIT || !visited.insert(parent_id) {
+                break;
+            }
+            let Ok(Some(parent)) = queue.get(parent_id) else {
+                break;
+            };
+            if parent.kind != child.kind
+                || parent.dedupe_key != child.dedupe_key
+                || parent.task_ref != child.task_ref
+                || parent.dedupe_actor_ref != child.dedupe_actor_ref
+            {
+                break;
+            }
+            origin_id = parent_id;
+            child = parent;
+        }
+        origin_id
     }
 
     /// Persists the gate surface of a scheduled outbound attempt (best-effort).

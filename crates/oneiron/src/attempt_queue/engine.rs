@@ -21,9 +21,8 @@ use super::cancel::{
     force_cancel_record, validate_force_authority,
 };
 use super::encoding::{
-    DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, dedupe_index_key,
-    encode_record, lease_expired, legacy_dedupe_index_key, ready_at, ready_key,
-    validate_dedupe_record, waiting_on_backoff,
+    DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, encode_record, lease_expired,
+    legacy_dedupe_index_key, ready_at, ready_key, validate_dedupe_record, waiting_on_backoff,
 };
 use super::telemetry::{
     emit_attempt_queue_cleanup_span, invalid_transition, record_attempt_queue_cleanup_metrics,
@@ -38,15 +37,31 @@ use super::types::{
 use super::validate::{
     ERR_MANIFEST_FULL, append_attempt_event, lease_claimed_record, validate_cleanup_leases_input,
     validate_failure_reason, validate_intervention_actor, validate_kind, validate_lease_owner,
-    validate_manifest_entry, validate_optional_dedupe, validate_optional_failure_reason,
-    validate_optional_intervention_note, validate_optional_run_id, validate_transition_lease,
+    validate_manifest_entry, validate_optional_dedupe, validate_optional_dedupe_actor_ref,
+    validate_optional_failure_reason, validate_optional_intervention_note,
+    validate_optional_run_id, validate_transition_lease,
 };
 
 const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
+/// A dedupe index entry pointing at a row whose actor scope is not the one the
+/// key family named. Reported as corruption, never as a dedupe miss: silently
+/// enqueueing a second live row would be the exact double-send the index is
+/// there to prevent.
+const ERR_DEDUPE_ACTOR_MISMATCH: &str = "dedupe index points at a different actor scope";
 /// Stable reason stamped on a retried source row when the caller supplied none.
 pub(super) const RETRY_REASON_UNSPECIFIED: &str = "retry";
 const CLAIM_KIND_WRITE_RETRY_LIMIT: usize = 3;
 const DREAMER_RUN_ROOT_CLIMB_LIMIT: usize = 64;
+/// Point reads one [`AttemptQueue::retry_chain_depth`] walk may spend. A
+/// lineage this long is already past every backoff ceiling that reads it, so
+/// the depth saturates here instead of letting a walk grow with the row set.
+pub(super) const RETRY_CHAIN_DEPTH_LIMIT: u32 = 1_024;
+/// A `retry_of` link naming a row this queue does not hold.
+pub(super) const ERR_RETRY_CHAIN_MISSING_ROW: &str = "retry chain names a missing attempt";
+/// A `retry_of` link returning to a row already on the walk.
+pub(super) const ERR_RETRY_CHAIN_CYCLE: &str = "retry chain cycles";
+/// A `retry_of` link naming an existing row that is not a try of this attempt.
+pub(super) const ERR_RETRY_CHAIN_MISMATCH: &str = "retry chain links unrelated attempts";
 
 #[derive(Debug, Default)]
 struct ClaimKindReadScan {
@@ -99,22 +114,24 @@ impl<'a> AttemptQueue<'a> {
         input: EnqueueAttempt,
         task_ref: Option<String>,
     ) -> Result<EnqueueOutcome> {
+        // This public door is actorless, and stays that way: every caller
+        // reaching it keeps the exact v1 key family, its pre-v1 raw fallback,
+        // and that fallback's self-heal — byte-identical to before the actor
+        // axis existed.
+        let actor_ref: Option<&str> = None;
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
+        validate_optional_dedupe_actor_ref(actor_ref)?;
         validate_optional_run_id(input.run_id.as_deref())?;
 
-        let dedupe_blake3_key = input
-            .dedupe_key
-            .as_deref()
-            .map(|dedupe_key| DedupeIndexKeys::new(&input.kind, dedupe_key));
-        if let (Some(dedupe_key), Some(index_key)) =
-            (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
-        {
+        if let Some(dedupe_key) = input.dedupe_key.as_deref() {
+            let keys = DedupeIndexKeys::new(&input.kind, actor_ref, dedupe_key);
             let rtxn = self.store.env.read_txn()?;
             if let Some(record) = self.read_existing_dedupe_in_read_txn(
                 &rtxn,
-                &index_key.blake3[..],
+                &keys.primary[..],
                 &input.kind,
+                actor_ref,
                 dedupe_key,
             )? {
                 return Ok(EnqueueOutcome::Existing(record));
@@ -122,7 +139,8 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.enqueue_with_task_ref_in_txn(&mut wtxn, input, task_ref)?;
+        let outcome = self
+            .enqueue_with_task_ref_and_dedupe_actor_in_txn(&mut wtxn, input, task_ref, actor_ref)?;
         wtxn.commit()?;
 
         Ok(outcome)
@@ -138,7 +156,7 @@ impl<'a> AttemptQueue<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: EnqueueAttempt,
     ) -> Result<EnqueueOutcome> {
-        self.enqueue_with_task_ref_in_txn(wtxn, input, None)
+        self.enqueue_with_task_ref_and_dedupe_actor_in_txn(wtxn, input, None, None)
     }
 
     /// Transaction-composable enqueue with an owning TASK backlink.
@@ -148,20 +166,47 @@ impl<'a> AttemptQueue<'a> {
         input: EnqueueAttempt,
         task_ref: Option<String>,
     ) -> Result<EnqueueOutcome> {
+        self.enqueue_with_task_ref_and_dedupe_actor_in_txn(wtxn, input, task_ref, None)
+    }
+
+    /// Transaction-composable enqueue that scopes the advisory dedupe index to
+    /// one actor.
+    ///
+    /// The scope is NOT part of [`EnqueueAttempt`] and never comes from caller
+    /// content: a caller that has an authenticated actor passes it here, and
+    /// every other caller keeps the actorless key family unchanged. Two actors
+    /// sharing one client key therefore occupy disjoint entries, instead of the
+    /// second one silently coalescing onto the first one's pending row.
+    pub(crate) fn enqueue_with_task_ref_and_dedupe_actor_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueAttempt,
+        task_ref: Option<String>,
+        dedupe_actor_ref: Option<&str>,
+    ) -> Result<EnqueueOutcome> {
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
+        validate_optional_dedupe_actor_ref(dedupe_actor_ref)?;
         validate_optional_run_id(input.run_id.as_deref())?;
 
-        let dedupe_blake3_key = input
+        // Key-gated persistence: with no key there is no index entry to scope,
+        // so a scope offered anyway is normalized away rather than written into
+        // a row that decode would then refuse.
+        let persisted_actor_ref = input
+            .dedupe_key
+            .as_ref()
+            .and_then(|_| dedupe_actor_ref.map(str::to_owned));
+        let scoped_actor_ref = persisted_actor_ref.as_deref();
+        let dedupe_keys = input
             .dedupe_key
             .as_deref()
-            .map(|dedupe_key| DedupeIndexKeys::new(&input.kind, dedupe_key));
-        if let (Some(dedupe_key), Some(index_key)) =
-            (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
+            .map(|dedupe_key| DedupeIndexKeys::new(&input.kind, scoped_actor_ref, dedupe_key));
+        if let (Some(dedupe_key), Some(keys)) = (input.dedupe_key.as_deref(), dedupe_keys.as_ref())
             && let Some(record) = self.read_existing_dedupe_in_write_txn(
                 wtxn,
-                &index_key.blake3[..],
+                keys,
                 &input.kind,
+                scoped_actor_ref,
                 dedupe_key,
             )?
         {
@@ -183,6 +228,7 @@ impl<'a> AttemptQueue<'a> {
             task_ref,
             run_id: input.run_id,
             dedupe_key: input.dedupe_key,
+            dedupe_actor_ref: persisted_actor_ref,
             created_at: input.now,
             updated_at: input.now,
             events: Vec::new(),
@@ -203,10 +249,13 @@ impl<'a> AttemptQueue<'a> {
         self.store
             .attempt_ready
             .put(wtxn, &ready_key, record.id.as_bytes())?;
-        if let Some(index_key) = dedupe_blake3_key.as_ref() {
+        // A new row writes its OWN family only. An actor-scoped row never
+        // manufactures a v1 entry, which would re-create the actor-blind
+        // collision this key family exists to end.
+        if let Some(keys) = dedupe_keys.as_ref() {
             self.store
                 .attempt_dedupe
-                .put(wtxn, &index_key.blake3[..], record.id.as_bytes())?;
+                .put(wtxn, &keys.primary[..], record.id.as_bytes())?;
         }
 
         Ok(EnqueueOutcome::Enqueued(record))
@@ -555,41 +604,11 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
-            return Err(invalid_transition("complete", "missing"));
-        };
-        let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
-            AttemptState::Leased => {
-                validate_lease_owner(&input.lease_owner)?;
-                validate_transition_lease(
-                    &record,
-                    &input.lease_owner,
-                    input.attempt_count,
-                    "complete",
-                )?;
-                record.state = AttemptState::Completed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = None;
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
-                let encoded = encode_record(&record)?;
-                self.store
-                    .attempt_records
-                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
-                    &mut wtxn,
-                    &record,
-                    &input.lease_owner,
-                )?;
-                wtxn.commit()?;
-                Ok(CompleteOutcome::Completed(record))
-            }
-            state => Err(invalid_transition("complete", state.as_str())),
+        let outcome = self.complete_in_txn(&mut wtxn, input)?;
+        if matches!(outcome, CompleteOutcome::Completed(_)) {
+            wtxn.commit()?;
         }
+        Ok(outcome)
     }
 
     /// Marks a leased attempt terminally failed. Failing an already-failed attempt is
@@ -657,7 +676,19 @@ impl<'a> AttemptQueue<'a> {
     /// source nor an orphan retry.
     pub fn retry(&self, input: RetryAttempt) -> Result<RetryOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.attempt_records.get(&wtxn, input.id.as_bytes())? else {
+        let outcome = self.retry_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Retries inside a caller-owned transaction, including both rows and all
+    /// index moves. The caller must abort the transaction on error.
+    pub(crate) fn retry_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+    ) -> Result<RetryOutcome> {
+        let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
         let mut source = decode_record(&raw_record, input.id)?;
@@ -683,6 +714,10 @@ impl<'a> AttemptQueue<'a> {
             task_ref: source.task_ref.clone(),
             run_id: source.run_id.clone(),
             dedupe_key: source.dedupe_key.clone(),
+            // The scope travels WITH the key it scopes, so the index move below
+            // derives the child's entry from the row itself — never from a
+            // caller's state or a decoded TASK payload.
+            dedupe_actor_ref: source.dedupe_actor_ref.clone(),
             created_at: input.now,
             updated_at: input.now,
             events: Vec::new(),
@@ -720,35 +755,37 @@ impl<'a> AttemptQueue<'a> {
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, source.id.as_bytes(), &encoded_source)?;
+            .put(wtxn, source.id.as_bytes(), &encoded_source)?;
         let encoded_next = encode_record(&next)?;
         self.store
             .attempt_records
-            .put(&mut wtxn, next.id.as_bytes(), &encoded_next)?;
+            .put(wtxn, next.id.as_bytes(), &encoded_next)?;
 
         // The source was leased, so it holds no ready entry to retire; only the
         // new row enters the ready index, at its own scheduled instant.
         let ready_key = ready_key(ready_at(&next), next.id);
         self.store
             .attempt_ready
-            .put(&mut wtxn, &ready_key, next.id.as_bytes())?;
+            .put(wtxn, &ready_key, next.id.as_bytes())?;
         self.store.put_attempt_run_index_in_txn(
-            &mut wtxn,
+            wtxn,
             next.run_id.as_deref(),
             next.id.as_bytes(),
         )?;
 
         // Only the newest pending member of a dedupe chain owns the advisory
-        // index, so the entry moves off the now-terminal source.
-        self.delete_dedupe_entry_for_record(&mut wtxn, &source)?;
+        // index, so the entry moves off the now-terminal source. The chain
+        // stays in ONE key family: an actor-scoped chain keeps its v2 entry, a
+        // pre-1876 actorless chain keeps its v1 entry until it drains.
+        self.delete_dedupe_entry_for_record(wtxn, &source)?;
         if let Some(dedupe_key) = next.dedupe_key.as_deref() {
-            let index_key = dedupe_index_key(&next.kind, dedupe_key);
+            let keys =
+                DedupeIndexKeys::new(&next.kind, next.dedupe_actor_ref.as_deref(), dedupe_key);
             self.store
                 .attempt_dedupe
-                .put(&mut wtxn, &index_key[..], next.id.as_bytes())?;
+                .put(wtxn, &keys.primary[..], next.id.as_bytes())?;
         }
 
-        wtxn.commit()?;
         Ok(RetryOutcome::Retried(next))
     }
 
@@ -1089,6 +1126,72 @@ impl<'a> AttemptQueue<'a> {
         decode_record(&raw, id).map(Some)
     }
 
+    /// Counts the retries that precede `id` by walking its `retry_of` lineage.
+    ///
+    /// A first try is depth 0 and every `retry_of` hop adds one. [`Self::retry`]
+    /// mints a NEW row whose `attempt_count` restarts at zero, so the lineage
+    /// is the only honest logical retry counter: a caller spacing retries must
+    /// read the depth here rather than infer one from a per-row lease counter.
+    ///
+    /// Missing rows, cycles, and content-inconsistent hops encountered during
+    /// the bounded walk fail CLOSED with [`Error::InvalidAttemptQueueRecord`],
+    /// never a silently short depth that would collapse a long backoff onto
+    /// its first rung. Every visited hop compares six fields: `kind`, `payload`,
+    /// `task_ref`, `run_id`, `dedupe_key`, and `dedupe_actor_ref`. This checks
+    /// content consistency, not general chain uniqueness: unrelated rows with
+    /// identical values for all six fields are indistinguishable. To distinguish
+    /// independent roots, they must differ on at least one of these fields.
+    /// The durable connector satisfies this prerequisite with a unique
+    /// `task_ref` per independent root.
+    ///
+    /// The walk reads the initial row plus at most `RETRY_CHAIN_DEPTH_LIMIT`
+    /// (1,024) parent rows. Hop depth saturates at 1,024, so a legitimately vast
+    /// lineage is bounded work rather than an error. All rows read one snapshot,
+    /// so a concurrent retry cannot make the walk observe half of two different
+    /// chains.
+    pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut visited = HashSet::from([id]);
+        let mut child = self.retry_chain_record_in_txn(&rtxn, id)?;
+        let mut depth = 0_u32;
+        while let Some(parent_id) = child.retry_of {
+            // A revisit is a CYCLE before it is anything else: a row already on
+            // the walk trivially matches itself on identity, so the field
+            // compare below could never be the one to stop an endless loop.
+            if !visited.insert(parent_id) {
+                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_CYCLE));
+            }
+            let parent = self.retry_chain_record_in_txn(&rtxn, parent_id)?;
+            if !retries_the_same_attempt(&child, &parent) {
+                return Err(Error::InvalidAttemptQueueRecord(ERR_RETRY_CHAIN_MISMATCH));
+            }
+            depth = depth.saturating_add(1);
+            if depth >= RETRY_CHAIN_DEPTH_LIMIT {
+                return Ok(RETRY_CHAIN_DEPTH_LIMIT);
+            }
+            child = parent;
+        }
+        Ok(depth)
+    }
+
+    /// One row of the lineage walk: it must exist, or the chain is broken.
+    ///
+    /// Yields the whole decoded record, not just its link, so the hop that
+    /// follows can check parent-child identity within the same one read and
+    /// one decode this walk already spends per visited row.
+    fn retry_chain_record_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<AttemptRecord> {
+        let Some(raw) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_RETRY_CHAIN_MISSING_ROW,
+            ));
+        };
+        decode_record(&raw, id)
+    }
+
     /// Reads an attempt by id inside a caller-owned write transaction.
     pub(crate) fn get_in_write_txn(
         &self,
@@ -1170,6 +1273,7 @@ impl<'a> AttemptQueue<'a> {
         txn: &heed::RoTxn<'_>,
         index_key: &[u8],
         kind: &str,
+        expected_dedupe_actor_ref: Option<&str>,
         dedupe_key: &str,
     ) -> Result<Option<AttemptRecord>> {
         let Some(existing_id) = self.store.attempt_dedupe.get(txn, index_key)? else {
@@ -1181,43 +1285,102 @@ impl<'a> AttemptQueue<'a> {
         };
         let record = decode_record(&raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
+        if record.dedupe_actor_ref.as_deref() != expected_dedupe_actor_ref {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_MISMATCH));
+        }
         if !record.state.is_pending() {
             return Ok(None);
         }
         Ok(Some(record))
     }
 
+    /// Resolves a live dedupe hit in family order, checking the actor axis
+    /// per path.
+    ///
+    /// An ACTOR-SCOPED request reads its own v2 entry, then the actorless v1
+    /// entry, then the pre-v1 raw key. A pending legacy row has no trustworthy
+    /// actor axis, so it stays the conservative winner until its chain
+    /// terminalizes — returned as a hit without rewriting the row, promoting
+    /// either index, or running the actorless self-heal.
+    ///
+    /// An ACTORLESS request keeps exactly today's behavior: the v1 entry, then
+    /// the pre-v1 raw key with its landed raw→v1 self-heal. It never
+    /// manufactures an actor scope.
     fn read_existing_dedupe_in_write_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        blake3_key: &[u8],
+        keys: &DedupeIndexKeys,
         kind: &str,
+        dedupe_actor_ref: Option<&str>,
         dedupe_key: &str,
     ) -> Result<Option<AttemptRecord>> {
-        if let Some(record) =
-            self.read_existing_dedupe_entry_in_write_txn(txn, blake3_key, kind, dedupe_key)?
-        {
+        if let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
+            txn,
+            &keys.primary[..],
+            kind,
+            dedupe_actor_ref,
+            dedupe_key,
+        )? {
             return Ok(Some(record));
         }
 
         let legacy_key = legacy_dedupe_index_key(kind, dedupe_key);
-        let Some(record) =
-            self.read_existing_dedupe_entry_in_write_txn(txn, &legacy_key, kind, dedupe_key)?
-        else {
-            return Ok(None);
-        };
-        self.store
-            .attempt_dedupe
-            .put(txn, blake3_key, record.id.as_bytes())?;
-        self.store.attempt_dedupe.delete(txn, &legacy_key)?;
-        Ok(Some(record))
+        match keys.fallback_v1 {
+            // Actor-scoped: both legacy families are READ-ONLY here. A pending
+            // actorless row keeps the key until its chain terminalizes, and
+            // nothing about it is rewritten or promoted on the way out.
+            Some(fallback_v1) => {
+                if let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
+                    txn,
+                    &fallback_v1[..],
+                    kind,
+                    None,
+                    dedupe_key,
+                )? {
+                    return Ok(Some(record));
+                }
+                self.read_existing_dedupe_entry_in_write_txn(
+                    txn,
+                    &legacy_key,
+                    kind,
+                    None,
+                    dedupe_key,
+                )
+            }
+            // Actorless: today's pre-v1 raw fallback, including its landed
+            // raw -> v1 index self-heal.
+            None => {
+                let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
+                    txn,
+                    &legacy_key,
+                    kind,
+                    None,
+                    dedupe_key,
+                )?
+                else {
+                    return Ok(None);
+                };
+                self.store
+                    .attempt_dedupe
+                    .put(txn, &keys.primary[..], record.id.as_bytes())?;
+                self.store.attempt_dedupe.delete(txn, &legacy_key)?;
+                Ok(Some(record))
+            }
+        }
     }
 
+    /// Reads one index entry, reaping it when it is verifiably stale.
+    ///
+    /// Reaping and terminal cleanup are distinct: this path deletes the entry
+    /// it just examined and found dead, whichever family it belongs to, while
+    /// cleanup derives keys only from a record's own persisted scope. A kind,
+    /// key, or actor mismatch is corruption, never a miss.
     fn read_existing_dedupe_entry_in_write_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         index_key: &[u8],
         kind: &str,
+        expected_dedupe_actor_ref: Option<&str>,
         dedupe_key: &str,
     ) -> Result<Option<AttemptRecord>> {
         let Some(existing_id) = self.store.attempt_dedupe.get(txn, index_key)? else {
@@ -1230,6 +1393,9 @@ impl<'a> AttemptQueue<'a> {
         };
         let record = decode_record(&raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
+        if record.dedupe_actor_ref.as_deref() != expected_dedupe_actor_ref {
+            return Err(Error::InvalidAttemptQueueRecord(ERR_DEDUPE_ACTOR_MISMATCH));
+        }
         if !record.state.is_pending() {
             self.store.attempt_dedupe.delete(txn, index_key)?;
             return Ok(None);
@@ -1237,16 +1403,25 @@ impl<'a> AttemptQueue<'a> {
         Ok(Some(record))
     }
 
+    /// Retires the index entries a settled row OWNS.
+    ///
+    /// Ownership follows the row's persisted scope: an actor-scoped row owns
+    /// exactly its own v2 entry, because the v1 and pre-v1 raw entries may
+    /// still belong to another actor's live legacy chain. An actorless row owns
+    /// both of those, exactly as before.
     pub(super) fn delete_dedupe_entry_for_record(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
     ) -> Result<()> {
         if let Some(dedupe_key) = record.dedupe_key.as_deref() {
-            let blake3_key = dedupe_index_key(&record.kind, dedupe_key);
-            let legacy_key = legacy_dedupe_index_key(&record.kind, dedupe_key);
-            self.store.attempt_dedupe.delete(txn, &blake3_key[..])?;
-            self.store.attempt_dedupe.delete(txn, &legacy_key)?;
+            let keys =
+                DedupeIndexKeys::new(&record.kind, record.dedupe_actor_ref.as_deref(), dedupe_key);
+            self.store.attempt_dedupe.delete(txn, &keys.primary[..])?;
+            if record.dedupe_actor_ref.is_none() {
+                let legacy_key = legacy_dedupe_index_key(&record.kind, dedupe_key);
+                self.store.attempt_dedupe.delete(txn, &legacy_key)?;
+            }
         }
         Ok(())
     }
@@ -1287,6 +1462,25 @@ impl<'a> AttemptQueue<'a> {
 
 fn mark_rechecked_candidate_not_running(report: &mut AttemptQueueCleanupReport) {
     report.running = report.running.saturating_sub(1);
+}
+
+/// Whether a `retry_of` link joins two tries of the SAME attempt.
+///
+/// Both writers of that link — [`AttemptQueue::retry`] and the landing
+/// successor in [`super::cancel`] — copy exactly these six fields verbatim
+/// from the source row to the row that supersedes it, so a hop differing on
+/// any of them is corruption by construction rather than a lineage. Nothing
+/// else in the row is comparable: state, lease, counters, timestamps and the
+/// event/manifest/cancel logs are all EXPECTED to diverge between a finalized
+/// source and its fresh successor, which is why the link cannot be checked by
+/// record equality.
+fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
+    child.kind == parent.kind
+        && child.payload == parent.payload
+        && child.task_ref == parent.task_ref
+        && child.run_id == parent.run_id
+        && child.dedupe_key == parent.dedupe_key
+        && child.dedupe_actor_ref == parent.dedupe_actor_ref
 }
 
 /// Resolves the OF-193 Dreamer root for one stamped run id using the durable

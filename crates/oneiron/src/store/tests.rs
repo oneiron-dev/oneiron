@@ -14,7 +14,9 @@ use std::sync::{Arc, Barrier};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
 use crate::config::VaultConfig;
-use crate::error::{Error, Result, VaultRootProblem};
+#[cfg(target_os = "linux")]
+use crate::error::VaultRootProblem;
+use crate::error::{Error, Result};
 use crate::registry::{TypeByteZone, zone_of};
 use heed::RwTxn;
 use heed::types::Bytes;
@@ -4047,6 +4049,162 @@ fn gate_notice_plane_tokens_mirror_the_policy_plane_enum() {
     assert_eq!(GATE_SYSTEM_NOTICE_PLANE_TOKENS.to_vec(), published);
 }
 
+/// ONE-1296: whatever prose a host auto-checker names its hold with, the
+/// receipt reason the gate records is one this ledger accepts.
+///
+/// The vet runs on the append path AND the decode path, so an unrendered host
+/// reason does not merely lose itself — it costs the whole decision row with
+/// `CorruptedIndex("gate decision ledger")`, and the write the checker meant
+/// to park fails instead of parking. This postcondition is what keeps a held
+/// write recordable, so it is pinned here rather than left to the caller.
+#[test]
+fn checker_hold_reasons_render_into_reasons_the_ledger_accepts() {
+    let long = "very long reason ".repeat(64);
+    let prose = [
+        // The exact string that failed before the reasons were rendered.
+        "checker: hedged verdict",
+        "  leading and trailing  ",
+        "MiXeD CaSe / punctuation!!",
+        "unicode ✂ snip",
+        "tabs\tand\nnewlines",
+        long.as_str(),
+    ];
+    for reason in prose {
+        let rendered = checker_hold_receipt_reason(reason).expect("prose names a token");
+        assert!(
+            valid_gate_receipt_reason(&rendered),
+            "{reason:?} rendered to {rendered:?}, which the ledger rejects"
+        );
+    }
+
+    // The WHY stays legible: a reason is rendered, not hashed away.
+    assert_eq!(
+        checker_hold_receipt_reason("hedged: low confidence").as_deref(),
+        Some("checker_hedged_low_confidence")
+    );
+
+    // Text naming no token at all is not a hold reason. The gate falls to the
+    // unavailable verdict there rather than recording an unexplained refusal.
+    assert_eq!(checker_hold_receipt_reason("  ...!!  "), None);
+    assert_eq!(checker_hold_receipt_reason(""), None);
+}
+
+/// The merged validator accepts both receipt families in the same ledger,
+/// including a mixed reason list, on append and on decode after reopening.
+/// This pins codec vocabulary, not which override a writer may select; the
+/// gate's source-specific override tests still require exactly one source.
+#[test]
+fn checker_and_comm_send_override_receipts_coexist_in_the_ledger() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    // The legacy helper removes the default policy manifest. Reopen now to
+    // capture the reseeded_after_loss receipt before appending our fixtures.
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let initial_records = vault.store.gate_decisions(usize::MAX)?;
+    let checker_reason =
+        checker_hold_receipt_reason("checker: hedged verdict").expect("checker prose renders");
+    let mut records = Vec::new();
+    for (index, (outcome, reason, receipt_reasons)) in [
+        (
+            "pending",
+            "gate.pending.checker",
+            vec![checker_reason.clone()],
+        ),
+        (
+            "allow",
+            "gate.allow",
+            vec!["comm_send_override_standing".to_owned()],
+        ),
+        (
+            "allow",
+            "gate.allow",
+            vec!["comm_send_override_one_shot".to_owned()],
+        ),
+        (
+            "pending",
+            "gate.pending.checker",
+            vec![
+                checker_reason,
+                "comm_send_override_standing".to_owned(),
+                "comm_send_override_one_shot".to_owned(),
+            ],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut record = gate_decision(synthetic_gate_decision_id(0x6B, index as u64), 3, None);
+        record.outcome = outcome.to_owned();
+        record.reason_codes = vec![reason.to_owned()];
+        record.receipt_reasons = receipt_reasons;
+        assert_eq!(
+            decode_gate_decision(&encode_gate_decision(&record)?)?,
+            record
+        );
+        records.push(record);
+    }
+    append_gate_decisions(&vault, &records)?;
+    drop(vault);
+
+    let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+    let ledger = reopened.store.gate_decisions(usize::MAX)?;
+    assert_eq!(ledger.len(), initial_records.len() + records.len());
+    for record in initial_records.iter().chain(&records) {
+        assert!(ledger.contains(record));
+        assert_eq!(
+            gate_decision_primary(&reopened, record.decision_id)?.as_ref(),
+            Some(record)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn checker_and_comm_send_override_receipts_keep_charset_and_length_bounds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    for (index, prefix) in ["checker_", "comm_send_override_"].into_iter().enumerate() {
+        let mut record = gate_decision(synthetic_gate_decision_id(0x6C, index as u64), 3, None);
+        let boundary = format!("{prefix}{}", "a".repeat(128 - prefix.len()));
+        record.receipt_reasons = vec![boundary.clone()];
+        vault.with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &record))?;
+        assert_eq!(
+            gate_decision_primary(&vault, record.decision_id)?,
+            Some(record.clone())
+        );
+        for reason in [
+            format!("{boundary}a"),
+            format!("{prefix}Uppercase"),
+            format!("{prefix}two words"),
+            format!("{prefix}punctuation.dot"),
+            format!("{prefix}é"),
+            "unknown_receipt_family".to_owned(),
+            String::new(),
+        ] {
+            let invalid = GateDecisionRecord {
+                decision_id: synthetic_gate_decision_id(0x6D, index as u64),
+                receipt_reasons: vec![reason.clone()],
+                ..record.clone()
+            };
+            assert!(
+                matches!(
+                    decode_gate_decision(&encode_gate_decision(&invalid)?),
+                    Err(Error::CorruptedIndex("gate decision ledger"))
+                ),
+                "decode must reject {reason:?}"
+            );
+            let appended = vault
+                .with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &invalid));
+            assert!(
+                matches!(appended, Err(Error::CorruptedIndex("gate decision ledger"))),
+                "append must reject {reason:?}"
+            );
+            assert!(gate_decision_primary(&vault, invalid.decision_id)?.is_none());
+        }
+    }
+    assert_eq!(vault.store.gate_decisions(20)?.len(), 2);
+    Ok(())
+}
+
 #[test]
 fn gate_notice_accepts_what_the_in_crate_writers_produce() {
     // The owner-plane writer: plane only, no versioned document behind it.
@@ -4703,5 +4861,273 @@ fn open_existing_serves_the_bound_vault_across_an_aba_swap_of_the_caller_path() 
         decoy_vault.get(&bound_id)?.is_none(),
         "and never received the bound vault's rows",
     );
+    Ok(())
+}
+
+fn community_store_fixture(vault: &Vault) -> Result<()> {
+    for n in 1..=100 {
+        vault.put_entity(&entity_id(n), 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    vault.put_edge(
+        &entity_id(1),
+        crate::EdgeKind::BelongsTo,
+        &entity_id(2),
+        1.0,
+    )?;
+    vault.put_edge(&entity_id(1), crate::EdgeKind::Supports, &entity_id(3), 1.0)?;
+    Ok(())
+}
+
+fn community_store_fixture_entity_ids(vault: &Vault) -> Result<BTreeSet<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    vault
+        .store
+        .entities
+        .iter(&txn)?
+        .map(|entry| {
+            let (key, _) = entry?;
+            EntityId::from_bytes(key.as_ref().try_into().expect("entity id key"))
+        })
+        .collect()
+}
+
+#[test]
+fn ppr_community_store_refresh_uses_vault_meta_and_only_live_outgoing_projection() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    // Seeded agent definitions are live entities too, even without graph edges.
+    let expected_nodes = community_store_fixture_entity_ids(&vault)?;
+    assert_eq!(expected_nodes.len(), 100 + 7);
+    vault.put_edge(&entity_id(3), crate::EdgeKind::Opposes, &entity_id(4), 1.0)?;
+    vault.put_edge(&entity_id(250), crate::EdgeKind::About, &entity_id(1), 1.0)?;
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut txn, b"unrelated:sentinel", b"keep")?;
+        txn.commit()?;
+    }
+    let report = vault.refresh_ppr_communities(&[], 42)?;
+    assert!(report.full_recompute);
+    assert_eq!(report.recomputed_entities, expected_nodes.len());
+    let txn = vault.store.env.read_txn()?;
+    let snapshot = vault
+        .store
+        .ppr_community_snapshot_in_txn(&txn)?
+        .expect("snapshot");
+    assert_eq!(snapshot.nodes.len(), expected_nodes.len());
+    assert_eq!(
+        snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(),
+        expected_nodes
+    );
+    assert!(!snapshot.nodes.contains_key(&entity_id(250)));
+    assert_eq!(
+        snapshot.nodes[&entity_id(1)].fine,
+        snapshot.nodes[&entity_id(2)].fine
+    );
+    assert_ne!(
+        snapshot.nodes[&entity_id(1)].fine,
+        snapshot.nodes[&entity_id(3)].fine
+    );
+    assert_ne!(
+        snapshot.nodes[&entity_id(3)].fine,
+        snapshot.nodes[&entity_id(4)].fine
+    );
+    assert_eq!(
+        snapshot.meta.graph_version,
+        crate::ppr::read_graph_version(&vault.store, &txn)?
+    );
+    assert_eq!(snapshot.meta.generated_at, 42);
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&txn, b"unrelated:sentinel")?
+            .expect("sentinel")
+            .as_ref(),
+        b"keep"
+    );
+    for (key, value) in snapshot.encode_rows().expect("encode") {
+        assert_eq!(
+            vault
+                .store
+                .vault_meta
+                .get(&txn, &key)?
+                .expect("row")
+                .as_ref(),
+            value.as_slice()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_incremental_refresh_invalidates_versions_and_is_atomic() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let old = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("old")
+    };
+    vault.put_edge(
+        &entity_id(1),
+        crate::EdgeKind::BelongsTo,
+        &entity_id(2),
+        0.0,
+    )?;
+    assert!(vault.ppr_community_membership(&entity_id(1))?.is_none());
+    let report = vault.refresh_ppr_communities(&[entity_id(1), entity_id(2)], 43)?;
+    assert!(!report.full_recompute);
+    let read = vault.store.env.read_txn()?;
+    let current = vault
+        .store
+        .ppr_community_snapshot_in_txn(&read)?
+        .expect("current");
+    assert_ne!(current.meta.graph_version, old.meta.graph_version);
+    assert_ne!(
+        current.nodes[&entity_id(1)].fine,
+        current.nodes[&entity_id(2)].fine
+    );
+    assert_eq!(current.nodes[&entity_id(100)], old.nodes[&entity_id(100)]);
+    let mut replacement = current.clone();
+    replacement.meta.generated_at = 44;
+    {
+        let mut write = vault.store.env.write_txn()?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
+        // No commit: an aborted replacement must not expose any new rows.
+    }
+    assert_eq!(
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&read)?
+            .expect("old read"),
+        current
+    );
+    {
+        let mut write = vault.store.env.write_txn()?;
+        vault
+            .store
+            .replace_ppr_community_cache_in_txn(&mut write, &replacement)?;
+        write.commit()?;
+    }
+    assert_eq!(
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&read)?
+            .expect("snapshot isolation"),
+        current
+    );
+    drop(read);
+    let read = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&read)?
+            .expect("published"),
+        replacement
+    );
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_rejects_corruption_and_stale_or_torn_replacement() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    vault.refresh_ppr_communities(&[], 42)?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .ppr_community_snapshot_in_txn(&txn)?
+            .expect("snapshot")
+    };
+    for remove_member in [true, false] {
+        let mut invalid = original.clone();
+        if remove_member {
+            invalid.members.pop_first();
+        } else {
+            invalid.nodes.pop_first();
+        }
+        let mut txn = vault.store.env.write_txn()?;
+        assert!(
+            vault
+                .store
+                .replace_ppr_community_cache_in_txn(&mut txn, &invalid)
+                .is_err()
+        );
+        assert_eq!(
+            vault
+                .store
+                .ppr_community_snapshot_in_txn(&txn)?
+                .expect("unchanged"),
+            original
+        );
+    }
+    let mut stale = original;
+    stale.meta.graph_version += 1;
+    {
+        let mut txn = vault.store.env.write_txn()?;
+        assert!(
+            vault
+                .store
+                .replace_ppr_community_cache_in_txn(&mut txn, &stale)
+                .is_err()
+        );
+    }
+    let key = format!("ppr_community_cache:v0:node:{}", entity_id(1).to_hex());
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, key.as_bytes(), &[0; 31])?;
+    txn.commit()?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(matches!(
+        vault.store.ppr_community_snapshot_in_txn(&txn),
+        Err(Error::CorruptedIndex(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn ppr_community_store_excludes_local_and_pending_deletion_truth_in_same_transaction() -> Result<()>
+{
+    let (_dir, vault) = open_test_vault();
+    community_store_fixture(&vault)?;
+    // Only the two deleted fixture rows leave the live projection; all seven
+    // seeded agent definitions and the other fixture rows must remain.
+    let mut expected_nodes = community_store_fixture_entity_ids(&vault)?;
+    assert_eq!(expected_nodes.len(), 100 + 7);
+    assert!(expected_nodes.remove(&entity_id(1)));
+    assert!(expected_nodes.remove(&entity_id(2)));
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.sync_state.put(
+        &mut txn,
+        &crate::deletion::local_hard_delete_key(&entity_id(1)),
+        b"deleted",
+    )?;
+    let pending = crate::deletion::pending_tombstone_key("1970-01", &entity_id(2));
+    vault.store.sync_state.put(&mut txn, &pending, b"deleted")?;
+    let (snapshot, _) = vault.store.compute_ppr_communities_in_txn(
+        &txn,
+        None,
+        &[],
+        42,
+        &crate::PprCommunityConfig::default(),
+    )?;
+    assert_eq!(snapshot.nodes.len(), 100 + 7 - 2);
+    assert_eq!(
+        snapshot.nodes.keys().copied().collect::<BTreeSet<_>>(),
+        expected_nodes
+    );
+    assert!(!snapshot.nodes.contains_key(&entity_id(1)));
+    assert!(!snapshot.nodes.contains_key(&entity_id(2)));
     Ok(())
 }
