@@ -16,6 +16,13 @@ categories.workspace = true
 # doctest compile pass entirely.
 doctest = false
 
+[features]
+# Opt-in lifecycle attachment only. The default driver still has no net/io stack.
+voice = ["dep:oneiron-server"]
+
+[target.'cfg(unix)'.dependencies]
+oneiron-server = { version = "0.1.0", path = "../oneiron-server", optional = true }
+
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
 # Exactly ONE LlmBackend adapter, and it is the LOCAL one on purpose: the
