@@ -110,10 +110,30 @@ fn standard_fusion_can_replace_a_saturated_direct_page() -> TestResult {
     let direct = scoped.search_with_effort(&request)?;
     assert_eq!(direct.hits.len(), 2);
     assert!(!hit_ids(&direct).contains(&neighbor));
+    // Scoped text uses the neutral pipeline blend, not raw BM25 scores.
+    assert!(direct.hits.iter().all(|hit| hit.score == 1.0));
     request.effort = Effort::Standard;
+    // Supports alone gives the neighbor 0.85: leading PPR is not enough to
+    // replace a direct hit at 1.0 under actual max-score fusion.
+    let supports_only = scoped.search_with_effort(&request)?;
+    assert_eq!(supports_only.hits, direct.hits);
+
+    // Distinct kinds have independent budgets. With equal seed mass and
+    // neutral VAD, Supports + Mentions gives (1.0 + 0.6) * 0.85 = 1.36.
+    // More weight of the same kind would normalize away, not add evidence.
+    vault
+        .batch()
+        .edge(&first, crate::edge::EdgeKind::Mentions, &neighbor, 1.0)
+        .edge(&second, crate::edge::EdgeKind::Mentions, &neighbor, 1.0)
+        .commit()?;
     let expanded = scoped.search_with_effort(&request)?;
     assert_eq!(expanded.hits.len(), 2);
     assert_eq!(expanded.hits[0].id, neighbor, "{expanded:?}");
+    let expected = (1.0 + 0.6) * (1.0 - STANDARD_PPR_ALPHA);
+    assert!(
+        (expanded.hits[0].score - expected).abs() < 1e-6,
+        "{expanded:?}"
+    );
     assert!(!expanded.backend_used);
     Ok(())
 }
@@ -136,7 +156,7 @@ fn graph_expansion_uses_configured_vad_alpha_at_each_effort() -> TestResult {
         vault.config.ppr_vad_alpha = alpha;
         let scoped = vault.scoped_read(ScopedReadActorKey::new(READER).expect("actor key"));
         // Only the anchor matches; the neighbor's score comes solely from PPR.
-        let direct = scoped.search_text("date", 10)?;
+        let direct = scoped.search_text("date", 10, None)?;
         assert_eq!(ids_of(&direct), vec![anchor]);
         for effort in [Effort::Minimal, Effort::Standard, Effort::Deep] {
             let backend = ScriptedBackend::new(Vec::new());

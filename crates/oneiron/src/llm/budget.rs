@@ -1025,11 +1025,7 @@ fn release_reservations_for_lease(state: &mut BudgetState, record: &LeaseRecord)
 /// the shared partition, so overshoot beyond the slice is recorded as shared
 /// spend and later admissions saturate-deny rather than any admitted call
 /// being killed.
-fn apply_usage_for_lease(
-    state: &mut BudgetState,
-    record: &LeaseRecord,
-    used_units: u64,
-) {
+fn apply_usage_for_lease(state: &mut BudgetState, record: &LeaseRecord, used_units: u64) {
     for &row_index in &record.matched_rows {
         if let Some(tally) = state.row_tallies.get_mut(usize::from(row_index)) {
             tally.used_units = tally.used_units.saturating_add(used_units);

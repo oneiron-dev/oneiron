@@ -267,7 +267,10 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
     let backend = Arc::new(RecordingReasonBackend::new(None));
     let (_dir, server) = memory_reason_server(Some(backend.clone()));
     let inside = seeded_test_entity_id(0x0207_0001);
-    let outside = seeded_test_entity_id(0x0207_0002);
+    // Scoped search gives these TURNs neutral pipeline scores of 1.0, not
+    // raw BM25 scores. Make the outside row win the ascending-ID tie-break
+    // so applying limit before session narrowing would lose the inside row.
+    let outside = seeded_test_entity_id(0x0207_0000);
     let body = rmp_serde::to_vec_named(&json!({
         "txt": "launch", "spkr": "user", "at": 701_u64
     }))
@@ -290,7 +293,18 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         .unwrap();
     let short_id = oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &inside).unwrap();
     let scoped = scoped_read_for_legacy_api(&server.vault).unwrap();
-    assert_eq!(scoped.search_text("launch", 1, None).unwrap()[0].id, outside);
+    let unscoped = scoped.search_text("launch", 2, None).unwrap();
+    assert_eq!(
+        unscoped
+            .iter()
+            .map(|hit| (hit.id, hit.score))
+            .collect::<Vec<_>>(),
+        vec![(outside, 1.0), (inside, 1.0)]
+    );
+    assert_eq!(
+        scoped.search_text("launch", 1, None).unwrap()[0].id,
+        outside
+    );
     for depth in ["minimal", "standard", "deep"] {
         let (status, body) = route_json(
             server.clone(),
