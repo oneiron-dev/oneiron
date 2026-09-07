@@ -51,7 +51,7 @@ use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 #[cfg(all(unix, feature = "voice"))]
 use oneiron_server::{
     managed::ManagedShutdown,
-    voice_host::{VoiceHost, VoiceHostBindings, VoiceHostConfig},
+    voice_host::{VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceServeConnection},
 };
 use tokio::sync::{Semaphore, watch};
 
@@ -358,6 +358,12 @@ pub trait PassExecutorFactory {
         Ok(None)
     }
 
+    /// Claims optional, owner-supplied serve bindings. No connection is invented.
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_serve_bindings(&self) -> Result<Option<VoiceServeConnection>> {
+        Ok(None)
+    }
+
     /// The configured lifecycle signal, not another shutdown owner.
     #[cfg(all(unix, feature = "voice"))]
     fn voice_shutdown(&self) -> Option<ManagedShutdown> {
@@ -521,7 +527,23 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
             },
         )
         .map(Some)
-        .map_err(|_| oneiron::Error::InvalidConfig("voice attachment refused".into()))
+        .map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("voice attachment refused: {error}"))
+        })
+    }
+
+    #[cfg(all(unix, feature = "voice"))]
+    fn voice_serve_bindings(&self) -> Result<Option<VoiceServeConnection>> {
+        let Some(bindings) = self
+            .voice
+            .as_ref()
+            .and_then(|config| config.serve_bindings.as_ref())
+        else {
+            return Ok(None);
+        };
+        bindings.take().map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("voice serve bindings refused: {error}"))
+        })
     }
 
     #[cfg(all(unix, feature = "voice"))]
@@ -1065,12 +1087,26 @@ async fn run_one_pass<F: PassExecutorFactory>(
             config.exhaustion_policy,
         ),
     };
-    // Retain the optional host for this pass only. No stream is invented and
-    // no serve task is started: the lifecycle owner still owes those bindings.
+    // Only attach when the existing owner supplied a connection and outputs.
+    // Extraction-only configuration must not construct a throwaway host here.
     #[cfg(all(unix, feature = "voice"))]
-    let _voice_host = factory
-        .voice_host(vault, &guard)
-        .map_err(PassRunError::PreAdmission)?;
+    let voice = match factory
+        .voice_serve_bindings()
+        .map_err(PassRunError::PreAdmission)?
+    {
+        Some(bindings) => {
+            let host = factory
+                .voice_host(vault, &guard)
+                .map_err(PassRunError::PreAdmission)?
+                .ok_or_else(|| {
+                    PassRunError::PreAdmission(oneiron::Error::InvalidConfig(
+                        "voice serve bindings require an attached host".into(),
+                    ))
+                })?;
+            Some((host, bindings))
+        }
+        None => None,
+    };
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
@@ -1088,10 +1124,19 @@ async fn run_one_pass<F: PassExecutorFactory>(
         reserve_units: config.reserve_units,
         now: (*now_secs)(),
     };
-    driver
-        .run_wake_pass(input, &mut executor, cancel)
-        .await
-        .map_err(PassRunError::Failed)
+    let pass = driver.run_wake_pass(input, &mut executor, cancel);
+    #[cfg(all(unix, feature = "voice"))]
+    if let Some((host, bindings)) = voice {
+        let (result, served) = bindings.serve_for_pass(host, pass).await;
+        let report = result.map_err(PassRunError::Failed)?;
+        served.map_err(|error| {
+            PassRunError::Failed(oneiron::Error::InvalidConfig(format!(
+                "voice serve failed: {error}"
+            )))
+        })?;
+        return Ok(report);
+    }
+    pass.await.map_err(PassRunError::Failed)
 }
 
 /// The units ORDINARY pass execution may spend: the dialed total minus the
@@ -2772,330 +2817,5 @@ mod tests {
     }
 
     #[cfg(all(unix, feature = "voice"))]
-    mod voice {
-        use super::*;
-        use oneiron::interlocutor::InterlocutorResolutionInput;
-        use oneiron::llm::{
-            BudgetDenied, BudgetLease, ContentPart, FatalLlmError, FinishReason,
-            LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-            LlmResult, LlmStreamResult, LlmUsage,
-        };
-        use oneiron::voice_cascade::{AsrUpdate, VoiceSessionConfig};
-        use oneiron_server::runtime::RuntimeConfig;
-        use oneiron_server::voice_host::HostError;
-        use tokio::sync::{mpsc, oneshot};
-
-        struct Call {
-            lease: BudgetLease,
-            reply: oneshot::Sender<LlmResult<LlmResponse>>,
-        }
-
-        struct ControlledBackend(mpsc::UnboundedSender<Call>);
-
-        impl LlmBackend for ControlledBackend {
-            fn generate<'a>(
-                &'a self,
-                _request: LlmRequest,
-                lease: &'a BudgetLease,
-            ) -> LlmGenerateFuture<'a> {
-                Box::pin(async move {
-                    let (reply, receive) = oneshot::channel();
-                    self.0.send(Call { lease: lease.clone(), reply }).unwrap();
-                    receive.await.expect("test releases backend")
-                })
-            }
-
-            fn stream<'a>(
-                &'a self,
-                _request: LlmRequest,
-                _lease: &'a BudgetLease,
-            ) -> LlmStreamResult<'a> {
-                Err(FatalLlmError::InvalidRequest.into())
-            }
-        }
-
-        fn fixture() -> (
-            tempfile::TempDir,
-            Arc<Vault>,
-            ConsolidationExecutorFactory,
-            mpsc::UnboundedReceiver<Call>,
-        ) {
-            let dir = tempfile::tempdir().unwrap();
-            let mut config = VaultConfig::device();
-            config.map_size = 16 * 1024 * 1024;
-            config.dimensions = 4;
-            config.embedding_model = Some("test/model@v1".to_owned());
-            let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
-            let actor = seed_actor(&vault, 0x71, oneiron::registry::ENTITY_TYPE_MACHINE);
-            let (send, calls) = mpsc::unbounded_channel();
-            let factory = ConsolidationExecutorFactory::new(
-                Arc::new(ControlledBackend(send)),
-                DreamerClaimAuthoringStrategy::SinglePass,
-                WriteActor::new(actor, EdgeActorClass::System),
-                ModelId::new("test/model@v1").unwrap(),
-                Box::new(UnusedSink),
-            );
-            (dir, vault, factory, calls)
-        }
-
-        fn voice_config(vault: &Arc<Vault>) -> VoiceHostConfig {
-            let mut runtime = RuntimeConfig::default();
-            runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
-            VoiceHostConfig {
-                vault: Arc::clone(vault),
-                runtime,
-                extraction_prompt: "Extract entity_labels and salient_terms as JSON.".to_owned(),
-                session: VoiceSessionConfig::new("driver-voice-test", InterlocutorResolutionInput {
-                    owner_session: false,
-                    parties: Vec::new(),
-                    voice_session_ref: None,
-                }),
-                shutdown: ManagedShutdown::new(),
-            }
-        }
-
-        fn pass_guard(vault: &Vault, factory: &ConsolidationExecutorFactory) -> BudgetGuard {
-            let config = test_config();
-            vault.policy_budget_guard(
-                "wake",
-                pass_ordinary_budget_units(config.budget_total_units),
-                config.reserve_units,
-                config.exhaustion_policy,
-                factory.actor,
-            ).unwrap()
-        }
-
-        fn seven_units() -> LlmResponse {
-            let mut usage = LlmUsage::zero();
-            usage.output.total = 7;
-            usage.output.text = 7;
-            LlmResponse {
-                message: LlmMessage {
-                    role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text {
-                        text: r#"{"entity_labels":[],"salient_terms":[]}"#.to_owned(),
-                    }],
-                },
-                usage,
-                finish_reason: FinishReason::Stop,
-            }
-        }
-
-        #[test]
-        fn local_runtime_factory_keeps_the_same_backend_allocation() {
-            use oneiron_llm_local::{LocalAbortHandle, LocalGeneration, LocalModelMetadata};
-
-            struct UnusedRuntime(LocalModelMetadata);
-
-            impl LocalLlmRuntime for UnusedRuntime {
-                fn metadata(&self) -> &LocalModelMetadata {
-                    &self.0
-                }
-
-                fn generate<'a>(
-                    &'a self,
-                    _request: LlmRequest,
-                    _abort: LocalAbortHandle,
-                ) -> LlmResult<LocalGeneration<'a>> {
-                    panic!("construction must not call a model")
-                }
-            }
-
-            let (_dir, vault, factory, _calls) = fixture();
-            let model = ModelId::new("test/tiny@v1").unwrap();
-            let factory = ConsolidationExecutorFactory::with_local_runtime(
-                UnusedRuntime(LocalModelMetadata::new(model.clone(), "test", 1024)),
-                DreamerClaimAuthoringStrategy::SinglePass,
-                factory.actor,
-                model,
-                Box::new(UnusedSink),
-            );
-            assert!(factory.voice.is_none());
-            let backend = Arc::clone(&factory.backend);
-            let factory = factory.with_voice(voice_config(&vault));
-            let guard = pass_guard(&vault, &factory);
-            let host = factory.voice_host(&vault, &guard).unwrap().unwrap();
-            assert!(Arc::ptr_eq(&backend, host.backend()));
-        }
-
-        #[tokio::test]
-        async fn factory_backend_and_executor_share_the_voice_pass_meter() {
-            let (_dir, vault, factory, mut calls) = fixture();
-            let mut factory = factory.with_voice(voice_config(&vault));
-            let guard = pass_guard(&vault, &factory);
-            let host = factory.voice_host(&vault, &guard).unwrap().unwrap();
-            assert!(Arc::ptr_eq(&factory.backend, host.backend()));
-            let token = host.open("utterance".to_owned()).unwrap();
-            for revision in 1..=2 {
-                let work = host
-                    .prepare(&token, revision, format!("text {revision}"), false)
-                    .unwrap();
-                let (result, ()) = tokio::join!(work.run(), async {
-                    let call = calls.recv().await.unwrap();
-                    assert_eq!(guard.read().reserved_units, 100);
-                    call.reply.send(Ok(seven_units())).unwrap();
-                });
-                assert!(matches!(result.unwrap(), AsrUpdate::Partial(_)));
-            }
-            assert_eq!(guard.read().used_units, 14);
-            assert_eq!(host.budget().read(), guard.read());
-
-            // Drive the REAL factory executor to its backend await. The host
-            // can release its lease only if this is the very same pass meter.
-            let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_PERSON);
-            let input = rmpv::Value::Map(vec![
-                (
-                    rmpv::Value::from("conversation_ref"),
-                    rmpv::Value::Binary(conversation.as_bytes().to_vec()),
-                ),
-                (rmpv::Value::from("watermark"), rmpv::Value::from(0)),
-                (rmpv::Value::from("turns"), rmpv::Value::Array(Vec::new())),
-            ]);
-            enqueue_input(&vault, input, "voice-shared-executor", 10);
-            let admitted = admit(&vault, 11);
-            let deadline = WakePassDeadline::new(180_000);
-            let mut ctx = WakeAttemptContext {
-                vault: &vault,
-                deadline: &deadline,
-                budget_id: "wake",
-                now_ms: 11_000,
-            };
-            let mut executor = factory.executor(&guard).unwrap();
-            let (result, ()) = tokio::join!(executor.execute(&admitted, &mut ctx), async {
-                let call = calls.recv().await.unwrap();
-                assert_eq!(host.budget().read().used_units, 14);
-                assert_eq!(host.budget().read().reserved_units, 100);
-                host.budget()
-                    .abort(&call.lease)
-                    .expect("factory executor lease belongs to host meter");
-                call.reply.send(Err(FatalLlmError::InvalidRequest.into())).unwrap();
-            });
-            assert!(matches!(result, Ok(DreamerAttemptExecution::Park { .. })));
-            assert_eq!(guard.read().used_units, 14);
-            assert_eq!(guard.read().reserved_units, 0);
-        }
-
-        #[tokio::test]
-        async fn injected_host_releases_session_and_vault_locks_before_backend_await() {
-            let (_dir, vault, factory, mut calls) = fixture();
-            let factory = factory.with_voice(voice_config(&vault));
-            let guard = pass_guard(&vault, &factory);
-            let host = factory.voice_host(&vault, &guard).unwrap().unwrap();
-            let token = host.open("utterance".to_owned()).unwrap();
-            let work = host.prepare(&token, 1, "old".to_owned(), false).unwrap();
-            let (result, ()) = tokio::join!(work.run(), async {
-                let call = calls.recv().await.unwrap();
-                // A second prepare takes the actual session lock, and these
-                // operations take real vault read/write transactions.
-                let newer = host.prepare(&token, 2, "new".to_owned(), false).unwrap();
-                assert!(vault.retrieval_runs(10).unwrap().is_empty());
-                seed_actor(&vault, 0x73, oneiron::registry::ENTITY_TYPE_PERSON);
-                drop(newer);
-                call.reply.send(Ok(seven_units())).unwrap();
-            });
-            assert!(matches!(result.unwrap(), AsrUpdate::Ignored));
-            assert_eq!(guard.read().used_units, 7);
-            assert_eq!(guard.read().reserved_units, 0);
-        }
-
-        #[test]
-        fn foreign_same_attempt_id_guard_cannot_settle_or_abort_voice_lease() {
-            let (_dir, vault, factory, _calls) = fixture();
-            let factory = factory.with_voice(voice_config(&vault));
-            let guard = pass_guard(&vault, &factory);
-            let foreign = pass_guard(&vault, &factory);
-            let host = factory.voice_host(&vault, &guard).unwrap().unwrap();
-            let owned = guard.admit().unwrap();
-            let other = foreign.admit().unwrap();
-            assert_eq!(owned.lease.id(), other.lease.id());
-            let before = guard.read();
-            assert!(matches!(host.budget().abort(&other.lease), Err(BudgetDenied::LeaseInvalid)));
-            assert!(matches!(
-                host.budget().settle_per_call(&other.lease, &seven_units().usage),
-                Err(BudgetDenied::LeaseInvalid)
-            ));
-            assert_eq!(guard.read(), before);
-            guard.abort(&owned.lease).unwrap();
-            foreign.abort(&other.lease).unwrap();
-        }
-
-        #[tokio::test]
-        async fn either_shutdown_owner_cancels_voice_and_stops_existing_supervisor() {
-            for managed_first in [true, false] {
-                let (_dir, vault, factory, mut calls) = fixture();
-                let config = voice_config(&vault);
-                let shutdown = config.shutdown.clone();
-                let factory = factory.with_voice(config);
-                let guard = pass_guard(&vault, &factory);
-                let host = factory.voice_host(&vault, &guard).unwrap().unwrap();
-                let token = host.open("pending".to_owned()).unwrap();
-                let work = host.prepare(&token, 1, "text".to_owned(), false).unwrap();
-                let (ticks, _wake, _hint) =
-                    PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
-                let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
-                let handle = supervisor.shutdown_handle();
-                let (result, report, call) = tokio::join!(work.run(), supervisor.run(), async {
-                    let call = calls.recv().await.unwrap();
-                    if managed_first {
-                        shutdown.trigger();
-                    } else {
-                        handle.shutdown();
-                    }
-                    call
-                });
-                assert!(matches!(result, Err(HostError::Stopped)));
-                assert_eq!(report, WakeSupervisorReport::default());
-                assert!(shutdown.is_triggered());
-                assert!(call.reply.send(Ok(seven_units())).is_err());
-                assert_eq!(guard.read().reserved_units, 0);
-                assert_eq!(guard.read().used_units, 0);
-            }
-        }
-
-        #[tokio::test]
-        async fn unconfigured_voice_keeps_existing_constructor_and_wake_path() {
-            let (_dir, vault, factory, mut calls) = fixture();
-            let guard = pass_guard(&vault, &factory);
-            assert!(factory.voice_host(&vault, &guard).unwrap().is_none());
-            assert!(factory.voice_shutdown().is_none());
-            let ticks = ScriptedTicks {
-                ticks: vec![Tick::Hint(crate::tick::HintSignal::default())],
-            };
-            let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
-            let report = supervisor.run().await;
-            assert_eq!(report.passes_completed, 1);
-            assert_eq!(report.passes_failed, 0);
-            assert!(calls.try_recv().is_err());
-        }
-
-        #[test]
-        fn configured_voice_cannot_attach_another_vault() {
-            let (_dir, vault, factory, _calls) = fixture();
-            let (_other_dir, other) = open_vault();
-            let factory = factory.with_voice(voice_config(&vault));
-            let guard = pass_guard(&vault, &factory);
-            assert!(factory.voice_host(&other, &guard).is_err());
-        }
-
-        #[tokio::test]
-        async fn configured_voice_is_attached_after_guard_and_fails_closed() {
-            let (_dir, vault, factory, mut calls) = fixture();
-            let mut config = voice_config(&vault);
-            config.runtime = RuntimeConfig::default(); // Unrevisioned placeholder is refused.
-            let mut factory = factory.with_voice(config);
-            let clock: NowSeconds = Arc::new(|| 10);
-            let result = run_one_pass(
-                &vault,
-                &test_config(),
-                "voice-pass:p0",
-                &clock,
-                &mut factory,
-                &Tick::Hint(crate::tick::HintSignal::default()),
-                &WakeCancellation::new(),
-            ).await;
-            assert!(matches!(result, Err(PassRunError::PreAdmission(_))));
-            assert!(DreamerRunnerStore::new(&vault).budget("voice-pass:p0").unwrap().is_none());
-            assert!(calls.try_recv().is_err());
-        }
-    }
+    mod voice;
 }
