@@ -49,7 +49,12 @@ claimed = memory.claim_upsert(
 recalled = memory.recall("window seat")
 receipts = memory.receipts()
 
-print(json.dumps({"witnessed": witnessed, "claimed": claimed}, indent=2))
+print(json.dumps({
+    "witnessed": witnessed,
+    "claimed": claimed,
+    "recalled": recalled,
+    "receipts": receipts,
+}, indent=2))
 ```
 
 DTOs are plain dicts with snake_case keys, typed by the shipped stubs.
