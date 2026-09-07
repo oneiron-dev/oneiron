@@ -259,6 +259,7 @@ fn aborting_accept_rolls_back_archives_digest_and_proposal_consumption() {
 #[test]
 fn auto_decision_reads_posture_in_txn_and_rolls_back_with_its_digest() {
     let (_tmp, vault) = temp_vault();
+    rollout::close_blockers_for_test(&vault);
     let person = mint_person(&vault, ClaimSource::Generated);
     let candidates = scan_cleanup_candidates(&vault).expect("scan");
     let aborted: Result<()> = vault.with_write_txn(|txn| {
@@ -292,6 +293,7 @@ fn auto_decision_reads_posture_in_txn_and_rolls_back_with_its_digest() {
 fn posture_and_mint_provenance_survive_reopen() {
     let (tmp, vault) = temp_vault();
     let person = mint_person(&vault, ClaimSource::Generated);
+    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     drop(vault);
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("reopen");

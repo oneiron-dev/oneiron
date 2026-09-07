@@ -40,33 +40,58 @@ impl Vault {
         learned_at: u64,
         data: &[u8],
     ) -> Result<bool> {
+        self.with_write_txn(|txn| {
+            self.put_extraction_minted_person_in_txn(txn, id, source, occurred, learned_at, data)
+        })
+    }
+
+    pub(crate) fn put_extraction_minted_person_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        source: ClaimSource,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Result<bool> {
         if !claim_source_is_machine_minted(source) {
             return Ok(false);
         }
-        self.with_write_txn(|wtxn| {
-            let key = prefixed_key(EXTRACTION_PERSON_PREFIX, id);
-            if self.store.entities.get(wtxn, id.as_bytes())?.is_some()
-                || self.store.vault_meta.get(wtxn, &key)?.is_some()
-                || self
-                    .store
-                    .entity_deletion_present_in_txn(wtxn, id, learned_at)?
-            {
-                return Ok(false);
-            }
-            self.batch_in()
-                .put(id, ENTITY_TYPE_PERSON, occurred, learned_at, data)
-                .apply(wtxn)?;
-            let raw = self
+        let key = prefixed_key(EXTRACTION_PERSON_PREFIX, id);
+        if self.store.entities.get(wtxn, id.as_bytes())?.is_some()
+            || self.store.vault_meta.get(wtxn, &key)?.is_some()
+            || self.local_hard_delete_marker_exists_in_txn(wtxn, id)?
+            || self
                 .store
-                .entities
-                .get(wtxn, id.as_bytes())?
-                .ok_or(Error::CorruptedIndex("extraction person mint"))?;
-            let mut evidence = blake3::hash(&raw).as_bytes().to_vec();
-            evidence.extend_from_slice(source.as_str().as_bytes());
-            self.store.vault_meta.put(wtxn, &key, &evidence)?;
-            Ok(true)
-        })
+                .entity_deletion_present_in_txn(wtxn, id, learned_at)?
+        {
+            return Ok(false);
+        }
+        self.batch_in()
+            .put(id, ENTITY_TYPE_PERSON, occurred, learned_at, data)
+            .apply(wtxn)?;
+        let raw = self
+            .store
+            .entities
+            .get(wtxn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("extraction person mint"))?;
+        let mut evidence = blake3::hash(&raw).as_bytes().to_vec();
+        evidence.extend_from_slice(source.as_str().as_bytes());
+        self.store.vault_meta.put(wtxn, &key, &evidence)?;
+        Ok(true)
     }
+}
+
+pub(super) fn clear_mint_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .vault_meta
+        .delete(txn, &prefixed_key(EXTRACTION_PERSON_PREFIX, id))?;
+    Ok(())
 }
 
 pub(super) fn is_extraction_minted_person_in_txn(

@@ -98,7 +98,15 @@ use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
 use crate::vault::{LiveEntityRow, edge_kind_prefix, live_entity_row_in_txn};
 
 mod person_provenance;
+mod rollout;
+mod run_record;
+mod scan;
+mod visibility;
 
+pub(crate) use visibility::is_archived_in_txn;
+
+#[cfg(test)]
+mod qodo_tests;
 #[cfg(test)]
 mod repair_tests;
 #[cfg(test)]
@@ -162,11 +170,6 @@ pub const FIELD_CLEANUP_TOMBSTONE_REASON: &str = "cleanup_tombstone_reason";
 
 /// The value of [`FIELD_CLEANUP_PHASE`] on every row this projector mints.
 pub const CLEANUP_PHASE: &str = "cleanup";
-
-/// Rows read per candidate-scan page. The scan is paged rather than
-/// materialized so a vault with more PERSON rows than
-/// `MAX_TYPE_QUERY_RESULTS` gets a cleanup pass instead of an overflow error.
-const CLEANUP_SCAN_PAGE: usize = 1024;
 
 /// Ceiling on rows one run will EXAMINE per entity type.
 ///
@@ -566,29 +569,8 @@ fn has_any_edge_in_txn(
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn scan_cleanup_candidates(vault: &Vault) -> Result<Vec<CleanupCandidate>> {
-    let mut candidates = Vec::new();
-    for (type_byte, _, _) in CLEANUP_CHECKS {
-        let mut after: Option<EntityId> = None;
-        let mut examined = 0_usize;
-        loop {
-            let page = vault.entities_by_type_page(type_byte, after.as_ref(), CLEANUP_SCAN_PAGE)?;
-            if page.is_empty() {
-                break;
-            }
-            after = page.last().copied();
-            let full_page = page.len() == CLEANUP_SCAN_PAGE;
-            for entity in page {
-                examined += 1;
-                if let Some(kind) = zero_live_members(vault, &entity)? {
-                    candidates.push(CleanupCandidate { entity, kind });
-                }
-            }
-            if !full_page || examined >= MAX_CLEANUP_SCAN_ROWS {
-                break;
-            }
-        }
-    }
-    Ok(candidates)
+    let txn = vault.store.env.read_txn()?;
+    Ok(scan::scan_in_txn(vault, &txn, MAX_CLEANUP_SCAN_ROWS)?.candidates)
 }
 
 // ---------------------------------------------------------------------------
@@ -610,6 +592,9 @@ pub fn cleanup_posture(vault: &Vault) -> Result<CleanupPosture> {
 }
 
 fn cleanup_posture_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<CleanupPosture> {
+    if !rollout::auto_enabled(vault, rtxn)? {
+        return Ok(CleanupPosture::ProposeFirst);
+    }
     let Some(raw) = vault
         .store
         .vault_meta
@@ -631,6 +616,11 @@ fn cleanup_posture_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Clean
 /// Storage errors.
 pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()> {
     vault.with_write_txn(|wtxn| {
+        if posture == CleanupPosture::AutoWithDigest && !rollout::auto_enabled(vault, wtxn)? {
+            return Err(Error::InvariantViolation(
+                "automatic cleanup rollout blockers are open",
+            ));
+        }
         vault
             .store
             .vault_meta
@@ -655,9 +645,7 @@ pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()>
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub fn run_vault_cleanup(vault: &Vault, attempt: &AttemptId) -> Result<CleanupRunReport> {
-    let candidates = scan_cleanup_candidates(vault)?;
-    // Read the owner's posture under the same writer lock as the decision.
-    vault.with_write_txn(|wtxn| run_cleanup_candidates_in_txn(vault, wtxn, attempt, candidates))
+    scan::run_with_limit(vault, attempt, MAX_CLEANUP_SCAN_ROWS)
 }
 
 fn run_cleanup_candidates_in_txn(
@@ -994,6 +982,26 @@ impl Vault {
                 }
             }
             self.clear_archive_tombstone_in_txn(wtxn, entity)?;
+            let raw = self
+                .store
+                .entities
+                .get(wtxn, entity.as_bytes())?
+                .ok_or_else(|| Error::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                })?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("archived entity header"))?;
+            if self.local_hard_delete_marker_exists_in_txn(wtxn, entity)?
+                || self
+                    .store
+                    .entity_deletion_present_in_txn(wtxn, entity, header.learned_at)?
+            {
+                // The failed transaction restores the archive marker too.
+                return Err(Error::VaultCleanupRestoreNotArchived {
+                    entity: entity.to_hex(),
+                });
+            }
+            person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
             Ok(())
         })
     }

@@ -103,7 +103,7 @@ impl ClaimMaterialization {
         let Some(envelope) = lifecycle_envelope(store, txn, id, &prior)? else {
             return Ok(None);
         };
-        Ok(Some(Self {
+        let binding = Self {
             id: *id,
             occurred: *occurred,
             learned_at: *learned_at,
@@ -111,7 +111,79 @@ impl ClaimMaterialization {
             reserved: false,
             envelope,
             prior: Some(row_digest(&raw)),
-        }))
+        };
+        // Retraction records a gate decision before consuming the Put. Check
+        // the reconstructed actor now, before any non-transactional metrics.
+        binding.validate_actor(store, txn)?;
+        Ok(Some(binding))
+    }
+
+    /// Admit only a current-row demotion and its exact ClaimOf weight update.
+    /// This does not widen the operation allowlist of other materializations.
+    pub(crate) fn apply_demotion(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        ops: Vec<BatchOp>,
+    ) -> Result<()> {
+        let Some(BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }) = ops.first()
+        else {
+            return Err(binding_error());
+        };
+        let raw = vault
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            || occurred.start != header.occurred_start
+            || *learned_at != header.learned_at
+        {
+            return Err(binding_error());
+        }
+        let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let expected = demotion_body(&vault.store, txn, id, &prior, &next, &ops[1..])?;
+        if encode_claim_body(&expected)? != *data {
+            return Err(binding_error());
+        }
+        let mut bindings = Vec::new();
+        if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {
+            let binding = Self {
+                id: *id,
+                occurred: *occurred,
+                learned_at: *learned_at,
+                data: data.clone(),
+                reserved: false,
+                envelope,
+                prior: Some(row_digest(&raw)),
+            };
+            binding.validate_actor(&vault.store, txn)?;
+            bindings.push(binding);
+        }
+        // No binding still means the existing first-party local policy, not
+        // authority inferred from evidence. The pipeline refreshes a consumed
+        // binding from the finalized row, atomically with the edge update.
+        super::apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            ops,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, false).with_claim_materializations(bindings),
+        )
     }
 
     pub(super) fn matches_op(&self, op: &BatchOp) -> bool {
@@ -146,6 +218,88 @@ impl ClaimMaterialization {
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
     }
+}
+
+/// Rebuild the permitted body delta instead of trusting caller-supplied axes.
+fn demotion_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    prior: &ClaimBody,
+    next: &ClaimBody,
+    tail: &[BatchOp],
+) -> Result<ClaimBody> {
+    use crate::claim::{
+        CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, ClaimSubject, claim_demotion_rung,
+    };
+    use crate::edge::{EdgeKind, validate_edge_weight};
+    use crate::vault::{edge_kind_prefix, parse_edge_record};
+
+    if prior.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(binding_error());
+    }
+    let before = claim_demotion_rung(prior)?;
+    let after = claim_demotion_rung(next)?;
+    let mut expected = prior.clone();
+    let rung = match (before, after, tail) {
+        (
+            None | Some(ClaimDemotionRung::Decayed),
+            Some(ClaimDemotionRung::Decayed),
+            [
+                BatchOp::SetEdgeWeight {
+                    src,
+                    kind: EdgeKind::ClaimOf,
+                    tgt,
+                    weight,
+                },
+            ],
+        ) if src == id && prior.subject == ClaimSubject::Entity(*tgt) => {
+            validate_edge_weight(*weight)?;
+            let mut current = None;
+            for entry in store
+                .edges_out
+                .prefix_iter(txn, &edge_kind_prefix(id, EdgeKind::ClaimOf))?
+            {
+                let (key, value) = entry?;
+                let edge = parse_edge_record(&key, &value)?;
+                if edge.target == *tgt && current.replace(edge.weight).is_some() {
+                    return Err(binding_error());
+                }
+            }
+            if *weight > current.ok_or(binding_error())? {
+                return Err(binding_error());
+            }
+            "decayed"
+        }
+        (
+            Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
+            Some(ClaimDemotionRung::Weakened),
+            [],
+        ) if next.confidence.is_finite()
+            && (0.0..=1.0).contains(&next.confidence)
+            && next.confidence <= prior.confidence =>
+        {
+            expected.confidence = next.confidence;
+            "weakened"
+        }
+        (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale), []) => {
+            expected.stale = true;
+            "stale"
+        }
+        _ => return Err(binding_error()),
+    };
+    let mut scope = match expected.scope.take() {
+        None => Vec::new(),
+        Some(Value::Map(entries)) => entries,
+        Some(_) => return Err(binding_error()),
+    };
+    scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
+    scope.push((
+        Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+        Value::from(rung),
+    ));
+    expected.scope = Some(Value::Map(scope));
+    Ok(expected)
 }
 
 fn row_digest(raw: &[u8]) -> [u8; 32] {
@@ -332,6 +486,7 @@ pub(crate) fn apply_owner_bound_claim_puts(
 #[cfg(test)]
 mod tests {
     mod freshness;
+    mod lifecycle_actor_regressions;
 
     use super::*;
     use crate::claim::{ClaimApprovalStatus, ClaimSubject};

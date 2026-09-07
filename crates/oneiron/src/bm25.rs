@@ -1122,6 +1122,9 @@ where
 
         for entry in entries {
             let id = entry.id;
+            if crate::vault_cleanup::is_archived_in_txn(store, rtxn, &id)? {
+                continue;
+            }
 
             // Enforce row-existence for every scored entry, not only those
             // that reach a `CountLengthIncrement` branch — otherwise a

@@ -60,14 +60,13 @@ impl Vault {
         if !eligible || tombstone.reason != TombstoneReason::ArchivedByCleanup {
             return Ok(false);
         }
-        let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
-        if had_vector {
-            crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+        // Re-prove eligibility at the archive door itself. Archive is a local
+        // visibility marker, not erasure: retain the complete body and indexes.
+        if crate::vault_cleanup::zero_live_members_in_txn(self, wtxn, id)?.is_none() {
+            return Ok(false);
         }
-        if existed {
-            self.put_archive_tombstone_in_txn(wtxn, id, tombstone)?;
-        }
-        Ok(existed)
+        self.put_archive_tombstone_in_txn(wtxn, id, tombstone)?;
+        Ok(true)
     }
 
     /// Deletes an entity blob by ID using the destructive user-hard-delete
@@ -108,6 +107,11 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
+        if reason == DeleteReason::ArchivedByCleanup {
+            return Err(Error::InvariantViolation(
+                "cleanup archives require the cleanup proposal/decision door",
+            ));
+        }
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());

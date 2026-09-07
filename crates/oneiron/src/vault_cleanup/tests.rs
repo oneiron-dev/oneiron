@@ -72,6 +72,22 @@ fn put_claim_about(
     vault.put_claim(claim, &body, t(1), 1).expect("put claim");
 }
 
+fn archive_for_test(vault: &Vault, id: &EntityId) -> bool {
+    vault
+        .with_write_txn(|txn| {
+            vault.archive_cleanup_candidate_in_txn(
+                txn,
+                id,
+                &crate::deletion::TombstoneValueV2 {
+                    reason: TombstoneReason::ArchivedByCleanup,
+                    deleted_at: 2,
+                    request_id: uuid::Uuid::now_v7().into_bytes(),
+                },
+            )
+        })
+        .expect("checked archive")
+}
+
 fn cleanup_receipt_records(vault: &Vault) -> Vec<ReceiptRecord> {
     vault
         .receipts(ReceiptQuery::new(64).with_kind(ReceiptKind::Gate))
@@ -221,6 +237,7 @@ fn default_posture_is_propose_first() {
         cleanup_posture(&vault).expect("posture"),
         CleanupPosture::ProposeFirst
     );
+    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     assert_eq!(
         cleanup_posture(&vault).expect("posture"),
@@ -375,6 +392,7 @@ fn rejecting_a_proposal_archives_nothing_and_leaves_no_receipt() {
 #[test]
 fn auto_posture_archives_and_mints_exactly_one_digest_receipt() {
     let (_tmp, vault) = temp_vault();
+    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     let first = fresh_id();
     let second = fresh_id();
@@ -449,18 +467,20 @@ fn the_archive_tombstone_writes_no_receipt_and_queues_no_sweep() {
     let person = fresh_id();
     put_person(&vault, &person);
 
-    let outcome = vault
-        .delete_entity_with_reason(&person, DeleteReason::ArchivedByCleanup)
-        .expect("archive");
-    assert!(outcome.existed);
+    let existed = archive_for_test(&vault, &person);
+    assert!(existed);
+    assert!(cleanup_receipt_records(&vault).is_empty());
+    let txn = vault.store.env.read_txn().expect("read txn");
     assert!(
-        outcome.receipt_id.is_none(),
-        "contracts row: receipt = false"
+        vault
+            .store
+            .sync_queue
+            .prefix_iter(&txn, crate::deletion::HARD_ERASE_SWEEP_PREFIX)
+            .expect("sweeps")
+            .next()
+            .is_none()
     );
-    assert!(
-        outcome.sweep_key.is_none(),
-        "contracts row: historicalSweepQueued = false"
-    );
+    drop(txn);
     // The shell survives: hard-purge is false, so the row is still addressable.
     assert!(vault.is_deleted_shell(&person).expect("shell"));
     assert!(
@@ -482,6 +502,7 @@ fn the_archive_tombstone_writes_no_receipt_and_queues_no_sweep() {
 #[test]
 fn restore_archived_revives_the_row_without_minting_a_twin() {
     let (_tmp, vault) = temp_vault();
+    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     let person = fresh_id();
     put_person(&vault, &person);
@@ -563,9 +584,7 @@ fn an_unreadable_archive_marker_refuses_the_restore() {
     let (_tmp, vault) = temp_vault();
     let person = fresh_id();
     put_person(&vault, &person);
-    vault
-        .delete_entity_with_reason(&person, DeleteReason::ArchivedByCleanup)
-        .expect("archive");
+    assert!(archive_for_test(&vault, &person));
 
     // Corrupt the marker in place: a legacy 8-byte value names no reason.
     vault
@@ -592,6 +611,7 @@ fn an_unreadable_archive_marker_refuses_the_restore() {
 #[test]
 fn archived_entities_flags_archived_rows() {
     let (_tmp, vault) = temp_vault();
+    rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).expect("set posture");
     let archived = fresh_id();
     let kept = fresh_id();
@@ -667,6 +687,9 @@ fn vault_cleanup_registers_on_the_timer_wake_only() {
 
 // ─── review-level teeth ─────────────────────────────────────────────────
 
+#[path = "destructive_door_scan.rs"]
+mod destructive_door_scan;
+
 const MODULE_SOURCE: &str = include_str!("../vault_cleanup.rs");
 
 /// The module's source with every comment line dropped.
@@ -691,25 +714,11 @@ fn module_code() -> String {
 #[test]
 fn the_cleanup_module_never_reaches_a_destructive_door() {
     let code = module_code();
-    for forbidden in [
-        "DeleteReason::UserDelete",
-        "DeleteReason::UserHardDelete",
-        "DeleteReason::GdprDelete",
-        "DeleteReason::PolicyDelete",
-        "hard_erase",
-        "HardEraseSweep",
-        "delete_entity(",
-        "erase_entity",
-        "apply_replayed_tombstone",
-        "local_hard_delete",
-        "soft_erase_active_store_in_txn",
-        "sweep_queue",
-    ] {
-        assert!(
-            !code.contains(forbidden),
-            "vault_cleanup must not call `{forbidden}` — hard deletion is never automatic"
-        );
-    }
+    assert_eq!(
+        destructive_door_scan::destructive_door(&code),
+        None,
+        "vault_cleanup must not reach a destructive door — hard deletion is never automatic"
+    );
     assert!(
         code.contains("DeleteReason::ArchivedByCleanup"),
         "the archive reason is the only reason this module may name"
@@ -761,9 +770,7 @@ fn falsifier_the_archived_row_carries_the_soft_archive_reason_and_undoes() {
     let (_tmp, vault) = temp_vault();
     let person = fresh_id();
     put_person(&vault, &person);
-    vault
-        .delete_entity_with_reason(&person, DeleteReason::ArchivedByCleanup)
-        .expect("archive");
+    assert!(archive_for_test(&vault, &person));
 
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let decoded = vault

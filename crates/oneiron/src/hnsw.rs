@@ -1090,8 +1090,16 @@ pub(crate) fn hnsw_search(
         nearest.sort_unstable();
     }
 
-    nearest.truncate(limit);
-    Ok(nearest
+    // Retain archived nodes for graph traversal, but never return them as
+    // active matches. Restore only removes the marker, not graph state.
+    let mut visible = Vec::with_capacity(nearest.len());
+    for entry in nearest {
+        if !crate::vault_cleanup::is_archived_in_txn(store, rtxn, &entry.id)? {
+            visible.push(entry);
+        }
+    }
+    visible.truncate(limit);
+    Ok(visible
         .into_iter()
         .map(|entry| ScoredEntity {
             id: entry.id,
@@ -1267,7 +1275,10 @@ fn beam_search(
     visited.insert(entry_point);
     candidates.push(Reverse(entry));
 
-    if !check_existence || store.entities().get(txn, entry_point.as_bytes())?.is_some() {
+    if !check_existence
+        || (store.entities().get(txn, entry_point.as_bytes())?.is_some()
+            && !crate::vault_cleanup::is_archived_in_txn(store, txn, &entry_point)?)
+    {
         results.push(entry);
     }
 
@@ -1310,10 +1321,15 @@ fn beam_search(
                     distance,
                 };
                 candidates.push(Reverse(candidate));
-                results.push(candidate);
-
-                if results.len() > ef {
-                    results.pop();
+                // Archived nodes still connect the graph. They must not fill
+                // the result beam and crowd out live rows before final filtering.
+                if !check_existence
+                    || !crate::vault_cleanup::is_archived_in_txn(store, txn, &neighbor_id)?
+                {
+                    results.push(candidate);
+                    if results.len() > ef {
+                        results.pop();
+                    }
                 }
             }
         }

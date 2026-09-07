@@ -680,52 +680,74 @@ impl<'a> DreamerWakeDriver<'a> {
                 break;
             }
 
+            let cleanup = if input.trigger == WakeTrigger::Timer
+                && input.scope == DreamerConsolidationScope::Macro
+            {
+                self.store.admit_next_vault_cleanup(AdmitDreamerAttempt {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now,
+                    budget_id: self.budget_id.clone(),
+                    budget_total_units: input.budget_total_units,
+                    reserve_units: input.reserve_units,
+                    started_milestone: self
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                })?
+            } else {
+                DreamerAdmissionOutcome::Empty
+            };
             let mut admitted =
-                match self
-                    .store
-                    .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
-                        scope: input.scope,
-                        local_node_id: input.local_node_id,
-                        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-                        admission: AdmitDreamerAttempt {
-                            lease_owner: input.lease_owner.clone(),
-                            now: input.now,
-                            budget_id: self.budget_id.clone(),
-                            budget_total_units: input.budget_total_units,
-                            reserve_units: input.reserve_units,
-                            started_milestone: self
-                                .milestone_claim(DreamerMilestoneKind::Started, input.now),
-                        },
-                    })? {
-                    DreamerConsolidationAdmissionOutcome::NoHomeNode => {
-                        report.stop = WakePassStop::NoHomeNode;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
-                        report.stop = WakePassStop::NotHomeNode;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
-                        // The store already paused the attempt (admission-level trap).
-                        report.stop = WakePassStop::Trapped;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::Empty,
-                    ) => {
-                        report.stop = WakePassStop::QueueEmpty;
-                        break;
-                    }
-                    DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::BudgetExhausted(_),
-                    ) => {
+                match cleanup {
+                    DreamerAdmissionOutcome::Admitted(attempt) => *attempt,
+                    DreamerAdmissionOutcome::BudgetExhausted(_) => {
                         report.stop = WakePassStop::BudgetExhausted;
                         break;
                     }
-                    DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::Admitted(attempt),
-                    ) => *attempt,
+                    DreamerAdmissionOutcome::Empty => match self.store.admit_next_consolidation(
+                        AdmitDreamerConsolidationAttempt {
+                            scope: input.scope,
+                            local_node_id: input.local_node_id,
+                            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+                            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+                            admission: AdmitDreamerAttempt {
+                                lease_owner: input.lease_owner.clone(),
+                                now: input.now,
+                                budget_id: self.budget_id.clone(),
+                                budget_total_units: input.budget_total_units,
+                                reserve_units: input.reserve_units,
+                                started_milestone: self
+                                    .milestone_claim(DreamerMilestoneKind::Started, input.now),
+                            },
+                        },
+                    )? {
+                        DreamerConsolidationAdmissionOutcome::NoHomeNode => {
+                            report.stop = WakePassStop::NoHomeNode;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::NotHomeNode(_) => {
+                            report.stop = WakePassStop::NotHomeNode;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
+                            // The store already paused the attempt (admission-level trap).
+                            report.stop = WakePassStop::Trapped;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::Admission(
+                            DreamerAdmissionOutcome::Empty,
+                        ) => {
+                            report.stop = WakePassStop::QueueEmpty;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::Admission(
+                            DreamerAdmissionOutcome::BudgetExhausted(_),
+                        ) => {
+                            report.stop = WakePassStop::BudgetExhausted;
+                            break;
+                        }
+                        DreamerConsolidationAdmissionOutcome::Admission(
+                            DreamerAdmissionOutcome::Admitted(attempt),
+                        ) => *attempt,
+                    },
                 };
 
             report.admitted += 1;
@@ -792,7 +814,16 @@ impl<'a> DreamerWakeDriver<'a> {
                 // executor is abandoned when the error propagates (a
                 // supervisor builds a fresh one per pass), so the
                 // AssertUnwindSafe is never observable.
-                let mut execute = pin!(exec.execute(&admitted, &mut ctx));
+                let mut execute = pin!(async {
+                    if admitted.status.attempt.kind
+                        == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+                    {
+                        crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
+                        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    } else {
+                        exec.execute(&admitted, &mut ctx).await
+                    }
+                });
                 let caught = poll_fn(|task_cx| {
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         execute.as_mut().poll(task_cx)
