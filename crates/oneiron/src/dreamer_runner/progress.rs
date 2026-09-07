@@ -294,7 +294,8 @@ impl DreamerRunnerStore<'_> {
                 AttemptState::Paused
                 | AttemptState::Completed
                 | AttemptState::Failed
-                | AttemptState::Cancelled,
+                | AttemptState::Cancelled
+                | AttemptState::Abandoned,
                 _,
             ) => {
                 return Ok(None);

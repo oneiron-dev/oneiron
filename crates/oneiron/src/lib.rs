@@ -62,6 +62,7 @@ pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
 pub mod disclosure;
+pub mod dispatch_byoa;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;

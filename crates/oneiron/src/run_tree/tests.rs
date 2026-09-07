@@ -255,7 +255,7 @@ fn run_tree_event_sequence_overflow_fails_closed() {
         note: None,
     }];
 
-    let result = run_tree_events(10, 30, 0, None, events, AttemptState::Completed);
+    let result = run_tree_events(10, 30, 0, None, events, AttemptState::Completed, false);
 
     assert!(matches!(
         result,
@@ -420,6 +420,117 @@ fn run_tree_projects_intervention_events_and_states() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn run_tree_cancelled_with_result_ends_in_cancellation() -> Result<()> {
+    use crate::attempt_queue::{AttemptResultRef, CleanupAttemptLeases, SetAttemptResult};
+
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let queued = enqueue(&runner, "result-worker", None, 10, "run-cancel-result")?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "result-worker".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    assert_eq!(claimed.id, queued.attempt.id);
+    let result_ref = AttemptResultRef::new("blob-artifact:deadbeef@1")?;
+    queue.set_result(SetAttemptResult {
+        id: claimed.id,
+        lease_owner: "result-worker".to_owned(),
+        attempt_count: claimed.attempt_count,
+        result_ref: result_ref.clone(),
+        now: 30,
+    })?;
+
+    // Attaching a result does not settle a live row or repeat its claim.
+    let running = RunTreeAdapter::new(&vault).read_run("run-cancel-result")?;
+    assert_eq!(running.roots[0].status, RunTreeStatus::Running);
+    assert_eq!(
+        event_kinds(&running.roots[0]),
+        vec![
+            RunTreeEventKind::Created,
+            RunTreeEventKind::Claimed,
+            RunTreeEventKind::ResultAttached,
+        ]
+    );
+
+    // Lease cleanup retains the result; the requeued row can then receive a
+    // durable cancel intervention. No result is written after settlement.
+    let cleanup = queue.cleanup_leases(CleanupAttemptLeases {
+        now: 40,
+        lease_timeout_secs: 10,
+    })?;
+    assert_eq!(cleanup.stale_requeued, 1);
+    let cancelled = queue.intervene(InterveneAttempt {
+        id: claimed.id,
+        kind: AttemptInterventionKind::Cancel,
+        actor: "dashboard".to_owned(),
+        note: Some("stop requeued work".to_owned()),
+        now: 50,
+    })?;
+    assert_eq!(cancelled.record.state, AttemptState::Cancelled);
+    assert_eq!(cancelled.record.result_ref.as_ref(), Some(&result_ref));
+    assert_eq!(cancelled.record.events.len(), 1);
+
+    let tree = RunTreeAdapter::new(&vault).read_run("run-cancel-result")?;
+    let node = &tree.roots[0];
+    assert_eq!(node.status, RunTreeStatus::Cancelled);
+    assert_eq!(node.failure, None);
+    assert_eq!(node.result_ref.as_deref(), Some(result_ref.as_str()));
+    assert_eq!(
+        event_kinds(node),
+        vec![
+            RunTreeEventKind::Created,
+            RunTreeEventKind::Claimed,
+            RunTreeEventKind::Cancelled,
+            RunTreeEventKind::ResultAttached,
+            RunTreeEventKind::Cancelled,
+        ]
+    );
+    // Preserve operator provenance and sequence; append runtime settlement.
+    assert_eq!(node.events[2].at, 50);
+    assert_eq!(node.events[2].actor, "dashboard");
+    assert_eq!(node.events[2].note.as_deref(), Some("stop requeued work"));
+    assert_eq!(node.events[3].at, 50);
+    assert_eq!(node.events[4].at, 50);
+    assert_eq!(node.events[4].actor, "runtime");
+    assert_eq!(node.events[4].note, None);
+    assert_eq!(
+        node.events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4]
+    );
+    assert_eq!(
+        RunTreeAdapter::new(&vault).read_run("run-cancel-result")?,
+        tree
+    );
+    assert_eq!(queue.get(claimed.id)?, Some(cancelled.record));
+    Ok(())
+}
+
+#[test]
+fn run_tree_final_cancellation_sequence_overflow_fails_closed() {
+    let events = vec![AttemptEvent {
+        sequence: u64::MAX - 1,
+        at: 20,
+        actor: "dashboard".to_owned(),
+        kind: AttemptInterventionKind::Cancel,
+        note: None,
+    }];
+
+    let result = run_tree_events(10, 30, 0, None, events, AttemptState::Cancelled, true);
+
+    assert!(matches!(
+        result,
+        Err(Error::ArithmeticOverflow("run-tree event sequence"))
+    ));
 }
 
 #[test]
@@ -594,7 +705,139 @@ fn dreamer_record(
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        result_ref: None,
     })
+}
+
+/// ONE-1904 T7: `abandoned` is a CROSS-EXECUTOR terminal state, so every
+/// executor kind — not only the foreign-agent one — must project it, carry its
+/// result reference under the exact wire key, and emit both lifecycle events.
+#[test]
+fn abandoned_projects_for_every_executor_kind_with_its_result_ref() -> Result<()> {
+    // One row per executor kind the queue actually carries, all abandoned.
+    let kinds = [
+        DREAMER_RUNNER_ATTEMPT_KIND,
+        crate::dispatch_byoa::BYOA_ATTEMPT_KIND,
+        crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+        "sync",
+    ];
+
+    for (index, kind) in kinds.iter().enumerate() {
+        let seed = 0xA0 + u8::try_from(index).expect("small index");
+        let record = abandoned_record(seed, kind, "blob-artifact:deadbeef@3");
+        let tree = render_run_tree(vec![record])?;
+        assert!(tree.repairs.is_empty());
+        let node = &tree.roots[0];
+
+        assert_eq!(
+            node.status,
+            RunTreeStatus::Abandoned,
+            "{kind} must project abandoned, not failed or cancelled"
+        );
+        assert_eq!(
+            node.failure, None,
+            "{kind} stopped without a diagnosed fault, so it has no failure summary"
+        );
+        assert_eq!(
+            node.result_ref.as_deref(),
+            Some("blob-artifact:deadbeef@3"),
+            "{kind} must still point at the exhaust it left behind"
+        );
+        assert!(
+            event_kinds(node).contains(&RunTreeEventKind::Abandoned),
+            "{kind} must emit its terminal event"
+        );
+        assert!(
+            event_kinds(node).contains(&RunTreeEventKind::ResultAttached),
+            "{kind} must announce the artifact it attached"
+        );
+
+        // The result is announced before the stop: the artifact was durable
+        // first, and a terminal node must not claim work continued after it
+        // ended.
+        let events = event_kinds(node);
+        let attached = events
+            .iter()
+            .position(|event| *event == RunTreeEventKind::ResultAttached)
+            .expect("result attached");
+        let abandoned = events
+            .iter()
+            .position(|event| *event == RunTreeEventKind::Abandoned)
+            .expect("abandoned");
+        assert!(attached < abandoned);
+
+        // The wire key is exactly `result_ref`, elided when absent.
+        let json = serde_json::to_value(node).expect("node serializes");
+        assert_eq!(
+            json.get("result_ref").and_then(serde_json::Value::as_str),
+            Some("blob-artifact:deadbeef@3")
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn a_row_without_a_result_elides_the_key_and_emits_no_attach_event() -> Result<()> {
+    let tree = render_run_tree(vec![legacy_queued_record(0xB1, 10, None)])?;
+    let node = &tree.roots[0];
+    assert_eq!(node.result_ref, None);
+    assert!(!event_kinds(node).contains(&RunTreeEventKind::ResultAttached));
+
+    let json = serde_json::to_value(node).expect("node serializes");
+    assert!(
+        json.get("result_ref").is_none(),
+        "an absent result must not widen the wire shape of an old row"
+    );
+
+    // ...and an old serialized tree without the key still decodes.
+    let decoded: super::RunTreeNode = serde_json::from_value(json).expect("node decodes");
+    assert_eq!(decoded.result_ref, None);
+    Ok(())
+}
+
+#[test]
+fn abandoned_projects_onto_the_agent_run_and_board_axes_without_becoming_failed() {
+    assert_eq!(
+        crate::agent_run_status::project_agent_run_status(RunTreeStatus::Abandoned),
+        crate::agent_run_status::AgentRunStatus::Abandoned,
+        "the agent-run axis already owns a truthful terminal token"
+    );
+    // A2A has no abandoned token, so that projection is documented-lossy; the
+    // native axes above are what keep the distinction.
+    assert_eq!(
+        crate::run_tree::RunTreeStatus::from(AttemptState::Abandoned),
+        RunTreeStatus::Abandoned
+    );
+}
+
+/// An abandoned row of `kind`, carrying its stop reason and result reference.
+fn abandoned_record(seed: u8, kind: &str, result_ref: &str) -> AttemptRecord {
+    AttemptRecord {
+        id: fixed_attempt_id(seed),
+        kind: kind.to_owned(),
+        payload: Vec::new(),
+        state: AttemptState::Abandoned,
+        lease_owner: None,
+        attempt_count: 1,
+        claimed_at: Some(11),
+        scheduled_at: None,
+        retry_of: None,
+        backoff_until: None,
+        last_error: Some("executor stopped without delivering".to_owned()),
+        task_ref: None,
+        run_id: Some("run-abandoned".to_owned()),
+        dedupe_key: None,
+        dedupe_actor_ref: None,
+        created_at: 10,
+        updated_at: 30,
+        events: Vec::new(),
+        manifest: Vec::new(),
+        cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        result_ref: Some(
+            crate::attempt_queue::AttemptResultRef::new(result_ref).expect("valid result ref"),
+        ),
+    }
 }
 
 fn fixed_attempt_id(byte: u8) -> crate::AttemptId {
@@ -625,6 +868,7 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        result_ref: None,
     }
 }
 
