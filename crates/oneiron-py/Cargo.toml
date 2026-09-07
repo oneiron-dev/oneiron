@@ -1,0 +1,34 @@
+[package]
+name = "oneiron-py"
+# ONE-1441 I12: the PyPI major must equal the engine's MEMORY_PACK_VERSION.
+# Deliberately NOT `version.workspace = true` — the workspace is at 0.1.0 and
+# tracks the engine, while this number tracks the pack schema a `recall` caller
+# receives. `build.rs` asserts the two stay in agreement.
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "oneiron_py"
+crate-type = ["cdylib"]
+# No Rust-side test harness. This crate is a thin PyO3 projection whose
+# behaviour is tested from Python (`tests/*.py`), and `extension-module`
+# deliberately leaves libpython unlinked — a cargo test binary would have
+# nothing to resolve its Python symbols against. Disabling the harness is what
+# lets `cargo nextest run --workspace` stay green over this crate.
+test = false
+doctest = false
+
+[dependencies]
+oneiron = { path = "../oneiron" }
+oneiron-remote = { path = "../oneiron-remote" }
+# abi3-py310 matches the 3.10 floor and produces ONE wheel for every later
+# CPython, so the release matrix is a platform list rather than a
+# platform-by-interpreter grid.
+pyo3 = { version = "0.27", features = ["abi3-py310", "extension-module"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

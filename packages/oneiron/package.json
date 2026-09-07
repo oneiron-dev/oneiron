@@ -1,0 +1,52 @@
+{
+  "name": "oneiron",
+  "version": "1.0.0",
+  "description": "Memory for agents: witness a turn, claim a fact, recall it, read the receipts.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oneiron-dev/oneiron.git",
+    "directory": "packages/oneiron"
+  },
+  "homepage": "https://github.com/oneiron-dev/oneiron",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "native/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:native": "bunx --bun @napi-rs/cli build --platform --release --manifest-path ../../crates/oneiron-napi/Cargo.toml --output-dir native --js index.cjs",
+    "build:ts": "bunx --bun tsc --project tsconfig.json",
+    "build": "bun run build:native && bun run build:ts",
+    "check:snippets": "bun run scripts/check-readme-snippets.mjs",
+    "check:sdk-major": "bun run scripts/assert-sdk-major.mjs",
+    "test": "bun test",
+    "prepack": "bun run build && bun run test && bun run check:snippets && bun run check:sdk-major",
+    "pack:dry-run": "bun pm pack --dry-run"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "memory",
+    "agents",
+    "retrieval",
+    "vector-search",
+    "knowledge-graph"
+  ]
+}

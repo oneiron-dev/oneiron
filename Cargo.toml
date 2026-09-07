@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,7 +21,10 @@ categories = ["database", "command-line-utilities"]
 
 [workspace.dependencies]
 arc-swap = "1.9"
-heed = "0.20"
+# Declare the local edge as well as the root patch: maturin collects sdist
+# inputs from path dependencies, not registry dependencies redirected by a patch.
+# Both declarations must select the same audited ONE-218 source tree.
+heed = { version = "0.20", path = "crates/heed/vendor/heed-0.20.5" }
 uuid = { version = "1", features = ["v7"] }
 # ONE-1140 (OD-1): receipt origin attestation, pinned to the 2.2.x line.
 ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }

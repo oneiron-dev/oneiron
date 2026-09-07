@@ -9,11 +9,11 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 #
-# ONEIRON VENDORED FORK (ONE-218). Byte-for-byte the published heed 0.20.5
-# manifest except for this comment block: package name, version, edition,
-# dependency requirements, features and targets are all UNCHANGED, so the
-# `[patch.crates-io]` entry in the repository root manifest substitutes this
-# tree for the registry copy without moving any version.
+# ONEIRON VENDORED FORK (ONE-218). The published heed 0.20.5 manifest with
+# this comment block and packaging-only exclusions (ONE-1441): package name,
+# version, edition, dependency requirements, features and targets are all
+# UNCHANGED, so the `[patch.crates-io]` entry in the repository root manifest
+# substitutes this tree for the registry copy without moving any version.
 #
 # This package is vendored inside the repository's `crates/` directory but is
 # deliberately NOT a member of the Oneiron workspace — the root manifest
@@ -34,6 +34,10 @@ autotests = false
 autobenches = false
 description = "A fully typed LMDB wrapper with minimum overhead"
 readme = "README.md"
+# Keep upstream archive metadata in the checkout for provenance, but not as
+# inputs to a new package. Cargo owns these generated names; the VCS file
+# otherwise makes `cargo package --list` (used by maturin sdist) fail.
+exclude = ["/.cargo_vcs_info.json", "/Cargo.toml.orig"]
 keywords = [
     "lmdb",
     "database",

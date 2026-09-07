@@ -31,6 +31,23 @@ pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 /// reachable through the session handle.
 pub const MEMORY_CODE_OFF_RECORD_SESSION_DOOR: &str = "OFF_RECORD_SESSION_DOOR";
 
+/// An embedded vault directory is already owned by another process holding the
+/// single-writer lease (ONE-1441 WIRE-P1).
+///
+/// Distinct from `INVALID_STATE`, which is the refresh-and-retry family: this
+/// refusal is about WHO holds the writer lease on a directory, not about a
+/// stale target or a version conflict, and no retry loop resolves it. The
+/// remedies are to connect to the owning process or to stop it — never to
+/// re-read and write again.
+///
+/// Emitted by the SDK's embedded constructor when
+/// [`crate::VaultWriterLease::acquire`] refuses, and only when the refusal is
+/// lease contention (`Error::ConcurrentWrite` carrying
+/// [`crate::VAULT_WRITER_LEASE_HELD`]). The central `From<Error>` impl below is
+/// deliberately NOT amended: every other `ConcurrentWrite` keeps its
+/// `INVALID_STATE` mapping.
+pub const MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER: &str = "VAULT_LOCKED_SINGLE_WRITER";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.

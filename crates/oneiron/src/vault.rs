@@ -84,6 +84,47 @@ const MAX_SUBTREE_RESULTS: usize = 50_000;
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
+pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
+
+/// Namespace the embedded default owner actor's id is derived from
+/// (ONE-1441 WIRE-P1).
+///
+/// Pinned: changing it changes the owner id every embedded vault already
+/// carries, which would strand every claim that names the old one.
+const EMBEDDED_OWNER_ACTOR_NAMESPACE: &[u8] = b"oneiron 2026-08 embedded-owner-actor v1";
+
+/// `name` of the embedded owner PERSON — the one field the PERSON projection
+/// profile reads at every profile level.
+const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
+
+/// The pinned, namespace-derived id of the embedded default owner actor.
+///
+/// Derived rather than literal so the derivation is auditable from the
+/// namespace above, and stamped with the RFC 9562 version-8 (custom) and
+/// variant bits so the value is a well-formed UUID like every other
+/// [`EntityId`] — which also guarantees it can never collide with the
+/// all-zero/all-`0xFF` reserved sentinels [`EntityId::from_bytes`] rejects.
+fn embedded_owner_actor_id() -> Result<EntityId> {
+    let digest = blake3::hash(EMBEDDED_OWNER_ACTOR_NAMESPACE);
+    let mut bytes = [0u8; ENTITY_ID_LEN];
+    bytes.copy_from_slice(&digest.as_bytes()[..ENTITY_ID_LEN]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    EntityId::from_bytes(bytes)
+}
+
+/// Encodes the minimal PERSON body the bootstrap writes.
+fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
+    let value = rmpv::Value::Map(vec![(
+        rmpv::Value::from("name"),
+        rmpv::Value::from(EMBEDDED_OWNER_ACTOR_NAME),
+    )]);
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &value)
+        .map_err(|_| Error::InvariantViolation("embedded owner actor body encode"))?;
+    Ok(encoded)
+}
+
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
 pub(crate) fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
@@ -148,6 +189,8 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    // Declared after Store: LMDB closes before process ownership is released.
+    writer_lease: Option<VaultWriterLease>,
     /// Posture/custody pairing this handle was opened under, retained from the
     /// validated config so the honest read-only description below cannot drift
     /// from what the opener actually accepted. Private: callers read it through
@@ -227,8 +270,8 @@ impl Vault {
     /// Every gate fails closed: the first failing gate returns its typed
     /// [`Error`] and no usable `Vault` handle is constructed.
     ///
-    /// This is the only door that CREATES a vault, and the only one whose
-    /// gates may repair an existing one at open time. Callers that must reopen
+    /// This and [`Self::open_owned`] use the create-capable gates, which may
+    /// repair an existing vault at open time. Callers that must reopen
     /// an already-initialized vault, and must never bring one into existence,
     /// use [`Self::open_existing`].
     pub fn open(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
@@ -237,6 +280,26 @@ impl Vault {
         // consumer build (including `--all-features`) can open a vault that
         // skips the default consent/policy gate.
         Self::open_seeded(path, config, DefaultPolicySeedMode::Required)
+    }
+
+    /// Opens a process-owned vault. Server and embedded SDK owners use this
+    /// door so the writer lease covers startup, all Arc holders, and shutdown.
+    /// Low-level `open` remains available for caller-managed engine lifetimes.
+    pub fn open_owned(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
+        validate_open_config(&config)?;
+        std::fs::create_dir_all(path.as_ref())?;
+        let canonical = path.as_ref().canonicalize()?;
+        let lease = VaultWriterLease::acquire(&canonical)?;
+        let store = Store::open_with_writer_lease(&canonical, &config, &lease)?;
+        let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
+        vault.writer_lease = Some(lease);
+        Ok(vault)
+    }
+
+    /// Process ownership, when opened through [`Self::open_owned`].
+    #[must_use]
+    pub fn writer_lease(&self) -> Option<&VaultWriterLease> {
+        self.writer_lease.as_ref()
     }
 
     /// Opens an ALREADY-INITIALIZED vault at `path`, or refuses.
@@ -506,6 +569,7 @@ impl Vault {
             store,
             config,
             analyzer,
+            writer_lease: None,
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
             // Every vault opens FULL; only an explicit ctl-driven shed parks
@@ -1035,6 +1099,74 @@ impl Vault {
             actor,
             actor_class,
         }
+    }
+
+    /// Ensures and returns the generic owner actor unauthenticated embedded SDK
+    /// constructors bind (ONE-1441 WIRE-P1 embedded ownership bootstrap).
+    ///
+    /// Constructor bootstrap: embedded ownership IS the authority, so no
+    /// verifier chain runs (OF-452 D10). The wire fixture also reaches this
+    /// seam to bind an owner PERSON on a pre-server vault — the same
+    /// construction-time binding, before any facade gate exists to consult.
+    ///
+    /// IDEMPOTENT and single-transaction. The id is derived from a pinned
+    /// namespace, so it is the same in every vault and across every process;
+    /// the check and the create share ONE write transaction, so two racing
+    /// constructors cannot both observe "absent" and both write. An occupant
+    /// that is present but is NOT a `PERSON` is a typed refusal, never an
+    /// overwrite: the bootstrap creates the owner, it does not retype whatever
+    /// it finds.
+    ///
+    /// The write goes through the ordinary `batch_in().put(...)` entity door
+    /// this crate uses everywhere else — no bespoke storage path, no
+    /// placeholder timestamps. `put_structural`'s verified-human-owner gate is
+    /// deliberately NOT invoked: by D10 it does not run at construction time,
+    /// and it could not, because the actor it would verify is the one being
+    /// created.
+    ///
+    /// `#[doc(hidden)] pub` — housekeeping, and housekeeping is public, so the
+    /// crate-boundary census does not draft it into the public catalog.
+    /// Bindings call THIS; they never call `put_entity`, `batch().put`, or any
+    /// other storage mutation directly.
+    #[doc(hidden)]
+    pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
+        let owner = embedded_owner_actor_id()?;
+        let now = unix_seconds_now();
+        self.try_with_write_txn(|wtxn| {
+            if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
+                return Err(crate::memory::hard_deleted_refusal(&owner));
+            }
+            match self.get_entity_type_in_txn(wtxn, &owner)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(owner),
+                // Present but not a PERSON: refuse, never retype. The typed
+                // engine error carries the occupant's byte, and the central
+                // `From<Error>` mapping renders it — no bespoke code is minted
+                // for a case the vocabulary already spells.
+                Some(existing) => {
+                    return Err(crate::memory::MemoryError::from(
+                        Error::EntityTypeImmutable {
+                            id: owner,
+                            existing,
+                            attempted: crate::registry::ENTITY_TYPE_PERSON,
+                        },
+                    ));
+                }
+                None => {}
+            }
+            self.batch_in()
+                .put(
+                    &owner,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &encode_embedded_owner_actor_body()?,
+                )
+                .apply(wtxn)?;
+            Ok(owner)
+        })
     }
 
     pub(crate) fn scoped_read_search_candidate_limit(

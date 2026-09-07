@@ -9,9 +9,7 @@ use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::fs::File;
 #[cfg(target_os = "linux")]
-use std::os::fd::{AsRawFd, FromRawFd};
-#[cfg(target_os = "linux")]
-use std::os::unix::ffi::OsStrExt;
+use std::os::fd::AsRawFd;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::FileExt;
 #[cfg(unix)]
@@ -32,6 +30,10 @@ use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 
+#[cfg(unix)]
+use super::root_directory::{FileIdentity, file_identity};
+#[cfg(target_os = "linux")]
+use super::root_directory::{adopt_descriptor, named_directory_identity, open_root_directory};
 use super::*;
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
@@ -522,6 +524,16 @@ impl Store {
         storage_abi_version: u16,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
+        Self::open_with_lease(path, config, storage_abi_version, seed_mode, None)
+    }
+
+    pub(super) fn open_with_lease(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+        storage_abi_version: u16,
+        seed_mode: DefaultPolicySeedMode,
+        lease: Option<&VaultWriterLease>,
+    ) -> Result<Self> {
         // Declared before the environment so its Drop runs after the env has
         // closed, releasing LMDB's file handles before removing torn files.
         let mut torn_creation_cleanup = TornCreationCleanup { root: None };
@@ -530,10 +542,20 @@ impl Store {
 
             std::fs::create_dir_all(path.as_ref())?;
             let canonical_path = path.as_ref().canonicalize()?;
-            let root_preflight = preflight_vault_root(&canonical_path)?;
+            if let Some(lease) = lease {
+                lease.validate_directory(&canonical_path)?;
+            }
+            #[cfg(target_os = "linux")]
+            let storage_path = lease.map_or_else(
+                || canonical_path.clone(),
+                VaultWriterLease::environment_path,
+            );
+            #[cfg(not(target_os = "linux"))]
+            let storage_path = canonical_path.clone();
+            let root_preflight = preflight_vault_root(&storage_path)?;
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
-                torn_creation_cleanup.arm(canonical_path.clone());
+                torn_creation_cleanup.arm(storage_path.clone());
             }
             let mut registered_path =
                 RegisteredPath::reserve(canonical_path.clone(), root_preflight.identity)?;
@@ -551,11 +573,33 @@ impl Store {
             // path/identity registry then rejects later duplicate live Env
             // opens for the same canonical path or known LMDB file identity.
             let env = unsafe {
-                EnvOpenOptions::new()
+                let mut options = EnvOpenOptions::new();
+                options
                     .map_size(config.map_size)
                     .max_readers(config.max_readers)
-                    .max_dbs(MAX_DBS)
-                    .open(&canonical_path)?
+                    .max_dbs(MAX_DBS);
+                #[cfg(target_os = "linux")]
+                let opened = if let Some(lease) = lease {
+                    // Keep the directory capability intact, just like the
+                    // existing-only door; the canonical path is cache identity.
+                    options.open_with_cache_identity(
+                        &lease.environment_path(),
+                        canonical_path.clone(),
+                        || {
+                            #[cfg(test)]
+                            test_hooks::run_before_lmdb_open(&canonical_path);
+                        },
+                        || {
+                            #[cfg(test)]
+                            test_hooks::run_after_lmdb_open(&canonical_path);
+                        },
+                    )?
+                } else {
+                    options.open(&canonical_path)?
+                };
+                #[cfg(not(target_os = "linux"))]
+                let opened = options.open(&canonical_path)?;
+                opened
             };
             // Wrap IMMEDIATELY so every `?` early-return below (failed open
             // gates) also releases the environment instead of leaking it into
@@ -566,6 +610,9 @@ impl Store {
             };
             #[cfg(test)]
             test_hooks::run_after_lmdb_open(&canonical_path);
+            if let Some(lease) = lease {
+                lease.validate_directory(&canonical_path)?;
+            }
             if VAULT_ROOT_IDENTITY_CHECKS_AVAILABLE {
                 // A root whose LMDB files gained a SECOND HARD LINK while this
                 // open was creating them is an ALIAS, not a torn creation, and
@@ -587,7 +634,7 @@ impl Store {
                 // `VaultRootPreflight(MultipleHardLinks)`, returns no handle,
                 // and releases its path reservation; only the destructive
                 // unlink is withheld. Every other failure keeps cleanup armed.
-                let refreshed = match preflight_vault_root(&canonical_path) {
+                let refreshed = match preflight_vault_root(&storage_path) {
                     Ok(refreshed) => refreshed,
                     Err(error) => {
                         if preflight_rejected_aliased_root(&error) {
@@ -1184,13 +1231,6 @@ impl VaultRootIdentity {
     }
 }
 
-#[cfg(unix)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct FileIdentity {
-    dev: u64,
-    ino: u64,
-}
-
 #[cfg(windows)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FileIdentity {
@@ -1378,23 +1418,6 @@ fn existing_root_refusal(root: &Path, after_environment_open: bool) -> Error {
             after_environment_open,
         },
     )
-}
-
-#[cfg(target_os = "linux")]
-fn open_root_directory(root: &Path) -> Result<File> {
-    let path = CString::new(root.as_os_str().as_bytes())
-        .map_err(|_| Error::InvalidConfig("vault root path contains a NUL byte".to_owned()))?;
-    // SAFETY: `path` is a live NUL-terminated C string for the whole call, and
-    // `libc::open` returns either a fresh descriptor owned by nobody else or a
-    // negative error code; `adopt_descriptor` checks the code before taking
-    // ownership, so the descriptor is closed exactly once.
-    let fd = unsafe {
-        libc::open(
-            path.as_ptr(),
-            libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    Ok(adopt_descriptor(fd)?)
 }
 
 /// One LMDB entry as the bound root holds it: the still-open descriptor the
@@ -1654,30 +1677,6 @@ fn lmdb_header_u16(header: &[u8], offset: usize) -> u16 {
     u16::from_ne_bytes(field)
 }
 
-/// Identity of the directory the caller's path names RIGHT NOW, without
-/// following a final symlink. `None` means the path no longer names a
-/// directory at all.
-#[cfg(target_os = "linux")]
-fn named_directory_identity(root: &Path) -> Result<Option<FileIdentity>> {
-    match std::fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.file_type().is_dir() => Ok(Some(file_identity(&metadata))),
-        Ok(_) => Ok(None),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn adopt_descriptor(fd: libc::c_int) -> std::io::Result<File> {
-    if fd < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: `fd` is a non-negative descriptor just returned by `open`/
-    // `openat` and held by no other owner, so this `File` becomes its sole
-    // owner and closes it exactly once.
-    Ok(unsafe { File::from_raw_fd(fd) })
-}
-
 /// Binds the existing root and opens its LMDB environment through the bound
 /// descriptor. Returns with the root-open guard released, having created
 /// nothing and written nothing.
@@ -1815,14 +1814,6 @@ fn inspect_vault_root_entry(root: &Path, entry: VaultRootEntry) -> Result<Option
             root,
             VaultRootProblem::UnsupportedPlatform { entry },
         ))
-    }
-}
-
-#[cfg(unix)]
-fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    FileIdentity {
-        dev: metadata.dev(),
-        ino: metadata.ino(),
     }
 }
 
