@@ -1,9 +1,9 @@
 mod lifecycle;
 
 use super::*;
+use crate::WriteActor;
 use crate::claim::validate_claim_body_and_decode;
 use crate::test_util::entity;
-use crate::WriteActor;
 
 fn imported_claim() -> StoredProvenanceClaim {
     let actor_class = EdgeActorClass::Human;

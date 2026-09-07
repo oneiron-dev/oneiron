@@ -534,6 +534,30 @@ impl Vault {
         Ok(versions)
     }
 
+    /// Reads metadata for exactly one version without walking the version
+    /// chain or loading content bytes. The record must name the requested
+    /// version; malformed or mismatched records fail closed. This does not
+    /// validate the chain, resolve the ASSET, or authorize secret-taint reuse.
+    pub fn blob_artifact_version_metadata(
+        &self,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<BlobArtifactVersion>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &blob_artifact_version_key(artifact_id, version))?
+        else {
+            return Ok(None);
+        };
+        let record = decode_blob_artifact_version_record(&raw)?;
+        if record.version != version {
+            return Err(Error::CorruptedIndex("blob artifact version record"));
+        }
+        Ok(Some(record))
+    }
+
     /// Reads the stored bytes for one version, verifying the content hash on
     /// the way out.
     pub fn read_blob_artifact_version(

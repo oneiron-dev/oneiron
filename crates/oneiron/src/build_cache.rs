@@ -641,11 +641,11 @@ fn sum_referenced_bytes<I: IntoIterator<Item = u64>>(sizes: I) -> BuildCacheResu
 
 fn admit_result_for_hit(vault: &Vault, result: &ActionResult) -> BuildCacheResult<()> {
     for reference in result.artifact_refs() {
-        // Metadata only: a hit must not materialize potentially large bodies.
-        if !vault
-            .blob_artifact_versions(reference.artifact_id())?
-            .iter()
-            .any(|v| v.version == reference.version())
+        // One exact metadata lookup per ref: neither version-chain scans nor
+        // potentially large content bodies belong on the hit path.
+        if vault
+            .blob_artifact_version_metadata(reference.artifact_id(), reference.version())?
+            .is_none()
         {
             return Err(BuildCacheError::ArtifactUnavailable {
                 artifact_ref: reference.to_result_ref(),

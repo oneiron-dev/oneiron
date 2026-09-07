@@ -10,7 +10,15 @@ use crate::pipeline::Signal;
 use super::empty_pack::EmptyContext;
 
 pub const DEFAULT_MAX_NEIGHBORS: usize = 50;
-pub(super) const DEFAULT_TOKEN_BUDGET: usize = 4000;
+/// The engine-default context-window token budget — the value an absent
+/// `AgentDefinition.memory_profile` reproduces (RT-05, ONE-1687).
+///
+/// RENAMED, never revalued: an agent with no profile assembles byte-for-byte
+/// the pack it assembled before the lift. The value reaches consumers through
+/// [`super::ContextPackBuilder::effective_token_budget`] on a default builder
+/// rather than a second read of this constant, so the budget has ONE
+/// authority.
+pub(super) const DEFAULT_WINDOW_TOKEN_BUDGET: usize = 4000;
 pub const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 pub const MAX_EDGE_HOP: u32 = 5;
 pub const MAX_CONTEXT_NEIGHBORS: usize = 1000;

@@ -12,6 +12,8 @@ use crate::secret_rotation::mark_exhaust_tainted_in_txn;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
+mod hit_metadata;
+
 fn path(value: &str) -> DeclaredOutputPath {
     DeclaredOutputPath::parse(value).expect("canonical path")
 }

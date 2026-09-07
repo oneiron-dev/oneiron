@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::Vault;
+use crate::agent_def::MemoryProfile;
 use crate::claim::ClaimBody;
 use crate::codebase::RepoRef;
 use crate::disclosure::{DisclosureContext, DisclosureMode};
@@ -34,7 +35,7 @@ use super::quarantine::load_pack_quarantine_index;
 use super::telemetry::{discard_failed_context_pack_telemetry, finalize_context_pack_telemetry};
 use super::types::{
     ContextPack, ContextPackRetrievalBudget, DEFAULT_MAX_FIELD_CHARS, DEFAULT_MAX_NEIGHBORS,
-    DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_TOKEN_BUDGET, FieldProfile,
+    DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET, FieldProfile,
     MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat, PackStats, TokenAllocation,
 };
 use super::validation::{
@@ -133,6 +134,7 @@ impl ContextPackTelemetry<'_> {
         self,
         run_id: RetrievalRunId,
         elapsed_us: u64,
+        total_in_scope: usize,
         claims_suppressed: usize,
         surfaced_result_ids: &[[u8; 16]],
         empty_reason: Option<String>,
@@ -141,6 +143,7 @@ impl ContextPackTelemetry<'_> {
             Self::Base(store) => store.finalize_context_pack_retrieval_run(
                 run_id,
                 elapsed_us,
+                total_in_scope,
                 claims_suppressed,
                 surfaced_result_ids,
                 empty_reason,
@@ -148,6 +151,7 @@ impl ContextPackTelemetry<'_> {
             Self::Session(session) => session.finalize_run(
                 run_id,
                 elapsed_us,
+                total_in_scope,
                 claims_suppressed,
                 surfaced_result_ids,
                 empty_reason,
@@ -169,6 +173,8 @@ pub(super) struct ContextPackRun<'a> {
     pub(super) pack: ContextPack,
     pub(super) telemetry_run_id: Option<RetrievalRunId>,
     pub(super) telemetry: ContextPackTelemetry<'a>,
+    /// Original pipeline scope count, retained by ordinary finalization.
+    pub(super) total_in_scope: usize,
     clamped_out: u64,
 }
 
@@ -176,6 +182,7 @@ pub struct UnfinalizedContextPack<'a> {
     pub value: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
     telemetry: ContextPackTelemetry<'a>,
+    total_in_scope: usize,
     clamped_out: u64,
 }
 
@@ -213,6 +220,7 @@ impl UnfinalizedContextPack<'_> {
             self.telemetry,
             self.telemetry_run_id.take(),
             pack.stats.query_time_us,
+            self.total_in_scope,
             pack.stats.claims_suppressed,
             &surfaced_result_ids,
             projected_context_pack_empty_reason(
@@ -228,6 +236,55 @@ impl UnfinalizedContextPack<'_> {
             value: pack,
             run_id: telemetry_run_id,
         }
+    }
+
+    /// Finalizes this assembly's retrieval-run row against the pack AS IT NOW
+    /// STANDS — after the caller's own scope filtering, clamping and
+    /// truncation — and returns it UNPROJECTED.
+    ///
+    /// The sibling of [`Self::finish_projected_json`] for a caller that
+    /// answers with the engine-canonical pack instead of an HTTP JSON
+    /// projection (ONE-1433's `code_run::vault_read` adapter). Deferring the
+    /// finalize is the whole point of the door: a durable run row published
+    /// out of an actor-scoped read must carry EXACTLY the ids that actor
+    /// received, so the surfaced ids, candidate and suppression counts, and
+    /// empty reason are all read back off the post-filter value rather than
+    /// off the assembly's own pre-filter results. An entity the caller's filter
+    /// removed is then as absent from telemetry as it is from the response —
+    /// the same fail-closed boundary OF-365 states for the disclosure clamp,
+    /// where a durable trace must not retain ids a clamp removed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a failed finalize after discarding the provisional row.
+    /// This door deliberately does NOT take [`Self::finish_projected_json`]'s
+    /// best-effort posture: its caller has a `Result` to carry the failure,
+    /// so even a base-vault finalize failure must fail this read.
+    pub fn finish_post_filter(mut self) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        let surfaced_result_ids: Vec<[u8; 16]> = self
+            .value
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let telemetry_run_id = self.telemetry_run_id.take();
+        if let Some(run_id) = telemetry_run_id
+            && let Err(error) = self.telemetry.finalize(
+                run_id,
+                self.value.stats.query_time_us,
+                self.value.stats.candidates_considered,
+                self.value.stats.claims_suppressed,
+                &surfaced_result_ids,
+                context_pack_empty_reason(&self.value, &surfaced_result_ids),
+            )
+        {
+            discard_failed_context_pack_telemetry(self.telemetry, Some(run_id));
+            return Err(error);
+        }
+        Ok(RetrievalWithTelemetry {
+            value: self.value,
+            run_id: telemetry_run_id,
+        })
     }
 }
 
@@ -246,7 +303,7 @@ impl<'a> ContextPackBuilder<'a> {
             merge_neighbors: true,
             format: PackFormat::default(),
             field_profile: FieldProfile::default(),
-            token_budget: DEFAULT_TOKEN_BUDGET,
+            token_budget: DEFAULT_WINDOW_TOKEN_BUDGET,
             token_allocation: TokenAllocation::default(),
             max_field_chars: DEFAULT_MAX_FIELD_CHARS,
             max_item_tokens: 0,
@@ -580,6 +637,41 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Applies an agent's RT-05 memory profile as construction-time defaults
+    /// (ONE-1687): the window budget and, when present, the per-class split.
+    ///
+    /// `None` is a NO-OP — today's defaults hold and the assembled pack is
+    /// byte-for-byte what it was before the profile existed. Call order is
+    /// deliberate: a later explicit [`Self::token_budget`] or
+    /// [`Self::token_allocation`] overrides these profile defaults, so a
+    /// per-request override always wins over the stored profile.
+    pub fn memory_profile(mut self, profile: Option<&MemoryProfile>) -> Self {
+        let Some(profile) = profile else {
+            return self;
+        };
+        self.token_budget =
+            usize::try_from(profile.window_token_budget).unwrap_or(DEFAULT_WINDOW_TOKEN_BUDGET);
+        if let Some(split) = profile.budget_split {
+            self.token_allocation = TokenAllocation {
+                claims: split.claims,
+                turns: split.turns,
+                summaries: split.summaries,
+                other: split.other,
+            };
+        }
+        self
+    }
+
+    /// The effective window budget after defaults and profile application.
+    ///
+    /// The ONE public read of the assembled budget. A default builder answers
+    /// the engine default through the same machinery a profiled builder uses,
+    /// so a cross-read never re-spells the constant.
+    #[must_use]
+    pub const fn effective_token_budget(&self) -> usize {
+        self.token_budget
+    }
+
     pub fn token_allocation(mut self, allocation: TokenAllocation) -> Self {
         self.token_allocation = allocation;
         self
@@ -621,6 +713,7 @@ impl<'a> ContextPackBuilder<'a> {
             run.telemetry,
             run.telemetry_run_id,
             run.pack.stats.query_time_us,
+            run.total_in_scope,
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
@@ -662,6 +755,7 @@ impl<'a> ContextPackBuilder<'a> {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
+            total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
         })
     }
@@ -947,6 +1041,7 @@ impl<'a> ContextPackBuilder<'a> {
                 },
                 telemetry_run_id,
                 telemetry,
+                total_in_scope,
                 clamped_out,
             })
         })();
@@ -988,6 +1083,7 @@ impl<'a> ContextPackBuilder<'a> {
             run.telemetry,
             run.telemetry_run_id,
             telemetry.stats.query_time_us,
+            run.total_in_scope,
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),

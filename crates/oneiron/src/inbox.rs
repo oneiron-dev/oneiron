@@ -359,7 +359,8 @@ impl Vault {
     }
 
     /// Applies one bulk verb to a group at the current time, covering every
-    /// verb class.
+    /// verb class. See [`Vault::resolve_inbox_group_at`] for post-commit VAD
+    /// failure and retry semantics.
     pub fn resolve_inbox_group(
         &self,
         group_key: &str,
@@ -375,6 +376,14 @@ impl Vault {
     /// carrying the run id; review-each expands the members without mutating
     /// them. `verb_class` narrows the bundle to `new_claim` / `update` /
     /// `conflict` rows.
+    ///
+    /// AcceptAll consolidates VAD for accepted Dreamer members after commit.
+    /// A VAD error is returned with all approvals and receipts still committed;
+    /// earlier members may be populated and later members not yet attempted.
+    /// Retry canonical [`Vault::consolidate_claim_vad`] on the accepted ids, not
+    /// this door: a retry with no remaining targets returns
+    /// [`Error::EntityNotFound`]. Other verb classes can remain open after a
+    /// narrowed accept. Neither RejectAll nor ReviewEach runs consolidation.
     pub fn resolve_inbox_group_at(
         &self,
         group_key: &str,
@@ -399,18 +408,20 @@ impl Vault {
         }
 
         let bundle_ref = bundle_ref_for_group(&group.group_key);
-        let (bundle_record, item_records) = self.with_write_txn(|wtxn| {
+        let (bundle_record, item_records, vad_claim_ids) = self.with_write_txn(|wtxn| {
             let mut item_records = Vec::new();
+            let mut vad_claim_ids = Vec::new();
             let mut basis: Vec<GateDecisionRecord> = Vec::new();
             for claim_id in &targets {
                 let id = EntityId::from_hex(claim_id)
                     .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
                 match verb {
                     InboxBulkVerb::AcceptAll => {
-                        if let Some(record) =
+                        if let Some(accepted) =
                             accept_member_in_txn(self, wtxn, &id, &bundle_ref, now)?
                         {
-                            item_records.push(record);
+                            vad_claim_ids.extend(accepted.vad_claim_id);
+                            item_records.push(accepted.record);
                         }
                     }
                     InboxBulkVerb::RejectAll => {
@@ -451,8 +462,13 @@ impl Vault {
                 bundle_basis,
                 now,
             )?;
-            Ok((bundle_record, item_records))
+            Ok((bundle_record, item_records, vad_claim_ids))
         })?;
+        // Consent is committed before the consolidator opens its own writer.
+        // Do not hide a VAD failure: Approved and its receipts remain durable.
+        for claim_id in vad_claim_ids {
+            self.consolidate_claim_vad_now(&claim_id, now)?;
+        }
 
         let review_items = if verb == InboxBulkVerb::ReviewEach {
             targets
@@ -484,6 +500,13 @@ impl Vault {
     /// [`Error::GateConsentStale`] when the reviewed content or policy floor
     /// drifted, and [`Error::InvalidClaimBody`] when the amendment does not
     /// decode or leaves the reviewed claim's predicate/subject.
+    ///
+    /// Dreamer members also run canonical VAD consolidation after commit. Its
+    /// errors are returned without rolling back Approved, the edit, or receipts.
+    /// Retry VAD through [`Vault::consolidate_claim_vad`] on the approved id;
+    /// unchanged evidence is idempotent. The pending row is already closed, so
+    /// retrying this approval door returns [`Error::EntityNotFound`]. Annotation
+    /// and reappraisal predicates retain their canonical consolidation errors.
     pub fn approve_inbox_member_with_edit(
         &self,
         claim_id: &EntityId,
@@ -504,7 +527,7 @@ impl Vault {
         amended_body: &[u8],
         now: u64,
     ) -> Result<InboxAmendedApproval> {
-        self.with_write_txn(|wtxn| {
+        let (approval, vad_claim_id) = self.with_write_txn(|wtxn| {
             let accepted = accept_member_with_amendment_in_txn(
                 self,
                 wtxn,
@@ -522,12 +545,19 @@ impl Vault {
             // read failure reported Err on a consent decision that had
             // already landed; here the same failure rolls it back.
             attach_amendment_deltas(self, wtxn, std::slice::from_mut(&mut receipt))?;
-            Ok(InboxAmendedApproval {
-                claim_id: claim_id.to_hex(),
-                receipt,
-                delta: accepted.delta,
-            })
-        })
+            Ok((
+                InboxAmendedApproval {
+                    claim_id: claim_id.to_hex(),
+                    receipt,
+                    delta: accepted.delta,
+                },
+                accepted.vad_claim_id,
+            ))
+        })?;
+        if let Some(claim_id) = vad_claim_id {
+            self.consolidate_claim_vad_now(&claim_id, now)?;
+        }
+        Ok(approval)
     }
 
     /// RS3 door: reopens the group behind a bundle receipt reference
@@ -1174,9 +1204,8 @@ fn accept_member_in_txn(
     id: &EntityId,
     bundle_ref: &str,
     now: u64,
-) -> Result<Option<GateDecisionRecord>> {
+) -> Result<Option<AcceptedMember>> {
     accept_member_with_amendment_in_txn(vault, wtxn, id, Some(bundle_ref), now, None)
-        .map(|accepted| accepted.map(|accepted| accepted.record))
 }
 
 /// One accepted member: the resolution decision plus the Δ its amendment
@@ -1184,6 +1213,7 @@ fn accept_member_in_txn(
 struct AcceptedMember {
     record: GateDecisionRecord,
     delta: Option<AmendmentDelta>,
+    vad_claim_id: Option<EntityId>,
 }
 
 /// Redeems consent on one member: verifies the content-addressed binding
@@ -1313,7 +1343,11 @@ fn accept_member_with_amendment_in_txn(
             delta,
         )?;
     }
-    Ok(Some(AcceptedMember { record, delta }))
+    Ok(Some(AcceptedMember {
+        record,
+        delta,
+        vad_claim_id: pending.dreamer_run_id.is_some().then_some(*id),
+    }))
 }
 
 /// Measures the amendment Δ, returning the receipt reasons that record a
