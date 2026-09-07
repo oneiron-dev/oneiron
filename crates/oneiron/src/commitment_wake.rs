@@ -521,7 +521,7 @@ enum WakeEligibility {
 ///    [`CommitmentWakeSkip::Raced`]: it settles nothing and enqueues nothing,
 ///    because a stale caller must never settle a phase it did not see.
 /// 2. Read the raw claim through the crate-private
-///    [`Vault::get_claim_in_txn`] and type it with CMT-1's public
+///    `Vault::get_claim_in_txn` and type it with CMT-1's public
 ///    `decode_commitment_claim`. The PUBLIC `get_commitment_claim` opens a
 ///    nested read transaction, which is illegal under LMDB, and is therefore
 ///    never reachable from here.

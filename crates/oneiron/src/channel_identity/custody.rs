@@ -146,7 +146,7 @@ pub fn delegated_custody_effector(channel: &str) -> Option<&'static str> {
 ///
 /// BOTH halves of the subject are normalized here, and the channel half is what
 /// ONE-1825 closes. Every writer that consumes this scope —
-/// [`verify_delegated_custody_in_txn`], reached through
+/// `verify_delegated_custody_in_txn`, reached through
 /// [`Vault::provision_delegated_identity`](crate::Vault::provision_delegated_identity)
 /// and [`Vault::verify_delegated_custody`](crate::Vault::verify_delegated_custody) —
 /// runs the request channel through [`ChannelKey::normalize`] FIRST and then
@@ -170,7 +170,7 @@ pub fn delegated_custody_subject_scope(channel: &str, address: &str) -> String {
 
 /// The read + subject scope pair a delegated custody binding must declare.
 ///
-/// The registration-side twin of [`verify_delegated_custody_in_txn`], so a host
+/// The registration-side twin of `verify_delegated_custody_in_txn`, so a host
 /// registering a grant and the engine admitting it cannot drift. `"Email"`,
 /// `"EMAIL"` and `" email "` all register the one scope the engine looks for.
 #[must_use]
@@ -186,7 +186,7 @@ pub fn delegated_custody_scopes(channel: &str, address: &str) -> Vec<String> {
 /// that binding naming this exact mailbox as its subject.
 ///
 /// There is no public constructor and no public field: the ONLY way to hold one
-/// is [`verify_delegated_custody_in_txn`], which reads the custody record. That
+/// is `verify_delegated_custody_in_txn`, which reads the custody record. That
 /// is the difference between a caller ASSERTING custody and custody having been
 /// VERIFIED.
 ///

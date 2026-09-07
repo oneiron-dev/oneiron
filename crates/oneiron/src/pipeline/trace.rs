@@ -7,6 +7,7 @@ use crate::analyzer::AnalyzerChannel;
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
+use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::fusion;
@@ -218,6 +219,7 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_facet_filter(&mut hasher, builder.facet_filter);
     fork_hash_relationship_filter(&mut hasher, builder.relationship_filter);
     fork_hash_world_scope(&mut hasher, builder.world_scope);
+    fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
     fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
@@ -485,6 +487,30 @@ fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
         WorldScope::WorldSet(scope_key) => {
             fork_hash_str(hasher, "world_set");
             fork_hash_raw_bytes(hasher, &scope_key);
+        }
+    }
+}
+
+/// Query validation still rejects empty AnyOf before channel work. Hashing only
+/// normalizes ordering/duplicates; it neither admits nor repairs invalid input.
+fn fork_hash_corpus_scope(hasher: &mut Sha256, scope: &CorpusScope) {
+    fork_hash_str(hasher, "corpus_scope");
+    match scope {
+        CorpusScope::All => fork_hash_str(hasher, "all"),
+        CorpusScope::Unscoped => fork_hash_str(hasher, "unscoped"),
+        CorpusScope::Corpus(id) => {
+            fork_hash_str(hasher, "corpus");
+            fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+        }
+        CorpusScope::AnyOf(ids) => {
+            fork_hash_str(hasher, "any_of");
+            let mut ids = ids.clone();
+            ids.sort_unstable();
+            ids.dedup();
+            fork_hash_len(hasher, ids.len());
+            for id in ids {
+                fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+            }
         }
     }
 }

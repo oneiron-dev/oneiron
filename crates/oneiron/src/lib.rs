@@ -22,6 +22,7 @@ pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod board_verb;
 pub mod booking;
+pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
@@ -56,6 +57,7 @@ pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
+pub mod corpus;
 pub mod counterparty_contact;
 pub(crate) mod credential_door;
 pub mod critic;
@@ -210,6 +212,13 @@ pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
 };
+pub use crate::build_cache::{
+    ActionKey, ActionResult, ArtifactVersionRef, BUILD_CACHE_ACTION_DOMAIN_V1,
+    BUILD_CACHE_ACTION_KEY_LEN, BUILD_CACHE_ACTION_SCHEMA_VERSION_V1, BUILD_CACHE_KEY_PREFIX_V1,
+    BUILD_CACHE_SCHEMA_VERSION_V1, BuildAction, BuildCache, BuildCacheError, BuildCachePutOutcome,
+    BuildCacheResult, BuildInputRoot, BuildPlatform, CachedActionResult, DeclaredOutputPath,
+    ExtraInputDigest, FrozenBuildCommand,
+};
 pub use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarEventView, CalendarInviteConsentBasis,
     CalendarInviteMethod, CalendarInviteMimePart, CalendarInvitePayload, CalendarRangeDto,
@@ -277,6 +286,9 @@ pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
 };
+pub use crate::corpus::{
+    CLAIM_SCOPE_CORPUS_ID_KEY, CorpusId, CorpusScope, corpus_id_from_scope, scope_with_corpus_id,
+};
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecordState,
@@ -339,10 +351,12 @@ pub use crate::feedback::{
 };
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
-    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    CriticalWriteConfirmResolution, GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS,
+    GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
+    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, RetrievalFilter,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, GateBreakerRunProjection, GateBreakerThresholds,
+    RetrievalFilter,
 };
 pub use crate::ingest::{
     EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,

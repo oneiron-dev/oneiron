@@ -46,13 +46,20 @@ const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
 /// not invisible-to-self.
 pub(crate) const UNSTAMPED_CLAIM_SENSITIVITY_BAND: u8 = 2;
 
-enum MapValue<'a> {
+/// Lookup outcome for ONE recognized key in an engine-owned scope map.
+/// `Duplicate` is kept distinct from `Present`: an ambiguous stamp is never
+/// silently resolved to one of its values — each reader decides its own
+/// fail-closed answer.
+pub(crate) enum MapValue<'a> {
     Missing,
     Present(&'a Value),
     Duplicate,
 }
 
-fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
+/// The single duplicate-aware scope-map lookup. Shared with
+/// [`crate::corpus`] so the corpus entry reads the surrounding map exactly
+/// like the provenance/taint/sensitivity stamps beside it.
+pub(crate) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
     let mut found = None;
     for (key, value) in entries {
         if key.as_str() == Some(needle) {

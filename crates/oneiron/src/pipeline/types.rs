@@ -5,6 +5,7 @@ use heed::RoTxn;
 use crate::claim::ClaimBody;
 use crate::codebase::{CodebaseScopeKey, RepoRef};
 use crate::context_pack::EmptyReason;
+use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 // Referenced only by an intra-doc link below; `cfg(doc)` keeps it out of
@@ -172,11 +173,24 @@ pub(super) struct PipelineFilterConfig<'a> {
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
     pub(super) world_scope: WorldScope,
+    /// The query's audience scope (ONE-1914); [`CorpusScope::All`] is the
+    /// default and a no-op, exactly like [`WorldScope::All`].
+    ///
+    /// Borrowed, not owned, so this config stays `Copy`
+    /// ([`CorpusScope::AnyOf`] carries a `Vec`). The referent is
+    /// canonicalized ONCE per run before this config is built, so an empty
+    /// `AnyOf` fails the run closed before the first candidate is scanned and
+    /// the candidate-scan twin stays a pure predicate.
+    pub(super) corpus_scope: &'a CorpusScope,
 }
 
 #[derive(Default)]
 pub(super) struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    // Counts D19 body lookups across all gates sharing this run cache, including
+    // probes whose decoded bodies are discarded rather than imported.
+    #[cfg(test)]
+    pub(super) claim_body_loads: usize,
 }
 
 /// Per-run memo for the D19 claim status gate.
@@ -191,6 +205,8 @@ pub(super) struct EntityMetadataCache {
 pub(super) struct ClaimStatusGateCache {
     pub(super) include_stale: bool,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
+    #[cfg(test)]
+    pub(super) body_loads: usize,
 }
 
 pub(crate) struct PipelineOutput {

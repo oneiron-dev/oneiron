@@ -1,5 +1,8 @@
 //! ONE-1388 adapter tests. Existing scope and ranking suites stay separate.
 
+#[path = "authority_corpus_tests.rs"]
+mod authority_corpus_tests;
+
 use std::collections::BTreeSet;
 
 use rmpv::Value;
@@ -404,6 +407,8 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
     let (_tmp, vault) = open_test_vault();
     let world_a = entity_id(0xE3);
     let world_b = entity_id(0xE2);
+    let corpus_a = crate::corpus::CorpusId::from_entity_id(entity_id(0xE4));
+    let corpus_b = crate::corpus::CorpusId::from_entity_id(entity_id(0xE5));
     let scope_a = map(vec![
         ("relationship", Value::from("alpha")),
         ("facet", Value::from("facet-a")),
@@ -414,6 +419,8 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         ("facet", Value::from("facet-b")),
         ("sensitivity", Value::from(3)),
     ]);
+    let scope_a = crate::corpus::scope_with_corpus_id(Some(scope_a), corpus_a)?;
+    let scope_b = crate::corpus::scope_with_corpus_id(Some(scope_b), corpus_b)?;
     let first = read_grant(
         "authority-reader",
         map(vec![
@@ -468,12 +475,25 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         ("facet", Value::from("facet-b")),
         ("sensitivity", Value::from(1)),
     ]));
+    wrong_facet_a.scope = Some(crate::corpus::scope_with_corpus_id(
+        wrong_facet_a.scope,
+        corpus_a,
+    )?);
+    let mut wrong_corpus_a = a.clone();
+    wrong_corpus_a.scope = Some(crate::corpus::scope_with_corpus_id(
+        wrong_corpus_a.scope,
+        corpus_b,
+    )?);
     let mut wrong_relationship_a = a;
     wrong_relationship_a.scope = Some(map(vec![
         ("relationship", Value::from("beta")),
         ("facet", Value::from("facet-a")),
         ("sensitivity", Value::from(1)),
     ]));
+    wrong_relationship_a.scope = Some(crate::corpus::scope_with_corpus_id(
+        wrong_relationship_a.scope,
+        corpus_a,
+    )?);
     for (index, body) in [
         low_confidence_a,
         low_salience_b,
@@ -481,6 +501,7 @@ fn authority_numeric_alternatives_keep_complete_scope_and_request_conjuncts() ->
         wrong_world_a,
         wrong_facet_a,
         wrong_relationship_a,
+        wrong_corpus_a,
     ]
     .iter()
     .enumerate()
@@ -634,6 +655,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 facet_filter: None,
                 relationship_filter: None,
                 world_scope: WorldScope::All,
+                corpus_scope: &crate::corpus::CorpusScope::All,
             };
             let mut metadata = EntityMetadataCache::default();
             // Bounded scans must use local decisions and resolved authority,
