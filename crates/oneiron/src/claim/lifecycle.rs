@@ -731,6 +731,9 @@ impl Vault {
                     envelope: binding
                         .as_ref()
                         .map(crate::batch::ClaimMaterialization::envelope),
+                    // Retraction is a lifecycle transition on an existing
+                    // claim, not a candidate seeking Auto; nothing consults.
+                    auto_checker: None,
                     defer_metrics_until_commit: false,
                 },
                 &policy,
