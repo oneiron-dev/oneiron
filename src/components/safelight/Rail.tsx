@@ -282,7 +282,7 @@ export function Rail() {
             the house, a new agent, and the channels' threads — one section
             between the base and the lenses. Selection lives here; status
             stays on the ground line, so no live dot on a row. */}
-        <Pack name="rooms" packs={packs}>
+        <Pack name="rooms" label="chats" packs={packs}>
           {RAIL_AGENTS.map((a) => (
             <Link
               key={a.key}
@@ -374,11 +374,15 @@ export function Rail() {
    the strip. */
 function Pack({
   name,
+  label,
   lensesId = `lenses-${name}`,
   packs,
   children,
 }: {
   name: PackName
+  /* the word a person reads; the key stays the fold's name (owner 09-08:
+     "rooms" is our word, not theirs) */
+  label?: string
   lensesId?: string
   packs: ReturnType<typeof usePackFolds>
   children: React.ReactNode
@@ -390,10 +394,10 @@ function Pack({
         className="pack-head"
         aria-expanded={!isFolded}
         aria-controls={lensesId}
-        title={isFolded ? `open ${name}` : `fold ${name} · its lenses keep working`}
+        title={isFolded ? `open ${label ?? name}` : `fold ${label ?? name} · its lenses keep working`}
         onClick={() => packs.toggle(name)}
       >
-        <span className="label">{name}</span>
+        <span className="label">{label ?? name}</span>
         <span className="pack-fold" aria-hidden="true">
           <Chevron />
         </span>
