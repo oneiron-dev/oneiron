@@ -561,3 +561,67 @@ html[data-room-column="center"] .rpane.tpane, html[data-room-column="dock"] .rpa
 @media (prefers-reduced-motion: reduce) {
   .rmsg.lit { animation: none; background: color-mix(in srgb, var(--silver-4) 14%, transparent); }
 }
+
+/* ── the house stacks (owner 09-08: "slack-stack in groups"; agent rooms stay
+   AI-shaped). three columns: the gutter, the text, the hover tier. a head
+   row (speaker change) = face + name in ink + the time, always; the words
+   under it in the text column; a folded line keeps the gutter, its time on
+   hover. your turn rides html[data-my-turn]: well (as ruled: right, on a
+   well, no name) · stack (a head row that says you, the words under it). ── */
+.room-thread.house { --gutter: 30px; }
+.room-thread.house .rmsg,
+html[data-voice="indent"] .room-thread.house .rmsg.mine,
+html[data-voice="mono"] .room-thread.house .rmsg.mine,
+html[data-voice="glyph"] .room-thread.house .rmsg.mine {
+  display: grid; grid-template-columns: var(--gutter) minmax(0, 1fr) auto; column-gap: 0; row-gap: 3px;
+  align-items: baseline; padding-left: 0; justify-content: stretch;
+}
+.room-thread.house .rmsg.head { margin-top: 6px; }
+/* the old 108px voice indent has no place in the grid */
+.room-thread.house .rmsg.mine,
+html[data-voice="indent"] .room-thread.house .rmsg.mine,
+html[data-voice="mono"] .room-thread.house .rmsg.mine,
+html[data-voice="glyph"] .room-thread.house .rmsg.mine { padding-left: 0; }
+.room-thread.house .rmsg .rwho { grid-column: 1 / 3; grid-row: 1; width: auto; gap: 10px; }
+.room-thread.house .rmsg .rwho:empty { display: none; }
+.room-thread.house .rmsg .rtier { grid-column: 3; grid-row: 1; padding-left: 12px; }
+.room-thread.house .rmsg .rbody { grid-column: 2; grid-row: 2; }
+.room-thread.house .rmsg:not(.head) .rbody { grid-row: 1; }
+.room-thread.house .rmsg.head .rat { opacity: 1; }
+.room-thread.house .rday { padding-left: var(--gutter); }
+.rme { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; color: var(--silver-3); }
+/* no face for you: the word starts where the names start */
+.room-thread.house .rmsg.mine .rwho { padding-left: var(--gutter); }
+/* well (default): your words end at the text column's right edge on a well, no head row */
+html:not([data-my-turn="stack"]) .room-thread.house .rmsg.mine .rwho,
+html:not([data-my-turn="stack"]) .tpane .rmsg.mine .rwho { display: none; }
+html:not([data-my-turn="stack"]) .room-thread.house .rmsg.mine .rbody { grid-row: 1; justify-self: end; max-width: 72%; }
+/* stack: your turn reads like everyone's, a head row that says you, the words plain */
+html[data-my-turn="stack"] .room-thread.house .rmsg.mine .rbody,
+html[data-my-turn="stack"] .tpane .rmsg.mine .rbody { justify-self: stretch; max-width: none; background: none; padding: 0; box-shadow: none; }
+html[data-my-turn="stack"] .room-thread.house .rmsg.mine.head .rbody { grid-row: 2; }
+
+/* ── reactions (owner 09-08): pills under the words, a glyph and a count;
+   yours wears the well. the smiley on the hover tier opens the glyph row. ── */
+.rreacts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding-top: 1px; }
+.rpill {
+  appearance: none; margin: 0; padding: 1px 8px 1px 6px; border-radius: 11px; cursor: pointer;
+  border: 1px solid var(--rule-strong); background: none; color: var(--silver-3);
+  display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; line-height: 18px;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.rpill .n { font-family: var(--mono); font-size: 10.5px; font-feature-settings: "tnum" 1; }
+.rpill:hover, .rpill:focus-visible { color: var(--silver-1); border-color: var(--silver-3); }
+.rpill:focus-visible { outline: 2px solid var(--safelight); outline-offset: 1px; }
+.rpill.mine { background: var(--bg-well); border-color: var(--silver-3); color: var(--silver-1); }
+.rmsg.mine .rpill.mine, .tpane .rpill.mine { background: var(--bg-elevated); }
+/* the glyph row floats off the tier's left edge, in the air: no layout shift */
+.rmsg .rtier { position: relative; }
+.rpick {
+  position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 3;
+  display: inline-flex; gap: 1px; align-items: center; padding: 2px 3px; border-radius: 6px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop); white-space: nowrap;
+}
+.rpick button { appearance: none; border: 0; background: none; padding: 2px 4px; border-radius: 4px; cursor: pointer; font-size: 14px; line-height: 1; }
+.rpick button:hover, .rpick button:focus-visible { background: color-mix(in srgb, var(--silver-4) 14%, transparent); }
+.rmsg:has(.rpick) .racts, .rmsg:has(.rpick) .rat { opacity: 1; }

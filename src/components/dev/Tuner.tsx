@@ -359,6 +359,30 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* your turn in a group room (owner 09-08, "show both"): well = right, on a
+     well, no name (as ruled) · stack = a head row that says you, the words
+     under it, like everyone else (Slack) */
+  type MyTurn = 'well' | 'stack'
+  const [myTurn, setMyTurnState] = React.useState<MyTurn>('well')
+  React.useEffect(() => {
+    try {
+      if (localStorage.getItem('oneiron-my-turn') === 'stack') setMyTurnState('stack')
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setMyTurn = React.useCallback((k: MyTurn) => {
+    setMyTurnState(k)
+    if (k === 'well') document.documentElement.removeAttribute('data-my-turn')
+    else document.documentElement.setAttribute('data-my-turn', k)
+    try {
+      if (k === 'well') localStorage.removeItem('oneiron-my-turn')
+      else localStorage.setItem('oneiron-my-turn', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   /* reset all (owner 09-08): every switch and dial back to the defaults.
      The switch keys are cleared here, the dials by the store; a reload
      lets prepaint restore the defaults in one pass. */
@@ -366,7 +390,7 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     const t = window.oneironTune
     t?.reset()
     try {
-      for (const k of ['oneiron-face-style', 'oneiron-open-law', 'oneiron-picker', 'oneiron-room-column', 'oneiron-roster-face', 'oneiron-select-chrome', 'oneiron-tune-pos', 'oneiron-voice-ground', 'oneiron-voice', 'oneiron-work'])
+      for (const k of ['oneiron-face-style', 'oneiron-my-turn', 'oneiron-open-law', 'oneiron-picker', 'oneiron-room-column', 'oneiron-roster-face', 'oneiron-select-chrome', 'oneiron-tune-pos', 'oneiron-voice-ground', 'oneiron-voice', 'oneiron-work'])
         localStorage.removeItem(k)
     } catch {
       /* session only */
@@ -433,6 +457,20 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             className={roomCol === k ? 'act on' : 'act'}
             title={k === 'left' ? 'the column at the left, the pane at the far right (as built)' : k === 'center' ? 'the column centers in the space beside the pane, in the whole room while it is closed (Claude, ChatGPT)' : 'the pane docks beside the column at the left; the air stays right'}
             onClick={() => setRoomCol(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">your turn · house</div>
+      <div className="t-acts">
+        {(['well', 'stack'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={myTurn === k ? 'act on' : 'act'}
+            title={k === 'well' ? 'right, on a well, no name (as ruled)' : 'stacked like everyone: a head row that says you, the words under it (Slack)'}
+            onClick={() => setMyTurn(k)}
           >
             {k}
           </button>
