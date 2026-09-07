@@ -36,13 +36,18 @@
   .line { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; margin-right: 22px; }
   .line .doing { opacity: .7; font-size: 13px; }
   .notes p { font-size: 13.5px; line-height: 1.5; max-width: 62ch; margin: 0 0 10px; opacity: .85; }
+  .picks input[size] { min-width: 0; width: 9em; }
+  .grid9 { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 12px 8px; margin: 6px 0 16px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .cell .line { margin: 0; gap: 6px; }
+  .cell .z { font-size: 11px; opacity: .6; text-align: center; }
 </style>
 
 <div class="picks" id="picks">
   <label>style <select id="p-style"><option value="">—</option><option>base</option><option>trink</option><option>vase</option><option>cut</option><option>dream</option><option>engrave, rerun it</option></select></label>
-  <label>Eiri mark <select id="p-eiri"><option value="">—</option><option>wings1</option><option>wings2</option><option>neither</option></select></label>
-  <label>Tory mark <select id="p-tory"><option value="">—</option><option>crest1</option><option>crest2</option><option>neither</option></select></label>
-  <label>Antevon mark <select id="p-antevon"><option value="">—</option><option>veil1</option><option>veil2</option><option>neither</option></select></label>
+  <label>Eiri mark <input type="text" id="p-eiri" size="10" placeholder="1c, wings2 …"></label>
+  <label>Tory mark <input type="text" id="p-tory" size="10" placeholder="1g, crest2 …"></label>
+  <label>Antevon mark <input type="text" id="p-antevon" size="10" placeholder="2c, 8g …"></label>
   <label>note <input type="text" id="p-note" placeholder="cast swaps, anything else"></label>
   <button id="copy">copy the sheet</button><span class="ok" id="ok"></span>
 </div>
@@ -86,6 +91,27 @@
           <div class="sizes">${[16, 20, 24].map((z) => `<span class="line">${face(k, 'GM-' + m, z)}<span class="name ${k}">${n}</span><span class="doing">reading the filings</span></span>`).join('')}<span class="z">${m}</span></div>`).join('')).join('')}
         <p class="read">wings1 reads at 16, wings2 blurs to a moth. Both crests read as a helmet at 16, and a side-on Spartan helmet is the most used logo mark alive. veil1 reads as a hooded bell. veil2 reads as an eye.</p>
       </div>`
+    const ATTR = {
+      eiri: ['wings', 'wing', 'staff', 'sandal', 'feather', 'rainbow', 'letter', 'cap', 'trumpet'],
+      tory: ['helmet side', 'helmet front', 'olive', 'spear + shield', 'shield', 'scroll', 'open scroll', 'lamp', 'capital'],
+      antevon: ['hearth', 'flame', 'wreath', 'veil', 'tablet', 'scroll', 'spring', 'key', 'temple'],
+    }
+    const svgface = (k, id, z) => `<span class="face" style="--m:url(/art/faces/svg/${k}-${id}.svg);--ink:var(--ink-${k});width:${z}px;height:${z}px" role="img" aria-label="${k} ${id}"></span>`
+    const marks2 = `
+      <div class="sheet">
+        <h2>marks · batch 2 — nine attributes per agent, two hands (g geometric · c calligraphic), gpt-image-2 on Flora, traced to SVG</h2>
+        ${AGENTS.map(([k, n]) => ['g', 'c'].map((h) => `
+          <div class="grid9">${ATTR[k].map((label, i) => `
+            <div class="cell">
+              ${face(k, 'GM2-' + (i + 1) + h, 48)}
+              <span class="line">${[16, 20, 24].map((z) => face(k, 'GM2-' + (i + 1) + h, z)).join('')}</span>
+              <span class="line">${[16, 20, 24].map((z) => svgface(k, (i + 1) + h, z)).join('')}</span>
+              <span class="line">${[16, 20, 24].map((z) => face(k, 'GM2k-' + (i + 1) + h, z)).join('')}</span>
+              <span class="z">${i + 1}${h} · ${label}</span>
+            </div>`).join('')}
+          </div>`).join('')).join('')}
+        <p class="read">Under each mark, three rows at 16 · 20 · 24: the PNG mask as cut, the traced SVG, then the same mark refitted to its keyline box on the 24-unit grid (round Ø20 · square 18 · wide 20×16 · tall 16×20, the standard in docs/marks-standard.md). The third row is the one to judge: it is how the set would sit in the roster.</p>
+      </div>`
     const notes = `
       <div class="sheet notes">
         <h2>what the sheet does not show</h2>
@@ -98,7 +124,7 @@
     el.innerHTML = `
       <h1>The gods · style bench</h1>
       <p class="lead">Gods were ratified on 08-19: Iris for Eiri, Athena for Tory, Mnemosyne for Antevon. Open: the print style and the attribute glyph that carries the row. Each block: the roster at 32, then 96 · 72 · 48 · 32 · 24 as printed, then keyed into the agent's ink as the face atom wears it.</p>
-      ${styles}${marks}${notes}`
+      ${styles}${marks}${marks2}${notes}`
   }
   room('paper', true)
   room('film', false)
