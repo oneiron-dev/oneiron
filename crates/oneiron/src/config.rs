@@ -2,6 +2,23 @@
 
 use std::path::PathBuf;
 
+/// Production remains default-off, regardless of benchmark results.
+pub const PPR_VAD_ALPHA_DEFAULT: f32 = 0.0;
+/// Largest supported PPR VAD salience coefficient.
+pub const PPR_VAD_ALPHA_MAX: f32 = 0.4;
+/// Pinned BEAM retrieval sweep.
+pub const PPR_VAD_ALPHA_SWEEP: &[f32] = &[0.0, 0.1, 0.2, 0.3, 0.4];
+
+/// Rejects non-finite or out-of-range PPR VAD coefficients without clamping.
+pub fn validate_ppr_vad_alpha(alpha: f32) -> crate::error::Result<()> {
+    if !alpha.is_finite() || !(0.0..=PPR_VAD_ALPHA_MAX).contains(&alpha) {
+        return Err(crate::Error::InvalidConfig(format!(
+            "ppr_vad_alpha must be finite and within 0..={PPR_VAD_ALPHA_MAX}, got {alpha}"
+        )));
+    }
+    Ok(())
+}
+
 /// Default hard byte budget for one live off-record session overlay.
 pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
@@ -43,9 +60,12 @@ impl Default for HnswConfig {
 /// let mut cfg = VaultConfig::default();
 /// cfg.dimensions = 768;
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VaultConfig {
+    /// Stored-edge VAD salience for PPR. Validated at query time in `0..=0.4`.
+    /// Nonzero use requires the pinned BEAM recall and latency gate.
+    pub ppr_vad_alpha: f32,
     /// Embedding vector dimension.
     pub dimensions: usize,
     /// MRL fast-lane prefix length (ONE-EMBED E3). When `Some(fd)`, the NSW
@@ -296,6 +316,7 @@ impl VaultConfig {
     #[must_use]
     pub fn device() -> Self {
         Self {
+            ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             dimensions: 1024,
             fast_dims: None,
             embedding_model: None,
@@ -314,6 +335,7 @@ impl VaultConfig {
     #[must_use]
     pub fn server() -> Self {
         Self {
+            ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
             dimensions: 4096,
             fast_dims: None,
             embedding_model: None,
@@ -328,3 +350,6 @@ impl VaultConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
