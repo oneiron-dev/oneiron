@@ -616,7 +616,7 @@ html.rail-folded main.pane { margin-left: var(--sheet-left-folded); }
    base and the lenses. Rows = face mark + name in ink. No status here: the
    ground line is the one presence mark (the 08-15 rule, both auditors). ── */
 .rail [data-pack="rooms"] .face.mark { width: 16px; height: 16px; }
-.rail [data-pack="rooms"] .rail-dash { display: block; width: 10px; height: 1px; background: var(--rule-strong); }
+.rail [data-pack="rooms"] .rail-plus { font-family: var(--mono); font-size: 14px; line-height: 1; color: var(--silver-3); }
 .rail [data-pack="rooms"] .txt.aname { color: var(--p-ink); }
 
 /* ── the ground line as the picker (owner 09-08, html[data-picker="ground"]):
