@@ -474,8 +474,8 @@ function Agents() {
   const [armed, setArmed] = React.useState<string | null>(null)
   /* pause parks the agent (nothing new starts; the live run finishes) */
   const [paused, setPaused] = React.useState<Record<string, string>>({})
-  /* the work pane (owner 09-08): closed at rest, one mark carries the count */
-  const [pane, setPane] = React.useState(false)
+  /* the work fold under the picked roster row (owner 09-08: one agent panel, not two wells) */
+  const [workOpen, setWorkOpen] = React.useState(true)
   /* stop = the cancel signal (rule 34): the run settles midway, in place */
   const [stopped, setStopped] = React.useState<Partial<Record<RunKey, boolean>>>({})
   /* the ledger sorts on its heads: asc → desc → off */
@@ -1188,111 +1188,91 @@ function Agents() {
   }
 
   /* ── the runs layer: now · earlier today, scoped to the room ── */
-  /* ── the pane (owner 09-08): the docked inspector for this agent's work.
-     Closed at rest it is ONE mark that carries the room's live count and
-     opens on a click; the tuner offers three shapes for the mark (line ·
-     strip · stack). Open, it is a well column inside the sheet, the vault's
-     own inspector rule ("a tinted zone divides, not a line"): the runs
-     unfolded to their helpers, the one red dot on what needs you, then
-     what ran earlier. In the house the runs group under names in ink. ── */
-  const renderPane = () => {
-    const words = `${liveCount} running${needsCount ? ` · ${needsCount} needs you` : ''}`
+  /* ── the work fold (owner 09-08: "merge the left agent panel and the right
+     details"): under the picked roster row, the agent's work unfolds — the
+     runs to their helpers, the one red dot on what needs you, steer and
+     stop on hover, then what ran earlier. The house row unfolds every
+     agent's work grouped under names in ink. The count lives in the fold
+     line, so the room's head is identity only. ── */
+  const renderWork = () => {
     const groups: Array<{ key: AgentKey | null; runs: typeof runRows }> = isHouse
       ? (['eiri', 'tory', 'antevon'] as AgentKey[]).map((k) => ({ key: k as AgentKey | null, runs: runRows.filter((r) => r.agent === k) })).filter((g) => g.runs.length)
       : [{ key: null, runs: runRows }]
     return (
-      <aside className={pane ? 'rpane open' : 'rpane'} aria-label="work">
-        {pane ? (
-          <>
-            <div className="rp-head">
-              <span className="meta-line" title="this room's live work">
-                {words}
-              </span>
-              <button type="button" className="act" title="close the pane" onClick={(e) => { markCued(e); setPane(false); cue('toggle') }}>
-                close
-              </button>
-            </div>
-            <div className="rp-body">
-              <span className="label">work</span>
-              {groups.map((g) => (
-                <div key={g.key ?? 'all'} className="rp-group">
-                  {g.key ? (
-                    <span className="aname rp-gname" data-agent={g.key}>
-                      {NAMES[g.key]}
-                    </span>
-                  ) : null}
-                  {g.runs.map((r) => {
-                    const still = !!stopped[r.agent]
-                    return (
-                      <div key={r.agent} className={still ? 'rp-run still' : 'rp-run'} data-agent={r.agent}>
-                        <span className="rp-doing" title={r.tip}>
-                          {r.doing}
+      <div className="rwork" aria-label="work">
+        <button
+          type="button"
+          className="rwork-head"
+          aria-expanded={workOpen}
+          title={workOpen ? 'fold the work' : 'unfold the work'}
+          onClick={(e) => { markCued(e); setWorkOpen((x) => !x); cue('toggle') }}
+        >
+          <span className="meta-line">
+            {liveCount} running
+            {needsCount ? (
+              <>
+                {' · '}
+                <i className="pm-dot" aria-hidden="true" />
+                {needsCount} needs you
+              </>
+            ) : null}
+          </span>
+          <span className="rwork-chev" aria-hidden="true">
+            {workOpen ? '▾' : '▸'}
+          </span>
+        </button>
+        {workOpen ? (
+          <div className="rp-body">
+            {groups.map((g) => (
+              <div key={g.key ?? 'all'} className="rp-group">
+                {g.key ? (
+                  <span className="aname rp-gname" data-agent={g.key}>
+                    {NAMES[g.key]}
+                  </span>
+                ) : null}
+                {g.runs.length === 0 ? <span className="meta-line">nothing runs right now</span> : null}
+                {g.runs.map((r) => {
+                  const still = !!stopped[r.agent]
+                  return (
+                    <div key={r.agent} className={still ? 'rp-run still' : 'rp-run'} data-agent={r.agent}>
+                      <span className="rp-doing" title={r.tip}>
+                        {r.doing}
+                      </span>
+                      {r.helpers.map((h) => (
+                        <div key={h.what} className={h.needs && !still ? 'rp-helper needs' : 'rp-helper'}>
+                          <span className="rp-hwhat">{h.what}</span>
+                          <span className="rp-hstate">{still ? '' : h.state}</span>
+                        </div>
+                      ))}
+                      {still ? (
+                        <span className="meta-line" title="stopped at its next breakpoint">
+                          stopped {SETTLE_AT}
                         </span>
-                        {r.helpers.map((h) => (
-                          <div key={h.what} className={h.needs && !still ? 'rp-helper needs' : 'rp-helper'}>
-                            <span className="rp-hwhat">{h.what}</span>
-                            <span className="rp-hstate">{still ? '' : h.state}</span>
-                          </div>
-                        ))}
-                        {still ? (
-                          <span className="meta-line" title="stopped at its next breakpoint">
-                            stopped {SETTLE_AT}
-                          </span>
-                        ) : (
-                          <span className="rp-acts">
-                            <button type="button" className="act" title="opens the run in the agent line · steer it there" onClick={(e) => { markCued(e); openChat(r.agent) }}>
-                              steer
-                            </button>
-                            <button type="button" className="act" title="verb: stop_run · at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
-                              stop
-                            </button>
-                          </span>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              ))}
-              <span className="label">earlier</span>
-              {histRows.slice(0, 4).map((h) => (
-                <div key={h.id} className="rp-earlier" title={h.tip}>
-                  <span className="rp-ewhat">{h.ran}</span>
-                  <span className="rp-estate">{h.wake.replace('woke ', '')}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <button type="button" className="pmark" title={`${words} · open the work pane`} onClick={(e) => { markCued(e); setPane(true); cue('toggle') }}>
-            <span className="pm-line">
-              {liveCount} running
-              {needsCount ? (
-                <>
-                  {' · '}
-                  <i className="pm-dot" aria-hidden="true" />
-                  {needsCount} needs you
-                </>
-              ) : null}
-              <span className="pm-chev" aria-hidden="true">
-                {' ›'}
-              </span>
-            </span>
-            <span className="pm-digits" aria-hidden="true">
-              {needsCount ? (
-                <span className="pm-need">
-                  <i className="pm-dot" />
-                  {needsCount}
-                </span>
-              ) : null}
-              <span className="pm-live">{liveCount}</span>
-            </span>
-            <span className="pm-stack" aria-hidden="true">
-              {needsCount ? <i className="pm-dot" /> : null}
-              {words}
-            </span>
-          </button>
-        )}
-      </aside>
+                      ) : (
+                        <span className="rp-acts">
+                          <button type="button" className="act" title="opens the run in the agent line · steer it there" onClick={(e) => { markCued(e); openChat(r.agent) }}>
+                            steer
+                          </button>
+                          <button type="button" className="act" title="verb: stop_run · at the next breakpoint · what landed stays" onClick={stop(r.agent)}>
+                            stop
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+            {histRows.length ? <span className="label">earlier</span> : null}
+            {histRows.slice(0, 3).map((h) => (
+              <div key={h.id} className="rp-earlier" title={h.tip}>
+                <span className="rp-ewhat">{h.ran}</span>
+                <span className="rp-estate">{h.wake.replace('woke ', '')}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     )
   }
 
@@ -1680,8 +1660,8 @@ function Agents() {
               const line = rowLine(c)
               const live = !!c.fixture && isLive(c.id) && !paused[c.id]
               return (
+                <React.Fragment key={c.id}>
                 <button
-                  key={c.id}
                   type="button"
                   className={['rrow', room === c.id ? 'on' : '', live ? 'live' : '', c.fixture ? '' : 'draft'].filter(Boolean).join(' ')}
                   data-agent={c.ink ?? undefined}
@@ -1705,6 +1685,8 @@ function Agents() {
                     </span>
                   </span>
                 </button>
+                {room === c.id && c.fixture ? renderWork() : null}
+                </React.Fragment>
               )
             })}
             <span className="rsep" aria-hidden="true"></span>
@@ -1730,6 +1712,7 @@ function Agents() {
                 </span>
               </span>
             </button>
+            {room === 'house' ? renderWork() : null}
             <span className="rsep" aria-hidden="true"></span>
             <button type="button" className="rrow new" title="a new agent · Antevon proposes the pieces, you confirm each" onClick={openNew}>
               <span className="rtext">
@@ -1767,7 +1750,6 @@ function Agents() {
             )}
             {layer === 'thread' ? renderLine() : null}
             </div>
-            {isHouse || current?.fixture ? renderPane() : null}
           </section>
         </div>
       </div>
