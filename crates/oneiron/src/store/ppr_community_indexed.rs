@@ -50,7 +50,9 @@ impl IndexedRows<'_, '_> {
         record_query_read(bytes);
         self.bytes = self.bytes.checked_add(bytes).ok_or_else(corrupt)?;
         if self.bytes > MAX_COMMUNITY_CACHE_BYTES
-            || value.as_ref().is_some_and(|v| v.len() > MAX_COMMUNITY_NODES * 16)
+            || value
+                .as_ref()
+                .is_some_and(|v| v.len() > MAX_COMMUNITY_NODES * 16)
         {
             return Err(corrupt());
         }
@@ -146,7 +148,10 @@ impl Store {
                 if m.coarse != coarse || nodes.len() > graph_size {
                     return Err(corrupt());
                 }
-                if parents.insert(m.fine, coarse).is_some_and(|old| old != coarse) {
+                if parents
+                    .insert(m.fine, coarse)
+                    .is_some_and(|old| old != coarse)
+                {
                     return Err(corrupt());
                 }
                 fine_groups.entry(m.fine).or_default().push(id);
@@ -167,7 +172,9 @@ impl Store {
         // silently disappear from that community's backlinks.
         for (&id, m) in &nodes {
             if [m.fine, m.coarse].iter().any(|c| {
-                all_members.get(c).is_none_or(|members| members.binary_search(&id).is_err())
+                all_members
+                    .get(c)
+                    .is_none_or(|members| members.binary_search(&id).is_err())
             }) {
                 return Err(corrupt());
             }

@@ -982,7 +982,6 @@ fn deferred_diversity_uses_only_final_pool_and_keeps_fused_score_bits() {
     assert!(report.coarse_entropy_bits > 0.0);
 }
 
-
 // Frozen pre-optimization selector: exact order and score-bit oracle.
 fn reference_diversify(mut pool: Vec<Ranked>, limit: usize, fraction: f32) -> Vec<Ranked> {
     let k = limit.min(pool.len());
@@ -1077,7 +1076,11 @@ fn diversity_tree_matches_scan_oracle() {
                             0 => 1.0,
                             1 => (n % 7) as f32,
                             2 => {
-                                if n % 2 == 0 { -0.0 } else { 0.0 }
+                                if n % 2 == 0 {
+                                    -0.0
+                                } else {
+                                    0.0
+                                }
                             }
                             _ => (count - n) as f32,
                         },
@@ -1128,7 +1131,10 @@ fn diversity_large_limit_has_logarithmic_selection_work() {
         DIVERSITY_SELECTION_WORK.with(|count| count.set(0));
         let rows = diversify(pool, usize::MAX, PPR_COMMUNITY_MAX_TOP_K_FRACTION);
         assert_eq!(rows.len(), n as usize);
-        assert!(rows.windows(2).all(|pair| pair[0].entity.id < pair[1].entity.id));
+        assert!(
+            rows.windows(2)
+                .all(|pair| pair[0].entity.id < pair[1].entity.id)
+        );
         // Count tree navigation as well as comparisons. A shared coarse group
         // must not force an update of every remaining fine-group head.
         let work = DIVERSITY_SELECTION_WORK.with(std::cell::Cell::get);
@@ -1146,7 +1152,10 @@ fn metadata_graph_count_is_writer_derived_bounded_and_full_decode_cross_checked(
     raw[21..29].copy_from_slice(&99_u64.to_le_bytes());
     assert!(CommunityCacheMeta::decode_row(raw, 100).is_ok());
     let rows: Vec<_> = rows.into_iter().collect();
-    assert_eq!(CommunitySnapshot::decode_rows(&rows, 7, 100), Err(CommunityError::Cache));
+    assert_eq!(
+        CommunitySnapshot::decode_rows(&rows, 7, 100),
+        Err(CommunityError::Cache)
+    );
     for count in [101_u64, u64::MAX] {
         let mut raw = snapshot.encode_rows().expect("rows")[META_KEY.as_bytes()].clone();
         raw[21..29].copy_from_slice(&count.to_le_bytes());
@@ -1163,12 +1172,18 @@ fn selected_query_view_retains_full_graph_size_and_matches_full_prior() {
     assert_eq!(view.graph_size, 100);
     let seeds = [scored(1, 1.0)];
     let usage = HashMap::new();
-    let context = CommunityBoostContext { ordered_seeds: &seeds, result_limit: 3, session_usage: &usage };
+    let context = CommunityBoostContext {
+        ordered_seeds: &seeds,
+        result_limit: 3,
+        session_usage: &usage,
+    };
     let mut expected = vec![scored(1, 1.0), scored(2, 0.8), scored(9, 0.6)];
     let mut actual = expected.clone();
     let full = PprCommunityCache::new(&snapshot, 7).expect("full cache");
-    let expected_report = apply_community_prior(&mut expected, &full, &context, &experiment()).expect("prior");
-    let actual_report = apply_community_prior(&mut actual, &view.cache(), &context, &experiment()).expect("prior");
+    let expected_report =
+        apply_community_prior(&mut expected, &full, &context, &experiment()).expect("prior");
+    let actual_report =
+        apply_community_prior(&mut actual, &view.cache(), &context, &experiment()).expect("prior");
     assert_eq!(actual, expected);
     assert_eq!(actual_report, expected_report);
     assert!(actual_report.boosted_candidates > 0);

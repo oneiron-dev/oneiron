@@ -1209,7 +1209,14 @@ impl DiversityTree {
         self.increment_range(1, 0, self.size, start, end);
     }
 
-    fn increment_range(&mut self, node: usize, left: usize, right: usize, start: usize, end: usize) {
+    fn increment_range(
+        &mut self,
+        node: usize,
+        left: usize,
+        right: usize,
+        start: usize,
+        end: usize,
+    ) {
         diversity_selection_work();
         if end <= left || right <= start {
             return;
@@ -1286,8 +1293,12 @@ fn diversify(mut pool: Vec<Ranked>, limit: usize, fraction: f32) -> Vec<Ranked> 
         let head = DiversityHead {
             row,
             group,
-            fine: row.membership.map_or(0, |m| *fine.get(&m.fine).unwrap_or(&0)),
-            coarse: row.membership.map_or(0, |m| *coarse.get(&m.coarse).unwrap_or(&0)),
+            fine: row
+                .membership
+                .map_or(0, |m| *fine.get(&m.fine).unwrap_or(&0)),
+            coarse: row
+                .membership
+                .map_or(0, |m| *coarse.get(&m.coarse).unwrap_or(&0)),
         };
         all.set(group, Some(head));
         if row.membership.is_none() || head.fine < cap {
