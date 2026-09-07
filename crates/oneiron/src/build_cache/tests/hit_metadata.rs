@@ -263,3 +263,271 @@ fn taint_read_errors_refuse_metadata_only_hits_without_repair() {
     ));
     assert_eq!(raw_row(&vault, &key).expect("row"), before);
 }
+
+// Select the version index rather than its duplicate head row. Use the
+// discovered key bytes; do not reconstruct the private artifact/version key.
+fn exact_version_row(vault: &Vault, record: &BlobArtifactVersion) -> (Vec<u8>, Vec<u8>) {
+    let mut rows = version_rows(vault, record)
+        .into_iter()
+        .filter(|(key, _)| key.starts_with(b"blob_artifact:version:"));
+    let row = rows.next().expect("exact version row");
+    assert!(rows.next().is_none(), "one row for this version claim");
+    row
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct HitStorageSnapshot {
+    metadata: BTreeMap<Vec<u8>, Vec<u8>>,
+    entities: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
+fn hit_storage_snapshot(vault: &Vault) -> HitStorageSnapshot {
+    let txn = vault.store.env.read_txn().expect("read txn");
+    HitStorageSnapshot {
+        metadata: vault
+            .store
+            .vault_meta
+            .iter(&txn)
+            .expect("metadata iter")
+            .map(|entry| {
+                let (key, raw) = entry.expect("metadata row");
+                (key.to_vec(), raw.to_vec())
+            })
+            .collect(),
+        entities: vault
+            .store
+            .entities
+            .iter(&txn)
+            .expect("entity iter")
+            .map(|entry| {
+                let (key, raw) = entry.expect("entity row");
+                (key.to_vec(), raw.to_vec())
+            })
+            .collect(),
+    }
+}
+
+fn assert_binding_refuses_hits(
+    vault: &Vault,
+    action: &BuildAction,
+    reference: &ArtifactVersionRef,
+) {
+    let before = hit_storage_snapshot(vault);
+    assert!(matches!(
+        vault.blob_artifact_version_metadata(reference.artifact_id(), reference.version()),
+        Err(Error::CorruptedIndex("blob artifact version claim")) | Err(Error::InvalidClaimBody(_))
+    ));
+    let cache = BuildCache::new(vault);
+    assert!(matches!(
+        cache.get(&key(action)),
+        Err(BuildCacheError::Store(Error::CorruptedIndex(
+            "blob artifact version claim"
+        ))) | Err(BuildCacheError::Store(Error::InvalidClaimBody(_)))
+    ));
+    assert_eq!(hit_storage_snapshot(vault), before);
+    assert!(matches!(
+        cache.put(action, result(reference.clone())),
+        Err(BuildCacheError::Store(Error::CorruptedIndex(
+            "blob artifact version claim"
+        ))) | Err(BuildCacheError::Store(Error::InvalidClaimBody(_)))
+    ));
+    assert_eq!(hit_storage_snapshot(vault), before);
+}
+
+fn same_version_substitution_fails_closed(historical: bool) {
+    let (_dir, vault) = temp_vault();
+    let references = [
+        artifact(&vault, b"clean artifact version one"),
+        artifact(&vault, b"foreign artifact version one"),
+    ];
+    let first_action = action();
+    let mut foreign_action = first_action.clone();
+    foreign_action.input_root.fork_hash[0] ^= 1;
+    let actions = [first_action, foreign_action];
+    let cache = BuildCache::new(&vault);
+    let mut stored = Vec::new();
+    for (action, reference) in actions.iter().zip(&references) {
+        let BuildCachePutOutcome::Stored(record) = cache
+            .put(action, result(reference.clone()))
+            .expect("store before substitution")
+        else {
+            panic!("expected Stored");
+        };
+        stored.push(record);
+    }
+    if historical {
+        let actor_id = EntityId::now();
+        let at = TimeRange { start: 20, end: 20 };
+        vault
+            .put_entity(&actor_id, ENTITY_TYPE_PERSON, at, 20, b"uploader")
+            .expect("put actor");
+        for reference in &references {
+            let head = vault
+                .append_blob_artifact_version(
+                    reference.artifact_id(),
+                    b"newer head bytes",
+                    &BlobVersionProvenance::UserUpload,
+                    WriteActor::new(actor_id, EdgeActorClass::Human),
+                    at,
+                    21,
+                )
+                .expect("advance head");
+            assert_eq!(head.version, 2);
+        }
+    }
+    // Valid historical refs must still hit after both heads advance.
+    let before_hits = hit_storage_snapshot(&vault);
+    for ((action, reference), record) in actions.iter().zip(&references).zip(&stored) {
+        assert_eq!(
+            cache.get(&record.action_key).expect("hit"),
+            Some(record.clone())
+        );
+        assert_eq!(
+            cache
+                .put(action, result(reference.clone()))
+                .expect("existing"),
+            BuildCachePutOutcome::Existing(record.clone())
+        );
+    }
+    assert_eq!(hit_storage_snapshot(&vault), before_hits);
+    mark_live(&vault, &references[1]);
+    assert_eq!(
+        vault
+            .artifact_taint_state(references[0].artifact_id())
+            .expect("clean target"),
+        ArtifactTaintState::Clean
+    );
+    let rows = references.each_ref().map(|reference| {
+        let record = vault
+            .blob_artifact_version_metadata(reference.artifact_id(), reference.version())
+            .expect("metadata")
+            .expect("version");
+        assert_eq!(record.version, 1);
+        exact_version_row(&vault, &record)
+    });
+    let heads = references.each_ref().map(|reference| {
+        vault
+            .blob_artifact_head(reference.artifact_id())
+            .expect("head")
+    });
+    let before_swap = hit_storage_snapshot(&vault);
+    let mut txn = vault.store.env.write_txn().expect("write txn");
+    for (target, source) in [(&rows[0], &rows[1]), (&rows[1], &rows[0])] {
+        vault
+            .store
+            .vault_meta
+            .put(&mut txn, &target.0, &source.1)
+            .expect("swap same-version records only");
+    }
+    txn.commit().expect("commit substitution");
+    let after_swap = hit_storage_snapshot(&vault);
+    assert_eq!(
+        after_swap.entities, before_swap.entities,
+        "bodies untouched"
+    );
+    for ((action, reference), head) in actions.iter().zip(&references).zip(&heads) {
+        assert_eq!(
+            vault
+                .blob_artifact_head(reference.artifact_id())
+                .expect("unchanged head"),
+            *head
+        );
+        assert_eq!(
+            raw_row(&vault, &key(action)),
+            before_swap
+                .metadata
+                .get(build_cache_key(&key(action)).as_slice())
+                .cloned()
+        );
+        assert_binding_refuses_hits(&vault, action, reference);
+    }
+    assert_eq!(hit_storage_snapshot(&vault), after_swap);
+}
+
+#[test]
+fn current_head_same_version_substitution_refuses_get_and_existing_put() {
+    same_version_substitution_fails_closed(false);
+}
+
+#[test]
+fn historical_same_version_substitution_refuses_get_and_existing_put() {
+    same_version_substitution_fails_closed(true);
+}
+
+fn replace_version_field(raw: &[u8], field: &str, replacement: Value) -> Vec<u8> {
+    let mut value = rmpv::decode::read_value(&mut Cursor::new(raw)).expect("version record");
+    let Value::Map(fields) = &mut value else {
+        panic!("version map");
+    };
+    let (_, field_value) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(field))
+        .expect("version field");
+    *field_value = replacement;
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &value).expect("encode forged version");
+    encoded
+}
+
+#[test]
+fn version_claim_binding_checks_hash_version_and_claim_existence() {
+    let (_dir, vault) = temp_vault();
+    let (first, second) = two_versions(&vault);
+    let oldest = vault
+        .blob_artifact_version_metadata(first.artifact_id(), first.version())
+        .expect("metadata")
+        .expect("oldest");
+    let actor_id = EntityId::now();
+    let at = TimeRange { start: 30, end: 30 };
+    vault
+        .put_entity(&actor_id, ENTITY_TYPE_PERSON, at, 30, b"uploader")
+        .expect("put actor");
+    let third = vault
+        .append_blob_artifact_version(
+            first.artifact_id(),
+            b"first version bytes",
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(actor_id, EdgeActorClass::Human),
+            at,
+            31,
+        )
+        .expect("revisit first hash at a distinct version");
+    assert_eq!(third.version, 3);
+    assert_eq!(third.content_hash, oldest.content_hash);
+    let (version_key, original) = exact_version_row(&vault, &oldest);
+    let action = action();
+    BuildCache::new(&vault)
+        .put(&action, result(first.clone()))
+        .expect("store oldest");
+    for (field, replacement) in [
+        // The right subject and version cannot authorize a different hash.
+        (
+            BLOB_ARTIFACT_VERSION_RECORD_KEYS[1],
+            Value::Binary(second.content_hash.to_vec()),
+        ),
+        // The right subject and hash cannot authorize a different version.
+        (
+            BLOB_ARTIFACT_VERSION_RECORD_KEYS[4],
+            Value::Binary(third.claim_id.as_bytes().to_vec()),
+        ),
+        // A dangling id or an existing non-CLAIM cannot establish ownership.
+        (
+            BLOB_ARTIFACT_VERSION_RECORD_KEYS[4],
+            Value::Binary(EntityId::now().as_bytes().to_vec()),
+        ),
+        (
+            BLOB_ARTIFACT_VERSION_RECORD_KEYS[4],
+            Value::Binary(first.artifact_id().as_bytes().to_vec()),
+        ),
+    ] {
+        let forged = replace_version_field(&original, field, replacement);
+        let mut txn = vault.store.env.write_txn().expect("write txn");
+        vault
+            .store
+            .vault_meta
+            .put(&mut txn, &version_key, &forged)
+            .expect("forge version binding");
+        txn.commit().expect("commit fixture");
+        assert_binding_refuses_hits(&vault, &action, &first);
+    }
+}
