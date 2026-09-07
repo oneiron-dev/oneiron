@@ -14,6 +14,7 @@ fn response_preserves_true_pause_marker_and_elides_false() {
             updated_at: 1,
         },
         failure: None,
+        result_ref: None,
         events: Vec::new(),
         children: Vec::new(),
         gate_breaker_paused: paused,
