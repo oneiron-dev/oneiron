@@ -1,3 +1,5 @@
+mod pending_lookup;
+
 use super::*;
 use crate::agent_def::{AgentDefinition, AgentScope, encode_agent_definition};
 use crate::claim::{
@@ -4380,6 +4382,313 @@ fn external_effect_fail_closed_policy_holds_instead_of_denies() -> Result<()> {
     );
     assert_eq!(decisions[0].content_kind, "external_effect");
     assert_eq!(decisions[0].claim_id, None);
+    Ok(())
+}
+
+// ONE-1879: evaluation stays live; only identical Pending ledger rows coalesce.
+fn coalescing_effect_record(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<GateDecisionRecord> {
+    let governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None)?;
+    let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
+    let record = store
+        .gate_decision_in_txn(&*wtxn, decision_id)?
+        .expect("returned decision ref exists in the caller's txn");
+    assert_eq!(record.outcome, decision.outcome().as_str());
+    Ok(record)
+}
+
+fn coalescing_ledger_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<GateDecisionRecord>> {
+    let mut records = Vec::new();
+    store.for_each_gate_decision_in_txn(txn, |record| {
+        records.push(record);
+        Ok(())
+    })?;
+    Ok(records)
+}
+
+#[test]
+fn external_effect_pending_coalesces_same_wtxn_and_committed_retries() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("send:pending-coalesce".to_owned());
+
+    let first = vault.with_write_txn(|wtxn| {
+        let first = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
+        assert_eq!(first.outcome, "pending");
+        for _ in 0..4 {
+            let retry = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
+            assert_eq!(retry.decision_id.to_hex(), first.decision_id.to_hex());
+            assert_eq!(retry, first);
+            assert_eq!(
+                coalescing_ledger_in_txn(&vault.store, wtxn)?,
+                vec![first.clone()]
+            );
+        }
+        Ok(first)
+    })?;
+    assert_eq!(vault.store.gate_decisions(10)?, vec![first.clone()]);
+    vault.with_write_txn(|wtxn| {
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?,
+            first
+        );
+        assert_eq!(
+            coalescing_ledger_in_txn(&vault.store, wtxn)?,
+            vec![first.clone()]
+        );
+        Ok(())
+    })?;
+    assert_eq!(vault.store.gate_decisions(10)?, vec![first]);
+    Ok(())
+}
+
+#[test]
+fn external_effect_pending_actor_and_send_changes_mint_distinct_rows() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("send:original".to_owned());
+    let mut other_actor = effect.clone();
+    other_actor.actor.actor_ref = Some("other-sender".to_owned());
+    let mut other_class = effect.clone();
+    other_class.actor.actor_class = "user".to_owned();
+    let mut other_send = effect.clone();
+    other_send.send_ref = Some("send:other".to_owned());
+
+    vault.with_write_txn(|wtxn| {
+        let first = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
+        let mut records = vec![first.clone()];
+        for changed in [&other_actor, &other_class, &other_send] {
+            let row = coalescing_effect_record(&vault.store, wtxn, changed, &policy)?;
+            assert_eq!(row.outcome, "pending");
+            assert_eq!(row.actor_class, changed.actor.actor_class);
+            assert_eq!(row.actor_ref, changed.actor.actor_ref);
+            assert_eq!(row.reason_codes, first.reason_codes);
+            assert_eq!(row.read_frontier_hash, first.read_frontier_hash);
+            assert_ne!(row.diff_handle, first.diff_handle);
+            assert!(
+                records
+                    .iter()
+                    .all(|prior| prior.decision_id != row.decision_id)
+            );
+            records.push(row.clone());
+            assert_eq!(
+                coalescing_effect_record(&vault.store, wtxn, changed, &policy)?,
+                row
+            );
+            let stored = coalescing_ledger_in_txn(&vault.store, wtxn)?;
+            assert_eq!(stored.len(), records.len());
+            assert!(records.iter().all(|prior| stored.contains(prior)));
+        }
+        // The match need not be the most recently appended Pending row.
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?,
+            first
+        );
+        assert_eq!(coalescing_ledger_in_txn(&vault.store, wtxn)?.len(), 4);
+        Ok(())
+    })?;
+    assert_eq!(vault.store.gate_decisions(10)?.len(), 4);
+    Ok(())
+}
+
+#[test]
+fn external_effect_pending_reason_and_receipt_changes_mint_distinct_rows() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+    let mut opted_out = effect.clone();
+    opted_out.counterparty_opted_out = true;
+    let mut explained = opted_out.clone();
+    explained.counterparty_opt_out_receipt_reason = Some("counterparty_opt_out_do_not_contact");
+
+    vault.with_write_txn(|wtxn| {
+        let first = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
+        let reason = coalescing_effect_record(&vault.store, wtxn, &opted_out, &policy)?;
+        let receipt = coalescing_effect_record(&vault.store, wtxn, &explained, &policy)?;
+        assert_ne!(reason.reason_codes, first.reason_codes);
+        assert_eq!(reason.receipt_reasons, first.receipt_reasons);
+        assert_eq!(receipt.reason_codes, reason.reason_codes);
+        assert_ne!(receipt.receipt_reasons, reason.receipt_reasons);
+        assert_ne!(first.decision_id, reason.decision_id);
+        assert_ne!(first.decision_id, receipt.decision_id);
+        assert_ne!(reason.decision_id, receipt.decision_id);
+        for (input, row) in [
+            (&effect, &first),
+            (&opted_out, &reason),
+            (&explained, &receipt),
+        ] {
+            assert_eq!(row.outcome, "pending");
+            // These changes are NOT covered by the effect diff or policy hash.
+            assert_eq!(row.diff_handle, first.diff_handle);
+            assert_eq!(row.read_frontier_hash, first.read_frontier_hash);
+            assert_eq!(
+                &coalescing_effect_record(&vault.store, wtxn, input, &policy)?,
+                row
+            );
+        }
+        let stored = coalescing_ledger_in_txn(&vault.store, wtxn)?;
+        assert_eq!(stored.len(), 3);
+        assert!(stored.contains(&first));
+        assert!(stored.contains(&reason));
+        assert!(stored.contains(&receipt));
+        Ok(())
+    })?;
+    assert_eq!(vault.store.gate_decisions(10)?.len(), 3);
+    Ok(())
+}
+
+#[test]
+fn external_effect_pending_policy_frontier_change_mints_distinct_row() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![]);
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &data)?;
+    let first_policy = resolve(&vault)?;
+    rewrite_policy_manifest_entries(&mut data, |entries| {
+        let (_, version) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(POLICY_PACK_VERSION_KEY))
+            .expect("pack version");
+        *version = Value::from("v2");
+    });
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &data)?;
+    let changed_policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+
+    vault.with_write_txn(|wtxn| {
+        let first = coalescing_effect_record(&vault.store, wtxn, &effect, &first_policy)?;
+        let changed = coalescing_effect_record(&vault.store, wtxn, &effect, &changed_policy)?;
+        assert_eq!(first.outcome, "pending");
+        assert_eq!(changed.outcome, "pending");
+        assert_eq!(changed.reason_codes, first.reason_codes);
+        assert_eq!(changed.receipt_reasons, first.receipt_reasons);
+        assert_eq!(changed.diff_handle, first.diff_handle);
+        assert_eq!(
+            changed.policy_manifest_version,
+            first.policy_manifest_version
+        );
+        assert_ne!(changed.read_frontier_hash, first.read_frontier_hash);
+        assert_ne!(changed.decision_id, first.decision_id);
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &effect, &changed_policy)?,
+            changed
+        );
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &effect, &first_policy)?,
+            first
+        );
+        let stored = coalescing_ledger_in_txn(&vault.store, wtxn)?;
+        assert_eq!(stored.len(), 2);
+        assert!(stored.contains(&first));
+        assert!(stored.contains(&changed));
+        Ok(())
+    })?;
+    assert_eq!(vault.store.gate_decisions(10)?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn external_effect_pending_retry_rechecks_permission_allow_deny_still_append() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        "sender",
+        "external:send",
+        Value::Map(vec![(
+            Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+            Value::from("line"),
+        )]),
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &data)?;
+    let policy = resolve(&vault)?;
+    let allowed = external_effect_gate_input("sender", "send", "line");
+    let mut pending = allowed.clone();
+    pending.has_permission = false;
+    let mut denied = allowed.clone();
+    denied.provenance.actor_entity_ref = None;
+
+    let records = vault.with_write_txn(|wtxn| {
+        let parked = coalescing_effect_record(&vault.store, wtxn, &pending, &policy)?;
+        assert_eq!(parked.outcome, "pending");
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &pending, &policy)?,
+            parked
+        );
+        let mut records = vec![parked.clone()];
+        for (input, outcome) in [(&allowed, "allow"), (&denied, "deny")] {
+            let first = coalescing_effect_record(&vault.store, wtxn, input, &policy)?;
+            let retry = coalescing_effect_record(&vault.store, wtxn, input, &policy)?;
+            assert_eq!(first.outcome, outcome);
+            assert_eq!(retry.outcome, outcome);
+            assert_eq!(retry.reason_codes, first.reason_codes);
+            assert_eq!(retry.diff_handle, first.diff_handle);
+            assert_ne!(retry.decision_id, first.decision_id);
+            assert!(records.iter().all(|prior| {
+                prior.decision_id != first.decision_id && prior.decision_id != retry.decision_id
+            }));
+            records.extend([first, retry]);
+        }
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &pending, &policy)?,
+            parked
+        );
+        let stored = coalescing_ledger_in_txn(&vault.store, wtxn)?;
+        assert_eq!(stored.len(), 5);
+        assert!(records.iter().all(|row| stored.contains(row)));
+        Ok(records)
+    })?;
+    let stored = vault.store.gate_decisions(10)?;
+    assert_eq!(stored.len(), 5);
+    assert!(records.iter().all(|row| stored.contains(row)));
+    Ok(())
+}
+
+#[test]
+fn external_effect_pending_coalescing_never_deletes_or_rewrites_existing_rows() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input("sender", "send", "line");
+    // Build a real candidate in an aborted txn, then seed an older receipt.
+    // Its timestamp must survive even though every retry evaluates at "now".
+    let mut original = {
+        let mut wtxn = vault.store.env.write_txn()?;
+        coalescing_effect_record(&vault.store, &mut wtxn, &effect, &policy)?
+    };
+    original.decision_id = GateDecisionId::from_bytes([0x41; 16]);
+    original.created_at = 1;
+    let mut other = original.clone();
+    // A different actor sorts before the exact match despite sharing its diff.
+    other.decision_id = GateDecisionId::from_bytes([0x40; 16]);
+    other.actor_ref = Some("other-sender".to_owned());
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &original)?;
+        vault.store.append_gate_decision_in_txn(wtxn, &other)?;
+        Ok(())
+    })?;
+
+    vault.with_write_txn(|wtxn| {
+        assert_eq!(
+            coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?,
+            original
+        );
+        let stored = coalescing_ledger_in_txn(&vault.store, wtxn)?;
+        assert_eq!(stored.len(), 2);
+        assert!(stored.contains(&original));
+        assert!(stored.contains(&other));
+        Ok(())
+    })?;
+    let stored = vault.store.gate_decisions(10)?;
+    assert_eq!(stored.len(), 2);
+    assert!(stored.contains(&original));
+    assert!(stored.contains(&other));
     Ok(())
 }
 
@@ -15181,11 +15490,11 @@ mod auto_checker {
         Ok(())
     }
 
-    // Independent preimage for the small frontier fixture below, from landed
-    // main a56c0398edbecd8126ffebac525871444b629fd8, resolution.rs:
-    // hash_policy_frontier_v0. In particular, posture follows budget exhaustion
-    // even WITHOUT a checker. This is not the older feature-only frontier.
-    fn landed_main_no_checker_frontier(posture: &str) -> [u8; 32] {
+    // Independent preimage for the small frontier fixture below: landed main
+    // a56c0398edbecd8126ffebac525871444b629fd8's hash_policy_frontier_v0,
+    // plus ONE-1453's intentional breaker-presence byte. Posture still follows
+    // budget exhaustion even WITHOUT a checker; an absent checker adds no bytes.
+    fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
         fn len(bytes: &mut Vec<u8>, value: u64) {
@@ -15228,6 +15537,7 @@ mod auto_checker {
         }
         bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
         len(&mut bytes, 0); // owner-policy rows
+        bytes.push(0); // no actor-burst-breaker override (ONE-1453 frontier domain)
         bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
         len(&mut bytes, 0); // owner-policy patterns
         len(&mut bytes, 0); // signatures
@@ -15269,7 +15579,7 @@ mod auto_checker {
                 assert_eq!(policy.comm_opt_out_posture().as_str(), resolved_posture);
                 let hash = policy.read_frontier_hash()?;
                 if checker.is_none() {
-                    assert_eq!(hash, landed_main_no_checker_frontier(resolved_posture));
+                    assert_eq!(hash, integrated_no_checker_frontier(resolved_posture));
                 }
                 let rtxn = vault.store.env.read_txn()?;
                 let consent = claim_consent_binding_parts(&vault.store, &rtxn, &body)?;
@@ -15331,14 +15641,18 @@ mod auto_checker {
     /// projection classifies the parked row as a checker hedge.
     #[test]
     fn checker_hold_falls_to_proposed() -> Result<()> {
-        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let (_tmp, vault) = temp_vault();
+        // Restricted lineage includes source/sensitivity even for Proposed
+        // writes. Withhold the permit so setup genuinely parks on source trust.
+        let mut setup_manifest = checker_manifest(vec![checker_entry(CHECKER_REF)]);
+        rewrite_policy_manifest_entries(&mut setup_manifest, |entries| {
+            entries.retain(|(key, _)| key.as_str() != Some(POLICY_SOURCE_TRUST_KEY));
+        });
+        put_policy_manifest_bytes(&vault, test_id(0x22), &setup_manifest)?;
         let claim_id = test_id(0x34);
         let body = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
         let (candidate, envelope) = dreamer_parts(&vault, &body)?;
 
-        // The ordinary Proposed write omits source/sensitivity from its gate
-        // input. Generated lineage still requires a permit, so landed main
-        // parks it as PendingSourceTrust before any checker is injected.
         vault
             .batch()
             .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
@@ -15348,8 +15662,13 @@ mod auto_checker {
         assert_eq!(setup_pending.len(), 1);
         assert_eq!(setup_pending[0].reason_codes, ["gate.pending.source_trust"]);
 
-        // This door includes source/sensitivity, so the explicit permit now
-        // makes the ordinary verdict Auto; the checker alone narrows it.
+        // Add the explicit public Generated permit to the same manifest. The
+        // ordinary verdict is now Auto; only the checker narrows it to Pending.
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
         let body = vault.get_claim(&claim_id)?.expect("proposal landed");
         let checker = Arc::new(RecordingAutoChecker::hold());
         let bounded_checker = BoundedAutoChecker::new(checker.clone());
@@ -15543,14 +15862,14 @@ mod auto_checker {
         Ok(())
     }
 
-    /// Reuse the signed checker fixture, but permit the BENIGN declared source
-    /// for exactly one actor. Restricted history still needs this explicit row.
+    /// Reuse the signed checker fixture, but permit the restricted ToolOutput
+    /// lineage member for exactly one actor, not the benign Observed declaration.
     fn lineage_manifest(knob: Option<&str>, permit_actor: Option<EntityId>) -> Vec<u8> {
         let mut data = checker_manifest(knob.map(checker_entry).into_iter().collect());
         rewrite_policy_manifest_entries(&mut data, |entries| {
             entries.retain(|(key, _)| key.as_str() != Some(POLICY_SOURCE_TRUST_KEY));
             if let Some(actor) = permit_actor {
-                let mut permit = source_trust_entry(ClaimSource::Observed, 0);
+                let mut permit = source_trust_entry(ClaimSource::ToolOutput, 0);
                 let Value::Map(sources) = &mut permit.1 else {
                     panic!("source-trust fixture is a map");
                 };
@@ -15678,6 +15997,12 @@ mod auto_checker {
                 ClaimSource::Observed,
                 "history never relabels the candidate"
             );
+            assert_eq!(seen[0].lineage.as_ref(), Some(envelope.lineage()));
+            let request = crate::llm::auto_check_llm_request(CHECKER_REF, &seen[0].borrowed(), "");
+            let crate::llm::ContentPart::Text { text } = &request.messages[1].content[0] else {
+                panic!("checker request must carry candidate text");
+            };
+            assert!(text.contains("\nsource: observed\nlineage: observed, tool_output\n"));
             assert_eq!(seen[0].actor_class, "agent");
             assert_eq!(seen[0].predicate, "profile.name");
             assert_eq!(seen[0].value_preview, "Ada Lovelace");
@@ -15725,6 +16050,76 @@ mod auto_checker {
             );
             assert_eq!(records[0].receipt_reasons, receipt_reasons);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn source_aware_checker_holds_tool_output_history_with_observed_declaration() -> Result<()> {
+        use crate::write_envelope::SourceLineage;
+
+        struct SourceAwareChecker {
+            calls: AtomicUsize,
+        }
+
+        impl AutoChecker for SourceAwareChecker {
+            fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+                let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+                if candidate.source == ClaimSource::ToolOutput
+                    || candidate
+                        .lineage
+                        .is_some_and(|lineage| lineage.contains(ClaimSource::ToolOutput))
+                {
+                    AutoCheckOutcome::Hold {
+                        reasons: vec![HOLD_REASON.to_owned()],
+                    }
+                } else {
+                    AutoCheckOutcome::Allow
+                }
+            }
+        }
+
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x22),
+            &lineage_manifest(
+                Some(CHECKER_REF),
+                Some(first_party_eiri_connector_actor_id()),
+            ),
+        )?;
+        let claim_id = test_id(0x33);
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let (candidate, envelope) = benign_source_lineage_parts(&vault, &body, true, false)?;
+        let checker = Arc::new(SourceAwareChecker {
+            calls: AtomicUsize::new(0),
+        });
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+        let error = commit_lineage_candidate(
+            &vault,
+            &claim_id,
+            candidate,
+            &envelope,
+            Some(&bounded_checker),
+        )
+        .expect_err("the checker must see the ToolOutput history behind Observed");
+        let (outcome, reasons) = gate_rejection_parts(error);
+        assert_eq!(outcome, "pending");
+        assert_eq!(reasons, ["gate.pending.checker"]);
+        assert_eq!(checker.calls.load(AtomicOrdering::Relaxed), 1);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+
+        // Pure Observed bypasses the gate's consult. Ask the host directly to
+        // prove it allows that same declaration when ToolOutput is absent.
+        let observed_lineage = SourceLineage::of(ClaimSource::Observed);
+        let observed = AutoCheckCandidate {
+            predicate: &body.predicate,
+            value_preview: "Ada Lovelace",
+            source: ClaimSource::Observed,
+            lineage: Some(&observed_lineage),
+            actor_class: "agent",
+            sensitivity_band: Some(0),
+        };
+        assert_eq!(checker.check(&observed), AutoCheckOutcome::Allow);
         Ok(())
     }
 
@@ -15897,6 +16292,9 @@ mod auto_checker {
         Ok(())
     }
 }
+
+#[path = "tests/breaker.rs"]
+mod breaker;
 
 #[cfg(test)]
 mod vad_vetting_tests {

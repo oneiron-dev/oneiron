@@ -416,12 +416,9 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
-        // ONE-1595 (c435a02d, PR #845): trusted managed-vault metadata,
-        // not foreign/guest content. The open gate seals a computed DEK MAC
-        // at a fixed key after the canary waiver; WakeLedger::advance_rev
-        // persists the engine-owned revision for restart ordering. Neither
-        // writes an entity, edge, or vector or accepts a caller-selected key.
-        // Pin only these two call lines; every new raw hit still fails below.
+        // ONE-1595 server-plane metadata, like auth/idempotency above: a keyed
+        // DEK verification MAC and a monotonic wake-ledger revision. Neither
+        // writes guest entity, edge, or vector content, so no stamper applies.
         (
             RawHit {
                 path: "crates/oneiron-server/src/managed.rs".to_owned(),

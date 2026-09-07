@@ -8,6 +8,7 @@ use crate::affect::coping::{
 use crate::claim::claim_surfaceable;
 use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
+use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::query_expansion::{GroundingContext, HydeExpander, HydeOptions};
@@ -15,6 +16,7 @@ use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 
+use super::corpus_filter::claim_matches_corpus;
 use super::support::normalize_range;
 use super::types::{
     DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, DreamerWorkingSet, DreamerWorkingSetBudget,
@@ -39,6 +41,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) apply_confidence: bool,
     pub(super) apply_gravity: bool,
     pub(super) apply_contiguity: bool,
+    pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
     pub(super) type_filter: Option<Vec<u8>>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
@@ -48,6 +51,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) facet_filter: Option<(EntityId, FacetMode)>,
     pub(super) relationship_filter: Option<(EntityId, RelMode)>,
     pub(super) world_scope: WorldScope,
+    pub(super) corpus_scope: CorpusScope,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
@@ -84,6 +88,7 @@ impl<'a> PipelineBuilder<'a> {
             apply_confidence: false,
             apply_gravity: false,
             apply_contiguity: false,
+            candidate_filter: None,
             type_filter: None,
             since_filter: None,
             occurred_range: None,
@@ -93,6 +98,7 @@ impl<'a> PipelineBuilder<'a> {
             facet_filter: None,
             relationship_filter: None,
             world_scope: WorldScope::All,
+            corpus_scope: CorpusScope::All,
             context_pack_budget: None,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
@@ -421,6 +427,11 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    pub(crate) fn filter_candidates(mut self, filter: &'a super::CandidateFilter<'a>) -> Self {
+        self.candidate_filter = Some(filter);
+        self
+    }
+
     pub fn filter_types(mut self, types: &[u8]) -> Self {
         self.type_filter = Some(types.to_vec());
         self
@@ -491,11 +502,34 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Sets the corpus scope for this query (ONE-1914). The default is
+    /// [`CorpusScope::All`] (span every corpus), under which this stage is a
+    /// no-op and results are identical to never calling the method.
+    /// [`CorpusScope::Unscoped`] keeps only core claims;
+    /// [`CorpusScope::Corpus`] and [`CorpusScope::AnyOf`] keep the named
+    /// corpora's claims PLUS unscoped/core claims, because a claim with no
+    /// corpus stamp belongs to every audience.
+    ///
+    /// The filter runs post-fusion / post-boosts, before the `result_limit`
+    /// truncation and under the same read transaction — immediately after
+    /// the world filter — so claims excluded by corpus never consume result
+    /// slots. Scoring and fusion are untouched. A corpus is an AUDIENCE
+    /// scope on CLAIM records: it is orthogonal to [`Self::world`], which
+    /// stays the epistemic axis, and non-CLAIM entities pass unfiltered.
+    ///
+    /// An empty [`CorpusScope::AnyOf`] names no corpus and fails the run
+    /// closed with [`Error::InvalidConfig`].
+    pub fn corpus(mut self, scope: CorpusScope) -> Self {
+        self.corpus_scope = scope;
+        self
+    }
+
     pub fn prior_successful_coping_strategies(
         self,
         affected_person: &EntityId,
         limit: usize,
     ) -> Result<Vec<CopingOutcomeRecord>> {
+        let corpus_scope = self.corpus_scope.clone().canonicalize()?;
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -506,6 +540,9 @@ impl<'a> PipelineBuilder<'a> {
                 continue;
             };
             if body.predicate != COPING_OUTCOME_PREDICATE || !claim_surfaceable(&body) {
+                continue;
+            }
+            if !claim_matches_corpus(&corpus_scope, &body)? {
                 continue;
             }
             validate_coping_outcome_claim_structure(&body)?;

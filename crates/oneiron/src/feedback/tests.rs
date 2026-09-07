@@ -1390,6 +1390,13 @@ fn gate_outcomes_remain_authoritative() {
         receipt.fields.get("hold_reason").map(String::as_str),
         Some("gate.pending.counterparty_opt_out")
     );
+    assert_eq!(
+        receipt
+            .fields
+            .get("gate_receipt_reasons")
+            .map(String::as_str),
+        Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+    );
     assert!(!receipt.fields.contains_key("suppression"));
     assert!(!receipt.fields.contains_key("suppression_reason"));
     assert!(

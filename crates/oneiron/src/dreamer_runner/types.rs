@@ -3,6 +3,7 @@
 use rmpv::Value;
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::dreamer_wake::WakeTrigger;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::temporal::TimeRange;
@@ -310,6 +311,30 @@ pub struct EnqueueDreamerSkillOptimizeAttempt {
     pub input: Value,
     pub parent_attempt: Option<AttemptId>,
     /// Optional advisory dedupe key — a local cost coalescer (one optimization
+    /// pass per wake), not a correctness lock.
+    pub dedupe_key: Option<String>,
+    pub run_id: Option<String>,
+    pub now: u64,
+}
+
+/// Input for enqueueing an ARCH-0073 vault-cleanup attempt (ONE-1931).
+///
+/// Carries the `trigger` because the registration is trigger-SCOPED: ARCH-0073
+/// puts the cleanup pass on the TIMER wake (whose default scope is Macro), and
+/// [`crate::dreamer_runner::DreamerRunnerStore::enqueue_vault_cleanup`]
+/// refuses every other trigger with
+/// [`crate::error::Error::VaultCleanupWakeTriggerRejected`]. A maintenance
+/// scan registered on a compaction or session-end wake would make an
+/// interactive turn pay for housekeeping.
+///
+/// Carries no target: the pass finds its own candidates by walking the
+/// checker table, so an enqueued attempt names the WORK, never its rows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnqueueDreamerVaultCleanupAttempt {
+    pub trigger: WakeTrigger,
+    pub input: Value,
+    pub parent_attempt: Option<AttemptId>,
+    /// Optional advisory dedupe key — a local cost coalescer (one cleanup
     /// pass per wake), not a correctness lock.
     pub dedupe_key: Option<String>,
     pub run_id: Option<String>,

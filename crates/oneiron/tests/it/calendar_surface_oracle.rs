@@ -23,13 +23,18 @@
 //!
 //! ## Normal criticality is not source permission
 //!
-//! `gate::default_policy_manifest()` gives `calendar.` normal criticality and
-//! sensitivity. It does not grant Imported source trust. A Human actor's
-//! Approved request still needs an explicit, actor-bound source permit.
+//! `gate::default_policy_manifest()` resolves criticality from an allow-list of
+//! predicate prefixes and defaults everything else to `critical`. `calendar.`
+//! carries its own prefix rule (`criticality: normal`, `sensitivity: normal`),
+//! so calendar writes need no criticality override. It does not grant Imported
+//! source trust. A Human actor's Approved request still needs an explicit,
+//! actor-bound source permit at the unchanged unstamped floor.
 //!
 //! [`calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest`]
-//! pins the distinction on an unchanged default vault: Imported + Approved
-//! pends only on source trust and writes no EVENT or claims. The tier-scoping
+//! first pins the distinction on an unchanged default vault: Imported + Approved
+//! pends only on source trust and writes no EVENT or claims. It then installs
+//! the actor's source permit beside the unchanged default manifest and proves
+//! that approved claims project through the public surface. The tier-scoping
 //! property — claims stored as Proposed stay invisible on every read verb —
 //! remains pinned by [`calendar_surface_scopes_read_search_and_freebusy`].
 
@@ -120,8 +125,10 @@ fn envelope(actor: EntityId, approval: ClaimApprovalStatus) -> WriteEnvelope {
 }
 
 /// Stores one calendar EVENT and its family through the ordinary claim
-/// candidate door at `approval`. Approved fixtures explicitly install their
-/// actor's Imported source permit; Proposed claims keep their review status.
+/// candidate door at `approval`, against the default predicate policy plus
+/// the fixture actor's explicit Imported source permit. Callers install that
+/// permit beside the unchanged default manifest; Proposed claims keep their
+/// review status.
 fn store_calendar_event(
     vault: &Vault,
     actor: EntityId,
@@ -177,6 +184,19 @@ fn window() -> TimeRange {
 #[test]
 fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest() {
     let (_dir, vault) = temp_vault();
+    let manifests = vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("default policy manifests");
+    assert_eq!(
+        manifests.len(),
+        1,
+        "the stock vault seeds one default policy"
+    );
+    let default_manifest_id = manifests[0];
+    let default_manifest = vault
+        .get_raw(&default_manifest_id)
+        .expect("read default manifest")
+        .expect("default manifest exists");
     let (actor, facade) = actor_facade(&vault);
     let busy = test_id(BUSY_SEED);
     let envelope = envelope(actor, ClaimApprovalStatus::Approved);
@@ -269,6 +289,52 @@ fn calendar_claims_resolve_normal_criticality_under_the_default_policy_manifest(
             .is_empty()
     );
     assert!(vault.connector_send_tasks().expect("tasks").is_empty());
+
+    oneiron::calendar::transcript::permit_imported_calendar_source_for_test(&vault, actor)
+        .expect("authorize this CAL ingest actor's Imported source");
+    assert_eq!(
+        vault.get_raw(&default_manifest_id).expect("default policy"),
+        Some(default_manifest),
+        "the explicit Imported permit must not replace the default policy"
+    );
+
+    // The unchanged `calendar.` prefix rule resolves criticality `normal`.
+    // The separate source permit contributes no predicate axes or ceilings;
+    // approval alone does not authorize Imported provenance.
+    let busy = store_calendar_event(
+        &vault,
+        actor,
+        BUSY_SEED,
+        SECRET_NAME,
+        TimeRange {
+            start: 1_000,
+            end: 1_099,
+        },
+        "busy",
+        ClaimApprovalStatus::Approved,
+    );
+    let stored = vault
+        .get_claim(&claim_id(BUSY_SEED, 1))
+        .expect("claim row")
+        .expect("the claim-candidate door stored a row");
+    assert_eq!(stored.predicate, "calendar.time_kind");
+    assert_eq!(stored.lifecycle, oneiron::ClaimLifecycleStatus::Active);
+    assert_eq!(stored.approval, ClaimApprovalStatus::Approved);
+
+    // …and admitted claims project under the default predicate policy plus
+    // explicit source authorization. `blocks_time` comes from the admitted
+    // `calendar.time_kind` claim rather than the EVENT header, so a true here
+    // proves the gate let the claim through to the projector.
+    let view = facade
+        .calendar_read(&CalendarReadRequest {
+            event_ref: busy.to_hex(),
+        })
+        .expect("read")
+        .expect("an authorized calendar claim projects under the default predicate policy");
+    assert_eq!(view.event_ref, busy.to_hex());
+    assert!(view.blocks_time);
+    assert_eq!(view.start_utc, Some(1_000));
+    assert_eq!(view.end_utc, Some(1_099));
 }
 
 /// Missing and wrong-actor permits reject the same atomic batch that a
