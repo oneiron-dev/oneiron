@@ -3225,7 +3225,9 @@
           "completed",
           "failed",
           "cancelled",
-          "interrupted"
+          "interrupted",
+          "abandoned",
+          "result_attached"
         ],
         "type": "string"
       },
@@ -3356,6 +3358,12 @@
               "null"
             ]
           },
+          "result_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "run_id": {
             "type": [
               "string",
@@ -3469,7 +3477,8 @@
           "paused",
           "completed",
           "failed",
-          "cancelled"
+          "cancelled",
+          "abandoned"
         ],
         "type": "string"
       },
@@ -3809,7 +3818,8 @@
           "paused",
           "completed",
           "failed",
-          "cancelled"
+          "cancelled",
+          "abandoned"
         ],
         "type": "string"
       },

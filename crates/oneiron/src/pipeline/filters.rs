@@ -56,6 +56,9 @@ pub(super) fn claim_status_gate_allows(
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)? {
+        return Ok(false);
+    }
     // Entities without a parseable envelope are not a claim-status
     // decision; `apply_filters` drops them downstream exactly as before.
     let Some(meta) = metadata_cache.get(store, rtxn, id)? else {

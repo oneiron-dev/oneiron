@@ -81,7 +81,10 @@ impl AttemptQueue<'_> {
         validate_cancel_standing(input.standing)?;
         match record.state {
             AttemptState::Landing => return Ok(CancelRequestOutcome::AlreadyLanding(record)),
-            AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled => {
+            AttemptState::Completed
+            | AttemptState::Failed
+            | AttemptState::Cancelled
+            | AttemptState::Abandoned => {
                 return Ok(CancelRequestOutcome::AlreadySettled(record));
             }
             // Only a CLAIMED, leased realization has a worker who can answer.
