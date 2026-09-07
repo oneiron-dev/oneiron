@@ -80,6 +80,121 @@ fn unknown_foreign_and_aborted_leases_cannot_charge_or_refund() {
 }
 
 #[test]
+fn same_textual_ids_from_independent_guards_are_not_authority() {
+    let table = BudgetPolicyTable::from_rows(vec![actor_row(0x64, Some(6), Some(100))]);
+    for policy_aware in [false, true] {
+        let make_guard = || {
+            if policy_aware {
+                BudgetGuard::with_policy_table(
+                    "same-attempt",
+                    100,
+                    10,
+                    BudgetExhaustionPolicy::Suspend,
+                    policy_test_actor(0x64),
+                    &table,
+                )
+            } else {
+                BudgetGuard::with_reserve_units(
+                    "same-attempt",
+                    100,
+                    10,
+                    BudgetExhaustionPolicy::Suspend,
+                )
+            }
+        };
+        let guard = make_guard();
+        let foreign = make_guard();
+        let local = guard.admit().unwrap().lease;
+        let other = foreign.admit().unwrap().lease;
+        assert_eq!(local.id(), "same-attempt:metered:1");
+        assert_eq!(local.id(), other.id());
+        assert_eq!(format!("{local:?}"), format!("{other:?}"));
+        assert_ne!(local, other);
+        let leases = std::collections::HashSet::from([local.clone(), local.clone(), other.clone()]);
+        assert_eq!(leases.len(), 2);
+        let before = (guard.read(), meter_snapshot(&guard));
+        let foreign_before = (foreign.read(), meter_snapshot(&foreign));
+        for lease in [&other, &BudgetLease::for_test(local.id())] {
+            assert_eq!(
+                guard.settle_per_call(lease, &usage(90, 9)),
+                Err(BudgetDenied::LeaseInvalid)
+            );
+            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
+            assert_eq!(
+                guard.settle_absolute(lease, 99),
+                Err(BudgetDenied::LeaseInvalid)
+            );
+            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
+            assert_eq!(
+                guard.settle_terminal(lease, &usage(90, 9)),
+                Err(BudgetDenied::LeaseInvalid)
+            );
+            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
+            assert_eq!(guard.abort(lease), Err(BudgetDenied::LeaseInvalid));
+            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
+        }
+        assert_eq!((foreign.read(), meter_snapshot(&foreign)), foreign_before);
+        guard.settle_per_call(&local, &usage(3, 4)).unwrap();
+        let settled = (guard.read(), meter_snapshot(&guard));
+        assert_eq!(settled.0.used_units, 7);
+        assert_eq!(settled.0.reserved_units, 0);
+        // A settled record must not turn foreign settlement into a duplicate no-op.
+        assert_eq!(
+            guard.settle_per_call(&other, &usage(3, 4)),
+            Err(BudgetDenied::LeaseInvalid)
+        );
+        assert_eq!(
+            guard.settle_absolute(&other, 7),
+            Err(BudgetDenied::LeaseInvalid)
+        );
+        assert_eq!((guard.read(), meter_snapshot(&guard)), settled);
+        foreign.abort(&other).unwrap();
+        assert_eq!(foreign.read().used_units, 0);
+        assert_eq!(foreign.read().reserved_units, 0);
+    }
+}
+
+#[test]
+fn guard_and_lease_clones_share_settlement_and_abort_authority() {
+    let guard = BudgetGuard::with_reserve_units("clones", 100, 10, BudgetExhaustionPolicy::Suspend);
+    let clone = guard.clone();
+    let first = guard.admit().unwrap().lease;
+    let copied = first.clone();
+    assert_eq!(first, copied);
+    clone.settle_per_call(&copied, &usage(3, 4)).unwrap();
+    let settled = meter_snapshot(&guard);
+    assert_eq!(settled.used_units, 7);
+    guard.settle_terminal(&first, &usage(90, 9)).unwrap();
+    clone.settle_per_call(&copied, &usage(90, 9)).unwrap();
+    assert_eq!(meter_snapshot(&guard), settled);
+
+    let second = clone.admit().unwrap().lease;
+    guard.settle_absolute(&second.clone(), 12).unwrap();
+    clone.settle_per_call(&second, &usage(90, 9)).unwrap();
+    assert_eq!(guard.read().used_units, 12);
+    let third = guard.admit().unwrap().lease;
+    let third_copy = third.clone();
+    clone.settle_terminal(&third_copy, &usage(3, 4)).unwrap();
+    guard.settle_absolute(&third, 99).unwrap();
+    assert_eq!(
+        guard.read().used_units,
+        12,
+        "absolute usage is still a watermark"
+    );
+
+    let aborted = clone.admit().unwrap().lease;
+    guard.abort(&aborted.clone()).unwrap();
+    let after_abort = meter_snapshot(&guard);
+    clone.abort(&aborted).unwrap();
+    assert_eq!(meter_snapshot(&guard), after_abort);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(
+        clone.settle_per_call(&aborted, &usage(3, 4)),
+        Err(BudgetDenied::LeaseInvalid)
+    );
+}
+
+#[test]
 fn out_of_order_calls_conserve_rows_floors_shared_and_caps() {
     let table = BudgetPolicyTable::from_rows(vec![
         purpose_row(CallPurpose::Extraction, Some(6), Some(14)),
@@ -242,8 +357,30 @@ fn explicit_local_continuation_stays_unmetered() {
         BudgetGuard::with_reserve_units("local", 10, 10, BudgetExhaustionPolicy::ContinueOnLocal);
     let metered = guard.admit().unwrap();
     let local = guard.admit_local().unwrap();
+    let foreign =
+        BudgetGuard::with_reserve_units("local", 10, 10, BudgetExhaustionPolicy::ContinueOnLocal);
+    let _foreign_metered = foreign.admit().unwrap();
+    let foreign_local = foreign.admit_local().unwrap();
+    assert_eq!(local.lease.id(), foreign_local.lease.id());
+    let snapshot = meter_snapshot(&guard);
+    assert_eq!(
+        guard.settle_per_call(&foreign_local.lease, &usage(3, 4)),
+        Err(BudgetDenied::LeaseInvalid)
+    );
+    assert_eq!(
+        guard.settle_absolute(&foreign_local.lease, 7),
+        Err(BudgetDenied::LeaseInvalid)
+    );
+    assert_eq!(
+        guard.abort(&foreign_local.lease),
+        Err(BudgetDenied::LeaseInvalid)
+    );
+    assert_eq!(meter_snapshot(&guard), snapshot);
     let before = guard.read();
-    guard.settle_per_call(&local.lease, &usage(3, 4)).unwrap();
+    guard
+        .clone()
+        .settle_per_call(&local.lease, &usage(3, 4))
+        .unwrap();
     assert_eq!(guard.read(), before);
     guard.settle_per_call(&metered.lease, &usage(3, 4)).unwrap();
     assert_eq!(guard.read().used_units, 7);

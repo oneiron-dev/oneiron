@@ -174,14 +174,18 @@ impl VoiceCascadeSession {
                     "finish or interrupt the previous generation before final",
                 ));
             }
-            self.prepared_asr = None;
+            // Retire the attempt, but keep its exact-input fence until the
+            // revision is consumed or the utterance is closed.
             self.preparation_active = false;
         }
         match event.kind {
-            AsrEventKind::Partial => self
-                .retrieval
-                .observe_partial(handle, revision, &event.text, enricher)
-                .map(AsrUpdate::Partial),
+            AsrEventKind::Partial => {
+                let retrieval = self
+                    .retrieval
+                    .observe_partial(handle, revision, &event.text, enricher)?;
+                self.prepared_asr = None;
+                Ok(AsrUpdate::Partial(retrieval))
+            }
             AsrEventKind::Final => {
                 // Do not consume a final while a generation is still live. The
                 // host must first barge in, or acknowledge normal drained output.
@@ -200,7 +204,14 @@ impl VoiceCascadeSession {
                     .resolve_interlocutors(&self.config.interlocutors)?;
                 let retrieval = self
                     .retrieval
-                    .finalize(handle, revision, &event.text, enricher)?;
+                    .finalize(handle, revision, &event.text, enricher);
+                // Final retrieval can fail after closing the utterance. That
+                // lifecycle invalidation also releases the fence; earlier
+                // identity/enrichment failures must leave it intact for retry.
+                if !self.retrieval.is_open(handle) {
+                    self.prepared_asr = None;
+                }
+                let retrieval = retrieval?;
                 self.epoch = next;
                 let request = BrainRequest {
                     generation: GenerationEpoch {

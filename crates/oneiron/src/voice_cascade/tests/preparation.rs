@@ -114,3 +114,170 @@ fn cancellation_keeps_revision_and_exact_input_fence_but_releases_attempt() -> R
     assert_eq!(vault.retrieval_runs(200)?.len(), 1);
     Ok(())
 }
+
+fn reject_changed_prepared_input(
+    session: &mut VoiceCascadeSession,
+    handle: &UtteranceHandle,
+    kind: AsrEventKind,
+) {
+    let changed = event(kind, "changed transcript");
+    assert!(matches!(
+        session.prepare_asr(handle, 1, changed.clone(), true),
+        Err(Error::InvalidConfig(message))
+            if message == "ASR preparation revision or exact input mismatch"
+    ));
+    let mut enricher = Enricher::default();
+    assert!(matches!(
+        session.handle_asr(handle, 1, changed, true, &mut enricher),
+        Err(Error::InvalidConfig(message))
+            if message == "ASR preparation revision or exact input mismatch"
+    ));
+    assert!(
+        enricher.texts.is_empty(),
+        "changed input must not reach extraction"
+    );
+}
+
+#[test]
+fn partial_retrieval_error_keeps_prepared_input_fence_and_exact_retry_works() -> Result<()> {
+    for via_sync in [false, true] {
+        let (_dir, vault) = vault();
+        let result_ref = put_text(&vault, 0x70, "Tokyo launch")?;
+        let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
+        let handle = session.open_utterance("partial-error", SpeculativeSessionConfig::default())?;
+        let input = event(AsrEventKind::Partial, " Tokyo launch ");
+        let stale = session
+            .prepare_asr(&handle, 1, input.clone(), true)?
+            .unwrap();
+        let pending = session
+            .prepare_asr(&handle, 1, input.clone(), true)?
+            .unwrap();
+        let mut enricher = Enricher::default();
+        enricher.value.query_vector = Some(vec![f32::NAN, 0.0, 0.0, 0.0]);
+        let failed = if via_sync {
+            let failed = session.handle_asr(&handle, 1, input.clone(), true, &mut enricher);
+            assert!(!session.accepts_prepared_asr(&pending));
+            assert!(matches!(
+                session.apply_prepared_asr(pending, PartialEnrichment::default())?,
+                AsrUpdate::Ignored
+            ));
+            failed
+        } else {
+            session.apply_prepared_asr(pending, enricher.value.clone())
+        };
+        assert!(matches!(failed, Err(Error::InvalidVector { index: 0, .. })));
+        assert!(session.is_utterance_open(&handle));
+        assert!(vault.retrieval_runs(200)?.is_empty());
+        reject_changed_prepared_input(&mut session, &handle, AsrEventKind::Partial);
+        assert!(matches!(
+            session.apply_prepared_asr(stale, PartialEnrichment::default())?,
+            AsrUpdate::Ignored
+        ));
+        assert!(vault.retrieval_runs(200)?.is_empty());
+
+        enricher.value.query_vector = None;
+        let retry = session.prepare_asr(&handle, 1, input, true)?.unwrap();
+        let AsrUpdate::Partial(partial) =
+            session.apply_prepared_asr(retry, enricher.value.clone())?
+        else {
+            panic!("original partial must remain retryable");
+        };
+        let warm = partial.context.expect("real retrieval after vector repair");
+        assert!(warm.result_refs.contains(&result_ref));
+        assert_eq!(vault.retrieval_runs(200)?.len(), 1);
+        assert!(
+            session
+                .prepare_asr(
+                    &handle,
+                    1,
+                    event(AsrEventKind::Partial, " Tokyo launch "),
+                    true,
+                )
+                .is_err(),
+            "success consumes the revision"
+        );
+        let final_ticket = session
+            .prepare_asr(
+                &handle,
+                2,
+                event(AsrEventKind::Final, "Tokyo launch plans"),
+                true,
+            )?
+            .unwrap();
+        let AsrUpdate::Final(request) =
+            session.apply_prepared_asr(final_ticket, enricher.value)?
+        else {
+            panic!("next revision must work");
+        };
+        assert!(request.retrieval.promoted);
+        assert_eq!(request.retrieval.run_id, warm.run_id);
+        assert_eq!(vault.retrieval_runs(200)?.len(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn final_identity_error_keeps_prepared_input_fence_and_exact_retry_works() -> Result<()> {
+    use crate::counterparty_contact::CounterpartyContactRecord;
+    use crate::interlocutor::InterlocutorPartyInput;
+
+    for via_sync in [false, true] {
+        let (_dir, vault) = vault();
+        let contact = entity(0x71);
+        let mut config = config();
+        config
+            .interlocutors
+            .parties
+            .push(InterlocutorPartyInput::ContactRef(contact));
+        let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config)?;
+        let handle = session.open_utterance("identity-error", SpeculativeSessionConfig::default())?;
+        let stale = prepared(&mut session, &handle, 1, " exact bytes ");
+        let pending = prepared(&mut session, &handle, 1, " exact bytes ");
+        let mut enricher = Enricher::default();
+        let failed = if via_sync {
+            let failed = session.handle_asr(
+                &handle,
+                1,
+                event(AsrEventKind::Final, " exact bytes "),
+                true,
+                &mut enricher,
+            );
+            assert!(!session.accepts_prepared_asr(&pending));
+            assert!(matches!(
+                session.apply_prepared_asr(pending, PartialEnrichment::default())?,
+                AsrUpdate::Ignored
+            ));
+            failed
+        } else {
+            session.apply_prepared_asr(pending, PartialEnrichment::default())
+        };
+        assert!(matches!(failed, Err(Error::EntityNotFound)));
+        assert!(enricher.texts.is_empty(), "identity fails before enrichment");
+        assert!(session.is_utterance_open(&handle));
+        assert!(vault.retrieval_runs(200)?.is_empty());
+        reject_changed_prepared_input(&mut session, &handle, AsrEventKind::Final);
+        assert!(matches!(
+            session.apply_prepared_asr(stale, PartialEnrichment::default())?,
+            AsrUpdate::Ignored
+        ));
+        assert!(vault.retrieval_runs(200)?.is_empty());
+
+        // Repair the concrete missing contact without changing session inputs.
+        let record = CounterpartyContactRecord::user_introduction(entity(0x72), "mika", 10)?;
+        vault.create_counterparty_contact(&contact, &record)?;
+        let retry = prepared(&mut session, &handle, 1, " exact bytes ");
+        let AsrUpdate::Final(request) =
+            session.apply_prepared_asr(retry, PartialEnrichment::default())?
+        else {
+            panic!("original final must remain retryable");
+        };
+        assert_eq!(request.transcript, " exact bytes ");
+        assert!(request.externally_tainted);
+        assert_eq!(request.generation.value(), 1);
+        assert_eq!(request.interlocutors.entries().len(), 2);
+        assert!(session.accepts_pcm(request.generation));
+        assert!(!session.is_utterance_open(&handle));
+        assert_eq!(vault.retrieval_runs(200)?.len(), 1);
+    }
+    Ok(())
+}
