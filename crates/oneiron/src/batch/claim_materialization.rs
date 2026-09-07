@@ -231,6 +231,41 @@ impl ClaimMaterialization {
     }
 }
 
+/// Consumes only the next exact binding, then validates its current authority.
+pub(super) fn consume_claim_materialization(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim_materializations: &mut VecDeque<ClaimMaterialization>,
+    op: &BatchOp,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<Option<ClaimMaterialization>> {
+    if claim_materializations
+        .front()
+        .is_some_and(|binding| binding.matches_op(op))
+    {
+        let binding = claim_materializations
+            .pop_front()
+            .expect("matched front binding");
+        binding.validate_actor(store, txn)?;
+        reject_overlay_member_base_write(store, &binding.envelope().actor().entity_ref(), origin)?;
+        Ok(Some(binding))
+    } else if !claim_materializations.is_empty()
+        && matches!(
+            op,
+            BatchOp::Put {
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                ..
+            }
+        )
+    {
+        Err(Error::InvalidClaimBody(
+            "claim materialization operation mismatch",
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Rebuild the permitted body delta instead of trusting caller-supplied axes.
 fn demotion_body(
     store: &Store,
@@ -311,41 +346,6 @@ fn demotion_body(
     ));
     expected.scope = Some(Value::Map(scope));
     Ok(expected)
-}
-
-/// Consumes only the next exact binding, then validates its current authority.
-pub(super) fn consume_claim_materialization(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    claim_materializations: &mut VecDeque<ClaimMaterialization>,
-    op: &BatchOp,
-    origin: BaseWriteOrigin<'_>,
-) -> Result<Option<ClaimMaterialization>> {
-    if claim_materializations
-        .front()
-        .is_some_and(|binding| binding.matches_op(op))
-    {
-        let binding = claim_materializations
-            .pop_front()
-            .expect("matched front binding");
-        binding.validate_actor(store, txn)?;
-        reject_overlay_member_base_write(store, &binding.envelope().actor().entity_ref(), origin)?;
-        Ok(Some(binding))
-    } else if !claim_materializations.is_empty()
-        && matches!(
-            op,
-            BatchOp::Put {
-                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-                ..
-            }
-        )
-    {
-        Err(Error::InvalidClaimBody(
-            "claim materialization operation mismatch",
-        ))
-    } else {
-        Ok(None)
-    }
 }
 
 fn row_digest(raw: &[u8]) -> [u8; 32] {

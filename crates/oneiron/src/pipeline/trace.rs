@@ -7,6 +7,7 @@ use crate::analyzer::AnalyzerChannel;
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::codebase::RepoRef;
 use crate::context_pack::ContextPackRetrievalBudget;
+use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::fusion;
@@ -197,6 +198,10 @@ pub(super) fn retrieval_trace_fork_hash(
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
+    fork_hash_f32(
+        &mut hasher,
+        crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+    );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
     fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
@@ -219,6 +224,7 @@ pub(super) fn retrieval_trace_fork_hash(
         builder.world_scope,
         builder.active_world_selection.as_ref(),
     );
+    fork_hash_corpus_scope(&mut hasher, &builder.corpus_scope);
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
@@ -493,6 +499,30 @@ fn fork_hash_world_scope(
             fork_hash_len(hasher, selected.worlds.len());
             for world in &selected.worlds {
                 fork_hash_raw_bytes(hasher, world.as_bytes());
+            }
+        }
+    }
+}
+
+/// Query validation still rejects empty AnyOf before channel work. Hashing only
+/// normalizes ordering/duplicates; it neither admits nor repairs invalid input.
+fn fork_hash_corpus_scope(hasher: &mut Sha256, scope: &CorpusScope) {
+    fork_hash_str(hasher, "corpus_scope");
+    match scope {
+        CorpusScope::All => fork_hash_str(hasher, "all"),
+        CorpusScope::Unscoped => fork_hash_str(hasher, "unscoped"),
+        CorpusScope::Corpus(id) => {
+            fork_hash_str(hasher, "corpus");
+            fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+        }
+        CorpusScope::AnyOf(ids) => {
+            fork_hash_str(hasher, "any_of");
+            let mut ids = ids.clone();
+            ids.sort_unstable();
+            ids.dedup();
+            fork_hash_len(hasher, ids.len());
+            for id in ids {
+                fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
             }
         }
     }

@@ -416,11 +416,12 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
-        // ONE-1595 (c435a02d, PR #845): trusted managed-vault metadata,
-        // not foreign/guest content. The open gate seals a computed DEK MAC
-        // at a fixed key after the canary waiver; WakeLedger::advance_rev
-        // persists the engine-owned revision for restart ordering. Neither
-        // writes an entity, edge, or vector or accepts a caller-selected key.
+        // ONE-1595 (c435a02d, PR #845): trusted managed-vault server-plane
+        // metadata, like auth/idempotency above, not foreign/guest content.
+        // The open gate seals a computed DEK MAC at a fixed key after the
+        // canary waiver; WakeLedger::advance_rev persists the engine-owned
+        // monotonic revision for restart ordering. Neither writes an entity,
+        // edge, or vector or accepts a caller-selected key, so no stamper applies.
         // Pin only these two call lines; every new raw hit still fails below.
         (
             RawHit {

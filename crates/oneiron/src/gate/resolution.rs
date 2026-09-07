@@ -12,6 +12,9 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
+mod breaker_policy;
+
+use super::breaker::{GateBreakerThresholds, resolve_gate_breaker_thresholds};
 use super::ceiling::{
     ActorCeiling, DelegationFoldCache, DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack, PolicySensitivity,
@@ -112,6 +115,10 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     auto_checker: Option<String>,
     budget_policy: BudgetPolicyTable,
+    /// ONE-1453: the ONE resolved burst-breaker dial, or `None` for engine
+    /// defaults. Zero valid overrides and two-or-more distinct valid overrides
+    /// both resolve here as `None`.
+    actor_burst_breaker: Option<GateBreakerThresholds>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -789,6 +796,8 @@ fn hash_policy_frontier_v0(
         hash_owner_policy_row(hasher, row);
     }
 
+    resolution.hash_actor_burst_breaker(hasher);
+
     hash_opt_str(hasher, resolution.owner_policy_document.as_deref());
     hash_opt_str(hasher, resolution.owner_policy_output_contract.as_deref());
     hash_bool(hasher, resolution.owner_policy_patterns_dropped);
@@ -1016,6 +1025,9 @@ pub(crate) fn resolve_policy_manifest(
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    // ONE-1453: only VALID overrides enter the fold; a malformed one
+    // contributed no candidate at decode.
+    let mut actor_burst_breaker_candidates: Vec<GateBreakerThresholds> = Vec::new();
 
     for index_entry in store
         .type_index
@@ -1111,6 +1123,9 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(thresholds) = decoded.actor_burst_breaker {
+                    actor_burst_breaker_candidates.push(thresholds);
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
@@ -1132,6 +1147,13 @@ pub(crate) fn resolve_policy_manifest(
         resolution.owner_policy_rows.clear();
         resolution.owner_policy_rows_dropped = true;
     }
+
+    // ONE-1453: the distinct-valid-value rule alone decides. One distinct
+    // valid value applies; two or more are an ambiguity, and both that case
+    // and the zero-candidate case take engine defaults. A conflicting dial is
+    // NOT a malformed manifest: it does not fail-close the write gate.
+    resolution.actor_burst_breaker =
+        resolve_gate_breaker_thresholds(&actor_burst_breaker_candidates);
 
     // A resolved table must stay addressable by a u16 row index: up to 65,536
     // rows (indices 0..=65535) are valid; the 65,537th row marks the whole

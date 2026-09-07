@@ -30,11 +30,24 @@ pub enum EmbedderLocality {
     ThirdParty,
 }
 
-/// One pending claim body supplied to a host-injected embedder.
+/// Content supplied to an embedder and its egress predicate.
+///
+/// Match the variant before decoding: CLAIM carries its canonical record,
+/// while an epoch SUMMARY carries only its already-decoded prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingEmbeddingPayload {
+    /// Canonical MessagePack CLAIM body bytes, without the entity header.
+    ClaimBody(Vec<u8>),
+    /// UTF-8 prose from a validated epoch-summary body, without framing keys.
+    SummaryText(String),
+}
+
+/// One pending entity supplied to a host-injected embedder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingEmbeddingInput {
     pub entity_id: EntityId,
-    pub claim_body: Vec<u8>,
+    pub payload: PendingEmbeddingPayload,
+    /// Commits to the full stored body, not just the embedding payload.
     pub pending_embedding_token: Vec<u8>,
 }
 
@@ -49,7 +62,7 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
 }
 
-/// Tri-state PII egress verdict for one pending claim (ONE-EMBED E6).
+/// Tri-state PII egress verdict for one pending entity (ONE-EMBED E6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EgressDecision {
     Allow,
@@ -59,14 +72,14 @@ pub enum EgressDecision {
 
 /// Host-supplied egress gate. The OneiroNER PII head's verdict lives
 /// host-side; the engine never knows what PII is. Consulted for EVERY
-/// claim routed to a non-OnDevice embedder.
+/// entity routed to a non-OnDevice embedder, including epoch summaries.
 ///
 /// Host trait impls invoked under a held txn/lock must be non-blocking
 /// cached lookups; hosts run arbitrary inference in the async phases the
 /// engine exposes for it.
 pub trait EgressPredicate: Send + Sync {
-    /// Egress verdict for one pending claim. `Deny` and `NoVerdict` both
-    /// route the claim to the local (OnDevice) embedder — fail-closed; a
+    /// Egress verdict for one typed payload. `Deny` and `NoVerdict` both
+    /// route the entity to the local (OnDevice) embedder — fail-closed; a
     /// missing verdict can never send bytes off-device and never stalls
     /// the queue.
     ///
@@ -595,12 +608,27 @@ fn pending_input_in_txn(
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(None);
-    }
+    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
+    // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
+    // record's framing keys carry no retrievable meaning. The pending-embedding
+    // token still commits to the whole record, so a re-mint invalidates it.
+    let payload = match header.entity_type {
+        crate::registry::ENTITY_TYPE_CLAIM => PendingEmbeddingPayload::ClaimBody(body.to_vec()),
+        crate::registry::ENTITY_TYPE_SUMMARY => {
+            // An ordinary witness SUMMARY shares the type byte and is not an
+            // epoch record. SKIP it — the same `None` this arm returned for
+            // every SUMMARY before RT-05 — which the caller retires as stale.
+            let Ok(summary) = crate::compaction::decode_epoch_summary_body(body) else {
+                return Ok(None);
+            };
+            PendingEmbeddingPayload::SummaryText(summary.text)
+        }
+        _ => return Ok(None),
+    };
     Ok(Some(PendingEmbeddingInput {
         entity_id: *id,
-        claim_body: raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        payload,
         pending_embedding_token: token,
     }))
 }

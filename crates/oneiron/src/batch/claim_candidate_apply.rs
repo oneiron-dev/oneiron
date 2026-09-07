@@ -40,6 +40,7 @@ pub(super) fn apply_claim_candidate(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    staged_claim_gate: Option<&StagedClaimGateOutcome>,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -89,6 +90,7 @@ pub(super) fn apply_claim_candidate(
         include_source_in_gate_input,
         claim_gate_prechecked,
         preflight_gate_decision_id,
+        staged_claim_gate,
         None,
         // A claim candidate is never part of a promotion closure: promote
         // replays the session's typed journal, which stages no candidate op.

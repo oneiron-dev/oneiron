@@ -1332,14 +1332,8 @@ fn gate_outcomes_remain_authoritative() {
 
     // The same route, actor, and stored contact can send before opt-out.
     let mut allowed_transport = RecordingTransport::default();
-    let allowed = send_feedback(
-        &vault,
-        &preview,
-        &context,
-        &approval,
-        &mut allowed_transport,
-    )
-    .expect("send before opt-out");
+    let allowed = send_feedback(&vault, &preview, &context, &approval, &mut allowed_transport)
+        .expect("send before opt-out");
     assert_eq!(
         allowed.dispatch.outcome,
         OutboundDispatchOutcome::DeliveredToChannel
@@ -1367,32 +1361,38 @@ fn gate_outcomes_remain_authoritative() {
         .expect("a held dispatch is still an ordinary result");
 
     assert_ne!(outcome.logical_send_ref, allowed.logical_send_ref);
+    // ONE-1752: approving the feedback bundle does not override the contact's
+    // opt-out. The default posture holds the send for a separate owner decision.
     assert_eq!(outcome.dispatch.outcome, OutboundDispatchOutcome::Held);
     assert_eq!(outcome.dispatch.gate_outcome, "pending");
+    assert_eq!(
+        outcome.dispatch.gate_reason_codes,
+        vec!["gate.pending.counterparty_opt_out".to_owned()]
+    );
     let receipt = &outcome.dispatch.receipt;
     assert_eq!(receipt.outcome, "held");
+    for reason in [
+        "gate.pending.counterparty_opt_out",
+        "counterparty_opt_out_unsubscribe",
+    ] {
+        assert!(
+            receipt.policy_trace.iter().any(|code| code == reason),
+            "the opt-out hold retains its receipt reason: {reason}"
+        );
+    }
     assert_eq!(
         receipt.fields.get("hold_reason").map(String::as_str),
         Some("gate.pending.counterparty_opt_out")
     );
-    assert!(!receipt.fields.contains_key("suppression"));
-    assert!(
-        receipt
-            .policy_trace
-            .contains(&"gate.pending.counterparty_opt_out".to_owned()),
-        "the opt-out pending arm fired over the same stored contact"
-    );
-    assert!(
-        receipt
-            .policy_trace
-            .contains(&"counterparty_opt_out_unsubscribe".to_owned())
-    );
     assert_eq!(
-        receipt
-            .fields
-            .get("gate_receipt_reasons")
-            .map(String::as_str),
+        receipt.fields.get("gate_receipt_reasons").map(String::as_str),
         Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+    );
+    assert!(!receipt.fields.contains_key("suppression"));
+    assert!(!receipt.fields.contains_key("suppression_reason"));
+    assert!(
+        !receipt.fields.contains_key("intent_state"),
+        "the gate hold stops before dispatch ledger admission"
     );
     assert_eq!(outcome.transport_calls, 0);
     assert!(

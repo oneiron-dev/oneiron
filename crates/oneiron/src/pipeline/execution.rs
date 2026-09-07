@@ -28,9 +28,9 @@ use super::blend::{
 use super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::builder::PipelineBuilder;
 use super::channels::{
-    execute_phonetic, execute_temporal, scoped_entity_channel_limit, scoped_text_channel_limit,
-    scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
+    execute_phonetic, scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
 };
+use super::corpus_filter::CorpusFilter;
 use super::filters::{
     apply_claim_status_gate, apply_facet_filter, apply_filters, apply_relationship_filter,
     apply_world_filter, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
@@ -44,8 +44,7 @@ use super::trace::{
 };
 use super::types::{
     ClaimStatusGateCache, EntityMetadataCache, FacetMode, PER_SCAN_CAP_FACTOR, PPR_DAMPING,
-    PendingVectorEmbedding, PipelineFilterConfig, PipelineOutput, RelMode, ScoredEntity,
-    WorldScope,
+    PendingVectorEmbedding, PipelineOutput, RelMode, ScoredEntity,
 };
 use super::world_authority::resolve_active_world_authority;
 
@@ -118,6 +117,8 @@ impl PipelineBuilder<'_> {
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
+            let mut community_diversity = None;
+            let mut community_trace_identity = None;
             let codebase_scope_active = self.has_codebase_scope_filter();
             // ONE-1420: under `WorldScope::ActiveSet` the turn's world
             // authority resolves ONCE here — inside this run's read
@@ -134,29 +135,17 @@ impl PipelineBuilder<'_> {
                 self.execution_actor,
                 temporal_now,
             )?;
-            let filter_config = PipelineFilterConfig {
-                type_filter: self.type_filter.as_deref(),
-                since_filter: self.since_filter,
-                occurred_range,
-                learned_range: self.learned_range,
-                repo_ref_filter: self.repo_ref_filter.as_ref(),
-                project_id_filter: self.project_id_filter.as_deref(),
-                facet_filter: self.facet_filter,
-                relationship_filter: self.relationship_filter,
-                world_scope: self.world_scope,
-                world_active_set: world_authority
-                    .as_ref()
-                    .map(|resolved| &resolved.active_set),
-            };
-            // D19 is always active. For final-token prefix queries, a dead
-            // claim can outrank a live prefix hit in BM25, then be removed
-            // after fusion; overfetch prevents that dead hit from consuming
-            // the only text-channel slot. Live exact claims already satisfy
-            // the D19 gate, so they must not widen ordinary
-            // `search_text(..., limit)` calls.
+            let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
+            let mut filter_config = corpus_filter.config(self, occurred_range);
+            filter_config.world_active_set = world_authority
+                .as_ref()
+                .map(|resolved| &resolved.active_set);
+            // Ordinary text uses D19 widening; candidate-filtered text instead
+            // applies D19 during bounded scoring and needs no corpus-sized probe.
             let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
             let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
                 && *limit > 0
+                && self.candidate_filter.is_none()
             {
                 let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
@@ -224,44 +213,18 @@ impl PipelineBuilder<'_> {
                 || claim_gate_text_widening_active;
 
             if let Some((query_vector, limit)) = &self.vector_search {
-                // EMB-2: a `fast_dims`-length query is a first-class prefix
-                // query on the funnel read path.
-                if query_vector.len() != self.vault.config.dimensions
-                    && self.vault.config.fast_dims.map(usize::from) != Some(query_vector.len())
-                {
-                    return Err(Error::DimensionMismatch {
-                        expected: self.vault.config.dimensions,
-                        got: query_vector.len(),
-                    });
-                }
-                if let Some(error) = Error::invalid_vector_component(query_vector) {
-                    return Err(error);
-                }
-
-                let channel_limit = scoped_vector_channel_limit(
-                    &self.vault.store,
+                let vector_results = self.scoped_vector_results(
                     &rtxn,
+                    query_vector,
                     if overrides.widen_channel_limits {
                         retry_channel_limit(*limit)
                     } else {
                         *limit
                     },
-                    codebase_scope_active,
-                )?;
-                let vector_results = crate::hnsw::hnsw_search(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &rtxn,
-                    query_vector,
-                    channel_limit,
-                    self.skip_vector_rescore,
-                )?;
-                let mut vector_probe_claim_gate = ClaimStatusGateCache::default();
-                import_claim_gate_decisions_for_scores(
+                    filter_config,
+                    &mut metadata_cache,
                     &mut claim_gate,
-                    &mut vector_probe_claim_gate,
-                    &vector_results,
-                );
+                )?;
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Vector,
@@ -295,30 +258,18 @@ impl PipelineBuilder<'_> {
                     .expect("hyde expansion has config")
                     .2
                     .channel_limit;
-                let channel_limit = scoped_vector_channel_limit(
-                    &self.vault.store,
+                let hyde_results = self.scoped_vector_results(
                     &rtxn,
+                    &expansion.embedding,
                     if overrides.widen_channel_limits {
                         retry_channel_limit(limit)
                     } else {
                         limit
                     },
-                    codebase_scope_active,
-                )?;
-                let hyde_results = crate::hnsw::hnsw_search(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &rtxn,
-                    &expansion.embedding,
-                    channel_limit,
-                    self.skip_vector_rescore,
-                )?;
-                let mut hyde_probe_claim_gate = ClaimStatusGateCache::default();
-                import_claim_gate_decisions_for_scores(
+                    filter_config,
+                    &mut metadata_cache,
                     &mut claim_gate,
-                    &mut hyde_probe_claim_gate,
-                    &hyde_results,
-                );
+                )?;
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Hyde,
@@ -374,19 +325,31 @@ impl PipelineBuilder<'_> {
                 let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-                let mut text_results = crate::bm25::search_text_scoped_with_recency(
+                let search = if self.candidate_filter.is_some() {
+                    crate::bm25::search_text_filtered_with_recency
+                } else {
+                    crate::bm25::search_text_scoped_with_recency
+                };
+                let mut text_results = search(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
                     bm25_config,
                     text_query,
-                    text_channel_limit,
+                    if self.candidate_filter.is_some() {
+                        *limit
+                    } else {
+                        text_channel_limit
+                    },
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
-                if text_channel_limit > *limit && text_scope_widening_active {
+                if self.candidate_filter.is_none()
+                    && text_channel_limit > *limit
+                    && text_scope_widening_active
+                {
                     let scoped_result_limit = if recency.is_some() {
                         limit.saturating_mul(PER_SCAN_CAP_FACTOR)
                     } else {
@@ -541,23 +504,17 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(config) = &self.temporal_search {
-                let mut scoped_config = config.clone();
-                scoped_config.limit = scoped_entity_channel_limit(
-                    &self.vault.store,
+                let mut config = config.clone();
+                if overrides.widen_channel_limits {
+                    config.limit = retry_channel_limit(config.limit);
+                }
+                let temporal_results = self.scoped_temporal_results(
                     &rtxn,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(config.limit)
-                    } else {
-                        config.limit
-                    },
-                    codebase_scope_active,
-                )?;
-                let temporal_results = execute_temporal(
-                    &self.vault.store,
-                    &rtxn,
-                    &scoped_config,
+                    &config,
                     temporal_now,
+                    filter_config,
                     &mut metadata_cache,
+                    &mut claim_gate,
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -589,12 +546,13 @@ impl PipelineBuilder<'_> {
                 // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                 // instead of uniform 1/n.
                 let (ppr_results, deferred_cache_write) =
-                    crate::ppr::ppr_query_in_txn_with_deferred_cache(
+                    crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
                         &self.vault.store,
                         &rtxn,
                         seeds,
                         *depth,
                         PPR_DAMPING,
+                        self.vault.config.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Specificity,
                     )?;
                 add_signal_score_components(
@@ -757,14 +715,51 @@ impl PipelineBuilder<'_> {
                     // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
                     // specificity weighting is search_ppr-only.
                     let (mut ppr_results, deferred_cache_write) =
-                        crate::ppr::ppr_query_in_txn_with_deferred_cache(
-                            &self.vault.store,
-                            &rtxn,
-                            &seeds,
-                            *depth,
-                            PPR_DAMPING,
-                            crate::ppr::SeedWeighting::Uniform,
-                        )?;
+                        if self.vault.config.ppr_community.beta == 0.0 {
+                            // Exact legacy path: no evidence/cache reads or new key namespace.
+                            crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
+                                &self.vault.store,
+                                &rtxn,
+                                &seeds,
+                                *depth,
+                                PPR_DAMPING,
+                                self.vault.config.ppr_vad_alpha,
+                                crate::ppr::SeedWeighting::Uniform,
+                            )?
+                        } else {
+                            // ID sorting for the base cache must not replace the fused
+                            // evidence order. Explicit-only seeds get zero evidence.
+                            let ordered_seeds =
+                                crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
+                                    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+                            let empty_usage = HashMap::new();
+                            let context = crate::ppr_community::CommunityBoostContext {
+                                ordered_seeds: &ordered_seeds,
+                                result_limit: self.result_limit,
+                                session_usage: self.community_session_usage.unwrap_or(&empty_usage),
+                            };
+                            let (results, write, diversity) =
+                                crate::ppr::ppr_expand_in_txn_with_community_deferred_cache(
+                                    &self.vault.store,
+                                    &rtxn,
+                                    crate::ppr::CommunityPprRequest {
+                                        seeds: &seeds,
+                                        depth: *depth,
+                                        teleport_alpha: PPR_DAMPING,
+                                        weighting: crate::ppr::SeedWeighting::Uniform,
+                                        config: &self.vault.config,
+                                        context: &context,
+                                    },
+                                )?;
+                            community_diversity = diversity;
+                            if capture_retrieval_trace {
+                                community_trace_identity = Some(self.community_trace_identity(
+                                    &ordered_seeds,
+                                    crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
+                                ));
+                            }
+                            (results, write)
+                        };
                     if let Some(deferred_cache_write) = deferred_cache_write {
                         deferred_ppr_cache_writes.push(deferred_cache_write);
                     }
@@ -969,6 +964,15 @@ impl PipelineBuilder<'_> {
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
+
+            empty_reason = corpus_filter.apply(
+                &mut scores,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                &mut claim_gate,
+                empty_reason,
+            )?;
             if let Some((relationship, RelMode::Filter)) = self.relationship_filter {
                 let before_relationship = scores.len();
                 apply_relationship_filter(
@@ -1155,6 +1159,15 @@ impl PipelineBuilder<'_> {
                     context_pack_budget,
                 )?;
             }
+            // Only admitted final candidates participate. This selection cannot
+            // surface hidden bridge nodes, undo filters, or multiply scores twice.
+            if let Some(diversity) = community_diversity {
+                diversity.apply(
+                    &mut scores,
+                    self.result_limit,
+                    &self.vault.config.ppr_community,
+                )?;
+            }
             scores.truncate(self.result_limit);
             if before_limit > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::BelowThreshold);
@@ -1185,6 +1198,16 @@ impl PipelineBuilder<'_> {
                     rerank_query,
                     &candidate_set,
                 );
+                let fork_hash = if let Some(identity) = community_trace_identity {
+                    use sha2::{Digest, Sha256};
+                    let mut hash = Sha256::new();
+                    hash.update(b"oneiron.retrieval_trace.community.fork.v0");
+                    hash.update(fork_hash);
+                    hash.update(identity);
+                    hash.finalize().into()
+                } else {
+                    fork_hash
+                };
                 Some(RetrievalTrace {
                     fork_hash,
                     per_channel: trace_channels,
@@ -1256,6 +1279,12 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        if self.ppr_search.is_some() || self.ppr_expand.is_some() {
+            crate::config::validate_ppr_vad_alpha(self.vault.config.ppr_vad_alpha)?;
+        }
+        if self.ppr_expand.is_some() && self.vault.config.ppr_community.beta != 0.0 {
+            crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
+        }
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
@@ -1648,20 +1677,6 @@ impl PipelineBuilder<'_> {
                 .ppr_expand
                 .as_ref()
                 .is_some_and(|(seeds, _)| !seeds.is_empty())
-    }
-
-    fn has_codebase_scope_filter(&self) -> bool {
-        self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
-    }
-
-    fn has_strict_text_scope_filter(&self) -> bool {
-        self.type_filter.is_some()
-            || self.since_filter.is_some()
-            || self.occurred_range.is_some()
-            || self.learned_range.is_some()
-            || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
-            || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
-            || self.world_scope != WorldScope::All
     }
 
     fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {

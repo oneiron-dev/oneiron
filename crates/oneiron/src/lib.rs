@@ -16,6 +16,7 @@ pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod attempt_queue;
 pub mod authority;
+pub mod autoreason_campaign;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
@@ -55,15 +56,18 @@ pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
+pub mod corpus;
 pub mod counterparty_contact;
 pub(crate) mod credential_door;
 pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
 pub mod disclosure;
+pub mod dispatch_byoa;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;
+pub mod dreamer_prefilter;
 pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
@@ -116,6 +120,7 @@ pub mod persona_snapshot;
 pub mod pipeline;
 pub mod policy_model;
 pub(crate) mod ppr;
+pub mod ppr_community;
 pub mod prompt;
 pub mod provenance;
 pub mod provider_confidence;
@@ -144,6 +149,7 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
+pub mod slim;
 pub mod speculative;
 pub mod store;
 pub mod surface_event;
@@ -156,7 +162,10 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
+pub mod vault_cleanup;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
+pub mod voice_cascade;
 pub mod voice_identity;
 pub mod voice_segment;
 pub mod wave_orchestration;
@@ -172,12 +181,27 @@ pub mod write_envelope;
 // module tree.
 pub use crate::access_grant::AccessGrant;
 pub use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+pub use crate::agent_def::{
+    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, MEMORY_PROFILE_KEYS,
+    MemoryProfile,
+};
 pub use crate::artifact_hosting::{
     ArtifactPointerChannel, ArtifactServedFile, ArtifactSnapshotSelector, artifact_hex,
     parse_codebase_fork_hash_hex,
 };
 pub use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, InterveneAttempt,
+};
+pub use crate::autoreason_campaign::{
+    AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
+    CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
+    CampaignComparisonReport, CampaignConfig, CampaignCorpusFilter, CampaignCost,
+    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
+    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
+    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment,
+    CampaignTournamentConfig, CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD,
+    EXPERIMENT_VERDICT_KEEP, ExperimentVerdict, build_campaign_held_out_decision,
+    build_campaign_split_report, compare_campaign, merge_campaign_arm_report,
 };
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
@@ -232,8 +256,13 @@ pub use crate::commitment_wake::{
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
 };
 pub use crate::compaction::{
-    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
-    CompactionSnapshotRef, ValidatedCompactionPacket, admit_compaction_packet,
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionBackend, CompactionBackendRegistry,
+    CompactionDirective, CompactionDriver, CompactionPacket, CompactionPayloadKind,
+    CompactionProduct, CompactionRequest, CompactionSignal, CompactionSnapshotRef,
+    CompactionTierClass, CompactionWatermark, CompactionWindowMessage, EPOCH_SUMMARY_BODY_KEYS,
+    EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EPOCH_SUMMARY_MAX_DERIVED_EDGES,
+    EpochSummaryBody, MarginLaw, SwapPlan, ValidatedCompactionPacket, admit_compaction_packet,
+    decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
@@ -241,10 +270,16 @@ pub use crate::companion::{
     CompanionScopeResolutionSource, CompanionSubject, CompanionTaskKind, EndCompanionRelationship,
     EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
 };
-pub use crate::config::{HnswConfig, VaultConfig};
+pub use crate::config::{
+    HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
+    VaultPrivacyConfig,
+};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
+};
+pub use crate::corpus::{
+    CLAIM_SCOPE_CORPUS_ID_KEY, CorpusId, CorpusScope, corpus_id_from_scope, scope_with_corpus_id,
 };
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
@@ -256,14 +291,20 @@ pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
     ConsolidationExecutor, ConsolidationSink, plan_partitions, read_watermark, scan_dirty_turns,
 };
+pub use crate::dreamer_prefilter::{
+    NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,
+    PrefilterWeights, prefilter_turn, reopen_prefilter_rescan, screen_turn_inputs,
+    validate_prefilter_config,
+};
 #[cfg(feature = "sync")]
 pub use crate::dreamer_runner::DreamerAttemptProgressProducer;
 pub use crate::dreamer_runner::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-    DreamerAdmittedAttempt, DreamerBudgetReserveOutcome, DreamerClaimAuthoringStrategy,
-    DreamerConsolidationScope, DreamerHomeNodeCandidate, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, ReserveDreamerBudget,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerBudgetReserveOutcome,
+    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
 };
 pub use crate::dreamer_wake::{
     DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -306,6 +347,10 @@ pub use crate::gate::{
     GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
     GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+};
+pub use crate::ingest::{
+    EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
+    ScoredEntityResolutionCandidate, evaluate_entity_resolution_waterfall,
 };
 pub use crate::interlocutor::{
     InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp,
@@ -350,6 +395,17 @@ pub use crate::pipeline::{
     Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet, decode_world_access_claim_value,
     world_access_claim_body,
 };
+pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+// The provider-confidence shortcut rows are a DISPOSABLE cache with no
+// production control surface — reads repair them and the prior writer moves
+// them, and that is the whole contract. These three seams exist only so the
+// ES-09 oracle can stage cleared/stale index states without `vault_meta`
+// becoming public, so they are compiled out of the default-feature API.
+#[cfg(feature = "test-support")]
+pub use crate::provider_confidence::{
+    clear_provider_confidence_indexes, provider_confidence_index_presence,
+    set_provider_confidence_index_raw,
+};
 pub use crate::psych_profile::{
     PsychProfile, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
 };
@@ -367,6 +423,10 @@ pub use crate::session_lifecycle::{
     EndedSession, SessionClosePredicate, SessionEndWake, SessionMintOutcome,
 };
 pub use crate::skill::{SKILL_RECORD_BODY_KEYS, SkillGovernanceTier};
+pub use crate::slim::{
+    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,
+    SlimResidue, VaultResidency,
+};
 pub use crate::store::{
     RetrievalRunId, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
@@ -390,6 +450,14 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+};
+pub use crate::vault_cleanup::{
+    ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
+    CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal, CleanupRunReport,
+    MACHINE_MINTED_CLAIM_SOURCES, VAULT_CLEANUP_POSTURE_KEY, accept_cleanup_proposal,
+    cleanup_digests, cleanup_posture, cleanup_proposal, cleanup_proposals,
+    is_vault_cleanup_receipt, reject_cleanup_proposal, run_vault_cleanup, scan_cleanup_candidates,
+    set_cleanup_posture, zero_live_members,
 };
 pub use crate::web_fetch::{
     CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,

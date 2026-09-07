@@ -12,10 +12,11 @@
 //! - **Off by default.** Managed mode is reachable only through
 //!   `--managed-by-hypnos`. Without it, [`crate::commands::serve`] never
 //!   enters this module and the unmanaged path is exactly what it was.
-//! - **Argv is the whole configuration.** Managed mode never consults a config
-//!   file, the `ONEIRON_*` environment (including `ONEIRON_AUTH_SECRET` —
-//!   bearer auth is the supervisor's job) or the XDG layers. It reads exactly
-//!   one environment variable, [`HYPNOS_LISTEN_FD`], and even the dictionary
+//! - **Argv is the whole configuration.** Managed mode never loads settings from
+//!   a config file, the `ONEIRON_*` environment (including `ONEIRON_AUTH_SECRET` —
+//!   bearer auth is the supervisor's job) or the XDG layers. Explicit privacy
+//!   environment settings and `ONEIRON_CONFIG` are refused by presence alone.
+//!   Only [`HYPNOS_LISTEN_FD`] supplies an environment value; even dictionary
 //!   search roots come from argv rather than the usual `HOME`/`XDG_*` probe.
 //! - **The engine schedules nothing.** There is no timer here. Alarms are
 //!   pushed by the supervisor over the ctl socket; the ledger tells it when to
@@ -60,7 +61,7 @@ use crate::build_app;
 use crate::config::{ServeArgs, ServeConfig};
 use crate::server::SyncServer;
 
-/// The one environment variable managed mode consults. When set, it names an
+/// The one environment value managed mode uses. When set, it names an
 /// already-bound listening unix socket the supervisor passed across spawn.
 pub const HYPNOS_LISTEN_FD: &str = "HYPNOS_LISTEN_FD";
 
@@ -85,6 +86,9 @@ pub const LEDGER_REV_KEY: &str = "managed:ledger_rev:v1";
 /// this surface can be briefly unavailable — a 503 without the tag is a
 /// different outage and means a different response from the caller.
 pub const WRITES_FROZEN_TAG: &str = "writes_frozen";
+
+// Highest ctl version implemented here. Shed remains explicitly refused.
+const IMPLEMENTED_CTL_CONTRACT_VERSION: u32 = 1;
 
 /// Domain separator for the DEK MAC, so the same DEK over the same bytes in
 /// another role cannot collide with this one.
@@ -133,6 +137,12 @@ pub enum ManagedError {
     #[error("--managed-by-hypnos conflicts with --{flag}: {reason}")]
     ConflictingFlag {
         flag: &'static str,
+        reason: &'static str,
+    },
+
+    #[error("--managed-by-hypnos conflicts with {env}: {reason}")]
+    ConflictingEnvironment {
+        env: &'static str,
         reason: &'static str,
     },
 
@@ -286,11 +296,10 @@ impl ManagedArgs {
 
     /// Serve configuration for managed mode, built from argv alone.
     ///
-    /// The fields read here are exactly the [`ArgvUse::Read`] rows of
-    /// [`MANAGED_ARGV`] that are not part of the managed group — dimensions,
-    /// map size, dictionary roots and log level. Everything else on
-    /// `ServeArgs` is refused before this runs, so nothing reaches here to be
-    /// quietly dropped.
+    /// Outside the managed group, the argv allowlist permits exactly the
+    /// fields read here: dimensions, map size, dictionary roots and log level.
+    /// Everything else on `ServeArgs` is refused before this runs, so nothing
+    /// reaches here to be quietly dropped.
     ///
     /// `auth_secret` stays `None` and unauthenticated requests are allowed:
     /// bearer auth terminates at the supervisor, which owns the listening
@@ -468,6 +477,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.allowed_origins.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
+    // Contract v1 has no managed privacy override: refuse instead of dropping it.
+    (
+        "privacy-posture",
+        |args| args.privacy_posture.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "hosted-kms-key-ref",
+        |args| args.hosted_kms_key_ref.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
     // The tuning layer: defaults, except the four fields below.
     (
         "lease-vault-id",
@@ -634,6 +654,21 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
             return Err(ManagedError::ConflictingFlag { flag, reason });
         }
     }
+    // Check presence only: never parse these values or load the requested file.
+    // Even an empty or non-Unicode setting is an explicit unmanaged request,
+    // not permission to fall back to the managed default custody.
+    for env in [
+        "ONEIRON_PRIVACY_POSTURE",
+        "ONEIRON_HOSTED_KMS_KEY_REF",
+        "ONEIRON_CONFIG",
+    ] {
+        if std::env::var_os(env).is_some() {
+            return Err(ManagedError::ConflictingEnvironment {
+                env,
+                reason: NO_CONFIG_LAYER_REASON,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -652,8 +687,8 @@ pub enum ServeListener {
 impl ServeListener {
     /// Resolves the managed HTTP listener.
     ///
-    /// [`HYPNOS_LISTEN_FD`] is the only environment variable managed mode
-    /// reads, and its absence is not an error — it selects the self-bind
+    /// [`HYPNOS_LISTEN_FD`] is the only environment value managed mode
+    /// uses, and its absence is not an error — it selects the self-bind
     /// fallback on `--http-socket`.
     pub fn for_managed(args: &ManagedArgs) -> Result<Self, ManagedError> {
         match std::env::var(HYPNOS_LISTEN_FD) {
@@ -1414,7 +1449,8 @@ impl ManagedState {
     /// as it runs, and it subscribes before it can import a single update, so
     /// the receiver count covers every session that is able to write. A
     /// session that upgraded and has not spoken yet holds nothing to count, so
-    /// [`SYNC_UPGRADE_SETTLE_SECS`] covers that blind window instead.
+    /// a 15-second settle window (the protocol hello deadline plus margin)
+    /// covers that blind window instead.
     ///
     /// Fail-closed on both halves: an upgrade that was refused after this gate
     /// (401, no such route) still counts for the settle window, and a clock
@@ -1460,7 +1496,11 @@ impl ManagedState {
                 ok: true,
                 vault: self.vault_name.clone(),
                 pid: std::process::id(),
-                contract_version: CONTRACT_VERSION,
+                contract_version: IMPLEMENTED_CTL_CONTRACT_VERSION,
+            }),
+            CtlRequest::Shed { .. } => Err(ManagedError::CtlRequestRefused {
+                reason: "shed integration is deferred; managed ctl does not invoke engine shedding"
+                    .to_owned(),
             }),
             CtlRequest::PrepareReap => self.prepare_reap().await,
             CtlRequest::ReapAbort => {
@@ -1885,5 +1925,95 @@ pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
             );
         }
         Err(error) => tracing::warn!(%error, "final wake ledger export failed"),
+    }
+}
+
+#[cfg(test)]
+mod shed_tests {
+    use super::*;
+    use oneiron_vault_contract::{ShedCause, TOKEN_LEN, supports_slim};
+
+    #[tokio::test]
+    async fn ctl_shed_refusal_preserves_other_verbs() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let vault = Arc::new(oneiron::Vault::open(
+            dir.path(),
+            oneiron::VaultConfig::server(),
+        )?);
+        let server = Arc::new(SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig::default(),
+        )?);
+        let credentials = Credentials {
+            dek: [0x11; DEK_LEN],
+            token: [0x22; TOKEN_LEN],
+        };
+        let ledger = WakeLedger::load(
+            Arc::clone(&vault),
+            "ctl-test".to_owned(),
+            dir.path().join("supervisor.sock"),
+            &credentials,
+        )?;
+        let state = ManagedState::new("ctl-test".to_owned(), server, ledger);
+        let revision = state.ledger().rev();
+        for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
+            for waited_secs in [0, 1] {
+                let error = state
+                    .handle_request(CtlRequest::Shed { cause, waited_secs })
+                    .await
+                    .unwrap_err();
+                let ManagedError::CtlRequestRefused { reason } = error else {
+                    panic!("expected typed ctl refusal, got {error:?}");
+                };
+                if waited_secs == 0 {
+                    assert_eq!(reason, "shed requires a positive waited_secs");
+                } else {
+                    assert!(reason.contains("shed integration is deferred"));
+                }
+                assert!(!state.is_frozen());
+                assert!(state.observed_alarms().await.is_empty());
+                assert_eq!(state.ledger().rev(), revision);
+                assert_eq!(vault.residency(), oneiron::VaultResidency::Full);
+            }
+        }
+        assert!(matches!(
+            state.handle_request(CtlRequest::Ping).await?,
+            CtlResponse::Ping {
+                ok: true,
+                vault,
+                pid,
+                contract_version,
+            } if vault == "ctl-test"
+                && pid == std::process::id()
+                && contract_version == 1
+                && !supports_slim(contract_version)
+        ));
+        assert!(matches!(
+            state.handle_request(CtlRequest::PrepareReap).await?,
+            CtlResponse::PrepareReap {
+                quiescent: true,
+                ..
+            }
+        ));
+        assert!(state.is_frozen());
+        assert!(matches!(
+            state.handle_request(CtlRequest::ReapAbort).await?,
+            CtlResponse::Ok { ok: true }
+        ));
+        assert!(!state.is_frozen());
+        assert!(matches!(
+            state
+                .handle_request(CtlRequest::AlarmDue {
+                    id: "nightly".to_owned(),
+                    reason_tag: "cron".to_owned(),
+                })
+                .await?,
+            CtlResponse::Ok { ok: true }
+        ));
+        let alarms = state.observed_alarms().await;
+        assert_eq!(alarms.len(), 1);
+        assert_eq!(alarms[0].id, "nightly");
+        assert_eq!(alarms[0].reason_tag, "cron");
+        Ok(())
     }
 }

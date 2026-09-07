@@ -8,6 +8,7 @@ use crate::claim::{
 };
 use crate::codebase::{CodebaseScopeKey, RepoRef};
 use crate::context_pack::EmptyReason;
+use crate::corpus::CorpusScope;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{
@@ -153,8 +154,14 @@ pub(super) struct EntityMetadata {
     pub(super) learned_at: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::Store, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
+    + Send
+    + Sync
+    + 'a;
+
+#[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
+    pub(super) candidate_filter: Option<&'a CandidateFilter<'a>>,
     pub(super) type_filter: Option<&'a [u8]>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
@@ -168,11 +175,24 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// per run under the run's read transaction and borrowed by every
     /// per-candidate check. `None` for every other scope.
     pub(super) world_active_set: Option<&'a WorldAuthoritySet>,
+    /// The query's audience scope (ONE-1914); [`CorpusScope::All`] is the
+    /// default and a no-op, exactly like [`WorldScope::All`].
+    ///
+    /// Borrowed, not owned, so this config stays `Copy`
+    /// ([`CorpusScope::AnyOf`] carries a `Vec`). The referent is
+    /// canonicalized ONCE per run before this config is built, so an empty
+    /// `AnyOf` fails the run closed before the first candidate is scanned and
+    /// the candidate-scan twin stays a pure predicate.
+    pub(super) corpus_scope: &'a CorpusScope,
 }
 
 #[derive(Default)]
 pub(super) struct EntityMetadataCache {
     entries: HashMap<EntityId, Option<EntityMetadata>>,
+    // Counts D19 body lookups across all gates sharing this run cache, including
+    // probes whose decoded bodies are discarded rather than imported.
+    #[cfg(test)]
+    pub(super) claim_body_loads: usize,
 }
 
 /// Per-run memo for the D19 claim status gate.
@@ -186,6 +206,8 @@ pub(super) struct EntityMetadataCache {
 #[derive(Default)]
 pub(super) struct ClaimStatusGateCache {
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
+    #[cfg(test)]
+    pub(super) body_loads: usize,
 }
 
 pub(crate) struct PipelineOutput {

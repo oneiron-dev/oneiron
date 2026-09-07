@@ -179,6 +179,9 @@ impl<'a> ScopedRead<'a> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if self.vault.archive_tombstone_in_txn(&rtxn, id)?.is_some() {
+            return Ok(None);
+        }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
@@ -343,6 +346,9 @@ impl<'a> ScopedRead<'a> {
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some() {
+            return Ok(false);
+        }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
