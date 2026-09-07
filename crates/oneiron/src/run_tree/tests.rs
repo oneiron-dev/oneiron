@@ -423,6 +423,117 @@ fn run_tree_projects_intervention_events_and_states() -> Result<()> {
 }
 
 #[test]
+fn run_tree_cancelled_with_result_ends_in_cancellation() -> Result<()> {
+    use crate::attempt_queue::{AttemptResultRef, CleanupAttemptLeases, SetAttemptResult};
+
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let queued = enqueue(&runner, "result-worker", None, 10, "run-cancel-result")?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "result-worker".to_owned(),
+        now: 20,
+    })?
+    else {
+        panic!("expected claim");
+    };
+    assert_eq!(claimed.id, queued.attempt.id);
+    let result_ref = AttemptResultRef::new("blob-artifact:deadbeef@1")?;
+    queue.set_result(SetAttemptResult {
+        id: claimed.id,
+        lease_owner: "result-worker".to_owned(),
+        attempt_count: claimed.attempt_count,
+        result_ref: result_ref.clone(),
+        now: 30,
+    })?;
+
+    // Attaching a result does not settle a live row or repeat its claim.
+    let running = RunTreeAdapter::new(&vault).read_run("run-cancel-result")?;
+    assert_eq!(running.roots[0].status, RunTreeStatus::Running);
+    assert_eq!(
+        event_kinds(&running.roots[0]),
+        vec![
+            RunTreeEventKind::Created,
+            RunTreeEventKind::Claimed,
+            RunTreeEventKind::ResultAttached,
+        ]
+    );
+
+    // Lease cleanup retains the result; the requeued row can then receive a
+    // durable cancel intervention. No result is written after settlement.
+    let cleanup = queue.cleanup_leases(CleanupAttemptLeases {
+        now: 40,
+        lease_timeout_secs: 10,
+    })?;
+    assert_eq!(cleanup.stale_requeued, 1);
+    let cancelled = queue.intervene(InterveneAttempt {
+        id: claimed.id,
+        kind: AttemptInterventionKind::Cancel,
+        actor: "dashboard".to_owned(),
+        note: Some("stop requeued work".to_owned()),
+        now: 50,
+    })?;
+    assert_eq!(cancelled.record.state, AttemptState::Cancelled);
+    assert_eq!(cancelled.record.result_ref.as_ref(), Some(&result_ref));
+    assert_eq!(cancelled.record.events.len(), 1);
+
+    let tree = RunTreeAdapter::new(&vault).read_run("run-cancel-result")?;
+    let node = &tree.roots[0];
+    assert_eq!(node.status, RunTreeStatus::Cancelled);
+    assert_eq!(node.failure, None);
+    assert_eq!(node.result_ref.as_deref(), Some(result_ref.as_str()));
+    assert_eq!(
+        event_kinds(node),
+        vec![
+            RunTreeEventKind::Created,
+            RunTreeEventKind::Claimed,
+            RunTreeEventKind::Cancelled,
+            RunTreeEventKind::ResultAttached,
+            RunTreeEventKind::Cancelled,
+        ]
+    );
+    // Preserve operator provenance and sequence; append runtime settlement.
+    assert_eq!(node.events[2].at, 50);
+    assert_eq!(node.events[2].actor, "dashboard");
+    assert_eq!(node.events[2].note.as_deref(), Some("stop requeued work"));
+    assert_eq!(node.events[3].at, 50);
+    assert_eq!(node.events[4].at, 50);
+    assert_eq!(node.events[4].actor, "runtime");
+    assert_eq!(node.events[4].note, None);
+    assert_eq!(
+        node.events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4]
+    );
+    assert_eq!(
+        RunTreeAdapter::new(&vault).read_run("run-cancel-result")?,
+        tree
+    );
+    assert_eq!(queue.get(claimed.id)?, Some(cancelled.record));
+    Ok(())
+}
+
+#[test]
+fn run_tree_final_cancellation_sequence_overflow_fails_closed() {
+    let events = vec![AttemptEvent {
+        sequence: u64::MAX - 1,
+        at: 20,
+        actor: "dashboard".to_owned(),
+        kind: AttemptInterventionKind::Cancel,
+        note: None,
+    }];
+
+    let result = run_tree_events(10, 30, 0, None, events, AttemptState::Cancelled, true);
+
+    assert!(matches!(
+        result,
+        Err(Error::ArithmeticOverflow("run-tree event sequence"))
+    ));
+}
+
+#[test]
 fn run_tree_fails_closed_when_runtime_attempt_table_is_unavailable() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);

@@ -465,13 +465,21 @@ fn run_tree_events(
 }
 
 /// Appends one synthesized lifecycle event, unless the stream already carries
-/// that kind from a durable operator row.
+/// that kind from a durable operator row. Cancellation must be the final event.
 fn push_lifecycle_event(
     events: &mut Vec<RunTreeEvent>,
     at: u64,
     kind: RunTreeEventKind,
 ) -> Result<()> {
-    if events.iter().any(|event| event.kind == kind) {
+    let already_present = if kind == RunTreeEventKind::Cancelled {
+        // Keep the operator's cancellation intact, but do not let it suppress
+        // terminal truth after a synthesized result attachment. Only the
+        // queue's Cancelled state requests this final lifecycle event.
+        events.last().is_some_and(|event| event.kind == kind)
+    } else {
+        events.iter().any(|event| event.kind == kind)
+    };
+    if already_present {
         return Ok(());
     }
     let sequence = events

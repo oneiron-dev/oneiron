@@ -42,17 +42,24 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::attempt_queue::{
     AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef,
-    EnqueueAttempt, EnqueueOutcome, SetAttemptResult,
+    AttemptState, EnqueueAttempt, EnqueueOutcome, SetAttemptResult,
 };
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
-use crate::checkout::CheckoutId;
+use crate::blob_artifact::{
+    BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
+    read_blob_artifact_head_in_txn,
+};
+use crate::checkout::{
+    CheckoutFactSink, CheckoutId, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLeaseState,
+    CheckoutLiveness,
+};
+use crate::code_sandbox::microvm::ExecutionBudget;
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxCredentialHandle, SandboxGuestTier};
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::git_wire::{GitRefName, GitWire, GitWireRepo};
-use crate::llm::{LlmBackend, ModelId};
+use crate::llm::{BudgetLease, LlmBackend, LlmRequest, ModelId};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -72,6 +79,13 @@ pub const BYOA_RESULT_REF_PREFIX: &str = "blob-artifact:";
 const BYOA_EXHAUST_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:byoa-exhaust-artifact:v1";
 /// Domain separator for the stable host-runtime write actor.
 const BYOA_RUNTIME_ACTOR_DOMAIN: &[u8] = b"oneiron:byoa-runtime-actor:v1";
+
+/// Maximum bytes in each binary exhaust stream.
+pub const BYOA_MAX_EXHAUST_STREAM_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum total stream and checkpoint text bytes in one capture.
+pub const BYOA_MAX_EXHAUST_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+// Vec<u8> is encoded as a MessagePack sequence: a byte can take two bytes.
+const MAX_EXHAUST_ENCODED_BYTES: usize = 2 * BYOA_MAX_EXHAUST_TOTAL_BYTES + 64 * 1024;
 
 const MAX_BASE_URL_LEN: usize = 2048;
 const MAX_MODEL_SLUG_LEN: usize = 128;
@@ -185,7 +199,7 @@ impl TryFrom<String> for ByoEndpointProtocol {
 /// `credential_ref` is an opaque custody handle. No field of this type can
 /// hold an API key, so no encoding, rendering, or receipt derived from it can
 /// leak one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByoEndpointSpec {
     pub base_url: String,
     #[serde(with = "credential_handle_wire")]
@@ -196,6 +210,19 @@ pub struct ByoEndpointSpec {
     /// hash-ordered map would make the same configuration encode differently
     /// on different runs and defeat artifact dedupe.
     pub model_slug_map: BTreeMap<String, ModelId>,
+}
+
+impl std::fmt::Debug for ByoEndpointSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Public config can be constructed before validation. Never echo a
+        // rejected user-info URL (or a query token) through diagnostic output.
+        f.debug_struct("ByoEndpointSpec")
+            .field("base_url", &"<endpoint URL>")
+            .field("credential_ref", &self.credential_ref)
+            .field("protocol", &self.protocol)
+            .field("model_slug_map", &self.model_slug_map)
+            .finish()
+    }
 }
 
 impl ByoEndpointSpec {
@@ -394,6 +421,7 @@ pub struct ByoaAttemptPayload {
 ///
 /// Returns [`ByoaError::Store`] when the payload cannot be encoded.
 pub fn encode_byoa_attempt_payload(payload: &ByoaAttemptPayload) -> ByoaResult<Vec<u8>> {
+    validate_connector(&payload.connector)?;
     rmp_serde::to_vec_named(payload)
         .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_PAYLOAD_ENCODE)))
 }
@@ -435,6 +463,51 @@ pub trait ByoEndpointBackendFactory {
     fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>>;
 }
 
+/// The claimed attempt a host is about to execute. Connector truth is loaded
+/// from this row, never supplied again by the worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByoaExecutionFence {
+    pub attempt_id: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+}
+
+/// Host-owned MCP client. Implementations attach to the configured server,
+/// perform the bounded call, close the session, and return its exhaust.
+/// Credential resolution and MCP wire details stay outside the engine.
+pub trait ByoaMcpExecutor {
+    /// Must enforce the supplied runtime budget and exhaust byte limits while
+    /// collecting output, not after reading an unbounded transport response.
+    ///
+    /// # Errors
+    /// Returns a refusal if attachment or execution fails.
+    fn attach_and_run(
+        &mut self,
+        spec: &ProtocolAttachSpec,
+        input: &[u8],
+        budget: ExecutionBudget,
+    ) -> ByoaResult<ByoaExhaust>;
+}
+
+/// Host-owned foreign sandbox runner. There is no process/shell fallback.
+/// The host resolves the live checkout into its real worktree, enforces the
+/// supplied foreign boundary and budget, and routes every guest network reach
+/// through `authorize`. A returned lease is not permission for direct sockets.
+pub trait ByoaCliExecutor {
+    /// Run the exact argv against the named checkout and collect bounded exhaust.
+    ///
+    /// # Errors
+    /// Refuses unavailable checkouts, confinement, egress, or runtime failures.
+    fn run(
+        &mut self,
+        spec: &CliSandboxSpec,
+        checkout: &CheckoutLeaseAct,
+        boundary: SandboxBoundaryContract,
+        budget: ExecutionBudget,
+        authorize: &mut dyn FnMut(&str, u64) -> ByoaResult<ByoaEgressLease>,
+    ) -> ByoaResult<ByoaExhaust>;
+}
+
 /// Result alias for every door in this module.
 pub type ByoaResult<T> = Result<T, ByoaError>;
 
@@ -457,6 +530,13 @@ const ERR_EGRESS_PROFILE_REF: &str = "cli sandbox egress_profile_ref must be non
 const ERR_CREDENTIAL_HANDLES: &str = "cli sandbox references too many credential handles";
 const ERR_EXHAUST_ENCODE: &str = "byoa exhaust failed to encode";
 const ERR_EXHAUST_EMPTY: &str = "byoa exhaust must carry at least one stream";
+const ERR_EXHAUST_TOO_LARGE: &str = "byoa exhaust exceeds its byte budget";
+const ERR_ATTEMPT_KIND: &str = "operation requires a valid BYOA attempt";
+const ERR_EXECUTION_SHAPE: &str = "execution does not match the persisted connector";
+const ERR_EXECUTION_BUDGET: &str = "byoa execution requires a bounded budget";
+const ERR_EXECUTION_CHECKOUT: &str = "byoa execution requires a live matching checkout";
+const ERR_ARTIFACT_COLLISION: &str = "byoa exhaust artifact is not owned by this capture";
+const ERR_CAPTURE_CONFLICT: &str = "byoa capture conflicts with the canonical result";
 const ERR_CHECKPOINT_FRONTIER: &str = "byoa checkpoint frontier entry is unbounded or unprintable";
 const ERR_ATTEMPT_MISSING: &str = "missing";
 const ERR_RESULT_REF_SHAPE: &str = "byoa result reference is not artifact@version shaped";
@@ -649,6 +729,13 @@ pub struct ByoaTerminalReceipt {
 struct ByoaExhaustEnvelope {
     schema_version: u8,
     attempt_id: [u8; 16],
+    // Retained after settlement clears the row's live owner. Terminal retries
+    // must present the same fence rather than borrowing generic no-op semantics.
+    // Old exhaust remains readable, but missing fence evidence cannot authorize a retry.
+    #[serde(default)]
+    lease_owner: String,
+    #[serde(default)]
+    attempt_count: u32,
     disposition: ByoaTerminalDisposition,
     exhaust: ByoaExhaust,
 }
@@ -693,7 +780,6 @@ where
     /// queue refuses the row.
     pub fn dispatch(&mut self, request: DispatchByoa) -> ByoaResult<ByoaDispatchOutcome> {
         validate_connector(&request.connector)?;
-        let connector_kind = request.connector.kind();
         let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: request.connector,
@@ -712,13 +798,16 @@ where
             request.task_ref.map(|task_ref| task_ref.to_hex()),
         )?;
 
-        let status = |attempt| ByoaDispatchStatus {
-            attempt,
-            connector_kind,
+        let status = |attempt: AttemptRecord| -> ByoaResult<ByoaDispatchStatus> {
+            let connector_kind = decode_byoa_record(&attempt)?.connector.kind();
+            Ok(ByoaDispatchStatus {
+                attempt,
+                connector_kind,
+            })
         };
         Ok(match outcome {
-            EnqueueOutcome::Enqueued(attempt) => ByoaDispatchOutcome::Dispatched(status(attempt)),
-            EnqueueOutcome::Existing(attempt) => ByoaDispatchOutcome::Existing(status(attempt)),
+            EnqueueOutcome::Enqueued(attempt) => ByoaDispatchOutcome::Dispatched(status(attempt)?),
+            EnqueueOutcome::Existing(attempt) => ByoaDispatchOutcome::Existing(status(attempt)?),
         })
     }
 
@@ -731,6 +820,135 @@ where
     pub fn endpoint_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
         validate_endpoint(spec)?;
         self.endpoint_factory.resolve_backend(spec)
+    }
+
+    fn execution_record(&self, fence: &ByoaExecutionFence) -> ByoaResult<AttemptRecord> {
+        let record = AttemptQueue::new(self.vault)
+            .get(fence.attempt_id)?
+            .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
+        decode_byoa_record(&record)?;
+        AttemptQueue::check_result_lease(
+            &record,
+            &fence.lease_owner,
+            fence.attempt_count,
+            "execute_byoa",
+        )?;
+        if record.result_ref.is_some() {
+            return Err(invalid(ERR_CAPTURE_CONFLICT));
+        }
+        Ok(record)
+    }
+
+    /// Invokes the persisted endpoint through its host backend and budget lease.
+    /// The returned transcript can be passed to `capture_terminal_exhaust`.
+    /// The backend owns transport timeouts and enforces its budget lease.
+    ///
+    /// # Errors
+    /// Refuses stale fences, unbound/mismatched models, oversized input/output,
+    /// and backend failures. Provider error text is not copied into custody.
+    pub async fn execute_endpoint(
+        &self,
+        fence: &ByoaExecutionFence,
+        slug: &str,
+        request: LlmRequest,
+        lease: &BudgetLease,
+    ) -> ByoaResult<ByoaExhaust> {
+        let record = self.execution_record(fence)?;
+        let ByoaConnectorSpec::Endpoint(spec) = decode_byoa_record(&record)?.connector else {
+            return Err(invalid(ERR_EXECUTION_SHAPE));
+        };
+        if spec.model_for_slug(slug)? != &request.model {
+            return Err(invalid(ERR_EXECUTION_SHAPE));
+        }
+        encode_execution_transcript(&request)?;
+        let backend = self.endpoint_backend(&spec)?;
+        let response = backend
+            .generate(request, lease)
+            .await
+            .map_err(|_| ByoaError::Backend("endpoint execution failed".to_owned()))?;
+        Ok(ByoaExhaust {
+            transcript: Some(encode_execution_transcript(&response)?),
+            ..ByoaExhaust::default()
+        })
+    }
+
+    /// Attaches and executes MCP using the host client, not just its config.
+    ///
+    /// # Errors
+    /// Refuses an invalid fence, connector, budget, or oversized input/output,
+    /// and propagates the host client's refusal.
+    pub fn execute_mcp<M: ByoaMcpExecutor>(
+        &self,
+        fence: &ByoaExecutionFence,
+        input: &[u8],
+        budget: ExecutionBudget,
+        executor: &mut M,
+    ) -> ByoaResult<ByoaExhaust> {
+        validate_execution_budget(budget)?;
+        if input.len() > BYOA_MAX_EXHAUST_STREAM_BYTES {
+            return Err(invalid(ERR_EXHAUST_TOO_LARGE));
+        }
+        let record = self.execution_record(fence)?;
+        let ByoaConnectorSpec::ProtocolAttach(spec) = decode_byoa_record(&record)?.connector else {
+            return Err(invalid(ERR_EXECUTION_SHAPE));
+        };
+        let exhaust = executor.attach_and_run(&spec, input, budget)?;
+        validate_exhaust(&exhaust)?;
+        Ok(exhaust)
+    }
+
+    /// Invokes a host sandbox against a live checkout through the foreign
+    /// boundary. Lease validation occurs again at terminal capture; no LMDB
+    /// write lock is held while host code executes.
+    ///
+    /// # Errors
+    /// Refuses stale leases, missing/expired checkouts, invalid budgets, and
+    /// unbounded output, or propagates the sandbox's refusal.
+    pub fn execute_cli<C: ByoaCliExecutor, F: CheckoutFactSink, L: CheckoutLiveness>(
+        &mut self,
+        fence: &ByoaExecutionFence,
+        budget: ExecutionBudget,
+        checkouts: &CheckoutLeaseService<'_, F, L>,
+        executor: &mut C,
+        now: u64,
+    ) -> ByoaResult<ByoaExhaust> {
+        validate_execution_budget(budget)?;
+        let record = self.execution_record(fence)?;
+        let ByoaConnectorSpec::CliSandbox(spec) = decode_byoa_record(&record)?.connector else {
+            return Err(invalid(ERR_EXECUTION_SHAPE));
+        };
+        let checkout = checkouts
+            .get(spec.checkout_id)
+            .map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))?
+            .ok_or_else(|| invalid(ERR_EXECUTION_CHECKOUT))?;
+        if checkout.state != CheckoutLeaseState::Active
+            || now < checkout.updated_at
+            || checkout
+                .lease_expires_at
+                .is_some_and(|expiry| now >= expiry)
+            || record
+                .task_ref
+                .as_ref()
+                .is_some_and(|task| *task != checkout.task_ref.to_hex())
+        {
+            return Err(invalid(ERR_EXECUTION_CHECKOUT));
+        }
+        let intent = bytes_to_hex_lower(fence.attempt_id.as_bytes());
+        let mut authorize = |host: &str, at: u64| {
+            if at < now {
+                return Err(invalid(ERR_LEASE_EXPIRED));
+            }
+            self.authorize_cli_egress(&spec, host, &intent, at)
+        };
+        let exhaust = executor.run(
+            &spec,
+            &checkout,
+            CliSandboxSpec::boundary_contract(),
+            budget,
+            &mut authorize,
+        )?;
+        validate_exhaust(&exhaust)?;
+        Ok(exhaust)
     }
 
     /// Authorizes ONE outbound host for a CLI-sandbox guest.
@@ -779,130 +997,177 @@ where
         Ok(lease)
     }
 
-    /// Folds a terminated executor's exhaust into ONE canonical artifact
-    /// version and settles the attempt row against it.
+    /// Folds a terminated executor's exhaust into one canonical artifact.
     ///
-    /// Idempotent at both layers. The artifact append de-duplicates identical
-    /// bytes onto the existing head version, and the queue doors are
-    /// idempotent for a reference already attached, so a capture retried after
-    /// a crash converges on the SAME `artifact@version` instead of minting a
-    /// second version of the same evidence.
+    /// Artifact, actor, result reference, and abandonment commit in one write
+    /// transaction. Other dispositions only attach evidence; their worker still
+    /// settles the row. Retries never append another version. An abandoned
+    /// retry returns the first result, even if the new exhaust differs.
     ///
     /// # Errors
     ///
-    /// Returns [`ByoaError::Store`] when the attempt is unknown, the exhaust
-    /// is empty, the artifact write fails, or the queue refuses the terminal
-    /// transition.
+    /// Refuses invalid BYOA rows, stale leases, conflicting results, artifact
+    /// collisions, and invalid or oversized exhaust without durable writes.
     pub fn capture_terminal_exhaust(
         &mut self,
         request: CaptureByoaExhaust,
     ) -> ByoaResult<ByoaTerminalReceipt> {
-        validate_exhaust(&request.exhaust)?;
-        let queue = AttemptQueue::new(self.vault);
-        let record = queue.get(request.attempt_id)?.ok_or_else(|| {
-            ByoaError::Store(Error::InvalidAttemptQueueTransition {
-                action: "capture_byoa_exhaust",
-                state: ERR_ATTEMPT_MISSING,
-            })
-        })?;
+        self.vault
+            .try_with_write_txn(|wtxn| self.capture_terminal_exhaust_in_txn(wtxn, request))
+    }
 
+    fn capture_terminal_exhaust_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        request: CaptureByoaExhaust,
+    ) -> ByoaResult<ByoaTerminalReceipt> {
+        validate_exhaust(&request.exhaust)?;
+        if request.lease_owner.is_empty() || request.lease_owner.len() > 128 {
+            return Err(invalid(ERR_CAPTURE_CONFLICT));
+        }
         let artifact_id = byoa_exhaust_artifact_id(request.attempt_id)?;
-        let bytes = encode_exhaust_envelope(&ByoaExhaustEnvelope {
+        let result_ref = byoa_result_ref(&artifact_id, 1)?;
+        let envelope = ByoaExhaustEnvelope {
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             attempt_id: *request.attempt_id.as_bytes(),
+            lease_owner: request.lease_owner,
+            attempt_count: request.attempt_count,
             disposition: request.disposition,
             exhaust: request.exhaust,
-        })?;
-
+        };
+        let bytes = encode_exhaust_envelope(&envelope)?;
+        let body = BlobArtifactBody::new(
+            byoa_exhaust_artifact_name(request.attempt_id),
+            BYOA_EXHAUST_MEDIA_TYPE,
+        );
         let occurred = TimeRange {
             start: request.now,
             end: request.now,
         };
-        if self.vault.get_blob_artifact(&artifact_id)?.is_none() {
-            self.vault.put_blob_artifact(
-                &artifact_id,
-                &BlobArtifactBody::new(
-                    byoa_exhaust_artifact_name(request.attempt_id),
-                    BYOA_EXHAUST_MEDIA_TYPE,
-                ),
-                occurred,
-                request.now,
+        let action = if request.disposition == ByoaTerminalDisposition::Abandoned {
+            "abandon"
+        } else {
+            "set_result"
+        };
+        let queue = AttemptQueue::new(self.vault);
+        let record = queue
+            .get_in_write_txn(wtxn, request.attempt_id)?
+            .ok_or(ByoaError::Store(Error::InvalidAttemptQueueTransition {
+                action: "capture_byoa_exhaust",
+                state: ERR_ATTEMPT_MISSING,
+            }))?;
+        decode_byoa_record(&record)?;
+        if record.state.is_running() {
+            AttemptQueue::check_result_lease(
+                &record,
+                &envelope.lease_owner,
+                envelope.attempt_count,
+                action,
             )?;
+        } else if record.result_ref.is_none()
+            || record.attempt_count != envelope.attempt_count
+            || !disposition_matches_state(envelope.disposition, record.state)
+        {
+            return Err(ByoaError::Store(Error::InvalidAttemptQueueTransition {
+                action,
+                state: record.state.as_str(),
+            }));
         }
-        // The run this exhaust belongs to, falling back to the attempt itself
-        // for a row dispatched outside any named run.
-        let run_ref = record
-            .run_id
-            .unwrap_or_else(|| bytes_to_hex_lower(request.attempt_id.as_bytes()));
-        let version = self.vault.append_blob_artifact_version(
-            &artifact_id,
-            &bytes,
-            &BlobVersionProvenance::AgentRun { run_ref },
-            ensure_byoa_runtime_actor(self.vault, occurred, request.now)?,
-            occurred,
-            request.now,
-        )?;
-
-        let appended_ref = byoa_result_ref(&artifact_id, version.version)?;
-        let (attempt, result_ref) = match request.disposition {
-            ByoaTerminalDisposition::Abandoned => {
-                let outcome = queue.abandon(AbandonAttempt {
+        let provenance = BlobVersionProvenance::AgentRun {
+            run_ref: record
+                .run_id
+                .clone()
+                .unwrap_or_else(|| bytes_to_hex_lower(request.attempt_id.as_bytes())),
+        };
+        if let Some(existing_ref) = record.result_ref.as_ref() {
+            if existing_ref != &result_ref {
+                return Err(invalid(ERR_CAPTURE_CONFLICT));
+            }
+            validate_canonical_capture(
+                self.vault,
+                wtxn,
+                &artifact_id,
+                &body,
+                &provenance,
+                &envelope,
+            )?;
+            return Ok(ByoaTerminalReceipt {
+                attempt: record,
+                artifact_id,
+                artifact_version: 1,
+                result_ref,
+            });
+        }
+        // An unattached artifact can never be a partial successful capture:
+        // all custody writes now share this transaction. Refuse collisions,
+        // including empty chains with perfectly matching caller-made metadata.
+        if self
+            .vault
+            .get_entity_type_in_txn(wtxn, &artifact_id)?
+            .is_some()
+            || read_blob_artifact_head_in_txn(&self.vault.store, wtxn, &artifact_id)?.is_some()
+        {
+            return Err(invalid(ERR_ARTIFACT_COLLISION));
+        }
+        // Run the queue's state, reason, and write-once gates before creating
+        // any artifact. Failure later in the closure rolls this back too.
+        let attempt = if envelope.disposition == ByoaTerminalDisposition::Abandoned {
+            match queue.abandon_in_txn(
+                wtxn,
+                AbandonAttempt {
                     id: request.attempt_id,
-                    lease_owner: request.lease_owner,
-                    attempt_count: request.attempt_count,
-                    result_ref: appended_ref.clone(),
+                    lease_owner: envelope.lease_owner.clone(),
+                    attempt_count: envelope.attempt_count,
+                    result_ref: result_ref.clone(),
                     reason: request
                         .reason
                         .unwrap_or_else(|| BYOA_DEFAULT_ABANDON_REASON.to_owned()),
                     now: request.now,
-                })?;
-                let attempt = match outcome {
-                    AbandonOutcome::Abandoned(attempt)
-                    | AbandonOutcome::AlreadyAbandoned(attempt) => attempt,
-                };
-                // The receipt names what the ROW owns, not what this call just
-                // appended. An abandonment is terminal and its reference is
-                // write-once: the fresh path validates the rebind and stores
-                // exactly the reference above, while a re-capture whose exhaust
-                // bytes differ takes `AlreadyAbandoned` and keeps the FIRST
-                // reference. Reporting the new version there would advertise an
-                // artifact the attempt does not name, so the extra version stays
-                // durable evidence only and repeated capture returns the same
-                // `result_ref`. (An abandoned row always carries one; the append
-                // is the fallback purely to stay total.)
-                let settled_ref = attempt
-                    .result_ref
-                    .clone()
-                    .unwrap_or_else(|| appended_ref.clone());
-                (attempt, settled_ref)
+                },
+            )? {
+                AbandonOutcome::Abandoned(attempt) | AbandonOutcome::AlreadyAbandoned(attempt) => {
+                    attempt
+                }
             }
-            // The row is still live and its worker settles it; capture only
-            // names what it produced. Attaching the artifact and settling are
-            // deliberately separate so the evidence is durable even if the
-            // settle never happens. A divergent re-capture is refused outright
-            // by `set_result`'s write-once door, so the reference the receipt
-            // carries here is always the one just attached.
-            ByoaTerminalDisposition::Completed
-            | ByoaTerminalDisposition::Failed
-            | ByoaTerminalDisposition::Cancelled => (
-                queue.set_result(SetAttemptResult {
+        } else {
+            queue.set_result_in_txn(
+                wtxn,
+                SetAttemptResult {
                     id: request.attempt_id,
-                    lease_owner: request.lease_owner,
-                    attempt_count: request.attempt_count,
-                    result_ref: appended_ref.clone(),
+                    lease_owner: envelope.lease_owner.clone(),
+                    attempt_count: envelope.attempt_count,
+                    result_ref: result_ref.clone(),
                     now: request.now,
-                })?,
-                appended_ref,
-            ),
+                },
+            )?
         };
-        // The version the receipt reports is read back OUT of the reference it
-        // carries, so the two can never disagree.
-        let artifact_version = parse_byoa_result_ref(&result_ref)?.1;
-
+        let actor = ensure_byoa_runtime_actor(self.vault, wtxn, occurred, request.now)?;
+        self.vault
+            .batch_in()
+            .put(
+                &artifact_id,
+                crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
+                occurred,
+                request.now,
+                &encode_blob_artifact_body(&body)?,
+            )
+            .apply(wtxn)?;
+        let version = self.vault.append_blob_artifact_version_in_txn(
+            wtxn,
+            &artifact_id,
+            &bytes,
+            &provenance,
+            actor,
+            occurred,
+            request.now,
+        )?;
+        if version.version != 1 {
+            return Err(invalid(ERR_ARTIFACT_COLLISION));
+        }
         Ok(ByoaTerminalReceipt {
             attempt,
             artifact_id,
-            artifact_version,
+            artifact_version: version.version,
             result_ref,
         })
     }
@@ -1004,28 +1269,78 @@ fn byoa_runtime_actor() -> ByoaResult<WriteActor> {
 /// so concurrent first captures cannot overwrite an existing identity.
 fn ensure_byoa_runtime_actor(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     occurred: TimeRange,
     learned_at: u64,
 ) -> ByoaResult<WriteActor> {
     let actor = byoa_runtime_actor()?;
-    vault.with_write_txn(|wtxn| {
-        if let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, &actor.entity_ref())? {
-            crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
-        } else {
-            vault
-                .batch_in()
-                .put(
-                    &actor.entity_ref(),
-                    crate::registry::ENTITY_TYPE_PERSON,
-                    occurred,
-                    learned_at,
-                    BYOA_RUNTIME_ACTOR_DOMAIN,
-                )
-                .apply(wtxn)?;
-        }
-        Ok(())
-    })?;
+    if let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, &actor.entity_ref())? {
+        crate::provenance::validate_actor_class(entity_type, actor.actor_class())?;
+    } else {
+        vault
+            .batch_in()
+            .put(
+                &actor.entity_ref(),
+                crate::registry::ENTITY_TYPE_PERSON,
+                occurred,
+                learned_at,
+                BYOA_RUNTIME_ACTOR_DOMAIN,
+            )
+            .apply(wtxn)?;
+    }
     Ok(actor)
+}
+
+fn decode_byoa_record(record: &AttemptRecord) -> ByoaResult<ByoaAttemptPayload> {
+    if record.kind != BYOA_ATTEMPT_KIND {
+        return Err(invalid(ERR_ATTEMPT_KIND));
+    }
+    decode_byoa_attempt_payload(&record.payload)
+}
+
+fn disposition_matches_state(disposition: ByoaTerminalDisposition, state: AttemptState) -> bool {
+    matches!(
+        (disposition, state),
+        (ByoaTerminalDisposition::Completed, AttemptState::Completed)
+            | (ByoaTerminalDisposition::Failed, AttemptState::Failed)
+            | (ByoaTerminalDisposition::Cancelled, AttemptState::Cancelled)
+            | (ByoaTerminalDisposition::Abandoned, AttemptState::Abandoned)
+    )
+}
+
+fn validate_canonical_capture(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+    body: &BlobArtifactBody,
+    provenance: &BlobVersionProvenance,
+    requested: &ByoaExhaustEnvelope,
+) -> ByoaResult<()> {
+    if vault.get_blob_artifact_in_txn(wtxn, artifact_id)?.as_ref() != Some(body) {
+        return Err(invalid(ERR_ARTIFACT_COLLISION));
+    }
+    let head = read_blob_artifact_head_in_txn(&vault.store, wtxn, artifact_id)?
+        .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
+    if head.version != 1 || &head.provenance != provenance {
+        return Err(invalid(ERR_ARTIFACT_COLLISION));
+    }
+    let bytes = vault
+        .read_blob_artifact_version_in_txn(wtxn, artifact_id, 1)?
+        .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
+    if blake3::hash(&bytes).as_bytes() != &head.content_hash {
+        return Err(invalid(ERR_ARTIFACT_COLLISION));
+    }
+    let stored = decode_exhaust_envelope(&bytes)?;
+    if stored.attempt_id != requested.attempt_id
+        || stored.lease_owner != requested.lease_owner
+        || stored.attempt_count != requested.attempt_count
+        || stored.disposition != requested.disposition
+        || (stored.disposition != ByoaTerminalDisposition::Abandoned
+            && stored.exhaust != requested.exhaust)
+    {
+        return Err(invalid(ERR_CAPTURE_CONFLICT));
+    }
+    Ok(())
 }
 
 fn byoa_exhaust_artifact_name(attempt_id: AttemptId) -> String {
@@ -1036,6 +1351,7 @@ fn byoa_exhaust_artifact_name(attempt_id: AttemptId) -> String {
 }
 
 fn encode_exhaust_envelope(envelope: &ByoaExhaustEnvelope) -> ByoaResult<Vec<u8>> {
+    validate_exhaust(&envelope.exhaust)?;
     rmp_serde::to_vec_named(envelope)
         .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_EXHAUST_ENCODE)))
 }
@@ -1049,6 +1365,15 @@ fn encode_exhaust_envelope(envelope: &ByoaExhaustEnvelope) -> ByoaResult<Vec<u8>
 pub fn decode_byoa_exhaust(
     bytes: &[u8],
 ) -> ByoaResult<(AttemptId, ByoaTerminalDisposition, ByoaExhaust)> {
+    let envelope = decode_exhaust_envelope(bytes)?;
+    let attempt_id = AttemptId::from_bytes(&envelope.attempt_id)?;
+    Ok((attempt_id, envelope.disposition, envelope.exhaust))
+}
+
+fn decode_exhaust_envelope(bytes: &[u8]) -> ByoaResult<ByoaExhaustEnvelope> {
+    if bytes.len() > MAX_EXHAUST_ENCODED_BYTES {
+        return Err(invalid(ERR_EXHAUST_TOO_LARGE));
+    }
     let envelope: ByoaExhaustEnvelope = rmp_serde::from_slice(bytes)
         .map_err(|_| ByoaError::Store(Error::InvalidAgentDispatchInput(ERR_EXHAUST_ENCODE)))?;
     if envelope.schema_version != BYOA_CONNECTOR_SCHEMA_VERSION {
@@ -1056,8 +1381,8 @@ pub fn decode_byoa_exhaust(
             ERR_PAYLOAD_SCHEMA,
         )));
     }
-    let attempt_id = AttemptId::from_bytes(&envelope.attempt_id)?;
-    Ok((attempt_id, envelope.disposition, envelope.exhaust))
+    validate_exhaust(&envelope.exhaust)?;
+    Ok(envelope)
 }
 
 // ---------------------------------------------------------------------------
@@ -1089,7 +1414,28 @@ fn validate_endpoint(spec: &ByoEndpointSpec) -> ByoaResult<()> {
     let base_url = spec.base_url.as_str();
     if !is_bounded_printable(base_url, MAX_BASE_URL_LEN)
         || base_url.chars().any(char::is_whitespace)
-        || !(base_url.starts_with("https://") || base_url.starts_with("http://"))
+        || base_url.contains('\\')
+    {
+        return Err(invalid(ERR_BASE_URL));
+    }
+    // URL parsers normalize hostless forms and backslashes. Refuse those
+    // spellings, all user-info (even empty), and query/fragment credentials
+    // before passing the structurally parsed endpoint to a host transport.
+    let authority = base_url
+        .strip_prefix("https://")
+        .or_else(|| base_url.strip_prefix("http://"))
+        .ok_or_else(|| invalid(ERR_BASE_URL))?
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|authority| !authority.is_empty() && !authority.contains('@'))
+        .ok_or_else(|| invalid(ERR_BASE_URL))?;
+    let url = reqwest::Url::parse(base_url).map_err(|_| invalid(ERR_BASE_URL))?;
+    if url.host_str().is_none_or(str::is_empty)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || authority.ends_with(':')
     {
         return Err(invalid(ERR_BASE_URL));
     }
@@ -1141,9 +1487,55 @@ fn validate_cli_sandbox(spec: &CliSandboxSpec) -> ByoaResult<()> {
     Ok(())
 }
 
+fn validate_execution_budget(budget: ExecutionBudget) -> ByoaResult<()> {
+    if !budget.is_bounded()
+        || budget.wall_clock_secs > 3600
+        || budget.mem_mib > 4096
+        || budget.pids > 128
+    {
+        return Err(invalid(ERR_EXECUTION_BUDGET));
+    }
+    Ok(())
+}
+
+// Bound serialization itself rather than allocating an arbitrary request or
+// response before checking its size. Host transports must bound collection too.
+fn encode_execution_transcript(value: &impl Serialize) -> ByoaResult<Vec<u8>> {
+    struct BoundedBytes(Vec<u8>);
+    impl std::io::Write for BoundedBytes {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > BYOA_MAX_EXHAUST_STREAM_BYTES - self.0.len() {
+                return Err(std::io::Error::other(ERR_EXHAUST_TOO_LARGE));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut bytes = BoundedBytes(Vec::new());
+    serde_json::to_writer(&mut bytes, value).map_err(|_| invalid(ERR_EXHAUST_TOO_LARGE))?;
+    Ok(bytes.0)
+}
+
 fn validate_exhaust(exhaust: &ByoaExhaust) -> ByoaResult<()> {
     if exhaust.is_empty() {
         return Err(invalid(ERR_EXHAUST_EMPTY));
+    }
+    let mut total = 0_usize;
+    for stream in [
+        exhaust.transcript.as_deref().unwrap_or_default(),
+        exhaust.stdout.as_slice(),
+        exhaust.stderr.as_slice(),
+        exhaust.diff_bundle.as_deref().unwrap_or_default(),
+    ] {
+        if stream.len() > BYOA_MAX_EXHAUST_STREAM_BYTES {
+            return Err(invalid(ERR_EXHAUST_TOO_LARGE));
+        }
+        total = total
+            .checked_add(stream.len())
+            .ok_or_else(|| invalid(ERR_EXHAUST_TOO_LARGE))?;
     }
     if exhaust.checkpoint_frontier.len() > MAX_CHECKPOINT_FRONTIER_ENTRIES {
         return Err(invalid(ERR_CHECKPOINT_FRONTIER));
@@ -1152,6 +1544,12 @@ fn validate_exhaust(exhaust: &ByoaExhaust) -> ByoaResult<()> {
         if !is_bounded_printable(entry, MAX_CHECKPOINT_FRONTIER_ENTRY_LEN) {
             return Err(invalid(ERR_CHECKPOINT_FRONTIER));
         }
+        total = total
+            .checked_add(entry.len())
+            .ok_or_else(|| invalid(ERR_EXHAUST_TOO_LARGE))?;
+    }
+    if total > BYOA_MAX_EXHAUST_TOTAL_BYTES {
+        return Err(invalid(ERR_EXHAUST_TOO_LARGE));
     }
     Ok(())
 }
