@@ -45,6 +45,23 @@ pub struct RunTreeNode {
     pub failure: Option<RunTreeFailure>,
     pub events: Vec<RunTreeEvent>,
     pub children: Vec<RunTreeNode>,
+    /// ONE-1453 presentation marker: this run is durably paused by the
+    /// per-actor burst breaker.
+    ///
+    /// PRESENTATION ONLY, and additive: it never mutates [`RunTreeStatus`],
+    /// [`RunTreeEventKind`], attempt rows, or
+    /// [`crate::attempt_queue::AttemptState`]. A breaker pause is not
+    /// terminal and synthesizes no attempt event. Breaker truth lives in
+    /// `gate`; this module stores nothing and reads no vault metadata. Elided
+    /// when false, so serialized trees stay wire-compatible in both
+    /// directions.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub gate_breaker_paused: bool,
+}
+
+/// Serializer predicate that elides the additive `false` marker.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Surface lifecycle status.
@@ -115,6 +132,23 @@ pub enum RunTreeRepair {
         attempt_id: String,
         parent_id: String,
     },
+}
+
+impl RunTree {
+    /// Stamps the ONE-1453 burst-breaker pause marker on this tree.
+    ///
+    /// Presentation only. The caller obtains `paused` from
+    /// [`crate::Vault::gate_breaker_run_projection`]; this module never reads
+    /// breaker storage and never derives the value itself.
+    ///
+    /// The marker lands on exactly the deterministic FIRST root — the same
+    /// root ordering ONE-1452 uses to pick a run's agent label — and every
+    /// other node, root or child, stays `false`.
+    pub fn set_gate_breaker_paused_marker(&mut self, paused: bool) {
+        for (index, root) in self.roots.iter_mut().enumerate() {
+            root.gate_breaker_paused = paused && index == 0;
+        }
+    }
 }
 
 /// Read adapter over the runtime attempt queue.
@@ -456,6 +490,9 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         },
         events,
         children: Vec::new(),
+        // Rendering reads durable attempt rows only. The breaker marker is
+        // applied afterwards, by a caller holding the projection.
+        gate_breaker_paused: false,
     };
 
     Ok(FlatRunTreeNode {

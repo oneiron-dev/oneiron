@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::str;
 
 use heed::RwTxn;
@@ -815,6 +815,14 @@ impl<'a> BatchBuilder<'a> {
             return Err(err);
         }
 
+        // ONE-1453: the verdicts the preflight above already recorded for the
+        // local claims whose ORIGINAL gate event the burst breaker booked.
+        // Phase 2 enforces them instead of asking the gate again, so one write
+        // debits the breaker exactly once and a demotion computed in phase 1
+        // reaches the body that lands. `staged_gate_decisions` itself is
+        // retained unchanged for post-commit metric emission.
+        let staged_claim_gate = staged_claim_gate_outcomes(&staged_gate_decisions);
+
         // ONE-1741: batch deletes no longer pre-scan for scan-verdict
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
@@ -827,7 +835,8 @@ impl<'a> BatchBuilder<'a> {
             self.ops,
             text_index_trusted,
             ApplyOpsGateMode::new(false, true)
-                .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
+                .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                .with_staged_claim_gate(staged_claim_gate),
         )?;
         wtxn.commit()?;
         for decision in staged_gate_decisions {
@@ -835,6 +844,45 @@ impl<'a> BatchBuilder<'a> {
         }
         Ok(())
     }
+}
+
+/// The staged phase-2 verdicts for the local claims whose original gate event
+/// the ONE-1453 burst breaker booked, keyed by claim id.
+///
+/// Only breaker-touched claims enter the map. A claim the breaker never
+/// reached — every non-agent write, every non-run write, every outcome that is
+/// neither would-be-`Auto` nor already-`Proposed` — keeps the landed
+/// `apply_put` gate path byte for byte, because there is nothing about it
+/// phase 2 could learn here that re-evaluation would not produce identically.
+fn staged_claim_gate_outcomes(
+    staged_decisions: &[crate::gate::RecordedClaimGateDecision],
+) -> BTreeMap<EntityId, StagedClaimGateOutcome> {
+    let mut staged = BTreeMap::new();
+    for decision in staged_decisions {
+        if !decision.breaker_demoted() && decision.breaker_undo().is_none() {
+            continue;
+        }
+        let record = decision.record();
+        let Some(claim_id) = record.claim_id else {
+            continue;
+        };
+        let Ok(claim_id) = EntityId::from_bytes(claim_id) else {
+            continue;
+        };
+        staged.insert(
+            claim_id,
+            StagedClaimGateOutcome {
+                decision_id: record.decision_id,
+                outcome: decision.decision().outcome(),
+                reason_codes: decision.decision().reason_codes().to_vec(),
+                diff_handle: record.diff_handle.clone(),
+                read_frontier_hash: record.read_frontier_hash,
+                created_at: record.created_at,
+                breaker_demoted: decision.breaker_demoted(),
+            },
+        );
+    }
+    staged
 }
 
 /// Evaluates local claim gates and appends their decisions to `wtxn`.
@@ -942,7 +990,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             {
                 let result =
                     crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                        crate::gate::check_claim_policy_for_write_with_record(
+                        crate::gate::check_claim_policy_for_write_as_original_event(
                             store,
                             wtxn,
                             id,
@@ -972,7 +1020,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 ..
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate).clone().into_claim_body(envelope);
-                let result = crate::gate::check_claim_policy_for_write_with_record(
+                let result = crate::gate::check_claim_policy_for_write_as_original_event(
                     store,
                     wtxn,
                     id,
@@ -1049,10 +1097,20 @@ fn stage_preflight_decision(
             .last()
             .filter(|decision| decision.outcome() != "allow")
             .map(crate::gate::RecordedClaimGateDecision::decision_id);
-        for decision in staged_decisions.iter() {
-            if Some(decision.decision_id()) != preserved_denial_id {
-                store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
+        // ONE-1453: walk the discarded decisions in REVERSE staging order.
+        // Order is load-bearing when several earlier claims touched the same
+        // actor/run row: each undo restores the exact bytes ITS event
+        // observed, so unwinding last-to-first lands the row back on the byte
+        // state that preceded the first staged claim. Forward order would
+        // leave an intermediate snapshot behind.
+        for decision in staged_decisions.iter().rev() {
+            if Some(decision.decision_id()) == preserved_denial_id {
+                continue;
             }
+            if let Some(undo) = decision.breaker_undo() {
+                crate::gate::undo_gate_breaker_in_txn(store, wtxn, undo)?;
+            }
+            store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
         }
         staged_decisions.retain(|decision| Some(decision.decision_id()) == preserved_denial_id);
         return Err(err);

@@ -45,7 +45,7 @@ pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader,
-    LONG_INTERVAL_THRESHOLD_SECS, SHORT_ID_COUNTER_LEN,
+    LONG_INTERVAL_THRESHOLD_SECS, SHORT_ID_COUNTER_LEN, StagedClaimGateOutcome,
 };
 // Reached only from the crate-root white-box test module (`crate::tests`); the
 // re-exports keep the historical `crate::batch::` paths resolvable there.

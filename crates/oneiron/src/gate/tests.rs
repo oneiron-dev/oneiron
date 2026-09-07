@@ -13989,3 +13989,1286 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
     assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
     Ok(())
 }
+
+// ONE-1453 per-actor burst breaker: a durable, per-(dreamer run, provenance
+// actor) velocity-to-review conversion over the ONE-1452 consent-bundle path.
+// Fail-closed means DEMOTE, never deny; a tripped row clears only through an
+// owner-authenticated bundle approve or decline.
+
+/// The optional `actor_burst_breaker` manifest dial, spelled exactly.
+fn breaker_dial_entry(max_events: Value, window_secs: Value) -> (Value, Value) {
+    (
+        Value::from(GATE_BREAKER_POLICY_KEY),
+        Value::Map(vec![
+            (Value::from("max_events"), max_events),
+            (Value::from("window_secs"), window_secs),
+        ]),
+    )
+}
+
+/// A manifest that grants every actor in `actors` a Dreamer `Generated` Auto
+/// path, optionally under a valid burst-breaker dial.
+fn breaker_manifest(actors: &[EntityId], dial: Option<(u64, u64)>) -> Vec<u8> {
+    let mut extra = vec![
+        source_trust_entry(ClaimSource::Generated, 0),
+        signatures_entry(),
+    ];
+    if let Some((max_events, window_secs)) = dial {
+        extra.push(breaker_dial_entry(
+            Value::from(max_events),
+            Value::from(window_secs),
+        ));
+    }
+    let mut data = encode_policy_manifest(extra);
+    for actor in actors {
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row_for_ref("agent", &actor.to_hex(), "auto"),
+        );
+    }
+    data
+}
+
+/// One Dreamer-authored agent write on `run_id`.
+fn breaker_write(
+    vault: &crate::Vault,
+    claim_id: EntityId,
+    actor: EntityId,
+    subject_seed: u8,
+    run_id: &str,
+    approval: ClaimApprovalStatus,
+    learned_at: u64,
+) -> Result<()> {
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.subject = ClaimSubject::Entity(test_id(subject_seed));
+    body.approval = approval;
+    body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
+    let (candidate, envelope) = dreamer_claim_candidate_write_parts(vault, &body, actor, run_id)?;
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            candidate,
+            &envelope,
+            test_time(learned_at),
+            learned_at,
+        )
+        .commit()
+}
+
+fn breaker_row(
+    vault: &crate::Vault,
+    run_id: &str,
+    actor: &EntityId,
+) -> Result<Option<GateBreakerRowV1>> {
+    let rtxn = vault.store.env.read_txn()?;
+    gate_breaker_row_for_test(&vault.store, &rtxn, run_id, actor)
+}
+
+fn breaker_row_bytes(
+    vault: &crate::Vault,
+    run_id: &str,
+    actor: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    gate_breaker_row_bytes_for_test(&vault.store, &rtxn, run_id, actor)
+}
+
+fn breaker_run_row_count(vault: &crate::Vault, run_id: &str) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    gate_breaker_run_row_count_for_test(&vault.store, &rtxn, run_id)
+}
+
+/// Every synthetic trip receipt in the ordinary gate-decision ledger.
+fn breaker_trip_receipts(vault: &crate::Vault) -> Result<Vec<GateDecisionRecord>> {
+    Ok(vault
+        .store
+        .gate_decisions(256)?
+        .into_iter()
+        .filter(|record| record.content_kind == GATE_BREAKER_CONTENT_KIND)
+        .collect())
+}
+
+fn claim_gate_decisions(
+    vault: &crate::Vault,
+    claim_id: &EntityId,
+) -> Result<Vec<GateDecisionRecord>> {
+    Ok(vault
+        .store
+        .gate_decisions(256)?
+        .into_iter()
+        .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+        .collect())
+}
+
+#[test]
+fn burst_triggers_pause() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let other_actor = test_id(0x41);
+    let run = "breaker-burst-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor, other_actor], Some((2, 600))),
+    )?;
+
+    // Exactly `max_events` ordinary events keep their ordinary outcome and
+    // trip nothing.
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x31))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    let untripped = breaker_row(&vault, run, &actor)?.expect("counted row");
+    assert_eq!(untripped.event_timestamps().len(), 2);
+    assert_eq!(untripped.tripped_at(), None);
+    assert!(breaker_trip_receipts(&vault)?.is_empty());
+    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+
+    // Event `max_events + 1` durably trips and lands Proposed.
+    breaker_write(
+        &vault,
+        test_id(0x32),
+        actor,
+        0x52,
+        run,
+        ClaimApprovalStatus::Auto,
+        5,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x32))?.approval,
+        ClaimApprovalStatus::Proposed,
+        "the triggering would-be-Auto claim lands Proposed, never denied or discarded"
+    );
+    assert!(has_pending_gate_consent(&vault, &test_id(0x32))?);
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    let tripped = breaker_row(&vault, run, &actor)?.expect("tripped row");
+    let tripped_at = tripped.tripped_at().expect("durable trip instant");
+    assert_eq!(tripped.event_timestamps().len(), 3);
+    assert_eq!(tripped.thresholds().max_events, 2);
+    assert_eq!(tripped.thresholds().window_secs, 600);
+
+    // Exactly one additional decision record represents the transition, and
+    // its `diff_handle` is independently recomputable from the trip facts.
+    let receipts = breaker_trip_receipts(&vault)?;
+    assert_eq!(receipts.len(), 1);
+    let receipt = &receipts[0];
+    assert_eq!(receipt.content_kind, GATE_BREAKER_CONTENT_KIND);
+    assert_eq!(receipt.outcome, GATE_BREAKER_OUTCOME_TRIPPED);
+    assert_eq!(receipt.reason_codes, vec![GATE_BREAKER_REASON_TRIPPED]);
+    assert_eq!(receipt.claim_id, None);
+    assert!(receipt.receipt_reasons.is_empty());
+    assert!(receipt.system_notices.is_empty());
+    assert_eq!(receipt.actor_ref.as_deref(), Some(actor.to_hex().as_str()));
+    assert_eq!(
+        receipt.diff_handle,
+        gate_breaker_trip_handle(
+            run,
+            &actor,
+            tripped_at,
+            // Post-append count at the transition: `max_events + 1`.
+            3,
+            GateBreakerThresholds {
+                max_events: 2,
+                window_secs: 600,
+            },
+        )
+        .to_vec()
+    );
+
+    // A later event while tripped is demoted with no second trip receipt, and
+    // the already-tripped row is not rewritten.
+    let tripped_bytes = breaker_row_bytes(&vault, run, &actor)?.expect("tripped bytes");
+    breaker_write(
+        &vault,
+        test_id(0x33),
+        actor,
+        0x53,
+        run,
+        ClaimApprovalStatus::Auto,
+        6,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x33))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(breaker_trip_receipts(&vault)?.len(), 1);
+    assert_eq!(
+        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
+        Some(tripped_bytes.as_slice()),
+        "an already-tripped row short-circuits: no prune, no append, no rewrite"
+    );
+
+    // A DIFFERENT actor on the SAME run is evaluated independently.
+    breaker_write(
+        &vault,
+        test_id(0x34),
+        other_actor,
+        0x54,
+        run,
+        ClaimApprovalStatus::Auto,
+        7,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x34))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(
+        breaker_row(&vault, run, &other_actor)?
+            .expect("second actor row")
+            .tripped_at(),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn breaker_counts_auto_and_existing_proposals_only() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // `auto_actor` carries an agent Auto ceiling; `pend_actor` does not, so
+    // its Proposed writes take the ordinary actor-ceiling pend and land in the
+    // consent tray. The breaker counts BOTH shapes, on their own rows.
+    let auto_actor = test_id(0x40);
+    let pend_actor = test_id(0x41);
+    let run = "breaker-counting-run";
+    // The owner-interactive write at the end of this test is an ordinary
+    // `human` candidate, so the manifest carries the human class ceiling that
+    // lets it land. Without that row it is refused outright for
+    // `gate.pending.actor_ceiling` — a would-be-`Auto` write whose ordinary
+    // outcome is pending — before it can demonstrate anything about the
+    // breaker. The AGENT rows stay exactly as the assertions below need them:
+    // `auto_actor` alone carries the agent Auto ceiling.
+    let mut data = breaker_manifest(&[auto_actor], Some((8, 600)));
+    trust_human_candidate_actor(&mut data);
+    put_policy_manifest_bytes(&vault, test_id(0x70), &data)?;
+
+    // A would-be-Auto event counts.
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        auto_actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x30))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+
+    // An already-Proposed event counts and keeps its own pending outcome.
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        pend_actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Proposed,
+        4,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x31))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(has_pending_gate_consent(&vault, &test_id(0x31))?);
+    for actor in [auto_actor, pend_actor] {
+        assert_eq!(
+            breaker_row(&vault, run, &actor)?
+                .expect("counted row")
+                .event_timestamps()
+                .len(),
+            1
+        );
+    }
+
+    // The already-Proposed event keeps its landed reason set; counting alone
+    // never grafts the breaker reason onto it.
+    let rtxn = vault.store.env.read_txn()?;
+    let pending = vault
+        .store
+        .pending_gate_consent_in_txn(&rtxn, &test_id(0x31))?
+        .expect("pending row");
+    drop(rtxn);
+    assert!(
+        !pending
+            .reason_codes
+            .iter()
+            .any(|reason| reason.as_str() == GATE_BREAKER_REASON_PENDING)
+    );
+
+    // A gate DENIAL is not a candidate: an evidence-free Dreamer body is
+    // refused by the GATE-12 floor and touches no breaker row.
+    let mut denied = public_stamped(source_trust_claim(ClaimSource::Generated));
+    denied.subject = ClaimSubject::Entity(test_id(0x52));
+    denied.evidence = None;
+    let (candidate, envelope) =
+        dreamer_claim_candidate_write_parts(&vault, &denied, auto_actor, run)?;
+    assert!(
+        vault
+            .batch()
+            .claim_candidate(&test_id(0x32), candidate, &envelope, test_time(5), 5)
+            .commit()
+            .is_err()
+    );
+    assert_eq!(
+        breaker_row(&vault, run, &auto_actor)?
+            .expect("row")
+            .event_timestamps()
+            .len(),
+        1,
+        "a denied event keeps its outcome and books nothing"
+    );
+
+    // An owner-interactive write is outside the breaker even on a vault whose
+    // run is being counted.
+    let mut human = public_stamped(source_trust_claim(ClaimSource::UserStated));
+    human.subject = ClaimSubject::Entity(test_id(0x53));
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &human)?;
+    vault
+        .batch()
+        .claim_candidate(&test_id(0x33), candidate, &envelope, test_time(6), 6)
+        .commit()?;
+    assert_eq!(breaker_run_row_count(&vault, run)?, 2);
+
+    // The synthetic trip receipt is never itself counted: none was appended,
+    // and nothing tripped.
+    assert!(breaker_trip_receipts(&vault)?.is_empty());
+    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    Ok(())
+}
+
+#[test]
+fn breaker_window_boundary_is_strict() {
+    let thresholds = GateBreakerThresholds {
+        max_events: 2,
+        window_secs: 10,
+    };
+
+    // A timestamp EXACTLY one window old is expired; one second younger is
+    // live.
+    let pruned = evaluate_gate_breaker_event(
+        Some(gate_breaker_row_for_transition_test(
+            thresholds,
+            vec![90, 91],
+            None,
+        )),
+        thresholds,
+        GateBreakerCandidate::Auto,
+        100,
+    );
+    assert_eq!(pruned.row().event_timestamps(), [91, 100]);
+    assert_eq!(pruned.event_count(), 2);
+    assert!(!pruned.tripped_now());
+    assert_eq!(pruned.outcome(), GateBreakerCandidate::Auto);
+
+    // Strictly greater than `max_events` trips; equal does not.
+    let tripping = evaluate_gate_breaker_event(
+        Some(gate_breaker_row_for_transition_test(
+            thresholds,
+            vec![95, 96],
+            None,
+        )),
+        thresholds,
+        GateBreakerCandidate::Auto,
+        100,
+    );
+    assert_eq!(tripping.event_count(), 3);
+    assert!(tripping.tripped_now());
+    assert_eq!(tripping.outcome(), GateBreakerCandidate::Proposed);
+    assert_eq!(tripping.row().tripped_at(), Some(100));
+    assert_eq!(
+        tripping.row().event_timestamps(),
+        [95, 96, 100],
+        "the timestamp that caused the trip stays in the row"
+    );
+
+    // An already-Proposed candidate is preserved, not rewritten to something
+    // else, when it trips.
+    let tripping_proposed = evaluate_gate_breaker_event(
+        Some(gate_breaker_row_for_transition_test(
+            thresholds,
+            vec![95, 96],
+            None,
+        )),
+        thresholds,
+        GateBreakerCandidate::Proposed,
+        100,
+    );
+    assert_eq!(tripping_proposed.outcome(), GateBreakerCandidate::Proposed);
+
+    // Clock rollback clamps to `max(now, last)` so the log stays
+    // nondecreasing.
+    let rolled_back = evaluate_gate_breaker_event(
+        Some(gate_breaker_row_for_transition_test(
+            thresholds,
+            vec![100],
+            None,
+        )),
+        thresholds,
+        GateBreakerCandidate::Auto,
+        95,
+    );
+    assert_eq!(rolled_back.row().event_timestamps(), [100, 100]);
+
+    // An already-tripped row short-circuits: unchanged bytes, demoted
+    // candidate, and an `event_count` pinned to the stored log length.
+    let short_circuit = evaluate_gate_breaker_event(
+        Some(gate_breaker_row_for_transition_test(
+            thresholds,
+            vec![10, 11, 12],
+            Some(12),
+        )),
+        GateBreakerThresholds {
+            max_events: 9_999,
+            window_secs: 1,
+        },
+        GateBreakerCandidate::Auto,
+        10_000,
+    );
+    assert!(!short_circuit.rewritten());
+    assert!(!short_circuit.tripped_now());
+    assert_eq!(short_circuit.event_count(), 3);
+    assert_eq!(short_circuit.outcome(), GateBreakerCandidate::Proposed);
+    assert_eq!(short_circuit.row().event_timestamps(), [10, 11, 12]);
+    assert_eq!(short_circuit.row().thresholds().max_events, 2);
+
+    // A missing row is created under the live snapshot.
+    let fresh = evaluate_gate_breaker_event(None, thresholds, GateBreakerCandidate::Auto, 100);
+    assert_eq!(fresh.row().event_timestamps(), [100]);
+    assert_eq!(fresh.row().thresholds(), thresholds);
+    assert_eq!(fresh.row().tripped_at(), None);
+}
+
+#[test]
+fn breaker_fail_closed_no_auto_accept() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-fail-closed-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((2, 600))),
+    )?;
+
+    // A row tripped many windows ago, whose whole event log has since aged
+    // out. Time passing is exactly this shape from the row's side.
+    let ancient = gate_breaker_row_for_transition_test(
+        GateBreakerThresholds {
+            max_events: 2,
+            window_secs: 600,
+        },
+        vec![1, 2, 3],
+        Some(3),
+    );
+    vault.with_write_txn(|wtxn| {
+        put_gate_breaker_row_for_test(&vault.store, wtxn, run, &actor, &ancient)
+    })?;
+    let before = breaker_row_bytes(&vault, run, &actor)?.expect("seeded row");
+
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    assert_eq!(
+        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
+        Some(before.as_slice()),
+        "time passing alone never untrips, and never rewrites the row"
+    );
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x30))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+
+    // The demoted member is in ONE-1452's bundle and no non-owner path moves
+    // it to Approved.
+    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(bundle.members.len(), 1);
+    assert_eq!(bundle.members[0].claim_id, test_id(0x30));
+    Ok(())
+}
+
+#[test]
+fn breaker_survives_vault_reopen() -> Result<()> {
+    let (tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-reopen-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((1, 600))),
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    let before = breaker_row_bytes(&vault, run, &actor)?.expect("tripped row");
+    drop(vault);
+
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())
+        .expect("reopen vault");
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert_eq!(
+        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
+        Some(before.as_slice())
+    );
+    breaker_write(
+        &vault,
+        test_id(0x32),
+        actor,
+        0x52,
+        run,
+        ClaimApprovalStatus::Auto,
+        5,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x32))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}
+
+#[test]
+fn breaker_manifest_override_changes_trip_point() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((50, 300))),
+    )?;
+    assert_eq!(
+        resolve(&vault)?.actor_burst_breaker_thresholds(),
+        GateBreakerThresholds {
+            max_events: 50,
+            window_secs: 300,
+        }
+    );
+
+    // The applied snapshot is what the row records.
+    let run = "breaker-override-run";
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    assert_eq!(
+        breaker_row(&vault, run, &actor)?.expect("row").thresholds(),
+        GateBreakerThresholds {
+            max_events: 50,
+            window_secs: 300,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn breaker_malformed_override_uses_engine_defaults() -> Result<()> {
+    let malformed = [
+        // Zero, on either field.
+        breaker_dial_entry(Value::from(0_u64), Value::from(600_u64)),
+        breaker_dial_entry(Value::from(30_u64), Value::from(0_u64)),
+        // Negative and fractional.
+        breaker_dial_entry(Value::from(-1_i64), Value::from(600_u64)),
+        breaker_dial_entry(Value::F64(1.5), Value::from(600_u64)),
+        // Wrong types.
+        breaker_dial_entry(Value::from("30"), Value::from(600_u64)),
+        breaker_dial_entry(
+            Value::Array(vec![Value::from(30_u64)]),
+            Value::from(600_u64),
+        ),
+        // Overflowed `max_events`.
+        breaker_dial_entry(Value::from(u64::from(u32::MAX) + 1), Value::from(600_u64)),
+    ];
+    for (index, dial) in malformed.into_iter().enumerate() {
+        let (_tmp, vault) = temp_vault();
+        let mut extra = vec![
+            source_trust_entry(ClaimSource::Generated, 0),
+            signatures_entry(),
+        ];
+        extra.push(dial);
+        put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(extra))?;
+        let policy = resolve(&vault)?;
+        assert_eq!(
+            policy.actor_burst_breaker_thresholds(),
+            GateBreakerThresholds::default(),
+            "malformed dial {index} must take engine defaults, never disable accounting"
+        );
+        assert_eq!(
+            GateBreakerThresholds::default(),
+            GateBreakerThresholds {
+                max_events: GATE_BREAKER_DEFAULT_MAX_EVENTS,
+                window_secs: GATE_BREAKER_WINDOW_SECS,
+            }
+        );
+        assert!(
+            !policy.is_fail_closed(),
+            "a malformed dial is not a malformed manifest"
+        );
+    }
+
+    // A missing/unknown/partial shape is malformed the same way.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x71),
+        &encode_policy_manifest(vec![(
+            Value::from(GATE_BREAKER_POLICY_KEY),
+            Value::Map(vec![(Value::from("max_events"), Value::from(30_u64))]),
+        )]),
+    )?;
+    assert_eq!(
+        resolve(&vault)?.actor_burst_breaker_thresholds(),
+        GateBreakerThresholds::default()
+    );
+    Ok(())
+}
+
+#[test]
+fn breaker_conflicting_manifest_overrides_use_defaults() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &encode_policy_manifest(vec![breaker_dial_entry(
+            Value::from(50_u64),
+            Value::from(300_u64),
+        )]),
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x71),
+        &encode_policy_manifest(vec![breaker_dial_entry(
+            Value::from(7_u64),
+            Value::from(60_u64),
+        )]),
+    )?;
+    assert_eq!(
+        resolve(&vault)?.actor_burst_breaker_thresholds(),
+        GateBreakerThresholds::default(),
+        "two distinct valid dials resolve to engine defaults"
+    );
+    Ok(())
+}
+
+#[test]
+fn breaker_malformed_plus_valid_uses_valid() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &encode_policy_manifest(vec![breaker_dial_entry(
+            Value::from("nope"),
+            Value::from(600_u64),
+        )]),
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x71),
+        &encode_policy_manifest(vec![breaker_dial_entry(
+            Value::from(50_u64),
+            Value::from(300_u64),
+        )]),
+    )?;
+    assert_eq!(
+        resolve(&vault)?.actor_burst_breaker_thresholds(),
+        GateBreakerThresholds {
+            max_events: 50,
+            window_secs: 300,
+        },
+        "a malformed manifest contributes no candidate at all"
+    );
+    Ok(())
+}
+
+#[test]
+fn breaker_dial_changes_policy_frontier_and_stales_bundle() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-frontier-run";
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let absent = resolve(&vault)?.read_frontier_hash()?;
+
+    park_consent_bundle_member(&vault, test_id(0x30), actor, 0x50, run, "proposal", 3)?;
+    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+
+    // Edit ONLY the dial.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &encode_policy_manifest(vec![breaker_dial_entry(
+            Value::from(50_u64),
+            Value::from(300_u64),
+        )]),
+    )?;
+    let present = resolve(&vault)?.read_frontier_hash()?;
+    assert_ne!(absent, present);
+
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &encode_policy_manifest(vec![breaker_dial_entry(
+            Value::from(7_u64),
+            Value::from(60_u64),
+        )]),
+    )?;
+    assert_ne!(present, resolve(&vault)?.read_frontier_hash()?);
+
+    // A bundle reviewed under the old dial is stale.
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    assert!(matches!(
+        vault.resolve_gate_consent_bundle(
+            &owner,
+            bundle.bundle_id,
+            run,
+            GateConsentBundleAction::Approve,
+            9,
+        ),
+        Err(Error::GateConsentStale { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn breaker_manifest_change_does_not_untrip() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-manifest-change-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((1, 600))),
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    let tripped = breaker_row_bytes(&vault, run, &actor)?.expect("tripped row");
+
+    // Relax the dial, then remove it entirely.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((10_000, 1))),
+    )?;
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    put_policy_manifest_bytes(&vault, test_id(0x70), &breaker_manifest(&[actor], None))?;
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert_eq!(
+        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
+        Some(tripped.as_slice()),
+        "the trip snapshot freezes until owner resolution deletes the row"
+    );
+    breaker_write(
+        &vault,
+        test_id(0x32),
+        actor,
+        0x52,
+        run,
+        ClaimApprovalStatus::Auto,
+        5,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x32))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    Ok(())
+}
+
+#[test]
+fn staged_breaker_outcome_materializes_once() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-staged-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((1, 600))),
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    let before = breaker_row(&vault, run, &actor)?
+        .expect("row")
+        .event_timestamps()
+        .len();
+
+    // The demoted claim: preflight books it once, phase 2 enforces the staged
+    // verdict instead of asking the gate again.
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    assert_eq!(
+        breaker_row(&vault, run, &actor)?
+            .expect("row")
+            .event_timestamps()
+            .len(),
+        before + 1,
+        "preflight plus phase 2 append exactly one breaker timestamp"
+    );
+    let decisions = claim_gate_decisions(&vault, &test_id(0x31))?;
+    assert_eq!(decisions.len(), 1, "exactly one ordinary gate record");
+    assert_eq!(decisions[0].outcome, "pending");
+    assert_eq!(decisions[0].reason_codes, vec![GATE_BREAKER_REASON_PENDING]);
+
+    let rtxn = vault.store.env.read_txn()?;
+    let pending = vault
+        .store
+        .pending_gate_consent_in_txn(&rtxn, &test_id(0x31))?
+        .expect("staged pending row");
+    drop(rtxn);
+    assert_eq!(pending.decision_id, decisions[0].decision_id);
+    assert_eq!(pending.diff_handle, decisions[0].diff_handle);
+    assert_eq!(pending.read_frontier_hash, decisions[0].read_frontier_hash);
+    assert_eq!(pending.dreamer_run_id.as_deref(), Some(run));
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x31))?.approval,
+        ClaimApprovalStatus::Proposed,
+        "the materialized body is canonically re-encoded as Proposed"
+    );
+    Ok(())
+}
+
+#[test]
+fn selective_gate_error_restores_breaker_side_effects() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-selective-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((1, 600))),
+    )?;
+
+    let mut first = public_stamped(source_trust_claim(ClaimSource::Generated));
+    first.subject = ClaimSubject::Entity(test_id(0x50));
+    first.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
+    let (first_candidate, first_envelope) =
+        dreamer_claim_candidate_write_parts(&vault, &first, actor, run)?;
+    let mut second = public_stamped(source_trust_claim(ClaimSource::Generated));
+    second.subject = ClaimSubject::Entity(test_id(0x51));
+    second.evidence = Some(precommit_evidence(vec![test_id(0x51)]));
+    let (second_candidate, second_envelope) =
+        dreamer_claim_candidate_write_parts(&vault, &second, actor, run)?;
+    // Refused by the GATE-12 evidence floor, which is a DENIAL and therefore
+    // the one receipt the preflight intentionally commits.
+    let mut denied = public_stamped(source_trust_claim(ClaimSource::Generated));
+    denied.subject = ClaimSubject::Entity(test_id(0x52));
+    denied.evidence = None;
+    let (denied_candidate, denied_envelope) =
+        dreamer_claim_candidate_write_parts(&vault, &denied, actor, run)?;
+
+    let err = vault
+        .batch()
+        .claim_candidate(
+            &test_id(0x30),
+            first_candidate,
+            &first_envelope,
+            test_time(3),
+            3,
+        )
+        .claim_candidate(
+            &test_id(0x31),
+            second_candidate,
+            &second_envelope,
+            test_time(4),
+            4,
+        )
+        .claim_candidate(
+            &test_id(0x32),
+            denied_candidate,
+            &denied_envelope,
+            test_time(5),
+            5,
+        )
+        .commit()
+        .expect_err("the evidence-free member must refuse the batch");
+    assert_gate_rejected(err, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
+
+    assert_eq!(
+        breaker_run_row_count(&vault, run)?,
+        0,
+        "every discarded staged decision's breaker mutation is reversed"
+    );
+    assert!(breaker_trip_receipts(&vault)?.is_empty());
+    for claim in [test_id(0x30), test_id(0x31), test_id(0x32)] {
+        assert!(vault.get_raw(&claim)?.is_none());
+        assert!(!has_pending_gate_consent(&vault, &claim)?);
+    }
+    let remaining = vault.store.gate_decisions(256)?;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].outcome, "deny");
+    assert_eq!(remaining[0].claim_id, Some(*test_id(0x32).as_bytes()));
+    Ok(())
+}
+
+#[test]
+fn resume_on_owner_approve() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let other_actor = test_id(0x41);
+    let run = "breaker-resume-approve-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor, other_actor], Some((1, 600))),
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x32),
+        other_actor,
+        0x52,
+        run,
+        ClaimApprovalStatus::Auto,
+        5,
+    )?;
+    assert_eq!(breaker_run_row_count(&vault, run)?, 2);
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+
+    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(bundle.members.len(), 1);
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let trip_receipts_before = breaker_trip_receipts(&vault)?.len();
+    vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        run,
+        GateConsentBundleAction::Approve,
+        9,
+    )?;
+
+    assert_eq!(
+        breaker_run_row_count(&vault, run)?,
+        0,
+        "both actor rows clear inside the resolution transaction"
+    );
+    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x31))?.approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(!has_pending_gate_consent(&vault, &test_id(0x31))?);
+    assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
+    assert_eq!(
+        breaker_trip_receipts(&vault)?.len(),
+        trip_receipts_before,
+        "owner-authenticated replay does not retrip"
+    );
+
+    // The next original write starts a fresh window.
+    breaker_write(
+        &vault,
+        test_id(0x33),
+        actor,
+        0x53,
+        run,
+        ClaimApprovalStatus::Auto,
+        10,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x33))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    let fresh = breaker_row(&vault, run, &actor)?.expect("fresh row");
+    assert_eq!(fresh.event_timestamps().len(), 1);
+    assert_eq!(fresh.tripped_at(), None);
+    Ok(())
+}
+
+#[test]
+fn resume_on_owner_decline() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-resume-decline-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((1, 600))),
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+
+    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        run,
+        GateConsentBundleAction::Decline,
+        9,
+    )?;
+
+    assert_eq!(breaker_run_row_count(&vault, run)?, 0);
+    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    let declined = stored_claim_body(&vault, &test_id(0x31))?;
+    assert_eq!(declined.approval, ClaimApprovalStatus::Rejected);
+    assert_eq!(declined.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(declined.valid_to, Some(9));
+    assert!(!has_pending_gate_consent(&vault, &test_id(0x31))?);
+    assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
+
+    breaker_write(
+        &vault,
+        test_id(0x32),
+        actor,
+        0x52,
+        run,
+        ClaimApprovalStatus::Auto,
+        10,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x32))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_bundle_resolution_keeps_breaker_tripped() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-failed-resolution-run";
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &breaker_manifest(&[actor], Some((1, 600))),
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x30),
+        actor,
+        0x50,
+        run,
+        ClaimApprovalStatus::Auto,
+        3,
+    )?;
+    breaker_write(
+        &vault,
+        test_id(0x31),
+        actor,
+        0x51,
+        run,
+        ClaimApprovalStatus::Auto,
+        4,
+    )?;
+    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    let tripped = breaker_row_bytes(&vault, run, &actor)?.expect("tripped row");
+
+    // Fail AFTER the clear point: the actor ceiling is withdrawn, so the
+    // member replay the approve performs is refused by the live gate. The
+    // bundle digest is untouched, so validation still passes and the clear has
+    // already run when the failure lands.
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x70),
+        &encode_policy_manifest(vec![
+            source_trust_entry(ClaimSource::Generated, 0),
+            signatures_entry(),
+        ]),
+    )?;
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    // The digest itself still matches — it binds the STORED pending rows — so
+    // validation passes and the clear has already run when the per-member
+    // consent binding is recomputed under the new frontier and refuses.
+    assert!(matches!(
+        vault.resolve_gate_consent_bundle(
+            &owner,
+            bundle.bundle_id,
+            run,
+            GateConsentBundleAction::Approve,
+            9,
+        ),
+        Err(Error::GateConsentStale { .. })
+    ));
+
+    assert_eq!(
+        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
+        Some(tripped.as_slice()),
+        "rollback restores every breaker row"
+    );
+    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    assert!(has_pending_gate_consent(&vault, &test_id(0x31))?);
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x31))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(consent_bundle_receipts(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn non_run_and_owner_writes_bypass_breaker() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    let run = "breaker-bypass-run";
+    let mut data = breaker_manifest(&[actor], Some((1, 600)));
+    trust_human_candidate_actor(&mut data);
+    put_policy_manifest_bytes(&vault, test_id(0x70), &data)?;
+
+    // Owner-interactive writes: more than the configured threshold, and no
+    // breaker key, receipt, demotion, or pause anywhere.
+    for (ordinal, claim) in [test_id(0x30), test_id(0x31), test_id(0x32)]
+        .into_iter()
+        .enumerate()
+    {
+        let mut body = public_stamped(source_trust_claim(ClaimSource::UserStated));
+        body.subject = ClaimSubject::Entity(test_id(0x50 + ordinal as u8));
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &claim,
+                candidate,
+                &envelope,
+                test_time(3 + ordinal as u64),
+                3 + ordinal as u64,
+            )
+            .commit()?;
+        assert_eq!(
+            stored_claim_body(&vault, &claim)?.approval,
+            ClaimApprovalStatus::Auto
+        );
+    }
+    assert_eq!(breaker_run_row_count(&vault, run)?, 0);
+    assert!(breaker_trip_receipts(&vault)?.is_empty());
+    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+
+    // An agent write with NO Dreamer run surface: `gate-test` provenance
+    // carries no run id, so the breaker never sees it.
+    for (ordinal, claim) in [test_id(0x33), test_id(0x34), test_id(0x35)]
+        .into_iter()
+        .enumerate()
+    {
+        let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+        body.subject = ClaimSubject::Entity(test_id(0x55 + ordinal as u8));
+        body.evidence = Some(precommit_evidence(vec![test_id(0x55 + ordinal as u8)]));
+        let (candidate, envelope) =
+            claim_candidate_write_parts_for_actor(&vault, &body, actor, EdgeActorClass::Agent)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &claim,
+                candidate,
+                &envelope,
+                test_time(7 + ordinal as u64),
+                7 + ordinal as u64,
+            )
+            .commit()?;
+        assert_eq!(
+            stored_claim_body(&vault, &claim)?.approval,
+            ClaimApprovalStatus::Auto
+        );
+    }
+    assert_eq!(breaker_run_row_count(&vault, run)?, 0);
+    assert!(breaker_trip_receipts(&vault)?.is_empty());
+    Ok(())
+}

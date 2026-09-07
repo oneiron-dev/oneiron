@@ -12,6 +12,7 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
+use super::breaker::{GateBreakerThresholds, resolve_gate_breaker_thresholds};
 use super::ceiling::{
     ActorCeiling, DelegationFoldCache, DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack, PolicySensitivity,
@@ -70,6 +71,10 @@ pub(crate) struct PolicyManifestResolution {
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     budget_policy: BudgetPolicyTable,
+    /// ONE-1453: the ONE resolved burst-breaker dial, or `None` for engine
+    /// defaults. Zero valid overrides and two-or-more distinct valid overrides
+    /// both resolve here as `None`.
+    actor_burst_breaker: Option<GateBreakerThresholds>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -94,6 +99,16 @@ impl PolicyManifestResolution {
     #[must_use]
     pub(crate) fn on_budget_exhausted(&self) -> BudgetExhaustionPolicy {
         self.on_budget_exhausted.unwrap_or_default()
+    }
+
+    /// The ONE-1453 burst-breaker thresholds this resolution applies.
+    ///
+    /// Engine defaults cover an absent dial, an all-malformed set of
+    /// overrides, and two-or-more distinct valid overrides. A malformed dial
+    /// never disables accounting and never yields a zero threshold.
+    #[must_use]
+    pub(crate) fn actor_burst_breaker_thresholds(&self) -> GateBreakerThresholds {
+        self.actor_burst_breaker.unwrap_or_default()
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
@@ -682,6 +697,21 @@ fn hash_policy_frontier_v0(
         hash_owner_policy_row(hasher, row);
     }
 
+    // ONE-1453: the resolved optional burst-breaker dial. Absence, one
+    // resolved override, and a DIFFERENT resolved override are frontier-
+    // distinct, so editing the dial stales every consent bundle reviewed under
+    // the old one (ONE-1452 binds each member's `read_frontier_hash` into the
+    // bundle id). Pre-release no-legacy law covers the domain change: no
+    // migration or compatibility branch.
+    match resolution.actor_burst_breaker {
+        Some(thresholds) => {
+            hash_bool(hasher, true);
+            hasher.update(thresholds.max_events.to_be_bytes());
+            hasher.update(thresholds.window_secs.to_be_bytes());
+        }
+        None => hash_bool(hasher, false),
+    }
+
     hash_opt_str(hasher, resolution.owner_policy_document.as_deref());
     hash_opt_str(hasher, resolution.owner_policy_output_contract.as_deref());
     hash_bool(hasher, resolution.owner_policy_patterns_dropped);
@@ -909,6 +939,9 @@ pub(crate) fn resolve_policy_manifest(
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
+    // ONE-1453: only VALID overrides enter the fold; a malformed one
+    // contributed no candidate at decode.
+    let mut actor_burst_breaker_candidates: Vec<GateBreakerThresholds> = Vec::new();
 
     for index_entry in store
         .type_index
@@ -979,6 +1012,9 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(thresholds) = decoded.actor_burst_breaker {
+                    actor_burst_breaker_candidates.push(thresholds);
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
@@ -1000,6 +1036,13 @@ pub(crate) fn resolve_policy_manifest(
         resolution.owner_policy_rows.clear();
         resolution.owner_policy_rows_dropped = true;
     }
+
+    // ONE-1453: the distinct-valid-value rule alone decides. One distinct
+    // valid value applies; two or more are an ambiguity, and both that case
+    // and the zero-candidate case take engine defaults. A conflicting dial is
+    // NOT a malformed manifest: it does not fail-close the write gate.
+    resolution.actor_burst_breaker =
+        resolve_gate_breaker_thresholds(&actor_burst_breaker_candidates);
 
     // A resolved table must stay addressable by a u16 row index: up to 65,536
     // rows (indices 0..=65535) are valid; the 65,537th row marks the whole

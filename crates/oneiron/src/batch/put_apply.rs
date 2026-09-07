@@ -159,6 +159,49 @@ fn validate_local_skill_create(
     Ok(())
 }
 
+/// Validates fork lineage and the inherited ceiling for a local `AGENT_DEF` create.
+///
+/// # Errors
+///
+/// Rejects a self-reference, a missing or non-`AGENT_DEF` parent, or a widened
+/// ceiling. Propagates parent-row storage and decoding errors.
+fn validate_local_agent_definition_create(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    created: &crate::agent_def::AgentDefinition,
+) -> Result<()> {
+    if let Some(parent) = created.forked_from {
+        if parent == *id {
+            return Err(Error::InvalidAgentDefBody(
+                "forkedFrom cannot name the fork itself",
+            ));
+        }
+        let parent_raw =
+            store
+                .entities
+                .get(wtxn, parent.as_bytes())?
+                .ok_or(Error::InvalidAgentDefBody(
+                    "forkedFrom parent must exist as a type-17 AGENT_DEF",
+                ))?;
+        let parent_header = EntityMetadataHeader::parse(&parent_raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        if parent_header.entity_type != ENTITY_TYPE_AGENT_DEF {
+            return Err(Error::InvalidAgentDefBody(
+                "forkedFrom parent must exist as a type-17 AGENT_DEF",
+            ));
+        }
+        let parent_definition =
+            crate::agent_def::decode_agent_definition(&parent_raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if created.ceiling.widens_beyond(parent_definition.ceiling) {
+            return Err(Error::InvalidAgentDefBody(
+                "forked agent ceiling cannot widen beyond its parent row ceiling",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
@@ -184,6 +227,7 @@ pub(super) fn apply_put(
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    staged_claim_gate: Option<&StagedClaimGateOutcome>,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<AppliedPut> {
@@ -298,7 +342,30 @@ pub(super) fn apply_put(
             let policy = write_policy.ok_or(Error::InvariantViolation(
                 "local claim write policy snapshot missing",
             ))?;
-            if allow_reserved_predicate {
+            if let Some(staged) = staged_claim_gate {
+                // ONE-1453: this transaction's preflight already evaluated the
+                // gate for this exact body and booked its breaker event. A
+                // second evaluation here would either debit the breaker twice
+                // or discard the demotion the first one computed, so the
+                // staged verdict is ENFORCED instead — no policy call, no
+                // second ordinary decision, no second debit.
+                crate::gate::apply_staged_claim_gate_in_txn(
+                    store,
+                    wtxn,
+                    &id,
+                    &body,
+                    write_envelope,
+                    policy,
+                    staged,
+                    crate::gate::GateWriteMode {
+                        record_decision: record_gate_decisions,
+                        persist_pending_consent: persist_gate_pending_consent,
+                        resolve_pending: true,
+                        can_resolve_pending_consent,
+                        include_source_in_gate_input,
+                    },
+                )?;
+            } else if allow_reserved_predicate {
                 crate::gate::check_reserved_claim_policy(&body, write_envelope, policy)?;
             } else if let Some(write_envelope) = write_envelope {
                 crate::gate::check_claim_policy_for_write_with_preflight_decision(
@@ -536,6 +603,26 @@ pub(super) fn apply_put(
         None
     };
     let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
+    // ONE-1453: the materialized body's ONE flip. The preflight body is
+    // immutable — the gate answered for it and its `diff_handle` normalizes
+    // approval away — so the breaker's Auto-to-Proposed conversion is applied
+    // here, to the bytes that actually land. Placed with the reconciliation
+    // above and BEFORE short-id planning hashes the body, so the stored body,
+    // the staged decision, the enforcement approval and the pending row all
+    // agree on `Proposed`.
+    let breaker_demoted_claim_body =
+        if staged_claim_gate.is_some_and(|staged| staged.breaker_demoted) {
+            let mut demoted = decoded_claim_body
+                .as_ref()
+                .ok_or(Error::InvariantViolation("validated CLAIM body missing"))?
+                .clone();
+            demoted.approval = ClaimApprovalStatus::Proposed;
+            decoded_claim_body = Some(demoted.clone());
+            Some(crate::claim::encode_claim_body(&demoted)?)
+        } else {
+            None
+        };
+    let data = breaker_demoted_claim_body.as_deref().unwrap_or(data);
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin
@@ -722,35 +809,7 @@ pub(super) fn apply_put(
             .ok_or(Error::InvariantViolation(
                 "validated AGENT_DEF record missing",
             ))?;
-        if let Some(parent) = created.forked_from {
-            if parent == id {
-                return Err(Error::InvalidAgentDefBody(
-                    "forkedFrom cannot name the fork itself",
-                ));
-            }
-            let parent_raw =
-                store
-                    .entities
-                    .get(wtxn, parent.as_bytes())?
-                    .ok_or(Error::InvalidAgentDefBody(
-                        "forkedFrom parent must exist as a type-17 AGENT_DEF",
-                    ))?;
-            let parent_header = EntityMetadataHeader::parse(&parent_raw)
-                .ok_or(Error::CorruptedIndex("entity header"))?;
-            if parent_header.entity_type != ENTITY_TYPE_AGENT_DEF {
-                return Err(Error::InvalidAgentDefBody(
-                    "forkedFrom parent must exist as a type-17 AGENT_DEF",
-                ));
-            }
-            let parent_definition = crate::agent_def::decode_agent_definition(
-                &parent_raw[ENTITY_METADATA_HEADER_LEN..],
-            )?;
-            if created.ceiling.widens_beyond(parent_definition.ceiling) {
-                return Err(Error::InvalidAgentDefBody(
-                    "forked agent ceiling cannot widen beyond its parent row ceiling",
-                ));
-            }
-        }
+        validate_local_agent_definition_create(store, wtxn, &id, created)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let created = new_skill_record
             .as_ref()

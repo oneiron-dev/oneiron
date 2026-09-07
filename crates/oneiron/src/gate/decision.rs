@@ -215,6 +215,12 @@ pub(crate) enum GateReasonCode {
     /// deliberate transformation, so one cycle is refused outright rather
     /// than parked for review.
     DenyPersonaSingleCycle,
+    /// ONE-1453: the per-actor burst breaker converted a would-be-`Auto`
+    /// agent-run write into owner review. Velocity, not authority — the claim
+    /// is preserved and joins the run's existing consent bundle, so this is a
+    /// pend and never a denial. An event already pending for another cause
+    /// keeps its own reason set and does not gain this one.
+    PendingActorBurstBreaker,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -257,6 +263,7 @@ impl GateReasonCode {
             Self::PendingPersonaIsolation => "gate.pending.persona_isolation",
             Self::PendingMirroringIsolation => "gate.pending.mirroring_isolation",
             Self::DenyPersonaSingleCycle => "gate.deny.dreamer_precommit.persona_single_cycle",
+            Self::PendingActorBurstBreaker => "gate.pending.actor_burst_breaker",
         }
     }
 
@@ -303,6 +310,10 @@ impl GateReasonCode {
                 GateMetricReasonClass::CriticalityFloor
             }
             Self::DenyPersonaSingleCycle => GateMetricReasonClass::DreamerPrecommit,
+            // ONE-1453 rides the actor-level pending class it already belongs
+            // to: the breaker is an actor ceiling that velocity lowered. No
+            // new metric class, index, or counter width.
+            Self::PendingActorBurstBreaker => GateMetricReasonClass::ActorCeiling,
         }
     }
 }

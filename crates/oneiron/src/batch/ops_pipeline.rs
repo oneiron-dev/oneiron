@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use heed::RwTxn;
 
@@ -22,6 +22,11 @@ pub(crate) struct ApplyOpsGateMode {
     include_source_in_gate_input: bool,
     claim_gate_prechecked: bool,
     preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
+    /// ONE-1453: the gate verdicts this transaction's preflight already
+    /// recorded, keyed by local claim id. Only claims whose ORIGINAL event the
+    /// burst breaker booked appear here; everything else keeps the landed
+    /// `apply_put` gate path byte for byte.
+    staged_claim_gate: Option<BTreeMap<EntityId, StagedClaimGateOutcome>>,
 }
 
 impl ApplyOpsGateMode {
@@ -32,6 +37,7 @@ impl ApplyOpsGateMode {
             include_source_in_gate_input: false,
             claim_gate_prechecked: false,
             preflight_gate_decision_ids: HashMap::new(),
+            staged_claim_gate: None,
         }
     }
 
@@ -60,6 +66,20 @@ impl ApplyOpsGateMode {
         >,
     ) -> Self {
         self.preflight_gate_decision_ids = preflight_gate_decision_ids;
+        self
+    }
+
+    /// Binds the gate verdicts this transaction's preflight already recorded
+    /// for local claims the ONE-1453 burst breaker booked (ONE-1453).
+    ///
+    /// Not a general gate bypass: the map is crate-private, `BatchBuilder`
+    /// builds it only from decisions IT staged in THIS transaction, and the
+    /// door that consumes it enforces rather than re-evaluates.
+    pub(crate) fn with_staged_claim_gate(
+        mut self,
+        staged_claim_gate: BTreeMap<EntityId, StagedClaimGateOutcome>,
+    ) -> Self {
+        self.staged_claim_gate = Some(staged_claim_gate);
         self
     }
 }
@@ -393,6 +413,7 @@ pub(crate) fn apply_ops_with_origin(
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
     let mut preflight_gate_decision_ids = gate_mode.preflight_gate_decision_ids;
+    let staged_claim_gate = gate_mode.staged_claim_gate;
 
     secret_scan::scan_batch_ops(&ops)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
@@ -534,6 +555,13 @@ pub(crate) fn apply_ops_with_origin(
                     } else {
                         None
                     },
+                    staged_claim_gate
+                        .as_ref()
+                        .filter(|_| {
+                            entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                                && !allow_reserved_predicate
+                        })
+                        .and_then(|staged| staged.get(&id)),
                     Some(&companion_retired_histories),
                     origin,
                 )?;
@@ -654,6 +682,10 @@ pub(crate) fn apply_ops_with_origin(
                     } else {
                         None
                     },
+                    staged_claim_gate
+                        .as_ref()
+                        .filter(|_| !internal_lexical_query_hint)
+                        .and_then(|staged| staged.get(&id)),
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;

@@ -8,6 +8,9 @@ use crate::llm::{
     BudgetExhaustionPolicy, BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable, CallPurpose,
 };
 
+use super::breaker::{
+    GATE_BREAKER_POLICY_KEY, GateBreakerThresholds, parse_gate_breaker_thresholds,
+};
 use super::ceiling::{
     ActorCeiling, DelegationGrantRecord, OwnerRowAction, PolicyApprovalCeiling, PolicyAxes,
     PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack, PolicyRule,
@@ -49,6 +52,11 @@ pub(super) struct DecodedPolicyManifest {
     pub(super) signatures: Vec<PolicySignature>,
     pub(super) on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     pub(super) budget_policy: BudgetPolicyTable,
+    /// ONE-1453: this manifest's burst-breaker candidate. `None` covers both
+    /// an absent key and a malformed override — a malformed override
+    /// contributes NO candidate to the cross-manifest fold and never makes the
+    /// manifest itself malformed.
+    pub(super) actor_burst_breaker: Option<GateBreakerThresholds>,
     pub(super) unsupported_schema: bool,
     pub(super) engine_version_floor: bool,
     pub(super) unknown_axis_seen: bool,
@@ -89,6 +97,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
                 | POLICY_SIGNATURES_KEY
                 | POLICY_ON_BUDGET_EXHAUSTED_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | GATE_BREAKER_POLICY_KEY
         ) {
             return None;
         }
@@ -186,6 +195,15 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    // ONE-1453. Fail-closed with respect to DISABLING the breaker: a missing,
+    // duplicated, or malformed override contributes no candidate, and the
+    // resolver then applies engine defaults. It never errors the manifest,
+    // skips accounting, mints a zero threshold, or keeps a permissive partial
+    // field.
+    let actor_burst_breaker = match single_map_value(&entries, GATE_BREAKER_POLICY_KEY) {
+        MapValue::Missing | MapValue::Duplicate => None,
+        MapValue::Present(value) => parse_gate_breaker_thresholds(value),
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -212,6 +230,7 @@ pub(super) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifes
         signatures,
         on_budget_exhausted,
         budget_policy,
+        actor_burst_breaker,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
