@@ -81,7 +81,7 @@ fn schema_v1_contact_grant_with_legacy_five_key_scope_decodes() -> Result<()> {
     let legacy_value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
-            Value::from(OUTBOUND_GRANT_SCHEMA_VERSION),
+            Value::from(1_u64),
         ),
         (
             Value::from(KEY_PRINCIPAL_REF),
@@ -620,4 +620,44 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
             "{unsafe_server}"
         );
     }
+}
+
+
+#[test]
+fn schema_v2_carries_every_landed_outbound_scope_and_v1_body() -> Result<()> {
+    use crate::test_util::entity;
+    let scopes = [
+        StandingOutboundGrantScope::Contact { contact_ref: "contact:1".to_owned() },
+        StandingOutboundGrantScope::VerbClass { verb_class: "send".to_owned() },
+        StandingOutboundGrantScope::Channel { channel: "email".to_owned() },
+        StandingOutboundGrantScope::BriefVerbClass { brief_ref: "brief:1".to_owned(), verb_class: "send".to_owned() },
+        StandingOutboundGrantScope::ScopedMcp { server: "files".to_owned(), tool: "read_file".to_owned(),
+            data_class_ceiling: DataClass::Personal, endpoint_allowlist: vec!["https://files.example.test".to_owned()] },
+        StandingOutboundGrantScope::BookingPageInvites { page_ref: entity(0x91) },
+        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref: entity(0x92), envelope_ref: entity(0x93), verb_class: "mail.send".to_owned() },
+    ];
+    assert_eq!(OUTBOUND_GRANT_SCHEMA_VERSION, 2);
+    for scope in scopes {
+        let mut grant = StandingOutboundGrant::from_grant_mint_intent(
+            &intent(GrantMintIntentScope::VerbClass { verb_class: "send".to_owned() }), 10, vec![1; 32], [2; 32])?;
+        grant.scope = scope;
+        let bytes = encode_standing_outbound_grant_body(&grant)?;
+        assert_eq!(decode_standing_outbound_grant_body(&bytes)?, grant);
+        let mut legacy = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
+        let Value::Map(entries) = &mut legacy else { panic!("map"); };
+        assert_eq!(entries[0].1, Value::from(2_u64));
+        entries[0].1 = Value::from(1_u64);
+        let mut legacy_bytes = Vec::new();
+        rmpv::encode::write_value(&mut legacy_bytes, &legacy).unwrap();
+        if matches!(grant.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }) {
+            assert!(decode_standing_outbound_grant_body(&legacy_bytes).is_err());
+            assert!(!grant.scope.matches_effect("mail.send", "email", None, None));
+        } else {
+            assert_eq!(decode_standing_outbound_grant_body(&legacy_bytes)?, grant);
+            assert_eq!(encode_standing_outbound_grant_body(&decode_standing_outbound_grant_body(&legacy_bytes)?)?, bytes);
+            assert_eq!(legacy_bytes.len(), bytes.len());
+            assert_eq!(legacy_bytes.iter().zip(&bytes).filter(|(a, b)| a != b).count(), 1);
+        }
+    }
+    Ok(())
 }

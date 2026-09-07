@@ -1,0 +1,396 @@
+use super::*;
+use crate::channel_identity::{ChannelIdentity, ChannelIdentityFulfillment, SelfHeldShape};
+use crate::edge::EdgeActorClass;
+use crate::store::GateDecisionId;
+use crate::temporal::TimeRange;
+use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+
+fn fixture(rung: ChannelIdentityAutonomyRung) -> (tempfile::TempDir, Vault, AuthenticatedOwner, ChannelIdentityAutonomyRequest) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    let owner_id = entity(0x51);
+    vault.put_entity(&owner_id, crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 }, 1, b"owner").unwrap();
+    let owner = vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now()).unwrap();
+    let identity_ref = entity(0x61);
+    let actor_ref = entity(0x71);
+    let identity = ChannelIdentity::requested("email", "agent@example.test", SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(actor_ref), 1)
+        .transition(ChannelIdentityState::PendingFulfillment, Some(ChannelIdentityFulfillment::Manual), 2, None).unwrap()
+        .transition(ChannelIdentityState::Active, None, 3, None).unwrap();
+    vault.create_channel_identity(&identity_ref, &identity).unwrap();
+    let request = ChannelIdentityAutonomyRequest { actor_ref, relationship_context: RelationshipContext::WorkDeal, rung,
+        read_envelope: MailboxReadEnvelope { identity_ref, label_allowlist: vec!["inbox".to_owned()],
+            thread_allowlist: vec!["thread:1".to_owned()], not_before: None, not_after: None },
+        action_envelope: rung.verb().map(|_| ChannelIdentityActionEnvelope { identity_ref,
+            relationship_context: RelationshipContext::WorkDeal, counterparty_class: Some("known".to_owned()),
+            max_actions: 3, window_secs: 86_400 }) };
+    (dir, vault, owner, request)
+}
+
+fn candidate(request: &ChannelIdentityAutonomyRequest, n: u8) -> ChannelIdentityEffectCandidate {
+    ChannelIdentityEffectCandidate { identity_ref: request.read_envelope.identity_ref,
+        relationship_context: request.relationship_context, verb_class: "mail.send".to_owned(),
+        counterparty_class: Some("known".to_owned()), effect_key: [n; 32] }
+}
+
+fn review_scope(request: &ChannelIdentityAutonomyRequest) -> GraduationScopeKey {
+    GraduationScopeKey { actor_ref: request.actor_ref, identity_ref: request.read_envelope.identity_ref,
+        relationship_context: request.relationship_context, verb_class: "mail.send".to_owned(),
+        counterparty_class: Some("known".to_owned()) }
+}
+
+fn review(vault: &Vault, scope: &GraduationScopeKey, n: u64, outcome: DraftReviewOutcome) -> EntityId {
+    vault.record_graduation_evidence(GraduationEvidence { scope: scope.clone(), outcome,
+        receipt_ref: format!("review:{n:03}"), occurred_at: n },
+        &WriteActor::new(scope.actor_ref, EdgeActorClass::Agent)).unwrap()
+}
+
+fn snapshot(vault: &Vault) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let txn = vault.store.env.read_txn().unwrap();
+    vault.store.vault_meta.iter(&txn).unwrap().map(|row| {
+        let (key, value) = row.unwrap(); (key.to_vec(), value.to_vec())
+    }).collect()
+}
+
+#[test]
+fn read_and_action_grants_are_disjoint() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::ScopedRead);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    assert!(state.action_grant.is_none());
+    assert_eq!(state.read_grant.capability, AccessGrantCapability::ChannelIdentityScopedRead);
+    assert!(crate::consent::disclosure_grant_from_access_grant(&state.read_grant).is_err(),
+        "static adapters must not bypass mailbox envelope resolution");
+    let bound = read_bound(request.actor_ref, request.read_envelope.identity_ref,
+        address(PREDICATE_MAILBOX_READ_ENVELOPE, &read_value(&request.read_envelope).unwrap()).unwrap()).unwrap();
+    assert!(crate::consent::ActionGrant::new(bound).is_err());
+    assert!(vault.authorize_and_consume_channel_identity_grant(
+        &state.mode.read_grant_ref.unwrap(), &candidate(&request, 1)).is_err());
+}
+
+#[test]
+fn draft_grant_cannot_send() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let reference = state.mode.action_grant_ref.unwrap();
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 1)).unwrap());
+    let mut draft = candidate(&request, 1);
+    draft.verb_class = " MAIL.DRAFT ".to_owned();
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &draft).unwrap());
+    assert!(!state.action_grant.unwrap().scope.matches_effect("mail.send", "email", None, None));
+}
+
+#[test]
+fn owner_auto_envelope_matches_exactly() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::AutonomousWithinEnvelope);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let reference = state.mode.action_grant_ref.unwrap();
+    let good = candidate(&request, 1);
+    let mut wrong = good.clone();
+    wrong.identity_ref = entity(0x62);
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &wrong).unwrap());
+    wrong = good.clone(); wrong.relationship_context = RelationshipContext::PersonalFriends;
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &wrong).unwrap());
+    wrong = good.clone(); wrong.counterparty_class = None;
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &wrong).unwrap());
+    wrong.counterparty_class = Some("stranger".to_owned());
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &wrong).unwrap());
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &good).unwrap());
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &good).unwrap(), "retry shares slot");
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 2)).unwrap());
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 3)).unwrap());
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 4)).unwrap());
+}
+
+#[test]
+fn concurrent_volume_window_never_overruns() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::AutonomousWithinEnvelope);
+    let reference = vault.apply_channel_identity_autonomy(&request, &owner).unwrap().mode.action_grant_ref.unwrap();
+    let barrier = std::sync::Barrier::new(20);
+    let accepted = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..20).map(|n| {
+            let vault = &vault; let request = &request; let barrier = &barrier;
+            scope.spawn(move || {
+                barrier.wait();
+                vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(request, n)).unwrap()
+            })
+        }).collect();
+        handles.into_iter().map(|h| usize::from(h.join().unwrap())).sum::<usize>()
+    });
+    assert_eq!(accepted, 3);
+}
+
+#[test]
+fn twelve_untouched_offers_graduation() {
+    let (dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::SendWithApproval);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    for n in 1..12 { review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched); }
+    assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
+    review(&vault, &scope, 12, DraftReviewOutcome::ApprovedUntouched);
+    let before = vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().unwrap();
+    assert_eq!(before.unchanged_streak, 12);
+    assert_eq!(before.evidence_refs, (1..=12).map(|n| format!("review:{n:03}")).collect::<Vec<_>>());
+    assert_eq!(Some(before.proposed_envelope.clone()), request.action_envelope);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    let after = reopened.evaluate_graduation_offer(&scope, 12, crate::unix_seconds_now()).unwrap().unwrap();
+    assert_eq!(before.evidence_refs, after.evidence_refs);
+}
+
+#[test]
+fn amendment_resets_streak() {
+    for reset in [DraftReviewOutcome::ApprovedAmended { edit_distance_millis: 1 },
+        DraftReviewOutcome::Rejected, DraftReviewOutcome::Undone] {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+        let scope = review_scope(&request);
+        for n in 1..=12 { review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched); }
+        review(&vault, &scope, 13, reset);
+        for n in 14..=24 { review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched); }
+        assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
+        review(&vault, &scope, 25, DraftReviewOutcome::ApprovedUntouched);
+        assert_eq!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().unwrap().unchanged_streak, 12);
+    }
+}
+
+#[test]
+fn offer_never_mints_grant() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::SendWithApproval);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    for n in 1..=12 { review(&vault, &scope, n, DraftReviewOutcome::ApprovedUntouched); }
+    let before = snapshot(&vault);
+    let offer = vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().unwrap();
+    assert_eq!(snapshot(&vault), before);
+    assert_eq!(vault.verify_channel_identity_autonomy(&request, &owner).unwrap(), state);
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&state.mode.action_grant_ref.unwrap(), &candidate(&request, 1)).unwrap());
+    let envelope_ref = vault.put_channel_identity_action_envelope(offer.proposed_envelope, &owner, 1).unwrap();
+    let grant_ref = vault.mint_channel_identity_action_grant(&envelope_ref, "mail.send", &owner).unwrap();
+    let mut mode = state.mode;
+    mode.rung = ChannelIdentityAutonomyRung::AutonomousWithinEnvelope;
+    mode.action_grant_ref = Some(grant_ref);
+    vault.set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now()).unwrap();
+    assert!(vault.authorize_and_consume_channel_identity_grant(&grant_ref, &candidate(&request, 1)).unwrap());
+}
+
+#[test]
+fn authenticated_apply_verify_is_exact_and_idempotent() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    let first = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let before = snapshot(&vault);
+    assert_eq!(vault.apply_channel_identity_autonomy(&request, &owner).unwrap(), first);
+    assert_eq!(vault.verify_channel_identity_autonomy(&request, &owner).unwrap(), first);
+    assert_eq!(snapshot(&vault), before, "no new consent receipts on exact replay");
+    let mut wrong = request.clone();
+    wrong.action_envelope.as_mut().unwrap().max_actions += 1;
+    assert!(vault.apply_channel_identity_autonomy(&wrong, &owner).is_err());
+    assert!(vault.verify_channel_identity_autonomy(&wrong, &owner).is_err());
+    assert_eq!(snapshot(&vault), before);
+    assert!(vault.authenticate_owner(request.actor_ref, "agent", true, GateDecisionId::now()).is_err());
+    assert!(vault.authenticate_owner(owner.actor(), owner.principal_ref(), false, GateDecisionId::now()).is_err());
+    let (_other_dir, other) = open_test_vault_with(embedding_test_config());
+    assert!(other.put_mailbox_read_envelope(request.read_envelope.clone(), &owner, 1).is_err());
+    assert!(other.apply_channel_identity_autonomy(&request, &owner).is_err());
+}
+
+#[test]
+fn revoked_read_action_and_unified_grants_fail_closed() {
+    for which in 0..3 {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::AutonomousWithinEnvelope);
+        let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+        let reference = state.mode.action_grant_ref.unwrap();
+        let now = crate::unix_seconds_now();
+        match which {
+            0 => { vault.revoke_access_grant(&state.mode.read_grant_ref.unwrap(), now).unwrap(); }
+            1 => { vault.revoke_standing_outbound_grant(&reference, now).unwrap(); }
+            _ => {
+                let grant = state.action_grant.unwrap();
+                let bound_ref = crate::entity_id::bytes_to_hex_lower(&grant.binding_diff_handle);
+                vault.revoke_consent_grant(&owner, &bound_ref).unwrap();
+            }
+        }
+        assert!(vault.resolve_channel_identity_autonomy_mode(&request.read_envelope.identity_ref, &request.relationship_context, now).is_err());
+        assert!(vault.verify_channel_identity_autonomy(&request, &owner).is_err());
+        assert!(vault.apply_channel_identity_autonomy(&request, &owner).is_err());
+        assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 1)).unwrap());
+    }
+}
+
+#[test]
+fn rungs_and_relationship_contexts_round_trip_exactly() {
+    for (rung, wire) in [(ChannelIdentityAutonomyRung::ScopedRead, "scoped_read"),
+        (ChannelIdentityAutonomyRung::DraftOnly, "draft_only"),
+        (ChannelIdentityAutonomyRung::SendWithApproval, "send_with_approval"),
+        (ChannelIdentityAutonomyRung::AutonomousWithinEnvelope, "autonomous_within_envelope")] {
+        assert_eq!(rung.as_str(), wire);
+        assert_eq!(ChannelIdentityAutonomyRung::parse(wire), Some(rung));
+        for relationship_context in RelationshipContext::ALL {
+            let mode = ChannelIdentityAutonomyMode { identity_ref: entity(1), relationship_context,
+                rung, read_grant_ref: Some(entity(2)), action_grant_ref: Some(entity(3)) };
+            assert_eq!(mode_from(&decode(&encode(&mode_value(&mode)).unwrap()).unwrap()).unwrap(), mode);
+        }
+    }
+    assert!(ChannelIdentityAutonomyRung::parse("full_auto").is_none());
+    assert!(context(&Value::from("unknown")).is_err());
+}
+
+#[test]
+fn evidence_is_attributed_deduplicated_and_scope_isolated() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+        receipt_ref: "one-review".to_owned(), occurred_at: 1 };
+    assert!(vault.record_graduation_evidence(evidence.clone(), &WriteActor::new(entity(9), EdgeActorClass::Agent)).is_err());
+    let actor = WriteActor::new(scope.actor_ref, EdgeActorClass::Agent);
+    let first = vault.record_graduation_evidence(evidence.clone(), &actor).unwrap();
+    for _ in 0..12 { assert_eq!(vault.record_graduation_evidence(evidence.clone(), &actor).unwrap(), first); }
+    assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
+    let mut other = scope.clone(); other.counterparty_class = Some("other".to_owned());
+    for n in 1..=12 { review(&vault, &other, n, DraftReviewOutcome::ApprovedUntouched); }
+    assert!(vault.evaluate_graduation_offer(&scope, 0, crate::unix_seconds_now()).unwrap().is_none());
+}
+
+/// `WriteActor` can never stand in for owner authentication at an envelope or mode door.
+/// ```compile_fail
+/// use oneiron::{Vault, write_envelope::WriteActor};
+/// use oneiron::channel_identity_autonomy::{MailboxReadEnvelope, ChannelIdentityAutonomyMode};
+/// fn cannot_escalate(vault: &Vault, actor: &WriteActor, envelope: MailboxReadEnvelope, mode: ChannelIdentityAutonomyMode) {
+///     vault.put_mailbox_read_envelope(envelope, actor, 1).unwrap();
+///     vault.set_channel_identity_autonomy_mode(mode, actor, 1).unwrap();
+/// }
+/// ```
+#[test]
+fn owner_write_signatures_require_authenticated_owner() {
+    let _: fn(&Vault, MailboxReadEnvelope, &AuthenticatedOwner, u64) -> Result<EntityId> = Vault::put_mailbox_read_envelope;
+    let _: fn(&Vault, ChannelIdentityActionEnvelope, &AuthenticatedOwner, u64) -> Result<EntityId> = Vault::put_channel_identity_action_envelope;
+    let _: fn(&Vault, ChannelIdentityAutonomyMode, &AuthenticatedOwner, u64) -> Result<EntityId> = Vault::set_channel_identity_autonomy_mode;
+    let _: fn(&Vault, &EntityId, &ChannelIdentityEffectCandidate) -> Result<bool> = Vault::authorize_and_consume_channel_identity_grant;
+}
+
+
+#[test]
+fn generic_grant_writes_cannot_reactivate_or_replace_owner_read_authority() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    assert!(vault.put_access_grant(&reference, &state.read_grant).is_err());
+    assert!(vault.create_access_grant(&entity(0x85), &state.read_grant).is_err());
+    let unrelated = AccessGrant::companion_profile_read(request.actor_ref, entity(0x86), entity(0x87), 1);
+    assert!(vault.put_access_grant(&reference, &unrelated).is_err());
+    vault.revoke_access_grant(&reference, crate::unix_seconds_now()).unwrap();
+    assert!(vault.put_access_grant(&reference, &state.read_grant).is_err());
+    assert!(vault.verify_channel_identity_autonomy(&request, &owner).is_err());
+}
+
+#[test]
+fn volume_clock_rollback_fails_closed_and_elapsed_window_resets() {
+    let (_dir, vault, owner, mut request) = fixture(ChannelIdentityAutonomyRung::AutonomousWithinEnvelope);
+    request.action_envelope.as_mut().unwrap().max_actions = 1;
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let reference = state.mode.action_grant_ref.unwrap();
+    let StandingOutboundGrantScope::ChannelIdentityEnvelope { envelope_ref, .. } = state.action_grant.unwrap().scope
+        else { panic!("identity action"); };
+    let mut key = crate::outbound_grant::CHANNEL_IDENTITY_GRANT_USAGE_PREFIX.to_vec();
+    key.extend_from_slice(envelope_ref.as_bytes());
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 1)).unwrap());
+    let now = crate::unix_seconds_now();
+    // Simulate an engine clock rollback by making its last persisted window
+    // start lie in the future. There is no clock field in the public candidate.
+    {
+        let mut txn = vault.store.env.write_txn().unwrap();
+        let mut bytes = vault.store.vault_meta.get(&txn, &key).unwrap().unwrap().to_vec();
+        bytes[..8].copy_from_slice(&(now + 86_400).to_be_bytes());
+        vault.store.vault_meta.put(&mut txn, &key, &bytes).unwrap();
+        txn.commit().unwrap();
+    }
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 2)).unwrap());
+    {
+        let mut txn = vault.store.env.write_txn().unwrap();
+        let mut bytes = vault.store.vault_meta.get(&txn, &key).unwrap().unwrap().to_vec();
+        bytes[..8].copy_from_slice(&(now - 86_400).to_be_bytes());
+        vault.store.vault_meta.put(&mut txn, &key, &bytes).unwrap();
+        txn.commit().unwrap();
+    }
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 2)).unwrap());
+    assert!(!vault.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 3)).unwrap());
+}
+
+#[test]
+fn owner_can_apply_another_context_without_reminting_shared_read_authority() {
+    let (_dir, vault, owner, mut request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    let first = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    request.relationship_context = RelationshipContext::PersonalFriends;
+    request.action_envelope.as_mut().unwrap().relationship_context = request.relationship_context;
+    let second = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    assert_eq!(first.mode.read_grant_ref, second.mode.read_grant_ref);
+    assert_ne!(first.mode.action_grant_ref, second.mode.action_grant_ref);
+    assert_eq!(vault.verify_channel_identity_autonomy(&request, &owner).unwrap(), second);
+}
+
+
+#[test]
+fn scoped_read_checks_identity_principal_labels_threads_and_item_time() {
+    let (_dir, vault, owner, mut request) = fixture(ChannelIdentityAutonomyRung::ScopedRead);
+    request.read_envelope.not_before = Some(10);
+    request.read_envelope.not_after = Some(20);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    let item = MailboxReadCandidate { identity_ref: request.read_envelope.identity_ref,
+        label: Some("inbox".to_owned()), thread_ref: Some("thread:1".to_owned()), occurred_at: 15 };
+    assert!(vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &item).unwrap());
+    let mut wrong = item.clone(); wrong.label = Some("private".to_owned());
+    assert!(!vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &wrong).unwrap());
+    wrong = item.clone(); wrong.thread_ref = None;
+    assert!(!vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &wrong).unwrap());
+    wrong = item.clone(); wrong.occurred_at = 21;
+    assert!(!vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &wrong).unwrap());
+    wrong = item.clone(); wrong.identity_ref = entity(0x62);
+    assert!(!vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &wrong).unwrap());
+    assert!(!vault.authorize_channel_identity_scoped_read(&reference, &entity(0x72), &item).unwrap());
+    vault.revoke_access_grant(&reference, crate::unix_seconds_now()).unwrap();
+    assert!(!vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &item).unwrap());
+}
+
+#[test]
+fn posture_never_authorizes_missing_or_mismatched_grants() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    let state = vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let before = snapshot(&vault);
+    let mut mode = state.mode.clone(); mode.rung = ChannelIdentityAutonomyRung::AutonomousWithinEnvelope;
+    assert!(vault.set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now()).is_err());
+    let mut mode = state.mode.clone(); mode.action_grant_ref = Some(entity(0x88));
+    assert!(vault.set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now()).is_err());
+    let mut mode = state.mode; mode.read_grant_ref = None;
+    assert!(vault.set_channel_identity_autonomy_mode(mode, &owner, crate::unix_seconds_now()).is_err());
+    assert_eq!(snapshot(&vault), before);
+}
+
+#[test]
+fn effect_key_reservation_survives_reopen_without_double_consumption() {
+    let (dir, vault, owner, mut request) = fixture(ChannelIdentityAutonomyRung::AutonomousWithinEnvelope);
+    request.action_envelope.as_mut().unwrap().max_actions = 1;
+    let reference = vault.apply_channel_identity_autonomy(&request, &owner).unwrap().mode.action_grant_ref.unwrap();
+    let effect = candidate(&request, 1);
+    assert!(vault.authorize_and_consume_channel_identity_grant(&reference, &effect).unwrap());
+    drop(vault);
+    let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    assert!(reopened.authorize_and_consume_channel_identity_grant(&reference, &effect).unwrap());
+    assert!(!reopened.authorize_and_consume_channel_identity_grant(&reference, &candidate(&request, 2)).unwrap());
+}
+
+
+#[test]
+fn owner_review_exception_requires_authentication_and_preserves_attribution() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+    vault.apply_channel_identity_autonomy(&request, &owner).unwrap();
+    let scope = review_scope(&request);
+    let evidence = GraduationEvidence { scope: scope.clone(), outcome: DraftReviewOutcome::ApprovedUntouched,
+        receipt_ref: "owner-review".to_owned(), occurred_at: 1 };
+    assert!(vault.record_graduation_evidence(evidence.clone(), &WriteActor::new(owner.actor(), EdgeActorClass::Human)).is_err());
+    vault.record_graduation_evidence_as_owner(evidence, &owner).unwrap();
+    let offer = vault.evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now()).unwrap().unwrap();
+    assert_eq!(offer.scope.actor_ref, request.actor_ref);
+    assert_eq!(offer.evidence_refs, ["owner-review"]);
+}
