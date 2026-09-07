@@ -52,7 +52,7 @@ pub struct RunTreeNode {
     /// [`RunTreeEventKind`], attempt rows, or
     /// [`crate::attempt_queue::AttemptState`]. A breaker pause is not
     /// terminal and synthesizes no attempt event. Breaker truth lives in
-    /// `gate`; this module stores nothing and reads no vault metadata. Elided
+    /// `gate`; the read adapter obtains that projection without storing it. Elided
     /// when false, so serialized trees stay wire-compatible in both
     /// directions.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -138,15 +138,20 @@ impl RunTree {
     /// Stamps the ONE-1453 burst-breaker pause marker on this tree.
     ///
     /// Presentation only. The caller obtains `paused` from
-    /// [`crate::Vault::gate_breaker_run_projection`]; this module never reads
-    /// breaker storage and never derives the value itself.
+    /// [`crate::Vault::gate_breaker_run_projection`]; the setter never derives
+    /// breaker state from attempt lifecycle status.
     ///
     /// The marker lands on exactly the deterministic FIRST root — the same
     /// root ordering ONE-1452 uses to pick a run's agent label — and every
     /// other node, root or child, stays `false`.
     pub fn set_gate_breaker_paused_marker(&mut self, paused: bool) {
-        for (index, root) in self.roots.iter_mut().enumerate() {
-            root.gate_breaker_paused = paused && index == 0;
+        let mut nodes: Vec<_> = self.roots.iter_mut().collect();
+        while let Some(node) = nodes.pop() {
+            node.gate_breaker_paused = false;
+            nodes.extend(node.children.iter_mut());
+        }
+        if let Some(root) = self.roots.first_mut() {
+            root.gate_breaker_paused = paused;
         }
     }
 }
@@ -154,6 +159,7 @@ impl RunTree {
 /// Read adapter over the runtime attempt queue.
 pub struct RunTreeAdapter<'a> {
     queue: AttemptQueue<'a>,
+    vault: &'a Vault,
 }
 
 impl<'a> RunTreeAdapter<'a> {
@@ -162,6 +168,7 @@ impl<'a> RunTreeAdapter<'a> {
     pub fn new(vault: &'a Vault) -> Self {
         Self {
             queue: AttemptQueue::new(vault),
+            vault,
         }
     }
 
@@ -173,7 +180,13 @@ impl<'a> RunTreeAdapter<'a> {
     /// Renders persisted rows for one run id into deterministic roots and
     /// children.
     pub fn read_run(&self, run_id: &str) -> Result<RunTree> {
-        render_run_tree_presorted(self.queue.list_run(run_id)?)
+        let mut tree = render_run_tree_presorted(self.queue.list_run(run_id)?)?;
+        let paused = self
+            .vault
+            .gate_breaker_run_projection(run_id)?
+            .gate_breaker_paused;
+        tree.set_gate_breaker_paused_marker(paused);
+        Ok(tree)
     }
 
     /// Engine-generated display name and agent label for one run's consent

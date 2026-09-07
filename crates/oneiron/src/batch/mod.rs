@@ -1,6 +1,7 @@
 pub mod export;
 pub(crate) mod secret_scan;
 
+mod agent_definition_create;
 mod authority_log;
 mod builder;
 mod child_of_overlay;
@@ -8,6 +9,8 @@ mod claim_candidate_apply;
 mod deindex;
 mod edge_apply;
 mod facet_validation;
+mod gate_mode;
+mod gate_staging;
 mod lexical_query_hints;
 mod ops_pipeline;
 mod phonetic_apply;
@@ -37,15 +40,19 @@ pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,
 };
+pub(crate) use self::gate_mode::ApplyOpsGateMode;
+pub(crate) use self::gate_staging::StagedClaimGateOutcome;
+use self::gate_staging::{stage_preflight_decision, staged_claim_gate_outcomes};
 pub(crate) use self::ops_pipeline::{
-    ApplyOpsGateMode, BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
-    apply_ops_with_origin, apply_session_bundle_claim_puts, reject_overlay_member_base_write,
+    BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode, apply_ops_with_origin,
+    apply_session_bundle_claim_puts, reject_overlay_member_base_write,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
+pub(crate) use self::put_apply::delete_entity_index_rows;
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader,
-    LONG_INTERVAL_THRESHOLD_SECS, SHORT_ID_COUNTER_LEN, StagedClaimGateOutcome,
+    LONG_INTERVAL_THRESHOLD_SECS, SHORT_ID_COUNTER_LEN,
 };
 // Reached only from the crate-root white-box test module (`crate::tests`); the
 // re-exports keep the historical `crate::batch::` paths resolvable there.

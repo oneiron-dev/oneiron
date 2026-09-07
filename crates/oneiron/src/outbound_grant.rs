@@ -101,7 +101,10 @@ const KEY_LAST_USED_AT: &str = OUTBOUND_GRANT_BODY_KEYS[9];
 const KEY_BINDING_DIFF_HANDLE: &str = OUTBOUND_GRANT_BODY_KEYS[10];
 const KEY_READ_FRONTIER_HASH: &str = OUTBOUND_GRANT_BODY_KEYS[11];
 
-const SCOPE_KEYS: [&str; 9] = [
+// Append-only: `page_ref` is the tenth key and sits inside the optional range
+// `decode_scope` validates, so every row written before it decodes unchanged
+// and no existing scope's encoded bytes move.
+const SCOPE_KEYS: [&str; 10] = [
     "kind",
     "contact_ref",
     "verb_class",
@@ -111,6 +114,7 @@ const SCOPE_KEYS: [&str; 9] = [
     "tool",
     "data_class_ceiling",
     "endpoint_allowlist",
+    "page_ref",
 ];
 
 const SCOPE_KIND_CONTACT: &str = "contact";
@@ -118,6 +122,17 @@ const SCOPE_KIND_VERB_CLASS: &str = "verb_class";
 const SCOPE_KIND_CHANNEL: &str = "channel";
 const SCOPE_KIND_BRIEF_VERB_CLASS: &str = "brief_verb_class";
 const SCOPE_KIND_SCOPED_MCP: &str = "scoped_mcp";
+/// On-disk token for the booking-page invite scope. Byte-identical to the
+/// receipt vocabulary in `receipt/grant.rs`, so the audit surface and the codec
+/// cannot drift.
+const SCOPE_KIND_BOOKING_PAGE_INVITES: &str = "booking_page_invites";
+
+/// OF-336 origin component recorded on a booking-page invite grant. The mint is
+/// the page-publish action, not an ask escalator, so the provenance names it.
+const BOOKING_PAGE_INVITE_ORIGIN_COMPONENT_ID: &str = "booking.page_publish";
+
+/// OF-336 origin action recorded on a booking-page invite grant.
+const BOOKING_PAGE_INVITE_ORIGIN_ACTION_ID: &str = "publish_booking_page";
 const PRINCIPAL_INDEX_PREFIX: &[u8] = b"outbound_grant/principal/v1\0";
 const SEND_VERB_CLASS: &str = "send";
 
@@ -143,6 +158,11 @@ pub enum StandingOutboundGrantScope {
         data_class_ceiling: DataClass,
         endpoint_allowlist: Vec<String>,
     },
+    /// Bounded booking-page authority: `calendar.invite` for bookings that a
+    /// confirm persisted on exactly this page. The recipient binding is NOT in
+    /// this scope — the consent door resolves it from booking claims — so a
+    /// live grant never widens past the page it was minted for.
+    BookingPageInvites { page_ref: EntityId },
 }
 
 /// Authenticated grant-time input for one payload-aware external tool scope.
@@ -156,6 +176,18 @@ pub struct ScopedMcpGrantMintIntent {
     pub tool: String,
     pub data_class_ceiling: DataClass,
     pub endpoint_allowlist: Vec<String>,
+}
+
+/// Authenticated grant-time input for one booking page's invite scope.
+///
+/// Deliberately two fields: the page the publish action named and the
+/// principal that published it. Nothing about a booker, a recipient, or a
+/// verb travels here — the scope authorizes exactly `calendar.invite`, and the
+/// recipient binding is resolved from persisted booking claims at the door.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BookingPageInviteGrantMintIntent {
+    pub page_ref: EntityId,
+    pub publisher_principal: EntityId,
 }
 
 impl StandingOutboundGrantScope {
@@ -195,6 +227,7 @@ impl StandingOutboundGrantScope {
             Self::Channel { .. } => "always_this_channel",
             Self::BriefVerbClass { .. } => "brief_verb_class",
             Self::ScopedMcp { .. } => "scoped_mcp",
+            Self::BookingPageInvites { .. } => "booking_page_invites",
         }
     }
 
@@ -248,6 +281,11 @@ impl StandingOutboundGrantScope {
                     && brief_ref.is_some_and(|brief_ref| refs_match(grant_brief, brief_ref))
             }
             Self::ScopedMcp { .. } => false,
+            // Exactly one verb. The page and the recipient are NOT decided
+            // here: the calendar consent door resolves both from persisted
+            // booking claims, so a page grant can never cover a second verb
+            // even when the channel string matches.
+            Self::BookingPageInvites { .. } => verb.trim() == crate::calendar::CALENDAR_INVITE_VERB,
         }
     }
 }
@@ -591,9 +629,10 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
                 Value::Array(grant_endpoints.iter().cloned().map(Value::from).collect());
             SCOPE_KIND_SCOPED_MCP
         }
+        StandingOutboundGrantScope::BookingPageInvites { .. } => SCOPE_KIND_BOOKING_PAGE_INVITES,
     };
 
-    Value::Map(vec![
+    let mut entries = vec![
         (Value::from(SCOPE_KEYS[0]), Value::from(kind)),
         (Value::from(SCOPE_KEYS[1]), contact_ref),
         (Value::from(SCOPE_KEYS[2]), verb_class),
@@ -603,7 +642,14 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
         (Value::from(SCOPE_KEYS[6]), tool),
         (Value::from(SCOPE_KEYS[7]), data_class_ceiling),
         (Value::from(SCOPE_KEYS[8]), endpoint_allowlist),
-    ])
+    ];
+    // The tenth pair is pushed ONLY by the scope that owns it. Emitting a Nil
+    // `page_ref` for every other kind would move their encoded bytes, and this
+    // codec is append-only.
+    if let StandingOutboundGrantScope::BookingPageInvites { page_ref } = scope {
+        entries.push((Value::from(SCOPE_KEYS[9]), Value::from(page_ref.to_hex())));
+    }
+    Value::Map(entries)
 }
 
 fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
@@ -615,19 +661,23 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
     let kind = required_value(entries, SCOPE_KEYS[0])?
         .as_str()
         .ok_or_else(invalid_grant)?;
-    let has_non_applicable_field = if kind == SCOPE_KIND_SCOPED_MCP {
-        SCOPE_KEYS[1..5].iter().any(|scope_key| {
-            entries.iter().any(|(key, value)| {
-                key.as_str() == Some(*scope_key) && !matches!(value, Value::Nil)
-            })
-        })
+    // Each kind names exactly the keys it does NOT own. A blind kind's
+    // non-applicable set now reaches `page_ref` too: blind rows never carried
+    // it, so every pre-existing row still decodes identically.
+    let non_applicable: Vec<&str> = if kind == SCOPE_KIND_BOOKING_PAGE_INVITES {
+        SCOPE_KEYS[1..9].to_vec()
+    } else if kind == SCOPE_KIND_SCOPED_MCP {
+        let mut keys = SCOPE_KEYS[1..5].to_vec();
+        keys.extend_from_slice(&SCOPE_KEYS[9..]);
+        keys
     } else {
-        SCOPE_KEYS[5..].iter().any(|scope_key| {
-            entries.iter().any(|(key, value)| {
-                key.as_str() == Some(*scope_key) && !matches!(value, Value::Nil)
-            })
-        })
+        SCOPE_KEYS[5..].to_vec()
     };
+    let has_non_applicable_field = non_applicable.iter().any(|scope_key| {
+        entries
+            .iter()
+            .any(|(key, value)| key.as_str() == Some(*scope_key) && !matches!(value, Value::Nil))
+    });
     if has_non_applicable_field {
         return Err(invalid_grant());
     }
@@ -664,6 +714,11 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
                 )?)?,
             })
         }
+        SCOPE_KIND_BOOKING_PAGE_INVITES => Ok(StandingOutboundGrantScope::BookingPageInvites {
+            // Required for this kind: a row that claims the booking-page scope
+            // without naming its page authorizes nothing and fails closed.
+            page_ref: decode_entity_ref(required_value(entries, SCOPE_KEYS[9])?)?,
+        }),
         _ => Err(invalid_grant()),
     }
 }
@@ -701,6 +756,9 @@ fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
                 canonical_non_empty_str(endpoint)?;
             }
         }
+        // An `EntityId` is already the validated form of a page reference;
+        // there is no string spelling to canonicalize.
+        StandingOutboundGrantScope::BookingPageInvites { .. } => {}
     }
     Ok(())
 }
@@ -790,6 +848,11 @@ fn decode_canonical_non_empty_string(value: &Value) -> Result<String> {
     let value = value.as_str().ok_or_else(invalid_grant)?;
     canonical_non_empty_str(value)?;
     Ok(value.to_owned())
+}
+
+fn decode_entity_ref(value: &Value) -> Result<EntityId> {
+    let value = value.as_str().ok_or_else(invalid_grant)?;
+    EntityId::from_hex(value).map_err(|_| invalid_grant())
 }
 
 fn decode_optional_string(value: &Value) -> Result<Option<String>> {
@@ -958,6 +1021,57 @@ impl Vault {
         Ok(grant)
     }
 
+    /// Mints the bounded booking-page invite grant for one published page.
+    ///
+    /// Same shape as the two landed mints: resolve the policy floor on a read
+    /// transaction, build and validate the grant, then write it under the
+    /// existing `entities.get` already-exists guard. The caller owns
+    /// one-live-grant-per-page: `booking::mint_publish_page_invite_grant`
+    /// looks up the principal index before it ever reaches this door, and
+    /// derives `id` from the page so a second publish lands on
+    /// [`Error::OutboundGrantAlreadyExists`] rather than on a second grant.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::OutboundGrantAlreadyExists`] when `id` is already stored;
+    /// [`Error::InvalidOutboundGrantBody`] when the grant fails validation;
+    /// storage errors propagate.
+    pub fn mint_booking_page_invite_outbound_grant(
+        &self,
+        id: &EntityId,
+        intent: &BookingPageInviteGrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        let policy = {
+            let rtxn = self.store.env.read_txn()?;
+            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
+        };
+        let grant = StandingOutboundGrant {
+            principal_ref: intent.publisher_principal.to_hex(),
+            origin_component_id: BOOKING_PAGE_INVITE_ORIGIN_COMPONENT_ID.to_owned(),
+            origin_action_id: BOOKING_PAGE_INVITE_ORIGIN_ACTION_ID.to_owned(),
+            origin_receipt_ref: None,
+            scope: StandingOutboundGrantScope::BookingPageInvites {
+                page_ref: intent.page_ref,
+            },
+            status: StandingOutboundGrantStatus::Active,
+            created_at,
+            revoked_at: None,
+            last_used_at: None,
+            binding_diff_handle: booking_page_invite_grant_binding_handle(intent),
+            read_frontier_hash: policy.read_frontier_hash()?,
+        };
+        grant.validate()?;
+        let data = encode_standing_outbound_grant_body(&grant)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::OutboundGrantAlreadyExists);
+        }
+        self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
+        wtxn.commit()?;
+        Ok(grant)
+    }
+
     /// Revokes a standing outbound grant by rewriting the same record as revoked.
     pub fn revoke_standing_outbound_grant(
         &self,
@@ -1078,6 +1192,20 @@ fn scoped_mcp_grant_binding_handle(intent: &ScopedMcpGrantMintIntent) -> Vec<u8>
     for endpoint in &intent.endpoint_allowlist {
         scoped_mcp_binding_hash_str(&mut hasher, endpoint);
     }
+    hasher.finalize().as_bytes().to_vec()
+}
+
+/// Content address for the page-publish decision behind one booking-page
+/// grant. Its own domain tag: a booking-page handle can never be replayed as
+/// an OF-336 escalator handle or as a scoped-tool one over the same bytes.
+fn booking_page_invite_grant_binding_handle(intent: &BookingPageInviteGrantMintIntent) -> Vec<u8> {
+    let mut hasher = blake3::Hasher::new();
+    scoped_mcp_binding_hash_bytes(
+        &mut hasher,
+        b"oneiron.gate.standing_outbound_grant.booking_page_invites.v1",
+    );
+    scoped_mcp_binding_hash_bytes(&mut hasher, intent.publisher_principal.as_bytes());
+    scoped_mcp_binding_hash_bytes(&mut hasher, intent.page_ref.as_bytes());
     hasher.finalize().as_bytes().to_vec()
 }
 

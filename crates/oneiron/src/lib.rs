@@ -16,6 +16,7 @@ pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod attempt_queue;
 pub mod authority;
+pub mod autoreason_campaign;
 pub mod batch;
 pub mod blob_artifact;
 pub(crate) mod bm25;
@@ -78,7 +79,9 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod fanout_auto;
 pub mod federation;
+pub mod feedback;
 pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
@@ -129,6 +132,7 @@ pub mod saved_query;
 pub mod secret_custody;
 pub mod secret_lease;
 pub mod secret_manifest;
+pub mod secret_rotation;
 pub mod secret_snapshot;
 pub mod serialize;
 pub mod session_lifecycle;
@@ -175,6 +179,17 @@ pub use crate::artifact_hosting::{
 };
 pub use crate::attempt_queue::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueue, InterveneAttempt,
+};
+pub use crate::autoreason_campaign::{
+    AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
+    CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
+    CampaignComparisonReport, CampaignConfig, CampaignCorpusFilter, CampaignCost,
+    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
+    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
+    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTasteJudgment,
+    CampaignTournamentConfig, CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD,
+    EXPERIMENT_VERDICT_KEEP, ExperimentVerdict, build_campaign_held_out_decision,
+    build_campaign_split_report, compare_campaign, merge_campaign_arm_report,
 };
 pub use crate::batch::BatchBuilder;
 // Kept by the compiler, not by a consumer: `bm25` and `gate` are non-`pub` modules,
@@ -223,6 +238,10 @@ pub use crate::commitment_wake::{
     CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip, CommitmentWakeSkip,
     approved_commitment_wake, commitment_wake_proposal_claim_id, decode_commitment_wake_event,
     encode_commitment_wake_event, fire_due_commitment_wake, schedule_approved_commitment_wake,
+};
+pub use crate::comm::{
+    PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch, SendOverrideScope, mint_send_override,
+    send_override_for_send,
 };
 pub use crate::compaction::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
@@ -275,6 +294,24 @@ pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 pub use crate::federation::FederationGrantScope;
+pub use crate::feedback::{
+    FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
+    FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_DAG_MAX_HOPS,
+    FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
+    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_MECHANISM_MAX_BYTES,
+    FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
+    FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_REF_MAX_BYTES,
+    FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS, FeedbackApproval,
+    FeedbackApprovalScope, FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot,
+    FeedbackDagHop, FeedbackError, FeedbackExportOutcome, FeedbackHealerDiagnosis,
+    FeedbackHnswSnapshot, FeedbackPlatform, FeedbackPreview, FeedbackRedactionError,
+    FeedbackRedactor, FeedbackSendContext, FeedbackSendOutcome, FeedbackSendRoute,
+    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, PassThroughFeedbackRedactor,
+    decode_feedback_bundle, encode_feedback_bundle, export_feedback_bundle, feedback_approval_card,
+    feedback_approval_component_id, feedback_approval_disclosure, feedback_bundle_digest,
+    feedback_content_ref, feedback_dispatch_request, feedback_logical_send_ref,
+    prepare_feedback_preview, send_feedback, validate_feedback_approval,
+};
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
     CriticalWriteConfirmResolution, GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS,
@@ -293,13 +330,15 @@ pub use crate::linear_sync::{
     TaskIssueLink, TaskMirrorSnapshot, WaveResult, linear_operation_id,
 };
 pub use crate::llm::{
+    AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
+    AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend,
     LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
     LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
     PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError, TierPrecedence,
-    UnsupportedCapability,
+    UnsupportedCapability, auto_check_llm_request,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
@@ -373,7 +412,9 @@ pub use crate::wave_orchestration::{
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
     blocked_by_edge_write,
 };
-pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+pub use crate::write_envelope::{
+    ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     #[cfg(test)]

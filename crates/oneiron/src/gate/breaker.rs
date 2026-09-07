@@ -197,6 +197,21 @@ pub(crate) struct GateBreakerApplied {
 /// Byte-exact restore instructions for one event's breaker mutation.
 pub(crate) type GateBreakerUndo = (Vec<u8>, Option<Vec<u8>>, Option<GateDecisionId>);
 
+/// A duplicate, absent, or malformed override never disables the breaker:
+/// it contributes no candidate, so the resolver uses the engine defaults.
+pub(super) fn decode_gate_breaker_override(
+    entries: &[(Value, Value)],
+) -> Option<GateBreakerThresholds> {
+    let mut values = entries.iter().filter_map(|(key, value)| {
+        (key.as_str() == Some(GATE_BREAKER_POLICY_KEY)).then_some(value)
+    });
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    parse_gate_breaker_thresholds(value)
+}
+
 /// The optional resolved `actor_burst_breaker` manifest override.
 ///
 /// A valid override is an object with EXACTLY the two positive integral fields

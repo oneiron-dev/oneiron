@@ -2593,7 +2593,7 @@ fn gate_source_trust_unstamped_claim_hits_floor_band() -> Result<()> {
         body.scope = scope;
         // The manifest's row carries no `actor_ref`, so it is class-wide and
         // answers an unattributed write exactly as it answers an attributed one.
-        let allowed = check_claim_source_trust(&body, None, &policy).is_ok();
+        let allowed = check_claim_source_trust(&body, None, &policy, false).is_ok();
         assert_eq!(allowed, expect_auto, "{label}");
     }
     Ok(())
@@ -3317,8 +3317,11 @@ fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> 
     Ok(())
 }
 
+/// ONE-1752: the grant is irrelevant to the opt-out consequence, exactly as
+/// before — only the consequence itself moved from a deny to a held owner
+/// decision.
 #[test]
-fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result<()> {
+fn external_effect_holds_opted_out_counterparty_regardless_of_grant() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
         "sender",
@@ -3351,10 +3354,10 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
         check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
-    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
-        vec!["gate.deny.counterparty_opt_out"]
+        vec!["gate.pending.counterparty_opt_out"]
     );
     assert_eq!(
         decision.receipt_reasons(),
@@ -3366,10 +3369,10 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
 
     let decisions = vault.store.gate_decisions(10)?;
     assert_eq!(decisions.len(), 1);
-    assert_eq!(decisions[0].outcome, "deny");
+    assert_eq!(decisions[0].outcome, "pending");
     assert_eq!(
         decisions[0].reason_codes,
-        vec!["gate.deny.counterparty_opt_out"]
+        vec!["gate.pending.counterparty_opt_out"]
     );
     assert_eq!(
         decisions[0].receipt_reasons,
@@ -3384,7 +3387,7 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
     assert_eq!(
         receipts[0].policy_trace,
         vec![
-            "gate.deny.counterparty_opt_out",
+            "gate.pending.counterparty_opt_out",
             "counterparty_opt_out_unsubscribe",
             "counterparty_first_touch_user_introduction"
         ]
@@ -3400,6 +3403,487 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
             .map(String::as_str),
         Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
     );
+    Ok(())
+}
+
+/// The manifest every ONE-1752 opt-out fixture below evaluates against: one
+/// scoped grant for `sender` on `line`, plus whatever posture entry the caller
+/// wants.
+fn opt_out_posture_manifest(posture: Option<&str>) -> Vec<u8> {
+    let mut entries = vec![external_effect_scoped_grant_entry(
+        "sender",
+        "send",
+        Value::Map(vec![
+            (
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("line"),
+            ),
+            (
+                Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
+                Value::from(ExternalEffectPolicyRisk::Normal.as_str()),
+            ),
+        ]),
+        None,
+    )];
+    if let Some(posture) = posture {
+        entries.push((
+            Value::from(POLICY_COMM_OPT_OUT_POSTURE_KEY),
+            Value::from(posture),
+        ));
+    }
+    encode_policy_manifest(entries)
+}
+
+/// An opted-out contact for `counterparty`, written through the redirected
+/// contact writers so the claim heads — not a hand-placed row — are the truth
+/// the gate hydrates.
+fn opted_out_contact(
+    vault: &crate::Vault,
+    identity: EntityId,
+    contact_id: EntityId,
+    counterparty: &str,
+    reason: CounterpartyOptOutReason,
+) -> Result<()> {
+    let contact = CounterpartyContactRecord::user_introduction(identity, counterparty, 10)?;
+    vault.create_counterparty_contact(&contact_id, &contact)?;
+    vault.opt_out_counterparty_contact(&contact_id, reason, 20)?;
+    Ok(())
+}
+
+/// A bound human, the only actor class that may rule on a send override.
+fn owner_actor(vault: &crate::Vault, seed: u8) -> Result<WriteActor> {
+    let owner = test_id(seed);
+    vault.put_entity(
+        &owner,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    Ok(WriteActor::new(owner, EdgeActorClass::Human))
+}
+
+/// ARCH-0057 §3.1, end to end on the full hydration path: an opted-out
+/// counterparty HOLDS the send for the owner, the owner rules with
+/// `mint_send_override`, and the resubmitted send is allowed and says so.
+///
+/// The owner-facing deny is never emitted.
+#[test]
+fn gate_opt_out_escalates_never_denies_owner() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xE5), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+    assert_eq!(policy.comm_opt_out_posture(), CommOptOutPosture::Escalate);
+
+    opted_out_contact(
+        &vault,
+        test_id(0xE6),
+        test_id(0xE7),
+        "kenji@example.com",
+        CounterpartyOptOutReason::Stop,
+    )?;
+
+    // No channel identity: the shipping constructors leave it None, so this is
+    // the real hydration path (party-channel index plus mandatory full scan).
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+    effect.send_ref = Some("intent:kenji:1".to_owned());
+
+    let (_decision_id, held, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(held.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&held),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    assert!(
+        !gate_reason_strs(&held).contains(&GateReasonCode::DenyCounterpartyOptOut.as_str()),
+        "the owner path must never see the deny"
+    );
+    assert_eq!(
+        held.receipt_reasons(),
+        &[
+            "counterparty_opt_out_stop",
+            "counterparty_first_touch_user_introduction"
+        ]
+    );
+
+    // The decision is recorded as the pending owner ask the dispatch path holds
+    // on. (`outbound::tests` pins the Held/Pending dispatch outcome itself.)
+    let decisions = vault.store.gate_decisions(10)?;
+    let held_record = decisions
+        .iter()
+        .find(|record| record.reason_codes == vec!["gate.pending.counterparty_opt_out"])
+        .expect("the pending opt-out decision is recorded");
+    assert_eq!(held_record.outcome, "pending");
+
+    // The owner rules. The channel is minted mixed-case and padded on purpose:
+    // mint and hydration share one normalizer, so it still covers `line`.
+    let owner = owner_actor(&vault, 0xE8)?;
+    crate::comm::mint_send_override(
+        &vault,
+        "kenji@example.com",
+        Some(" LINE "),
+        crate::comm::SendOverrideScope::Standing,
+        None,
+        owner,
+        30,
+        None,
+    )
+    .expect("the owner may rule on a send override");
+
+    // The caller resubmits the SAME send.
+    let (_decision_id, allowed, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(allowed.outcome(), GateOutcome::Allow);
+    assert!(
+        allowed
+            .receipt_reasons()
+            .contains(&"comm_send_override_standing"),
+        "the allow must name the override that decided it: {:?}",
+        allowed.receipt_reasons()
+    );
+    // The override authorized a send; it cleared nothing.
+    let contact = vault
+        .get_counterparty_contact(&test_id(0xE7))?
+        .expect("contact row");
+    assert!(contact.is_opted_out());
+    Ok(())
+}
+
+/// The receipt names exactly ONE override source — never both, and never one
+/// when no override decided the send.
+#[test]
+fn override_receipt_is_source_specific() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xEA), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+    opted_out_contact(
+        &vault,
+        test_id(0xEB),
+        test_id(0xEC),
+        "mika@example.com",
+        CounterpartyOptOutReason::Unsubscribe,
+    )?;
+
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("mika@example.com".to_owned());
+    effect.send_ref = Some("intent:mika:1".to_owned());
+
+    let owner = owner_actor(&vault, 0xED)?;
+    crate::comm::mint_send_override(
+        &vault,
+        "mika@example.com",
+        Some("line"),
+        crate::comm::SendOverrideScope::OneShot,
+        Some("intent:mika:1"),
+        owner,
+        30,
+        Some(u64::MAX),
+    )
+    .expect("the owner may rule on a send override");
+    let (_decision_id, one_shot, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(one_shot.outcome(), GateOutcome::Allow);
+    assert_eq!(
+        override_tokens(&one_shot),
+        vec!["comm_send_override_one_shot"]
+    );
+    // The chained sources are RETAINED, not replaced.
+    assert!(
+        one_shot
+            .receipt_reasons()
+            .contains(&"counterparty_opt_out_unsubscribe")
+    );
+    assert!(
+        one_shot
+            .receipt_reasons()
+            .contains(&"counterparty_first_touch_user_introduction")
+    );
+
+    // A standing head now also covers this send. Standing wins, and the receipt
+    // still names exactly one source.
+    crate::comm::mint_send_override(
+        &vault,
+        "mika@example.com",
+        None,
+        crate::comm::SendOverrideScope::Standing,
+        None,
+        owner,
+        31,
+        None,
+    )
+    .expect("the owner may rule on a send override");
+    let (_decision_id, standing, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(
+        override_tokens(&standing),
+        vec!["comm_send_override_standing"]
+    );
+
+    // A posture-`allow_with_receipt` send with no override at all carries
+    // neither token.
+    let (_other_tmp, other_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &other_vault,
+        test_id(0xEE),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let other_policy = resolve(&other_vault)?;
+    opted_out_contact(
+        &other_vault,
+        test_id(0xEB),
+        test_id(0xEC),
+        "mika@example.com",
+        CounterpartyOptOutReason::Unsubscribe,
+    )?;
+    let (_decision_id, plain, _charge) = other_vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&other_vault.store, wtxn, &effect, &other_policy, true)
+    })?;
+    assert_eq!(plain.outcome(), GateOutcome::Allow);
+    assert!(override_tokens(&plain).is_empty());
+    assert!(
+        plain
+            .receipt_reasons()
+            .contains(&"counterparty_opt_out_unsubscribe"),
+        "allow_with_receipt keeps the opt-out trail: {:?}",
+        plain.receipt_reasons()
+    );
+    Ok(())
+}
+
+/// The override tokens one decision carries, in receipt order.
+fn override_tokens(decision: &GateDecision) -> Vec<&'static str> {
+    decision
+        .receipt_reasons()
+        .iter()
+        .copied()
+        .filter(|reason| reason.starts_with("comm_send_override_"))
+        .collect()
+}
+
+/// The DEC-0005 posture dial: default, effect, composition, and parse failure.
+#[test]
+fn posture_dial_allow_with_receipt() -> Result<()> {
+    // Absent everywhere resolves to the restrictive pole.
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xF0), &opt_out_posture_manifest(None))?;
+    assert_eq!(
+        resolve(&vault)?.comm_opt_out_posture(),
+        CommOptOutPosture::Escalate
+    );
+
+    // One pack saying `allow_with_receipt` sends immediately, keeping the trail.
+    let (_allow_tmp, allow_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &allow_vault,
+        test_id(0xF1),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let allow_policy = resolve(&allow_vault)?;
+    assert_eq!(
+        allow_policy.comm_opt_out_posture(),
+        CommOptOutPosture::AllowWithReceipt
+    );
+    opted_out_contact(
+        &allow_vault,
+        test_id(0xF2),
+        test_id(0xF3),
+        "kenji@example.com",
+        CounterpartyOptOutReason::BlockOrFriendRemoval,
+    )?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+    let (_decision_id, decision, _charge) = allow_vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&allow_vault.store, wtxn, &effect, &allow_policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert_eq!(
+        decision.receipt_reasons(),
+        &[
+            "counterparty_opt_out_block_or_friend_removal",
+            "counterparty_first_touch_user_introduction"
+        ]
+    );
+
+    // An unrecognized token fails the manifest closed, in the same class as an
+    // invalid `on_budget_exhausted` token.
+    let (_bad_tmp, bad_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &bad_vault,
+        test_id(0xF4),
+        &opt_out_posture_manifest(Some("allow")),
+    )?;
+    let bad_policy = resolve(&bad_vault)?;
+    assert!(bad_policy.diagnostics().malformed_manifest_seen);
+    assert!(bad_policy.is_fail_closed());
+    assert_eq!(
+        bad_policy.comm_opt_out_posture(),
+        CommOptOutPosture::Escalate
+    );
+
+    // Composition is restrictive: one `escalate` pack wins over an
+    // `allow_with_receipt` one.
+    let (_mixed_tmp, mixed_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &mixed_vault,
+        test_id(0xF5),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    put_policy_manifest_bytes(
+        &mixed_vault,
+        test_id(0xF6),
+        &opt_out_posture_manifest(Some("escalate")),
+    )?;
+    let mixed_policy = resolve(&mixed_vault)?;
+    assert!(!mixed_policy.diagnostics().malformed_manifest_seen);
+    assert_eq!(
+        mixed_policy.comm_opt_out_posture(),
+        CommOptOutPosture::Escalate
+    );
+    Ok(())
+}
+
+/// The posture is frontier state: flipping it moves `read_frontier_hash`, so
+/// every consent binding taken under the old posture — a standing outbound
+/// grant's included — stops matching.
+#[test]
+fn posture_flip_moves_frontier_hash() -> Result<()> {
+    let (_escalate_tmp, escalate_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &escalate_vault,
+        test_id(0xF7),
+        &opt_out_posture_manifest(Some("escalate")),
+    )?;
+    let escalate_policy = resolve(&escalate_vault)?;
+
+    let (_allow_tmp, allow_vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &allow_vault,
+        test_id(0xF7),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let allow_policy = resolve(&allow_vault)?;
+
+    assert_ne!(
+        escalate_policy.read_frontier_hash()?,
+        allow_policy.read_frontier_hash()?
+    );
+
+    // The binding a standing outbound grant is minted under is that same
+    // frontier, so a grant minted under one posture is not active under the
+    // other.
+    let intent = GrantMintIntent {
+        principal_ref: "sender".to_owned(),
+        origin_component_id: "ask-1".to_owned(),
+        origin_action_id: "escalate_always_this_verb_class".to_owned(),
+        origin_receipt_ref: Some("gate:ask-1".to_owned()),
+        scope: GrantMintIntentScope::VerbClass {
+            verb_class: "send".to_owned(),
+        },
+    };
+    let (escalate_handle, escalate_frontier) =
+        standing_outbound_grant_binding_parts(&intent, &escalate_policy)?;
+    let (allow_handle, allow_frontier) =
+        standing_outbound_grant_binding_parts(&intent, &allow_policy)?;
+    assert_eq!(
+        escalate_handle, allow_handle,
+        "the grant itself is identical; only the policy floor moved"
+    );
+    assert_ne!(escalate_frontier, allow_frontier);
+    Ok(())
+}
+
+/// ONE-1868's fold is untouched: ONE-1752 changed what the folded bit DOES, not
+/// which sources set it.
+#[test]
+fn dnc_and_132_fold_unchanged() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xB0), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+
+    // Control: nothing suppresses this send.
+    let (_decision_id, control, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(control.outcome(), GateOutcome::Allow);
+
+    // Leg 1 — the type-132 full-scan fallback. This contact's identity resolves
+    // to no ChannelIdentity row, so the party-channel index never learned it and
+    // only the mandatory scan can find it.
+    opted_out_contact(
+        &vault,
+        test_id(0xB1),
+        test_id(0xB2),
+        "kenji@example.com",
+        CounterpartyOptOutReason::Stop,
+    )?;
+    let (_decision_id, folded, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(folded.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&folded),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+
+    // A SECOND contact for the same party that is not opted out cannot clear the
+    // first: the aggregate is restrictive.
+    let clean =
+        CounterpartyContactRecord::user_introduction(test_id(0xB3), "kenji@example.com", 10)?;
+    vault.create_counterparty_contact(&test_id(0xB4), &clean)?;
+    let (_decision_id, still_folded, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(still_folded.outcome(), GateOutcome::Pending);
+
+    // Leg 2 — CA-01's `comm.do_not_contact`, on a party with no contact row at
+    // all, and a caller-asserted bit that hydration may never clear.
+    let mut other = external_effect_gate_input("sender", "send", "line");
+    other.counterparty = Some("mika@example.com".to_owned());
+    let party = crate::comm::resolve_or_create_comm_party(&vault, "mika@example.com")
+        .map_err(|_| Error::InvalidClaimBody("comm party"))?;
+    let mut dnc = ClaimBody::new(
+        crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
+        ClaimSubject::Entity(party),
+        Value::Map(vec![(
+            Value::from("scope"),
+            Value::from(crate::campaign::claims::DO_NOT_CONTACT_SCOPE_ALL),
+        )]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    dnc.valid_from = Some(1);
+    vault.put_claim(&test_id(0xB5), &dnc, TimeRange { start: 1, end: 1 }, 1)?;
+    let (_decision_id, dnc_folded, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &other, &policy, true)
+    })?;
+    assert_eq!(dnc_folded.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&dnc_folded),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    assert_eq!(
+        dnc_folded.receipt_reasons(),
+        &["counterparty_opt_out_do_not_contact"]
+    );
+
+    // A caller-asserted bit for a party with no head at all still stands.
+    let mut prehydrated = external_effect_gate_input("sender", "send", "line");
+    prehydrated.counterparty = Some("nobody@example.com".to_owned());
+    prehydrated.counterparty_opted_out = true;
+    let (_decision_id, kept, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &prehydrated, &policy, true)
+    })?;
+    assert_eq!(kept.outcome(), GateOutcome::Pending);
     Ok(())
 }
 
@@ -13990,1285 +14474,1161 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
     Ok(())
 }
 
-// ONE-1453 per-actor burst breaker: a durable, per-(dreamer run, provenance
-// actor) velocity-to-review conversion over the ONE-1452 consent-bundle path.
-// Fail-closed means DEMOTE, never deny; a tripped row clears only through an
-// owner-authenticated bundle approve or decline.
+// ---------------------------------------------------------------------------
+// ONE-1296 `auto_checker` manifest knob: decode/merge/hash, the write door's
+// consult predicate, and the fail-closed mapping.
+//
+// All fixtures and helpers stay inside this module; the GATE-12/GATE-13
+// Dreamer fixtures above are reused, not modified.
+// ---------------------------------------------------------------------------
+mod auto_checker {
+    use super::*;
 
-/// The optional `actor_burst_breaker` manifest dial, spelled exactly.
-fn breaker_dial_entry(max_events: Value, window_secs: Value) -> (Value, Value) {
-    (
-        Value::from(GATE_BREAKER_POLICY_KEY),
-        Value::Map(vec![
-            (Value::from("max_events"), max_events),
-            (Value::from("window_secs"), window_secs),
-        ]),
-    )
-}
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::{Arc, Mutex};
 
-/// A manifest that grants every actor in `actors` a Dreamer `Generated` Auto
-/// path, optionally under a valid burst-breaker dial.
-fn breaker_manifest(actors: &[EntityId], dial: Option<(u64, u64)>) -> Vec<u8> {
-    let mut extra = vec![
-        source_trust_entry(ClaimSource::Generated, 0),
-        signatures_entry(),
-    ];
-    if let Some((max_events, window_secs)) = dial {
-        extra.push(breaker_dial_entry(
-            Value::from(max_events),
-            Value::from(window_secs),
-        ));
-    }
-    let mut data = encode_policy_manifest(extra);
-    for actor in actors {
-        append_actor_ceiling(
-            &mut data,
-            actor_ceiling_row_for_ref("agent", &actor.to_hex(), "auto"),
-        );
-    }
-    data
-}
-
-/// One Dreamer-authored agent write on `run_id`.
-fn breaker_write(
-    vault: &crate::Vault,
-    claim_id: EntityId,
-    actor: EntityId,
-    subject_seed: u8,
-    run_id: &str,
-    approval: ClaimApprovalStatus,
-    learned_at: u64,
-) -> Result<()> {
-    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-    body.subject = ClaimSubject::Entity(test_id(subject_seed));
-    body.approval = approval;
-    body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
-    let (candidate, envelope) = dreamer_claim_candidate_write_parts(vault, &body, actor, run_id)?;
-    vault
-        .batch()
-        .claim_candidate(
-            &claim_id,
-            candidate,
-            &envelope,
-            test_time(learned_at),
-            learned_at,
-        )
-        .commit()
-}
-
-fn breaker_row(
-    vault: &crate::Vault,
-    run_id: &str,
-    actor: &EntityId,
-) -> Result<Option<GateBreakerRowV1>> {
-    let rtxn = vault.store.env.read_txn()?;
-    gate_breaker_row_for_test(&vault.store, &rtxn, run_id, actor)
-}
-
-fn breaker_row_bytes(
-    vault: &crate::Vault,
-    run_id: &str,
-    actor: &EntityId,
-) -> Result<Option<Vec<u8>>> {
-    let rtxn = vault.store.env.read_txn()?;
-    gate_breaker_row_bytes_for_test(&vault.store, &rtxn, run_id, actor)
-}
-
-fn breaker_run_row_count(vault: &crate::Vault, run_id: &str) -> Result<usize> {
-    let rtxn = vault.store.env.read_txn()?;
-    gate_breaker_run_row_count_for_test(&vault.store, &rtxn, run_id)
-}
-
-/// Every synthetic trip receipt in the ordinary gate-decision ledger.
-fn breaker_trip_receipts(vault: &crate::Vault) -> Result<Vec<GateDecisionRecord>> {
-    Ok(vault
-        .store
-        .gate_decisions(256)?
-        .into_iter()
-        .filter(|record| record.content_kind == GATE_BREAKER_CONTENT_KIND)
-        .collect())
-}
-
-fn claim_gate_decisions(
-    vault: &crate::Vault,
-    claim_id: &EntityId,
-) -> Result<Vec<GateDecisionRecord>> {
-    Ok(vault
-        .store
-        .gate_decisions(256)?
-        .into_iter()
-        .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
-        .collect())
-}
-
-#[test]
-fn burst_triggers_pause() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let other_actor = test_id(0x41);
-    let run = "breaker-burst-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor, other_actor], Some((2, 600))),
-    )?;
-
-    // Exactly `max_events` ordinary events keep their ordinary outcome and
-    // trip nothing.
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x31))?.approval,
-        ClaimApprovalStatus::Auto
-    );
-    let untripped = breaker_row(&vault, run, &actor)?.expect("counted row");
-    assert_eq!(untripped.event_timestamps().len(), 2);
-    assert_eq!(untripped.tripped_at(), None);
-    assert!(breaker_trip_receipts(&vault)?.is_empty());
-    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-
-    // Event `max_events + 1` durably trips and lands Proposed.
-    breaker_write(
-        &vault,
-        test_id(0x32),
-        actor,
-        0x52,
-        run,
-        ClaimApprovalStatus::Auto,
-        5,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x32))?.approval,
-        ClaimApprovalStatus::Proposed,
-        "the triggering would-be-Auto claim lands Proposed, never denied or discarded"
-    );
-    assert!(has_pending_gate_consent(&vault, &test_id(0x32))?);
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    let tripped = breaker_row(&vault, run, &actor)?.expect("tripped row");
-    let tripped_at = tripped.tripped_at().expect("durable trip instant");
-    assert_eq!(tripped.event_timestamps().len(), 3);
-    assert_eq!(tripped.thresholds().max_events, 2);
-    assert_eq!(tripped.thresholds().window_secs, 600);
-
-    // Exactly one additional decision record represents the transition, and
-    // its `diff_handle` is independently recomputable from the trip facts.
-    let receipts = breaker_trip_receipts(&vault)?;
-    assert_eq!(receipts.len(), 1);
-    let receipt = &receipts[0];
-    assert_eq!(receipt.content_kind, GATE_BREAKER_CONTENT_KIND);
-    assert_eq!(receipt.outcome, GATE_BREAKER_OUTCOME_TRIPPED);
-    assert_eq!(receipt.reason_codes, vec![GATE_BREAKER_REASON_TRIPPED]);
-    assert_eq!(receipt.claim_id, None);
-    assert!(receipt.receipt_reasons.is_empty());
-    assert!(receipt.system_notices.is_empty());
-    assert_eq!(receipt.actor_ref.as_deref(), Some(actor.to_hex().as_str()));
-    assert_eq!(
-        receipt.diff_handle,
-        gate_breaker_trip_handle(
-            run,
-            &actor,
-            tripped_at,
-            // Post-append count at the transition: `max_events + 1`.
-            3,
-            GateBreakerThresholds {
-                max_events: 2,
-                window_secs: 600,
-            },
-        )
-        .to_vec()
-    );
-
-    // A later event while tripped is demoted with no second trip receipt, and
-    // the already-tripped row is not rewritten.
-    let tripped_bytes = breaker_row_bytes(&vault, run, &actor)?.expect("tripped bytes");
-    breaker_write(
-        &vault,
-        test_id(0x33),
-        actor,
-        0x53,
-        run,
-        ClaimApprovalStatus::Auto,
-        6,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x33))?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-    assert_eq!(breaker_trip_receipts(&vault)?.len(), 1);
-    assert_eq!(
-        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
-        Some(tripped_bytes.as_slice()),
-        "an already-tripped row short-circuits: no prune, no append, no rewrite"
-    );
-
-    // A DIFFERENT actor on the SAME run is evaluated independently.
-    breaker_write(
-        &vault,
-        test_id(0x34),
-        other_actor,
-        0x54,
-        run,
-        ClaimApprovalStatus::Auto,
-        7,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x34))?.approval,
-        ClaimApprovalStatus::Auto
-    );
-    assert_eq!(
-        breaker_row(&vault, run, &other_actor)?
-            .expect("second actor row")
-            .tripped_at(),
-        None
-    );
-    Ok(())
-}
-
-#[test]
-fn breaker_counts_auto_and_existing_proposals_only() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // `auto_actor` carries an agent Auto ceiling; `pend_actor` does not, so
-    // its Proposed writes take the ordinary actor-ceiling pend and land in the
-    // consent tray. The breaker counts BOTH shapes, on their own rows.
-    let auto_actor = test_id(0x40);
-    let pend_actor = test_id(0x41);
-    let run = "breaker-counting-run";
-    // The owner-interactive write at the end of this test is an ordinary
-    // `human` candidate, so the manifest carries the human class ceiling that
-    // lets it land. Without that row it is refused outright for
-    // `gate.pending.actor_ceiling` — a would-be-`Auto` write whose ordinary
-    // outcome is pending — before it can demonstrate anything about the
-    // breaker. The AGENT rows stay exactly as the assertions below need them:
-    // `auto_actor` alone carries the agent Auto ceiling.
-    let mut data = breaker_manifest(&[auto_actor], Some((8, 600)));
-    trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, test_id(0x70), &data)?;
-
-    // A would-be-Auto event counts.
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        auto_actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x30))?.approval,
-        ClaimApprovalStatus::Auto
-    );
-
-    // An already-Proposed event counts and keeps its own pending outcome.
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        pend_actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Proposed,
-        4,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x31))?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-    assert!(has_pending_gate_consent(&vault, &test_id(0x31))?);
-    for actor in [auto_actor, pend_actor] {
-        assert_eq!(
-            breaker_row(&vault, run, &actor)?
-                .expect("counted row")
-                .event_timestamps()
-                .len(),
-            1
-        );
-    }
-
-    // The already-Proposed event keeps its landed reason set; counting alone
-    // never grafts the breaker reason onto it.
-    let rtxn = vault.store.env.read_txn()?;
-    let pending = vault
-        .store
-        .pending_gate_consent_in_txn(&rtxn, &test_id(0x31))?
-        .expect("pending row");
-    drop(rtxn);
-    assert!(
-        !pending
-            .reason_codes
-            .iter()
-            .any(|reason| reason.as_str() == GATE_BREAKER_REASON_PENDING)
-    );
-
-    // A gate DENIAL is not a candidate: an evidence-free Dreamer body is
-    // refused by the GATE-12 floor and touches no breaker row.
-    let mut denied = public_stamped(source_trust_claim(ClaimSource::Generated));
-    denied.subject = ClaimSubject::Entity(test_id(0x52));
-    denied.evidence = None;
-    let (candidate, envelope) =
-        dreamer_claim_candidate_write_parts(&vault, &denied, auto_actor, run)?;
-    assert!(
-        vault
-            .batch()
-            .claim_candidate(&test_id(0x32), candidate, &envelope, test_time(5), 5)
-            .commit()
-            .is_err()
-    );
-    assert_eq!(
-        breaker_row(&vault, run, &auto_actor)?
-            .expect("row")
-            .event_timestamps()
-            .len(),
-        1,
-        "a denied event keeps its outcome and books nothing"
-    );
-
-    // An owner-interactive write is outside the breaker even on a vault whose
-    // run is being counted.
-    let mut human = public_stamped(source_trust_claim(ClaimSource::UserStated));
-    human.subject = ClaimSubject::Entity(test_id(0x53));
-    let (candidate, envelope) = claim_candidate_write_parts(&vault, &human)?;
-    vault
-        .batch()
-        .claim_candidate(&test_id(0x33), candidate, &envelope, test_time(6), 6)
-        .commit()?;
-    assert_eq!(breaker_run_row_count(&vault, run)?, 2);
-
-    // The synthetic trip receipt is never itself counted: none was appended,
-    // and nothing tripped.
-    assert!(breaker_trip_receipts(&vault)?.is_empty());
-    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    Ok(())
-}
-
-#[test]
-fn breaker_window_boundary_is_strict() {
-    let thresholds = GateBreakerThresholds {
-        max_events: 2,
-        window_secs: 10,
+    use crate::inbox::{InboxExceptionClass, InboxQuery};
+    use crate::llm::{
+        AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker,
+        BoundedAutoChecker,
     };
 
-    // A timestamp EXACTLY one window old is expired; one second younger is
-    // live.
-    let pruned = evaluate_gate_breaker_event(
-        Some(gate_breaker_row_for_transition_test(
-            thresholds,
-            vec![90, 91],
-            None,
-        )),
-        thresholds,
-        GateBreakerCandidate::Auto,
-        100,
-    );
-    assert_eq!(pruned.row().event_timestamps(), [91, 100]);
-    assert_eq!(pruned.event_count(), 2);
-    assert!(!pruned.tripped_now());
-    assert_eq!(pruned.outcome(), GateBreakerCandidate::Auto);
+    const CHECKER_REF: &str = "host-checker-v1";
+    const OTHER_CHECKER_REF: &str = "host-checker-v2";
+    const CHECKER_RUN_ID: &str = "one1296-checker-run";
+    /// A host names its reasons in PROSE — punctuation, spaces and all. This
+    /// exact string is the one that made the ledger refuse the decision row
+    /// before the reasons were rendered into its token vocabulary.
+    const HOLD_REASON: &str = "checker: hedged verdict";
 
-    // Strictly greater than `max_events` trips; equal does not.
-    let tripping = evaluate_gate_breaker_event(
-        Some(gate_breaker_row_for_transition_test(
-            thresholds,
-            vec![95, 96],
-            None,
-        )),
-        thresholds,
-        GateBreakerCandidate::Auto,
-        100,
-    );
-    assert_eq!(tripping.event_count(), 3);
-    assert!(tripping.tripped_now());
-    assert_eq!(tripping.outcome(), GateBreakerCandidate::Proposed);
-    assert_eq!(tripping.row().tripped_at(), Some(100));
-    assert_eq!(
-        tripping.row().event_timestamps(),
-        [95, 96, 100],
-        "the timestamp that caused the trip stays in the row"
-    );
+    /// [`HOLD_REASON`] as the receipt records it. The `checker_` prefix is the
+    /// ENGINE's family marker and is always applied, so the host's own leading
+    /// "checker:" word renders into the slug after it; the WHY stays legible.
+    const HOLD_RECEIPT_REASON: &str = "checker_checker_hedged_verdict";
 
-    // An already-Proposed candidate is preserved, not rewritten to something
-    // else, when it trips.
-    let tripping_proposed = evaluate_gate_breaker_event(
-        Some(gate_breaker_row_for_transition_test(
-            thresholds,
-            vec![95, 96],
-            None,
-        )),
-        thresholds,
-        GateBreakerCandidate::Proposed,
-        100,
-    );
-    assert_eq!(tripping_proposed.outcome(), GateBreakerCandidate::Proposed);
+    /// Counts every consult and records what it was shown.
+    struct RecordingAutoChecker {
+        outcome: AutoCheckOutcome,
+        calls: AtomicUsize,
+        seen: Mutex<Vec<AutoCheckCandidateOwned>>,
+    }
 
-    // Clock rollback clamps to `max(now, last)` so the log stays
-    // nondecreasing.
-    let rolled_back = evaluate_gate_breaker_event(
-        Some(gate_breaker_row_for_transition_test(
-            thresholds,
-            vec![100],
-            None,
-        )),
-        thresholds,
-        GateBreakerCandidate::Auto,
-        95,
-    );
-    assert_eq!(rolled_back.row().event_timestamps(), [100, 100]);
-
-    // An already-tripped row short-circuits: unchanged bytes, demoted
-    // candidate, and an `event_count` pinned to the stored log length.
-    let short_circuit = evaluate_gate_breaker_event(
-        Some(gate_breaker_row_for_transition_test(
-            thresholds,
-            vec![10, 11, 12],
-            Some(12),
-        )),
-        GateBreakerThresholds {
-            max_events: 9_999,
-            window_secs: 1,
-        },
-        GateBreakerCandidate::Auto,
-        10_000,
-    );
-    assert!(!short_circuit.rewritten());
-    assert!(!short_circuit.tripped_now());
-    assert_eq!(short_circuit.event_count(), 3);
-    assert_eq!(short_circuit.outcome(), GateBreakerCandidate::Proposed);
-    assert_eq!(short_circuit.row().event_timestamps(), [10, 11, 12]);
-    assert_eq!(short_circuit.row().thresholds().max_events, 2);
-
-    // A missing row is created under the live snapshot.
-    let fresh = evaluate_gate_breaker_event(None, thresholds, GateBreakerCandidate::Auto, 100);
-    assert_eq!(fresh.row().event_timestamps(), [100]);
-    assert_eq!(fresh.row().thresholds(), thresholds);
-    assert_eq!(fresh.row().tripped_at(), None);
-}
-
-#[test]
-fn breaker_fail_closed_no_auto_accept() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-fail-closed-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((2, 600))),
-    )?;
-
-    // A row tripped many windows ago, whose whole event log has since aged
-    // out. Time passing is exactly this shape from the row's side.
-    let ancient = gate_breaker_row_for_transition_test(
-        GateBreakerThresholds {
-            max_events: 2,
-            window_secs: 600,
-        },
-        vec![1, 2, 3],
-        Some(3),
-    );
-    vault.with_write_txn(|wtxn| {
-        put_gate_breaker_row_for_test(&vault.store, wtxn, run, &actor, &ancient)
-    })?;
-    let before = breaker_row_bytes(&vault, run, &actor)?.expect("seeded row");
-
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    assert_eq!(
-        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
-        Some(before.as_slice()),
-        "time passing alone never untrips, and never rewrites the row"
-    );
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x30))?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-
-    // The demoted member is in ONE-1452's bundle and no non-owner path moves
-    // it to Approved.
-    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
-    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    assert_eq!(bundle.members.len(), 1);
-    assert_eq!(bundle.members[0].claim_id, test_id(0x30));
-    Ok(())
-}
-
-#[test]
-fn breaker_survives_vault_reopen() -> Result<()> {
-    let (tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-reopen-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((1, 600))),
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    let before = breaker_row_bytes(&vault, run, &actor)?.expect("tripped row");
-    drop(vault);
-
-    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())
-        .expect("reopen vault");
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    assert_eq!(
-        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
-        Some(before.as_slice())
-    );
-    breaker_write(
-        &vault,
-        test_id(0x32),
-        actor,
-        0x52,
-        run,
-        ClaimApprovalStatus::Auto,
-        5,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x32))?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-    Ok(())
-}
-
-#[test]
-fn breaker_manifest_override_changes_trip_point() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((50, 300))),
-    )?;
-    assert_eq!(
-        resolve(&vault)?.actor_burst_breaker_thresholds(),
-        GateBreakerThresholds {
-            max_events: 50,
-            window_secs: 300,
+    impl RecordingAutoChecker {
+        fn new(outcome: AutoCheckOutcome) -> Self {
+            Self {
+                outcome,
+                calls: AtomicUsize::new(0),
+                seen: Mutex::new(Vec::new()),
+            }
         }
-    );
 
-    // The applied snapshot is what the row records.
-    let run = "breaker-override-run";
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    assert_eq!(
-        breaker_row(&vault, run, &actor)?.expect("row").thresholds(),
-        GateBreakerThresholds {
-            max_events: 50,
-            window_secs: 300,
+        fn allow() -> Self {
+            Self::new(AutoCheckOutcome::Allow)
         }
-    );
-    Ok(())
-}
 
-#[test]
-fn breaker_malformed_override_uses_engine_defaults() -> Result<()> {
-    let malformed = [
-        // Zero, on either field.
-        breaker_dial_entry(Value::from(0_u64), Value::from(600_u64)),
-        breaker_dial_entry(Value::from(30_u64), Value::from(0_u64)),
-        // Negative and fractional.
-        breaker_dial_entry(Value::from(-1_i64), Value::from(600_u64)),
-        breaker_dial_entry(Value::F64(1.5), Value::from(600_u64)),
-        // Wrong types.
-        breaker_dial_entry(Value::from("30"), Value::from(600_u64)),
-        breaker_dial_entry(
-            Value::Array(vec![Value::from(30_u64)]),
-            Value::from(600_u64),
-        ),
-        // Overflowed `max_events`.
-        breaker_dial_entry(Value::from(u64::from(u32::MAX) + 1), Value::from(600_u64)),
-    ];
-    for (index, dial) in malformed.into_iter().enumerate() {
-        let (_tmp, vault) = temp_vault();
-        let mut extra = vec![
+        fn hold() -> Self {
+            Self::new(AutoCheckOutcome::Hold {
+                reasons: vec![HOLD_REASON.to_owned()],
+            })
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(AtomicOrdering::Relaxed)
+        }
+
+        fn seen(&self) -> Vec<AutoCheckCandidateOwned> {
+            self.seen.lock().expect("checker log").clone()
+        }
+    }
+
+    impl AutoChecker for RecordingAutoChecker {
+        fn check(&self, candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+            self.seen
+                .lock()
+                .expect("checker log")
+                .push(AutoCheckCandidateOwned::from(candidate));
+            self.outcome.clone()
+        }
+    }
+
+    /// A host implementation that unwinds instead of answering.
+    struct PanickingAutoChecker;
+
+    impl AutoChecker for PanickingAutoChecker {
+        fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            panic!("host auto checker panicked");
+        }
+    }
+
+    /// A host implementation that answers long after the gate stopped waiting.
+    struct SlowAutoChecker;
+
+    impl AutoChecker for SlowAutoChecker {
+        fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+            std::thread::sleep(Duration::from_millis(
+                crate::llm::AUTO_CHECKER_DEADLINE_MS + 500,
+            ));
+            AutoCheckOutcome::Allow
+        }
+    }
+
+    fn bounded(checker: impl AutoChecker) -> crate::llm::BoundedAutoChecker {
+        crate::llm::BoundedAutoChecker::new(std::sync::Arc::new(checker))
+    }
+
+    fn checker_entry(value: &str) -> (Value, Value) {
+        (
+            Value::from(POLICY_AUTO_CHECKER_KEY),
+            Value::from(value.to_owned()),
+        )
+    }
+
+    /// The precommit vault's manifest — an `agent` actor ceiling of `auto`, an
+    /// explicit auto permit for `generated`, and a signature — plus whatever
+    /// `auto_checker` rows the case under test wants.
+    fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
+        let mut entries = vec![
             source_trust_entry(ClaimSource::Generated, 0),
             signatures_entry(),
         ];
-        extra.push(dial);
-        put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(extra))?;
+        entries.extend(extra);
+        let mut data = encode_policy_manifest(entries);
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        );
+        data
+    }
+
+    fn checker_vault(knob: Option<&str>) -> Result<(tempfile::TempDir, crate::Vault)> {
+        let (tmp, vault) = temp_vault();
+        let extra = knob.map(checker_entry).into_iter().collect();
+        put_policy_manifest_bytes(&vault, test_id(0x22), &checker_manifest(extra))?;
+        Ok((tmp, vault))
+    }
+
+    /// A valid Dreamer candidate: non-degenerate value, resolving evidence,
+    /// public sensitivity band, no isolation-classed predicate.
+    fn checker_body(vault: &crate::Vault, approval: ClaimApprovalStatus) -> Result<ClaimBody> {
+        let evidence_ref = test_id(0x36);
+        seed_precommit_evidence_entity(vault, &evidence_ref)?;
+        let mut body = precommit_body(
+            Value::from("Ada Lovelace"),
+            Some(precommit_evidence(vec![evidence_ref])),
+        );
+        body.approval = approval;
+        Ok(body)
+    }
+
+    fn dreamer_parts(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
+        dreamer_claim_candidate_write_parts(
+            vault,
+            body,
+            first_party_eiri_connector_actor_id(),
+            CHECKER_RUN_ID,
+        )
+    }
+
+    /// The ONE production injection: the checker-aware promotion terminal.
+    fn attempt_checked_candidate_write(
+        vault: &crate::Vault,
+        claim_id: &EntityId,
+        body: &ClaimBody,
+        checker: Option<&BoundedAutoChecker>,
+    ) -> Result<()> {
+        let (candidate, envelope) = dreamer_parts(vault, body)?;
+        if let Some(checker) = checker {
+            vault
+                .batch()
+                .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+                .commit_with_checker_and_then(checker, |_| Ok(()))
+        } else {
+            vault.with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .claim_candidate(claim_id, candidate, &envelope, test_time(3), 3)
+                    .apply_recording_gate_decisions(wtxn)
+            })
+        }
+    }
+
+    /// The claim write door itself, with the checker under test injected. The
+    /// transaction commits either way, so a parked write leaves its receipt
+    /// and its pending-consent row behind exactly as the write path would.
+    fn gate_claim_write(
+        vault: &crate::Vault,
+        claim_id: &EntityId,
+        body: &ClaimBody,
+        envelope: &WriteEnvelope,
+        checker: Option<&BoundedAutoChecker>,
+        persist_pending_consent: bool,
+    ) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let policy = resolve_policy_manifest(&vault.store, &wtxn)?;
+        let mut recorded_decision = None;
+        let result = check_claim_policy_for_write_with_record(
+            &vault.store,
+            &mut wtxn,
+            claim_id,
+            ClaimGateWrite {
+                body,
+                envelope: Some(envelope),
+                auto_checker: checker,
+                defer_metrics_until_commit: false,
+            },
+            &policy,
+            GateWriteMode {
+                record_decision: true,
+                persist_pending_consent,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: true,
+            },
+            &mut recorded_decision,
+        );
+        wtxn.commit()?;
+        result
+    }
+
+    /// Every recorded decision as `(reason_codes, receipt_reasons)`.
+    fn decision_rows(vault: &crate::Vault) -> Result<Vec<(Vec<String>, Vec<String>)>> {
+        Ok(vault
+            .store
+            .gate_decisions(100)?
+            .into_iter()
+            .map(|record| (record.reason_codes, record.receipt_reasons))
+            .collect())
+    }
+
+    /// 1. The knob parses, merges and hashes; and a manifest that never names
+    ///    a checker is untouched by this ticket — same resolution, same
+    ///    frontier hash contribution (none at all), same decisions, even with
+    ///    a holding checker injected.
+    #[test]
+    fn knob_roundtrip_and_unset_is_identity() -> Result<()> {
+        // Parse.
+        let (_tmp, named) = checker_vault(Some(CHECKER_REF))?;
+        assert_eq!(resolve(&named)?.auto_checker(), Some(CHECKER_REF));
+
+        // Unset: nothing resolves, and the default resolution names nobody.
+        let (_tmp, unset) = checker_vault(None)?;
+        assert_eq!(resolve(&unset)?.auto_checker(), None);
+        assert_eq!(PolicyManifestResolution::default().auto_checker(), None);
+
+        // The value is frontier-relevant WHEN PRESENT, and only then.
+        let named_hash = resolve(&named)?.read_frontier_hash()?;
+        let unset_hash = resolve(&unset)?.read_frontier_hash()?;
+        assert_ne!(named_hash, unset_hash);
+        let (_tmp, other) = checker_vault(Some(OTHER_CHECKER_REF))?;
+        assert_ne!(resolve(&other)?.read_frontier_hash()?, named_hash);
+        let (_tmp, unset_again) = checker_vault(None)?;
+        assert_eq!(resolve(&unset_again)?.read_frontier_hash()?, unset_hash);
+
+        // A duplicate row inside ONE manifest is the same ambiguity
+        // `on_budget_exhausted` refuses.
+        let (_tmp, duplicated) = temp_vault();
+        put_policy_manifest_bytes(
+            &duplicated,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF), checker_entry(CHECKER_REF)]),
+        )?;
+        assert!(resolve(&duplicated)?.diagnostics().malformed_manifest_seen);
+
+        // A blank ref is a misconfigured knob, not "no checker".
+        let (_tmp, blank) = temp_vault();
+        put_policy_manifest_bytes(
+            &blank,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry("   ")]),
+        )?;
+        assert!(resolve(&blank)?.diagnostics().malformed_manifest_seen);
+
+        // Across manifests: the first identical value wins, a conflict fails
+        // the whole gate closed.
+        let (_tmp, agreed) = temp_vault();
+        put_policy_manifest_bytes(
+            &agreed,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
+        put_policy_manifest_bytes(
+            &agreed,
+            test_id(0x23),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
+        let agreed_policy = resolve(&agreed)?;
+        assert_eq!(agreed_policy.auto_checker(), Some(CHECKER_REF));
+        assert!(!agreed_policy.diagnostics().malformed_manifest_seen);
+
+        let (_tmp, conflicting) = temp_vault();
+        put_policy_manifest_bytes(
+            &conflicting,
+            test_id(0x22),
+            &checker_manifest(vec![checker_entry(CHECKER_REF)]),
+        )?;
+        put_policy_manifest_bytes(
+            &conflicting,
+            test_id(0x23),
+            &checker_manifest(vec![checker_entry(OTHER_CHECKER_REF)]),
+        )?;
+        let conflicting_policy = resolve(&conflicting)?;
+        assert!(conflicting_policy.diagnostics().malformed_manifest_seen);
+        assert!(conflicting_policy.is_fail_closed());
+
+        // Decisions half of the identity: with NO knob, an injected checker
+        // that would hold everything changes nothing. The manifest arms the
+        // consult; the injection alone cannot.
+        let claim_id = test_id(0x33);
+        let body = checker_body(&unset, ClaimApprovalStatus::Auto)?;
+        let checker = bounded(RecordingAutoChecker::hold());
+        attempt_checked_candidate_write(&unset, &claim_id, &body, Some(&checker))?;
+        assert_eq!(
+            unset.get_claim(&claim_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto
+        );
+        Ok(())
+    }
+
+    fn posture_entry(value: &str) -> (Value, Value) {
+        (
+            Value::from(POLICY_COMM_OPT_OUT_POSTURE_KEY),
+            Value::from(value),
+        )
+    }
+
+    fn combined_manifest(posture: Option<&str>, checker: Option<&str>) -> Vec<u8> {
+        let entries = posture
+            .map(posture_entry)
+            .into_iter()
+            .chain(checker.map(checker_entry))
+            .collect();
+        encode_policy_manifest(entries)
+    }
+
+    #[test]
+    fn both_manifest_keys_parse_and_fold_independently() -> Result<()> {
+        let opaque = "  host-checker/α  ";
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x22),
+            &combined_manifest(Some("allow_with_receipt"), Some(opaque)),
+        )?;
         let policy = resolve(&vault)?;
+        assert!(!policy.is_fail_closed());
+        assert_eq!(policy.auto_checker(), Some(opaque));
         assert_eq!(
-            policy.actor_burst_breaker_thresholds(),
-            GateBreakerThresholds::default(),
-            "malformed dial {index} must take engine defaults, never disable accounting"
+            policy.comm_opt_out_posture(),
+            CommOptOutPosture::AllowWithReceipt
         );
-        assert_eq!(
-            GateBreakerThresholds::default(),
-            GateBreakerThresholds {
-                max_events: GATE_BREAKER_DEFAULT_MAX_EVENTS,
-                window_secs: GATE_BREAKER_WINDOW_SECS,
+
+        // Omission contributes no value on either axis. Posture disagreement
+        // restricts; checker disagreement alone is malformed. Try both orders.
+        for (left_posture, right_posture, expected_posture) in [
+            (
+                None,
+                Some("allow_with_receipt"),
+                CommOptOutPosture::AllowWithReceipt,
+            ),
+            (
+                Some("escalate"),
+                Some("allow_with_receipt"),
+                CommOptOutPosture::Escalate,
+            ),
+        ] {
+            for (left_checker, right_checker, malformed) in [
+                (None, Some(CHECKER_REF), false),
+                (Some(CHECKER_REF), Some(CHECKER_REF), false),
+                (Some(CHECKER_REF), Some(OTHER_CHECKER_REF), true),
+            ] {
+                let manifests = [
+                    combined_manifest(left_posture, left_checker),
+                    combined_manifest(right_posture, right_checker),
+                ];
+                for reverse in [false, true] {
+                    let (_tmp, folded) = temp_vault();
+                    let order = if reverse { [1, 0] } else { [0, 1] };
+                    for (id, index) in [test_id(0x22), test_id(0x23)].into_iter().zip(order) {
+                        put_policy_manifest_bytes(&folded, id, &manifests[index])?;
+                    }
+                    let policy = resolve(&folded)?;
+                    assert_eq!(policy.comm_opt_out_posture(), expected_posture);
+                    assert_eq!(policy.diagnostics().malformed_manifest_seen, malformed);
+                    assert_eq!(policy.is_fail_closed(), malformed);
+                    if !malformed {
+                        assert_eq!(policy.auto_checker(), Some(CHECKER_REF));
+                    }
+                }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn either_manifest_key_rejects_malformed_values_and_duplicates() -> Result<()> {
+        let oversized = format!("{}x", "é".repeat(128));
+        for (key, values) in [
+            (POLICY_AUTO_CHECKER_KEY, vec![Value::Nil]),
+            (POLICY_AUTO_CHECKER_KEY, vec![Value::Boolean(true)]),
+            (POLICY_AUTO_CHECKER_KEY, vec![Value::from(" \t ")]),
+            (POLICY_AUTO_CHECKER_KEY, vec![Value::from(oversized)]),
+            (POLICY_AUTO_CHECKER_KEY, vec![Value::from(CHECKER_REF); 2]),
+            (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::Nil]),
+            (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::from(1)]),
+            (POLICY_COMM_OPT_OUT_POSTURE_KEY, vec![Value::from("allow")]),
+            (
+                POLICY_COMM_OPT_OUT_POSTURE_KEY,
+                vec![Value::from("escalate"); 2],
+            ),
+        ] {
+            // The other key is valid and present, not omitted as a shortcut.
+            let mut entries = vec![if key == POLICY_AUTO_CHECKER_KEY {
+                posture_entry("allow_with_receipt")
+            } else {
+                checker_entry(CHECKER_REF)
+            }];
+            entries.extend(values.into_iter().map(|value| (Value::from(key), value)));
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(&vault, test_id(0x22), &encode_policy_manifest(entries))?;
+            let policy = resolve(&vault)?;
+            assert!(policy.diagnostics().malformed_manifest_seen, "{key}");
+            assert!(policy.is_fail_closed(), "{key}");
+            let decision = policy.evaluate_gate(&gate_evaluator_input(
+                "first_party",
+                None,
+                ClaimSource::UserStated,
+                PolicyCriticality::Normal,
+            ));
+            assert_eq!(decision.outcome(), GateOutcome::Deny, "{key}");
+            assert_eq!(
+                decision.reason_codes(),
+                &[GateReasonCode::DenyPolicyFailClosed]
+            );
+        }
+        Ok(())
+    }
+
+    // Independent preimage for the small frontier fixture below: landed main
+    // a56c0398edbecd8126ffebac525871444b629fd8's hash_policy_frontier_v0,
+    // plus ONE-1453's intentional breaker-presence byte. Posture still follows
+    // budget exhaustion even WITHOUT a checker; an absent checker adds no bytes.
+    fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+
+        fn len(bytes: &mut Vec<u8>, value: u64) {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        fn text(bytes: &mut Vec<u8>, value: &str) {
+            len(bytes, value.len() as u64);
+            bytes.extend_from_slice(value.as_bytes());
+        }
+
+        let mut bytes = Vec::new();
+        text(&mut bytes, "oneiron.gate.policy_frontier.v0");
+        len(&mut bytes, 1); // one manifest
+        bytes.extend_from_slice(&[0; 5]); // four diagnostics, source-trust malformed
+        for source in [
+            "user_stated",
+            "observed",
+            "inferred",
+            "imported",
+            "tool_output",
+            "generated",
+        ] {
+            text(&mut bytes, source);
+            bytes.push(0); // no source-trust row
+        }
+        text(&mut bytes, "suspend");
+        text(&mut bytes, posture);
+        len(&mut bytes, 0); // budget-policy rows
+        len(&mut bytes, 1); // one pack
+        text(&mut bytes, "gate-test");
+        text(&mut bytes, "v1");
+        text(&mut bytes, env!("CARGO_PKG_VERSION"));
+        bytes.push(1);
+        text(&mut bytes, "normal"); // default criticality
+        bytes.push(1);
+        text(&mut bytes, "normal"); // default sensitivity
+        bytes.push(0); // unknown axis
+        for _ in 0..5 {
+            len(&mut bytes, 0); // rules, actor ceilings, delegations, revokes, scoped grants
+        }
+        bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
+        len(&mut bytes, 0); // owner-policy rows
+        bytes.push(0); // no actor-burst-breaker override (ONE-1453 frontier domain)
+        bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
+        len(&mut bytes, 0); // owner-policy patterns
+        len(&mut bytes, 0); // signatures
+        Sha256::digest(&bytes).into()
+    }
+
+    #[test]
+    fn checker_posture_frontier_matrix_preserves_main_and_rebinds_authority() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let body = public_stamped(source_trust_claim(ClaimSource::UserStated));
+        let intent = GrantMintIntent {
+            principal_ref: "sender".to_owned(),
+            origin_component_id: "ask-1".to_owned(),
+            origin_action_id: "escalate_always_this_verb_class".to_owned(),
+            origin_receipt_ref: Some("gate:ask-1".to_owned()),
+            scope: GrantMintIntentScope::VerbClass {
+                verb_class: "send".to_owned(),
+            },
+        };
+        let mut bindings = Vec::new();
+        for posture in [None, Some("escalate"), Some("allow_with_receipt")] {
+            for checker in [None, Some(CHECKER_REF), Some(OTHER_CHECKER_REF)] {
+                let mut data = combined_manifest(posture, checker);
+                rewrite_policy_manifest_entries(&mut data, |entries| {
+                    for (key, value) in entries {
+                        if matches!(
+                            key.as_str(),
+                            Some(POLICY_RULES_KEY | POLICY_ACTOR_CEILINGS_KEY)
+                        ) {
+                            *value = Value::Array(vec![]);
+                        }
+                    }
+                });
+                put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
+                let policy = resolve(&vault)?;
+                assert!(!policy.is_fail_closed());
+                assert_eq!(policy.auto_checker(), checker);
+                let resolved_posture = posture.unwrap_or("escalate");
+                assert_eq!(policy.comm_opt_out_posture().as_str(), resolved_posture);
+                let hash = policy.read_frontier_hash()?;
+                if checker.is_none() {
+                    assert_eq!(hash, integrated_no_checker_frontier(resolved_posture));
+                }
+                let rtxn = vault.store.env.read_txn()?;
+                let consent = claim_consent_binding_parts(&vault.store, &rtxn, &body)?;
+                let grant = standing_outbound_grant_binding_parts(&intent, &policy)?;
+                assert_eq!(consent.1, hash);
+                assert_eq!(grant.1, hash);
+                bindings.push((resolved_posture, checker, hash, consent.0, grant.0));
+            }
+        }
+        for left in &bindings {
+            for right in &bindings {
+                let same_policy = (left.0, left.1) == (right.0, right.1);
+                assert_eq!(
+                    left.2 == right.2,
+                    same_policy,
+                    "posture and checker are independent"
+                );
+                assert_eq!(left.3, right.3, "claim content did not change");
+                assert_eq!(left.4, right.4, "grant intent did not change");
+                // Same diff handles cannot redeem a binding after either axis
+                // moves: both binding tuples also require this frontier.
+                assert_eq!((&left.3, left.2) == (&right.3, right.2), same_policy);
+                assert_eq!((&left.4, left.2) == (&right.4, right.2), same_policy);
+            }
+        }
+        Ok(())
+    }
+
+    /// Knob plus an injected Allow checker on an otherwise-Auto Dreamer write:
+    /// consulted exactly once, and still Auto.
+    #[test]
+    fn auto_routes_through_checker_allow() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let claim_id = test_id(0x33);
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let checker = Arc::new(RecordingAutoChecker::allow());
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+
+        attempt_checked_candidate_write(&vault, &claim_id, &body, Some(&bounded_checker))?;
+
+        assert_eq!(
+            vault.get_claim(&claim_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto
         );
+        assert_eq!(checker.calls(), 1, "exactly one consult per candidate");
+
+        let seen = checker.seen();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].predicate, "profile.name");
+        assert_eq!(seen[0].source, ClaimSource::Generated);
+        assert_eq!(seen[0].actor_class, "agent");
+        assert_eq!(seen[0].value_preview, "Ada Lovelace");
+        assert_eq!(seen[0].sensitivity_band, Some(0));
+        Ok(())
+    }
+
+    /// A hold drops the ceiling to Proposed with `gate.pending.checker`, the
+    /// checker's own reasons ride the receipt, and the EXISTING inbox
+    /// projection classifies the parked row as a checker hedge.
+    #[test]
+    fn checker_hold_falls_to_proposed() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let claim_id = test_id(0x34);
+        let body = checker_body(&vault, ClaimApprovalStatus::Proposed)?;
+        let (candidate, envelope) = dreamer_parts(&vault, &body)?;
+
+        // The ordinary Proposed write omits source/sensitivity from its gate
+        // input. Generated lineage still requires a permit, so landed main
+        // parks it as PendingSourceTrust before any checker is injected.
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+        assert!(has_pending_gate_consent(&vault, &claim_id)?);
+        let setup_pending = vault.pending_gate_consents(10)?;
+        assert_eq!(setup_pending.len(), 1);
+        assert_eq!(setup_pending[0].reason_codes, ["gate.pending.source_trust"]);
+
+        // This door includes source/sensitivity, so the explicit permit now
+        // makes the ordinary verdict Auto; the checker alone narrows it.
+        let body = vault.get_claim(&claim_id)?.expect("proposal landed");
+        let checker = Arc::new(RecordingAutoChecker::hold());
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+        gate_claim_write(
+            &vault,
+            &claim_id,
+            &body,
+            &envelope,
+            Some(&bounded_checker),
+            true,
+        )?;
+        assert_eq!(checker.calls(), 1);
+
+        assert_eq!(
+            vault.get_claim(&claim_id)?.expect("claim").approval,
+            ClaimApprovalStatus::Proposed,
+            "a held write stays Proposed; no new approval state exists"
+        );
+
+        let rows = decision_rows(&vault)?;
+        let (reason_codes, receipt_reasons) = rows
+            .iter()
+            .find(|(reason_codes, _)| {
+                reason_codes.as_slice() == [GateReasonCode::PendingChecker.as_str()]
+            })
+            .expect("the hold recorded its own decision");
+        assert_eq!(reason_codes.as_slice(), ["gate.pending.checker"]);
         assert!(
-            !policy.is_fail_closed(),
-            "a malformed dial is not a malformed manifest"
+            receipt_reasons
+                .iter()
+                .any(|reason| reason == HOLD_RECEIPT_REASON),
+            "the checker's reasons append to the receipt, rendered into the \
+             ledger's token vocabulary: {receipt_reasons:?}"
         );
+
+        let pending = vault.pending_gate_consents(10)?;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].reason_codes.as_slice(), ["gate.pending.checker"]);
+        assert!(
+            pending[0]
+                .reason_codes
+                .iter()
+                .any(|code| code.starts_with(crate::inbox::INBOX_REASON_CHECKER_PREFIX)),
+            "the reason prefix the inbox already matches"
+        );
+
+        // Zero inbox changes: the existing projection classifies it.
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members.len(), 1);
+        assert!(
+            groups[0].members[0]
+                .exception_classes
+                .contains(&InboxExceptionClass::CheckerHedge)
+        );
+        Ok(())
     }
 
-    // A missing/unknown/partial shape is malformed the same way.
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x71),
-        &encode_policy_manifest(vec![(
-            Value::from(GATE_BREAKER_POLICY_KEY),
-            Value::Map(vec![(Value::from("max_events"), Value::from(30_u64))]),
-        )]),
-    )?;
-    assert_eq!(
-        resolve(&vault)?.actor_burst_breaker_thresholds(),
-        GateBreakerThresholds::default()
-    );
-    Ok(())
-}
+    /// Unavailable, a panic, a malformed verdict, a host failure the wrapper
+    /// reports as unavailable, and a checker that blows the deadline all land
+    /// the SAME fail-closed answer — and none of them hangs or unwinds through
+    /// the gate.
+    #[test]
+    fn dead_checker_fail_closed() -> Result<()> {
+        // Unavailable straight from the host: this is how a budget denial or a
+        // fatal model error reaches the gate.
+        let unavailable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Unavailable));
+        // A hold that names no reason is a malformed verdict.
+        let malformed = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
+            reasons: vec!["  ".to_owned()],
+        }));
+        // Prose naming no token the receipt vocabulary can keep is the same
+        // malformed verdict one step later: the hold survives `normalized`
+        // but renders to nothing, and an unexplained refusal must not be
+        // recorded as an explained one.
+        let untokenizable = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
+            reasons: vec!["...!!".to_owned()],
+        }));
+        let panicking = bounded(PanickingAutoChecker);
+        let slow = bounded(SlowAutoChecker);
+        let dead: [(&str, &BoundedAutoChecker); 5] = [
+            ("unavailable", &unavailable),
+            ("malformed verdict", &malformed),
+            ("untokenizable reasons", &untokenizable),
+            ("panic", &panicking),
+            ("deadline", &slow),
+        ];
 
-#[test]
-fn breaker_conflicting_manifest_overrides_use_defaults() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &encode_policy_manifest(vec![breaker_dial_entry(
-            Value::from(50_u64),
-            Value::from(300_u64),
-        )]),
-    )?;
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x71),
-        &encode_policy_manifest(vec![breaker_dial_entry(
-            Value::from(7_u64),
-            Value::from(60_u64),
-        )]),
-    )?;
-    assert_eq!(
-        resolve(&vault)?.actor_burst_breaker_thresholds(),
-        GateBreakerThresholds::default(),
-        "two distinct valid dials resolve to engine defaults"
-    );
-    Ok(())
-}
+        for (label, checker) in dead {
+            let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+            let claim_id = test_id(0x35);
+            let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
 
-#[test]
-fn breaker_malformed_plus_valid_uses_valid() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &encode_policy_manifest(vec![breaker_dial_entry(
-            Value::from("nope"),
-            Value::from(600_u64),
-        )]),
-    )?;
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x71),
-        &encode_policy_manifest(vec![breaker_dial_entry(
-            Value::from(50_u64),
-            Value::from(300_u64),
-        )]),
-    )?;
-    assert_eq!(
-        resolve(&vault)?.actor_burst_breaker_thresholds(),
-        GateBreakerThresholds {
-            max_events: 50,
-            window_secs: 300,
-        },
-        "a malformed manifest contributes no candidate at all"
-    );
-    Ok(())
-}
-
-#[test]
-fn breaker_dial_changes_policy_frontier_and_stales_bundle() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-frontier-run";
-    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
-    let absent = resolve(&vault)?.read_frontier_hash()?;
-
-    park_consent_bundle_member(&vault, test_id(0x30), actor, 0x50, run, "proposal", 3)?;
-    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
-    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-
-    // Edit ONLY the dial.
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &encode_policy_manifest(vec![breaker_dial_entry(
-            Value::from(50_u64),
-            Value::from(300_u64),
-        )]),
-    )?;
-    let present = resolve(&vault)?.read_frontier_hash()?;
-    assert_ne!(absent, present);
-
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &encode_policy_manifest(vec![breaker_dial_entry(
-            Value::from(7_u64),
-            Value::from(60_u64),
-        )]),
-    )?;
-    assert_ne!(present, resolve(&vault)?.read_frontier_hash()?);
-
-    // A bundle reviewed under the old dial is stale.
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
-    assert!(matches!(
-        vault.resolve_gate_consent_bundle(
-            &owner,
-            bundle.bundle_id,
-            run,
-            GateConsentBundleAction::Approve,
-            9,
-        ),
-        Err(Error::GateConsentStale { .. })
-    ));
-    Ok(())
-}
-
-#[test]
-fn breaker_manifest_change_does_not_untrip() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-manifest-change-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((1, 600))),
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    let tripped = breaker_row_bytes(&vault, run, &actor)?.expect("tripped row");
-
-    // Relax the dial, then remove it entirely.
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((10_000, 1))),
-    )?;
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    put_policy_manifest_bytes(&vault, test_id(0x70), &breaker_manifest(&[actor], None))?;
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    assert_eq!(
-        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
-        Some(tripped.as_slice()),
-        "the trip snapshot freezes until owner resolution deletes the row"
-    );
-    breaker_write(
-        &vault,
-        test_id(0x32),
-        actor,
-        0x52,
-        run,
-        ClaimApprovalStatus::Auto,
-        5,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x32))?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-    Ok(())
-}
-
-#[test]
-fn staged_breaker_outcome_materializes_once() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-staged-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((1, 600))),
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    let before = breaker_row(&vault, run, &actor)?
-        .expect("row")
-        .event_timestamps()
-        .len();
-
-    // The demoted claim: preflight books it once, phase 2 enforces the staged
-    // verdict instead of asking the gate again.
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    assert_eq!(
-        breaker_row(&vault, run, &actor)?
-            .expect("row")
-            .event_timestamps()
-            .len(),
-        before + 1,
-        "preflight plus phase 2 append exactly one breaker timestamp"
-    );
-    let decisions = claim_gate_decisions(&vault, &test_id(0x31))?;
-    assert_eq!(decisions.len(), 1, "exactly one ordinary gate record");
-    assert_eq!(decisions[0].outcome, "pending");
-    assert_eq!(decisions[0].reason_codes, vec![GATE_BREAKER_REASON_PENDING]);
-
-    let rtxn = vault.store.env.read_txn()?;
-    let pending = vault
-        .store
-        .pending_gate_consent_in_txn(&rtxn, &test_id(0x31))?
-        .expect("staged pending row");
-    drop(rtxn);
-    assert_eq!(pending.decision_id, decisions[0].decision_id);
-    assert_eq!(pending.diff_handle, decisions[0].diff_handle);
-    assert_eq!(pending.read_frontier_hash, decisions[0].read_frontier_hash);
-    assert_eq!(pending.dreamer_run_id.as_deref(), Some(run));
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x31))?.approval,
-        ClaimApprovalStatus::Proposed,
-        "the materialized body is canonically re-encoded as Proposed"
-    );
-    Ok(())
-}
-
-#[test]
-fn selective_gate_error_restores_breaker_side_effects() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-selective-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((1, 600))),
-    )?;
-
-    let mut first = public_stamped(source_trust_claim(ClaimSource::Generated));
-    first.subject = ClaimSubject::Entity(test_id(0x50));
-    first.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
-    let (first_candidate, first_envelope) =
-        dreamer_claim_candidate_write_parts(&vault, &first, actor, run)?;
-    let mut second = public_stamped(source_trust_claim(ClaimSource::Generated));
-    second.subject = ClaimSubject::Entity(test_id(0x51));
-    second.evidence = Some(precommit_evidence(vec![test_id(0x51)]));
-    let (second_candidate, second_envelope) =
-        dreamer_claim_candidate_write_parts(&vault, &second, actor, run)?;
-    // Refused by the GATE-12 evidence floor, which is a DENIAL and therefore
-    // the one receipt the preflight intentionally commits.
-    let mut denied = public_stamped(source_trust_claim(ClaimSource::Generated));
-    denied.subject = ClaimSubject::Entity(test_id(0x52));
-    denied.evidence = None;
-    let (denied_candidate, denied_envelope) =
-        dreamer_claim_candidate_write_parts(&vault, &denied, actor, run)?;
-
-    let err = vault
-        .batch()
-        .claim_candidate(
-            &test_id(0x30),
-            first_candidate,
-            &first_envelope,
-            test_time(3),
-            3,
-        )
-        .claim_candidate(
-            &test_id(0x31),
-            second_candidate,
-            &second_envelope,
-            test_time(4),
-            4,
-        )
-        .claim_candidate(
-            &test_id(0x32),
-            denied_candidate,
-            &denied_envelope,
-            test_time(5),
-            5,
-        )
-        .commit()
-        .expect_err("the evidence-free member must refuse the batch");
-    assert_gate_rejected(err, "deny", &["gate.deny.dreamer_precommit.no_evidence"]);
-
-    assert_eq!(
-        breaker_run_row_count(&vault, run)?,
-        0,
-        "every discarded staged decision's breaker mutation is reversed"
-    );
-    assert!(breaker_trip_receipts(&vault)?.is_empty());
-    for claim in [test_id(0x30), test_id(0x31), test_id(0x32)] {
-        assert!(vault.get_raw(&claim)?.is_none());
-        assert!(!has_pending_gate_consent(&vault, &claim)?);
+            let err = attempt_checked_candidate_write(&vault, &claim_id, &body, Some(checker))
+                .expect_err("a checker that cannot answer must refuse the Auto request");
+            let (outcome, reason_codes) = gate_rejection_parts(err);
+            assert_eq!(outcome, "pending", "{label} must not deny, it parks");
+            assert_eq!(
+                reason_codes,
+                vec!["gate.pending.checker.unavailable"],
+                "{label} must fail closed with the unavailable reason"
+            );
+            assert!(
+                vault.get_raw(&claim_id)?.is_none(),
+                "{label} must leave no claim behind"
+            );
+            assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+            let records: Vec<_> = vault
+                .store
+                .gate_decisions(100)?
+                .into_iter()
+                .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+                .collect();
+            assert_eq!(records.len(), 1, "{label} must retain its refusal receipt");
+            assert_eq!(records[0].outcome, "pending");
+            assert_eq!(
+                records[0].reason_codes,
+                ["gate.pending.checker.unavailable"]
+            );
+        }
+        Ok(())
     }
-    let remaining = vault.store.gate_decisions(256)?;
-    assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].outcome, "deny");
-    assert_eq!(remaining[0].claim_id, Some(*test_id(0x32).as_bytes()));
-    Ok(())
-}
 
-#[test]
-fn resume_on_owner_approve() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let other_actor = test_id(0x41);
-    let run = "breaker-resume-approve-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor, other_actor], Some((1, 600))),
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x32),
-        other_actor,
-        0x52,
-        run,
-        ClaimApprovalStatus::Auto,
-        5,
-    )?;
-    assert_eq!(breaker_run_row_count(&vault, run)?, 2);
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
+    #[test]
+    fn checker_preflight_rejection_discards_earlier_allows_and_all_batch_writes() -> Result<()> {
+        struct AllowThenHold {
+            calls: AtomicUsize,
+        }
+        impl AutoChecker for AllowThenHold {
+            fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+                if self.calls.fetch_add(1, AtomicOrdering::Relaxed) == 0 {
+                    AutoCheckOutcome::Allow
+                } else {
+                    AutoCheckOutcome::Hold {
+                        reasons: vec![HOLD_REASON.to_owned()],
+                    }
+                }
+            }
+        }
 
-    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
-    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    assert_eq!(bundle.members.len(), 1);
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
-    let trip_receipts_before = breaker_trip_receipts(&vault)?.len();
-    vault.resolve_gate_consent_bundle(
-        &owner,
-        bundle.bundle_id,
-        run,
-        GateConsentBundleAction::Approve,
-        9,
-    )?;
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let (candidate, envelope) = dreamer_parts(&vault, &body)?;
+        let first_id = test_id(0x41);
+        let held_id = test_id(0x43);
+        let host = Arc::new(AllowThenHold {
+            calls: AtomicUsize::new(0),
+        });
+        let checker = BoundedAutoChecker::new(host.clone());
+        let receipts_before = vault.store.gate_decisions(100)?;
+        let mut after_apply_ran = false;
 
-    assert_eq!(
-        breaker_run_row_count(&vault, run)?,
-        0,
-        "both actor rows clear inside the resolution transaction"
-    );
-    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x31))?.approval,
-        ClaimApprovalStatus::Approved
-    );
-    assert!(!has_pending_gate_consent(&vault, &test_id(0x31))?);
-    assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
-    assert_eq!(
-        breaker_trip_receipts(&vault)?.len(),
-        trip_receipts_before,
-        "owner-authenticated replay does not retrip"
-    );
-
-    // The next original write starts a fresh window.
-    breaker_write(
-        &vault,
-        test_id(0x33),
-        actor,
-        0x53,
-        run,
-        ClaimApprovalStatus::Auto,
-        10,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x33))?.approval,
-        ClaimApprovalStatus::Auto
-    );
-    let fresh = breaker_row(&vault, run, &actor)?.expect("fresh row");
-    assert_eq!(fresh.event_timestamps().len(), 1);
-    assert_eq!(fresh.tripped_at(), None);
-    Ok(())
-}
-
-#[test]
-fn resume_on_owner_decline() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-resume-decline-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((1, 600))),
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-
-    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
-    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
-    vault.resolve_gate_consent_bundle(
-        &owner,
-        bundle.bundle_id,
-        run,
-        GateConsentBundleAction::Decline,
-        9,
-    )?;
-
-    assert_eq!(breaker_run_row_count(&vault, run)?, 0);
-    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    let declined = stored_claim_body(&vault, &test_id(0x31))?;
-    assert_eq!(declined.approval, ClaimApprovalStatus::Rejected);
-    assert_eq!(declined.lifecycle, ClaimLifecycleStatus::Retracted);
-    assert_eq!(declined.valid_to, Some(9));
-    assert!(!has_pending_gate_consent(&vault, &test_id(0x31))?);
-    assert_eq!(consent_bundle_receipts(&vault)?.len(), 1);
-
-    breaker_write(
-        &vault,
-        test_id(0x32),
-        actor,
-        0x52,
-        run,
-        ClaimApprovalStatus::Auto,
-        10,
-    )?;
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x32))?.approval,
-        ClaimApprovalStatus::Auto
-    );
-    Ok(())
-}
-
-#[test]
-fn failed_bundle_resolution_keeps_breaker_tripped() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-failed-resolution-run";
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &breaker_manifest(&[actor], Some((1, 600))),
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x30),
-        actor,
-        0x50,
-        run,
-        ClaimApprovalStatus::Auto,
-        3,
-    )?;
-    breaker_write(
-        &vault,
-        test_id(0x31),
-        actor,
-        0x51,
-        run,
-        ClaimApprovalStatus::Auto,
-        4,
-    )?;
-    let reviewer = WriteActor::new(actor, EdgeActorClass::Agent);
-    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    let tripped = breaker_row_bytes(&vault, run, &actor)?.expect("tripped row");
-
-    // Fail AFTER the clear point: the actor ceiling is withdrawn, so the
-    // member replay the approve performs is refused by the live gate. The
-    // bundle digest is untouched, so validation still passes and the clear has
-    // already run when the failure lands.
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x70),
-        &encode_policy_manifest(vec![
-            source_trust_entry(ClaimSource::Generated, 0),
-            signatures_entry(),
-        ]),
-    )?;
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
-    // The digest itself still matches — it binds the STORED pending rows — so
-    // validation passes and the clear has already run when the per-member
-    // consent binding is recomputed under the new frontier and refuses.
-    assert!(matches!(
-        vault.resolve_gate_consent_bundle(
-            &owner,
-            bundle.bundle_id,
-            run,
-            GateConsentBundleAction::Approve,
-            9,
-        ),
-        Err(Error::GateConsentStale { .. })
-    ));
-
-    assert_eq!(
-        breaker_row_bytes(&vault, run, &actor)?.as_deref(),
-        Some(tripped.as_slice()),
-        "rollback restores every breaker row"
-    );
-    assert!(vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
-    assert!(has_pending_gate_consent(&vault, &test_id(0x31))?);
-    assert_eq!(
-        stored_claim_body(&vault, &test_id(0x31))?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-    assert!(consent_bundle_receipts(&vault)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn non_run_and_owner_writes_bypass_breaker() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = test_id(0x40);
-    let run = "breaker-bypass-run";
-    let mut data = breaker_manifest(&[actor], Some((1, 600)));
-    trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, test_id(0x70), &data)?;
-
-    // Owner-interactive writes: more than the configured threshold, and no
-    // breaker key, receipt, demotion, or pause anywhere.
-    for (ordinal, claim) in [test_id(0x30), test_id(0x31), test_id(0x32)]
-        .into_iter()
-        .enumerate()
-    {
-        let mut body = public_stamped(source_trust_claim(ClaimSource::UserStated));
-        body.subject = ClaimSubject::Entity(test_id(0x50 + ordinal as u8));
-        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
-        vault
+        let error = vault
             .batch()
-            .claim_candidate(
-                &claim,
+            .claim_candidate(&first_id, candidate.clone(), &envelope, test_time(3), 3)
+            .claim_candidate(&held_id, candidate, &envelope, test_time(3), 3)
+            .commit_with_checker_and_then(&checker, |_| {
+                after_apply_ran = true;
+                Ok(())
+            })
+            .expect_err("a later checker hold refuses the whole batch");
+
+        let (outcome, reasons) = gate_rejection_parts(error);
+        assert_eq!(outcome, "pending");
+        assert_eq!(reasons, ["gate.pending.checker"]);
+        assert_eq!(host.calls.load(AtomicOrdering::Relaxed), 2);
+        assert!(!after_apply_ran);
+        assert!(vault.get_raw(&first_id)?.is_none());
+        assert!(vault.get_raw(&held_id)?.is_none());
+        assert!(vault.pending_gate_consents(10)?.is_empty());
+        let records = vault.store.gate_decisions(100)?;
+        assert_eq!(records.len(), receipts_before.len() + 1);
+        for prior in receipts_before {
+            assert!(
+                records.contains(&prior),
+                "pre-existing receipts stay intact"
+            );
+        }
+        assert!(
+            !records
+                .iter()
+                .any(|record| record.claim_id == Some(*first_id.as_bytes()))
+        );
+        let rejection = records
+            .iter()
+            .find(|record| record.claim_id == Some(*held_id.as_bytes()))
+            .expect("actual held candidate receipt");
+        assert_eq!(rejection.outcome, "pending");
+        assert_eq!(rejection.reason_codes, ["gate.pending.checker"]);
+        assert_eq!(rejection.receipt_reasons, [HOLD_RECEIPT_REASON]);
+        Ok(())
+    }
+
+    /// Reuse the signed checker fixture, but permit the BENIGN declared source
+    /// for exactly one actor. Restricted history still needs this explicit row.
+    fn lineage_manifest(knob: Option<&str>, permit_actor: Option<EntityId>) -> Vec<u8> {
+        let mut data = checker_manifest(knob.map(checker_entry).into_iter().collect());
+        rewrite_policy_manifest_entries(&mut data, |entries| {
+            entries.retain(|(key, _)| key.as_str() != Some(POLICY_SOURCE_TRUST_KEY));
+            if let Some(actor) = permit_actor {
+                let mut permit = source_trust_entry(ClaimSource::Observed, 0);
+                let Value::Map(sources) = &mut permit.1 else {
+                    panic!("source-trust fixture is a map");
+                };
+                let Value::Map(row) = &mut sources[0].1 else {
+                    panic!("explicit permit fixture is a map");
+                };
+                row.push((Value::from(ACTOR_REF_KEY), Value::from(actor.to_hex())));
+                entries.push(permit);
+            }
+        });
+        trust_human_candidate_actor(&mut data);
+        data
+    }
+
+    fn benign_source_lineage_parts(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+        restricted: bool,
+        human: bool,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
+        use crate::write_envelope::SourceLineage;
+
+        let (candidate, base) = dreamer_parts(vault, body)?;
+        let actor = if human {
+            claim_candidate_write_parts(vault, body)?.1.actor()
+        } else {
+            base.actor()
+        };
+        let source = ClaimSource::Observed;
+        assert!(!source.requires_explicit_auto_permit());
+        let lineage = if restricted {
+            SourceLineage::of(source).with(ClaimSource::ToolOutput)
+        } else {
+            SourceLineage::of(source)
+        };
+        // Only this crate-internal constructor can supply nontrivial history.
+        // Even the human control keeps Dreamer-shaped provenance: actor class
+        // must exclude it, not the absence of a recognizable run marker.
+        let envelope = WriteEnvelope::with_lineage(
+            actor,
+            source,
+            base.provenance().clone(),
+            body.approval,
+            lineage,
+        );
+        assert_eq!(envelope.source(), source);
+        assert_eq!(
+            envelope.lineage().requires_explicit_auto_permit(),
+            restricted
+        );
+        Ok((candidate, envelope))
+    }
+
+    fn commit_lineage_candidate(
+        vault: &crate::Vault,
+        claim_id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        checker: Option<&BoundedAutoChecker>,
+    ) -> Result<()> {
+        if let Some(checker) = checker {
+            // The same terminal promotion uses: one consult in preflight,
+            // then None in apply, with refusal receipts outside the rollback.
+            vault
+                .batch()
+                .claim_candidate(claim_id, candidate, envelope, test_time(3), 3)
+                .commit_with_checker_and_then(checker, |_| Ok(()))
+        } else {
+            vault.with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .claim_candidate(claim_id, candidate, envelope, test_time(3), 3)
+                    .apply_recording_gate_decisions(wtxn)
+            })
+        }
+    }
+
+    #[test]
+    fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> Result<()> {
+        for (outcome, pending_reason, receipt_reasons) in [
+            (AutoCheckOutcome::Allow, None, vec![]),
+            (
+                AutoCheckOutcome::Hold {
+                    reasons: vec![HOLD_REASON.to_owned()],
+                },
+                Some("gate.pending.checker"),
+                vec![HOLD_RECEIPT_REASON],
+            ),
+            (
+                AutoCheckOutcome::Unavailable,
+                Some("gate.pending.checker.unavailable"),
+                vec![],
+            ),
+        ] {
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(
+                &vault,
+                test_id(0x22),
+                &lineage_manifest(
+                    Some(CHECKER_REF),
+                    Some(first_party_eiri_connector_actor_id()),
+                ),
+            )?;
+            let claim_id = test_id(0x33);
+            let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+            let (candidate, envelope) = benign_source_lineage_parts(&vault, &body, true, false)?;
+            let checker = Arc::new(RecordingAutoChecker::new(outcome));
+            let bounded_checker = BoundedAutoChecker::new(checker.clone());
+            let result = commit_lineage_candidate(
+                &vault,
+                &claim_id,
                 candidate,
                 &envelope,
-                test_time(3 + ordinal as u64),
-                3 + ordinal as u64,
-            )
-            .commit()?;
-        assert_eq!(
-            stored_claim_body(&vault, &claim)?.approval,
-            ClaimApprovalStatus::Auto
-        );
+                Some(&bounded_checker),
+            );
+            assert_eq!(
+                checker.calls(),
+                1,
+                "restricted history must not skip or repeat the consult"
+            );
+            let seen = checker.seen();
+            assert_eq!(seen.len(), 1);
+            assert_eq!(
+                seen[0].source,
+                ClaimSource::Observed,
+                "history never relabels the candidate"
+            );
+            assert_eq!(seen[0].actor_class, "agent");
+            assert_eq!(seen[0].predicate, "profile.name");
+            assert_eq!(seen[0].value_preview, "Ada Lovelace");
+            assert_eq!(seen[0].sensitivity_band, Some(0));
+            if let Some(reason) = pending_reason {
+                let (outcome, reasons) =
+                    gate_rejection_parts(result.expect_err("checker refuses Auto"));
+                assert_eq!(outcome, "pending");
+                assert_eq!(reasons, [reason]);
+                assert!(
+                    vault.get_raw(&claim_id)?.is_none(),
+                    "refusal leaves no claim"
+                );
+            } else {
+                result?;
+                let landed = vault
+                    .get_claim(&claim_id)?
+                    .expect("ordinary Auto remains eligible");
+                assert_eq!(landed.approval, ClaimApprovalStatus::Auto);
+                assert_eq!(landed.source, Some(ClaimSource::Observed));
+            }
+            assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+            let records: Vec<_> = vault
+                .store
+                .gate_decisions(100)?
+                .into_iter()
+                .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+                .collect();
+            assert_eq!(
+                records.len(),
+                1,
+                "the actual decision survives exactly once"
+            );
+            assert_eq!(
+                records[0].outcome,
+                if pending_reason.is_some() {
+                    "pending"
+                } else {
+                    "allow"
+                }
+            );
+            assert_eq!(
+                records[0].reason_codes,
+                [pending_reason.unwrap_or("gate.allow")]
+            );
+            assert_eq!(records[0].receipt_reasons, receipt_reasons);
+        }
+        Ok(())
     }
-    assert_eq!(breaker_run_row_count(&vault, run)?, 0);
-    assert!(breaker_trip_receipts(&vault)?.is_empty());
-    assert!(!vault.gate_breaker_run_projection(run)?.gate_breaker_paused);
 
-    // An agent write with NO Dreamer run surface: `gate-test` provenance
-    // carries no run id, so the breaker never sees it.
-    for (ordinal, claim) in [test_id(0x33), test_id(0x34), test_id(0x35)]
-        .into_iter()
-        .enumerate()
-    {
-        let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-        body.subject = ClaimSubject::Entity(test_id(0x55 + ordinal as u8));
-        body.evidence = Some(precommit_evidence(vec![test_id(0x55 + ordinal as u8)]));
-        let (candidate, envelope) =
-            claim_candidate_write_parts_for_actor(&vault, &body, actor, EdgeActorClass::Agent)?;
-        vault
-            .batch()
-            .claim_candidate(
-                &claim,
+    #[test]
+    fn restricted_lineage_without_matching_permit_never_consults_checker() -> Result<()> {
+        for permit_actor in [None, Some(test_id(0x21))] {
+            let (_tmp, vault) = temp_vault();
+            put_policy_manifest_bytes(
+                &vault,
+                test_id(0x22),
+                &lineage_manifest(Some(CHECKER_REF), permit_actor),
+            )?;
+            let claim_id = test_id(0x33);
+            let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+            let (candidate, envelope) = benign_source_lineage_parts(&vault, &body, true, false)?;
+            let checker = Arc::new(RecordingAutoChecker::allow());
+            let bounded_checker = BoundedAutoChecker::new(checker.clone());
+            let error = commit_lineage_candidate(
+                &vault,
+                &claim_id,
                 candidate,
                 &envelope,
-                test_time(7 + ordinal as u64),
-                7 + ordinal as u64,
+                Some(&bounded_checker),
             )
-            .commit()?;
+            .expect_err("neither a missing permit nor another actor's permit authorizes Auto");
+            let (outcome, reasons) = gate_rejection_parts(error);
+            assert_eq!(outcome, "pending");
+            assert_eq!(reasons, ["gate.pending.source_trust"]);
+            assert_eq!(
+                checker.calls(),
+                0,
+                "ordinary Pending cannot be widened by the checker"
+            );
+            assert!(checker.seen().is_empty());
+            assert!(vault.get_raw(&claim_id)?.is_none());
+            assert!(!has_pending_gate_consent(&vault, &claim_id)?);
+            let records: Vec<_> = vault
+                .store
+                .gate_decisions(100)?
+                .into_iter()
+                .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+                .collect();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].outcome, "pending");
+            assert_eq!(records[0].reason_codes, ["gate.pending.source_trust"]);
+            assert!(records[0].receipt_reasons.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lineage_checker_exclusions_keep_ordinary_allow() -> Result<()> {
+        for (label, restricted, human, knob, inject) in [
+            (
+                "trivial benign lineage",
+                false,
+                false,
+                Some(CHECKER_REF),
+                true,
+            ),
+            ("human", true, true, Some(CHECKER_REF), true),
+            ("no knob", true, false, None, true),
+            ("None injection", true, false, Some(CHECKER_REF), false),
+        ] {
+            let (_tmp, vault) = temp_vault();
+            let actor = if human {
+                test_id(0x20)
+            } else {
+                first_party_eiri_connector_actor_id()
+            };
+            put_policy_manifest_bytes(&vault, test_id(0x22), &lineage_manifest(knob, Some(actor)))?;
+            let claim_id = test_id(0x33);
+            let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+            let (candidate, envelope) =
+                benign_source_lineage_parts(&vault, &body, restricted, human)?;
+            let checker = Arc::new(RecordingAutoChecker::hold());
+            let bounded_checker = BoundedAutoChecker::new(checker.clone());
+            commit_lineage_candidate(
+                &vault,
+                &claim_id,
+                candidate,
+                &envelope,
+                inject.then_some(&bounded_checker),
+            )?;
+            assert_eq!(checker.calls(), 0, "{label}");
+            assert!(checker.seen().is_empty(), "{label}");
+            let landed = vault.get_claim(&claim_id)?.expect("ordinary allow lands");
+            assert_eq!(landed.approval, ClaimApprovalStatus::Auto, "{label}");
+            assert_eq!(landed.source, Some(ClaimSource::Observed), "{label}");
+            assert!(!has_pending_gate_consent(&vault, &claim_id)?, "{label}");
+            let records: Vec<_> = vault
+                .store
+                .gate_decisions(100)?
+                .into_iter()
+                .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
+                .collect();
+            assert_eq!(records.len(), 1, "{label}");
+            assert_eq!(records[0].outcome, "allow", "{label}");
+            assert_eq!(records[0].reason_codes, ["gate.allow"], "{label}");
+            assert!(records[0].receipt_reasons.is_empty(), "{label}");
+        }
+        Ok(())
+    }
+
+    /// Owner/user writes never reach a checker, whatever the manifest says.
+    #[test]
+    fn user_writes_never_consult_checker() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let mut data = checker_manifest(vec![checker_entry(CHECKER_REF)]);
+        trust_human_candidate_actor(&mut data);
+        put_policy_manifest_bytes(&vault, test_id(0x24), &data)?;
+
+        let claim_id = test_id(0x37);
+        let body = public_stamped(source_trust_claim(ClaimSource::UserStated));
+        let (_candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+        let checker = Arc::new(RecordingAutoChecker::hold());
+        let bounded_checker = BoundedAutoChecker::new(checker.clone());
+
+        gate_claim_write(
+            &vault,
+            &claim_id,
+            &body,
+            &envelope,
+            Some(&bounded_checker),
+            false,
+        )?;
+
         assert_eq!(
-            stored_claim_body(&vault, &claim)?.approval,
+            checker.calls(),
+            0,
+            "a human/user_stated write records zero checker calls"
+        );
+        let rows = decision_rows(&vault)?;
+        assert_eq!(rows.len(), 1, "one decision, and it is the ordinary one");
+        assert_eq!(rows[0].0.as_slice(), ["gate.allow"]);
+        Ok(())
+    }
+
+    /// Every other claim write door threads no checker at all, so a configured
+    /// knob changes nothing on them: the ordinary batch door lands the same
+    /// Dreamer write Auto while a holding checker sits unreachable beside it.
+    #[test]
+    fn non_dreamer_paths_pass_none() -> Result<()> {
+        let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+        let claim_id = test_id(0x38);
+        let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+        let (candidate, envelope) = dreamer_parts(&vault, &body)?;
+        let unreachable = RecordingAutoChecker::hold();
+
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+
+        assert_eq!(
+            vault.get_claim(&claim_id)?.expect("claim landed").approval,
+            ClaimApprovalStatus::Auto,
+            "the ordinary batch door injects no checker, so the knob is inert there"
+        );
+        assert_eq!(unreachable.calls(), 0);
+
+        // The compat promotion entry point is the same story: it passes None.
+        let plain_id = test_id(0x39);
+        attempt_checked_candidate_write(&vault, &plain_id, &body, None)?;
+        assert_eq!(
+            vault.get_claim(&plain_id)?.expect("claim landed").approval,
             ClaimApprovalStatus::Auto
         );
+        assert_eq!(unreachable.calls(), 0);
+        Ok(())
     }
-    assert_eq!(breaker_run_row_count(&vault, run)?, 0);
-    assert!(breaker_trip_receipts(&vault)?.is_empty());
-    Ok(())
 }
+
+#[path = "tests/breaker.rs"]
+mod breaker;

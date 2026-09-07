@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use heed::RwTxn;
 
@@ -14,75 +14,6 @@ use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::Store;
-
-#[derive(Debug, Clone)]
-pub(crate) struct ApplyOpsGateMode {
-    record_decisions: bool,
-    persist_pending_consent: bool,
-    include_source_in_gate_input: bool,
-    claim_gate_prechecked: bool,
-    preflight_gate_decision_ids: HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>,
-    /// ONE-1453: the gate verdicts this transaction's preflight already
-    /// recorded, keyed by local claim id. Only claims whose ORIGINAL event the
-    /// burst breaker booked appear here; everything else keeps the landed
-    /// `apply_put` gate path byte for byte.
-    staged_claim_gate: Option<BTreeMap<EntityId, StagedClaimGateOutcome>>,
-}
-
-impl ApplyOpsGateMode {
-    pub(crate) fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
-        Self {
-            record_decisions,
-            persist_pending_consent,
-            include_source_in_gate_input: false,
-            claim_gate_prechecked: false,
-            preflight_gate_decision_ids: HashMap::new(),
-            staged_claim_gate: None,
-        }
-    }
-
-    pub(crate) fn with_source_in_gate_input(mut self) -> Self {
-        self.include_source_in_gate_input = true;
-        self
-    }
-
-    /// Marks local CLAIM puts as already authorized in this transaction.
-    /// Structural validation and materialization still run; only the duplicate
-    /// gate evaluation in `apply_put` is skipped.
-    fn with_prechecked_claim_gate(mut self) -> Self {
-        self.claim_gate_prechecked = true;
-        self
-    }
-
-    /// Binds the receipt identities a same-transaction gate preflight already
-    /// recorded. Reachable crate-wide because `commitment::lapse_commitments_in_txn`
-    /// composes the batch apply from inside a `CommitmentGapDecay` op and must
-    /// carry its preflight identities forward rather than mint fresh ones.
-    pub(crate) fn with_preflight_gate_decision_ids(
-        mut self,
-        preflight_gate_decision_ids: HashMap<
-            EntityId,
-            VecDeque<Option<crate::store::GateDecisionId>>,
-        >,
-    ) -> Self {
-        self.preflight_gate_decision_ids = preflight_gate_decision_ids;
-        self
-    }
-
-    /// Binds the gate verdicts this transaction's preflight already recorded
-    /// for local claims the ONE-1453 burst breaker booked (ONE-1453).
-    ///
-    /// Not a general gate bypass: the map is crate-private, `BatchBuilder`
-    /// builds it only from decisions IT staged in THIS transaction, and the
-    /// door that consumes it enforces rather than re-evaluates.
-    pub(crate) fn with_staged_claim_gate(
-        mut self,
-        staged_claim_gate: BTreeMap<EntityId, StagedClaimGateOutcome>,
-    ) -> Self {
-        self.staged_claim_gate = Some(staged_claim_gate);
-        self
-    }
-}
 
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
@@ -519,6 +450,16 @@ pub(crate) fn apply_ops_with_origin(
                 } else {
                     store.validate_public_entity_type(entity_type)?;
                 }
+                let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                    && !allow_reserved_predicate
+                {
+                    preflight_gate_decision_ids
+                        .get_mut(&id)
+                        .and_then(VecDeque::pop_front)
+                        .flatten()
+                } else {
+                    None
+                };
                 let applied = apply_put(
                     store,
                     wtxn,
@@ -545,23 +486,9 @@ pub(crate) fn apply_ops_with_origin(
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
                     claim_gate_prechecked,
-                    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                        && !allow_reserved_predicate
-                    {
-                        preflight_gate_decision_ids
-                            .get_mut(&id)
-                            .and_then(VecDeque::pop_front)
-                            .flatten()
-                    } else {
-                        None
-                    },
-                    staged_claim_gate
-                        .as_ref()
-                        .filter(|_| {
-                            entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                                && !allow_reserved_predicate
-                        })
-                        .and_then(|staged| staged.get(&id)),
+                    preflight_decision_id,
+                    preflight_decision_id
+                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                     Some(&companion_retired_histories),
                     origin,
                 )?;
@@ -658,6 +585,14 @@ pub(crate) fn apply_ops_with_origin(
                 learned_at,
                 internal_lexical_query_hint,
             } => {
+                let preflight_decision_id = if !internal_lexical_query_hint {
+                    preflight_gate_decision_ids
+                        .get_mut(&id)
+                        .and_then(VecDeque::pop_front)
+                        .flatten()
+                } else {
+                    None
+                };
                 let applied = apply_claim_candidate(
                     store,
                     wtxn,
@@ -674,18 +609,9 @@ pub(crate) fn apply_ops_with_origin(
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
                     claim_gate_prechecked,
-                    if !internal_lexical_query_hint {
-                        preflight_gate_decision_ids
-                            .get_mut(&id)
-                            .and_then(VecDeque::pop_front)
-                            .flatten()
-                    } else {
-                        None
-                    },
-                    staged_claim_gate
-                        .as_ref()
-                        .filter(|_| !internal_lexical_query_hint)
-                        .and_then(|staged| staged.get(&id)),
+                    preflight_decision_id,
+                    preflight_decision_id
+                        .and_then(|decision_id| staged_claim_gate.as_ref()?.get(&decision_id)),
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;

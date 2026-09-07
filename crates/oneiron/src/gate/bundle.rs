@@ -64,9 +64,8 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
 
-/// Bound on the pending-consent rows one bundle projection reads. Membership
-/// is deterministic under it: the scan is ordered, so review and resolve
-/// select the same rows and a truncated group binds the same digest.
+/// Bound on the pending-consent rows one bundle projection accepts. Read one
+/// extra row and reject overflow rather than clear a run with omitted members.
 const GATE_BUNDLE_PENDING_SCAN_LIMIT: usize = 10_000;
 
 impl Vault {
@@ -136,6 +135,9 @@ impl Vault {
                     ClaimGateWrite {
                         body: &body,
                         envelope: Some(&envelope),
+                        // Bundle merge is an owner-resolution path, not an
+                        // agent-class Dreamer write; it never consults.
+                        auto_checker: None,
                         defer_metrics_until_commit: true,
                     },
                     &policy,
@@ -534,7 +536,10 @@ fn check_session_bundle_actor_policy(
         enforce_gate_decision(policy.evaluate_gate(&input))?;
     }
     let actor_ref = actor.entity_ref().to_hex();
-    check_claim_source_trust(body, Some(actor_ref.as_str()), policy)
+    // Read-only review over already-proposed bodies. Bundle MERGE builds its
+    // own trivial-lineage envelope above, so there is no observed history for
+    // this door to read: declared-source only, exactly as before.
+    check_claim_source_trust(body, Some(actor_ref.as_str()), policy, false)
 }
 
 /// One bundle member paired with the hash of the LIVE claim body the digest
@@ -579,7 +584,13 @@ fn gate_consent_bundle_members_in_txn(
     let mut members = Vec::new();
     let mut seen_decisions = BTreeSet::new();
     let mut seen_claims = BTreeSet::new();
-    for record in store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT)? {
+    let records = store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT + 1)?;
+    if records.len() > GATE_BUNDLE_PENDING_SCAN_LIMIT {
+        return Err(Error::InvalidClaimBody(
+            "gate consent bundle scan limit exceeded",
+        ));
+    }
+    for record in records {
         if record.dreamer_run_id.as_deref() != Some(dreamer_run_id) {
             continue;
         }
@@ -704,6 +715,9 @@ fn replay_gate_consent_bundle_member(
         ClaimGateWrite {
             body,
             envelope: Some(&envelope),
+            // Consent-bundle resolution replays an owner's decision; there is
+            // no fresh Auto verdict for a checker to weigh in on.
+            auto_checker: None,
             defer_metrics_until_commit: true,
         },
         policy,

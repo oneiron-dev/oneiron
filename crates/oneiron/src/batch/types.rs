@@ -27,31 +27,6 @@ pub(super) const ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE: &str = "raw NOTE put req
 pub(super) type CompanionRetiredHistoryOverlay =
     HashSet<(CompanionRecordKey, Vec<CompanionLifecycleEvent>)>;
 
-/// ONE-1453: what `BatchBuilder::commit`'s gate PREFLIGHT already decided for
-/// one local claim, carried into phase-2 materialization.
-///
-/// It exists because breaker accounting is booked exactly once, at the site
-/// that appends the event's ordinary decision. Phase 2 must therefore reuse
-/// that verdict rather than evaluate policy a second time — a second
-/// evaluation would either debit the breaker twice or silently discard the
-/// demotion the first one computed.
-///
-/// This is NOT a general gate-bypass argument: it is crate-private, it is
-/// built only from decisions this same transaction staged, and the door that
-/// consumes it enforces rather than re-evaluates.
-#[derive(Debug, Clone)]
-pub(crate) struct StagedClaimGateOutcome {
-    pub(crate) decision_id: crate::store::GateDecisionId,
-    pub(crate) outcome: crate::gate::GateOutcome,
-    pub(crate) reason_codes: Vec<crate::gate::GateReasonCode>,
-    pub(crate) diff_handle: Vec<u8>,
-    pub(crate) read_frontier_hash: [u8; 32],
-    pub(crate) created_at: u64,
-    /// The breaker converted this claim's would-be-`Auto` outcome, so phase 2
-    /// enforces against `Proposed` and re-encodes the stored body to match.
-    pub(crate) breaker_demoted: bool,
-}
-
 pub(super) fn is_relationship_end_scrub_value(value: &Value) -> bool {
     let Value::Map(entries) = value else {
         return false;

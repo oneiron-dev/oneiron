@@ -12,6 +12,8 @@ use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
+mod breaker_policy;
+
 use super::breaker::{GateBreakerThresholds, resolve_gate_breaker_thresholds};
 use super::ceiling::{
     ActorCeiling, DelegationFoldCache, DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes,
@@ -53,6 +55,42 @@ impl PolicyManifestDiagnostics {
     }
 }
 
+/// DEC-0005 posture for a send to an opted-out counterparty that carries no
+/// matching `comm.send_override` (ARCH-0057 §3.1).
+///
+/// `Escalate` is the DEFAULT and the restrictive pole: an absent key anywhere,
+/// and any single matching pack that names it, resolve here. It is the posture
+/// that asks the owner rather than deciding for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum CommOptOutPosture {
+    /// Hold the send as a pending owner decision.
+    #[default]
+    Escalate,
+    /// Send immediately, keeping the opt-out receipt trail.
+    AllowWithReceipt,
+}
+
+impl CommOptOutPosture {
+    /// Restrictive composition: any `Escalate` wins.
+    #[must_use]
+    pub(crate) fn restrict(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::AllowWithReceipt, Self::AllowWithReceipt) => Self::AllowWithReceipt,
+            _ => Self::Escalate,
+        }
+    }
+
+    /// Manifest token for this posture. The parse direction is
+    /// `decode::parse_comm_opt_out_posture`; the two stay exact inverses.
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Escalate => "escalate",
+            Self::AllowWithReceipt => "allow_with_receipt",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(super) diagnostics: PolicyManifestDiagnostics,
@@ -70,6 +108,12 @@ pub(crate) struct PolicyManifestResolution {
     owner_policy_patterns_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
+    comm_opt_out_posture: Option<CommOptOutPosture>,
+    /// The opaque host auto-checker ref (ONE-1296). The CHECKER itself is
+    /// never stored here — only the manifest's selector for it. Injection
+    /// rides the write door's own options, so no host object is ever reachable
+    /// from a resolved manifest.
+    auto_checker: Option<String>,
     budget_policy: BudgetPolicyTable,
     /// ONE-1453: the ONE resolved burst-breaker dial, or `None` for engine
     /// defaults. Zero valid overrides and two-or-more distinct valid overrides
@@ -101,14 +145,22 @@ impl PolicyManifestResolution {
         self.on_budget_exhausted.unwrap_or_default()
     }
 
-    /// The ONE-1453 burst-breaker thresholds this resolution applies.
-    ///
-    /// Engine defaults cover an absent dial, an all-malformed set of
-    /// overrides, and two-or-more distinct valid overrides. A malformed dial
-    /// never disables accounting and never yields a zero threshold.
+    /// The resolved opt-out posture. No pack carrying the key resolves to the
+    /// restrictive default, `Escalate`.
     #[must_use]
-    pub(crate) fn actor_burst_breaker_thresholds(&self) -> GateBreakerThresholds {
-        self.actor_burst_breaker.unwrap_or_default()
+    pub(crate) fn comm_opt_out_posture(&self) -> CommOptOutPosture {
+        self.comm_opt_out_posture.unwrap_or_default()
+    }
+
+    /// The manifest's opaque auto-checker ref (ONE-1296), or `None` when no
+    /// manifest names one.
+    ///
+    /// Presence is the whole meaning: it is what arms the write door's consult.
+    /// The engine never interprets the string, and the checker itself is
+    /// supplied per-write rather than resolved from here.
+    #[must_use]
+    pub(crate) fn auto_checker(&self) -> Option<&str> {
+        self.auto_checker.as_deref()
     }
 
     /// The resolved `budget_policy` rows, fail-closed: a loaded manifest that
@@ -414,6 +466,25 @@ impl PolicyManifestResolution {
 
     #[must_use]
     pub(crate) fn evaluate_gate(&self, input: &GateEvaluatorInput) -> GateDecision {
+        self.evaluate_gate_with_lineage(input, false)
+    }
+
+    /// The ONE-1314 envelope-bearing entry: the same evaluation, plus the
+    /// write's observed source lineage as a second auto-permit axis.
+    ///
+    /// The flag is a DERIVED fact about the write in hand
+    /// ([`crate::WriteEnvelope::effective_requires_explicit_auto_permit`]), so
+    /// it rides the call rather than the input record: an input a door has no
+    /// envelope for cannot accidentally carry a stale or forged axis, and the
+    /// recorded gate input keeps its exact prior shape. Every non-envelope
+    /// door keeps entering through [`Self::evaluate_gate`], which is this call
+    /// with the axis off.
+    #[must_use]
+    pub(crate) fn evaluate_gate_with_lineage(
+        &self,
+        input: &GateEvaluatorInput,
+        lineage_requires_auto_permit: bool,
+    ) -> GateDecision {
         let actor_class = input.actor.actor_class.trim();
         if actor_class.is_empty() {
             return GateDecision::deny(GateReasonCode::DenyMissingActorClass);
@@ -429,11 +500,34 @@ impl PolicyManifestResolution {
         } else {
             None
         };
+        // ONE-1752 (ARCH-0057 §3.1). The folded opt-out bit is unchanged — CA
+        // owns how it is computed — and only its CONSEQUENCE moved. A
+        // counterparty's suppression is a fact about the counterparty; refusing
+        // the owner outright made their own instrument answer for it. So:
+        //
+        // * a matching `comm.send_override` falls through to ordinary
+        //   evaluation, and `external_effect_receipt_reasons` pins WHICH
+        //   override decided it;
+        // * `allow_with_receipt` falls through immediately, keeping the opt-out
+        //   receipt trail;
+        // * `escalate` (the default) holds the send as a PENDING owner
+        //   decision, carrying the same receipt reasons the deny carried.
+        //
+        // The override never deletes `comm.opt_out`, `comm.do_not_contact`, or a
+        // contact-level opt-out claim; CLEAR remains its own op.
         if let Some(effect) = external_effect
             && effect.counterparty_opted_out
         {
-            return GateDecision::deny(GateReasonCode::DenyCounterpartyOptOut)
-                .with_receipt_reasons(external_effect_receipt_reasons(effect));
+            match (
+                effect.counterparty_send_override,
+                self.comm_opt_out_posture(),
+            ) {
+                (Some(_), _) | (None, CommOptOutPosture::AllowWithReceipt) => {}
+                (None, CommOptOutPosture::Escalate) => {
+                    return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
+                        .with_receipt_reasons(external_effect_receipt_reasons(effect));
+                }
+            }
         }
         if self.is_fail_closed() {
             if input.content_kind == GateContentKind::ExternalEffect {
@@ -484,10 +578,11 @@ impl PolicyManifestResolution {
             pending.push(GateReasonCode::PendingPolicyManifestAuthority);
         }
 
-        if !self.source_trust_allows_auto(
+        if !self.source_trust_allows_auto_with_lineage(
             input.source,
             input.sensitivity_band,
             input.actor.actor_ref.as_deref(),
+            lineage_requires_auto_permit,
         ) {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
@@ -538,14 +633,33 @@ impl PolicyManifestResolution {
 
     /// `actor_ref` selects which source-trust rows answer this write; see
     /// [`check_source_trust`], whose row selection this mirrors exactly.
+    // The declared-only form's one production caller is the federated
+    // admission path, which exists only under `sync`.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn source_trust_allows_auto(
         &self,
         source: Option<ClaimSource>,
         sensitivity: Option<u8>,
         actor_ref: Option<&str>,
     ) -> bool {
+        self.source_trust_allows_auto_with_lineage(source, sensitivity, actor_ref, false)
+    }
+
+    /// The ONE-1314 two-axis form: the declared label OR the write's observed
+    /// lineage. Only a caller holding a [`crate::WriteEnvelope`] can answer the
+    /// second axis, so the declared-only form above stays the entry for every
+    /// door with no envelope in scope (federated admission, external effects).
+    pub(super) fn source_trust_allows_auto_with_lineage(
+        &self,
+        source: Option<ClaimSource>,
+        sensitivity: Option<u8>,
+        actor_ref: Option<&str>,
+        lineage_requires_auto_permit: bool,
+    ) -> bool {
         let Some(source) = source else {
-            return true;
+            // No declared source to judge. Fail-closed on the lineage axis:
+            // an unstated label cannot vouch for an observed history.
+            return !lineage_requires_auto_permit;
         };
 
         if self.source_trust.malformed_manifest_seen {
@@ -560,7 +674,7 @@ impl PolicyManifestResolution {
         // reads as carrying no row at all and keeps its default posture.
         let row = match self.source_trust.row(source) {
             Some(row) if row.binds_actor(actor_ref) => row,
-            _ => return !source.requires_explicit_auto_permit(),
+            _ => return !(source.requires_explicit_auto_permit() || lineage_requires_auto_permit),
         };
 
         let Some(max_auto_sensitivity) = row.max_auto_sensitivity else {
@@ -568,7 +682,8 @@ impl PolicyManifestResolution {
         };
 
         sensitivity <= max_auto_sensitivity
-            && (!source.requires_explicit_auto_permit() || (row.receipted && row.warned))
+            && (!(source.requires_explicit_auto_permit() || lineage_requires_auto_permit)
+                || (row.receipted && row.warned))
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
@@ -629,6 +744,18 @@ fn hash_policy_frontier_v0(
     hash_diagnostics(hasher, resolution.diagnostics);
     hash_source_trust(hasher, &resolution.source_trust);
     hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
+    // The RESOLVED posture, beside its budget sibling: it decides whether an
+    // opted-out send holds or ships, so flipping it must move the frontier and
+    // invalidate every standing grant bound to the old one.
+    hash_str(hasher, resolution.comm_opt_out_posture().as_str());
+    // ONE-1296: hashed ONLY when the knob is present, so a manifest that never
+    // names a checker keeps its exact no-checker frontier hash — and every
+    // consent binding taken against it stays valid. A domain tag rides with
+    // the value so no future optional field can collide with this one.
+    if let Some(auto_checker) = resolution.auto_checker.as_deref() {
+        hash_str(hasher, "auto_checker");
+        hash_str(hasher, auto_checker);
+    }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
@@ -697,20 +824,7 @@ fn hash_policy_frontier_v0(
         hash_owner_policy_row(hasher, row);
     }
 
-    // ONE-1453: the resolved optional burst-breaker dial. Absence, one
-    // resolved override, and a DIFFERENT resolved override are frontier-
-    // distinct, so editing the dial stales every consent bundle reviewed under
-    // the old one (ONE-1452 binds each member's `read_frontier_hash` into the
-    // bundle id). Pre-release no-legacy law covers the domain change: no
-    // migration or compatibility branch.
-    match resolution.actor_burst_breaker {
-        Some(thresholds) => {
-            hash_bool(hasher, true);
-            hasher.update(thresholds.max_events.to_be_bytes());
-            hasher.update(thresholds.window_secs.to_be_bytes());
-        }
-        None => hash_bool(hasher, false),
-    }
+    resolution.hash_actor_burst_breaker(hasher);
 
     hash_opt_str(hasher, resolution.owner_policy_document.as_deref());
     hash_opt_str(hasher, resolution.owner_policy_output_contract.as_deref());
@@ -1008,6 +1122,31 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // Unlike `on_budget_exhausted`, disagreement here is NOT
+                // malformed: the posture has a restrictive pole, so two packs
+                // that disagree have a deterministic, safe answer — hold the
+                // send. Marking that malformed would fail the whole vault
+                // closed over a question the axis can answer itself.
+                if let Some(posture) = decoded.comm_opt_out_posture {
+                    resolution.comm_opt_out_posture = Some(
+                        resolution
+                            .comm_opt_out_posture
+                            .map_or(posture, |existing| existing.restrict(posture)),
+                    );
+                }
+                // One checker per vault (ONE-1296), folded exactly like the
+                // budget policy above: the first value wins, a second manifest
+                // stating the SAME ref is one configuration written twice, and
+                // two manifests naming different checkers is a policy state
+                // nothing downstream could resolve — so it fails closed rather
+                // than picking a winner.
+                if let Some(auto_checker) = decoded.auto_checker {
+                    match &resolution.auto_checker {
+                        None => resolution.auto_checker = Some(auto_checker),
+                        Some(existing) if *existing == auto_checker => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
@@ -1131,10 +1270,15 @@ impl Vault {
 /// `actor_ref` is the hex entity ref of the actor presenting this write, or
 /// `None` for an unattributed one. Actor-bound source-trust rows answer only
 /// the actor they name, so an unattributed write never rides one.
+///
+/// ONE-1314: `lineage_requires_auto_permit` comes from the write's envelope
+/// (`effective_requires_explicit_auto_permit`) where one exists; a door with
+/// no envelope in scope passes `false` and keeps its exact prior verdict.
 pub(super) fn check_claim_source_trust(
     body: &ClaimBody,
     actor_ref: Option<&str>,
     policy: &PolicyManifestResolution,
+    lineage_requires_auto_permit: bool,
 ) -> Result<()> {
     check_source_trust(
         body.source,
@@ -1142,6 +1286,7 @@ pub(super) fn check_claim_source_trust(
         claim_sensitivity_band(body),
         actor_ref,
         &policy.source_trust,
+        lineage_requires_auto_permit,
     )
 }
 
