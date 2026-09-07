@@ -6,6 +6,7 @@ mod corpus_filter;
 mod execution;
 mod filters;
 mod scoped_channels;
+pub(crate) use types::CandidateFilter;
 mod support;
 mod trace;
 mod types;

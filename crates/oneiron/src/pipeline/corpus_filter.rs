@@ -26,6 +26,7 @@ impl CorpusFilter {
         occurred_range: Option<(u64, u64)>,
     ) -> PipelineFilterConfig<'a> {
         PipelineFilterConfig {
+            candidate_filter: builder.candidate_filter,
             type_filter: builder.type_filter.as_deref(),
             since_filter: builder.since_filter,
             occurred_range,

@@ -121,15 +121,12 @@ impl PipelineBuilder<'_> {
             let codebase_scope_active = self.has_codebase_scope_filter();
             let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
             let filter_config = corpus_filter.config(self, occurred_range);
-            // D19 is always active. For final-token prefix queries, a dead
-            // claim can outrank a live prefix hit in BM25, then be removed
-            // after fusion; overfetch prevents that dead hit from consuming
-            // the only text-channel slot. Live exact claims already satisfy
-            // the D19 gate, so they must not widen ordinary
-            // `search_text(..., limit)` calls.
+            // Ordinary text uses D19 widening; candidate-filtered text instead
+            // applies D19 during bounded scoring and needs no corpus-sized probe.
             let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
             let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
                 && *limit > 0
+                && self.candidate_filter.is_none()
             {
                 let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
@@ -309,19 +306,31 @@ impl PipelineBuilder<'_> {
                 let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-                let mut text_results = crate::bm25::search_text_scoped_with_recency(
+                let search = if self.candidate_filter.is_some() {
+                    crate::bm25::search_text_filtered_with_recency
+                } else {
+                    crate::bm25::search_text_scoped_with_recency
+                };
+                let mut text_results = search(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
                     bm25_config,
                     text_query,
-                    text_channel_limit,
+                    if self.candidate_filter.is_some() {
+                        *limit
+                    } else {
+                        text_channel_limit
+                    },
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
-                if text_channel_limit > *limit && text_scope_widening_active {
+                if self.candidate_filter.is_none()
+                    && text_channel_limit > *limit
+                    && text_scope_widening_active
+                {
                     let scoped_result_limit = if recency.is_some() {
                         limit.saturating_mul(PER_SCAN_CAP_FACTOR)
                     } else {

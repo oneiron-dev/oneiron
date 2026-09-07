@@ -155,8 +155,14 @@ pub(super) struct EntityMetadata {
     pub(super) learned_at: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::Store, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
+    + Send
+    + Sync
+    + 'a;
+
+#[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
+    pub(super) candidate_filter: Option<&'a CandidateFilter<'a>>,
     pub(super) type_filter: Option<&'a [u8]>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,

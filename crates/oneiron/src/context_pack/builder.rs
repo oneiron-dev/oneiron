@@ -5,7 +5,7 @@
 //! [`super::quarantine`], [`super::empty_pack`] and [`super::telemetry`] into one
 //! run. The chained config methods stay in one file on purpose — a caller reads
 //! `.search_vector().filter_types().hydrate().run()` as a single unit.
-
+mod scoped;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
