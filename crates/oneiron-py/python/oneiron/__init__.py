@@ -117,6 +117,10 @@ class Oneiron:
         process home, at call time. The handle is usable immediately; there is
         no ``as_actor`` call to make first.
 
+        Embedded open is currently supported only on Unix (macOS/Linux).
+        On other targets, including Windows, it fails closed because writer
+        locking is unsupported; use :meth:`connect` to a supported server host.
+
         A second process opening the same directory raises
         ``VAULT_LOCKED_SINGLE_WRITER``; connect to the owning process instead.
         """
@@ -126,6 +130,9 @@ class Oneiron:
     @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron":
         """Binds a running ``oneiron-server`` through its facade projection.
+
+        Remote connect remains available on targets without embedded open,
+        including Windows; the server must run on a supported host.
 
         ``key`` is a minted slip passed verbatim as
         ``Authorization: Bearer v2.<claims>.<mac-hex>``. This package never

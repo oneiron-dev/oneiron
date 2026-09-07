@@ -11,10 +11,12 @@
 //! JSON-serialized engine `MemoryError` (`{code, message, suggestions}`),
 //! so the TS wrapper (deferred this wave) can rehydrate typed errors.
 
+mod input_error;
 mod numeric;
 
 use std::sync::Arc;
 
+use input_error::witness_input_error;
 use numeric::{claim_input_to_engine, dimensions_to_engine};
 
 use base64::Engine as _;
@@ -2378,6 +2380,8 @@ impl NativeClient {
     #[napi]
     pub fn witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
         let stamped = oneiron_remote::stamp_occurred_at(turn.occurred_at).map_err(facade_error)?;
+        // Caller numbers are already validated; narrowing failure here is
+        // an internal invariant failure, not bad input.
         let occurred_at = i64::try_from(stamped)
             .map_err(|_| boundary_error("occurred_at is out of range".to_owned()))?;
         let turn = NapiWitnessTurn {
@@ -2386,7 +2390,7 @@ impl NativeClient {
             messages: turn.messages,
             occurred_at,
         };
-        let engine_turn = witness_turn_to_engine(&turn).map_err(boundary_error)?;
+        let engine_turn = witness_turn_to_engine(&turn).map_err(witness_input_error)?;
         let receipt = self.inner.witness(&engine_turn).map_err(facade_error)?;
         Ok(witness_receipt_from_engine(receipt))
     }
