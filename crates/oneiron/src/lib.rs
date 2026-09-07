@@ -22,6 +22,7 @@ pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod board_verb;
 pub mod booking;
+pub mod build_cache;
 pub mod calendar;
 pub mod campaign;
 pub mod channel_identity;
@@ -56,12 +57,14 @@ pub mod consult_ladder;
 pub mod context_board;
 pub mod context_pack;
 pub mod context_projection;
+pub mod corpus;
 pub mod counterparty_contact;
 pub(crate) mod credential_door;
 pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
 pub mod disclosure;
+pub mod dispatch_byoa;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;
@@ -161,6 +164,8 @@ pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 mod vault;
+// ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
+pub mod vault_cleanup;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
 pub mod voice_identity;
@@ -207,6 +212,13 @@ pub use crate::batch::BatchBuilder;
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
+};
+pub use crate::build_cache::{
+    ActionKey, ActionResult, ArtifactVersionRef, BUILD_CACHE_ACTION_DOMAIN_V1,
+    BUILD_CACHE_ACTION_KEY_LEN, BUILD_CACHE_ACTION_SCHEMA_VERSION_V1, BUILD_CACHE_KEY_PREFIX_V1,
+    BUILD_CACHE_SCHEMA_VERSION_V1, BuildAction, BuildCache, BuildCacheError, BuildCachePutOutcome,
+    BuildCacheResult, BuildInputRoot, BuildPlatform, CachedActionResult, DeclaredOutputPath,
+    ExtraInputDigest, FrozenBuildCommand,
 };
 pub use crate::calendar::{
     CALENDAR_INVITE_CHANNEL, CALENDAR_INVITE_VERB, CalendarEventView, CalendarInviteConsentBasis,
@@ -275,6 +287,9 @@ pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
 };
+pub use crate::corpus::{
+    CLAIM_SCOPE_CORPUS_ID_KEY, CorpusId, CorpusScope, corpus_id_from_scope, scope_with_corpus_id,
+};
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecordState,
@@ -295,9 +310,10 @@ pub use crate::dreamer_runner::DreamerAttemptProgressProducer;
 pub use crate::dreamer_runner::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
-    DreamerAdmittedAttempt, DreamerBudgetReserveOutcome, DreamerClaimAuthoringStrategy,
-    DreamerConsolidationScope, DreamerHomeNodeCandidate, DreamerRunnerStore,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, ReserveDreamerBudget,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerBudgetReserveOutcome,
+    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerHomeNodeCandidate,
+    DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    EnqueueDreamerVaultCleanupAttempt, ReserveDreamerBudget,
 };
 pub use crate::dreamer_wake::{
     DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
@@ -336,10 +352,11 @@ pub use crate::feedback::{
 };
 pub use crate::gate::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
-    CriticalWriteConfirmResolution, GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED,
-    GATE_BUNDLE_OUTCOME_DECLINED, GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
+    CriticalWriteConfirmResolution, GATE_BREAKER_DEFAULT_MAX_EVENTS, GATE_BREAKER_WINDOW_SECS,
+    GATE_BUNDLE_CONTENT_KIND, GATE_BUNDLE_OUTCOME_APPROVED, GATE_BUNDLE_OUTCOME_DECLINED,
+    GATE_BUNDLE_REASON_APPROVED, GATE_BUNDLE_REASON_DECLINED,
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_CRITICAL_CONFIRM_DECLINED,
-    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
+    GATE_REASON_CRITICAL_CONFIRM_TIMEOUT, GateBreakerRunProjection, GateBreakerThresholds,
 };
 pub use crate::ingest::{
     EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
@@ -438,6 +455,14 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
+};
+pub use crate::vault_cleanup::{
+    ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
+    CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal, CleanupRunReport,
+    MACHINE_MINTED_CLAIM_SOURCES, VAULT_CLEANUP_POSTURE_KEY, accept_cleanup_proposal,
+    cleanup_digests, cleanup_posture, cleanup_proposal, cleanup_proposals,
+    is_vault_cleanup_receipt, reject_cleanup_proposal, run_vault_cleanup, scan_cleanup_candidates,
+    set_cleanup_posture, zero_live_members,
 };
 pub use crate::web_fetch::{
     CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope,

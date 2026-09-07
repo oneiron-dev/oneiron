@@ -259,6 +259,7 @@ pub(crate) enum SurfaceEventHandoffStatePayload {
     Completed,
     Failed,
     Cancelled,
+    Abandoned,
 }
 
 impl From<oneiron::SurfaceEventHandoffState> for SurfaceEventHandoffStatePayload {
@@ -270,6 +271,7 @@ impl From<oneiron::SurfaceEventHandoffState> for SurfaceEventHandoffStatePayload
             oneiron::SurfaceEventHandoffState::Completed => Self::Completed,
             oneiron::SurfaceEventHandoffState::Failed => Self::Failed,
             oneiron::SurfaceEventHandoffState::Cancelled => Self::Cancelled,
+            oneiron::SurfaceEventHandoffState::Abandoned => Self::Abandoned,
         }
     }
 }

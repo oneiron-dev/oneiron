@@ -12,6 +12,19 @@ pub enum DeleteReason {
     UserHardDelete,
     GdprDelete,
     PolicyDelete,
+    /// ARCH-0073 vault auto-cleanup ARCHIVE (ONE-1931). The SOFT-reversible
+    /// twin of `user_delete`, and the only reason the engine's own cron ever
+    /// applies: the ratified contracts row pins `activeStoreHardPurgeV1 =
+    /// false`, `historicalSweepQueued = false`, `receipt = false`, so an
+    /// archive purges nothing, queues no sweep, and mints no per-entity
+    /// receipt (the cron receipts its OWN decisions once per run instead).
+    ///
+    /// Unlike every other reason it also publishes NO CRDT tombstone
+    /// ([`Self::publishes_crdt_tombstone`]): archiving a claim-less shell is
+    /// LOCAL vault hygiene, not a cross-device deletion intent, and keeping
+    /// it local is what lets [`crate::Vault::restore_archived`] undo it
+    /// without withdrawing a tombstone other devices have already obeyed.
+    ArchivedByCleanup,
 }
 
 // ─── Tombstone wire format v2 (ONE-1132 / ONE-1090 write side) ──────────────
@@ -21,10 +34,16 @@ pub enum DeleteReason {
 //   [reason:1][deleted_at:8 LE][request_id:16]            (25 bytes)
 //
 // reason ∈ {user_delete=1, user_hard_delete=2, gdpr_delete=3,
-// policy_delete=4}; byte 0 is RESERVED and decodes as hard. Decode rule: a
-// legacy 8-byte value (bare `deleted_at` u64 LE) or an unknown reason byte
-// decodes as HARD — over-purge, never under-delete. `request_id` is the
-// deletion request UUID (16 raw bytes) used for receipt correlation (M4-06).
+// policy_delete=4, archived_by_cleanup=5}; byte 0 is RESERVED and decodes as
+// hard. Decode rule: a legacy 8-byte value (bare `deleted_at` u64 LE) or an
+// unknown reason byte decodes as HARD — over-purge, never under-delete.
+// `request_id` is the deletion request UUID (16 raw bytes) used for receipt
+// correlation (M4-06).
+//
+// ONE-1931 (ARCH-0073) took byte 5 for `archived_by_cleanup`. It joins the
+// KNOWN set — the layout is unchanged at 25 bytes, and the fail-closed law is
+// intact: byte 0, byte 6 and every byte above still decode to `reason: None`
+// and therefore HARD.
 
 /// Total length of a v2 tombstone wire value.
 pub const TOMBSTONE_VALUE_V2_LEN: usize = 25;
@@ -42,6 +61,9 @@ pub enum TombstoneReason {
     UserHardDelete = 2,
     GdprDelete = 3,
     PolicyDelete = 4,
+    /// ARCH-0073 vault auto-cleanup ARCHIVE (ONE-1931) — SOFT, like
+    /// `user_delete`. Wire byte 5.
+    ArchivedByCleanup = 5,
 }
 
 impl TombstoneReason {
@@ -60,15 +82,19 @@ impl TombstoneReason {
             2 => Some(Self::UserHardDelete),
             3 => Some(Self::GdprDelete),
             4 => Some(Self::PolicyDelete),
+            5 => Some(Self::ArchivedByCleanup),
+            // UNCHANGED fail-closed arm: byte 0 (RESERVED) and every byte
+            // above the table stay unknown, and an unknown byte is HARD.
             _ => None,
         }
     }
 
-    /// Receiver effect class: only `user_delete` is a soft (shell-keeping)
-    /// delete; every other reason hard-purges (ARCH-0038 v1).
+    /// Receiver effect class: `user_delete` and `archived_by_cleanup` are the
+    /// soft (shell-keeping) reasons; every other reason hard-purges
+    /// (ARCH-0038 v1, extended by ARCH-0073 / ONE-1931).
     #[must_use]
     pub const fn is_hard(self) -> bool {
-        !matches!(self, Self::UserDelete)
+        !matches!(self, Self::UserDelete | Self::ArchivedByCleanup)
     }
 }
 
@@ -79,6 +105,7 @@ impl From<DeleteReason> for TombstoneReason {
             DeleteReason::UserHardDelete => Self::UserHardDelete,
             DeleteReason::GdprDelete => Self::GdprDelete,
             DeleteReason::PolicyDelete => Self::PolicyDelete,
+            DeleteReason::ArchivedByCleanup => Self::ArchivedByCleanup,
         }
     }
 }
@@ -155,9 +182,12 @@ impl DecodedTombstoneValue {
         match self.reason {
             Some(TombstoneReason::GdprDelete) => DeleteReason::GdprDelete,
             Some(TombstoneReason::PolicyDelete) => DeleteReason::PolicyDelete,
-            Some(TombstoneReason::UserHardDelete | TombstoneReason::UserDelete) | None => {
-                DeleteReason::UserHardDelete
-            }
+            Some(
+                TombstoneReason::UserHardDelete
+                | TombstoneReason::UserDelete
+                | TombstoneReason::ArchivedByCleanup,
+            )
+            | None => DeleteReason::UserHardDelete,
         }
     }
 
@@ -287,6 +317,41 @@ pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
     format!("{LOCAL_HARD_DELETE_PREFIX}{}", id.to_hex())
 }
 
+// ─── Cleanup-archive marker (`ac:`) — durable LOCAL archive truth ───────────
+//
+// ARCH-0073 / ONE-1931. Key = `ac:{entity_id_hex}` (32-char lowercase hex,
+// GLOBAL — no window segment, because an archive is not addressed to a sync
+// window at all); value = the same 25 bytes
+// `[reason:1][deleted_at:8 LE][request_id:16]` every tombstone uses, with
+// `reason = archived_by_cleanup` (byte 5).
+//
+// It is DELIBERATELY NOT the `pt:` marker. `pt:` means "deletion propagation
+// intent a sync-enabled boot must replay into the window doc"; an archive has
+// no propagation intent, and a replayed archive would become a published
+// tombstone that [`crate::Vault::restore_archived`] could only undo by
+// WITHDRAWING it from the CRDT — the resurrection vector `dt:` exists to
+// close, and ARCH-0066 tooth #5 (sync re-gating) is OPEN. A separate prefix
+// keeps the archive local by construction rather than by convention.
+//
+// REVERSIBLE, unlike `dt:`: the restore door deletes this row, and deleting
+// it is exactly what revives the shell. Nothing else in the engine writes it.
+
+/// `sync_state` key prefix for cleanup-archive markers (ONE-1931).
+pub(crate) const ARCHIVE_TOMBSTONE_PREFIX: &str = "ac:";
+
+/// Builds the GLOBAL `ac:{entity_hex}` cleanup-archive marker key.
+pub(crate) fn archive_tombstone_key(id: &EntityId) -> String {
+    format!("{ARCHIVE_TOMBSTONE_PREFIX}{}", id.to_hex())
+}
+
+/// Recovers the entity id from an `ac:` marker key.
+///
+/// `None` for any key that is not a well-formed marker key — a corrupt row
+/// must not be reported as an archived entity id.
+pub(crate) fn entity_id_from_archive_tombstone_key(key: &str) -> Option<EntityId> {
+    EntityId::from_hex(key.strip_prefix(ARCHIVE_TOMBSTONE_PREFIX)?).ok()
+}
+
 /// Formats the ARCH-0023b `YYYY-MM` window label for a unix-seconds
 /// timestamp, clamping timestamps at or beyond year 10000 to the last
 /// representable window `"9999-12"` (a larger year would produce a key the
@@ -356,27 +421,52 @@ impl DeleteReason {
             Self::UserHardDelete => "user_hard_delete",
             Self::GdprDelete => "gdpr_delete",
             Self::PolicyDelete => "policy_delete",
+            Self::ArchivedByCleanup => "archived_by_cleanup",
         }
     }
 
     pub(crate) const fn writes_receipt(self) -> bool {
         match self {
-            Self::UserDelete => false,
+            Self::UserDelete | Self::ArchivedByCleanup => false,
             Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
     pub(crate) const fn active_store_hard_purge_v1(self) -> bool {
         match self {
-            Self::UserDelete => false,
+            Self::UserDelete | Self::ArchivedByCleanup => false,
             Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 
     pub(crate) const fn queues_historical_sweep(self) -> bool {
         match self {
-            Self::UserDelete => false,
+            Self::UserDelete | Self::ArchivedByCleanup => false,
             Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
+        }
+    }
+
+    /// Whether this reason's soft leg publishes a CRDT tombstone — the FOURTH
+    /// row of the per-reason behavior matrix (ONE-1931).
+    ///
+    /// `true` for every ARCH-0038 reason, so nothing about user/GDPR/policy
+    /// deletion changes: a deletion is an intent every device must obey, and
+    /// withholding it would leave a deleted body live elsewhere.
+    ///
+    /// `false` for `archived_by_cleanup` alone. An archive is LOCAL vault
+    /// hygiene over rows that carry nothing (a claim-less PERSON, an empty
+    /// SUMMARY), and it is REVERSIBLE by contract (ARCH-0024 :87
+    /// "re-mention restores, never duplicates"). Publishing it would make the
+    /// restore door a tombstone-WITHDRAWAL door, and withdrawing a published
+    /// tombstone is the resurrection vector the `dt:` marker exists to close
+    /// — plus ARCH-0066 tooth #5 (sync re-gating) is OPEN. So the archive
+    /// intent stays in the LOCAL `ac:` marker
+    /// ([`archive_tombstone_key`]), where undoing it withdraws nothing any
+    /// peer ever saw.
+    pub(crate) const fn publishes_crdt_tombstone(self) -> bool {
+        match self {
+            Self::ArchivedByCleanup => false,
+            Self::UserDelete | Self::UserHardDelete | Self::GdprDelete | Self::PolicyDelete => true,
         }
     }
 }

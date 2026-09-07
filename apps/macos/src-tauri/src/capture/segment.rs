@@ -56,7 +56,7 @@ pub struct Frames<'a> {
     pub far: Option<&'a [Pcm]>,
 }
 
-impl<'a> Frames<'a> {
+impl Frames<'_> {
     /// Frames in this block. When a far-end leg is present the two legs are
     /// truncated to their common length, because a frame is only aligned if
     /// both halves of it exist.

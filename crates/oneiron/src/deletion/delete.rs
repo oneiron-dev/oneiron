@@ -3,6 +3,7 @@ use uuid::Uuid;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
 use crate::store::GateDecisionRecord;
 use crate::unix_seconds_now;
 
@@ -18,7 +19,8 @@ use super::rendezvous::{
 };
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone::{
-    DeleteReason, TombstoneReason, TombstoneValueV2, local_hard_delete_key, pending_tombstone_key,
+    DecodedTombstoneValue, DeleteReason, TombstoneReason, TombstoneValueV2, archive_tombstone_key,
+    decode_tombstone_value, local_hard_delete_key, pending_tombstone_key,
     window_label_from_timestamp,
 };
 
@@ -41,6 +43,32 @@ impl DeleteEntityOutcome {
 }
 
 impl Vault {
+    /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
+    /// No headerless fallback, publication, sweep, or per-entity receipt.
+    pub(crate) fn archive_cleanup_candidate_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        tombstone: &TombstoneValueV2,
+    ) -> Result<bool> {
+        let Some(raw) = self.store.entities.get(wtxn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity metadata"))?;
+        let eligible = matches!(header.entity_type, ENTITY_TYPE_PERSON | ENTITY_TYPE_SUMMARY);
+        if !eligible || tombstone.reason != TombstoneReason::ArchivedByCleanup {
+            return Ok(false);
+        }
+        // Re-prove eligibility at the archive door itself. Archive is a local
+        // visibility marker, not erasure: retain the complete body and indexes.
+        if crate::vault_cleanup::zero_live_members_in_txn(self, wtxn, id)?.is_none() {
+            return Ok(false);
+        }
+        self.put_archive_tombstone_in_txn(wtxn, id, tombstone)?;
+        Ok(true)
+    }
+
     /// Deletes an entity blob by ID using the destructive user-hard-delete
     /// contract.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
@@ -79,6 +107,11 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
+        if reason == DeleteReason::ArchivedByCleanup {
+            return Err(Error::InvariantViolation(
+                "cleanup archives require the cleanup proposal/decision door",
+            ));
+        }
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
@@ -146,16 +179,28 @@ impl Vault {
                 )?;
             }
             if existed {
-                // OWNER-DECISION (cfg-off durability): the pending-tombstone
-                // marker rides the SAME txn as the shell scrub.
-                self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+                if reason.publishes_crdt_tombstone() {
+                    // OWNER-DECISION (cfg-off durability): the pending-tombstone
+                    // marker rides the SAME txn as the shell scrub.
+                    self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+                } else {
+                    // ONE-1931 archive: same "intent rides the scrub txn"
+                    // discipline, different marker. `ac:` is GLOBAL and is
+                    // never replayed into a window doc, so an archive that
+                    // survives a crash is still just a local archive.
+                    self.put_archive_tombstone_in_txn(&mut wtxn, id, &tombstone)?;
+                }
                 if let Some(decision) = gate_decision.as_ref() {
                     self.store
                         .append_gate_decision_in_txn(&mut wtxn, decision)?;
                 }
             }
             wtxn.commit()?;
-            if existed {
+            // An archive publishes nothing (`publishes_crdt_tombstone` is
+            // false for exactly one reason): there is no remote-binding act
+            // to re-gate, and nothing for a peer to obey, so the local `ac:`
+            // marker committed above IS the whole archive.
+            if existed && reason.publishes_crdt_tombstone() {
                 // fix-leg 7 P1-1: the tombstone publish carries the GATE.
                 // The scrub txn's re-fold proved authority for a LOCAL act and
                 // then dropped its snapshot; publication is a separate,
@@ -700,5 +745,57 @@ impl Vault {
             self.store.sync_state.delete(wtxn, &key)?;
             Ok(())
         })
+    }
+
+    /// Writes the GLOBAL `ac:{entity_hex}` cleanup-archive marker in the
+    /// caller's shell-scrub transaction (ONE-1931).
+    ///
+    /// The archive twin of [`Self::put_pending_tombstone_in_txn`], and
+    /// deliberately NOT that function: an archive carries no propagation
+    /// intent, so its record must live under a prefix no sync replay reads.
+    fn put_archive_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        let key = archive_tombstone_key(id);
+        self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        Ok(())
+    }
+
+    /// Reads the `ac:` cleanup-archive marker for `id` through the caller's
+    /// transaction, decoded (ONE-1931).
+    ///
+    /// `None` when there is no marker. A marker whose bytes do not decode to
+    /// the archive reason is returned VERBATIM rather than swallowed — the
+    /// restore door refuses on the decoded reason, so a corrupt or
+    /// wrong-reason row must reach it as itself.
+    pub(crate) fn archive_tombstone_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<DecodedTombstoneValue>> {
+        let key = archive_tombstone_key(id);
+        Ok(self
+            .store
+            .sync_state
+            .get(txn, &key)?
+            .map(|raw| decode_tombstone_value(&raw)))
+    }
+
+    /// Deletes the `ac:` cleanup-archive marker in the caller's transaction,
+    /// returning whether a row was there to delete (ONE-1931).
+    ///
+    /// This IS the restore: the shell the archive kept becomes live again the
+    /// moment the marker is gone, and because the archive published nothing,
+    /// nothing is withdrawn from any peer.
+    pub(crate) fn clear_archive_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let key = archive_tombstone_key(id);
+        self.store.sync_state.delete(wtxn, &key)
     }
 }

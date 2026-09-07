@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -65,6 +65,89 @@ fn production_file(rel: &str) -> bool {
         && !rel.contains("/benches/")
         && !rel.ends_with("/tests.rs")
         && !rel.ends_with("/src/tests_bug.rs")
+}
+
+// Recognize only simple, top-level cfg(test) path mounts. Unknown path syntax
+// keeps every file scanned. Other mounts of the same basename also veto an
+// exclusion, even across directories: false positives are safer than hiding code.
+fn cfg_test_external_files(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
+    let mut tests = BTreeSet::new();
+    let mut production_names = BTreeSet::new();
+    for (parent, source) in sources {
+        let clean = strip_comments_and_literals(source);
+        for (start, _) in clean.match_indices("mod") {
+            if start > 0 && is_ident_byte(clean.as_bytes()[start - 1]) {
+                continue;
+            }
+            let tail = &clean[start + 3..];
+            if !tail.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let tail = tail.trim_start();
+            let name_end = tail.bytes().take_while(|byte| is_ident_byte(*byte)).count();
+            if name_end == 0 || !tail[name_end..].trim_start().starts_with(';') {
+                continue;
+            }
+            let name = &tail[..name_end];
+            let prefix_start = clean[..start].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+            let prefix = &clean[prefix_start..start];
+            let compact = prefix.split_whitespace().collect::<String>();
+            if !compact.contains("path=") {
+                production_names.insert(format!("{name}.rs"));
+                continue;
+            }
+            let Some(path_start) = prefix.find("#[path") else {
+                return BTreeSet::new();
+            };
+            let path_start = prefix_start + path_start + "#[path".len();
+            let Some(path_end) = clean[path_start..start].find(']') else {
+                return BTreeSet::new();
+            };
+            let literal = source[path_start..path_start + path_end]
+                .trim()
+                .strip_prefix('=')
+                .map(str::trim)
+                .and_then(|value| value.strip_prefix('"'))
+                .and_then(|value| value.strip_suffix('"'));
+            let Some(literal) = literal else {
+                return BTreeSet::new();
+            };
+            if literal.contains(['\\', '"']) || compact.matches("path=").count() != 1 {
+                return BTreeSet::new();
+            }
+            let mounted = Path::new(literal);
+            let Some(file_name) = mounted.file_name() else {
+                return BTreeSet::new();
+            };
+            let depth = clean[..start]
+                .bytes()
+                .fold(0isize, |depth, byte| match byte {
+                    b'{' | b'(' | b'[' => depth + 1,
+                    b'}' | b')' | b']' => depth - 1,
+                    _ => depth,
+                });
+            if depth == 0
+                && matches!(
+                    compact.as_str(),
+                    "#[cfg(test)]#[path=]" | "#[path=]#[cfg(test)]"
+                )
+                && mounted.components().count() == 1
+                && mounted.is_relative()
+            {
+                tests.insert(parent.parent().expect("source directory").join(mounted));
+            } else {
+                production_names.insert(file_name.to_string_lossy().into_owned());
+            }
+        }
+    }
+    tests.retain(|path| {
+        let file_name = path
+            .file_name()
+            .expect("mounted filename")
+            .to_string_lossy();
+        !production_names.contains(file_name.as_ref())
+    });
+    tests
 }
 
 fn production_source(source: &str) -> String {
@@ -324,13 +407,22 @@ fn is_ident_byte(byte: u8) -> bool {
 fn of060_f1_put_replicated_stays_sync_only() {
     let repo = repo_root();
     let mut violations = Vec::new();
+    let sources = rust_files_under(&repo.join("crates"))
+        .into_iter()
+        .filter(|path| production_file(&normalized(relative_path(&repo, path))))
+        .map(|path| {
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+            (path, source)
+        })
+        .collect::<Vec<_>>();
+    let test_files = cfg_test_external_files(&sources);
 
-    for path in rust_files_under(&repo.join("crates")) {
-        let rel = normalized(relative_path(&repo, &path));
-        if !production_file(&rel) {
+    for (path, source) in sources {
+        if test_files.contains(&path) {
             continue;
         }
-        let source = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {rel}: {err}"));
+        let rel = normalized(relative_path(&repo, &path));
         let source = production_source(&source);
         for pattern in [".put_replicated", "::put_replicated"] {
             for hit in find_substring_hits(&source, pattern) {
@@ -346,6 +438,75 @@ fn of060_f1_put_replicated_stays_sync_only() {
         "OF-060 F1: put_replicated must stay reachable only from oneiron sync production code:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn of060_f1_recognizes_actual_cfg_test_external_path_mount() {
+    let repo = repo_root();
+    let dir = repo.join("crates/oneiron/src/provider_confidence");
+    let parent = dir.join("indexes.rs");
+    let mounted = dir.join("prior_projection_tests.rs");
+    let sources = [parent, mounted.clone()]
+        .into_iter()
+        .map(|path| {
+            let source = fs::read_to_string(&path).expect("mount regression source");
+            (path, source)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(production_file(&normalized(relative_path(&repo, &mounted))));
+    assert!(production_source(&sources[1].1).contains(".put_replicated"));
+    assert_eq!(cfg_test_external_files(&sources), BTreeSet::from([mounted]));
+}
+
+#[test]
+fn of060_f1_external_mount_keeps_production_controls_scanned() {
+    let parent = PathBuf::from("src/indexes.rs");
+    let mounted = PathBuf::from("src/fixture_tests.rs");
+    let test_mount = "#[cfg(test)]\n#[path = \"fixture_tests.rs\"]\nmod tests;";
+    let production = "fn seed() { vault.put_replicated(); }";
+    let classify = |source: &str| {
+        cfg_test_external_files(&[
+            (parent.clone(), source.to_owned()),
+            (mounted.clone(), production.to_owned()),
+        ])
+    };
+    assert_eq!(classify(test_mount), BTreeSet::from([mounted.clone()]));
+    assert!(production_file(&normalized(&mounted)));
+    for source in [
+        "",
+        r#"#[path = "fixture_tests.rs"] mod fixture;"#,
+        "mod fixture_tests;",
+        r#"#[cfg(not(test))] #[path = "fixture_tests.rs"] mod fixture;"#,
+        r#"#[cfg(any(test, feature = "sync"))] #[path = "fixture_tests.rs"] mod fixture;"#,
+        "// #[cfg(test)]\n#[path = \"fixture_tests.rs\"] mod fixture;",
+        r#"/* #[cfg(test)] */ #[path = "fixture_tests.rs"] mod fixture;"#,
+        r##"const DOC: &str = r#"#[cfg(test)] #[path = "fixture_tests.rs"] mod tests;"#;"##,
+        r##"const DOC: &str = "#[cfg(test)]"; #[path = "fixture_tests.rs"] mod fixture;"##,
+        r#"#[cfg(test)] const MARKER: () = (); #[path = "fixture_tests.rs"] mod fixture;"#,
+        r#"macro_rules! quote { () => { #[cfg(test)] #[path = "fixture_tests.rs"] mod tests; }; }"#,
+        r##"#[cfg(test)] #[path = r#"fixture_tests.rs"#] mod tests;"##,
+    ] {
+        assert!(
+            classify(source).is_empty(),
+            "must scan production: {source}"
+        );
+        assert_eq!(
+            find_substring_hits(&production_source(production), ".put_replicated").len(),
+            1
+        );
+    }
+    for production_mount in [
+        r#"#[path = "fixture_tests.rs"] mod live;"#,
+        "mod fixture_tests;",
+    ] {
+        assert!(classify(&format!("{test_mount}\n{production_mount}")).is_empty());
+        let another_parent = [
+            (parent.clone(), test_mount.to_owned()),
+            (PathBuf::from("src/live.rs"), production_mount.to_owned()),
+        ];
+        assert!(cfg_test_external_files(&another_parent).is_empty());
+    }
 }
 
 #[test]
@@ -416,9 +577,12 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
             },
             1,
         ),
-        // ONE-1595 server-plane metadata, like auth/idempotency above: a keyed
-        // DEK verification MAC and a monotonic wake-ledger revision. Neither
-        // writes guest entity, edge, or vector content, so no stamper applies.
+        // ONE-1595 (c435a02d, PR #845): trusted managed-vault metadata,
+        // not foreign/guest content. The open gate seals a computed DEK MAC
+        // at a fixed key after the canary waiver; WakeLedger::advance_rev
+        // persists the engine-owned revision for restart ordering. Neither
+        // writes an entity, edge, or vector or accepts a caller-selected key.
+        // Pin only these two call lines; every new raw hit still fails below.
         (
             RawHit {
                 path: "crates/oneiron-server/src/managed.rs".to_owned(),

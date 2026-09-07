@@ -4608,3 +4608,150 @@ fn classifier_table() {
         assert_eq!(dreamer_isolation_class(predicate), None, "{predicate}");
     }
 }
+
+// ── ONE-1914 · corpus scope inside the opaque `scope` map ───────────────
+
+fn corpus_scope_body(scope: Option<Value>) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        "profile.corpus_scope",
+        ClaimSubject::Entity(EntityId::from_bytes([0x71; 16]).expect("valid id")),
+        Value::from("value"),
+        0.7,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.scope = scope;
+    body
+}
+
+fn corpus_entry(id: &EntityId) -> (Value, Value) {
+    (
+        Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
+        Value::Binary(id.as_bytes().to_vec()),
+    )
+}
+
+/// The corpus id survives a full encode/decode round trip ALONGSIDE the
+/// engine's other scope stamps and an entry the crate does not recognize —
+/// the map stays opaque, it just now has one entry retrieval can read.
+#[test]
+fn corpus_id_round_trips_through_the_claim_codec() -> Result<()> {
+    let corpus = crate::corpus::CorpusId::from_entity_id(
+        EntityId::from_bytes([0x72; 16]).expect("valid id"),
+    );
+    let existing = Value::Map(vec![
+        (Value::from("sensitivity"), Value::from("internal")),
+        (
+            Value::from(CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
+            Value::from(ClaimSource::ToolOutput.as_str()),
+        ),
+        (Value::from("unknown_future_key"), Value::from("opaque")),
+    ]);
+    let body = corpus_scope_body(Some(crate::corpus::scope_with_corpus_id(
+        Some(existing),
+        corpus,
+    )?));
+
+    let encoded = encode_claim_body(&body)?;
+    let decoded = validate_claim_body_and_decode(&encoded, false)?;
+
+    assert_eq!(
+        decoded.scope, body.scope,
+        "scope map survives byte-for-byte"
+    );
+    assert_eq!(claim_corpus_id(&decoded)?, Some(corpus));
+    assert_eq!(claim_sensitivity_band(&decoded), Some(1));
+    assert_eq!(
+        claim_evidence_taint(&decoded),
+        Some(ClaimSource::ToolOutput)
+    );
+    Ok(())
+}
+
+/// A claim with no corpus entry is unscoped/core, not an error — including a
+/// claim with no scope map at all.
+#[test]
+fn absent_corpus_id_decodes_as_unscoped() -> Result<()> {
+    for scope in [
+        None,
+        Some(Value::Map(Vec::new())),
+        Some(Value::Map(vec![(
+            Value::from("sensitivity"),
+            Value::from("public"),
+        )])),
+    ] {
+        let body = corpus_scope_body(scope);
+        let decoded = validate_claim_body_and_decode(&encode_claim_body(&body)?, false)?;
+        assert_eq!(claim_corpus_id(&decoded)?, None);
+    }
+    Ok(())
+}
+
+/// Fail-closed at the codec: an ambiguous or malformed corpus entry is
+/// rejected on every validated decode, so it can neither be written nor read
+/// back into a retrieval scope decision.
+#[test]
+fn malformed_corpus_id_is_rejected_by_the_claim_codec() -> Result<()> {
+    let a = EntityId::from_bytes([0x73; 16]).expect("valid id");
+    let b = EntityId::from_bytes([0x74; 16]).expect("valid id");
+    let table: Vec<(&str, Value)> = vec![
+        (
+            "duplicate corpus entries",
+            Value::Map(vec![corpus_entry(&a), corpus_entry(&b)]),
+        ),
+        (
+            "non-binary value",
+            Value::Map(vec![(
+                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
+                Value::from(a.to_hex()),
+            )]),
+        ),
+        (
+            "wrong-length binary",
+            Value::Map(vec![(
+                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
+                Value::Binary(vec![0x73; 8]),
+            )]),
+        ),
+        (
+            "reserved id",
+            Value::Map(vec![(
+                Value::from(crate::corpus::CLAIM_SCOPE_CORPUS_ID_KEY),
+                Value::Binary(vec![0x00; 16]),
+            )]),
+        ),
+    ];
+
+    for (label, scope) in table {
+        let encoded = encode_claim_body(&corpus_scope_body(Some(scope)))?;
+        assert_matches!(
+            validate_claim_body_bytes(&encoded, false),
+            Err(Error::InvalidClaimBody(_)),
+            "{label} must fail the write chokepoint"
+        );
+        assert_matches!(
+            decode_claim_body(&encoded, true),
+            Err(Error::InvalidClaimBody(_)),
+            "{label} must fail the read decode too"
+        );
+    }
+    Ok(())
+}
+
+/// The check is scoped to the entries the engine recognizes: an unknown
+/// sibling may be duplicated, malformed or any shape at all and still decode.
+#[test]
+fn unrecognized_scope_entries_stay_opaque() -> Result<()> {
+    let scope = Value::Map(vec![
+        (Value::from("unknown_future_key"), Value::from(1)),
+        (Value::from("unknown_future_key"), Value::Array(Vec::new())),
+        (Value::from("another_unknown"), Value::Binary(vec![0x00; 3])),
+    ]);
+    let body = corpus_scope_body(Some(scope.clone()));
+
+    let decoded = validate_claim_body_and_decode(&encode_claim_body(&body)?, false)?;
+
+    assert_eq!(decoded.scope, Some(scope));
+    assert_eq!(claim_corpus_id(&decoded)?, None);
+    Ok(())
+}
