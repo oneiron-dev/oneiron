@@ -8,11 +8,12 @@ use crate::error::{Error, Result};
 
 use super::types::{ATTEMPT_RECORD_VERSION, AttemptId, AttemptRecord, AttemptState};
 use super::validate::{
-    ERR_CANCELLATION_MISPLACED, ERR_DEDUPE_ACTOR_WITHOUT_KEY, ERR_LANDING_RECORD_MISPLACED,
-    ERR_LANDING_WITH_BACKOFF, ERR_LANDING_WITHOUT_LEASE, ERR_LANDING_WITHOUT_RECORD,
-    validate_attempt_events, validate_attempt_manifest, validate_cancel_state, validate_kind,
-    validate_lease_owner, validate_optional_dedupe, validate_optional_dedupe_actor_ref,
-    validate_optional_failure_reason, validate_optional_run_id,
+    ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT, ERR_CANCELLATION_MISPLACED,
+    ERR_DEDUPE_ACTOR_WITHOUT_KEY, ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITH_BACKOFF,
+    ERR_LANDING_WITHOUT_LEASE, ERR_LANDING_WITHOUT_RECORD, validate_attempt_events,
+    validate_attempt_manifest, validate_cancel_state, validate_kind, validate_lease_owner,
+    validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
+    validate_optional_result_ref, validate_optional_run_id,
 };
 
 // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
@@ -156,6 +157,15 @@ pub(super) fn decode_ready_key(bytes: &[u8]) -> Result<(u64, AttemptId)> {
     ))
 }
 
+/// Encodes one row under the pinned header version.
+///
+/// The body is a named MessagePack map, so a field ADDED with `serde(default)`
+/// is invisible to a reader that predates it and decodes as its default on a
+/// row that predates the writer. Unit-enum values are encoded by DECLARATION
+/// INDEX, so a state variant may only be appended after every existing one —
+/// the rule stated on [`AttemptState`] — and the header version stays at
+/// [`ATTEMPT_RECORD_VERSION`] because neither addition rewrites an existing
+/// byte.
 pub(super) fn encode_record(record: &AttemptRecord) -> Result<Vec<u8>> {
     let mut encoded = vec![ATTEMPT_RECORD_VERSION];
     let mut body = rmp_serde::to_vec_named(record)
@@ -198,6 +208,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     validate_attempt_events(&record.events)?;
     validate_attempt_manifest(&record.manifest)?;
     validate_cancel_state(&record.cancel_state)?;
+    validate_optional_result_ref(record.result_ref.as_ref())?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
     }
@@ -261,14 +272,20 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         AttemptState::Landing if record.cancel_state.landing.is_none() => {
             return Err(Error::InvalidAttemptQueueRecord(ERR_LANDING_WITHOUT_RECORD));
         }
-        AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled
+        AttemptState::Completed
+        | AttemptState::Failed
+        | AttemptState::Cancelled
+        | AttemptState::Abandoned
             if record.lease_owner.is_some() =>
         {
             return Err(Error::InvalidAttemptQueueRecord(
                 "terminal attempt must not have a lease owner",
             ));
         }
-        AttemptState::Completed | AttemptState::Failed | AttemptState::Cancelled
+        AttemptState::Completed
+        | AttemptState::Failed
+        | AttemptState::Cancelled
+        | AttemptState::Abandoned
             if waiting_on_backoff(&record) =>
         {
             return Err(Error::InvalidAttemptQueueRecord(
@@ -283,6 +300,19 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
         AttemptState::Failed if record.last_error.is_none() => {
             return Err(Error::InvalidAttemptQueueRecord(
                 "failed attempt must have a failure reason",
+            ));
+        }
+        // An abandonment is only auditable if the row still says what it left
+        // behind and why it stopped. Both are required at the door, so a row
+        // that lost either can never be read back as a well-formed abandonment.
+        AttemptState::Abandoned if record.result_ref.is_none() => {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_ABANDONED_WITHOUT_RESULT,
+            ));
+        }
+        AttemptState::Abandoned if record.last_error.is_none() => {
+            return Err(Error::InvalidAttemptQueueRecord(
+                ERR_ABANDONED_WITHOUT_REASON,
             ));
         }
         _ => {}

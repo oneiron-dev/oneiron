@@ -1340,7 +1340,7 @@ impl<'a> AgentDispatcher<'a> {
             // to ASK; only the owner/authority or a runtime ground can force,
             // and this trusted wrapper mints neither.
             AttemptState::Leased | AttemptState::Landing => AttemptInterventionKind::Interrupt,
-            AttemptState::Completed | AttemptState::Failed => {
+            AttemptState::Completed | AttemptState::Failed | AttemptState::Abandoned => {
                 return Ok(KillOutcome::AlreadyTerminal);
             }
         };

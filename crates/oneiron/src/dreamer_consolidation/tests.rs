@@ -23,6 +23,8 @@ use crate::{
 
 use super::*;
 
+mod person_extraction;
+
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
