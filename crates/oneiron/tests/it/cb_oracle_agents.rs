@@ -67,6 +67,7 @@ mod cb_a {
             failure: None,
             events: Vec::new(),
             children: Vec::new(),
+            gate_breaker_paused: false,
         };
         let children = [
             ChildAgentPresence::from_run_tree_node(&node)

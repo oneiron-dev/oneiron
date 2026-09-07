@@ -202,7 +202,7 @@ pub struct HeldOutVerdict {
     /// Canonical content digest of the predecessor body it was scored against.
     pub target_digest: String,
     /// The PROPOSAL's effective governance tier at the moment this ruling was
-    /// based ([`ScoredBasis::proposal_tier`]).
+    /// based (`ScoredBasis::proposal_tier`).
     ///
     /// `None` on a pre-score refusal, which has no basis at all, and on a
     /// ruling whose proposal resolved AMBIGUOUS — neither can be admitted.

@@ -469,7 +469,7 @@ impl GmailDelegatedAdapter {
     ///
     /// # Errors
     ///
-    /// As [`Self::require_active_row_matches_adapter`], plus the SECRET-02
+    /// As `Self::require_active_row_matches_adapter`, plus the SECRET-02
     /// door's own custody arms.
     pub fn with_delegated_token_at_door(
         &self,
@@ -531,7 +531,7 @@ impl GmailDelegatedAdapter {
     ///
     /// # Errors
     ///
-    /// As [`Self::require_active_row_matches_adapter`], plus attempt-queue and
+    /// As `Self::require_active_row_matches_adapter`, plus attempt-queue and
     /// storage errors.
     pub fn enqueue_inbox_poll(
         &self,

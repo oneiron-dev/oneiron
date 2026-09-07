@@ -546,6 +546,43 @@ impl Vault {
         Ok(versions)
     }
 
+    /// Reads metadata for exactly one version without walking the version
+    /// chain or loading content bytes. Two direct reads in one snapshot bind
+    /// the record to its persisted `blob.version` claim: the subject must be
+    /// the requested artifact, and the version, hash, and provenance must
+    /// match. An absent version returns `None`; malformed records or missing
+    /// or mismatched claims fail closed. This does not validate the chain,
+    /// resolve the ASSET, or authorize secret-taint reuse.
+    pub fn blob_artifact_version_metadata(
+        &self,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<BlobArtifactVersion>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &blob_artifact_version_key(artifact_id, version))?
+        else {
+            return Ok(None);
+        };
+        let record = decode_blob_artifact_version_record(&raw)?;
+        if record.version != version {
+            return Err(Error::CorruptedIndex("blob artifact version record"));
+        }
+        let claim = self
+            .get_claim_in_txn(&rtxn, &record.claim_id)?
+            .ok_or(Error::CorruptedIndex("blob artifact version claim"))?;
+        if claim.predicate != BLOB_VERSION_CLAIM_PREDICATE
+            || claim.subject != ClaimSubject::Entity(*artifact_id)
+            || claim.value
+                != blob_version_claim_value(version, &record.content_hash, &record.provenance)
+        {
+            return Err(Error::CorruptedIndex("blob artifact version claim"));
+        }
+        Ok(Some(record))
+    }
+
     /// Reads the stored bytes for one version, verifying the content hash on
     /// the way out.
     pub fn read_blob_artifact_version(

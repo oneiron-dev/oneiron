@@ -39,6 +39,8 @@
 //!   owns rather than delegating to a domain module.
 //! * `lexical_query_hint` — `core.lexical.query_hint` codec primitives.
 //! * `source_trust` — scope-map provenance/taint/sensitivity + read admission.
+//! * `scope` — the engine-recognized entries inside the opaque `scope` map
+//!   (the corpus dimension) and their fail-closed structural checks.
 //! * `scoped_read` — the policy-gated actor-keyed read lane.
 //! * `put` / `read` / `lifecycle` — the `Vault` write, read and
 //!   supersession/retraction/demotion doors.
@@ -53,6 +55,7 @@ mod predicate_grammar;
 mod predicate_validators;
 mod put;
 mod read;
+mod scope;
 mod scoped_read;
 mod source_trust;
 mod status;
@@ -63,6 +66,7 @@ pub use lexical_query_hint::*;
 pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;
+pub(crate) use scope::*;
 pub use scoped_read::*;
 pub use source_trust::*;
 pub use status::*;
