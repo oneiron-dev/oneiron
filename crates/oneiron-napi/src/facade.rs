@@ -17,7 +17,7 @@ mod numeric;
 use std::sync::Arc;
 
 use input_error::witness_input_error;
-use numeric::{claim_input_to_engine, dimensions_to_engine};
+use numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -2413,13 +2413,17 @@ impl NativeClient {
         query: String,
         effort: Option<String>,
         scope: Option<NapiRecallScope>,
-        limit: Option<u32>,
+        limit: Option<f64>,
         format: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("standard"))
             .map_err(facade_error)?;
         let scope = recall_scope_to_engine(scope);
-        let limit = limit.map_or(oneiron_remote::DEFAULT_RECALL_LIMIT, |value| value as usize);
+        let limit = limit
+            .map(limit_to_engine)
+            .transpose()
+            .map_err(facade_error)?
+            .unwrap_or(oneiron_remote::DEFAULT_RECALL_LIMIT);
         let pack = self
             .inner
             .recall(&query, effort, &scope, limit, format.as_deref())
@@ -2429,10 +2433,12 @@ impl NativeClient {
 
     /// Gate decision receipts, newest first.
     #[napi]
-    pub fn receipts(&self, limit: Option<u32>) -> napi::Result<Vec<NapiGateReceipt>> {
-        let limit = limit.map_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT, |value| {
-            value as usize
-        });
+    pub fn receipts(&self, limit: Option<f64>) -> napi::Result<Vec<NapiGateReceipt>> {
+        let limit = limit
+            .map(limit_to_engine)
+            .transpose()
+            .map_err(facade_error)?
+            .unwrap_or(oneiron_remote::DEFAULT_RECEIPTS_LIMIT);
         let records = self.inner.receipts(limit).map_err(facade_error)?;
         records
             .into_iter()

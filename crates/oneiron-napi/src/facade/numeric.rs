@@ -27,6 +27,27 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
     Ok(value as usize)
 }
 
+/// Validates the original JS count, then applies the shared list/search cap.
+pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
+    if !value.is_finite() || value.fract() != 0.0 || !(1.0..=f64::from(u32::MAX)).contains(&value) {
+        return Err(MemoryError {
+            code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(),
+            message: "limit must be a finite positive integer in the unsigned 32-bit range"
+                .to_owned(),
+            suggestions: vec![format!(
+                "Set limit to a whole number between 1 and {}, or omit it to use the default.",
+                oneiron_remote::MAX_SEARCH_LIMIT
+            )],
+            successor_short_id: None,
+            gate_denial: None,
+        });
+    }
+    // Positive whole u32 values are exact JS integers and fit usize on N-API targets.
+    let limit = value as usize;
+    oneiron_remote::check_limit(limit)?;
+    Ok(limit)
+}
+
 fn claim_timestamp(value: Option<f64>, field: &str) -> Result<Option<u64>, MemoryError> {
     value
         .map(|value| oneiron_remote::check_unix_seconds(field, value))
@@ -57,7 +78,7 @@ pub(super) fn claim_input_to_engine(input: &NapiClaimInput) -> Result<ClaimInput
 
 #[cfg(test)]
 mod tests {
-    use super::{NapiClaimInput, claim_input_to_engine, dimensions_to_engine};
+    use super::{NapiClaimInput, claim_input_to_engine, dimensions_to_engine, limit_to_engine};
 
     fn claim(timestamps: [Option<f64>; 4]) -> NapiClaimInput {
         NapiClaimInput {
@@ -99,6 +120,40 @@ mod tests {
             assert_eq!(error.code, "BAD_REQUEST");
             assert!(!error.suggestions.is_empty());
         }
+    }
+
+    #[test]
+    fn limits_are_checked_before_narrowing_and_shared_caps() {
+        for (number, expected) in [(1.0, 1), (10.0, 10), (100.0, 100), (1_000.0, 1_000)] {
+            assert_eq!(limit_to_engine(number).expect("valid limit"), expected);
+        }
+        for number in [
+            0.0,
+            -0.0,
+            -1.0,
+            -0.5,
+            0.5,
+            1.5,
+            1_000.5,
+            1_001.0,
+            f64::from(u32::MAX),
+            4_294_967_297.0,
+            9_007_199_254_740_991.0,
+            9_007_199_254_740_992.0,
+            f64::MAX,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let error = limit_to_engine(number).expect_err("invalid limit");
+            assert_eq!(error.code, "BAD_REQUEST");
+            assert!(error.message.contains("limit"));
+            assert!(!error.suggestions.is_empty());
+        }
+        let shared = oneiron_remote::check_limit(1_001).expect_err("over cap");
+        let boundary = limit_to_engine(1_001.0).expect_err("shared cap preserved");
+        assert_eq!(boundary.message, shared.message);
+        assert_eq!(boundary.suggestions, shared.suggestions);
     }
 
     #[test]
