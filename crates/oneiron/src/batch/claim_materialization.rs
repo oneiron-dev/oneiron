@@ -1,6 +1,11 @@
 //! Exact-operation envelope handoff. This is not a gate authorization.
 
-use super::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use std::collections::VecDeque;
+
+use super::{
+    ApplyOpsGateMode, BaseWriteOrigin, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
+    reject_overlay_member_base_write,
+};
 use crate::claim::{
     ClaimBody, ClaimLifecycleStatus, ClaimSource, decode_claim_body, encode_claim_body,
 };
@@ -145,6 +150,41 @@ impl ClaimMaterialization {
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())
+    }
+}
+
+/// Consumes only the next exact binding, then validates its current authority.
+pub(super) fn consume_claim_materialization(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim_materializations: &mut VecDeque<ClaimMaterialization>,
+    op: &BatchOp,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<Option<ClaimMaterialization>> {
+    if claim_materializations
+        .front()
+        .is_some_and(|binding| binding.matches_op(op))
+    {
+        let binding = claim_materializations
+            .pop_front()
+            .expect("matched front binding");
+        binding.validate_actor(store, txn)?;
+        reject_overlay_member_base_write(store, &binding.envelope().actor().entity_ref(), origin)?;
+        Ok(Some(binding))
+    } else if !claim_materializations.is_empty()
+        && matches!(
+            op,
+            BatchOp::Put {
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                ..
+            }
+        )
+    {
+        Err(Error::InvalidClaimBody(
+            "claim materialization operation mismatch",
+        ))
+    } else {
+        Ok(None)
     }
 }
 
