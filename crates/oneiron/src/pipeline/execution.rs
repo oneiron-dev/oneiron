@@ -1351,7 +1351,11 @@ impl PipelineBuilder<'_> {
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,
         // or telemetry work; the gate has already validated their request.
-        if self.authority_filter.as_ref().is_some_and(|filter| filter.deny_all) {
+        if self
+            .authority_filter
+            .as_ref()
+            .is_some_and(|filter| filter.deny_all)
+        {
             return Ok(PipelineOutput {
                 scores: Vec::new(),
                 claim_bodies: HashMap::new(),

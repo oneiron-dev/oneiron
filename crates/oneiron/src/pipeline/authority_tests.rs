@@ -269,16 +269,25 @@ fn authority_malformed_grants_and_invalid_requests_fail_closed() -> Result<()> {
         min_salience: Some(f32::NAN),
         ..RetrievalFilter::default()
     };
-    for scope in [map(vec![("min_confidence", Value::from("bad"))]), Value::Nil] {
+    for scope in [
+        map(vec![("min_confidence", Value::from("bad"))]),
+        Value::Nil,
+    ] {
         let malformed = scope != Value::Nil;
         install_grant(&vault, scope)?;
         let read = reader(&vault);
         if malformed {
             assert_search_ids(&read, None, &[])?;
         }
-        assert!(read.search_text("authorityneedle", 0, Some(&invalid)).is_err());
+        assert!(
+            read.search_text("authorityneedle", 0, Some(&invalid))
+                .is_err()
+        );
         assert!(read.search_vector(&[], 0, Some(&invalid)).is_err());
-        assert!(read.search("authorityneedle", &[], 0, Some(&invalid)).is_err());
+        assert!(
+            read.search("authorityneedle", &[], 0, Some(&invalid))
+                .is_err()
+        );
     }
     Ok(())
 }
@@ -567,7 +576,9 @@ fn authority_malformed_matching_grant_does_not_veto_or_widen_valid_alternatives(
 #[test]
 fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Result<()> {
     use super::filters::pipeline_candidate_matches_filters_and_gate;
-    use super::types::{ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, WorldScope};
+    use super::types::{
+        ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, WorldScope,
+    };
 
     let (_tmp, vault) = open_test_vault();
     install_grant(
