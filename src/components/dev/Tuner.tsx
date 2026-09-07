@@ -336,6 +336,29 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }, [])
 
+  /* the column's place (owner 09-08): left · center · dock */
+  type RoomCol = 'left' | 'center' | 'dock'
+  const [roomCol, setRoomColState] = React.useState<RoomCol>('left')
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem('oneiron-room-column')
+      if (v === 'center' || v === 'dock') setRoomColState(v)
+    } catch {
+      /* default */
+    }
+  }, [])
+  const setRoomCol = React.useCallback((k: RoomCol) => {
+    setRoomColState(k)
+    if (k === 'left') document.documentElement.removeAttribute('data-room-column')
+    else document.documentElement.setAttribute('data-room-column', k)
+    try {
+      if (k === 'left') localStorage.removeItem('oneiron-room-column')
+      else localStorage.setItem('oneiron-room-column', k)
+    } catch {
+      /* session only */
+    }
+  }, [])
+
   if (!values) return null
   return (
     <aside
@@ -483,6 +506,20 @@ export function Tuner({ open, onClose }: { open: boolean; onClose: () => void })
             className={work === k ? 'act on' : 'act'}
             title={k === 'thread' ? 'the live run as a card at the foot of the conversation + the agent bar (as built)' : 'one mark at the room’s top right · click docks the work pane (the Codex shape)'}
             onClick={() => setWork(k)}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="t-sec">room column</div>
+      <div className="t-acts">
+        {(['left', 'center', 'dock'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={roomCol === k ? 'act on' : 'act'}
+            title={k === 'left' ? 'the column at the left, the pane at the far right (as built)' : k === 'center' ? 'the column centers in the space beside the pane, in the whole room while it is closed (Claude, ChatGPT)' : 'the pane docks beside the column at the left; the air stays right'}
+            onClick={() => setRoomCol(k)}
           >
             {k}
           </button>

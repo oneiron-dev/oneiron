@@ -28,6 +28,8 @@ try {
   /* the picker + the work (owner 09-08): well/thread are the defaults, the tuner's pick restores here */
   const pk = localStorage.getItem('oneiron-picker');
   if (pk === 'sidebar' || pk === 'rail' || pk === 'ground') document.documentElement.setAttribute('data-picker', pk);
+  const rc = localStorage.getItem('oneiron-room-column');
+  if (rc === 'center' || rc === 'dock') document.documentElement.setAttribute('data-room-column', rc);
   const wk = localStorage.getItem('oneiron-work');
   if (wk === 'pane') document.documentElement.setAttribute('data-work', wk);
   const sc = localStorage.getItem('oneiron-select-chrome');
