@@ -38,7 +38,11 @@ use crate::temporal::TimeRange;
 /// `enabled` is the SOLE always-encode exception (ONE-1890): a decode default
 /// alone would let a seeded `enabled: true` row encode differently across
 /// vaults, breaking byte-identical cross-vault seeding.
-pub const AGENT_DEF_BODY_KEYS: [&str; 22] = [
+///
+/// `memory_profile` (RT-05, ONE-1687) appends LAST and is elided when absent,
+/// so a body written before it existed decodes with `memory_profile: None` and
+/// re-encodes byte-for-byte.
+pub const AGENT_DEF_BODY_KEYS: [&str; 23] = [
     "agentId",
     "desc",
     "version",
@@ -61,10 +65,22 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 22] = [
     "logicalId",
     "enabled",
     "displayName",
+    "memory_profile",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
 pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
+
+/// The pinned sub-map keys for a [`MemoryProfile`], in encode order.
+pub const MEMORY_PROFILE_KEYS: [&str; 4] = [
+    "window_token_budget",
+    "budget_split",
+    "compaction_backend",
+    "compaction",
+];
+
+/// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
+pub const CONTEXT_BUDGET_SPLIT_KEYS: [&str; 4] = ["claims", "turns", "summaries", "other"];
 
 /// Maximum byte length of an `agent_id`.
 pub const AGENT_ID_MAX_BYTES: usize = 256;
@@ -103,6 +119,17 @@ const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[18];
 const KEY_LOGICAL_ID: &str = AGENT_DEF_BODY_KEYS[19];
 const KEY_ENABLED: &str = AGENT_DEF_BODY_KEYS[20];
 const KEY_DISPLAY_NAME: &str = AGENT_DEF_BODY_KEYS[21];
+const KEY_MEMORY_PROFILE: &str = AGENT_DEF_BODY_KEYS[22];
+
+const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
+const KEY_PROFILE_BUDGET_SPLIT: &str = MEMORY_PROFILE_KEYS[1];
+const KEY_PROFILE_COMPACTION_BACKEND: &str = MEMORY_PROFILE_KEYS[2];
+const KEY_PROFILE_COMPACTION: &str = MEMORY_PROFILE_KEYS[3];
+
+const KEY_SPLIT_CLAIMS: &str = CONTEXT_BUDGET_SPLIT_KEYS[0];
+const KEY_SPLIT_TURNS: &str = CONTEXT_BUDGET_SPLIT_KEYS[1];
+const KEY_SPLIT_SUMMARIES: &str = CONTEXT_BUDGET_SPLIT_KEYS[2];
+const KEY_SPLIT_OTHER: &str = CONTEXT_BUDGET_SPLIT_KEYS[3];
 
 /// Reserved logical-id prefix for seeded system rows. Enforced at the
 /// AGENT_DEF put-decode chokepoint (`batch.rs::apply_put`), which is the only
@@ -251,6 +278,115 @@ pub(crate) fn forked_from_row_ref(forked_from: &EntityId) -> EntityId {
     *forked_from
 }
 
+/// Who compacts an agent's context WINDOW (RT-05, ONE-1687).
+///
+/// MEMORY consolidation is the Dreamer's regardless of this flag — that half
+/// is not a field, it is a law. This flag says only who owns the WINDOW, and
+/// it follows execution ownership so a window is never double-compacted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionOwnership {
+    /// First-party code mode: the engine compacts the window.
+    Engine,
+    /// A bring-your-own-agent harness self-compacts; the engine NEVER touches
+    /// its window.
+    Byoa,
+}
+
+impl CompactionOwnership {
+    /// Pinned wire string for [`Self::Engine`].
+    pub const ENGINE: &'static str = "engine";
+    /// Pinned wire string for [`Self::Byoa`].
+    pub const BYOA: &'static str = "byoa";
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Engine => Self::ENGINE,
+            Self::Byoa => Self::BYOA,
+        }
+    }
+
+    /// Parses the pinned wire vocabulary. Unknown strings are typed decode
+    /// errors, never a default.
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            Self::ENGINE => Ok(Self::Engine),
+            Self::BYOA => Ok(Self::Byoa),
+            _ => Err(Error::InvalidAgentDefBody(
+                "memory_profile compaction must be one of engine|byoa",
+            )),
+        }
+    }
+}
+
+/// Optional per-entity-class share of the window budget.
+///
+/// Absent means the engine default split holds. Every fraction is validated
+/// finite and strictly inside `(0.0, 1.0)`, and the four sum to `1.0 ± 1e-6`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct ContextBudgetSplit {
+    pub claims: f32,
+    pub turns: f32,
+    pub summaries: f32,
+    pub other: f32,
+}
+
+impl ContextBudgetSplit {
+    #[must_use]
+    pub const fn new(claims: f32, turns: f32, summaries: f32, other: f32) -> Self {
+        Self {
+            claims,
+            turns,
+            summaries,
+            other,
+        }
+    }
+}
+
+/// The per-agent context-window memory profile (RT-05, ONE-1687).
+///
+/// Additive and optional: an `AgentDefinition` carrying `None` reproduces
+/// today's behavior byte-for-byte, so the record grew without moving any
+/// existing agent's assembly.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct MemoryProfile {
+    /// Context-window token budget for this agent — the lift of
+    /// `context_pack`'s builder-constant default.
+    pub window_token_budget: u64,
+    /// Optional per-entity-class split; absent = the engine default split.
+    pub budget_split: Option<ContextBudgetSplit>,
+    /// Host-registered compaction backend key. Resolved against the
+    /// compaction registry at drive time; never a frontier tier. The ban is
+    /// enforced at registration, not by sniffing this string.
+    pub compaction_backend: ModelTierRef,
+    /// Who compacts this agent's context WINDOW.
+    pub compaction: CompactionOwnership,
+}
+
+impl MemoryProfile {
+    #[must_use]
+    pub const fn new(
+        window_token_budget: u64,
+        compaction_backend: ModelTierRef,
+        compaction: CompactionOwnership,
+    ) -> Self {
+        Self {
+            window_token_budget,
+            budget_split: None,
+            compaction_backend,
+            compaction,
+        }
+    }
+
+    #[must_use]
+    pub fn with_budget_split(mut self, split: ContextBudgetSplit) -> Self {
+        self.budget_split = Some(split);
+        self
+    }
+}
+
 /// A saved, host-agnostic agent composition record.
 ///
 /// The lifecycle block (`approval_status` … `provenance`) is the shared
@@ -287,6 +423,10 @@ pub struct AgentDefinition {
     pub enabled: bool,
     /// Runtime-editable display name; deliberately NOT in the freeze-set.
     pub display_name: Option<String>,
+    /// Per-agent context-window memory profile (RT-05, ONE-1687). A dial, not
+    /// identity: it may change on update under the ordinary version-bump rule,
+    /// so it is deliberately NOT in the freeze-set.
+    pub memory_profile: Option<MemoryProfile>,
 }
 
 impl AgentDefinition {
@@ -340,7 +480,21 @@ impl AgentDefinition {
             logical_id,
             enabled,
             display_name,
+            memory_profile: None,
         }
+    }
+
+    /// Attaches the RT-05 [`MemoryProfile`] (ONE-1687).
+    ///
+    /// Deliberately a builder step rather than a 22nd constructor parameter:
+    /// `new` mirrors the pre-RT-05 record and every existing call site keeps
+    /// compiling unchanged, so the additive-and-elided profile discipline
+    /// reaches the constructor too. `None` is the no-op that reproduces
+    /// today's record byte-for-byte.
+    #[must_use]
+    pub fn with_memory_profile(mut self, memory_profile: Option<MemoryProfile>) -> Self {
+        self.memory_profile = memory_profile;
+        self
     }
 }
 
@@ -426,6 +580,12 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
         entries.push((
             Value::from(KEY_DISPLAY_NAME),
             Value::from(display_name.as_str()),
+        ));
+    }
+    if let Some(profile) = &def.memory_profile {
+        entries.push((
+            Value::from(KEY_MEMORY_PROFILE),
+            encode_memory_profile(profile),
         ));
     }
 
@@ -524,6 +684,7 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let mut logical_id = None;
     let mut enabled = None;
     let mut display_name = None;
+    let mut memory_profile = None;
     let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -672,6 +833,7 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                     "displayName must be a non-empty UTF-8 string at most 256 bytes",
                 )?);
             }
+            KEY_MEMORY_PROFILE => memory_profile = Some(decode_memory_profile(value)?),
             _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
         }
     }
@@ -716,6 +878,7 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
         // dispatchable.
         enabled: enabled.unwrap_or(true),
         display_name,
+        memory_profile,
     };
     validate_agent_definition(&definition)?;
     Ok(definition)
@@ -794,6 +957,160 @@ fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
                 .map_or(Value::Nil, Value::from),
         ),
     ])
+}
+
+/// Encodes a [`MemoryProfile`] sub-map: the four [`MEMORY_PROFILE_KEYS`] in
+/// pinned order, with `budget_split` elided when absent.
+fn encode_memory_profile(profile: &MemoryProfile) -> Value {
+    let mut entries = vec![(
+        Value::from(KEY_PROFILE_WINDOW_TOKEN_BUDGET),
+        Value::from(profile.window_token_budget),
+    )];
+    if let Some(split) = profile.budget_split {
+        entries.push((
+            Value::from(KEY_PROFILE_BUDGET_SPLIT),
+            encode_context_budget_split(split),
+        ));
+    }
+    entries.push((
+        Value::from(KEY_PROFILE_COMPACTION_BACKEND),
+        Value::from(profile.compaction_backend.as_str()),
+    ));
+    entries.push((
+        Value::from(KEY_PROFILE_COMPACTION),
+        Value::from(profile.compaction.as_str()),
+    ));
+    Value::Map(entries)
+}
+
+fn encode_context_budget_split(split: ContextBudgetSplit) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_SPLIT_CLAIMS), Value::F32(split.claims)),
+        (Value::from(KEY_SPLIT_TURNS), Value::F32(split.turns)),
+        (
+            Value::from(KEY_SPLIT_SUMMARIES),
+            Value::F32(split.summaries),
+        ),
+        (Value::from(KEY_SPLIT_OTHER), Value::F32(split.other)),
+    ])
+}
+
+/// Strict [`MemoryProfile`] sub-map decode, mirroring the parent map's
+/// discipline exactly: non-map value, non-string keys, unknown keys and
+/// duplicate keys are all refused.
+fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "memory_profile must be a MessagePack map",
+        ));
+    };
+
+    let mut window_token_budget = None;
+    let mut budget_split = None;
+    let mut compaction_backend = None;
+    let mut compaction = None;
+    let mut seen = [false; MEMORY_PROFILE_KEYS.len()];
+
+    for (entry_key, value) in entries {
+        let Some(entry_key) = entry_key.as_str() else {
+            return Err(Error::InvalidAgentDefBody(
+                "memory_profile keys must be strings",
+            ));
+        };
+        let Some(index) = MEMORY_PROFILE_KEYS
+            .iter()
+            .position(|known| *known == entry_key)
+        else {
+            return Err(Error::InvalidAgentDefBody(
+                "memory_profile key is not in the pinned MEMORY_PROFILE_KEYS set",
+            ));
+        };
+        if seen[index] {
+            return Err(Error::InvalidAgentDefBody("duplicate memory_profile key"));
+        }
+        seen[index] = true;
+        match MEMORY_PROFILE_KEYS[index] {
+            KEY_PROFILE_WINDOW_TOKEN_BUDGET => {
+                window_token_budget = Some(value.as_u64().ok_or(Error::InvalidAgentDefBody(
+                    "memory_profile window_token_budget must be an unsigned integer",
+                ))?);
+            }
+            KEY_PROFILE_BUDGET_SPLIT => {
+                budget_split = Some(decode_context_budget_split(value)?);
+            }
+            KEY_PROFILE_COMPACTION_BACKEND => {
+                let tier = text_value(
+                    value,
+                    AGENT_MODEL_TIER_MAX_BYTES,
+                    "memory_profile compaction_backend must be a non-empty UTF-8 string at most 256 bytes",
+                )?;
+                compaction_backend = Some(ModelTierRef(tier));
+            }
+            KEY_PROFILE_COMPACTION => {
+                let text = value.as_str().ok_or(Error::InvalidAgentDefBody(
+                    "memory_profile compaction must be one of engine|byoa",
+                ))?;
+                compaction = Some(CompactionOwnership::parse(text)?);
+            }
+            _ => unreachable!("index resolved from MEMORY_PROFILE_KEYS"),
+        }
+    }
+
+    Ok(MemoryProfile {
+        window_token_budget: window_token_budget.ok_or(Error::InvalidAgentDefBody(
+            "missing required memory_profile key window_token_budget",
+        ))?,
+        budget_split,
+        compaction_backend: compaction_backend.ok_or(Error::InvalidAgentDefBody(
+            "missing required memory_profile key compaction_backend",
+        ))?,
+        compaction: compaction.ok_or(Error::InvalidAgentDefBody(
+            "missing required memory_profile key compaction",
+        ))?,
+    })
+}
+
+fn decode_context_budget_split(value: &Value) -> Result<ContextBudgetSplit> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "budget_split must be a MessagePack map",
+        ));
+    };
+
+    let mut fractions = [None; CONTEXT_BUDGET_SPLIT_KEYS.len()];
+
+    for (entry_key, value) in entries {
+        let Some(entry_key) = entry_key.as_str() else {
+            return Err(Error::InvalidAgentDefBody(
+                "budget_split keys must be strings",
+            ));
+        };
+        let Some(index) = CONTEXT_BUDGET_SPLIT_KEYS
+            .iter()
+            .position(|known| *known == entry_key)
+        else {
+            return Err(Error::InvalidAgentDefBody(
+                "budget_split key is not in the pinned CONTEXT_BUDGET_SPLIT_KEYS set",
+            ));
+        };
+        if fractions[index].is_some() {
+            return Err(Error::InvalidAgentDefBody("duplicate budget_split key"));
+        }
+        let Value::F32(fraction) = value else {
+            return Err(Error::InvalidAgentDefBody(
+                "budget_split fractions must be 32-bit floats",
+            ));
+        };
+        fractions[index] = Some(*fraction);
+    }
+
+    let missing = || Error::InvalidAgentDefBody("missing required budget_split key");
+    Ok(ContextBudgetSplit {
+        claims: fractions[0].ok_or_else(missing)?,
+        turns: fractions[1].ok_or_else(missing)?,
+        summaries: fractions[2].ok_or_else(missing)?,
+        other: fractions[3].ok_or_else(missing)?,
+    })
 }
 
 fn encode_mcp_ref(mcp: &McpRef) -> Value {
@@ -1034,6 +1351,46 @@ fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
     validate_skill_dependencies(&def.skills)?;
     validate_connectors(&def.connectors)?;
     validate_mcp_refs(&def.code_mode_mcps)?;
+    if let Some(profile) = &def.memory_profile {
+        validate_memory_profile(profile)?;
+    }
+    Ok(())
+}
+
+/// RT-05 profile validation (ONE-1687). Rides the existing
+/// [`Error::InvalidAgentDefBody`] axis — no new error family.
+///
+/// The frontier-tier ban is deliberately NOT here: decode holds no vault and
+/// no registry, so a string sniff would be the wrong authority. It fires at
+/// backend resolution instead, where the registered tier class is known.
+fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
+    if profile.window_token_budget == 0 {
+        return Err(Error::InvalidAgentDefBody(
+            "memory_profile window_token_budget must be greater than zero",
+        ));
+    }
+    validate_text_field(
+        profile.compaction_backend.as_str(),
+        AGENT_MODEL_TIER_MAX_BYTES,
+        "memory_profile compaction_backend must be a non-empty UTF-8 string at most 256 bytes",
+    )?;
+    if let Some(split) = profile.budget_split {
+        let fractions = [split.claims, split.turns, split.summaries, split.other];
+        if fractions
+            .iter()
+            .any(|f| !f.is_finite() || *f <= 0.0 || *f >= 1.0)
+        {
+            return Err(Error::InvalidAgentDefBody(
+                "memory_profile budget_split fractions must be finite and inside (0.0, 1.0)",
+            ));
+        }
+        let sum: f32 = fractions.iter().sum();
+        if (sum - 1.0).abs() > 1e-6 {
+            return Err(Error::InvalidAgentDefBody(
+                "memory_profile budget_split fractions must sum to 1.0",
+            ));
+        }
+    }
     Ok(())
 }
 

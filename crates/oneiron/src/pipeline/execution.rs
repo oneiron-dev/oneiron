@@ -117,8 +117,11 @@ impl PipelineBuilder<'_> {
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
+            let mut community_diversity = None;
+            let mut community_trace_identity = None;
             let codebase_scope_active = self.has_codebase_scope_filter();
             let filter_config = PipelineFilterConfig {
+                candidate_filter: self.candidate_filter,
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
                 occurred_range,
@@ -129,15 +132,12 @@ impl PipelineBuilder<'_> {
                 relationship_filter: self.relationship_filter,
                 world_scope: self.world_scope,
             };
-            // D19 is always active. For final-token prefix queries, a dead
-            // claim can outrank a live prefix hit in BM25, then be removed
-            // after fusion; overfetch prevents that dead hit from consuming
-            // the only text-channel slot. Live exact claims already satisfy
-            // the D19 gate, so they must not widen ordinary
-            // `search_text(..., limit)` calls.
+            // Ordinary text uses D19 widening; candidate-filtered text instead
+            // applies D19 during bounded scoring and needs no corpus-sized probe.
             let mut claim_gate_widening_probe = ClaimStatusGateCache::default();
             let claim_gate_text_widening_active = if let Some((query, limit)) = &self.text_search
                 && *limit > 0
+                && self.candidate_filter.is_none()
             {
                 let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
@@ -355,19 +355,31 @@ impl PipelineBuilder<'_> {
                 let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                     expansion.grounded_query.as_str()
                 });
-                let mut text_results = crate::bm25::search_text_scoped_with_recency(
+                let search = if self.candidate_filter.is_some() {
+                    crate::bm25::search_text_filtered_with_recency
+                } else {
+                    crate::bm25::search_text_scoped_with_recency
+                };
+                let mut text_results = search(
                     &self.vault.store,
                     &rtxn,
                     &self.vault.analyzer,
                     bm25_config,
                     text_query,
-                    text_channel_limit,
+                    if self.candidate_filter.is_some() {
+                        *limit
+                    } else {
+                        text_channel_limit
+                    },
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
-                if text_channel_limit > *limit && text_scope_widening_active {
+                if self.candidate_filter.is_none()
+                    && text_channel_limit > *limit
+                    && text_scope_widening_active
+                {
                     let scoped_result_limit = if recency.is_some() {
                         limit.saturating_mul(PER_SCAN_CAP_FACTOR)
                     } else {
@@ -570,12 +582,13 @@ impl PipelineBuilder<'_> {
                 // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                 // instead of uniform 1/n.
                 let (ppr_results, deferred_cache_write) =
-                    crate::ppr::ppr_query_in_txn_with_deferred_cache(
+                    crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
                         &self.vault.store,
                         &rtxn,
                         seeds,
                         *depth,
                         PPR_DAMPING,
+                        self.vault.config.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Specificity,
                     )?;
                 add_signal_score_components(
@@ -738,14 +751,51 @@ impl PipelineBuilder<'_> {
                     // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
                     // specificity weighting is search_ppr-only.
                     let (mut ppr_results, deferred_cache_write) =
-                        crate::ppr::ppr_query_in_txn_with_deferred_cache(
-                            &self.vault.store,
-                            &rtxn,
-                            &seeds,
-                            *depth,
-                            PPR_DAMPING,
-                            crate::ppr::SeedWeighting::Uniform,
-                        )?;
+                        if self.vault.config.ppr_community.beta == 0.0 {
+                            // Exact legacy path: no evidence/cache reads or new key namespace.
+                            crate::ppr::ppr_query_in_txn_with_vad_deferred_cache(
+                                &self.vault.store,
+                                &rtxn,
+                                &seeds,
+                                *depth,
+                                PPR_DAMPING,
+                                self.vault.config.ppr_vad_alpha,
+                                crate::ppr::SeedWeighting::Uniform,
+                            )?
+                        } else {
+                            // ID sorting for the base cache must not replace the fused
+                            // evidence order. Explicit-only seeds get zero evidence.
+                            let ordered_seeds =
+                                crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
+                                    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+                            let empty_usage = HashMap::new();
+                            let context = crate::ppr_community::CommunityBoostContext {
+                                ordered_seeds: &ordered_seeds,
+                                result_limit: self.result_limit,
+                                session_usage: self.community_session_usage.unwrap_or(&empty_usage),
+                            };
+                            let (results, write, diversity) =
+                                crate::ppr::ppr_expand_in_txn_with_community_deferred_cache(
+                                    &self.vault.store,
+                                    &rtxn,
+                                    crate::ppr::CommunityPprRequest {
+                                        seeds: &seeds,
+                                        depth: *depth,
+                                        teleport_alpha: PPR_DAMPING,
+                                        weighting: crate::ppr::SeedWeighting::Uniform,
+                                        config: &self.vault.config,
+                                        context: &context,
+                                    },
+                                )?;
+                            community_diversity = diversity;
+                            if capture_retrieval_trace {
+                                community_trace_identity = Some(self.community_trace_identity(
+                                    &ordered_seeds,
+                                    crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
+                                ));
+                            }
+                            (results, write)
+                        };
                     if let Some(deferred_cache_write) = deferred_cache_write {
                         deferred_ppr_cache_writes.push(deferred_cache_write);
                     }
@@ -1129,6 +1179,15 @@ impl PipelineBuilder<'_> {
                     context_pack_budget,
                 )?;
             }
+            // Only admitted final candidates participate. This selection cannot
+            // surface hidden bridge nodes, undo filters, or multiply scores twice.
+            if let Some(diversity) = community_diversity {
+                diversity.apply(
+                    &mut scores,
+                    self.result_limit,
+                    &self.vault.config.ppr_community,
+                )?;
+            }
             scores.truncate(self.result_limit);
             if before_limit > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::BelowThreshold);
@@ -1159,6 +1218,16 @@ impl PipelineBuilder<'_> {
                     rerank_query,
                     &candidate_set,
                 );
+                let fork_hash = if let Some(identity) = community_trace_identity {
+                    use sha2::{Digest, Sha256};
+                    let mut hash = Sha256::new();
+                    hash.update(b"oneiron.retrieval_trace.community.fork.v0");
+                    hash.update(fork_hash);
+                    hash.update(identity);
+                    hash.finalize().into()
+                } else {
+                    fork_hash
+                };
                 Some(RetrievalTrace {
                     fork_hash,
                     per_channel: trace_channels,
@@ -1230,6 +1299,12 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(self) -> Result<PipelineOutput> {
+        if self.ppr_search.is_some() || self.ppr_expand.is_some() {
+            crate::config::validate_ppr_vad_alpha(self.vault.config.ppr_vad_alpha)?;
+        }
+        if self.ppr_expand.is_some() && self.vault.config.ppr_community.beta != 0.0 {
+            crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
+        }
         let started = Instant::now();
         let started_at = crate::unix_seconds_now();
         let temporal_now = self.temporal_now.unwrap_or(started_at);

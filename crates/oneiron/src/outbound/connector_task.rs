@@ -501,6 +501,18 @@ fn update_connector_send_task_body(
         update(&mut body)?;
         let encoded = rmp_serde::to_vec_named(&body)
             .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
+        // A no-op update writes NOTHING. The executor re-marks the attempt on
+        // every claim, so a send that keeps parking (a gate hold waiting on a
+        // person, a window edge) would otherwise rewrite an identical body and
+        // bump the entity's learned time once per poll — a growing trail of
+        // writes that says the TASK changed when it did not. Comparing the
+        // encoded bytes against what is stored makes the retry loop leave the
+        // row byte-identical, while any real projection — the terminal
+        // outcome, a timezone refresh, a different node picking the attempt up
+        // — still differs in bytes and writes exactly once.
+        if raw[ENTITY_METADATA_HEADER_LEN..] == encoded[..] {
+            return Ok(());
+        }
         vault
             .batch_in()
             .put(

@@ -4,6 +4,17 @@
 //! `channel_identity.*` claim family. Provisioning verbs, provider adapters,
 //! reputation scoring, and manifest contents are intentionally outside this
 //! module; CID-1 pins the primitive shape and lifecycle invariants only.
+//!
+//! Two things live beside the record because they are properties OF the record
+//! rather than of whichever adapter last touched it:
+//!
+//! - [`address`] — the channel key and the assignment address are VALUES,
+//!   normalized once at construction, and [`AssignmentKey`] is the single
+//!   canonical inhabitant every uniqueness road compares.
+//! - [`custody`] — a `delegated_grant` row is a mailbox the product never
+//!   minted. What makes such a row true is a live custody record that NAMES
+//!   THIS MAILBOX, so the proof carries the mailbox and only the engine can
+//!   mint one.
 
 use std::io::Cursor;
 
@@ -21,11 +32,36 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::entity_id_from_type_index_key;
 
-/// Current ChannelIdentity body schema version.
+mod address;
+mod custody;
+
+pub use address::{
+    AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
+};
+pub use custody::{
+    DelegatedCustodyProof, DelegatedGrant, DelegatedGrantScope, delegated_custody_effector,
+    delegated_custody_scopes, delegated_custody_subject_scope,
+};
+
+use custody::verify_delegated_custody_in_txn;
+
+/// Current ChannelIdentity body schema version for the three self-held shapes.
+///
+/// This stays `1` on purpose. A `delegated_grant` row carries two extra keys
+/// and encodes at [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`]; every
+/// self-held row keeps encoding the exact bytes it always did, so every body
+/// written before the fourth shape existed decodes unchanged.
 pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 1;
+
+/// ChannelIdentity body schema version for `delegated_grant` rows.
+///
+/// Only the fourth shape uses it. The version is what selects the pinned key
+/// set at decode, so the two shapes' key sets can never be mixed.
+pub const CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION: u64 = 2;
 
 /// Minimum self-hold window for a quarantined released identity (90 days).
 pub const CHANNEL_IDENTITY_MIN_QUARANTINE_SECS: u64 = 90 * 24 * 60 * 60;
@@ -59,6 +95,31 @@ const KEY_QUARANTINE_UNTIL: &str = CHANNEL_IDENTITY_BODY_KEYS[9];
 const KEY_REPUTATION_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[10];
 const KEY_MANIFEST_REF: &str = CHANNEL_IDENTITY_BODY_KEYS[11];
 
+/// Pinned on-disk MessagePack key set for `delegated_grant` bodies.
+///
+/// The twelve self-held keys in the same order, then the two custody keys.
+/// `delegated_grant_ref` is a custody record NAME; no token bytes are ever
+/// written here.
+pub const CHANNEL_IDENTITY_DELEGATED_BODY_KEYS: [&str; 14] = [
+    CHANNEL_IDENTITY_BODY_KEYS[0],
+    CHANNEL_IDENTITY_BODY_KEYS[1],
+    CHANNEL_IDENTITY_BODY_KEYS[2],
+    CHANNEL_IDENTITY_BODY_KEYS[3],
+    CHANNEL_IDENTITY_BODY_KEYS[4],
+    CHANNEL_IDENTITY_BODY_KEYS[5],
+    CHANNEL_IDENTITY_BODY_KEYS[6],
+    CHANNEL_IDENTITY_BODY_KEYS[7],
+    CHANNEL_IDENTITY_BODY_KEYS[8],
+    CHANNEL_IDENTITY_BODY_KEYS[9],
+    CHANNEL_IDENTITY_BODY_KEYS[10],
+    CHANNEL_IDENTITY_BODY_KEYS[11],
+    "delegated_grant_ref",
+    "grant_scopes",
+];
+
+const KEY_DELEGATED_GRANT_REF: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[12];
+const KEY_GRANT_SCOPES: &str = CHANNEL_IDENTITY_DELEGATED_BODY_KEYS[13];
+
 /// Pinned `channel_identity.*` claim predicates for the CID-1 record fields.
 pub const CHANNEL_IDENTITY_CLAIM_PREDICATES: [&str; 11] = [
     PREDICATE_CHANNEL_IDENTITY_CHANNEL,
@@ -91,12 +152,23 @@ const MAX_CHANNEL_BYTES: usize = 64;
 const MAX_ADDRESS_OR_HANDLE_BYTES: usize = 512;
 
 /// ChannelIdentity addressability shape (OF-347 R1).
+///
+/// This is the WIRE vocabulary. Structurally, [`Self::DelegatedGrant`] is not a
+/// peer of the other three: it is the shape of a row whose account the product
+/// does NOT hold, while the three self-held spellings are exactly
+/// [`SelfHeldShape`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ChannelIdentityShape {
     DedicatedAddress,
     DedicatedHandle,
     SharedPresence,
+    /// A member/owner mailbox held under a scoped-read OAuth grant.
+    ///
+    /// The product never mints, owns, rotates, or quarantines the underlying
+    /// account: it holds a custody record ref and reads. Routing, receipts,
+    /// health claims and manifests never special-case this shape.
+    DelegatedGrant,
 }
 
 impl ChannelIdentityShape {
@@ -106,6 +178,7 @@ impl ChannelIdentityShape {
             Self::DedicatedAddress => "dedicated_address",
             Self::DedicatedHandle => "dedicated_handle",
             Self::SharedPresence => "shared_presence",
+            Self::DelegatedGrant => "delegated_grant",
         }
     }
 
@@ -115,7 +188,55 @@ impl ChannelIdentityShape {
             "dedicated_address" => Some(Self::DedicatedAddress),
             "dedicated_handle" => Some(Self::DedicatedHandle),
             "shared_presence" => Some(Self::SharedPresence),
+            "delegated_grant" => Some(Self::DelegatedGrant),
             _ => None,
+        }
+    }
+
+    /// Whether the product itself holds the underlying account.
+    ///
+    /// False only for [`Self::DelegatedGrant`], where the member's provider
+    /// owns creation, rotation and revocation.
+    #[must_use]
+    pub const fn is_self_held(self) -> bool {
+        !matches!(self, Self::DelegatedGrant)
+    }
+}
+
+/// The three shapes whose account the product actually holds.
+///
+/// This exists so that "a delegated grant asked for at a self-held door" has no
+/// spelling. [`ChannelIdentity::requested`] takes this type, and it has no
+/// `DelegatedGrant` variant, so a caller cannot hand it a delegated shape for
+/// the door to silently degrade — see that constructor for what the degrade
+/// actually cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum SelfHeldShape {
+    DedicatedAddress,
+    DedicatedHandle,
+    SharedPresence,
+}
+
+impl SelfHeldShape {
+    /// The wire shape this projects to.
+    #[must_use]
+    pub const fn shape(self) -> ChannelIdentityShape {
+        match self {
+            Self::DedicatedAddress => ChannelIdentityShape::DedicatedAddress,
+            Self::DedicatedHandle => ChannelIdentityShape::DedicatedHandle,
+            Self::SharedPresence => ChannelIdentityShape::SharedPresence,
+        }
+    }
+
+    /// The self-held shape a wire shape names, if it names one.
+    #[must_use]
+    pub const fn from_shape(shape: ChannelIdentityShape) -> Option<Self> {
+        match shape {
+            ChannelIdentityShape::DedicatedAddress => Some(Self::DedicatedAddress),
+            ChannelIdentityShape::DedicatedHandle => Some(Self::DedicatedHandle),
+            ChannelIdentityShape::SharedPresence => Some(Self::SharedPresence),
+            ChannelIdentityShape::DelegatedGrant => None,
         }
     }
 }
@@ -248,6 +369,8 @@ impl ChannelIdentityState {
         }
     }
 
+    /// The SELF-HELD edge table: an account the product minted and can rotate,
+    /// release, and hold out of recycling for its quarantine window.
     #[must_use]
     pub const fn can_transition_to(self, next: Self) -> bool {
         matches!(
@@ -260,6 +383,40 @@ impl ChannelIdentityState {
                 | (Self::Rotating, Self::Released)
                 | (Self::Released, Self::Quarantine)
                 | (Self::Quarantine, Self::Tombstone)
+        )
+    }
+
+    /// The DELEGATED edge table, for a mailbox the product never minted.
+    ///
+    /// Two states of the self-held table are absent, and their absence is the
+    /// enforcement rather than a predicate somewhere else: ROTATING (re-minting
+    /// an account we never owned) and QUARANTINE (taking a never-recycle hold
+    /// on someone else's mailbox). Retirement is `Active -> Released ->
+    /// Tombstone`, and both retirement stops free the assignment key, because
+    /// the mailbox was never ours to hold back — closing the row out must never
+    /// be the act that locks a member out of re-consenting.
+    #[must_use]
+    pub const fn can_transition_to_delegated(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Requested, Self::PendingFulfillment)
+                | (Self::PendingFulfillment, Self::Active)
+                | (Self::Active, Self::Released)
+                | (Self::Released, Self::Tombstone)
+        )
+    }
+
+    /// Whether a `delegated_grant` row in this state asserts a LIVE grant over
+    /// the member's mailbox.
+    ///
+    /// True for every state that claims we can still read it, false once the
+    /// row is retiring — which is exactly when custody may no longer be
+    /// provable, and must not be required to be.
+    #[must_use]
+    pub const fn asserts_delegated_custody(self) -> bool {
+        matches!(
+            self,
+            Self::Requested | Self::PendingFulfillment | Self::Active
         )
     }
 }
@@ -277,22 +434,56 @@ pub struct ChannelIdentity {
     pub quarantine_until: Option<u64>,
     pub reputation_ref: Option<EntityId>,
     pub manifest_ref: Option<EntityId>,
+    /// The custody handle a [`ChannelIdentityShape::DelegatedGrant`] row
+    /// carries, and nothing else carries. Names only: a custody record ref and
+    /// the read scopes it covers. No token bytes reach this field, the encoded
+    /// body, or any claim derived from either.
+    ///
+    /// Its presence and the shape are tied by [`Self::validate`], and a row
+    /// carrying one is only WRITABLE through the doors that re-prove custody in
+    /// the storing transaction — see
+    /// [`Vault::provision_delegated_identity`].
+    pub grant: Option<DelegatedGrant>,
 }
 
 impl ChannelIdentity {
-    /// Constructs a requested identity row before provider fulfillment starts.
+    /// Constructs a requested SELF-HELD identity row before provider
+    /// fulfillment starts.
+    ///
+    /// The channel and address are normalized HERE, once, so two spellings of
+    /// one mailbox cannot become two assignment keys with two occupants.
+    ///
+    /// The shape parameter is [`SelfHeldShape`], not the wire
+    /// [`ChannelIdentityShape`], and that is the whole of ONE-1825's third
+    /// root. A door that took the wire enum would have to answer for
+    /// `DelegatedGrant`, and every available answer is wrong: mapping it onto a
+    /// self-held shape hands a caller who asked for a read-only member-held
+    /// mailbox a PRODUCT-OWNED, send-capable row instead (see [`Self::may_send`]
+    /// — every self-held shape may send once Active, a delegated row never
+    /// does), and silence makes that escalation invisible. Refusing at runtime
+    /// is not available either: this signature is infallible and `#[must_use]`,
+    /// and a `panic!` is not a product-code refusal.
+    ///
+    /// So the misuse is made UNSPELLABLE instead. `SelfHeldShape` has no
+    /// `DelegatedGrant` variant, so there is no argument left that would need
+    /// degrading. [`Self::requested_delegated`] — behind
+    /// [`Vault::provision_delegated_identity`], which mints a real custody
+    /// proof — is the only delegated door.
     #[must_use]
     pub fn requested(
-        channel: impl Into<String>,
-        address_or_handle: impl Into<String>,
-        shape: ChannelIdentityShape,
+        channel: impl AsRef<str>,
+        address_or_handle: impl AsRef<str>,
+        shape: SelfHeldShape,
         binding: ChannelIdentityBinding,
         requested_at: u64,
     ) -> Self {
+        let channel = channel.as_ref();
         Self {
-            channel: channel.into(),
-            address_or_handle: address_or_handle.into(),
-            shape,
+            address_or_handle: AssignmentAddress::normalize(channel, address_or_handle.as_ref())
+                .as_str()
+                .to_owned(),
+            channel: ChannelKey::normalize(channel).as_str().to_owned(),
+            shape: shape.shape(),
             binding,
             state: ChannelIdentityState::Requested,
             pending_fulfillment: None,
@@ -300,7 +491,65 @@ impl ChannelIdentity {
             quarantine_until: None,
             reputation_ref: None,
             manifest_ref: None,
+            grant: None,
         }
+    }
+
+    /// Constructs a requested `delegated_grant` row over a member-held mailbox.
+    ///
+    /// `grant` names an already-granted custody record; this constructor does
+    /// not mint, rotate, or read it. It also does not TAKE the caller's word
+    /// that the grant exists: `custody` is a [`DelegatedCustodyProof`], which
+    /// only the engine's verification door can mint, and it must cover this
+    /// exact `(channel, address, custody record)` TRIPLE. A caller holding a
+    /// proof for another member's mailbox is refused here rather than at one
+    /// adapter.
+    ///
+    /// The row is born `Requested`, always. Custody is a local fact, consent is
+    /// a local fact, and the BINDING is chosen by the local actor that
+    /// consented; `Active` asserts all three already happened. Every later
+    /// delegated state is therefore reachable only as a checked step from a row
+    /// that already exists.
+    ///
+    /// `pub(crate)`: the proof borrows a transaction, so the only sound public
+    /// spelling is an engine door that mints and consumes it in one txn —
+    /// [`Vault::provision_delegated_identity`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidChannelIdentityBody`] when the proof does not cover the
+    /// triple, or when the row fails the record's bounds checks.
+    pub(crate) fn requested_delegated(
+        channel: impl AsRef<str>,
+        address_or_handle: impl AsRef<str>,
+        binding: ChannelIdentityBinding,
+        grant: DelegatedGrant,
+        custody: &DelegatedCustodyProof<'_>,
+        requested_at: u64,
+    ) -> Result<Self> {
+        let channel_key = ChannelKey::normalize(channel.as_ref());
+        let address = AssignmentAddress::normalize(channel.as_ref(), address_or_handle.as_ref());
+        if !custody.covers(channel_key.as_str(), address.as_str(), &grant) {
+            return Err(Error::InvalidChannelIdentityBody(
+                "delegated_grant identity requires a verified custody proof for its own \
+                 (channel, mailbox, grant)",
+            ));
+        }
+        let identity = Self {
+            channel: channel_key.as_str().to_owned(),
+            address_or_handle: address.as_str().to_owned(),
+            shape: ChannelIdentityShape::DelegatedGrant,
+            binding,
+            state: ChannelIdentityState::Requested,
+            pending_fulfillment: None,
+            state_changed_at: requested_at,
+            quarantine_until: None,
+            reputation_ref: None,
+            manifest_ref: None,
+            grant: Some(grant),
+        };
+        identity.validate()?;
+        Ok(identity)
     }
 
     /// Constructs the pre-provisioned own-app home-channel identity for an agent.
@@ -317,13 +566,61 @@ impl ChannelIdentity {
             quarantine_until: None,
             reputation_ref: None,
             manifest_ref: None,
+            grant: None,
         }
     }
 
     /// Returns the uniqueness key used for never-recycle enforcement.
+    ///
+    /// DERIVED, not stored. Returning the stored pair verbatim meant a row
+    /// decoded from disk — replay, rebuild, any body an older or third-party
+    /// writer produced — was compared under whatever spelling was on disk,
+    /// while another road normalized. Computing the key from the stored bytes
+    /// makes every road agree by construction.
+    ///
+    /// The ROW is never rewritten: `self.channel` and `self.address_or_handle`
+    /// keep the exact bytes the decoder read, so the codec's
+    /// `encode(decode(bytes)) == bytes` pin is untouched. Only the KEY is
+    /// canonical.
     #[must_use]
-    pub fn assignment_key(&self) -> (&str, &str) {
-        (&self.channel, &self.address_or_handle)
+    pub fn assignment_key(&self) -> AssignmentKey {
+        AssignmentKey::of(&self.channel, &self.address_or_handle)
+    }
+
+    /// Whether this row is a member-held mailbox under a scoped-read grant.
+    #[must_use]
+    pub const fn is_delegated(&self) -> bool {
+        !self.shape.is_self_held()
+    }
+
+    /// Whether this row still OCCUPIES its assignment key.
+    ///
+    /// A self-held row occupies it forever: never-recycle is the whole point of
+    /// releasing an address WE minted, so a quarantined or tombstoned row is
+    /// still holding it back. A delegated row is the opposite case — the
+    /// mailbox was never ours, so once the row is retiring we hold no claim on
+    /// it at all, and lawful re-consent stays open after the close.
+    #[must_use]
+    pub const fn occupies_assignment_key(&self) -> bool {
+        if self.is_delegated() {
+            !matches!(
+                self.state,
+                ChannelIdentityState::Released | ChannelIdentityState::Tombstone
+            )
+        } else {
+            true
+        }
+    }
+
+    /// Whether this row may carry an OUTBOUND effect.
+    ///
+    /// Self-held and `Active`, and nothing else. A delegated row is a
+    /// scoped-READ grant over a mailbox the product does not own; there is no
+    /// state it can reach in which sending as the member is a thing we were
+    /// given permission to do.
+    #[must_use]
+    pub const fn may_send(&self) -> bool {
+        !self.is_delegated() && matches!(self.state, ChannelIdentityState::Active)
     }
 
     /// Validates CID-1 record invariants.
@@ -339,6 +636,7 @@ impl ChannelIdentity {
             "address_or_handle must be non-empty and at most 512 bytes",
         )?;
         self.binding.validate()?;
+        self.validate_custody()?;
         match self.state {
             ChannelIdentityState::PendingFulfillment => {
                 if self.pending_fulfillment.is_none() {
@@ -372,7 +670,44 @@ impl ChannelIdentity {
         Ok(())
     }
 
+    /// The shape/grant tie, and the two states a delegated row has no business
+    /// being in.
+    ///
+    /// `ROTATING` would be re-minting an account the product never owned;
+    /// `QUARANTINE` would be a never-recycle hold on someone else's mailbox.
+    /// Both are absent from [`ChannelIdentityState::can_transition_to_delegated`]
+    /// so no lawful step reaches them, and refused here so no assembled or
+    /// decoded body can claim one either.
+    fn validate_custody(&self) -> Result<()> {
+        match (self.shape.is_self_held(), &self.grant) {
+            (true, None) => Ok(()),
+            (false, Some(grant)) => {
+                grant.validate()?;
+                if matches!(
+                    self.state,
+                    ChannelIdentityState::Rotating | ChannelIdentityState::Quarantine
+                ) {
+                    return Err(Error::InvalidChannelIdentityBody(
+                        "a delegated_grant identity is never rotated or quarantined: the \
+                         product neither mints nor holds back the member's mailbox",
+                    ));
+                }
+                Ok(())
+            }
+            (true, Some(_)) => Err(Error::InvalidChannelIdentityBody(
+                "only a delegated_grant identity may carry a delegated grant ref",
+            )),
+            (false, None) => Err(Error::InvalidChannelIdentityBody(
+                "delegated_grant identity requires a delegated grant ref",
+            )),
+        }
+    }
+
     /// Returns a copy with a checked lifecycle transition applied.
+    ///
+    /// The edge table is chosen by CUSTODY, not shared: a delegated row walks
+    /// [`ChannelIdentityState::can_transition_to_delegated`], which has no
+    /// rotation and no quarantine to step into.
     pub fn transition(
         &self,
         next: ChannelIdentityState,
@@ -380,7 +715,12 @@ impl ChannelIdentity {
         state_changed_at: u64,
         quarantine_until: Option<u64>,
     ) -> Result<Self> {
-        if !self.state.can_transition_to(next) {
+        let admitted = if self.is_delegated() {
+            self.state.can_transition_to_delegated(next)
+        } else {
+            self.state.can_transition_to(next)
+        };
+        if !admitted {
             return Err(invalid_identity());
         }
         if state_changed_at < self.state_changed_at {
@@ -446,13 +786,22 @@ impl ChannelIdentity {
 }
 
 /// Encodes a ChannelIdentity body in canonical MessagePack field order.
+///
+/// A self-held row encodes at [`CHANNEL_IDENTITY_SCHEMA_VERSION`] under the
+/// twelve pinned keys — byte-for-byte what CID-1 always wrote. A
+/// `delegated_grant` row encodes at
+/// [`CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION`] under those twelve keys
+/// followed by the two custody keys, so the two key sets can never be mixed and
+/// no older body changes shape.
 pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8>> {
     identity.validate()?;
-    let value = Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(CHANNEL_IDENTITY_SCHEMA_VERSION),
-        ),
+    let schema_version = if identity.is_delegated() {
+        CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION
+    } else {
+        CHANNEL_IDENTITY_SCHEMA_VERSION
+    };
+    let mut value = Value::Map(vec![
+        (Value::from(KEY_SCHEMA_VERSION), Value::from(schema_version)),
         (
             Value::from(KEY_CHANNEL),
             Value::from(identity.channel.as_str()),
@@ -494,6 +843,26 @@ pub fn encode_channel_identity_body(identity: &ChannelIdentity) -> Result<Vec<u8
             encode_optional_entity_ref(identity.manifest_ref),
         ),
     ]);
+
+    if let Some(grant) = &identity.grant {
+        let Value::Map(entries) = &mut value else {
+            unreachable!("body value is built as a map");
+        };
+        entries.push((
+            Value::from(KEY_DELEGATED_GRANT_REF),
+            Value::from(grant.custody_record_ref.as_str()),
+        ));
+        entries.push((
+            Value::from(KEY_GRANT_SCOPES),
+            Value::Array(
+                grant
+                    .scopes
+                    .iter()
+                    .map(|scope| Value::from(scope.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
 
     encode_msgpack_value(&value, "channel identity body MessagePack encode failed")
 }
@@ -620,13 +989,23 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
     let Value::Map(entries) = value else {
         return Err(invalid_identity());
     };
-    validate_keys(entries, &CHANNEL_IDENTITY_BODY_KEYS)?;
-
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
-        != Some(CHANNEL_IDENTITY_SCHEMA_VERSION)
-    {
-        return Err(invalid_identity());
-    }
+    // The VERSION selects the key set, so a delegated body cannot be read under
+    // the self-held pins (or the reverse) and a self-held body cannot smuggle
+    // in a grant ref by naming a key the twelve-key set does not have.
+    let schema_version = required_value(entries, KEY_SCHEMA_VERSION)?
+        .as_u64()
+        .ok_or_else(invalid_identity)?;
+    let delegated = match schema_version {
+        CHANNEL_IDENTITY_SCHEMA_VERSION => {
+            validate_keys(entries, &CHANNEL_IDENTITY_BODY_KEYS)?;
+            false
+        }
+        CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION => {
+            validate_keys(entries, &CHANNEL_IDENTITY_DELEGATED_BODY_KEYS)?;
+            true
+        }
+        _ => return Err(invalid_identity()),
+    };
 
     let channel = required_string(entries, KEY_CHANNEL)?.to_owned();
     let address_or_handle = required_string(entries, KEY_ADDRESS_OR_HANDLE)?.to_owned();
@@ -662,6 +1041,11 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
     };
     let reputation_ref = decode_optional_entity_ref(required_value(entries, KEY_REPUTATION_REF)?)?;
     let manifest_ref = decode_optional_entity_ref(required_value(entries, KEY_MANIFEST_REF)?)?;
+    let grant = if delegated {
+        Some(decode_delegated_grant(entries)?)
+    } else {
+        None
+    };
 
     let identity = ChannelIdentity {
         channel,
@@ -674,9 +1058,28 @@ fn decode_channel_identity_value(value: &Value) -> Result<ChannelIdentity> {
         quarantine_until,
         reputation_ref,
         manifest_ref,
+        grant,
     };
     identity.validate()?;
     Ok(identity)
+}
+
+fn decode_delegated_grant(entries: &[(Value, Value)]) -> Result<DelegatedGrant> {
+    let custody_record_ref = required_string(entries, KEY_DELEGATED_GRANT_REF)?.to_owned();
+    let Value::Array(raw_scopes) = required_value(entries, KEY_GRANT_SCOPES)? else {
+        return Err(invalid_identity());
+    };
+    let mut scopes = Vec::with_capacity(raw_scopes.len());
+    for raw in raw_scopes {
+        scopes.push(
+            raw.as_str()
+                .and_then(DelegatedGrantScope::parse)
+                .ok_or_else(invalid_identity)?,
+        );
+    }
+    let grant = DelegatedGrant::new(custody_record_ref, scopes);
+    grant.validate()?;
+    Ok(grant)
 }
 
 fn encode_binding_target(binding: ChannelIdentityBinding) -> Value {
@@ -790,21 +1193,203 @@ fn invalid_identity() -> Error {
     Error::InvalidChannelIdentityBody("body failed validation")
 }
 
+/// What an adapter hands the delegated door: NAMES, never evidence.
+///
+/// There is deliberately no proof field and no way to add one. A
+/// [`DelegatedCustodyProof`] borrows the transaction that read the custody
+/// record, so a proof that reached a caller-owned struct would be a proof that
+/// outlived its evidence. The door mints its own inside the write transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelegatedProvisionRequest {
+    /// Channel key; normalized by the door.
+    pub channel: String,
+    /// The member-held mailbox; normalized by the door.
+    pub address_or_handle: String,
+    /// Which agent (or vault) the mailbox routes to. Chosen by a LOCAL actor.
+    pub binding: ChannelIdentityBinding,
+    /// The custody record NAME plus the read scopes it covers.
+    pub grant: DelegatedGrant,
+}
+
+/// WHICH WRITE this is.
+///
+/// A door that takes a BODY — one incoming row, with no view of what stood at
+/// `id` before it — has to guess the rest, and the guesses are exactly where a
+/// re-keyed row looks like a fresh one and a crafted ACTIVE delegated body
+/// looks like a lawfully stepped one. These two shapes are the only ways a
+/// stored CHANNEL_IDENTITY row changes, and each is produced by a road that
+/// ALREADY HOLDS the facts it needs: the creating door knows the id was empty,
+/// the stepping door read the prior row in its own transaction.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum IdentityTransition<'a> {
+    /// No CHANNEL_IDENTITY row stood at this id: the key is being claimed.
+    Birth { next: &'a ChannelIdentity },
+    /// A stored row moves. `prior` is what this transaction read at `id`.
+    Step {
+        prior: &'a ChannelIdentity,
+        next: &'a ChannelIdentity,
+    },
+}
+
+impl IdentityTransition<'_> {
+    const fn next(&self) -> &ChannelIdentity {
+        match self {
+            Self::Birth { next } | Self::Step { next, .. } => next,
+        }
+    }
+}
+
+/// Admits a ChannelIdentity TRANSITION arriving at the store.
+///
+/// Every typed CID writer converges here, before its bytes are handed to the
+/// batch funnel, and three laws are stated once rather than re-derived per
+/// writer.
+///
+/// **B — a delegated row is BORN `Requested`.** Custody is a local fact,
+/// consent is a local fact, and the BINDING is chosen by the local actor that
+/// consented; `Active` claims all three already happened. A body that arrives
+/// ACTIVE at a birth asserts them without any of them having occurred — no
+/// provision decision, no bind edge, no fulfillment, no receipt. Every later
+/// delegated state is reachable only as a checked step from a row that exists.
+/// Self-held births in stepped states stay admitted: a self-held row asserts no
+/// external fact, and `own_app_home` births ACTIVE on purpose.
+///
+/// **K — a stored row's assignment key is immutable across a step.** The key is
+/// the mailbox the row was provisioned for; moving it would leave the key it
+/// used to hold naming a row that is no longer there while another key gains a
+/// second occupant.
+///
+/// **U — one occupant per key.** Uniqueness compares [`AssignmentKey`], not the
+/// stored spellings, and it asks [`ChannelIdentity::occupies_assignment_key`]
+/// rather than "does a row exist": a self-held row holds its address forever
+/// (never-recycle), while a retired DELEGATED row holds nothing, because the
+/// mailbox was never ours to hold back.
+///
+/// **C — custody is re-proved in THIS transaction for a live delegated row.**
+/// The proof a constructor consumed was minted in the read transaction that
+/// preceded the write, so a grant revoked in between would otherwise stand up a
+/// row that claims a mailbox this device can no longer read. The wall is kept
+/// exactly for the states that assert a live grant
+/// ([`ChannelIdentityState::asserts_delegated_custody`]); the retirement lane is
+/// deliberately exempt, because retirement after a member revokes is precisely
+/// when custody can no longer be proved and must stay possible.
+///
+/// # Errors
+///
+/// [`Error::InvalidChannelIdentityBody`] for a delegated birth outside
+/// `Requested` or a step that moves the key; [`Error::SecretRefNotFound`] /
+/// [`Error::SecretCustodyNotActive`] / [`Error::SecretBindingDenied`] when a
+/// live delegated row cannot re-prove custody for its own mailbox; and
+/// [`Error::ChannelIdentityAlreadyExists`] when the write would put a second
+/// occupant on a key.
+pub(crate) fn admit_channel_identity_transition_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    transition: IdentityTransition<'_>,
+) -> Result<()> {
+    let next = transition.next();
+    next.validate()?;
+    match transition {
+        IdentityTransition::Birth { next } => {
+            if next.is_delegated() && next.state != ChannelIdentityState::Requested {
+                return Err(Error::InvalidChannelIdentityBody(
+                    "a delegated_grant identity is born Requested; every later state is a \
+                     checked lifecycle step from a row that already exists",
+                ));
+            }
+        }
+        IdentityTransition::Step { prior, next } => {
+            if prior.assignment_key() != next.assignment_key() {
+                return Err(Error::InvalidChannelIdentityBody(
+                    "a stored channel identity's assignment key is immutable",
+                ));
+            }
+        }
+    }
+    if channel_identity_assignment_conflict_in_txn(store, txn, id, next)? {
+        return Err(Error::ChannelIdentityAlreadyExists);
+    }
+    reprove_delegated_custody_in_txn(store, txn, next)
+}
+
+/// Law C, for the row a birth or a step is about to store.
+fn reprove_delegated_custody_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+) -> Result<()> {
+    let Some(grant) = &identity.grant else {
+        return Ok(());
+    };
+    if identity.state.asserts_delegated_custody() {
+        verify_delegated_custody_in_txn(
+            store,
+            txn,
+            &identity.channel,
+            &identity.address_or_handle,
+            grant,
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether another row already OCCUPIES this row's assignment key.
+fn channel_identity_assignment_conflict_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    identity: &ChannelIdentity,
+) -> Result<bool> {
+    if !identity.occupies_assignment_key() {
+        return Ok(false);
+    }
+    let key = identity.assignment_key();
+    for entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+    {
+        let (index_key, _) = entry?;
+        let existing_id = entity_id_from_type_index_key(&index_key)?;
+        if existing_id == *id {
+            continue;
+        }
+        let raw = store
+            .entities
+            .get(txn, existing_id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(Error::CorruptedIndex("type index row kind mismatch"));
+        }
+        let stored = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if stored.occupies_assignment_key() && stored.assignment_key() == key {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Vault {
     /// Creates a ChannelIdentity record through the engine maintenance door.
     ///
     /// Generic public entity puts for `ENTITY_TYPE_CHANNEL_IDENTITY` remain
     /// rejected with `MaintenanceKindNotWritable`; this method validates the
-    /// CID-1 body and enforces the assignment-key uniqueness invariant before
+    /// CID-1 body and runs [`admit_channel_identity_transition_in_txn`] before
     /// writing.
     pub fn create_channel_identity(&self, id: &EntityId, identity: &ChannelIdentity) -> Result<()> {
         let data = encode_channel_identity_body(identity)?;
         let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
-            || self.channel_identity_assignment_conflict_in_txn(&wtxn, id, identity)?
-        {
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
             return Err(Error::ChannelIdentityAlreadyExists);
         }
+        admit_channel_identity_transition_in_txn(
+            &self.store,
+            &wtxn,
+            id,
+            IdentityTransition::Birth { next: identity },
+        )?;
         self.apply_channel_identity_body(&mut wtxn, id, identity.state_changed_at, data)?;
         wtxn.commit()?;
         Ok(())
@@ -820,6 +1405,105 @@ impl Vault {
         let identity = ChannelIdentity::own_app_home(agent_ref, created_at);
         self.create_channel_identity(id, &identity)?;
         Ok(identity)
+    }
+
+    /// Stands up a requested `delegated_grant` row: THE delegated door.
+    ///
+    /// One call, one write transaction, and the custody proof is minted and
+    /// consumed inside it. A caller cannot split this into "verify, then
+    /// provision" and hold the answer across the gap: the proof borrows its
+    /// transaction, so the window in which a member could revoke the grant
+    /// between the check and the write is closed by construction rather than by
+    /// a second check every host would have to remember to write.
+    ///
+    /// The adapter supplies `(channel, mailbox, binding, grant)` — NAMES — and
+    /// never a proof. The row is born `Requested`; going live is the ordinary
+    /// gated lifecycle road, and each step re-proves custody in its own
+    /// transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ChannelIdentityAlreadyExists`] when `id` is taken or the mailbox
+    /// already has an occupant; [`Error::SecretRefNotFound`],
+    /// [`Error::SecretCustodyNotActive`] or [`Error::SecretBindingDenied`] when
+    /// the named custody record is missing, inactive, unbound for the channel's
+    /// effector, or does not name this mailbox as its subject; and
+    /// [`Error::InvalidChannelIdentityBody`] when the resulting row fails
+    /// validation.
+    pub fn provision_delegated_identity(
+        &self,
+        id: &EntityId,
+        request: DelegatedProvisionRequest,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::ChannelIdentityAlreadyExists);
+        }
+        // The proof borrows `wtxn`; the block ends the borrow before the write
+        // takes it mutably, and the row it produced outlives it because a row
+        // carries names, never evidence.
+        let identity = {
+            let channel_key = ChannelKey::normalize(&request.channel);
+            let address =
+                AssignmentAddress::normalize(channel_key.as_str(), &request.address_or_handle);
+            let proof = verify_delegated_custody_in_txn(
+                &self.store,
+                &wtxn,
+                channel_key.as_str(),
+                address.as_str(),
+                &request.grant,
+            )?;
+            ChannelIdentity::requested_delegated(
+                channel_key.as_str(),
+                address.as_str(),
+                request.binding,
+                request.grant,
+                &proof,
+                requested_at,
+            )?
+        };
+        let data = encode_channel_identity_body(&identity)?;
+        admit_channel_identity_transition_in_txn(
+            &self.store,
+            &wtxn,
+            id,
+            IdentityTransition::Birth { next: &identity },
+        )?;
+        self.apply_channel_identity_body(&mut wtxn, id, requested_at, data)?;
+        wtxn.commit()?;
+        Ok(identity)
+    }
+
+    /// Verifies the custody record a delegated grant names for
+    /// `(channel, address)`, without minting anything the caller can hold.
+    ///
+    /// The proof is intentionally NOT returned: it borrows the transaction that
+    /// read the record, and a proof handed across a transaction boundary is
+    /// exactly the stale evidence the type exists to make unspellable. Callers
+    /// that want a row call [`Self::provision_delegated_identity`]; callers that
+    /// only want the yes/no call this.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::provision_delegated_identity`]'s custody arms.
+    pub fn verify_delegated_custody(
+        &self,
+        channel: &str,
+        address_or_handle: &str,
+        grant: &DelegatedGrant,
+    ) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        let channel_key = ChannelKey::normalize(channel);
+        let address = AssignmentAddress::normalize(channel_key.as_str(), address_or_handle);
+        verify_delegated_custody_in_txn(
+            &self.store,
+            &rtxn,
+            channel_key.as_str(),
+            address.as_str(),
+            grant,
+        )
+        .map(|_| ())
     }
 
     /// Applies a checked ChannelIdentity lifecycle transition in place.
@@ -849,9 +1533,15 @@ impl Vault {
             state_changed_at,
             quarantine_until,
         )?;
-        if self.channel_identity_assignment_conflict_in_txn(&wtxn, id, &next)? {
-            return Err(Error::ChannelIdentityAlreadyExists);
-        }
+        admit_channel_identity_transition_in_txn(
+            &self.store,
+            &wtxn,
+            id,
+            IdentityTransition::Step {
+                prior: &current,
+                next: &next,
+            },
+        )?;
         let data = encode_channel_identity_body(&next)?;
         self.apply_channel_identity_body(&mut wtxn, id, state_changed_at, data)?;
         wtxn.commit()?;
@@ -872,12 +1562,25 @@ impl Vault {
         decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    /// Reads the ChannelIdentity bound to an exact `(channel, address)` key.
+    /// Reads the ChannelIdentity holding a `(channel, address)` key.
+    ///
+    /// The lookup canonicalizes BOTH sides through [`AssignmentKey`], so a
+    /// caller spelling the mailbox the way its provider did finds the row a
+    /// normalizing writer stored, and a row decoded verbatim off disk is found
+    /// under the key it means rather than the bytes it holds.
+    ///
+    /// A row that no longer OCCUPIES its key is skipped: a released or
+    /// tombstoned delegated row has withdrawn its claim on a mailbox the
+    /// product never owned, so it must not shadow the row a lawful re-consent
+    /// stands up. Self-held rows occupy forever and are still found here in
+    /// every state, which is what keeps a tombstoned address routing to its own
+    /// rejection instead of looking unknown.
     pub fn channel_identity_by_assignment(
         &self,
         channel: &str,
         address_or_handle: &str,
     ) -> Result<Option<(EntityId, ChannelIdentity)>> {
+        let wanted = AssignmentKey::of(channel, address_or_handle);
         let rtxn = self.store.env.read_txn()?;
         for entry in self
             .store
@@ -897,45 +1600,11 @@ impl Vault {
                 return Err(Error::CorruptedIndex("type index row kind mismatch"));
             }
             let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if identity.assignment_key() == (channel, address_or_handle) {
+            if identity.occupies_assignment_key() && identity.assignment_key() == wanted {
                 return Ok(Some((id, identity)));
             }
         }
         Ok(None)
-    }
-
-    pub(crate) fn channel_identity_assignment_conflict_in_txn(
-        &self,
-        txn: &heed::RwTxn<'_>,
-        id: &EntityId,
-        identity: &ChannelIdentity,
-    ) -> Result<bool> {
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
-        {
-            let (key, _) = entry?;
-            let existing_id = entity_id_from_type_index_key(&key)?;
-            if existing_id == *id {
-                continue;
-            }
-            let raw = self
-                .store
-                .entities
-                .get(txn, existing_id.as_bytes())?
-                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-                return Err(Error::CorruptedIndex("type index row kind mismatch"));
-            }
-            let stored = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if stored.assignment_key() == identity.assignment_key() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     pub(crate) fn apply_channel_identity_body(

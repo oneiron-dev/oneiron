@@ -65,6 +65,7 @@
 //! this module owns neither.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr};
@@ -75,17 +76,32 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::Vault;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
+};
 use crate::codebase::RepoRef;
 use crate::credential_door::{
     CredentialDoorError, CredentialDoorService, DOOR_RECEIVE_PACK_EFFECTOR, DoorCredential,
     DoorScanVerdict, PushedBlob,
 };
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
-    GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireCommitOutcome,
-    GitWireProcessEnv, GitWireReceipt, lock_repository,
+    GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefExpectation, GitRefName, GitRefPublication,
+    GitTreeEntry, GitWire, GitWireCommitOutcome, GitWireProcessEnv, GitWireReceipt, GitWireRepo,
+    lock_repository,
 };
+use crate::origin::lfs::{
+    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer,
+    lfs_repo_id,
+};
+use crate::origin::publication::{
+    OriginPublicationReceipt, OriginPublicationRequest, OriginPublicationStatus,
+};
+use crate::temporal::TimeRange;
+use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 /// Directory under the vault root that holds the served bare repositories.
 /// It is the `GIT_PROJECT_ROOT` of every serve invocation.
@@ -124,6 +140,11 @@ pub const SERVE_BASE_ENV_KEYS: [&str; 5] = [
 /// `HTTP_CONTENT_ENCODING` (a stock client gzips its RPC bodies) and
 /// `HTTP_GIT_PROTOCOL` (the negotiated wire version) carry their CGI spelling,
 /// because that is the spelling the backend looks for.
+///
+/// The allowlist is what a served child MAY be given, not what it is always
+/// given: `HTTP_GIT_PROTOCOL` is currently never emitted, because the ref
+/// advertisement is gated by the publication projection and protocol v2 moves
+/// the ref list somewhere that projection cannot reach.
 pub const SERVE_REQUEST_ENV_KEYS: [&str; 9] = [
     "CONTENT_LENGTH",
     "CONTENT_TYPE",
@@ -230,6 +251,16 @@ tab=$(printf '\t')
 printf 'quarantine %s\n' "${GIT_QUARANTINE_PATH-}" >> "$part"
 empty=$(git --no-replace-objects hash-object -t tree /dev/null)
 while read -r old new ref; do
+	# Bind the intent to the actual pre-image before any ref can move. Otherwise
+	# a declined creation of an already-existing ref could masquerade as a
+	# crash-recovered effect merely because its post-image already exists.
+	if actual=$(git --no-replace-objects rev-parse --verify -q --end-of-options "$ref"); then
+		[ "$actual" = "$old" ] || exit 1
+	else
+		code=$?
+		[ "$code" -eq 1 ] || exit 1
+		case "$old" in *[!0]*) exit 1 ;; esac
+	fi
 	printf 'ref %s %s %s\n' "$old" "$new" "$ref" >> "$part"
 	case "$new" in
 		*[!0]*) ;;
@@ -395,6 +426,7 @@ pub struct DoorAdmissionStamp {
     credential_fingerprint: Option<String>,
     method: &'static str,
     admitted_at: u64,
+    operation_id: EntityId,
 }
 
 impl DoorAdmissionStamp {
@@ -407,6 +439,7 @@ impl DoorAdmissionStamp {
             credential_fingerprint: None,
             method: "bearer+registered-principal",
             admitted_at,
+            operation_id: EntityId::now(),
         }
     }
 
@@ -424,7 +457,15 @@ impl DoorAdmissionStamp {
             credential_fingerprint: Some(hasher.finalize().to_hex().to_string()),
             method: "door-credential+registered-principal",
             admitted_at,
+            operation_id: EntityId::now(),
         }
+    }
+
+    /// The request identity. After `serve` admits the request, this also names
+    /// its durable admission claim. Allocating this id alone is not evidence.
+    #[must_use]
+    pub const fn operation_id(&self) -> EntityId {
+        self.operation_id
     }
 
     /// The registered principal this admission was stamped for.
@@ -632,6 +673,29 @@ impl ServeRequest {
         self.path_info.ends_with("/git-receive-pack")
     }
 
+    /// Whether this request is the smart-HTTP ref advertisement.
+    ///
+    /// This is the ONE response that carries a ref list, and therefore the one
+    /// response [`Vault::published_origin_refs`] gates.
+    #[must_use]
+    pub fn is_ref_advertisement(&self) -> bool {
+        self.method.eq_ignore_ascii_case("GET")
+            && self.path_info.ends_with("/info/refs")
+            && self.advertised_service().is_some()
+    }
+
+    /// The service a smart advertisement names, if this request is one.
+    ///
+    /// A `GET /info/refs` with no `service=` is the DUMB protocol: it serves a
+    /// file, not a pkt-line ref list, and nothing here touches it.
+    fn advertised_service(&self) -> Option<&'static str> {
+        self.query_string.split('&').find_map(|pair| match pair {
+            "service=git-upload-pack" => Some("git-upload-pack"),
+            "service=git-receive-pack" => Some("git-receive-pack"),
+            _ => None,
+        })
+    }
+
     fn env_pairs(&self) -> Vec<(String, String)> {
         let mut pairs = vec![
             ("REQUEST_METHOD".to_owned(), self.method.clone()),
@@ -647,9 +711,18 @@ impl ServeRequest {
         if let Some(encoding) = &self.content_encoding {
             pairs.push(("HTTP_CONTENT_ENCODING".to_owned(), encoding.clone()));
         }
-        if let Some(protocol) = &self.git_protocol {
-            pairs.push(("HTTP_GIT_PROTOCOL".to_owned(), protocol.clone()));
-        }
+        // `HTTP_GIT_PROTOCOL` is deliberately NOT forwarded, so every served
+        // exchange speaks the v0/v1 wire.
+        //
+        // Protocol v2 moves the ref list out of this response and into an
+        // `ls-refs` command inside the RPC body, where it is interleaved with
+        // negotiation and cannot be projected through
+        // [`Vault::published_origin_refs`]. Advertising v2 and then gating
+        // nothing would publish heads this vault has not proved; advertising
+        // v2 and gating the GET would leave the client asking `ls-refs` for a
+        // list nobody filtered. Declining the version is the only answer that
+        // keeps "every advertised ref is a published ref" true, and a stock
+        // client that asked for v2 falls back to v0 on its own.
         if let Some(user) = &self.remote_user {
             pairs.push(("REMOTE_USER".to_owned(), user.clone()));
         }
@@ -919,6 +992,14 @@ pub struct DoorWindowReport {
     pub verdict: DoorWindowVerdict,
     /// The ref updates the push proposed, as the hook saw them.
     pub ref_updates: Vec<RefUpdate>,
+    /// The Git-LFS pointers this push newly introduced, paired with the
+    /// repository paths that carry them.
+    ///
+    /// The pairing is knowable HERE and nowhere later: the vetted hook framed
+    /// every added or modified blob together with its path, and once the
+    /// quarantine migrates that association is gone. Carrying it forward is
+    /// what lets the landing decide about a pointer instead of guessing.
+    pub lfs_pointers: Vec<LfsPushedPointer>,
     /// The quarantine the objects sat in while the door decided.
     pub quarantine_path: Option<PathBuf>,
 }
@@ -928,6 +1009,7 @@ impl DoorWindowReport {
         Self {
             verdict: DoorWindowVerdict::NotInvoked,
             ref_updates: Vec::new(),
+            lfs_pointers: Vec::new(),
             quarantine_path: None,
         }
     }
@@ -937,6 +1019,12 @@ impl DoorWindowReport {
     pub fn admitted(&self) -> bool {
         matches!(self.verdict, DoorWindowVerdict::Clean)
     }
+}
+
+#[derive(Clone, Copy)]
+struct DoorWindowContext<'a> {
+    seam: DoorSeam,
+    admission: Option<&'a DoorAdmissionStamp>,
 }
 
 struct DoorWindowRequest {
@@ -956,7 +1044,7 @@ fn serve_door_window(
     hooks: &DoorHooksDir,
     finished: &AtomicBool,
     deadline: Instant,
-    seam: DoorSeam,
+    context: DoorWindowContext<'_>,
 ) -> Result<DoorWindowReport> {
     let request_path = hooks.request_path();
     loop {
@@ -973,6 +1061,7 @@ fn serve_door_window(
                     reasons: vec!["door window closed without a request".to_owned()],
                 },
                 ref_updates: Vec::new(),
+                lfs_pointers: Vec::new(),
                 quarantine_path: None,
             });
         }
@@ -983,42 +1072,82 @@ fn serve_door_window(
     // that cannot be parsed and an extraction that cannot be read whole are
     // both unscanned bytes, so they become a published refusal rather than an
     // empty scan — and rather than an unanswered hook left blocking.
-    let (ref_updates, quarantine_path, verdict) = match door_window_inputs(&request_path, hooks) {
-        Ok((request, blobs)) => {
-            // The name rule decides FIRST, and it decides here rather than at
-            // the landing: this is the last moment at which refusing costs
-            // nothing, because the hook is still blocked and the backend has
-            // moved no ref. A push whose names the landing could not journal is
-            // refused whole; nothing about a legal batch changes.
-            let unlandable = unlandable_ref_reasons(&request.ref_updates);
-            let verdict = if unlandable.is_empty() {
-                match seam {
-                    DoorSeam::Noop => scan_through(&NoopDoorHook, repo, &blobs),
-                    DoorSeam::Landed => {
-                        scan_through(&CredentialDoorService::new(Arc::clone(vault)), repo, &blobs)
+    let (ref_updates, lfs_pointers, quarantine_path, verdict) =
+        match door_window_inputs(&request_path, hooks) {
+            Ok((request, blobs)) => {
+                // The name rule decides FIRST, and it decides here rather than
+                // at the landing: this is the last moment at which refusing
+                // costs nothing, because the hook is still blocked and the
+                // backend has moved no ref. A push whose names the landing
+                // could not journal is refused whole; nothing about a legal
+                // batch changes.
+                let unlandable = unlandable_ref_reasons(&request.ref_updates);
+                let verdict = if unlandable.is_empty() {
+                    match context.seam {
+                        DoorSeam::Noop => DoorWindowVerdict::Rejected {
+                            reasons: vec!["publication requires the landed scan".to_owned()],
+                        },
+                        DoorSeam::Landed => scan_through(
+                            &CredentialDoorService::new(Arc::clone(vault)),
+                            repo,
+                            &blobs,
+                        ),
                     }
-                }
-            } else {
+                } else {
+                    DoorWindowVerdict::Rejected {
+                        reasons: unlandable,
+                    }
+                };
+                (
+                    request.ref_updates,
+                    lfs_pushed_pointers(&blobs),
+                    request.quarantine_path,
+                    verdict,
+                )
+            }
+            Err(_) => (
+                Vec::new(),
+                Vec::new(),
+                None,
                 DoorWindowVerdict::Rejected {
-                    reasons: unlandable,
-                }
-            };
-            (request.ref_updates, request.quarantine_path, verdict)
-        }
-        Err(error) => (
-            Vec::new(),
-            None,
-            DoorWindowVerdict::Rejected {
-                reasons: vec![error.to_string()],
-            },
-        ),
-    };
-    hooks.publish_verdict(&verdict_line(&verdict))?;
-    Ok(DoorWindowReport {
+                    reasons: vec!["receive-pack input could not be verified".to_owned()],
+                },
+            ),
+        };
+    let mut report = DoorWindowReport {
         verdict,
         ref_updates,
+        lfs_pointers,
         quarantine_path,
-    })
+    };
+    if report.admitted() {
+        // The hook is still blocked. Commit the complete operation BEFORE
+        // releasing it to mutate refs. No GitWire call or repository lock is
+        // taken on this door thread; the serving thread holds that coordinator.
+        let recorded = context
+            .admission
+            .ok_or_else(|| receive_pack_provenance_refused("intent has no admission"))
+            .and_then(|stamp| vault.record_receive_pack_intent(repo, stamp, &report));
+        if recorded.is_err() {
+            report.verdict = DoorWindowVerdict::Rejected {
+                reasons: vec!["receive-pack intent could not be made durable".to_owned()],
+            };
+        }
+    }
+    hooks.publish_verdict(&verdict_line(&report.verdict))?;
+    Ok(report)
+}
+
+/// The Git-LFS pointers a push newly introduced.
+///
+/// Reads only what the door was already handed. No git child runs, no object
+/// is re-read, and a blob that is not a pointer is simply not one: the
+/// grammar decides, never a size.
+fn lfs_pushed_pointers(blobs: &[PushedBlob]) -> Vec<LfsPushedPointer> {
+    blobs
+        .iter()
+        .filter_map(|blob| LfsPushedPointer::from_pointer_lines(&blob.path, &blob.added_lines))
+        .collect()
 }
 
 /// Reads what the hook left behind: the ref list it decided over, and the
@@ -1045,8 +1174,8 @@ fn scan_through(hook: &dyn DoorHook, repo: &RepoRef, blobs: &[PushedBlob]) -> Do
                 .map(|proposal| format!("{}: {}", proposal.path, proposal.reason))
                 .collect(),
         },
-        Err(error) => DoorWindowVerdict::Rejected {
-            reasons: vec![error.to_string()],
+        Err(_) => DoorWindowVerdict::Rejected {
+            reasons: vec!["receive-pack scan could not complete".to_owned()],
         },
     }
 }
@@ -1318,6 +1447,10 @@ pub struct ReceivePackOutcome {
     pub repo_root: PathBuf,
     /// The ref moves the push proposed, as the door window saw them.
     pub ref_updates: Vec<RefUpdate>,
+    /// The Git-LFS pointers this push newly introduced, as the door window
+    /// framed them. Empty for every push that introduced none, which is every
+    /// push that does not use LFS.
+    pub lfs_pointers: Vec<LfsPushedPointer>,
     /// Where the objects live after the quarantine migrated.
     pub staged_objects_dir: PathBuf,
     /// Byte and ref counters for the request.
@@ -1367,10 +1500,794 @@ fn local_repo_ref(repo_root: &Path, commit: &GitOid) -> Result<RepoRef> {
     RepoRef::parse(&format!("local:{path}#{}", commit.as_str()))
 }
 
+// These claims describe transport admission and observation, NOT publication
+// or a credential evaluation that Phase A never performed. The local receipt
+// is atomic with the generic claim write and is not sync/export authority:
+// copied or caller-written claim bodies alone cannot impersonate this observer.
+pub(super) const RECEIVE_PACK_ADMISSION_PREDICATE: &str = "repo.receive_pack_admission";
+pub(super) const RECEIVE_PACK_OUTCOME_PREDICATE: &str = "repo.receive_pack_outcome";
+const RECEIVE_PACK_EVIDENCE_PREFIX: &[u8] = b"origin:receive_pack_evidence:v1:";
+
+fn receive_pack_evidence_key(id: EntityId) -> Vec<u8> {
+    let mut key = RECEIVE_PACK_EVIDENCE_PREFIX.to_vec();
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
+fn receive_pack_fields(fields: Vec<(&str, Value)>) -> Value {
+    Value::Map(
+        fields
+            .into_iter()
+            .map(|(key, value)| (Value::from(key), value))
+            .collect(),
+    )
+}
+
+fn receive_pack_field<'a>(body: &'a ClaimBody, key: &str) -> Result<&'a Value> {
+    body.value
+        .as_map()
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|(name, _)| name.as_str() == Some(key))
+                .map(|(_, value)| value)
+        })
+        .ok_or_else(|| receive_pack_provenance_refused("missing evidence field"))
+}
+
+fn receive_pack_provenance_refused(reason: &str) -> Error {
+    Error::ReceivePackLandingRefused {
+        reason: format!("receive-pack provenance: {reason}"),
+    }
+}
+
+fn receive_pack_updates_value(updates: &[RefUpdate]) -> Value {
+    Value::Array(
+        updates
+            .iter()
+            .map(|update| {
+                Value::Array(vec![
+                    Value::from(update.name.clone()),
+                    update
+                        .old_oid
+                        .as_ref()
+                        .map_or(Value::Nil, |oid| Value::from(oid.as_str())),
+                    update
+                        .new_oid
+                        .as_ref()
+                        .map_or(Value::Nil, |oid| Value::from(oid.as_str())),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn receive_pack_lfs_value(pointers: &[LfsPushedPointer]) -> Value {
+    Value::Array(
+        pointers
+            .iter()
+            .map(|pointer| {
+                Value::Array(vec![
+                    Value::from(pointer.path.clone()),
+                    Value::from(pointer.oid.to_hex()),
+                    Value::from(pointer.size_bytes),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn receive_pack_stats_value(stats: PackStats) -> Value {
+    Value::Array(vec![
+        Value::from(stats.request_bytes),
+        Value::from(stats.response_bytes),
+        Value::from(stats.ref_update_count as u64),
+    ])
+}
+
+fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        predicate,
+        subject,
+        value,
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    // Only public repository operation metadata, as in repo.publication. No
+    // bearer, credential bytes, blob contents, or scanner matches are retained.
+    body.scope = Some(receive_pack_fields(vec![(
+        "sensitivity",
+        Value::from("public"),
+    )]));
+    body
+}
+
+impl Vault {
+    fn put_receive_pack_evidence(&self, id: EntityId, body: &ClaimBody, at: u64) -> Result<()> {
+        let encoded = encode_claim_body(body)?;
+        let key = receive_pack_evidence_key(id);
+        self.with_write_txn(|wtxn| {
+            if self.store.entities.get(wtxn, id.as_bytes())?.is_some()
+                || self.store.vault_meta.get(wtxn, &key)?.is_some()
+            {
+                return Err(receive_pack_provenance_refused(
+                    "evidence id already exists",
+                ));
+            }
+            self.put_claim_in_txn(wtxn, &id, body, TimeRange { start: at, end: at }, at)?;
+            self.store.vault_meta.put(wtxn, &key, &encoded)?;
+            Ok(())
+        })
+    }
+
+    fn receive_pack_evidence_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: EntityId,
+        predicate: &str,
+    ) -> Result<ClaimBody> {
+        let body = self
+            .get_claim_in_txn(rtxn, &id)?
+            .ok_or_else(|| receive_pack_provenance_refused("claim is absent"))?;
+        let key = receive_pack_evidence_key(id);
+        let receipt =
+            self.store.vault_meta.get(rtxn, &key)?.ok_or_else(|| {
+                receive_pack_provenance_refused("not a locally observed operation")
+            })?;
+        let receipt: &[u8] = receipt.as_ref();
+        if body.predicate != predicate
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || receipt != encode_claim_body(&body)?.as_slice()
+        {
+            return Err(receive_pack_provenance_refused(
+                "claim does not match its producer receipt",
+            ));
+        }
+        Ok(body)
+    }
+
+    fn record_receive_pack_admission(
+        &self,
+        repo_dir: &Path,
+        stamp: &DoorAdmissionStamp,
+        seam: DoorSeam,
+    ) -> Result<()> {
+        // Preserve the explicit no-op transport seam, but never describe it
+        // as landed policy or scanning evidence. The authenticated server pins
+        // Landed; the seam is not selected by any request field or claim id.
+        let (door_seam, effector_check) = match seam {
+            DoorSeam::Landed => ("landed", "admitted"),
+            DoorSeam::Noop => ("noop", "not_performed"),
+        };
+        let actor = EntityId::from_hex(stamp.principal_ref())
+            .map_err(|_| receive_pack_provenance_refused("principal is not an entity id"))?;
+        let body = receive_pack_claim(
+            ClaimSubject::Edge {
+                source: stamp.operation_id,
+                kind: EdgeKind::PartOf,
+                target: actor,
+            },
+            RECEIVE_PACK_ADMISSION_PREDICATE,
+            receive_pack_fields(vec![
+                ("schema_version", Value::from(1)),
+                ("operation_id", Value::from(stamp.operation_id.to_hex())),
+                ("actor_id", Value::from(actor.to_hex())),
+                (
+                    "repo_root",
+                    Value::from(path_arg(&repo_dir.canonicalize()?)?),
+                ),
+                ("operation", Value::from("git-receive-pack")),
+                ("method", Value::from(stamp.method())),
+                (
+                    "credential_presented",
+                    Value::from(stamp.credential_fingerprint().is_some()),
+                ),
+                ("door_seam", Value::from(door_seam)),
+                ("effector", Value::from(DOOR_RECEIVE_PACK_EFFECTOR)),
+                ("effector_check", Value::from(effector_check)),
+                ("admitted_at", Value::from(stamp.admitted_at())),
+            ]),
+        );
+        self.put_receive_pack_evidence(stamp.operation_id, &body, stamp.admitted_at())
+    }
+
+    // Only finish_serve calls this production producer, after the single
+    // backend has exited, the door window admitted the intent and live refs
+    // narrowed it to observed results under the repository lock. An explicit
+    // Noop transport never claims the landed scanner ran.
+    #[cfg(test)]
+    fn record_receive_pack_outcome(
+        &self,
+        stamp: &DoorAdmissionStamp,
+        door: &DoorWindowReport,
+        outcome: &ReceivePackOutcome,
+        status: u16,
+    ) -> Result<ReceivePackAttribution> {
+        self.record_receive_pack_outcome_at(stamp, door, outcome, status, EntityId::now())
+    }
+
+    fn record_receive_pack_outcome_at(
+        &self,
+        stamp: &DoorAdmissionStamp,
+        door: &DoorWindowReport,
+        outcome: &ReceivePackOutcome,
+        status: u16,
+        id: EntityId,
+    ) -> Result<ReceivePackAttribution> {
+        let attribution = ReceivePackAttribution {
+            actor_id: EntityId::from_hex(stamp.principal_ref())
+                .map_err(|_| receive_pack_provenance_refused("invalid actor"))?,
+            provenance_claim_id: id,
+        };
+        if self.has_receive_pack_evidence(id)? {
+            let wire = GitWire::new(self)?;
+            let repo = wire.open_repo(outcome.pinned_repo_ref()?, &outcome.repo_root)?;
+            self.validate_receive_pack_attribution(
+                lfs_repo_id(&repo.identity().as_hex())?,
+                outcome,
+                &attribution,
+            )?;
+            return Ok(attribution);
+        }
+        if !door.admitted()
+            || outcome.lfs_pointers != door.lfs_pointers
+            || !outcome
+                .ref_updates
+                .iter()
+                .all(|update| door.ref_updates.contains(update))
+        {
+            return Err(receive_pack_provenance_refused(
+                "scan did not admit this intent",
+            ));
+        }
+        let wire = GitWire::new(self)?;
+        let repo = wire.open_repo(outcome.pinned_repo_ref()?, &outcome.repo_root)?;
+        let repo_id = lfs_repo_id(&repo.identity().as_hex())?;
+        let actor = EntityId::from_hex(stamp.principal_ref())
+            .map_err(|_| receive_pack_provenance_refused("principal is not an entity id"))?;
+        let admission = {
+            let rtxn = self.store.env.read_txn()?;
+            self.receive_pack_evidence_in_txn(
+                &rtxn,
+                stamp.operation_id,
+                RECEIVE_PACK_ADMISSION_PREDICATE,
+            )?
+        };
+        let scan = match receive_pack_field(&admission, "door_seam")?.as_str() {
+            Some("landed") => "clean",
+            Some("noop") => "not_performed",
+            _ => {
+                return Err(receive_pack_provenance_refused(
+                    "unknown admitted door seam",
+                ));
+            }
+        };
+        let body = receive_pack_claim(
+            ClaimSubject::Edge {
+                source: actor,
+                kind: EdgeKind::PartOf,
+                target: repo_id,
+            },
+            RECEIVE_PACK_OUTCOME_PREDICATE,
+            receive_pack_fields(vec![
+                ("schema_version", Value::from(1)),
+                ("operation_id", Value::from(stamp.operation_id.to_hex())),
+                ("actor_id", Value::from(actor.to_hex())),
+                ("repo_id", Value::from(repo_id.to_hex())),
+                (
+                    "repo_root",
+                    Value::from(path_arg(&outcome.repo_root.canonicalize()?)?),
+                ),
+                ("operation", Value::from("git-receive-pack")),
+                (
+                    "intent_updates",
+                    receive_pack_updates_value(&door.ref_updates),
+                ),
+                (
+                    "realized_updates",
+                    receive_pack_updates_value(&outcome.ref_updates),
+                ),
+                (
+                    "lfs_pointers",
+                    receive_pack_lfs_value(&outcome.lfs_pointers),
+                ),
+                ("pack_stats", receive_pack_stats_value(outcome.pack_stats)),
+                (
+                    "staged_objects_dir",
+                    Value::from(path_arg(&outcome.staged_objects_dir)?),
+                ),
+                ("scan", Value::from(scan)),
+                (
+                    "backend_exited_successfully",
+                    if status == 0 {
+                        Value::Nil
+                    } else {
+                        Value::from(true)
+                    },
+                ),
+                (
+                    "http_status",
+                    if status == 0 {
+                        Value::Nil
+                    } else {
+                        Value::from(status)
+                    },
+                ),
+                ("observed_at", Value::from(now_secs())),
+            ]),
+        );
+        self.put_receive_pack_evidence(id, &body, now_secs())?;
+        let attribution = ReceivePackAttribution {
+            actor_id: actor,
+            provenance_claim_id: id,
+        };
+        if scan == "clean" {
+            self.validate_receive_pack_attribution(repo_id, outcome, &attribution)?;
+        }
+        Ok(attribution)
+    }
+
+    fn receive_pack_source(
+        &self,
+        repo_id: EntityId,
+        repo_root: &Path,
+        attribution: &ReceivePackAttribution,
+    ) -> Result<ClaimBody> {
+        let rtxn = self.store.env.read_txn()?;
+        let body = self.receive_pack_evidence_in_txn(
+            &rtxn,
+            attribution.provenance_claim_id,
+            RECEIVE_PACK_OUTCOME_PREDICATE,
+        )?;
+        let operation = receive_pack_field(&body, "operation_id")?
+            .as_str()
+            .and_then(|id| EntityId::from_hex(id).ok())
+            .ok_or_else(|| receive_pack_provenance_refused("invalid operation identity"))?;
+        let admission =
+            self.receive_pack_evidence_in_txn(&rtxn, operation, RECEIVE_PACK_ADMISSION_PREDICATE)?;
+        let actor = attribution.actor_id;
+        let root = Value::from(path_arg(&repo_root.canonicalize()?)?);
+        let observation_matches_seam = matches!(
+            (
+                receive_pack_field(&admission, "door_seam")?.as_str(),
+                receive_pack_field(&admission, "effector_check")?.as_str(),
+                receive_pack_field(&body, "scan")?.as_str()
+            ),
+            (Some("landed"), Some("admitted"), Some("clean"))
+        );
+        if body.subject
+            != (ClaimSubject::Edge {
+                source: actor,
+                kind: EdgeKind::PartOf,
+                target: repo_id,
+            })
+            || admission.subject
+                != (ClaimSubject::Edge {
+                    source: operation,
+                    kind: EdgeKind::PartOf,
+                    target: actor,
+                })
+            || receive_pack_field(&body, "repo_id")? != &Value::from(repo_id.to_hex())
+            || receive_pack_field(&body, "actor_id")? != &Value::from(actor.to_hex())
+            || receive_pack_field(&admission, "actor_id")? != &Value::from(actor.to_hex())
+            || receive_pack_field(&admission, "operation_id")? != &Value::from(operation.to_hex())
+            || receive_pack_field(&body, "repo_root")? != &root
+            || receive_pack_field(&admission, "repo_root")? != &root
+            || receive_pack_field(&body, "operation")? != &Value::from("git-receive-pack")
+            || receive_pack_field(&admission, "operation")? != &Value::from("git-receive-pack")
+            || !observation_matches_seam
+        {
+            return Err(receive_pack_provenance_refused(
+                "actor, repository or operation does not match",
+            ));
+        }
+        Ok(body)
+    }
+
+    fn validate_receive_pack_attribution(
+        &self,
+        repo_id: EntityId,
+        outcome: &ReceivePackOutcome,
+        attribution: &ReceivePackAttribution,
+    ) -> Result<()> {
+        let body = self.receive_pack_source(repo_id, &outcome.repo_root, attribution)?;
+        if receive_pack_field(&body, "realized_updates")?
+            != &receive_pack_updates_value(&outcome.ref_updates)
+            || receive_pack_field(&body, "lfs_pointers")?
+                != &receive_pack_lfs_value(&outcome.lfs_pointers)
+            || receive_pack_field(&body, "pack_stats")?
+                != &receive_pack_stats_value(outcome.pack_stats)
+            || receive_pack_field(&body, "staged_objects_dir")?
+                != &Value::from(path_arg(&outcome.staged_objects_dir)?)
+        {
+            return Err(receive_pack_provenance_refused(
+                "outcome does not match the observed operation",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn has_receive_pack_evidence(&self, id: EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .vault_meta
+            .get(&rtxn, &receive_pack_evidence_key(id))?
+            .is_some())
+    }
+
+    /// The publication door must not let a receive-pack source certify some
+    /// other ref triple, actor or repository through a lower-level caller.
+    pub(super) fn validate_receive_pack_publication(
+        &self,
+        request: &OriginPublicationRequest,
+    ) -> Result<()> {
+        let attribution = ReceivePackAttribution {
+            actor_id: request.actor_id,
+            provenance_claim_id: request.provenance_claim_id,
+        };
+        let body =
+            self.receive_pack_source(request.repo_id, request.repo.repo_root(), &attribution)?;
+        let update = RefUpdate {
+            name: request.ref_name.as_str().to_owned(),
+            old_oid: request.expected_old_oid.clone(),
+            new_oid: Some(request.new_oid.clone()),
+        };
+        let expected = receive_pack_updates_value(&[update]);
+        if !receive_pack_field(&body, "realized_updates")?
+            .as_array()
+            .is_some_and(|updates| {
+                expected
+                    .as_array()
+                    .is_some_and(|wanted| updates.contains(&wanted[0]))
+            })
+        {
+            return Err(receive_pack_provenance_refused(
+                "ref triple was not observed in this operation",
+            ));
+        }
+        if request
+            .required_objects
+            .iter()
+            .any(|oid| oid != &request.new_oid)
+        {
+            return Err(receive_pack_provenance_refused(
+                "unobserved object dependency",
+            ));
+        }
+        let pointers = receive_pack_field(&body, "lfs_pointers")?
+            .as_array()
+            .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?
+            .iter()
+            .map(|value| {
+                let fields = value
+                    .as_array()
+                    .filter(|fields| fields.len() == 3)
+                    .ok_or_else(|| receive_pack_provenance_refused("invalid LFS evidence"))?;
+                Ok(LfsPushedPointer {
+                    path: fields[0]
+                        .as_str()
+                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS path"))?
+                        .to_owned(),
+                    oid: LfsOid::parse_hex(
+                        fields[1]
+                            .as_str()
+                            .ok_or_else(|| receive_pack_provenance_refused("invalid LFS oid"))?,
+                    )?,
+                    size_bytes: fields[2]
+                        .as_u64()
+                        .ok_or_else(|| receive_pack_provenance_refused("invalid LFS size"))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let admitted = admit_landing_lfs_pointers(self, request.repo_id, &pointers)?;
+        let wire = GitWire::new(self)?;
+        if request.required_lfs_oids
+            != ref_required_lfs_oids(&wire, &request.repo, &admitted, &request.new_oid)?
+        {
+            return Err(receive_pack_provenance_refused(
+                "LFS dependencies differ from observed intent",
+            ));
+        }
+        Ok(())
+    }
+}
+
+// A local operation journal, not an exported claim or caller-supplied authority.
+// Its initial row is committed while pre-receive still blocks every ref effect.
+const RECEIVE_PACK_INTENT_PREFIX: &[u8] = b"origin:receive_pack_intent:v1:";
+
+/// Per-ref completion, independent of the backend's transport success.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReceivePackRefStatus {
+    /// Publication and its attachments are durable.
+    Published,
+    /// The backend did not leave this ref at the proposed value.
+    NotApplied,
+    /// A previously observed effect was replaced; recovery never overwrites it.
+    Superseded,
+    /// An observed effect still needs publication or attachment recovery.
+    Pending,
+}
+
+/// One ref's result. A multi-ref operation can contain different results.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceivePackRefResult {
+    /// Full ref name from the admitted intent.
+    pub name: String,
+    /// Durable completion, or an explicit pending result.
+    pub status: ReceivePackRefStatus,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReceivePackIntentRef {
+    name: String,
+    old_oid: Option<String>,
+    new_oid: Option<String>,
+    outcome_id: String,
+    observed: bool,
+    status: ReceivePackRefStatus,
+}
+
+impl ReceivePackIntentRef {
+    fn update(&self) -> Result<RefUpdate> {
+        Ok(RefUpdate {
+            name: self.name.clone(),
+            old_oid: self.old_oid.clone().map(GitOid::parse_hex).transpose()?,
+            new_oid: self.new_oid.clone().map(GitOid::parse_hex).transpose()?,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReceivePackIntent {
+    operation_id: String,
+    actor_id: String,
+    repo_root: String,
+    admitted_at: u64,
+    refs: Vec<ReceivePackIntentRef>,
+    pointers: Vec<(String, String, u64)>,
+}
+
+fn receive_pack_intent_prefix(repo_root: &Path) -> Result<Vec<u8>> {
+    let mut key = RECEIVE_PACK_INTENT_PREFIX.to_vec();
+    key.extend_from_slice(
+        blake3::hash(path_arg(&repo_root.canonicalize()?)?.as_bytes()).as_bytes(),
+    );
+    Ok(key)
+}
+
+impl Vault {
+    fn record_receive_pack_intent(
+        &self,
+        repo: &RepoRef,
+        stamp: &DoorAdmissionStamp,
+        door: &DoorWindowReport,
+    ) -> Result<()> {
+        let RepoRef::LocalFolder { path, .. } = repo else {
+            return Err(receive_pack_provenance_refused("intent is not local"));
+        };
+        let root = Path::new(path).canonicalize()?;
+        let root_text = path_arg(&root)?;
+        let admission = {
+            let rtxn = self.store.env.read_txn()?;
+            self.receive_pack_evidence_in_txn(
+                &rtxn,
+                stamp.operation_id,
+                RECEIVE_PACK_ADMISSION_PREDICATE,
+            )?
+        };
+        if !door.admitted()
+            || !unlandable_ref_reasons(&door.ref_updates).is_empty()
+            || receive_pack_field(&admission, "door_seam")?.as_str() != Some("landed")
+            || receive_pack_field(&admission, "effector_check")?.as_str() != Some("admitted")
+            || receive_pack_field(&admission, "actor_id")?.as_str() != Some(stamp.principal_ref())
+            || receive_pack_field(&admission, "repo_root")?.as_str() != Some(root_text.as_str())
+        {
+            return Err(receive_pack_provenance_refused(
+                "intent was not admitted and scanned",
+            ));
+        }
+        let intent = ReceivePackIntent {
+            operation_id: stamp.operation_id.to_hex(),
+            actor_id: stamp.principal_ref().to_owned(),
+            repo_root: root_text,
+            admitted_at: stamp.admitted_at(),
+            refs: door
+                .ref_updates
+                .iter()
+                .map(|update| ReceivePackIntentRef {
+                    name: update.name.clone(),
+                    old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+                    new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
+                    outcome_id: EntityId::now().to_hex(),
+                    observed: false,
+                    status: ReceivePackRefStatus::Pending,
+                })
+                .collect(),
+            pointers: door
+                .lfs_pointers
+                .iter()
+                .map(|pointer| {
+                    (
+                        pointer.path.clone(),
+                        pointer.oid.to_hex(),
+                        pointer.size_bytes,
+                    )
+                })
+                .collect(),
+        };
+        let mut key = receive_pack_intent_prefix(&root)?;
+        key.extend_from_slice(stamp.operation_id.as_bytes());
+        let encoded = rmp_serde::to_vec_named(&intent)
+            .map_err(|_| receive_pack_provenance_refused("intent does not encode"))?;
+        self.with_write_txn(|wtxn| {
+            if self.store.vault_meta.get(wtxn, &key)?.is_some() {
+                return Err(receive_pack_provenance_refused("intent already exists"));
+            }
+            self.store.vault_meta.put(wtxn, &key, &encoded)?;
+            Ok(())
+        })
+    }
+
+    fn save_receive_pack_intent(&self, key: &[u8], intent: &ReceivePackIntent) -> Result<()> {
+        let encoded = rmp_serde::to_vec_named(intent)
+            .map_err(|_| receive_pack_provenance_refused("intent does not encode"))?;
+        self.with_write_txn(|wtxn| {
+            self.store.vault_meta.put(wtxn, key, &encoded)?;
+            Ok(())
+        })
+    }
+
+    /// Resumes locally journaled pushes, including a crash before any outcome
+    /// claim existed. Only observed post-images are published: recovery never
+    /// applies a ref that the backend declined. GitWire remains the effect owner.
+    pub fn reconcile_receive_pack_operations(&self, repo_root: &Path) -> Result<()> {
+        let _guard = lock_repository(&repo_common_dir(repo_root)?)?;
+        for (key, mut intent) in self.receive_pack_intents(repo_root)? {
+            self.resume_receive_pack_intent(&key, &mut intent)?;
+        }
+        Ok(())
+    }
+
+    fn receive_pack_intents(&self, repo_root: &Path) -> Result<Vec<(Vec<u8>, ReceivePackIntent)>> {
+        let prefix = receive_pack_intent_prefix(repo_root)?;
+        let rtxn = self.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for (index, row) in self
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, &prefix)?
+            .enumerate()
+        {
+            if index >= super::publication::ORIGIN_PUBLICATION_MAX_ROWS {
+                return Err(Error::IndexOverflow("receive-pack intents"));
+            }
+            let (key, value) = row?;
+            let intent = rmp_serde::from_slice(&value)
+                .map_err(|_| Error::CorruptedIndex("receive-pack intent"))?;
+            rows.push((key.to_vec(), intent));
+        }
+        Ok(rows)
+    }
+
+    fn resume_receive_pack_intent(
+        &self,
+        key: &[u8],
+        intent: &mut ReceivePackIntent,
+    ) -> Result<Option<ReceivePackLanding>> {
+        let root = Path::new(&intent.repo_root);
+        let stamp = DoorAdmissionStamp {
+            principal_ref: intent.actor_id.clone(),
+            credential_fingerprint: None,
+            method: "bearer+registered-principal",
+            admitted_at: intent.admitted_at,
+            operation_id: EntityId::from_hex(&intent.operation_id)
+                .map_err(|_| Error::CorruptedIndex("receive-pack operation id"))?,
+        };
+        let pointers = intent
+            .pointers
+            .iter()
+            .map(|(path, oid, size)| {
+                Ok(LfsPushedPointer {
+                    path: path.clone(),
+                    oid: LfsOid::parse_hex(oid)?,
+                    size_bytes: *size,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut landing: Option<ReceivePackLanding> = None;
+        for index in 0..intent.refs.len() {
+            if intent.refs[index].status != ReceivePackRefStatus::Pending {
+                continue;
+            }
+            let update = intent.refs[index].update()?;
+            // A failed proof is uncertainty, not permission to replay a ref.
+            let observed = realized_updates(self, root, std::slice::from_ref(&update));
+            match observed {
+                Ok(updates) if updates.is_empty() => {
+                    intent.refs[index].status = if intent.refs[index].observed {
+                        ReceivePackRefStatus::Superseded
+                    } else {
+                        ReceivePackRefStatus::NotApplied
+                    };
+                    self.save_receive_pack_intent(key, intent)?;
+                    continue;
+                }
+                Err(_) => continue,
+                Ok(_) => {}
+            }
+            if !intent.refs[index].observed {
+                intent.refs[index].observed = true;
+                self.save_receive_pack_intent(key, intent)?;
+            }
+            let outcome = ReceivePackOutcome {
+                repo_root: root.to_path_buf(),
+                ref_updates: vec![update.clone()],
+                lfs_pointers: pointers.clone(),
+                staged_objects_dir: root.join("objects"),
+                // Recovery cannot reconstruct transport counters. Zero means
+                // unmeasured; it is not a claim that a new backend completed.
+                pack_stats: PackStats {
+                    request_bytes: 0,
+                    response_bytes: 0,
+                    ref_update_count: 1,
+                },
+            };
+            let door = DoorWindowReport {
+                verdict: DoorWindowVerdict::Clean,
+                ref_updates: vec![update],
+                lfs_pointers: pointers.clone(),
+                quarantine_path: None,
+            };
+            let result = (|| {
+                let attribution = self.record_receive_pack_outcome_at(
+                    &stamp,
+                    &door,
+                    &outcome,
+                    0,
+                    EntityId::from_hex(&intent.refs[index].outcome_id)
+                        .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
+                )?;
+                self.apply_receive_pack_update_with_attribution(
+                    &outcome.pinned_repo_ref()?,
+                    &outcome,
+                    &attribution,
+                )
+            })();
+            if let Ok(receipt) = result {
+                intent.refs[index].status = ReceivePackRefStatus::Published;
+                self.save_receive_pack_intent(key, intent)?;
+                if let Some(previous) = &mut landing {
+                    previous.replayed &= receipt.replayed;
+                } else {
+                    landing = Some(receipt);
+                }
+            }
+            // Do not stop after a failed ref: retain its Pending disposition
+            // and recover the other refs independently.
+        }
+        Ok(landing)
+    }
+}
+
+/// Attribution from the durable receive-pack observer. The landing verifies
+/// the local producer receipt and the actor/repository/operation binding.
+#[derive(Debug, Clone, Copy)]
+pub struct ReceivePackAttribution {
+    /// Server-derived authenticated principal, not an origin-local stand-in.
+    pub actor_id: EntityId,
+    /// Durable observed-outcome claim written by this module's serve path.
+    /// Landing reads it; caller-supplied active claims are not source proof.
+    pub provenance_claim_id: EntityId,
+}
+
 /// The durable record of one landing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivePackLanding {
-    /// The journaled receipt of the ref advance.
+    /// The first certified ref's receipt. A multi-ref landing is not atomic;
+    /// success means every ref certified, but failure never rolls earlier refs back.
     pub receipt: GitWireReceipt,
     /// Whether a durable terminal record answered without re-running git.
     pub replayed: bool,
@@ -1403,7 +2320,11 @@ pub fn refs_already_applied(
 }
 
 impl Vault {
-    /// Lands one receive-pack outcome through the single-writer path.
+    /// Replays a receive-pack outcome through the single-writer path.
+    ///
+    /// New advancing publications require
+    /// [`Vault::apply_receive_pack_update_with_attribution`]. This outcome-only
+    /// door recovers attribution from an existing journal row or refuses.
     ///
     /// Crate-local inherent impl: it lives HERE, and `vault.rs` is never
     /// edited.
@@ -1417,44 +2338,499 @@ impl Vault {
     /// directly (a replay, a recovery) it is the acquisition itself. Either way
     /// the landing never runs without it.
     ///
-    /// The ref advance is journaled through GitWire's transactional
-    /// publication, which is the crash-window protocol for refs: a durable
-    /// intent exists before the effect is claimed, the postcondition is
-    /// re-verified against the repository, object availability is proved
-    /// *whole* before any ref is certified, and `GitWire::recover` finishes any
-    /// record a crash left `Prepared`. Nothing here writes the sync plane.
+    /// The ref advance is journaled through the origin publication protocol,
+    /// which is the crash-window protocol for refs: a durable intent exists
+    /// before the effect is claimed, the postcondition is re-verified against
+    /// the repository, object availability is proved *whole* before any ref is
+    /// certified, and the census finishes any record a crash left `Prepared`.
+    /// Nothing here writes the sync plane.
+    ///
+    /// # Why an advance and a deletion take different routes
+    ///
+    /// An advance PUBLISHES: it makes a new head visible, so it owes the
+    /// availability proof, the claim, and the visible-ref row that
+    /// [`Vault::published_origin_refs`] projects. It therefore runs through
+    /// [`Vault::publish_origin_ref`], one publication per ref, and a
+    /// publication the protocol refuses refuses the landing.
+    ///
+    /// A deletion publishes nothing. It withdraws a name, needs no object to
+    /// be present (deleting a ref unlinks a name rather than removing an
+    /// object), and mints no visibility — so it stays on the plain journaled
+    /// ref path. Routing it through the publication protocol would demand an
+    /// availability proof for a head that is being retired.
+    ///
+    /// # LFS pointer admission
+    ///
+    /// The admission runs HERE rather than at the transport, so a replay and a
+    /// recovery pass through it exactly as a served push does — a gate a caller
+    /// can route around is not a gate. It is the one place that knows both the
+    /// proven repository identity and the pointers the door framed.
     pub fn apply_receive_pack_update(
         &self,
         repo: &RepoRef,
         outcome: &ReceivePackOutcome,
     ) -> Result<ReceivePackLanding> {
-        let publications = outcome
-            .ref_updates
-            .iter()
-            .map(RefUpdate::publication)
-            .collect::<Result<Vec<_>>>()?;
-        if publications.is_empty() {
+        self.apply_receive_pack_update_inner(repo, outcome, None)
+    }
+
+    /// Lands an authenticated push with a real, already-durable source claim.
+    /// Authentication belongs to the transport. Its served operation produces
+    /// the evidence here; actor, repository and outcome bindings are checked
+    /// against both active claims and the local producer receipts.
+    pub fn apply_receive_pack_update_with_attribution(
+        &self,
+        repo: &RepoRef,
+        outcome: &ReceivePackOutcome,
+        attribution: &ReceivePackAttribution,
+    ) -> Result<ReceivePackLanding> {
+        self.apply_receive_pack_update_inner(repo, outcome, Some(attribution))
+    }
+
+    fn apply_receive_pack_update_inner(
+        &self,
+        repo: &RepoRef,
+        outcome: &ReceivePackOutcome,
+        attribution: Option<&ReceivePackAttribution>,
+    ) -> Result<ReceivePackLanding> {
+        if outcome.ref_updates.is_empty() {
             return Err(serve_failed("receive-pack outcome moved no ref"));
         }
         let wire = GitWire::new(self)?;
         let handle = wire.open_repo(repo.clone(), &outcome.repo_root)?;
         let _guard = lock_repository(handle.common_dir())?;
-        match wire.publish_refs(&handle, publications, now_secs())? {
-            GitWireCommitOutcome::Applied(receipt) => Ok(ReceivePackLanding {
-                receipt,
-                replayed: false,
-            }),
-            GitWireCommitOutcome::Replayed(receipt) => Ok(ReceivePackLanding {
-                receipt,
-                replayed: true,
-            }),
-            GitWireCommitOutcome::Rejected { reason, .. } => {
-                Err(Error::ReceivePackLandingRefused {
-                    reason: format!("{reason:?}"),
-                })
+        let repo_id = lfs_repo_id(&handle.identity().as_hex())?;
+        let recovered;
+        let attribution = match attribution {
+            Some(attribution) => attribution,
+            None => {
+                let existing = self
+                    .origin_publication_rows(Some(repo_id))?
+                    .into_iter()
+                    .find(|row| {
+                        outcome.ref_updates.iter().any(|update| {
+                            row.ref_name.as_str() == update.name
+                                && row.expected_old_oid == update.old_oid
+                                && Some(&row.new_oid) == update.new_oid.as_ref()
+                        })
+                    })
+                    .ok_or_else(|| {
+                        receive_pack_provenance_refused("no journal-backed operation to replay")
+                    })?;
+                recovered = ReceivePackAttribution {
+                    actor_id: existing.actor_id,
+                    provenance_claim_id: existing.provenance_claim_id,
+                };
+                &recovered
+            }
+        };
+        self.validate_receive_pack_attribution(repo_id, outcome, attribution)?;
+        // Decided BEFORE the refs move: a RepositoryLarge pointer whose bytes
+        // this vault does not hold refuses the landing, so no head is ever
+        // advertised that a stock client could not check out.
+        let admitted = admit_landing_lfs_pointers(self, repo_id, &outcome.lfs_pointers)?;
+        let learned_at = now_secs();
+        let landing = self.land_receive_pack_refs(
+            &wire,
+            &handle,
+            repo_id,
+            outcome,
+            &admitted,
+            Some(attribution),
+            learned_at,
+        )?;
+        // The landing's own postcondition, proved against the repository
+        // rather than inferred from the receipts: a replay that changed
+        // nothing and a first landing that changed everything both have to end
+        // with the repository carrying exactly what this outcome named.
+        if !refs_already_applied(self, repo, &outcome.repo_root, &certified_refs(outcome))? {
+            return Err(Error::ReceivePackLandingRefused {
+                reason: "the landing did not leave the refs it certified".to_owned(),
+            });
+        }
+        Ok(landing)
+    }
+
+    /// Lands every ref this outcome named, advances through the publication
+    /// protocol and deletions through the plain journaled path.
+    ///
+    /// The landing is `replayed` only when EVERY ref replayed: a push where one
+    /// ref was already durable and another genuinely moved did new work, and
+    /// reporting it as a replay would claim the origin had nothing to do.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "per-ref publication carries availability and authenticated attribution"
+    )]
+    fn land_receive_pack_refs(
+        &self,
+        wire: &GitWire<'_>,
+        handle: &GitWireRepo,
+        repo_id: EntityId,
+        outcome: &ReceivePackOutcome,
+        admitted: &[LfsPointerIntent],
+        attribution: Option<&ReceivePackAttribution>,
+        learned_at: u64,
+    ) -> Result<ReceivePackLanding> {
+        let mut certified: Option<GitWireReceipt> = None;
+        let mut replayed = true;
+        for update in &outcome.ref_updates {
+            let (receipt, was_replayed) = match update.new_oid.as_ref() {
+                Some(next) => self.publish_landing_advance(
+                    wire,
+                    handle,
+                    repo_id,
+                    update,
+                    next,
+                    admitted,
+                    attribution,
+                    learned_at,
+                )?,
+                None => landed_wire_outcome(wire.publish_refs(
+                    handle,
+                    vec![update.publication()?],
+                    learned_at,
+                )?)?,
+            };
+            // One publication per ref, not an atomic multi-ref push. Preserve
+            // each successful ref's attachment even if a later ref is refused.
+            // Never roll back a ref over a third party's later value.
+            attach_landing_lfs_pointers(
+                self,
+                wire,
+                handle,
+                repo_id,
+                std::slice::from_ref(update),
+                admitted,
+                learned_at,
+            )?;
+            replayed &= was_replayed;
+            if certified.is_none() {
+                certified = Some(receipt);
+            }
+        }
+        let receipt = certified.ok_or_else(|| serve_failed("receive-pack outcome moved no ref"))?;
+        Ok(ReceivePackLanding { receipt, replayed })
+    }
+
+    /// Publishes one advancing ref through the origin publication protocol.
+    ///
+    /// The protocol owns the compare-and-swap, the availability proof, the
+    /// LEDGER claim and the visible-ref row in one crash-consistent unit; this
+    /// function's whole job is to say what the push asked for and to translate
+    /// the protocol's verdict back into a landing.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "per-ref publication carries availability and authenticated attribution"
+    )]
+    fn publish_landing_advance(
+        &self,
+        wire: &GitWire<'_>,
+        handle: &GitWireRepo,
+        repo_id: EntityId,
+        update: &RefUpdate,
+        next: &GitOid,
+        admitted: &[LfsPointerIntent],
+        attribution: Option<&ReceivePackAttribution>,
+        learned_at: u64,
+    ) -> Result<(GitWireReceipt, bool)> {
+        let ref_name = GitRefName::parse_full(update.name.clone())?;
+        let attribution = match attribution {
+            Some(attribution) => *attribution,
+            None => {
+                // The old outcome-only API is a replay door, not authority to
+                // create a new publication. Recover attribution only from the
+                // durable publication it is actually replaying.
+                let existing = self
+                    .origin_publication_rows(Some(repo_id))?
+                    .into_iter()
+                    .find(|row| {
+                        row.ref_name == ref_name
+                            && row.expected_old_oid == update.old_oid
+                            && row.new_oid == *next
+                    })
+                    .ok_or_else(|| Error::ReceivePackLandingRefused {
+                        reason: "receive-pack needs authenticated actor and durable provenance"
+                            .to_owned(),
+                    })?;
+                ReceivePackAttribution {
+                    actor_id: existing.actor_id,
+                    provenance_claim_id: existing.provenance_claim_id,
+                }
+            }
+        };
+        let request = OriginPublicationRequest {
+            repo_id,
+            repo: handle.clone(),
+            ref_name: GitRefName::parse_full(update.name.clone())?,
+            expected_old_oid: update.old_oid.clone(),
+            new_oid: next.clone(),
+            required_objects: vec![next.clone()],
+            required_lfs_oids: ref_required_lfs_oids(wire, handle, admitted, next)?,
+            provenance_claim_id: attribution.provenance_claim_id,
+            actor_id: attribution.actor_id,
+            occurred: TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+        };
+        let receipt = self.publish_origin_ref(wire, request)?;
+        landing_from_publication(&update.name, &receipt)
+    }
+}
+
+/// The values this outcome claims the repository carries once it has landed.
+fn certified_refs(outcome: &ReceivePackOutcome) -> Vec<ObservedRef> {
+    outcome
+        .ref_updates
+        .iter()
+        .map(|update| ObservedRef {
+            name: update.name.clone(),
+            oid: update.new_oid.clone(),
+        })
+        .collect()
+}
+
+/// The admitted LFS objects one advancing ref's own tree actually carries.
+///
+/// The publication gate is per-REF, so an object that another branch of the
+/// same push introduced must not gate this one: over-requiring would record a
+/// false dependency and could later de-advertise a head for bytes it never
+/// needed. Empty for every push that carries no LFS content, which is the
+/// common case and reads no tree at all.
+fn ref_required_lfs_oids(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    admitted: &[LfsPointerIntent],
+    tip: &GitOid,
+) -> Result<Vec<(LfsOid, u64)>> {
+    if admitted.is_empty() || !ref_tip_is_tree_ish(wire, handle, tip)? {
+        return Ok(Vec::new());
+    }
+    let mut trees = BTreeMap::new();
+    let mut required = Vec::new();
+    for intent in admitted {
+        if ref_tree_carries_path(wire, handle, &mut trees, tip, &intent.path)? {
+            required.push((intent.oid, intent.size_bytes));
+        }
+    }
+    Ok(required)
+}
+
+/// Turns one publication's verdict into this ref's landing evidence.
+///
+/// The rejection is read BEFORE the status, and that order is the point. A
+/// record that already reached `Published` stays `Published` when a later
+/// re-drive is refused — the protocol never restates a terminal record — so the
+/// wire outcome, not the record, is the authority on whether THIS attempt moved
+/// the ref. Reading the status first would report a refused re-drive as a
+/// successful landing.
+fn landing_from_publication(
+    name: &str,
+    receipt: &OriginPublicationReceipt,
+) -> Result<(GitWireReceipt, bool)> {
+    if let Some(reason) = receipt.wire_rejection() {
+        return Err(Error::ReceivePackLandingRefused {
+            reason: format!("{reason:?}"),
+        });
+    }
+    if receipt.record.status != OriginPublicationStatus::Published {
+        return Err(Error::ReceivePackLandingRefused {
+            reason: format!(
+                "publication for {} is {}",
+                printable_ref_name(name),
+                receipt.record.status.as_str()
+            ),
+        });
+    }
+    let Some(outcome) = receipt.wire.clone() else {
+        return Err(Error::ReceivePackLandingRefused {
+            reason: format!("publication for {} moved no ref", printable_ref_name(name)),
+        });
+    };
+    landed_wire_outcome(outcome)
+}
+
+/// The receipt and replay flag of one journaled ref effect, or a refusal.
+fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(GitWireReceipt, bool)> {
+    match outcome {
+        GitWireCommitOutcome::Applied(receipt) => Ok((receipt, false)),
+        GitWireCommitOutcome::Replayed(receipt) => Ok((receipt, true)),
+        GitWireCommitOutcome::Rejected { reason, .. } => Err(Error::ReceivePackLandingRefused {
+            reason: format!("{reason:?}"),
+        }),
+    }
+}
+
+/// Classifies this landing's pointers and returns the ones that publish.
+///
+/// `KeepInGit` is dropped silently and on purpose: a build-required asset stays
+/// ordinary Git content, so it publishes as itself, gets no durable ref
+/// attachment, and any staged upload of it stays unreferenced and collectible.
+/// `StoreInLfs` demands its bytes: publishing a pointer whose object is absent
+/// would advertise a head that fails checkout, which is the one outcome
+/// ARCH-0068 forbids outright.
+fn admit_landing_lfs_pointers(
+    vault: &Vault,
+    repo_id: EntityId,
+    pointers: &[LfsPushedPointer],
+) -> Result<Vec<LfsPointerIntent>> {
+    if pointers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let policy = DefaultRepositoryLargeLfsPathPolicy;
+    let mut admitted = Vec::new();
+    for pointer in pointers {
+        let intent = pointer.intent(repo_id);
+        match vault.admit_lfs_pointer(&policy, &intent)? {
+            LfsAdmission::KeepInGit => continue,
+            LfsAdmission::StoreInLfs => {
+                if !vault.has_lfs_object(intent.oid, intent.size_bytes)? {
+                    return Err(Error::ReceivePackLandingRefused {
+                        reason: format!(
+                            "lfs object for {} is not stored in this vault",
+                            printable_ref_name(&intent.path)
+                        ),
+                    });
+                }
+                admitted.push(intent);
             }
         }
     }
+    Ok(admitted)
+}
+
+/// Records which refs now reference which LFS objects, and unrecords the ones
+/// a ref stopped referencing by ceasing to exist.
+///
+/// The attachment family is a per-REF index, so this function owns both
+/// directions of it:
+///
+/// - **A realized deletion detaches.** The ref the update names is gone from
+///   the repository, so every row that named it is now a claim about nothing.
+///   Only rows go: an object another ref still references keeps its bytes, and
+///   so does an object no ref references at all — this is not a collector.
+/// - **An update attaches by the ref's OWN tree.** An admitted pointer belongs
+///   to the refs whose new tree actually carries its path, which is why the new
+///   tree is walked rather than assumed. Attaching every admitted object to
+///   every moved ref would let one branch's asset become a permanent claim on
+///   every other branch that happened to travel in the same push.
+///
+/// An update never REMOVES a row. `admitted` is what THIS push introduced, not
+/// an inventory of what the ref's tree carries: a commit that touches no
+/// pointer admits nothing, and replacing a ref's rows with that empty set would
+/// erase attachments that are still true. Rows are dropped when the ref itself
+/// goes, and there only.
+///
+/// A `BuildRequired` path is absent from `admitted` and so stays unattached,
+/// whatever tree carries it.
+fn attach_landing_lfs_pointers(
+    vault: &Vault,
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    repo_id: EntityId,
+    updates: &[RefUpdate],
+    admitted: &[LfsPointerIntent],
+    learned_at: u64,
+) -> Result<()> {
+    let mut trees = BTreeMap::new();
+    for update in updates {
+        let Some(new_oid) = update.new_oid.as_ref() else {
+            vault.detach_lfs_objects_from_git_ref(repo_id, &update.name)?;
+            continue;
+        };
+        // A push that introduced no publishable pointer reads no tree at all,
+        // which is every push that carries no LFS content.
+        if admitted.is_empty() || !ref_tip_is_tree_ish(wire, handle, new_oid)? {
+            continue;
+        }
+        for intent in admitted {
+            if !ref_tree_carries_path(wire, handle, &mut trees, new_oid, &intent.path)? {
+                continue;
+            }
+            vault.attach_lfs_object_to_git_ref(repo_id, &update.name, intent.oid, learned_at)?;
+        }
+    }
+    Ok(())
+}
+
+/// The tree-entry mode of a subdirectory.
+const GIT_TREE_MODE: u32 = 0o040_000;
+
+/// The tree-entry mode of a gitlink: a commit that lives in another repository,
+/// so this repository holds no blob for that path.
+const GIT_GITLINK_MODE: u32 = 0o160_000;
+
+/// Whether a ref's post-image can be read as a tree at all.
+///
+/// A commit and an annotated tag both peel to the tree the ref publishes. A ref
+/// that names a blob has no tree and therefore carries no path — an answer,
+/// deliberately, rather than a failure: the refs have already moved by the time
+/// this runs, and an odd but legal ref value must not turn a landed push into
+/// an error.
+fn ref_tip_is_tree_ish(wire: &GitWire<'_>, handle: &GitWireRepo, tip: &GitOid) -> Result<bool> {
+    let kinds = wire.object_info(handle, std::slice::from_ref(tip))?;
+    Ok(matches!(
+        kinds.get(tip).map(String::as_str),
+        Some("commit" | "tag" | "tree")
+    ))
+}
+
+/// Whether the tree `tip` publishes carries `path` as a file of this
+/// repository.
+///
+/// Component by component, so a path is present only where the directories
+/// leading to it are directories and the leaf is a blob this repository holds:
+/// a directory of that name, or a gitlink of that name, is not the pointer
+/// file.
+fn ref_tree_carries_path(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    trees: &mut BTreeMap<String, Vec<GitTreeEntry>>,
+    tip: &GitOid,
+    path: &str,
+) -> Result<bool> {
+    let mut current = tip.clone();
+    let mut components = path.split('/').peekable();
+    while let Some(component) = components.next() {
+        if component.is_empty() {
+            return Ok(false);
+        }
+        let entries = read_tree_entries(wire, handle, trees, &current)?;
+        let Some(entry) = entries
+            .iter()
+            .find(|entry| entry.name == component.as_bytes())
+        else {
+            return Ok(false);
+        };
+        let mode = entry.mode;
+        if components.peek().is_none() {
+            return Ok(mode != GIT_TREE_MODE && mode != GIT_GITLINK_MODE);
+        }
+        if mode != GIT_TREE_MODE {
+            return Ok(false);
+        }
+        current = entry.oid.clone();
+    }
+    Ok(false)
+}
+
+/// The direct entries of one tree, read once per landing.
+///
+/// Refs pushed together share directories, and so do the pointers within one
+/// ref. The memo is what keeps a many-pointer push from re-reading the same
+/// tree once per pointer per ref; it lives for the one landing that built it
+/// and asserts nothing about any later one.
+fn read_tree_entries<'trees>(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    trees: &'trees mut BTreeMap<String, Vec<GitTreeEntry>>,
+    tree: &GitOid,
+) -> Result<&'trees [GitTreeEntry]> {
+    let entries = match trees.entry(tree.as_str().to_owned()) {
+        Entry::Occupied(occupied) => occupied.into_mut(),
+        Entry::Vacant(vacant) => vacant.insert(wire.read_tree(handle, tree)?),
+    };
+    Ok(entries.as_slice())
 }
 
 // ---------------------------------------------------------------------------
@@ -1486,6 +2862,8 @@ pub struct ServeReport {
     pub outcome: Option<ReceivePackOutcome>,
     /// The journaled landing, when one happened.
     pub landing: Option<ReceivePackLanding>,
+    /// Truthful per-ref completion, including partially published operations.
+    pub ref_results: Vec<ReceivePackRefResult>,
 }
 
 /// Serves one git smart-HTTP request against a vault-hosted repository.
@@ -1526,11 +2904,34 @@ pub fn serve(
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
+    serve_with_provenance(vault, repo_name, request, seam, None, body, sink)
+}
+
+/// Compatibility entry point. A new exchange always produces its own evidence;
+/// external claim ids cannot stand in for this request's admission or outcome.
+/// Passing `None` uses the same production path as [`serve`].
+pub fn serve_with_provenance(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    provenance_claim_id: Option<EntityId>,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
+    if provenance_claim_id.is_some() {
+        return Err(receive_pack_provenance_refused(
+            "a new exchange cannot reuse external evidence",
+        ));
+    }
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
     let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let admission = stamp_admission(vault, request, &repo_dir, seam)?;
+    if let Some(stamp) = admission.as_ref() {
+        vault.record_receive_pack_admission(&repo_dir, stamp, seam)?;
+    }
     let coordinator = if request.is_receive_pack() {
         Some(lock_repository(&repo_common_dir(&repo_dir)?)?)
     } else {
@@ -1538,9 +2939,22 @@ pub fn serve(
         // a push and neither delays one.
         None
     };
+    // This also runs for advertisements and no-op retries. A crash after the
+    // backend effect must not leave a ref hidden merely because no new hook runs.
+    vault.reconcile_receive_pack_operations(&repo_dir)?;
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
-        vault, request, seam, &repo_dir, &hooks, &mut child, body, sink,
+        vault,
+        request,
+        DoorWindowContext {
+            seam,
+            admission: admission.as_ref(),
+        },
+        &repo_dir,
+        &hooks,
+        &mut child,
+        body,
+        sink,
     );
     let exchange = match exchange {
         Ok(exchange) => exchange,
@@ -1656,7 +3070,7 @@ struct ServeExchange {
 fn run_exchange(
     vault: &Arc<Vault>,
     request: &ServeRequest,
-    seam: DoorSeam,
+    context: DoorWindowContext<'_>,
     repo_dir: &Path,
     hooks: &DoorHooksDir,
     child: &mut ServeChild,
@@ -1675,9 +3089,17 @@ fn run_exchange(
         let pump = scope.spawn(move || pump_request_body(body, stdin));
         let drain = scope.spawn(move || drain_stderr(stderr));
         let door = receive_pack.then(|| {
-            scope.spawn(|| serve_door_window(vault, &repo, hooks, &finished, deadline, seam))
+            scope.spawn(|| serve_door_window(vault, &repo, hooks, &finished, deadline, context))
         });
-        let streamed = stream_response(stdout, sink);
+        // The ref list is the one response body this module rewrites, and it
+        // is rewritten in flight: the gate holds one pkt-line, never the
+        // advertisement.
+        let streamed = if request.is_ref_advertisement() {
+            let mut gate = AdvertisedRefGate::new(vault, repo_dir, sink);
+            stream_response(stdout, &mut gate)
+        } else {
+            stream_response(stdout, sink)
+        };
         finished.store(true, Ordering::SeqCst);
         let (status, response_bytes) = streamed?;
         let request_bytes = join_thread(pump.join())?;
@@ -1747,6 +3169,350 @@ fn drain_stderr(mut stderr: ChildStderr) -> String {
         }
     }
     String::from_utf8_lossy(&captured).into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// The advertisement gate
+// ---------------------------------------------------------------------------
+
+/// The hex length of a SHA-1 object id, which is the only width this wire
+/// carries.
+const ADVERTISED_OID_HEX_LEN: usize = 40;
+
+/// The largest pkt-line this gate will hold.
+///
+/// Only ONE line is ever held for a decision; this bound covers the partial
+/// line left at a chunk boundary, so a backend that never terminates a
+/// pkt-line cannot grow the carry without limit.
+const SERVE_MAX_PKT_LINE_BYTES: usize = 65_524;
+
+/// The all-zero object id the empty-repository advertisement uses.
+const ADVERTISED_ZERO_OID: &str = "0000000000000000000000000000000000000000";
+
+/// The pseudo-ref an advertisement with no refs carries its capabilities on.
+const ADVERTISED_CAPABILITIES_REF: &str = "capabilities^{}";
+
+/// One pkt-line, or the flush that ends a section.
+enum PktLine {
+    Flush,
+    Data(Vec<u8>),
+}
+
+/// Which section of the advertisement the gate is reading.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AdvertisementPhase {
+    /// The `# service=...` banner and its flush, passed through verbatim.
+    Banner,
+    /// The ref list, which is what this gate exists for.
+    Refs,
+    /// Anything after the ref list's flush, passed through verbatim.
+    Trailer,
+}
+
+/// The publication projection for one served repository.
+///
+/// Resolved ONCE per advertisement, from the first object id the backend
+/// printed: [`GitWire::open_repo`] proves a repository against a commit it
+/// holds, and an advertised ref value is by construction such a commit. The
+/// advertisement has no earlier pin to offer.
+struct AdvertisementProjection {
+    repo_id: EntityId,
+    published: Vec<(GitRefName, GitOid)>,
+}
+
+/// The one place a served ref list is decided.
+///
+/// Every ref the origin advertises must appear in
+/// [`Vault::published_origin_refs`]. A seeded repository still needs an explicit
+/// publication; raw refs and failed projection reads never grant visibility.
+/// `HEAD` survives only when its object is projected, and the all-zero
+/// `capabilities^{}` line carries no object. Keep-refs are internal roots (RA4)
+/// and are always omitted.
+struct AdvertisedRefGate<'a> {
+    vault: Arc<Vault>,
+    repo_dir: PathBuf,
+    inner: &'a mut dyn ServeSink,
+    /// Off until the CGI headers prove this really is an advertisement.
+    gating: bool,
+    carry: Vec<u8>,
+    phase: AdvertisementPhase,
+    /// The capability suffix, detached from whichever ref line carried it.
+    capabilities: Option<Vec<u8>>,
+    emitted_ref: bool,
+    projection: Option<AdvertisementProjection>,
+    unresolved: bool,
+}
+
+impl<'a> AdvertisedRefGate<'a> {
+    fn new(vault: &Arc<Vault>, repo_dir: &Path, inner: &'a mut dyn ServeSink) -> Self {
+        Self {
+            vault: Arc::clone(vault),
+            repo_dir: repo_dir.to_path_buf(),
+            inner,
+            gating: false,
+            carry: Vec::new(),
+            phase: AdvertisementPhase::Banner,
+            capabilities: None,
+            emitted_ref: false,
+            projection: None,
+            unresolved: false,
+        }
+    }
+
+    fn drain_carry(&mut self) -> Result<()> {
+        while let Some(line) = take_pkt_line(&mut self.carry)? {
+            self.handle_line(line)?;
+        }
+        if self.carry.len() > SERVE_MAX_PKT_LINE_BYTES {
+            return Err(serve_failed(
+                "git http-backend produced an oversized pkt-line",
+            ));
+        }
+        Ok(())
+    }
+
+    fn handle_line(&mut self, line: PktLine) -> Result<()> {
+        match (self.phase, line) {
+            (AdvertisementPhase::Banner, PktLine::Flush) => {
+                self.phase = AdvertisementPhase::Refs;
+                self.emit_flush()
+            }
+            (AdvertisementPhase::Refs, PktLine::Flush) => {
+                self.phase = AdvertisementPhase::Trailer;
+                self.close_ref_list()
+            }
+            (AdvertisementPhase::Trailer, PktLine::Flush) => self.emit_flush(),
+            (AdvertisementPhase::Refs, PktLine::Data(data)) => self.handle_ref_line(&data),
+            (_, PktLine::Data(data)) => self.emit_data(&data),
+        }
+    }
+
+    /// Ends the ref list, keeping the capability suffix reachable.
+    ///
+    /// A stock client reads the capabilities off the FIRST ref line, so an
+    /// advertisement whose every ref was gated away still has to carry them:
+    /// the `capabilities^{}` pseudo-ref is exactly git's own spelling for
+    /// "no refs, these capabilities", and it is what an empty repository sends.
+    fn close_ref_list(&mut self) -> Result<()> {
+        if !self.emitted_ref && self.capabilities.is_some() {
+            let mut payload = Vec::new();
+            payload.extend_from_slice(ADVERTISED_ZERO_OID.as_bytes());
+            payload.push(b' ');
+            payload.extend_from_slice(ADVERTISED_CAPABILITIES_REF.as_bytes());
+            self.attach_capabilities(&mut payload);
+            payload.push(b'\n');
+            self.emit_data(&payload)?;
+        }
+        self.emit_flush()
+    }
+
+    fn handle_ref_line(&mut self, line: &[u8]) -> Result<()> {
+        let Some((oid, rest)) = split_advertised_ref(line) else {
+            return Err(serve_failed(
+                "git http-backend produced a malformed advertised ref",
+            ));
+        };
+        let (name, capabilities) = split_capabilities(rest);
+        if self.capabilities.is_none() {
+            self.capabilities = capabilities.map(<[u8]>::to_vec);
+        }
+        if !self.keeps_advertised_ref(oid, name) {
+            return Ok(());
+        }
+        let mut payload = Vec::with_capacity(line.len());
+        payload.extend_from_slice(oid);
+        payload.push(b' ');
+        payload.extend_from_slice(name);
+        if !self.emitted_ref {
+            self.attach_capabilities(&mut payload);
+        }
+        payload.push(b'\n');
+        self.emitted_ref = true;
+        self.emit_data(&payload)
+    }
+
+    fn attach_capabilities(&self, payload: &mut Vec<u8>) {
+        if let Some(capabilities) = self.capabilities.as_ref() {
+            payload.push(0);
+            let mut first = true;
+            for capability in capabilities.split(|byte| *byte == b' ') {
+                if let Some(target) = capability.strip_prefix(b"symref=HEAD:") {
+                    let visible = self.projection.as_ref().is_some_and(|projection| {
+                        projection
+                            .published
+                            .iter()
+                            .any(|(name, _)| name.as_str().as_bytes() == target)
+                    });
+                    if !visible {
+                        continue;
+                    }
+                }
+                if !first {
+                    payload.push(b' ');
+                }
+                payload.extend_from_slice(capability);
+                first = false;
+            }
+        }
+    }
+
+    /// Whether one advertised line survives the projection.
+    ///
+    /// Every "cannot tell" answer is a refusal. Neither an unknown repository
+    /// identity nor a missing journal row is evidence of publication.
+    fn keeps_advertised_ref(&mut self, oid: &[u8], name: &[u8]) -> bool {
+        let (Ok(name), Ok(oid_text)) = (std::str::from_utf8(name), std::str::from_utf8(oid)) else {
+            return false;
+        };
+        if name == ADVERTISED_CAPABILITIES_REF {
+            return oid_text == ADVERTISED_ZERO_OID;
+        }
+        if name.starts_with(GIT_WIRE_KEEP_REF_PREFIX) {
+            return false;
+        }
+        let Ok(value) = GitOid::parse_hex(oid_text) else {
+            return false;
+        };
+        self.ensure_projection(&value);
+        let Some(projection) = self.projection.as_ref() else {
+            return false;
+        };
+        if name == "HEAD" {
+            return projection.published.iter().any(|(_, oid)| *oid == value);
+        }
+        // An auxiliary peeled line cannot authorize an object independently
+        // of the publication's exact ref/OID pair.
+        let base = name.strip_suffix("^{}").unwrap_or(name);
+        let Ok(ref_name) = GitRefName::parse_full(base.to_owned()) else {
+            return false;
+        };
+        if !self
+            .vault
+            .origin_publication_manages_ref(projection.repo_id, &ref_name)
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        projection
+            .published
+            .iter()
+            .any(|(published, oid)| *published == ref_name && *oid == value)
+    }
+
+    fn ensure_projection(&mut self, pin: &GitOid) {
+        if self.projection.is_some() || self.unresolved {
+            return;
+        }
+        match resolve_advertisement_projection(&self.vault, &self.repo_dir, pin) {
+            Ok(projection) => self.projection = Some(projection),
+            Err(_) => self.unresolved = true,
+        }
+    }
+
+    fn emit_flush(&mut self) -> Result<()> {
+        self.inner.write_chunk(b"0000").map_err(Error::Io)
+    }
+
+    fn emit_data(&mut self, payload: &[u8]) -> Result<()> {
+        let length = payload
+            .len()
+            .checked_add(4)
+            .filter(|length| *length <= SERVE_MAX_PKT_LINE_BYTES)
+            .ok_or_else(|| serve_failed("a gated pkt-line does not fit the wire"))?;
+        self.inner
+            .write_chunk(format!("{length:04x}").as_bytes())
+            .map_err(Error::Io)?;
+        self.inner.write_chunk(payload).map_err(Error::Io)
+    }
+}
+
+impl ServeSink for AdvertisedRefGate<'_> {
+    fn begin(&mut self, status: u16, headers: &[(String, String)]) -> io::Result<()> {
+        self.gating = status == 200 && headers.iter().any(is_advertisement_content_type);
+        if !self.gating {
+            return self.inner.begin(status, headers);
+        }
+        // A gated body is shorter than the one the backend measured, so a
+        // declared length would be a lie the client waits on forever.
+        let framed = headers
+            .iter()
+            .filter(|(name, _)| !name.eq_ignore_ascii_case("Content-Length"))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.inner.begin(status, &framed)
+    }
+
+    fn write_chunk(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if !self.gating {
+            return self.inner.write_chunk(bytes);
+        }
+        self.carry.extend_from_slice(bytes);
+        self.drain_carry()
+            .map_err(|error| io::Error::other(error.to_string()))
+    }
+}
+
+fn is_advertisement_content_type(header: &(String, String)) -> bool {
+    header.0.eq_ignore_ascii_case("Content-Type")
+        && header.1.starts_with("application/x-git-")
+        && header.1.contains("-advertisement")
+}
+
+/// Resolves the projection this advertisement is gated against.
+fn resolve_advertisement_projection(
+    vault: &Vault,
+    repo_dir: &Path,
+    pin: &GitOid,
+) -> Result<AdvertisementProjection> {
+    let wire = GitWire::new(vault)?;
+    let handle = wire.open_repo(local_repo_ref(repo_dir, pin)?, repo_dir)?;
+    let repo_id = lfs_repo_id(&handle.identity().as_hex())?;
+    let published = vault.published_origin_refs(&wire, repo_id, &handle)?;
+    Ok(AdvertisementProjection { repo_id, published })
+}
+
+/// Takes the next complete pkt-line out of `carry`, if one is there.
+fn take_pkt_line(carry: &mut Vec<u8>) -> Result<Option<PktLine>> {
+    if carry.len() < 4 {
+        return Ok(None);
+    }
+    let text = std::str::from_utf8(&carry[..4])
+        .map_err(|_| serve_failed("git http-backend produced a non-ASCII pkt-line length"))?;
+    let length = usize::from_str_radix(text, 16)
+        .map_err(|_| serve_failed("git http-backend produced a non-hex pkt-line length"))?;
+    if length == 0 {
+        carry.drain(..4);
+        return Ok(Some(PktLine::Flush));
+    }
+    if !(4..=SERVE_MAX_PKT_LINE_BYTES).contains(&length) {
+        return Err(serve_failed(
+            "git http-backend produced a malformed pkt-line",
+        ));
+    }
+    if carry.len() < length {
+        return Ok(None);
+    }
+    let line = carry[4..length].to_vec();
+    carry.drain(..length);
+    Ok(Some(PktLine::Data(line)))
+}
+
+/// Splits `<oid> <rest>` out of one advertised line, trailing newline removed.
+fn split_advertised_ref(line: &[u8]) -> Option<(&[u8], &[u8])> {
+    let trimmed = line.strip_suffix(b"\n").unwrap_or(line);
+    let space = trimmed.iter().position(|byte| *byte == b' ')?;
+    if space != ADVERTISED_OID_HEX_LEN {
+        return None;
+    }
+    Some((&trimmed[..space], &trimmed[space + 1..]))
+}
+
+/// Splits the NUL-delimited capability suffix off an advertised ref line.
+fn split_capabilities(rest: &[u8]) -> (&[u8], Option<&[u8]>) {
+    match rest.iter().position(|byte| *byte == 0) {
+        Some(at) => (&rest[..at], Some(&rest[at + 1..])),
+        None => (rest, None),
+    }
 }
 
 /// Parses the CGI header block, then streams the body through untouched.
@@ -1871,7 +3637,19 @@ fn realized_updates(
     };
     let repo = local_repo_ref(repo_dir, pin)?;
     let wire = GitWire::new(vault)?;
-    let handle = wire.open_repo(repo, repo_dir)?;
+    let handle = match wire.open_repo(repo, repo_dir) {
+        Ok(handle) => handle,
+        Err(error) => {
+            let mut existing = None;
+            for old in proposed.iter().filter_map(|update| update.old_oid.as_ref()) {
+                if let Ok(handle) = wire.open_repo(local_repo_ref(repo_dir, old)?, repo_dir) {
+                    existing = Some(handle);
+                    break;
+                }
+            }
+            existing.ok_or(error)?
+        }
+    };
     let names = proposed
         .iter()
         .map(|update| GitRefName::parse_full(update.name.clone()))
@@ -1897,28 +3675,59 @@ fn finish_serve(
         door: exchange.door,
         outcome: None,
         landing: None,
+        ref_results: Vec::new(),
     };
     if !request.is_receive_pack() || !report.door.admitted() {
         return Ok(report);
     }
-    let moved = realized_updates(vault, repo_dir, &report.door.ref_updates)?;
-    if moved.is_empty() {
-        return Ok(report);
+    let stamp = report
+        .admission
+        .as_ref()
+        .ok_or_else(|| receive_pack_provenance_refused("admission is absent"))?;
+    let (key, mut intent) = vault
+        .receive_pack_intents(repo_dir)?
+        .into_iter()
+        .find(|(_, intent)| intent.operation_id == stamp.operation_id.to_hex())
+        .ok_or_else(|| receive_pack_provenance_refused("pre-effect intent is absent"))?;
+    report.landing = vault
+        .resume_receive_pack_intent(&key, &mut intent)
+        .unwrap_or(None);
+    report.ref_results = intent
+        .refs
+        .iter()
+        .map(|entry| ReceivePackRefResult {
+            name: entry.name.clone(),
+            status: entry.status,
+        })
+        .collect();
+    if report
+        .ref_results
+        .iter()
+        .any(|entry| entry.status != ReceivePackRefStatus::Published)
+    {
+        // This is not a whole-push success. The server rewrites Git's statuses
+        // using ref_results, while the operation retains every unfinished ref.
+        report.landing = None;
     }
-    let outcome = ReceivePackOutcome {
-        repo_root: repo_dir.to_path_buf(),
-        pack_stats: PackStats {
-            request_bytes: exchange.request_bytes,
-            response_bytes: exchange.response_bytes,
-            ref_update_count: moved.len(),
-        },
-        ref_updates: moved,
-        staged_objects_dir: repo_dir.join("objects"),
-    };
-    let repo = outcome.pinned_repo_ref()?;
-    let landing = vault.apply_receive_pack_update(&repo, &outcome)?;
-    report.outcome = Some(outcome);
-    report.landing = Some(landing);
+    let moved = intent
+        .refs
+        .iter()
+        .filter(|entry| entry.observed)
+        .map(ReceivePackIntentRef::update)
+        .collect::<Result<Vec<_>>>()?;
+    if !moved.is_empty() {
+        report.outcome = Some(ReceivePackOutcome {
+            repo_root: repo_dir.to_path_buf(),
+            pack_stats: PackStats {
+                request_bytes: exchange.request_bytes,
+                response_bytes: exchange.response_bytes,
+                ref_update_count: moved.len(),
+            },
+            ref_updates: moved,
+            lfs_pointers: report.door.lfs_pointers.clone(),
+            staged_objects_dir: repo_dir.join("objects"),
+        });
+    }
     Ok(report)
 }
 
@@ -1931,6 +3740,469 @@ mod tests {
     use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
     use crate::store::Store;
     use std::process::Command as StdCommand;
+
+    fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>) -> EntityId {
+        let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+        vault
+            .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
+            .expect("admission");
+        let door = DoorWindowReport {
+            verdict: DoorWindowVerdict::Clean,
+            ref_updates: updates,
+            lfs_pointers: Vec::new(),
+            quarantine_path: None,
+        };
+        vault
+            .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door)
+            .expect("pre-effect durable intent");
+        stamp.operation_id
+    }
+
+    #[test]
+    fn receive_pack_crash_before_outcome_recovers_on_noop_retry() {
+        let (vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        fixture_intent(
+            &vault,
+            &root,
+            vec![ref_update("refs/heads/recovered", None, Some(&oid))],
+        );
+        assert!(
+            vault
+                .origin_publication_ids(None)
+                .expect("no publication yet")
+                .is_empty()
+        );
+        let before = vault.receive_pack_intents(&root).expect("intent");
+        assert_eq!(before.len(), 1);
+        assert!(!before[0].1.refs[0].observed);
+        // Backend effect, followed by process loss before finish_serve writes anything.
+        git(&root, &["update-ref", "refs/heads/recovered", oid.as_str()]);
+        drop(before);
+        drop(vault);
+        let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
+        reopened
+            .reconcile_receive_pack_operations(&root)
+            .expect("no-op retry recovery");
+        let rows = reopened.receive_pack_intents(&root).expect("operation");
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
+        let ids = reopened.origin_publication_ids(None).expect("ids");
+        assert_eq!(ids.len(), 1);
+        reopened
+            .reconcile_receive_pack_operations(&root)
+            .expect("repeated recovery");
+        assert_eq!(
+            reopened.origin_publication_ids(None).expect("same ids"),
+            ids
+        );
+        let wire = GitWire::new(&reopened).expect("wire");
+        let handle = wire
+            .open_repo(local_repo_ref(&root, &oid).expect("repo"), &root)
+            .expect("handle");
+        assert_eq!(
+            reopened
+                .published_origin_refs(
+                    &wire,
+                    lfs_repo_id(&handle.identity().as_hex()).expect("id"),
+                    &handle,
+                )
+                .expect("visible")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn receive_pack_intent_without_backend_effect_never_advances_a_ref() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        fixture_intent(
+            &vault,
+            &root,
+            vec![ref_update("refs/heads/declined", None, Some(&oid))],
+        );
+        vault
+            .reconcile_receive_pack_operations(&root)
+            .expect("census");
+        let rows = vault.receive_pack_intents(&root).expect("operation");
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::NotApplied);
+        assert!(vault.origin_publication_ids(None).expect("ids").is_empty());
+        assert!(git(&root, &["for-each-ref", "refs/heads/declined"]).is_empty());
+    }
+
+    #[test]
+    fn receive_pack_multiref_partial_publication_resumes_without_rewriting_success() {
+        let (vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, first) = seeded_repo();
+        let second = commit_file(&root, "second.txt", "second\n");
+        fixture_intent(
+            &vault,
+            &root,
+            vec![
+                ref_update("refs/heads/first", None, Some(&first)),
+                ref_update("refs/heads/second", None, Some(&second)),
+                ref_update("refs/heads/declined", None, Some(&first)),
+            ],
+        );
+        git(&root, &["update-ref", "refs/heads/first", first.as_str()]);
+        git(&root, &["update-ref", "refs/heads/second", second.as_str()]);
+        let keep = super::super::publication::origin_keep_ref_name(&second).expect("keep");
+        let blocked = root.join(".git").join(format!("{}.lock", keep.as_str()));
+        fs::create_dir_all(blocked.parent().expect("parent")).expect("directory");
+        fs::write(&blocked, b"blocked keep-ref effect").expect("block second publication");
+        vault
+            .reconcile_receive_pack_operations(&root)
+            .expect("partial result retained");
+        let rows = vault.receive_pack_intents(&root).expect("intent");
+        assert_eq!(
+            rows[0]
+                .1
+                .refs
+                .iter()
+                .map(|entry| entry.status)
+                .collect::<Vec<_>>(),
+            vec![
+                ReceivePackRefStatus::Published,
+                ReceivePackRefStatus::Pending,
+                ReceivePackRefStatus::NotApplied,
+            ]
+        );
+        let first_id = vault.origin_publication_ids(None).expect("first row");
+        assert_eq!(first_id.len(), 1);
+        let first_claim = vault
+            .origin_publication(first_id[0])
+            .expect("row")
+            .expect("present")
+            .publication_claim_id
+            .expect("claim");
+        let claim_bytes = vault.get_raw(&first_claim).expect("claim bytes");
+        drop(rows);
+        drop(vault);
+        fs::remove_file(blocked).expect("unblock");
+        let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
+        reopened
+            .reconcile_receive_pack_operations(&root)
+            .expect("resume remaining ref");
+        let rows = reopened.receive_pack_intents(&root).expect("operation");
+        assert_eq!(rows[0].1.refs[1].status, ReceivePackRefStatus::Published);
+        assert_eq!(rows[0].1.refs[2].status, ReceivePackRefStatus::NotApplied);
+        assert_eq!(
+            reopened.origin_publication_ids(None).expect("rows").len(),
+            2
+        );
+        assert_eq!(
+            reopened.get_raw(&first_claim).expect("unchanged claim"),
+            claim_bytes
+        );
+    }
+
+    #[test]
+    fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        let repo = unpinned_repo_ref(&root);
+        for (seam, admitted) in [
+            (DoorSeam::Landed, true),
+            (DoorSeam::Noop, true),
+            (DoorSeam::Landed, false),
+        ] {
+            let (_hook_root, hooks) = hooks_dir();
+            let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+            if admitted {
+                vault
+                    .record_receive_pack_admission(&root, &stamp, seam)
+                    .expect("admission");
+            }
+            fs::write(
+                hooks.request_path(),
+                format!(
+                    "ref {} {} refs/heads/hook-test\n",
+                    "0".repeat(40),
+                    oid.as_str(),
+                ),
+            )
+            .expect("request");
+            fs::write(hooks.blobs_path(), b"").expect("empty added-blob stream");
+            let report = serve_door_window(
+                &vault,
+                &repo,
+                &hooks,
+                &AtomicBool::new(false),
+                Instant::now() + DOOR_WINDOW_TIMEOUT,
+                DoorWindowContext {
+                    seam,
+                    admission: Some(&stamp),
+                },
+            )
+            .expect("window answered");
+            let rows = vault.receive_pack_intents(&root).expect("journal");
+            let row = rows
+                .iter()
+                .find(|(_, row)| row.operation_id == stamp.operation_id.to_hex());
+            let allowed = admitted && seam == DoorSeam::Landed;
+            assert_eq!(report.admitted(), allowed);
+            assert_eq!(
+                fs::read_to_string(hooks.verdict_path()).expect("verdict") == DOOR_VERDICT_OK,
+                allowed
+            );
+            assert_eq!(
+                row.is_some(),
+                allowed,
+                "no OK can exist without its durable intent"
+            );
+            if let Some((_, row)) = row {
+                assert_eq!(row.refs[0].name, "refs/heads/hook-test");
+                assert!(!row.refs[0].observed);
+                assert_eq!(row.refs[0].status, ReceivePackRefStatus::Pending);
+            }
+            assert!(git(&root, &["for-each-ref", "refs/heads/hook-test"]).is_empty());
+            assert!(
+                vault
+                    .origin_publication_ids(None)
+                    .expect("no publication")
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn receive_pack_partial_effect_superseded_before_recovery_is_not_reapplied() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, first) = seeded_repo();
+        let later = commit_file(&root, "later.txt", "later\n");
+        fixture_intent(
+            &vault,
+            &root,
+            vec![ref_update("refs/heads/pending", None, Some(&first))],
+        );
+        git(&root, &["update-ref", "refs/heads/pending", first.as_str()]);
+        let keep = super::super::publication::origin_keep_ref_name(&first).expect("keep");
+        let blocked = root.join(".git").join(format!("{}.lock", keep.as_str()));
+        fs::create_dir_all(blocked.parent().expect("parent")).expect("directory");
+        fs::write(&blocked, b"block publication").expect("lock");
+        vault
+            .reconcile_receive_pack_operations(&root)
+            .expect("observed but pending");
+        let rows = vault.receive_pack_intents(&root).expect("journal");
+        assert!(rows[0].1.refs[0].observed);
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Pending);
+        git(&root, &["update-ref", "refs/heads/pending", later.as_str()]);
+        fs::remove_file(blocked).expect("unlock");
+        vault
+            .reconcile_receive_pack_operations(&root)
+            .expect("do not overwrite later writer");
+        let rows = vault.receive_pack_intents(&root).expect("journal");
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Superseded);
+        assert!(
+            rows[0].1.refs[0].observed,
+            "do not erase the earlier partial effect"
+        );
+        assert_eq!(
+            git(&root, &["rev-parse", "refs/heads/pending"]),
+            later.as_str()
+        );
+        assert!(
+            vault
+                .origin_publication_ids(None)
+                .expect("no publication")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn receive_pack_delete_crash_recovers_operation_without_inventing_an_advance() {
+        let (vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        git(&root, &["update-ref", "refs/heads/deleted", oid.as_str()]);
+        fixture_intent(
+            &vault,
+            &root,
+            vec![ref_update("refs/heads/deleted", Some(&oid), None)],
+        );
+        git(&root, &["update-ref", "-d", "refs/heads/deleted"]);
+        drop(vault);
+        let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
+        reopened
+            .reconcile_receive_pack_operations(&root)
+            .expect("recover deletion");
+        let rows = reopened.receive_pack_intents(&root).expect("journal");
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
+        assert!(rows[0].1.refs[0].observed);
+        let evidence_id = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("id");
+        let bytes = reopened.get_raw(&evidence_id).expect("evidence");
+        assert!(bytes.is_some());
+        reopened
+            .reconcile_receive_pack_operations(&root)
+            .expect("idempotent deletion");
+        assert_eq!(
+            reopened.get_raw(&evidence_id).expect("evidence unchanged"),
+            bytes
+        );
+        assert!(
+            reopened
+                .origin_publication_ids(None)
+                .expect("no advancing claim")
+                .is_empty()
+        );
+        assert!(git(&root, &["for-each-ref", "refs/heads/deleted"]).is_empty());
+    }
+
+    #[test]
+    fn receive_pack_no_hook_advertisement_recovers_a_pre_outcome_crash() {
+        let (vault_dir, vault) = temp_vault();
+        let (_source, repo_dir, _first, oid) = served_repo(&vault);
+        fixture_intent(
+            &vault,
+            &repo_dir,
+            vec![ref_update("refs/heads/recovered", None, Some(&oid))],
+        );
+        git(
+            &repo_dir,
+            &["update-ref", "refs/heads/recovered", oid.as_str()],
+        );
+        assert!(
+            vault
+                .origin_publication_ids(None)
+                .expect("before crash")
+                .is_empty()
+        );
+        drop(vault);
+        let reopened =
+            Arc::new(Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen"));
+        let response = advertise(&reopened, "git-upload-pack");
+        assert!(
+            advertised_refs(&response.body)
+                .iter()
+                .any(|(name, value)| { name == "refs/heads/recovered" && value == oid.as_str() })
+        );
+        let rows = reopened
+            .receive_pack_intents(&repo_dir)
+            .expect("recovered journal");
+        assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
+        assert_eq!(
+            reopened
+                .origin_publication_ids(None)
+                .expect("one publication")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn receive_pack_publication_cannot_omit_lfs_or_add_unobserved_objects() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        let bytes = b"an asset required by the observed pointer";
+        let oid = LfsOid::digest(bytes);
+        let size = u64::try_from(bytes.len()).expect("size");
+        vault
+            .put_lfs_object(oid, bytes, landing_time(), LANDING_LEARNED_AT)
+            .expect("asset");
+        let tip = commit_file(&root, "assets/logo.bin", &pointer_file(oid, size));
+        let outcome = pushed_outcome(
+            &root,
+            vec![ref_update("refs/heads/observed", None, Some(&tip))],
+            vec![LfsPushedPointer {
+                path: "assets/logo.bin".to_owned(),
+                oid,
+                size_bytes: size,
+            }],
+        );
+        let attribution = fixture_attribution(&vault, &outcome);
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = wire
+            .open_repo(outcome.pinned_repo_ref().expect("repo"), &root)
+            .expect("handle");
+        let mut request = OriginPublicationRequest {
+            repo_id: lfs_repo_id(&repo.identity().as_hex()).expect("id"),
+            repo,
+            ref_name: GitRefName::parse_full("refs/heads/observed").expect("ref"),
+            expected_old_oid: None,
+            new_oid: tip,
+            required_objects: Vec::new(),
+            required_lfs_oids: Vec::new(),
+            actor_id: attribution.actor_id,
+            provenance_claim_id: attribution.provenance_claim_id,
+            occurred: landing_time(),
+            learned_at: now_secs(),
+        };
+        assert!(
+            vault.publish_origin_ref(&wire, request.clone()).is_err(),
+            "LFS omission"
+        );
+        request.required_lfs_oids = vec![(oid, size)];
+        request.required_objects = vec![base];
+        assert!(
+            vault.publish_origin_ref(&wire, request.clone()).is_err(),
+            "unobserved dependency"
+        );
+        assert!(
+            vault
+                .origin_publication_ids(None)
+                .expect("no prepared rows")
+                .is_empty()
+        );
+        request.required_objects.clear();
+        assert_eq!(
+            vault
+                .publish_origin_ref(&wire, request)
+                .expect("exact evidence")
+                .record
+                .status,
+            OriginPublicationStatus::Published
+        );
+    }
+
+    // Synthetic observer input for landing/state-machine tests only. The wire
+    // and server roundtrips below produce this evidence through serve instead.
+    fn fixture_attribution(vault: &Vault, outcome: &ReceivePackOutcome) -> ReceivePackAttribution {
+        let stamp = DoorAdmissionStamp::from_principal(&EntityId::now().to_hex(), now_secs());
+        vault
+            .record_receive_pack_admission(&outcome.repo_root, &stamp, DoorSeam::Landed)
+            .expect("fixture admission evidence");
+        let door = DoorWindowReport {
+            verdict: DoorWindowVerdict::Clean,
+            ref_updates: outcome.ref_updates.clone(),
+            lfs_pointers: outcome.lfs_pointers.clone(),
+            quarantine_path: None,
+        };
+        vault
+            .record_receive_pack_outcome(&stamp, &door, outcome, 200)
+            .expect("fixture outcome evidence")
+    }
+
+    impl Vault {
+        fn apply_receive_pack_fixture(
+            &self,
+            repo: &RepoRef,
+            outcome: &ReceivePackOutcome,
+        ) -> Result<ReceivePackLanding> {
+            if outcome.ref_updates.is_empty() {
+                return Err(serve_failed("receive-pack outcome moved no ref"));
+            }
+            let wire = GitWire::new(self)?;
+            let handle = wire.open_repo(repo.clone(), &outcome.repo_root)?;
+            let repo_id = lfs_repo_id(&handle.identity().as_hex())?;
+            let existing = self
+                .origin_publication_rows(Some(repo_id))?
+                .into_iter()
+                .find(|row| {
+                    outcome.ref_updates.iter().any(|update| {
+                        row.ref_name.as_str() == update.name
+                            && row.expected_old_oid == update.old_oid
+                            && Some(&row.new_oid) == update.new_oid.as_ref()
+                    })
+                });
+            let attribution = existing.map_or_else(
+                || fixture_attribution(self, outcome),
+                |row| ReceivePackAttribution {
+                    actor_id: row.actor_id,
+                    provenance_claim_id: row.provenance_claim_id,
+                },
+            );
+            self.apply_receive_pack_update_with_attribution(repo, outcome, &attribution)
+        }
+    }
 
     fn temp_vault() -> (tempfile::TempDir, Arc<Vault>) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1990,6 +4262,7 @@ mod tests {
                 old_oid: None,
                 new_oid: Some(oid.clone()),
             }],
+            lfs_pointers: Vec::new(),
             staged_objects_dir: root.join(".git").join("objects"),
             pack_stats: PackStats {
                 request_bytes: 0,
@@ -1999,14 +4272,18 @@ mod tests {
         }
     }
 
-    fn sync_plane_rows(vault: &Vault) -> usize {
+    fn sync_plane_rows(vault: &Vault) -> BTreeMap<String, Vec<u8>> {
         let rtxn = vault.store.env.read_txn().expect("read txn");
         vault
             .store
             .sync_state
             .iter(&rtxn)
             .expect("iter sync state")
-            .count()
+            .map(|row| {
+                let (key, value) = row.expect("sync state row");
+                (key.into_owned(), value.to_vec())
+            })
+            .collect()
     }
 
     #[test]
@@ -2312,6 +4589,99 @@ mod tests {
     }
 
     #[test]
+    fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        let actor = EntityId::now();
+        let stamp = NoopDoorHook
+            .admit_receive_pack(
+                None,
+                &actor.to_hex(),
+                &unpinned_repo_ref(&root),
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                now_secs(),
+            )
+            .expect("noop stamp");
+        vault
+            .record_receive_pack_admission(&root, &stamp, DoorSeam::Noop)
+            .expect("honest admission");
+        let outcome = landing_outcome(&root, &oid);
+        let door = DoorWindowReport {
+            verdict: DoorWindowVerdict::Clean,
+            ref_updates: outcome.ref_updates.clone(),
+            lfs_pointers: Vec::new(),
+            quarantine_path: None,
+        };
+        let attribution = vault
+            .record_receive_pack_outcome(&stamp, &door, &outcome, 200)
+            .expect("honest observation through explicit noop seam");
+        let source = vault
+            .get_claim(&attribution.provenance_claim_id)
+            .expect("read")
+            .expect("source");
+        assert_eq!(
+            receive_pack_field(&source, "scan").expect("scan"),
+            &Value::from("not_performed")
+        );
+        let admission = vault
+            .get_claim(&stamp.operation_id())
+            .expect("read")
+            .expect("admission");
+        assert_eq!(
+            receive_pack_field(&admission, "effector_check").expect("effector"),
+            &Value::from("not_performed")
+        );
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(
+                    &outcome.pinned_repo_ref().expect("repo"),
+                    &outcome,
+                    &attribution,
+                )
+                .is_err(),
+            "an unperformed scan cannot authorize publication"
+        );
+        let wire = GitWire::new(&vault).expect("wire");
+        let handle = wire
+            .open_repo(outcome.pinned_repo_ref().expect("repo"), &root)
+            .expect("handle");
+        assert!(
+            vault
+                .publish_origin_ref(
+                    &wire,
+                    OriginPublicationRequest {
+                        repo_id: lfs_repo_id(&handle.identity().as_hex()).expect("repo id"),
+                        repo: handle,
+                        ref_name: GitRefName::parse_full(outcome.ref_updates[0].name.clone())
+                            .expect("ref"),
+                        expected_old_oid: outcome.ref_updates[0].old_oid.clone(),
+                        new_oid: oid,
+                        required_objects: Vec::new(),
+                        required_lfs_oids: Vec::new(),
+                        provenance_claim_id: attribution.provenance_claim_id,
+                        actor_id: actor,
+                        occurred: landing_time(),
+                        learned_at: now_secs(),
+                    }
+                )
+                .is_err(),
+            "the generic publication door must also refuse noop evidence"
+        );
+        assert!(
+            vault
+                .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+                .is_err()
+        );
+        assert!(
+            vault
+                .receive_pack_intents(&root)
+                .expect("no intent")
+                .is_empty()
+        );
+        assert!(vault.origin_publication_ids(None).expect("rows").is_empty());
+    }
+
+    #[test]
     fn smart_http_landed_door_hook_refuses_an_unauthorized_slip() {
         let (_dir, vault) = temp_vault();
         let door = CredentialDoorService::new(Arc::clone(&vault));
@@ -2431,6 +4801,85 @@ mod tests {
         );
     }
 
+    #[test]
+    fn smart_http_production_push_rejects_before_git_without_admission() {
+        struct UnreadBody;
+        impl Read for UnreadBody {
+            fn read(&mut self, _bytes: &mut [u8]) -> io::Result<usize> {
+                panic!("rejected admission must not start the body pump");
+            }
+        }
+        let (_dir, vault) = temp_vault();
+        let (_source, repo_dir, _, _) = served_repo(&vault);
+        let mut request = ServeRequest {
+            method: "POST".to_owned(),
+            path_info: "/demo.git/git-receive-pack".to_owned(),
+            query_string: String::new(),
+            content_type: Some("application/x-git-receive-pack-request".to_owned()),
+            content_length: None,
+            content_encoding: None,
+            git_protocol: None,
+            remote_user: None,
+            remote_addr: None,
+        };
+        let mut sink = CapturingSink::default();
+        let before = git(&repo_dir, &["rev-parse", "refs/heads/main"]);
+        assert!(
+            serve(
+                &vault,
+                "demo",
+                &request,
+                DoorSeam::Landed,
+                &mut UnreadBody,
+                &mut sink
+            )
+            .is_err()
+        );
+        request.remote_user = Some(EntityId::now().to_hex());
+        for supplied in [
+            EntityId::now(),
+            fixture_attribution(
+                &vault,
+                &landing_outcome(&repo_dir, &GitOid::parse_hex(before.clone()).expect("head")),
+            )
+            .provenance_claim_id,
+        ] {
+            assert!(
+                serve_with_provenance(
+                    &vault,
+                    "demo",
+                    &request,
+                    DoorSeam::Landed,
+                    Some(supplied),
+                    &mut UnreadBody,
+                    &mut sink
+                )
+                .is_err(),
+                "external evidence is not this request"
+            );
+        }
+        narrow_door_effectors(&vault, Vec::new());
+        assert!(matches!(
+            serve(
+                &vault,
+                "demo",
+                &request,
+                DoorSeam::Landed,
+                &mut UnreadBody,
+                &mut sink
+            ),
+            Err(Error::ReceivePackDoorRejected { .. })
+        ));
+        assert_eq!(sink.status, 0);
+        assert_eq!(git(&repo_dir, &["rev-parse", "refs/heads/main"]), before);
+        assert!(
+            vault
+                .origin_publication_rows(None)
+                .expect("journal")
+                .is_empty()
+        );
+    }
+
     /// The pin names WHICH object store the landing publishes into. A push that
     /// only deletes advances no post-image, and reading the pin out of
     /// `new_oid` alone is what dropped those pushes: no pin, no handle, no
@@ -2495,18 +4944,330 @@ mod tests {
         let outcome = landing_outcome(&root, &oid);
         let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
 
-        let before = sync_plane_rows(&vault);
+        let mut expected = sync_plane_rows(&vault);
         let landing = vault
-            .apply_receive_pack_update(&repo, &outcome)
+            .apply_receive_pack_fixture(&repo, &outcome)
             .expect("land receive-pack outcome");
         assert!(
             !landing.replayed,
             "the first landing journals its own record"
         );
+
+        // These LEDGER claims are required. Their generic CLAIM puts create
+        // pe:<claim-id> markers in sync_state, not Git replication payloads.
+        let records = vault
+            .origin_publication_rows(None)
+            .expect("publication journal");
+        let [record] = records.as_slice() else {
+            panic!("one landed ref must have exactly one publication record");
+        };
+        assert_eq!(record.status, OriginPublicationStatus::Published);
+        let source = vault
+            .get_claim(&record.provenance_claim_id)
+            .expect("read outcome claim")
+            .expect("durable outcome claim");
+        let operation_id = EntityId::from_hex(
+            receive_pack_field(&source, "operation_id")
+                .expect("outcome operation")
+                .as_str()
+                .expect("operation id string"),
+        )
+        .expect("operation entity id");
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let epoch =
+            crate::hnsw::read_embedding_model_epoch(&vault.store, &rtxn).expect("embedding epoch");
+        for (id, predicate) in [
+            (operation_id, RECEIVE_PACK_ADMISSION_PREDICATE),
+            (record.provenance_claim_id, RECEIVE_PACK_OUTCOME_PREDICATE),
+            (
+                record
+                    .publication_claim_id
+                    .expect("durable publication claim id"),
+                crate::origin::publication::ORIGIN_PUBLICATION_PREDICATE,
+            ),
+        ] {
+            let claim = vault
+                .get_claim_in_txn(&rtxn, &id)
+                .expect("read ledger claim")
+                .expect("durable ledger claim");
+            assert_eq!(claim.predicate, predicate);
+            assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+            let body = encode_claim_body(&claim).expect("encode ledger claim");
+            assert!(
+                expected
+                    .insert(
+                        Store::pending_embedding_marker_key(&id),
+                        Store::pending_embedding_marker_token(epoch, &body).to_vec(),
+                    )
+                    .is_none(),
+                "each new claim must have its own pending-embedding marker"
+            );
+        }
+        drop(rtxn);
         assert_eq!(
             sync_plane_rows(&vault),
-            before,
-            "repo refs ride the git wire; repo bytes never enter the sync plane"
+            expected,
+            "only the ledger claims' versioned hash markers may enter sync_state; \
+             no repo object/ref/pack/blob payload or other sync operation may appear"
+        );
+    }
+
+    #[test]
+    fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        let outcome = landing_outcome(&root, &oid);
+        let repo = outcome.pinned_repo_ref().expect("repo");
+        assert!(
+            vault.apply_receive_pack_update(&repo, &outcome).is_err(),
+            "an outcome with no journal cannot invent its actor or provenance"
+        );
+        let missing = ReceivePackAttribution {
+            actor_id: EntityId::now(),
+            provenance_claim_id: EntityId::now(),
+        };
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &outcome, &missing)
+                .is_err(),
+            "an allocated id is not a durable source claim"
+        );
+        let attribution = fixture_attribution(&vault, &outcome);
+        let source = vault
+            .get_claim(&attribution.provenance_claim_id)
+            .expect("source")
+            .expect("claim");
+        let copied_id = EntityId::now();
+        vault
+            .put_claim(&copied_id, &source, landing_time(), now_secs())
+            .expect("generic copied claim");
+        let copied = ReceivePackAttribution {
+            provenance_claim_id: copied_id,
+            ..attribution
+        };
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &outcome, &copied)
+                .is_err(),
+            "even a semantically identical claim has no local observer receipt"
+        );
+        let mut unrelated = source.clone();
+        unrelated.predicate = "test.unrelated_source".to_owned();
+        let unrelated_id = EntityId::now();
+        vault
+            .put_claim(&unrelated_id, &unrelated, landing_time(), now_secs())
+            .expect("unrelated active claim");
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(
+                    &repo,
+                    &outcome,
+                    &ReceivePackAttribution {
+                        provenance_claim_id: unrelated_id,
+                        ..attribution
+                    }
+                )
+                .is_err()
+        );
+        let wrong_actor = ReceivePackAttribution {
+            actor_id: EntityId::now(),
+            ..attribution
+        };
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &outcome, &wrong_actor)
+                .is_err()
+        );
+        let (_other_dir, other_root, other_oid) = seeded_repo();
+        let other = landing_outcome(&other_root, &other_oid);
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(
+                    &other.pinned_repo_ref().expect("other repo"),
+                    &other,
+                    &attribution
+                )
+                .is_err()
+        );
+        let mut different_operation = outcome.clone();
+        different_operation.ref_updates[0].name = "refs/heads/forged".to_owned();
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(
+                    &repo,
+                    &different_operation,
+                    &attribution
+                )
+                .is_err()
+        );
+        let mut different_intent = outcome.clone();
+        different_intent.ref_updates[0].old_oid = Some(oid.clone());
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &different_intent, &attribution)
+                .is_err()
+        );
+        let mut different_result = outcome.clone();
+        different_result.pack_stats.request_bytes += 1;
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &different_result, &attribution)
+                .is_err()
+        );
+        let wire = GitWire::new(&vault).expect("wire");
+        let handle = wire.open_repo(repo.clone(), &root).expect("handle");
+        let wrong_ref_request = OriginPublicationRequest {
+            repo_id: lfs_repo_id(&handle.identity().as_hex()).expect("repo id"),
+            repo: handle,
+            ref_name: GitRefName::parse_full("refs/heads/forged").expect("ref"),
+            expected_old_oid: None,
+            new_oid: oid.clone(),
+            required_objects: vec![oid],
+            required_lfs_oids: Vec::new(),
+            actor_id: attribution.actor_id,
+            provenance_claim_id: attribution.provenance_claim_id,
+            occurred: landing_time(),
+            learned_at: now_secs(),
+        };
+        assert!(
+            vault
+                .publish_origin_ref(&wire, wrong_ref_request.clone())
+                .is_err(),
+            "the lower publication door cannot reuse evidence for another ref"
+        );
+        let mut relabeled = source.clone();
+        relabeled.predicate = "test.relabeled_source".to_owned();
+        vault
+            .put_claim(
+                &attribution.provenance_claim_id,
+                &relabeled,
+                landing_time(),
+                now_secs(),
+            )
+            .expect("generic predicate overwrite fixture");
+        assert!(
+            vault.publish_origin_ref(&wire, wrong_ref_request).is_err(),
+            "rewriting a producer claim predicate cannot evade its source binding"
+        );
+        let mut forged = source.clone();
+        if let Value::Map(fields) = &mut forged.value {
+            fields
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("actor_id"))
+                .expect("actor field")
+                .1 = Value::from(wrong_actor.actor_id.to_hex());
+        }
+        vault
+            .put_claim(
+                &attribution.provenance_claim_id,
+                &forged,
+                landing_time(),
+                now_secs(),
+            )
+            .expect("generic overwrite of claim fixture");
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
+                .is_err(),
+            "an active rewritten claim no longer matches the original observer receipt"
+        );
+        let mut inactive = source.clone();
+        inactive.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
+        vault
+            .put_claim(
+                &attribution.provenance_claim_id,
+                &inactive,
+                landing_time(),
+                now_secs(),
+            )
+            .expect("retract source fixture");
+        assert!(
+            vault
+                .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
+                .is_err()
+        );
+        vault
+            .put_claim(
+                &attribution.provenance_claim_id,
+                &source,
+                landing_time(),
+                now_secs(),
+            )
+            .expect("restore exact source fixture");
+        assert!(
+            vault
+                .origin_publication_rows(None)
+                .expect("journal")
+                .is_empty(),
+            "every bad source is rejected before staging a publication"
+        );
+        vault
+            .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
+            .expect("explicit source claim");
+        let repo_id = landed_repo_id(&vault, &repo, &root);
+        let rows = vault
+            .origin_publication_rows(Some(repo_id))
+            .expect("journal");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].actor_id, attribution.actor_id);
+        assert_eq!(rows[0].provenance_claim_id, attribution.provenance_claim_id);
+        assert!(
+            vault
+                .get_claim(&rows[0].provenance_claim_id)
+                .expect("durable source")
+                .is_some()
+        );
+        assert!(
+            vault
+                .apply_receive_pack_update(&repo, &outcome)
+                .expect("journal-backed replay")
+                .replayed
+        );
+    }
+
+    #[test]
+    fn smart_http_receive_pack_evidence_survives_reopen_and_is_not_an_id_only_anchor() {
+        let (vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        let outcome = landing_outcome(&root, &oid);
+        let attribution = fixture_attribution(&vault, &outcome);
+        let repo = outcome.pinned_repo_ref().expect("repo");
+        let repo_id = landed_repo_id(&vault, &repo, &root);
+        drop(vault);
+        let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
+        reopened
+            .validate_receive_pack_attribution(repo_id, &outcome, &attribution)
+            .expect("both claims and their atomic local receipts survived");
+        let claim = reopened
+            .get_claim(&attribution.provenance_claim_id)
+            .expect("read")
+            .expect("claim");
+        let operation = EntityId::from_hex(
+            receive_pack_field(&claim, "operation_id")
+                .expect("operation")
+                .as_str()
+                .expect("id"),
+        )
+        .expect("entity id");
+        let mut admission = reopened
+            .get_claim(&operation)
+            .expect("read admission")
+            .expect("admission");
+        admission.lifecycle = ClaimLifecycleStatus::Retracted;
+        reopened
+            .put_claim(&operation, &admission, landing_time(), now_secs())
+            .expect("retract fixture");
+        assert!(
+            reopened
+                .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
+                .is_err(),
+            "an active outcome cannot launder an inactive admission"
+        );
+        assert!(
+            reopened
+                .origin_publication_rows(None)
+                .expect("journal")
+                .is_empty()
         );
     }
 
@@ -2518,10 +5279,10 @@ mod tests {
         let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
 
         let first = vault
-            .apply_receive_pack_update(&repo, &outcome)
+            .apply_receive_pack_fixture(&repo, &outcome)
             .expect("first landing");
         let second = vault
-            .apply_receive_pack_update(&repo, &outcome)
+            .apply_receive_pack_fixture(&repo, &outcome)
             .expect("replayed landing");
         assert!(!first.replayed);
         assert!(
@@ -2577,8 +5338,845 @@ mod tests {
             commit: oid.as_str().to_owned(),
         };
         assert!(
-            vault.apply_receive_pack_update(&repo, &outcome).is_err(),
+            vault.apply_receive_pack_fixture(&repo, &outcome).is_err(),
             "a landing that moves no ref is refused, never receipted"
+        );
+    }
+
+    const LANDING_LEARNED_AT: u64 = 1_700_000_000;
+
+    fn landing_time() -> TimeRange {
+        TimeRange {
+            start: LANDING_LEARNED_AT,
+            end: LANDING_LEARNED_AT,
+        }
+    }
+
+    /// One Git-LFS pointer file, byte for byte as a client writes it.
+    fn pointer_file(oid: LfsOid, size: u64) -> String {
+        format!(
+            "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {size}\n",
+            oid.to_hex()
+        )
+    }
+
+    /// Commits one file onto the checked-out branch and returns its commit.
+    fn commit_file(root: &Path, path: &str, contents: &str) -> GitOid {
+        let file = root.join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).expect("parent directory");
+        }
+        std::fs::write(&file, contents).expect("write file");
+        git(root, &["add", "--", path]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=Oneiron",
+                "-c",
+                "user.email=oneiron@example.invalid",
+                "commit",
+                "-m",
+                "carry an asset",
+            ],
+        );
+        GitOid::parse_hex(git(root, &["rev-parse", "--verify", "HEAD"])).expect("commit oid")
+    }
+
+    /// The repository key the landing files its attachment rows under.
+    fn landed_repo_id(vault: &Vault, repo: &RepoRef, root: &Path) -> EntityId {
+        let wire = GitWire::new(vault).expect("git wire");
+        let handle = wire.open_repo(repo.clone(), root).expect("open repo");
+        lfs_repo_id(&handle.identity().as_hex()).expect("repo id")
+    }
+
+    fn ref_update(name: &str, old_oid: Option<&GitOid>, new_oid: Option<&GitOid>) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            old_oid: old_oid.cloned(),
+            new_oid: new_oid.cloned(),
+        }
+    }
+
+    fn pushed_outcome(
+        root: &Path,
+        ref_updates: Vec<RefUpdate>,
+        lfs_pointers: Vec<LfsPushedPointer>,
+    ) -> ReceivePackOutcome {
+        ReceivePackOutcome {
+            repo_root: root.to_path_buf(),
+            pack_stats: PackStats {
+                request_bytes: 0,
+                response_bytes: 0,
+                ref_update_count: ref_updates.len(),
+            },
+            ref_updates,
+            lfs_pointers,
+            staged_objects_dir: root.join(".git").join("objects"),
+        }
+    }
+
+    /// The attachment family is an index of WHICH ref references an object, so
+    /// a push that moves two refs must not hand one ref's asset to the other.
+    /// A cartesian attachment would make every branch pushed alongside a
+    /// pointer a permanent referent of it, and the object would then look
+    /// referenced by refs whose trees never carried it.
+    #[test]
+    fn smart_http_landing_attaches_a_pointer_only_to_the_ref_that_carries_it() {
+        let (_vault_dir, vault) = temp_vault();
+        let bytes = b"asset bytes exactly one branch carries".to_vec();
+        let oid = LfsOid::digest(&bytes);
+        let size = u64::try_from(bytes.len()).expect("length fits u64");
+        vault
+            .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+            .expect("the object the pointer names is stored before the push lands");
+
+        let (_repo_dir, root, main_oid) = seeded_repo();
+        // The pointer file exists on `assets` and on no other ref.
+        git(&root, &["checkout", "-b", "assets"]);
+        let assets_oid = commit_file(&root, "assets/logo.bin", &pointer_file(oid, size));
+
+        let outcome = pushed_outcome(
+            &root,
+            vec![
+                ref_update("refs/heads/main", None, Some(&main_oid)),
+                ref_update("refs/heads/assets", None, Some(&assets_oid)),
+            ],
+            vec![LfsPushedPointer {
+                path: "assets/logo.bin".to_owned(),
+                oid,
+                size_bytes: size,
+            }],
+        );
+        let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_fixture(&repo, &outcome)
+            .expect("land the push");
+
+        let repo_id = landed_repo_id(&vault, &repo, &root);
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/assets")
+                .expect("read assets rows"),
+            vec![oid],
+            "the ref whose tree carries the pointer references the object"
+        );
+        assert!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/main")
+                .expect("read main rows")
+                .is_empty(),
+            "a ref that never carried the pointer gains nothing by travelling with it"
+        );
+
+        // Per-ref, not all-or-nothing: the first ref and its attachment survive
+        // a later conflict, and the later ref's third-party value is untouched.
+        let partial = pushed_outcome(
+            &root,
+            vec![
+                ref_update("refs/heads/partial-assets", None, Some(&assets_oid)),
+                ref_update("refs/heads/main", None, Some(&assets_oid)),
+            ],
+            vec![LfsPushedPointer {
+                path: "assets/logo.bin".to_owned(),
+                oid,
+                size_bytes: size,
+            }],
+        );
+        assert!(vault.apply_receive_pack_fixture(&repo, &partial).is_err());
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/partial-assets")
+                .expect("first ref attachment"),
+            vec![oid]
+        );
+        assert_eq!(
+            git(&root, &["rev-parse", "refs/heads/main"]),
+            main_oid.as_str()
+        );
+        assert_eq!(
+            git(&root, &["rev-parse", "refs/heads/partial-assets"]),
+            assets_oid.as_str()
+        );
+    }
+
+    /// Removing a ref removes that ref's rows and nothing else.
+    ///
+    /// The bytes are the point: two refs referenced this object, so the
+    /// deletion may not take the object down with the ref, and the surviving
+    /// ref's own row is still true.
+    #[test]
+    fn smart_http_landing_detaches_the_rows_of_a_deleted_ref() {
+        let (_vault_dir, vault) = temp_vault();
+        let bytes = b"asset bytes two branches share".to_vec();
+        let oid = LfsOid::digest(&bytes);
+        let size = u64::try_from(bytes.len()).expect("length fits u64");
+        vault
+            .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+            .expect("the object the pointer names is stored before the push lands");
+
+        let (_repo_dir, root, _base_oid) = seeded_repo();
+        let carrying = commit_file(&root, "assets/logo.bin", &pointer_file(oid, size));
+        // `release` publishes the very commit `main` does, so both refs carry
+        // the pointer path and both reference the one object.
+        git(&root, &["branch", "release", "refs/heads/main"]);
+
+        let pointer = LfsPushedPointer {
+            path: "assets/logo.bin".to_owned(),
+            oid,
+            size_bytes: size,
+        };
+        let pushed = pushed_outcome(
+            &root,
+            vec![
+                ref_update("refs/heads/main", None, Some(&carrying)),
+                ref_update("refs/heads/release", None, Some(&carrying)),
+            ],
+            vec![pointer],
+        );
+        let repo = pushed.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_fixture(&repo, &pushed)
+            .expect("land the push");
+        let repo_id = landed_repo_id(&vault, &repo, &root);
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/release")
+                .expect("read release rows"),
+            vec![oid],
+            "both refs carry the pointer path, so both reference the object"
+        );
+
+        // What the origin's receive-pack already did, which the landing then
+        // journals: the ref is observably gone.
+        git(
+            &root,
+            &["update-ref", "-d", "refs/heads/release", carrying.as_str()],
+        );
+        let deletion = pushed_outcome(
+            &root,
+            vec![ref_update("refs/heads/release", Some(&carrying), None)],
+            Vec::new(),
+        );
+        let deleted_repo = deletion
+            .pinned_repo_ref()
+            .expect("a delete-only push still pins its object store");
+        vault
+            .apply_receive_pack_fixture(&deleted_repo, &deletion)
+            .expect("land the deletion");
+
+        assert!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/release")
+                .expect("read release rows")
+                .is_empty(),
+            "the removed ref's rows go with it"
+        );
+        assert_eq!(
+            vault
+                .lfs_git_ref_objects(repo_id, "refs/heads/main")
+                .expect("read main rows"),
+            vec![oid],
+            "the ref that still carries the pointer keeps its row"
+        );
+        assert_eq!(
+            vault.get_lfs_object(oid).expect("download"),
+            Some(bytes),
+            "rows come and go; shared bytes do not"
+        );
+    }
+
+    // -- the advertisement gate -------------------------------------------
+
+    /// Collects one serve response without framing it.
+    #[derive(Default)]
+    struct CapturingSink {
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    }
+
+    impl ServeSink for CapturingSink {
+        fn begin(&mut self, status: u16, headers: &[(String, String)]) -> io::Result<()> {
+            self.status = status;
+            self.headers = headers.to_vec();
+            Ok(())
+        }
+
+        fn write_chunk(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.body.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    /// A bare repository under the vault's serving root, with two commits on
+    /// `main`, and both commit ids.
+    fn served_repo(vault: &Vault) -> (tempfile::TempDir, PathBuf, GitOid, GitOid) {
+        let (dir, source, first) = seeded_repo();
+        std::fs::write(source.join("NEXT.md"), "next\n").expect("write next");
+        git(&source, &["add", "--", "NEXT.md"]);
+        git(
+            &source,
+            &[
+                "-c",
+                "user.name=Oneiron",
+                "-c",
+                "user.email=oneiron@example.invalid",
+                "commit",
+                "-m",
+                "second",
+            ],
+        );
+        let head = git(&source, &["rev-parse", "--verify", "HEAD"]);
+        let second = GitOid::parse_hex(head).expect("second oid");
+        let root = origin_serving_root(vault).expect("serving root");
+        let path = source.to_str().expect("utf-8 source path").to_owned();
+        git(&root, &["clone", "--bare", "--", path.as_str(), "demo.git"]);
+        (dir, root.join("demo.git"), first, second)
+    }
+
+    /// Serves one ref advertisement through the real `git http-backend`.
+    fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
+        let request = ServeRequest {
+            method: "GET".to_owned(),
+            path_info: "/demo.git/info/refs".to_owned(),
+            query_string: format!("service={service}"),
+            content_type: None,
+            content_length: None,
+            content_encoding: None,
+            // A stock client asks for v2; the gate declines it so the ref list
+            // stays in this response, where it can be projected.
+            git_protocol: Some("version=2".to_owned()),
+            remote_user: Some("principal:tester".to_owned()),
+            remote_addr: None,
+        };
+        let mut body = io::empty();
+        let mut sink = CapturingSink::default();
+        serve(
+            vault,
+            "demo",
+            &request,
+            DoorSeam::Noop,
+            &mut body,
+            &mut sink,
+        )
+        .expect("serve the advertisement");
+        sink
+    }
+
+    /// The `(name, oid)` pairs one advertisement body carries.
+    fn advertised_refs(body: &[u8]) -> Vec<(String, String)> {
+        let mut carry = body.to_vec();
+        let mut section = 0_usize;
+        let mut refs = Vec::new();
+        while let Some(line) = take_pkt_line(&mut carry).expect("a well-formed pkt-line") {
+            match line {
+                PktLine::Flush => section += 1,
+                PktLine::Data(data) => {
+                    if section != 1 {
+                        continue;
+                    }
+                    let text = String::from_utf8_lossy(&data).into_owned();
+                    let text = text.trim_end_matches('\n');
+                    let text = text.split('\0').next().unwrap_or_default();
+                    let mut fields = text.splitn(2, ' ');
+                    let oid = fields.next().unwrap_or_default().to_owned();
+                    let name = fields.next().unwrap_or_default().to_owned();
+                    refs.push((name, oid));
+                }
+            }
+        }
+        refs
+    }
+
+    /// One framed pkt-line.
+    fn pkt(text: &str) -> Vec<u8> {
+        let mut framed = format!("{:04x}", text.len() + 4).into_bytes();
+        framed.extend_from_slice(text.as_bytes());
+        framed
+    }
+
+    fn advertisement_headers() -> Vec<(String, String)> {
+        vec![
+            (
+                "Content-Type".to_owned(),
+                "application/x-git-upload-pack-advertisement".to_owned(),
+            ),
+            ("Content-Length".to_owned(), "512".to_owned()),
+        ]
+    }
+
+    /// Test transport with a pre-proved principal. It uses the production
+    /// landed serve path; server tests below the HTTP adapter prove bearer auth.
+    struct PublicationTestOrigin {
+        addr: std::net::SocketAddr,
+        stop: Arc<AtomicBool>,
+        worker: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl PublicationTestOrigin {
+        fn start(vault: &Arc<Vault>, principal: EntityId) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("test listener");
+            let addr = listener.local_addr().expect("listener address");
+            let stop = Arc::new(AtomicBool::new(false));
+            let worker = std::thread::spawn({
+                let vault = Arc::clone(vault);
+                let stop = Arc::clone(&stop);
+                move || {
+                    for stream in listener.incoming() {
+                        if stop.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        serve_publication_test_connection(
+                            &vault,
+                            principal,
+                            stream.expect("test connection"),
+                        );
+                    }
+                }
+            });
+            Self {
+                addr,
+                stop,
+                worker: Some(worker),
+            }
+        }
+
+        fn url(&self) -> String {
+            format!("http://{}/demo.git", self.addr)
+        }
+    }
+
+    impl Drop for PublicationTestOrigin {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            let _ = std::net::TcpStream::connect(self.addr);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn serve_publication_test_connection(
+        vault: &Arc<Vault>,
+        principal: EntityId,
+        mut stream: std::net::TcpStream,
+    ) {
+        use std::io::BufRead;
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(10)))
+            .expect("write timeout");
+        let mut reader = io::BufReader::new(stream.try_clone().expect("reader"));
+        let mut line = String::new();
+        if reader.read_line(&mut line).expect("request line") == 0 {
+            return;
+        }
+        let mut parts = line.split_whitespace();
+        let method = parts.next().expect("method").to_owned();
+        let target = parts.next().expect("target").to_owned();
+        let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
+        let mut headers = BTreeMap::new();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("header");
+            if line.trim().is_empty() {
+                break;
+            }
+            let (name, value) = line.split_once(':').expect("header pair");
+            headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
+        }
+        assert!(
+            !headers.contains_key("transfer-encoding"),
+            "small fetch has a fixed body"
+        );
+        let length = headers
+            .get("content-length")
+            .map(|value| value.parse::<u64>().expect("length"));
+        let request = ServeRequest {
+            method,
+            path_info: path.to_owned(),
+            query_string: query.to_owned(),
+            content_type: headers.get("content-type").cloned(),
+            content_length: length,
+            content_encoding: headers.get("content-encoding").cloned(),
+            git_protocol: headers.get("git-protocol").cloned(),
+            remote_user: Some(principal.to_hex()),
+            remote_addr: Some("127.0.0.1".to_owned()),
+        };
+        let mut body = reader.take(length.unwrap_or(0));
+        let mut captured = CapturingSink::default();
+        serve(
+            vault,
+            "demo",
+            &request,
+            DoorSeam::Landed,
+            &mut body,
+            &mut captured,
+        )
+        .expect("serve stock client");
+        let mut response = format!("HTTP/1.1 {} OK\r\n", captured.status);
+        for (name, value) in captured.headers {
+            if !name.eq_ignore_ascii_case("content-length") {
+                response.push_str(&format!("{name}: {value}\r\n"));
+            }
+        }
+        response.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            captured.body.len()
+        ));
+        stream
+            .write_all(response.as_bytes())
+            .expect("response headers");
+        stream.write_all(&captured.body).expect("response body");
+    }
+
+    /// A stock client sees no head before finalize and fetches actual objects
+    /// after publication and after recovery of a CAS-before-finalize crash.
+    #[test]
+    fn stock_git_publication_roundtrip() {
+        let (_vault_dir, vault) = temp_vault();
+        let (source, repo_dir, _first, second) = served_repo(&vault);
+        let principal = EntityId::now();
+        let origin = PublicationTestOrigin::start(&vault, principal);
+        let url = origin.url();
+        let client = tempfile::tempdir().expect("stock client");
+        assert!(git(client.path(), &["ls-remote", "--heads", &url]).is_empty());
+
+        // Raw repository state is not publication authority, including HEAD.
+        let adopted = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+        assert!(
+            !adopted
+                .iter()
+                .any(|(name, _)| name == "refs/heads/main" || name == "HEAD"),
+            "an unpublished repository exposes no head before finalize"
+        );
+
+        // The raw head above was deliberately unadvertised. Remove the test
+        // fixture head, then let stock Git introduce it through receive-pack.
+        git(&repo_dir, &["update-ref", "-d", "refs/heads/main"]);
+        git(source.path(), &["push", &url, "refs/heads/main"]);
+        let repo = local_repo_ref(&repo_dir, &second).expect("pinned repo ref");
+        let rows = vault
+            .origin_publication_rows(None)
+            .expect("production journal");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].actor_id, principal);
+        let evidence = vault
+            .get_claim(&rows[0].provenance_claim_id)
+            .expect("source")
+            .expect("durable source");
+        assert_eq!(evidence.predicate, RECEIVE_PACK_OUTCOME_PREDICATE);
+        assert_eq!(
+            receive_pack_field(&evidence, "scan").expect("scan"),
+            &Value::from("clean")
+        );
+
+        let wire = GitWire::new(&vault).expect("git wire");
+        let handle = wire
+            .open_repo(repo, &repo_dir)
+            .expect("open the repository");
+        let repo_id = lfs_repo_id(&handle.identity().as_hex()).expect("repo id");
+        let published = vault
+            .published_origin_refs(&wire, repo_id, &handle)
+            .expect("the projection");
+        assert_eq!(
+            published,
+            vec![(
+                GitRefName::parse_full("refs/heads/main".to_owned()).expect("ref name"),
+                second.clone()
+            )],
+            "the landing published exactly the head it advanced"
+        );
+
+        let served = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+        assert!(
+            served
+                .iter()
+                .any(|(name, oid)| name == "refs/heads/main" && oid == second.as_str()),
+            "a published head round-trips to a stock client"
+        );
+        assert!(
+            served.iter().any(|(name, _)| name == "HEAD"),
+            "the wire furniture a stock client needs is never gated away"
+        );
+        git(client.path(), &["init", "--initial-branch=main"]);
+        git(client.path(), &["fetch", &url, "refs/heads/main"]);
+        assert_eq!(
+            git(client.path(), &["rev-parse", "FETCH_HEAD"]),
+            second.as_str()
+        );
+        assert_eq!(git(client.path(), &["show", "FETCH_HEAD:NEXT.md"]), "next");
+
+        let recovered_ref = GitRefName::parse_full("refs/heads/recovered").expect("recovered ref");
+        let mut recovery_outcome = landing_outcome(&repo_dir, &second);
+        recovery_outcome.ref_updates[0].name = recovered_ref.as_str().to_owned();
+        let recovery_attribution = fixture_attribution(&vault, &recovery_outcome);
+        let ask = OriginPublicationRequest {
+            repo_id,
+            repo: handle.clone(),
+            ref_name: recovered_ref.clone(),
+            expected_old_oid: None,
+            new_oid: second.clone(),
+            required_objects: vec![second.clone()],
+            required_lfs_oids: Vec::new(),
+            provenance_claim_id: recovery_attribution.provenance_claim_id,
+            actor_id: recovery_attribution.actor_id,
+            occurred: landing_time(),
+            learned_at: now_secs(),
+        };
+        let prepared = vault
+            .prepare_origin_publication_for_test(&wire, &ask)
+            .expect("prepare");
+        assert_eq!(prepared.status, OriginPublicationStatus::Prepared);
+        assert_eq!(
+            wire.read_ref(&handle, &recovered_ref)
+                .expect("prepared ref"),
+            None
+        );
+        assert!(
+            wire.update_ref_cas(&handle, &recovered_ref, None, &second, now_secs())
+                .expect("CAS before crash")
+                .is_applied()
+        );
+        assert!(
+            !git(client.path(), &["ls-remote", "--heads", &url]).contains("refs/heads/recovered")
+        );
+        let report = vault
+            .reconcile_origin_publications(&wire, repo_id, &handle, now_secs())
+            .expect("recover publication");
+        assert!(report.items.contains(&(
+            prepared.publication_id,
+            crate::origin::publication::OriginCensusDisposition::FinalizedPublished,
+        )));
+        let recovered_client = tempfile::tempdir().expect("fresh recovery client");
+        git(recovered_client.path(), &["init", "--initial-branch=main"]);
+        git(
+            recovered_client.path(),
+            &["fetch", &url, "refs/heads/recovered"],
+        );
+        assert_eq!(
+            git(recovered_client.path(), &["rev-parse", "FETCH_HEAD"]),
+            second.as_str()
+        );
+        assert_eq!(
+            git(recovered_client.path(), &["show", "FETCH_HEAD:NEXT.md"]),
+            "next"
+        );
+    }
+
+    /// The projection is the authority, and the repository is only ever
+    /// consulted to DISPROVE it.
+    #[test]
+    fn smart_http_advertisement_omits_a_ref_the_projection_disowns() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_source, repo_dir, first, second) = served_repo(&vault);
+        let outcome = landing_outcome(&repo_dir, &second);
+        let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_fixture(&repo, &outcome)
+            .expect("land the push");
+
+        // The repository moves behind the journal's back, which is exactly the
+        // state a half-finished crash or an out-of-band write leaves.
+        git(
+            &repo_dir,
+            &["update-ref", "refs/heads/main", first.as_str()],
+        );
+
+        let served = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+        assert!(
+            !served.iter().any(|(name, _)| name == "refs/heads/main"),
+            "a managed ref the projection no longer holds is not advertised"
+        );
+        assert!(
+            !served.iter().any(|(name, _)| name == "HEAD"),
+            "HEAD cannot expose the object of a ref the projection disowns"
+        );
+        assert!(
+            served
+                .iter()
+                .any(|(name, _)| name == ADVERTISED_CAPABILITIES_REF),
+            "an empty projection still carries the protocol capabilities"
+        );
+    }
+
+    /// Keep-refs are object roots, not content.
+    #[test]
+    fn smart_http_advertisement_never_carries_a_keep_ref() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_source, repo_dir, _first, second) = served_repo(&vault);
+        let outcome = landing_outcome(&repo_dir, &second);
+        let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_fixture(&repo, &outcome)
+            .expect("publish main");
+        let keep = format!("{GIT_WIRE_KEEP_REF_PREFIX}object/{}", second.as_str());
+        git(&repo_dir, &["update-ref", &keep, second.as_str()]);
+
+        let served = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+        assert!(
+            !served
+                .iter()
+                .any(|(name, _)| name.starts_with(GIT_WIRE_KEEP_REF_PREFIX)),
+            "an internal object root is never advertised content"
+        );
+        assert!(
+            served
+                .iter()
+                .any(|(name, oid)| name == "refs/heads/main" && oid == second.as_str()),
+            "the refs a client came for are untouched"
+        );
+    }
+
+    /// A stock client reads the capabilities off the FIRST ref line, so a
+    /// gated first line has to hand them on.
+    #[test]
+    fn smart_http_advertisement_moves_capabilities_to_the_first_surviving_ref() {
+        let (_vault_dir, vault) = temp_vault();
+        let (_source, repo_dir, _first, second) = served_repo(&vault);
+        let outcome = landing_outcome(&repo_dir, &second);
+        let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
+        vault
+            .apply_receive_pack_fixture(&repo, &outcome)
+            .expect("publish main");
+        let mut captured = CapturingSink::default();
+        let head = second.as_str().to_owned();
+        {
+            let mut gate = AdvertisedRefGate::new(&vault, &repo_dir, &mut captured);
+            gate.begin(200, &advertisement_headers()).expect("begin");
+            let body = [
+                pkt("# service=git-upload-pack\n"),
+                b"0000".to_vec(),
+                pkt(&format!(
+                    "{head} {GIT_WIRE_KEEP_REF_PREFIX}object/{head}\0side-band-64k\n"
+                )),
+                pkt(&format!("{head} refs/heads/main\n")),
+                b"0000".to_vec(),
+            ]
+            .concat();
+            gate.write_chunk(&body).expect("gate the advertisement");
+        }
+
+        assert!(
+            !captured
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("Content-Length")),
+            "a gated body is shorter than the one the backend measured"
+        );
+        assert_eq!(
+            advertised_refs(&captured.body),
+            vec![("refs/heads/main".to_owned(), head)],
+            "the keep-ref is gone and the ref a client wants remains"
+        );
+        let text = String::from_utf8_lossy(&captured.body).into_owned();
+        assert!(
+            text.contains("refs/heads/main\u{0}side-band-64k\n"),
+            "the capability suffix moved to the first surviving ref"
+        );
+    }
+
+    /// An advertisement whose every ref was gated away is still a legal
+    /// advertisement.
+    #[test]
+    fn smart_http_advertisement_with_no_surviving_ref_still_carries_capabilities() {
+        let (_vault_dir, vault) = temp_vault();
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        let mut captured = CapturingSink::default();
+        let head = "2".repeat(40);
+        {
+            let mut gate = AdvertisedRefGate::new(&vault, elsewhere.path(), &mut captured);
+            gate.begin(200, &advertisement_headers()).expect("begin");
+            let body = [
+                pkt("# service=git-upload-pack\n"),
+                b"0000".to_vec(),
+                pkt(&format!(
+                    "{head} {GIT_WIRE_KEEP_REF_PREFIX}object/{head}\0side-band-64k symref=HEAD:refs/heads/main\n"
+                )),
+                pkt(&format!("{head} refs/heads/main\n")),
+                pkt(&format!("{head} HEAD\n")),
+                b"0000".to_vec(),
+            ]
+            .concat();
+            gate.write_chunk(&body).expect("gate the advertisement");
+        }
+
+        assert_eq!(
+            advertised_refs(&captured.body),
+            vec![(
+                ADVERTISED_CAPABILITIES_REF.to_owned(),
+                ADVERTISED_ZERO_OID.to_owned()
+            )],
+            "git's own spelling for an advertisement with no refs"
+        );
+        let text = String::from_utf8_lossy(&captured.body).into_owned();
+        assert!(
+            text.contains("capabilities^{}\u{0}side-band-64k\n"),
+            "the capabilities survive the last ref"
+        );
+        assert!(
+            !text.contains("symref=HEAD:"),
+            "an unresolved projection cannot leak a raw symbolic ref"
+        );
+    }
+
+    /// A response that is not an advertisement is not rewritten.
+    #[test]
+    fn smart_http_advertisement_gate_passes_a_non_advertisement_through() {
+        let (_vault_dir, vault) = temp_vault();
+        let elsewhere = tempfile::tempdir().expect("tempdir");
+        let mut captured = CapturingSink::default();
+        {
+            let mut gate = AdvertisedRefGate::new(&vault, elsewhere.path(), &mut captured);
+            gate.begin(404, &[("Content-Type".to_owned(), "text/plain".to_owned())])
+                .expect("begin");
+            gate.write_chunk(b"Repository not found\n")
+                .expect("pass through");
+        }
+        assert_eq!(captured.status, 404);
+        assert_eq!(captured.body, b"Repository not found\n".to_vec());
+        assert_eq!(
+            captured.headers,
+            vec![("Content-Type".to_owned(), "text/plain".to_owned())],
+            "a body this gate does not own keeps its framing"
+        );
+    }
+
+    /// The wire version is pinned, because v2 puts the ref list where the
+    /// projection cannot reach it.
+    #[test]
+    fn smart_http_serve_never_forwards_a_wire_protocol_version() {
+        let request = ServeRequest {
+            method: "GET".to_owned(),
+            path_info: "/demo.git/info/refs".to_owned(),
+            query_string: "service=git-upload-pack".to_owned(),
+            content_type: None,
+            content_length: None,
+            content_encoding: None,
+            git_protocol: Some("version=2".to_owned()),
+            remote_user: None,
+            remote_addr: None,
+        };
+        assert!(request.is_ref_advertisement());
+        assert!(
+            !request
+                .env_pairs()
+                .iter()
+                .any(|(key, _)| key == "HTTP_GIT_PROTOCOL"),
+            "no served child is ever told to speak protocol v2"
+        );
+
+        let dumb = ServeRequest {
+            query_string: String::new(),
+            ..request
+        };
+        assert!(
+            !dumb.is_ref_advertisement(),
+            "a GET with no service is the dumb protocol, which carries no pkt-lines"
         );
     }
 }

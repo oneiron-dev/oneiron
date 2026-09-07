@@ -487,6 +487,7 @@ impl SessionRetrievalTelemetry<'_> {
         &self,
         run_id: crate::store::RetrievalRunId,
         elapsed_us: u64,
+        total_in_scope: usize,
         claims_suppressed: usize,
         surfaced_result_ids: &[[u8; 16]],
         empty_reason: Option<String>,
@@ -497,6 +498,7 @@ impl SessionRetrievalTelemetry<'_> {
                     wtxn,
                     run_id,
                     elapsed_us,
+                    total_in_scope,
                     claims_suppressed,
                     surfaced_result_ids,
                     empty_reason,
@@ -507,6 +509,7 @@ impl SessionRetrievalTelemetry<'_> {
             self.vault.store.finalize_context_pack_retrieval_run(
                 run_id,
                 elapsed_us,
+                total_in_scope,
                 claims_suppressed,
                 surfaced_result_ids,
                 empty_reason,

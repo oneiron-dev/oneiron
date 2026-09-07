@@ -174,6 +174,29 @@ pub(crate) struct CoreAuth {
 }
 
 impl CoreAuth {
+    /// Verifies an in-band slip through the existing MAC → claims → live-jti path.
+    /// Neither the trust root (even a v2-shaped root) nor dev-mode unverified
+    /// credentials may establish app-tier authority. Claim grammar is unchanged.
+    pub(crate) fn from_bind_token(
+        token: &str,
+        config: &SyncServerConfig,
+        revoked: &dyn RevokedTokenJtis,
+    ) -> Result<Self, ApiError> {
+        let expected = config
+            .auth_secret
+            .as_deref()
+            .ok_or_else(ApiError::unauthorized)?;
+        if expected.is_empty()
+            || split_core_token_v2(token).is_none()
+            || constant_time_eq(token, expected)
+        {
+            return Err(ApiError::unauthorized());
+        }
+        let auth = bearer_auth(token, config, revoked)?;
+        auth.require_registered_principal()?;
+        Ok(auth)
+    }
+
     pub(crate) fn from_headers(
         headers: &HeaderMap,
         config: &SyncServerConfig,

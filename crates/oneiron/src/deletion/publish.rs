@@ -178,6 +178,7 @@ impl Vault {
                     },
                 )?;
                 wtxn.commit()?;
+                self.notify_tombstone_publication(id, &window_key, value);
                 delete_update
             };
             // Outbound routing is the LAST act, after the publish txn
@@ -231,7 +232,42 @@ impl Vault {
             },
         )?;
         wtxn.commit()?;
+        self.notify_tombstone_publication(id, &window_key, value);
         Ok(true)
+    }
+
+    /// Publication notification only: never run from a Loro observer or before
+    /// TXN1 commits. Hard-purge dependencies stay pending at the read consumer
+    /// until the later purge has committed, including the transient-window path.
+    #[cfg(feature = "sync")]
+    fn notify_tombstone_publication(
+        &self,
+        id: &EntityId,
+        window: &crate::sync::WindowKey,
+        value: &TombstoneValueV2,
+    ) {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade();
+        if let Some(manager) = manager {
+            manager.materializer().notify_live_queries(
+                &format!("w:{window}/tombstones"),
+                &crate::sync::bridge::MaterializedDiffSummary {
+                    containers: if value.reason.is_hard() {
+                        vec![format!("w:{window}/entities/{}", id.to_hex())]
+                    } else {
+                        Vec::new()
+                    },
+                    bytes: 0,
+                },
+                &crate::sync::bridge::OriginMark {
+                    conn_id: None,
+                    origin: Some(crate::sync::bridge::DELETION_TOMBSTONE_ORIGIN.to_owned()),
+                },
+            );
+        }
     }
 
     /// Opens the transaction that publishes a gated tombstone, re-proving the
@@ -498,5 +534,82 @@ impl Vault {
         // authorized when its transaction committed — the value of `false` must
         // never be faked to `true` to "simplify" the callers.
         Ok(false)
+    }
+}
+
+#[cfg(all(test, feature = "sync"))]
+mod live_query_publication_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, Materializer, OriginMark};
+    use std::sync::{Arc, Mutex};
+
+    struct Tee {
+        vault: Arc<Vault>,
+        window: crate::sync::WindowKey,
+        id: EntityId,
+        seen: Mutex<usize>,
+    }
+    impl LiveQueryTee for Tee {
+        fn on_materialized(&self, _: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+            if by.origin.as_deref() != Some(crate::sync::bridge::DELETION_TOMBSTONE_ORIGIN) {
+                return;
+            }
+            // This read is synchronous, inside the notification. It must see
+            // the durable tombstone, not just the uncommitted live document.
+            let persisted =
+                crate::sync::window::load_window_from_state(&self.vault, "local", &self.window)
+                    .unwrap();
+            assert!(
+                persisted
+                    .get_map("tombstones")
+                    .get(&self.id.to_hex())
+                    .is_some()
+            );
+            assert_eq!(
+                diff.containers,
+                vec![format!("w:{}/entities/{}", self.window, self.id.to_hex())]
+            );
+            *self.seen.lock().unwrap() += 1;
+        }
+    }
+
+    #[test]
+    fn deletion_tee_only_observes_successful_lmdb_publication_live_and_transient() {
+        for (live, fail) in [(false, false), (true, false), (true, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+            let materializer = Arc::new(Materializer::new());
+            let manager = Arc::new(crate::sync::WindowManager::new(
+                vault.clone(),
+                materializer.clone(),
+                "local",
+            ));
+            manager.attach_to_vault();
+            let window = crate::sync::WindowKey::from_timestamp(1_772_000_000);
+            if live {
+                manager.open_window(&window).unwrap();
+            }
+            let id = EntityId::from_hex("11111111111111111111111111111111").unwrap();
+            let tee = Arc::new(Tee {
+                vault: vault.clone(),
+                window,
+                id,
+                seen: Mutex::new(0),
+            });
+            let consumer: Arc<dyn LiveQueryTee> = tee.clone();
+            materializer.attach_live_query_tee(&consumer);
+            if fail {
+                crate::deletion::rendezvous::arm_fail_live_tombstone_persist();
+            }
+            let value = TombstoneValueV2 {
+                reason: crate::deletion::tombstone::TombstoneReason::UserHardDelete,
+                deleted_at: 1_772_000_000,
+                request_id: [7; 16],
+            };
+            let result = vault.write_crdt_tombstone(&id, 1_772_000_000, &value, None, None);
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(*tee.seen.lock().unwrap(), usize::from(!fail));
+        }
     }
 }

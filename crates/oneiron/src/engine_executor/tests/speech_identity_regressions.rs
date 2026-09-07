@@ -181,12 +181,11 @@ fn initial_executor_replay_record(
     config: &EngineExecutorConfig,
 ) -> CodeRunReplayRecord {
     let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
-    let prompt_fingerprint = crate::prompt::resolve_engine_executor_wire_prompt(
-        &config.prompt_package_root,
-    )
-    .expect("resolve prompt package")
-    .stamp
-    .resolved_fingerprint;
+    let prompt_fingerprint =
+        crate::prompt::resolve_engine_executor_wire_prompt(&config.prompt_package_root)
+            .expect("resolve prompt package")
+            .stamp
+            .resolved_fingerprint;
     super::super::record_config_marker(
         &crate::code_run::ExecutorStorage::Canonical(vault),
         &mut record,
