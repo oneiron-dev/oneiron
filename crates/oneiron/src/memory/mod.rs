@@ -78,3 +78,4 @@ pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use support::{facade_provenance, verify_actor_binding};
+pub(crate) use witness::sole_edge_target;

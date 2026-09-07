@@ -21,6 +21,7 @@
 //! lattice.
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_def::{
@@ -43,6 +44,7 @@ use crate::dreamer_runner::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::failure_ladder::HealerCase;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -263,6 +265,95 @@ pub enum KillOutcome {
     /// The spawn was already terminal, so no kill effect occurred.
     AlreadyTerminal,
     Proposed(KillProposal),
+}
+
+/// Refusal reason for the configured-healer arm (ONE-1887 §5).
+///
+/// A configured healer needs the failing case's INDIVIDUALLY DURABLE refs —
+/// the failing `attempt_id`, `evidence_ref`, `pre_fail_checkpoint_ref`, and
+/// `qa_thread_ref`. This base exposes no reference-context seam that can carry
+/// them: [`AgentDispatchInput::context_spec`] is a projection DESCRIPTOR and
+/// [`AgentDispatchInput::context_from`] admits only SETTLED sibling TASK
+/// results under the spawning parent attempt and run. Case material must never
+/// be smuggled through `dedupe_key`, `run_id`, a briefing string, or a new
+/// parallel queue payload, so the arm refuses until that seam lands rather
+/// than dispatching a healer that cannot read its own case.
+const HEALER_REFERENCE_CONTEXT_SEAM_ABSENT: &str =
+    "healer slot dispatch requires a durable reference-context seam this base does not expose";
+
+/// Which healer a failure scope routes its cases to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HealerSlot {
+    /// The default slot until the configured ARCH-0066 healer agent exists. It
+    /// is an explicit typed outcome, never a silently dropped case.
+    Reserved,
+    /// Lowercase-hex EntityId spelling.
+    AgentDef { agent_def_ref: String },
+}
+
+/// Caller input for [`AgentDispatcher::dispatch_healer_slot`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchHealer {
+    pub slot: HealerSlot,
+    pub case: HealerCase,
+    pub run_id: Option<String>,
+    pub now: u64,
+}
+
+/// Typed healer-slot outcome.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HealerSlotOutcome {
+    Reserved { case: HealerCase },
+    Dispatched(AgentDispatchStatus),
+    Existing(AgentDispatchStatus),
+}
+
+impl AgentDispatcher<'_> {
+    /// Resolves one failure case onto its configured healer slot.
+    ///
+    /// `Reserved` mutates NO queue state and is unconditional; it still yields
+    /// a typed outcome that carries immediate surface-card data. `AgentDef`
+    /// parses the ref, enforces the propose-only ceiling against the LIVE
+    /// stored row, and then refuses on this base because the reference-context
+    /// seam it needs is absent (ONE-1887 §5).
+    ///
+    /// There is deliberately no force-cancel handle here or anywhere on the
+    /// healer path. A healer asking a live attempt to land calls ONE-1896's
+    /// public soft `request_cancel`/landing-request API separately; force
+    /// termination stays authority-only.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidAgentDispatchInput`] when `agent_def_ref` is not a hex
+    /// EntityId or when the reference-context seam is absent;
+    /// [`Error::AgentNotDispatchable`] when the named row's live ceiling
+    /// exceeds propose-only, plus everything the dispatchability predicate
+    /// raises for a missing, inactive, unapproved, or disabled row.
+    pub fn dispatch_healer_slot(&self, input: DispatchHealer) -> Result<HealerSlotOutcome> {
+        match input.slot {
+            HealerSlot::Reserved => Ok(HealerSlotOutcome::Reserved { case: input.case }),
+            HealerSlot::AgentDef { agent_def_ref } => {
+                let healer_ref = EntityId::from_hex(&agent_def_ref).map_err(|_| {
+                    Error::InvalidAgentDispatchInput(
+                        "healer agent_def_ref must be a hex-encoded EntityId string",
+                    )
+                })?;
+                // Read LIVE, never the frozen payload snapshot: a healer that
+                // could act at `Auto` would repair the agent it is diagnosing
+                // without anyone proposing it.
+                let definition =
+                    self.dispatchable_definition(&AgentDispatchTarget::Custom(healer_ref))?;
+                if definition.ceiling.widens_beyond(AgentCeiling::Proposed) {
+                    return Err(Error::AgentNotDispatchable(
+                        "healer agent definition exceeds the propose-only ceiling",
+                    ));
+                }
+                Err(Error::InvalidAgentDispatchInput(
+                    HEALER_REFERENCE_CONTEXT_SEAM_ABSENT,
+                ))
+            }
+        }
+    }
 }
 
 /// Encodes a dispatch input into its pinned-key MessagePack `Value` map.
