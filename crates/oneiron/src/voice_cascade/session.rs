@@ -359,11 +359,14 @@ impl VoiceCascadeSession {
         if self.speech_latched || now - started < self.config.barge_in_hold {
             return Ok(None);
         }
+        if self.generation.is_none() {
+            return Ok(None);
+        }
+        let stop = self.stop_generation(StopReason::UserBargeIn, true);
+        // Idle speech does not spend this interval's interruption. A final may
+        // start output while the same continuous speech is still in progress.
         self.speech_latched = true;
-        Ok(self
-            .generation
-            .is_some()
-            .then(|| self.stop_generation(StopReason::UserBargeIn, true)))
+        Ok(Some(stop))
     }
 
     /// Check at BOTH enqueue and dequeue in the audio sibling. This also accepts
@@ -475,16 +478,16 @@ fn validate_tool(request: &BrainRequest, event: &ToolEvent) -> Result<()> {
                 return Err(invalid("tool call needs a unique id, name and object input"));
             }
         }
-        ToolEvent::Result { call_id, output } => {
+        ToolEvent::Result { call_id, .. } => {
             let called = request.tool_events.iter().any(
                 |event| matches!(event, ToolEvent::Call { call_id: prior, .. } if prior == call_id),
             );
             let returned = request.tool_events.iter().any(|event| {
                 matches!(event, ToolEvent::Result { call_id: prior, .. } if prior == call_id)
             });
-            if !called || returned || !output.is_object() {
+            if !called || returned {
                 return Err(invalid(
-                    "tool result needs one prior call and object output",
+                    "tool result needs one prior call and no prior result",
                 ));
             }
         }

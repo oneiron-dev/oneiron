@@ -60,6 +60,8 @@ mod safeguard;
 mod session;
 
 pub mod tts_spikes;
+#[cfg(unix)]
+pub mod uds;
 
 pub use cancellation::{OutputStop, StopReason};
 pub use protocol::*;

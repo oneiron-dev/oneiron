@@ -1,5 +1,6 @@
 use super::*;
 use crate::interlocutor::{InterlocutorClass, InterlocutorPartyInput, PresenceEvidence};
+use crate::llm::ContentPart;
 
 #[test]
 fn normalized_asr_metadata_round_trips_and_endpoint_does_not_finalize() -> Result<()> {
@@ -188,6 +189,13 @@ fn sustained_speech_resets_on_silence_then_flushes_all_old_output() -> Result<()
     assert!(request.generation.value() > old.value());
     assert!(session.filter_pcm(pcm(request.generation)).is_some());
     assert!(session.filter_pcm(pcm(old)).is_none());
+    assert!(
+        session
+            .observe_speech(Duration::from_millis(401), true)?
+            .is_none(),
+        "an actual interruption already consumed this continuous interval"
+    );
+    assert!(session.accepts_pcm(request.generation));
     for event in [
         BrainEvent::TextDelta("late".to_owned()),
         call("late"),
@@ -208,6 +216,50 @@ fn sustained_speech_resets_on_silence_then_flushes_all_old_output() -> Result<()
             .expect("current")
             .tool_events
             .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn idle_continuous_speech_can_interrupt_output_started_by_asr_final() -> Result<()> {
+    let (_dir, vault) = vault();
+    let mut session = VoiceCascadeSession::new(vault, config())?;
+    let handle = session.open_utterance("idle-speech", SpeculativeSessionConfig::default())?;
+    for milliseconds in [0, 119, 120, 400] {
+        assert!(
+            session
+                .observe_speech(Duration::from_millis(milliseconds), true)?
+                .is_none(),
+            "idle speech must not consume the interruption latch"
+        );
+    }
+    let mut enricher = Enricher::default();
+    let update = session.handle_asr(
+        &handle,
+        1,
+        event(AsrEventKind::Final, "Tokyo launch"),
+        false,
+        &mut enricher,
+    )?;
+    let AsrUpdate::Final(request) = update else {
+        panic!("final starts output")
+    };
+    let generation = request.generation;
+    assert!(session.accepts_pcm(generation));
+    // No intervening silence or new hold: this is still the idle speech interval.
+    let stop = session
+        .observe_speech(Duration::from_millis(401), true)?
+        .expect("sustained speech must stop the new output");
+    assert_eq!(stop.reason, StopReason::UserBargeIn);
+    assert_eq!(stop.generation, Some(generation));
+    assert!(stop.kill.cancel_llm && stop.kill.cancel_tts && stop.kill.flush_playout_buffer);
+    assert!(session.filter_pcm(pcm(generation)).is_none());
+    assert!(session.brain_context(generation).is_none());
+    assert!(
+        session
+            .observe_speech(Duration::from_millis(402), true)?
+            .is_none(),
+        "only an actual stop consumes the latch"
     );
     Ok(())
 }
@@ -341,6 +393,114 @@ fn tool_events_are_ordered_in_brain_context_and_taint_never_clears() -> Result<(
 }
 
 #[test]
+fn tool_results_preserve_all_json_kinds_and_error_bits_in_brain_context() -> Result<()> {
+    let (_dir, vault) = vault();
+    let mut session = VoiceCascadeSession::new(vault, config())?;
+    let request = start(&mut session, false)?;
+    let generation = request.generation;
+    let mut brain = TestBrain::default();
+    brain.start(&request)?;
+    let mut expected = Vec::new();
+    for output in [
+        json!(null),
+        json!(false),
+        json!(true),
+        json!(42),
+        json!(-7),
+        json!(1.5),
+        json!("plain text"),
+        json!([]),
+        json!(["ref", 1, null, {"nested": true}]),
+        json!({"refs": ["tool:result"]}),
+    ] {
+        for is_error in [false, true] {
+            let original = ContentPart::ToolResult {
+                call_id: format!("result-{}", expected.len()),
+                output: output.clone(),
+                is_error,
+            };
+            let ContentPart::ToolResult {
+                call_id,
+                output,
+                is_error,
+            } = original.clone()
+            else {
+                panic!("provider-neutral tool result")
+            };
+            // Accepting arbitrary result JSON must not relax invocation inputs.
+            if !output.is_object() {
+                let invalid_call = BrainEvent::Tool(ToolEvent::Call {
+                    call_id: call_id.clone(),
+                    name: "lookup".to_owned(),
+                    input: output.clone(),
+                });
+                assert!(
+                    session
+                        .handle_brain(generation, invalid_call, false)
+                        .is_err()
+                );
+            }
+            let result = BrainEvent::Tool(ToolEvent::Result {
+                call_id: call_id.clone(),
+                output,
+                is_error,
+            });
+            assert!(
+                session
+                    .handle_brain(generation, result.clone(), false)
+                    .is_err(),
+                "every JSON kind still requires a prior call"
+            );
+            assert_eq!(
+                session.handle_brain(generation, call(&call_id), false)?,
+                Some(call(&call_id))
+            );
+            assert!(
+                session
+                    .handle_brain(generation, BrainEvent::Done, false)
+                    .is_err(),
+                "a result is outstanding"
+            );
+            assert_eq!(
+                session.handle_brain(generation, result.clone(), false)?,
+                Some(result.clone())
+            );
+            assert!(session.handle_brain(generation, result, false).is_err());
+            expected.push(original);
+        }
+    }
+    let context = session.brain_context(generation).expect("context");
+    brain.update_context(context)?;
+    assert_eq!(brain.contexts[0].tool_events.len(), expected.len() * 2);
+    let restored: Vec<_> = brain.contexts[0]
+        .tool_events
+        .iter()
+        .filter_map(|event| match event {
+            ToolEvent::Result {
+                call_id,
+                output,
+                is_error,
+            } => Some(ContentPart::ToolResult {
+                call_id: call_id.clone(),
+                output: output.clone(),
+                is_error: *is_error,
+            }),
+            ToolEvent::Call { .. } => None,
+        })
+        .collect();
+    assert_eq!(restored, expected);
+    assert!(
+        !brain.contexts[0].externally_tainted,
+        "error status is not host taint"
+    );
+    assert_eq!(
+        session.handle_brain(generation, BrainEvent::Done, false)?,
+        Some(BrainEvent::Done)
+    );
+    Ok(())
+}
+
+#[test]
 fn disabled_tools_and_busy_final_do_not_advance_or_consume_context() -> Result<()> {
     let (_dir, vault) = vault();
     let mut config = config();
@@ -350,6 +510,11 @@ fn disabled_tools_and_busy_final_do_not_advance_or_consume_context() -> Result<(
     assert!(
         session
             .handle_brain(generation, call("disabled"), false)
+            .is_err()
+    );
+    assert!(
+        session
+            .handle_brain(generation, result("disabled"), false)
             .is_err()
     );
     let next = session.open_utterance("next", SpeculativeSessionConfig::default())?;
