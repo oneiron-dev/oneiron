@@ -1,6 +1,10 @@
 mod pending_lookup;
 
 use super::*;
+
+#[path = "repair_tests.rs"]
+mod repair_tests;
+
 use crate::agent_def::{AgentDefinition, AgentScope, encode_agent_definition};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,

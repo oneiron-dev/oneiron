@@ -1,4 +1,4 @@
-//! Shared quota-bound diagnostic replay for Observer B and forward rematerialization.
+//! Validate diagnostic replay before its echo check or quota debit.
 
 use super::quota;
 use crate::Vault;

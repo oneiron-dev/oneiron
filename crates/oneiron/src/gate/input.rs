@@ -23,6 +23,8 @@ pub(crate) enum GateContentKind {
     EdgeProvenanceClaim,
     PolicyManifest,
     ExternalEffect,
+    /// ONE-1395: an unexecuted repair intent, evaluated with engine-stamped authority.
+    Repair,
     /// ONE-1686 (RT-04): one witnessed MESSAGE envelope, gated at the shared
     /// `Memory::witness` write boundary. See `gate::witness_message`.
     WitnessMessage,
@@ -37,6 +39,7 @@ impl GateContentKind {
             Self::EdgeProvenanceClaim => "edge_provenance_claim",
             Self::PolicyManifest => "policy_manifest",
             Self::ExternalEffect => "external_effect",
+            Self::Repair => "repair",
             Self::WitnessMessage => "witness_message",
         }
     }
