@@ -13,15 +13,18 @@ use super::identity_kind::{
 };
 use super::kernel::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
+    ReceiptRecord, ReceiptScan, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
     retain_newest_receipt,
 };
 #[cfg(test)]
 use super::kernel::{GATE_RECEIPT_MAX_BUFFERED, GATE_RECEIPT_PAGES_SCANNED};
-use super::ledgers::{attempt_pack_receipts, durable_send_receipts};
+use super::ledgers::{
+    attempt_pack_receipts, durable_send_receipts, scan_attempt_pack_receipts,
+    scan_durable_send_receipts,
+};
 use super::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
-    counterparty_contact_records_for_receipts, finalize_receipt_query_records,
+    counterparty_contact_records_for_receipts, finalize_receipt_query_records, finalize_receipt_scan,
     project_receipts_by_brief, project_receipts_by_counterparty_with_contacts,
     project_receipts_by_grant_limited,
 };
@@ -73,6 +76,34 @@ impl Vault {
     /// Queries the unified receipt family across existing receipt emitters.
     pub fn receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
         receipt_family_query(self, &query)
+    }
+
+    /// Scans receipts with explicit source and result-limit completeness.
+    ///
+    /// This initial seam supports explicit `Outbound`-only queries without
+    /// `job_ref`. Other kinds and cross-family lineage use legacy projectors
+    /// that cannot yet prove completeness, so those queries return an error.
+    /// `receipts` remains available with its existing bounded-view semantics.
+    /// The result limit cannot exceed the receipt-family work cap. Even a zero
+    /// result limit scans the sources, so an empty result is not mistaken for
+    /// proof that no matching receipt exists.
+    pub fn scan_receipts(&self, mut query: ReceiptQuery) -> Result<ReceiptScan> {
+        if query.kinds.len() != 1
+            || !query.kinds.contains(&ReceiptKind::Outbound)
+            || query.job_ref.is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "receipt completeness scan requires outbound-only queries without job_ref".to_owned(),
+            ));
+        }
+        query.limit = query.limit.min(MAX_RECEIPT_QUERY_SCAN);
+        let mut scan = scan_attempt_pack_receipts(self)?;
+        let durable = scan_durable_send_receipts(self)?;
+        // The durable projector is exhaustive. The attempt source metadata
+        // survives filtering, including when none of its scanned rows match.
+        scan.records.extend(durable.records);
+        scan.records.retain(|receipt| query.matches(receipt));
+        Ok(finalize_receipt_scan(scan, &query, None))
     }
 
     /// Alias for callers that prefer verb-first query naming.
