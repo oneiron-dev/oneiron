@@ -28127,16 +28127,6 @@
   "oneiron-server": {
    "files": [
     {
-     "bucket": "L",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api.rs",
-     "purpose": "HTTP query routes for web dashboard access",
-     "surface": {
-      "crate-vis": 25
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -28651,6 +28641,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/error_map.rs",
+     "purpose": "Engine-to-ApiError mapping plus query/JSON rejection translators",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -28947,6 +28947,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mod.rs",
+     "purpose": "HTTP query routes for web dashboard access",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -28997,6 +29007,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi_registry.rs",
+     "purpose": "OpenAPI ApiDoc registration for the HTTP API",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/params.rs",
+     "purpose": "Shared query/body param extractors, hex-id parsing, and small scalar helpers",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -29032,6 +29062,16 @@
      "purpose": "CA-07 saved-query HTTP routes",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/scoped_auth.rs",
+     "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -30627,10 +30667,10 @@
    ],
    "modules": {
     "api": {
-     "files": 122,
+     "files": 126,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "layout": "dir",
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
@@ -30767,9 +30807,9 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 2,
+   "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 168,
+   "source_files": 172,
    "test_files": 68
   },
   "oneiron-uniffi": {
