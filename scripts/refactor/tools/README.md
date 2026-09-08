@@ -57,10 +57,29 @@ the old file at `<base-rev>` IS the manifest. Exit 0 = pure move, 1 = drift (one
 `SPLIT-CHECK FAIL <old>: <k> problem(s)`); any exception fails closed with
 `SPLIT-CHECK-ERROR` + exit 1.
 
-What it checks (new side = working tree, every `*.rs` directly under `<new-dir>`):
+What it checks (new side = working tree, every `*.rs` under `<new-dir>`, nested
+directory modules followed):
 
 - `<old-file>` no longer exists; `<new-dir>/mod.rs` exists and carries a `mod x;`
-  for every child `x.rs`.
+  for every child `x.rs` and every nested module directory `x/`.
+- Nested modules. A base `mod X { … }` (X ≠ `tests`) is not one opaque item: its
+  body is walked with scope `X` (`X::tests`, `X::Y` for mods nested inside it) and
+  the mod itself becomes a *mod record* (name, cfgs, vis, `///` doc + non-cfg
+  attributes). On the new side a subdirectory `X/` holding a `mod.rs` is the nested
+  module `X`: its parent `mod.rs` must declare `mod X;`, `X/mod.rs` + `X/*.rs` are
+  collected with scope `<parent>::X`, and it is walked recursively; a flat child
+  `X.rs` whose stem matches a base mod record at that level is the module `X`
+  flattened into one file; a bodied `mod Y { … }` inside any new-side file is scope
+  `<file scope>::Y`. A subdirectory with `.rs` files but no `mod.rs` is a FAIL.
+- Mod records are compared 1:1: a base `mod X` at scope S needs exactly one
+  counterpart — a bodied `mod X` in S or a `mod X;` decl in S's `mod.rs`
+  (`FAIL missing mod X (in S)` / `FAIL duplicate mod X`); the cfg tuples must be equal
+  (`FAIL cfg on mod X differs: … -> …`); a visibility change is `INFO vis mod X`; the
+  `///` doc + non-cfg attributes must sit on the decl verbatim OR as `//!` / `#![…]`
+  lines at the top of `X/mod.rs` / `X.rs`, otherwise `INFO doc on mod X
+  moved/changed`. A new-side bodied mod or `mod.rs` decl with no base record is
+  `FAIL extra mod Y` unless it is a `tests` / `*_tests` mount or a decl for a sibling
+  `y.rs` child (plumbing).
 - Base file and each child are rustfmt-normalised whole (`rustlex.rustfmt`, edition
   2024, comment options off, no repo `rustfmt.toml`), then `rustlex.enumerate_items`
   on both. Items match by `(scope, kind, name | impl-header canon, cfgs)` and every
@@ -71,18 +90,24 @@ What it checks (new side = working tree, every `*.rs` directly under `<new-dir>`
   the two normalised fragments (capped at 60 lines); an item that only reflows because
   it moved between an inline `mod tests` body and a file top level is re-formatted
   standalone before it is called a mismatch.
-- Scope: `top` = the file body; `tests` = the base file's inline `mod tests { … }`
-  body. On the new side `tests.rs` / `*_tests.rs` children and an inline `mod tests`
-  in any child are the `tests` scope, so moved tests are still 1:1. `tests.rs` /
-  `*_tests.rs` are skipped (INFO) when the base file had no inline `mod tests`.
+- Scope is a `::`-joined module path: `top` = the file body; `tests` = the base
+  file's inline `mod tests { … }` body; `seam`, `seam::tests`, `seam::inner` for
+  bodied mods and what nests inside them. On the new side `tests.rs` / `*_tests.rs`
+  children at any level and an inline `mod tests` in any file are that level's
+  `…::tests` scope, so moved tests are still 1:1. `tests.rs` / `*_tests.rs` are
+  skipped (INFO) when the base file (or the base mod at that level) had no inline
+  `mod tests`. Item labels print `(in <scope>)` for every non-`top` scope.
 - An impl header that lands in more than one child (the usual way a 6k-line
   `impl Vault {}` gets split), or that the base already carried more than once, is
   compared per associated item (`method` / `const` / `type`) instead; each part's
   residue — header, attributes, docs, anything that is not an associated item — must
   equal the base's.
 - Allowed new-side extras (module plumbing, also ignored on the base side): `use` at
-  any visibility incl. `#[cfg(test)] use …` seams, `mod x;` declarations, `#![…]`
-  inner attributes, `//!` docs, `extern crate`, free comments and blank lines.
+  any visibility incl. `#[cfg(test)] use …` seams, `mod x;` declarations for sibling
+  children (a `mod.rs` decl that maps to nothing, or to a directory the base never
+  had, is `FAIL extra mod`), `#![…]` inner attributes, `//!` docs, `extern crate`,
+  free comments and blank lines. The `<n> children` count in the OK line is every
+  `*.rs` file walked, nested levels included.
 - Anything `enumerate_items` does not recognise (a top-level macro invocation such as
   `thread_local! { … }`, an `extern "C" { … }` block) is compared as an opaque
   canon-tokenised residue chunk, also 1:1. Reported line numbers are those of the
