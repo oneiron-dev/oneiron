@@ -265,8 +265,8 @@ impl<'a> ScopedRead<'a> {
     /// a THIN one: `retrieval_depth` owns the tier policy, the caps and the
     /// deep-lease rule, while every channel it runs comes back through the
     /// three search doors above and through
-    /// [`crate::ppr::PprNodeVisibility`], which conjoins
-    /// [`Self::is_entity_readable_with_policy_in`] with the resolved retrieval
+    /// `crate::ppr::PprNodeVisibility`, which conjoins
+    /// `Self::is_entity_readable_with_policy_in` with the resolved retrieval
     /// floor so graph expansion cannot bypass the direct-search constraints.
     ///
     /// So the effort dial cannot widen admission. It changes how many

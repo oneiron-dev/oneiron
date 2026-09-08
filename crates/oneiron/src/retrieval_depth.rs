@@ -284,7 +284,7 @@ pub fn short_ref_or_hex(vault: &Vault, id: &EntityId) -> Result<String> {
 /// same channel twice.
 ///
 /// The four derivations, in order: the whitespace-normalized query; the query
-/// with [`SUBQUERY_STOPWORDS`] removed; its leading half; its trailing half.
+/// with `SUBQUERY_STOPWORDS` removed; its leading half; its trailing half.
 /// Halving is what makes this useful on a compound question — "what did we
 /// decide about the launch date" retrieves differently for "decide launch" and
 /// for "date" than it does for the whole sentence — and it is arithmetic, not

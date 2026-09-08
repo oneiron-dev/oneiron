@@ -29,7 +29,7 @@
 //!
 //! [`zero_live_members`] is a TRIPWIRE, not a score. It answers from row
 //! shape and edge presence alone — no thresholds, no weights, no ranking, no
-//! "probably". Two arms ship, held in the const [`CLEANUP_CHECKS`] table so a
+//! "probably". Two arms ship, held in the const `CLEANUP_CHECKS` table so a
 //! third is one line:
 //!
 //! * Extraction-minted `PERSON` (byte 4) with zero live claims about it.
@@ -38,7 +38,7 @@
 //!
 //! ARC_THREAD is named by the canon but **has no entity-type byte in this
 //! engine**, and this ticket does not mint one. When that kind lands, its arm
-//! is one row in [`CLEANUP_CHECKS`].
+//! is one row in `CLEANUP_CHECKS`.
 //!
 //! ## Extraction-minted PERSON provenance
 //!
@@ -561,7 +561,7 @@ fn has_any_edge_in_txn(
 
 /// Every current cleanup candidate in the vault, in checker-table order.
 ///
-/// Paged and capped ([`MAX_CLEANUP_SCAN_ROWS`] rows examined per type): a
+/// Paged and capped (`MAX_CLEANUP_SCAN_ROWS` rows examined per type): a
 /// maintenance scan that cannot finish is worse than one that does part of
 /// the work and leaves the rest for the next wake.
 ///
