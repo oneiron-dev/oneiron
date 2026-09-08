@@ -1764,7 +1764,14 @@ mod one1891 {
     };
     use rmpv::Value;
 
-    pub(super) const INGEST_SOURCE: &str = include_str!("../../src/ingest.rs");
+    pub(super) const INGEST_SOURCE: &str = concat!(
+        include_str!("../../src/ingest/mod.rs"),
+        include_str!("../../src/ingest/resolution.rs"),
+        include_str!("../../src/ingest/types.rs"),
+        include_str!("../../src/ingest/admission.rs"),
+        include_str!("../../src/ingest/registry.rs"),
+        include_str!("../../src/ingest/transcripts.rs"),
+    );
     pub(super) const CLAIM_CORE_TYPES_SOURCE: &str = include_str!("../../src/claim/core_types.rs");
     pub(super) const PROVIDER_CONFIDENCE_SOURCE: &str =
         include_str!("../../src/provider_confidence.rs");
