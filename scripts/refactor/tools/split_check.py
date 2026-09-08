@@ -28,6 +28,7 @@ Fails CLOSED: any exception prints `SPLIT-CHECK-ERROR` and exits 1.
 """
 import difflib
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -187,17 +188,32 @@ def _normalised(item, assoc):
     return normalized_fragment(item.text, assoc, True)
 
 
+_INNER_VIS = re.compile(r"^(\s*)pub(?:\((?:crate|super|self|in\s+[A-Za-z0-9_:]+)\))?\s+", re.M)
+_TUPLE_VIS = re.compile(r"([(,]\s*)pub(?:\((?:crate|super|self|in\s+[A-Za-z0-9_:]+)\))?\s+")
+
+
+def strip_inner_vis(text):
+    """Remove `pub`/`pub(...)` tokens on EVERY line (struct fields, methods
+    inside an impl, tuple-struct fields), not only the item's signature line.
+    A split routinely promotes a private field or method to pub(super) so a
+    sibling child can reach it; that is a visibility change, never a body
+    change, and the checker must not fail it."""
+    return _TUPLE_VIS.sub(r"\1", _INNER_VIS.sub(r"\1", text))
+
+
 def bodies_equal(base, new, assoc=False):
     """(equal, base_norm, new_norm). Fast path: vis-stripped texts of the
     whole-file-formatted docs are byte-identical. Slow path: rustfmt each
     fragment on its own (absorbs the indentation-dependent reflow of an item
-    that moved from an inline `mod tests` body to a file top level)."""
-    b = strip_item_vis(base.text)
-    n = strip_item_vis(new.text)
+    that moved from an inline `mod tests` body to a file top level).
+    Visibility tokens are stripped on every line on both sides (inner
+    promotions such as `pub(super) fn` / `pub(super) field:` are allowed)."""
+    b = strip_inner_vis(strip_item_vis(base.text))
+    n = strip_inner_vis(strip_item_vis(new.text))
     if b == n:
         return True, b, n
-    b = _normalised(base, assoc)
-    n = _normalised(new, assoc)
+    b = strip_inner_vis(_normalised(base, assoc))
+    n = strip_inner_vis(_normalised(new, assoc))
     return b == n, b, n
 
 
