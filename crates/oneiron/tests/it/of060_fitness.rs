@@ -687,7 +687,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             RawHit {
                 path: "crates/oneiron-server/src/api/booking/subject.rs".to_owned(),
                 ident: "with_write_txn".to_owned(),
-                line: "server.vault.with_write_txn(|txn| {".to_owned(),
+                line: ".with_write_txn(|txn| {".to_owned(),
             },
             1,
         ),
@@ -761,7 +761,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
 fn of060_f2_extra_booking_write_txn_is_not_pinned() {
     let expected = f2_expected_raw_escape_hits();
     let booking_path = "crates/oneiron-server/src/api/booking/subject.rs";
-    let approved_line = "server.vault.with_write_txn(|txn| {";
+    let approved_line = ".with_write_txn(|txn| {";
     let approved_hits = raw_escape_hits(booking_path, &production_source(approved_line));
     assert_eq!(approved_hits.len(), 1);
     assert_eq!(expected.get(&approved_hits[0]), Some(&1));
@@ -770,7 +770,7 @@ fn of060_f2_extra_booking_write_txn_is_not_pinned() {
     // same file or the same line in another booking file must also fail F2.
     for (rel, extra_line) in [
         (booking_path, approved_line),
-        (booking_path, "server.vault.with_write_txn(|extra_txn| {"),
+        (booking_path, ".with_write_txn(|extra_txn| {"),
         (
             "crates/oneiron-server/src/api/booking/extra.rs",
             approved_line,
