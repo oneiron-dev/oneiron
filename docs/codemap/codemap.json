@@ -22688,7 +22688,7 @@
     }
    },
    "over_bar": 0,
-   "purpose": "—",
+   "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
    "source_files": 8,
    "test_files": 1
   },
