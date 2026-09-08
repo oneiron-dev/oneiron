@@ -641,6 +641,31 @@ async fn discover_requires_auth_and_returns_empty_contract() {
 
     handle.abort();
 }
+/// The Context Board replaced Companion Resume as the hydration surface, so
+/// discovery must name the new capability and must not keep advertising the
+/// retired one: an agent reads this list to decide what it may call.
+#[tokio::test]
+async fn discover_advertises_context_board_and_not_companion_resume() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
+    let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
+
+    let response = http_get(addr, "/api/core/discover", Some("secret")).await;
+    assert_http_status(&response, 200);
+    let body = http_json(&response);
+    let capabilities = str_array_set(&body["feature_flags"]["capabilities"]);
+
+    assert!(
+        capabilities.contains("core.context_board"),
+        "discovery must advertise the context board: {capabilities:?}"
+    );
+    assert!(
+        !capabilities.contains("companion.resume"),
+        "discovery must not advertise the retired resume capability: {capabilities:?}"
+    );
+
+    handle.abort();
+}
 
 #[tokio::test]
 async fn skills_pack_requires_auth_and_serves_static_markdown() {
