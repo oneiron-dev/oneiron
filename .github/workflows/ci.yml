@@ -68,8 +68,15 @@ concurrency:
 #
 # Gate layout: `changes` detects rust-relevant diffs; `checks` (fmt, clippy
 # workspace + featureless, typos, cargo-deny policy) runs on every non-draft
-# PR — the cargo steps only when the diff is rust-relevant — and on dispatch
-# (deny is the dispatch-era gate, ONE-335); `test` runs the macOS recipe on
+# PR, on every push to main, and on dispatch — the cargo steps only when the
+# diff is rust-relevant (deny is the dispatch-era gate, ONE-335). Main pushes
+# were added 2026-09-09: PR CI validates the merge result against main AS IT
+# WAS, so a merge burst can land a state no `checks` run ever saw, and a
+# direct push to main saw none at all. The runners are ours, so the honest
+# fix is to re-run the gate on the commit that actually became main rather
+# than to reason about when it is safe to skip. It also gives the advisory
+# policy a second, regular route: a newly published RUSTSEC advisory no
+# longer waits for someone to open a PR. `test` runs the macOS recipe on
 # rust-diff PRs, on main pushes and on dispatch (fail-open on push if the detector
 # breaks; tag pushes always run); `test-linux` runs the unfiltered suite on
 # the Linux reference host for main pushes and dispatch only; `package`
@@ -123,7 +130,8 @@ jobs:
     needs: changes
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
     # PR takes one runner slot and one checkout for all of them. Runs on every
-    # non-draft PR and on dispatch; the cargo steps below gate themselves on a
+    # non-draft PR, on every push to main and on dispatch; the cargo steps
+    # below gate themselves on a
     # rust-relevant diff (always on dispatch: a manual run is the full gate;
     # fail-open if the detector broke), typos and deny always. Inside
     # always(): dispatch is the deny gate's unconditional route (ONE-335,
@@ -132,7 +140,7 @@ jobs:
     if: >-
       always()
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+      && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
         with:
