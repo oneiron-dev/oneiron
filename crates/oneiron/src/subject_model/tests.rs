@@ -48,7 +48,11 @@ fn put_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result
 // Reader corruption tests must not ask the checked admission door to accept
 // invalid substrate. Preserve the existing row header and indexes, and damage
 // only its body, as an on-disk corruption fixture (never a production door).
-fn corrupt_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+pub(crate) fn corrupt_subject_fixture(
+    vault: &Vault,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
     let bytes = crate::claim::encode_claim_body(body)?;
     vault.with_write_txn(|txn| {
         let mut raw = vault
@@ -620,18 +624,7 @@ fn malformed_subject_values_are_not_projected_as_plumbing() -> Result<()> {
     let mut body = vault.get_claim(&id)?.expect("anchor claim");
     for value in [Value::from("not-an-id"), Value::from(place.to_hex())] {
         body.value = value;
-        vault.with_write_txn(|wtxn| {
-            vault.put_reserved_claim_in_txn(
-                wtxn,
-                &id,
-                &body,
-                TimeRange {
-                    start: 1_800_000_000,
-                    end: 1_800_000_000,
-                },
-                1_800_000_000,
-            )
-        })?;
+        corrupt_subject_fixture(&vault, &id, &body)?;
         assert_eq!(
             vault
                 .actor_subject_anchor(&actor, 1_800_000_000)

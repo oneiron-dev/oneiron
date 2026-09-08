@@ -8,6 +8,7 @@ use oneiron::sync::transport::{
     TAG_RPC, TAG_SUB, TAG_VERSION_VECTOR,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
@@ -85,10 +86,73 @@ async fn next(socket: &mut Socket) -> Message {
         .unwrap()
 }
 
-async fn send(socket: &mut Socket, tag: u8, value: Value) {
+/// The version-8 app envelope the server speaks: TAG + MessagePack
+/// `{type, id, seq, last, payload}`. Requests are terminal at seq zero; RPC
+/// results arrive as `rpc.res` chunks whose payloads concatenate into one
+/// MessagePack value.
+#[derive(Serialize, Deserialize)]
+struct Envelope<T> {
+    #[serde(rename = "type")]
+    kind: String,
+    id: u64,
+    seq: u64,
+    last: bool,
+    payload: T,
+}
+
+async fn send(socket: &mut Socket, tag: u8, mut value: Value) {
+    let object = value.as_object_mut().unwrap();
+    let id = object
+        .remove("requestId")
+        .or_else(|| object.remove("subscriptionId"))
+        .and_then(|id| id.as_u64())
+        .unwrap();
+    let kind = if tag == TAG_RPC {
+        "rpc.req".to_owned()
+    } else {
+        object
+            .remove("method")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let envelope = Envelope {
+        kind,
+        id,
+        seq: 0,
+        last: true,
+        payload: value,
+    };
     let mut data = vec![tag];
-    data.extend_from_slice(&serde_json::to_vec(&value).unwrap());
+    envelope
+        .serialize(&mut rmp_serde::Serializer::new(&mut data).with_struct_map())
+        .unwrap();
     socket.send(Message::Binary(data.into())).await.unwrap();
+}
+
+/// Reassemble one `rpc.res` reply from its chunk frames into the
+/// `{requestId, result, last}` shape the assertions pin.
+async fn rpc_reply(socket: &mut Socket) -> Value {
+    let mut data = Vec::new();
+    let mut next_seq = 0;
+    loop {
+        let frame = match next(socket).await {
+            Message::Binary(frame) => frame,
+            Message::Ping(_) | Message::Pong(_) => continue,
+            other => panic!("expected bind response, got {other:?}"),
+        };
+        assert_eq!(frame[0], TAG_RPC);
+        let envelope: Envelope<serde_bytes::ByteBuf> = rmp_serde::from_slice(&frame[1..]).unwrap();
+        assert_eq!(envelope.kind, "rpc.res");
+        assert_eq!(envelope.seq, next_seq);
+        next_seq += 1;
+        data.extend_from_slice(&envelope.payload);
+        if envelope.last {
+            let result: Value = rmp_serde::from_slice(&data).unwrap();
+            return json!({"requestId": envelope.id, "result": result, "last": true});
+        }
+    }
 }
 
 async fn close_code(socket: &mut Socket) -> u16 {
@@ -161,12 +225,10 @@ async fn bind_requires_a_mac_verified_slip_then_returns_terminal_reply() {
         json!({"requestId":5,"method":"auth.bind","params":{"token":valid}}),
     )
     .await;
-    let Message::Binary(reply) = next(&mut socket).await else {
-        panic!("expected bind response")
-    };
-    assert_eq!(reply[0], TAG_RPC);
-    let value: Value = serde_json::from_slice(&reply[1..]).unwrap();
-    assert_eq!(value, json!({"requestId":5,"result":null,"last":true}));
+    assert_eq!(
+        rpc_reply(&mut socket).await,
+        json!({"requestId":5,"result":null,"last":true})
+    );
 }
 
 #[tokio::test]
