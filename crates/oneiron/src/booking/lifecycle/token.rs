@@ -65,7 +65,7 @@ impl SessionKey {
 ///
 /// There is deliberately no caller TTL on either arm: `Ordinary` takes the
 /// server default, and `CheckoutExtension` is capped by the verified lease AND
-/// by [`MAX_CHECKOUT_HOLD_TTL_SECS`].
+/// by [`MAX_CHECKOUT_HOLD_TTL_SECS`](super::MAX_CHECKOUT_HOLD_TTL_SECS).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HoldLeaseSpec {
     Ordinary,
