@@ -167,9 +167,8 @@ crates/oneiron/src/registry.rs\t//! registry
 
 
 def run():
-    import os
-    d = "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp/v2moves"
-    os.makedirs(d, exist_ok=True)
+    import tempfile
+    d = tempfile.mkdtemp(prefix="v2moves-")
     open(f"{d}/synth.tsv", "w").write(TSV)
     open(f"{d}/synth.decls", "w").write(DECLS)
 
