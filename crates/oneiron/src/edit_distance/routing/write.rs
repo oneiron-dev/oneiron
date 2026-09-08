@@ -2,7 +2,8 @@
 
 use super::keys::{
     AGGREGATE_ROW_LABEL, MEMBER_KEY_PREFIX, MEMBER_ROW_LABEL, ROW_VERSION, StoredAggregate,
-    StoredModelVersion, aggregate_key, decode_row, decoded_aggregate, encode_row, invalid, meta_key,
+    StoredModelVersion, aggregate_key, decode_row, decoded_aggregate, encode_row, invalid,
+    meta_key,
 };
 use super::scope::RoutingScopeKey;
 use super::version::serving_model_version;
