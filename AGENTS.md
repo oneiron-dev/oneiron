@@ -29,8 +29,8 @@ Full verify gate — run at VERDICT time only, never for iteration:
 
     scripts/verify.sh
 
-`scripts/verify.sh` is the single source of truth for the scripted gate and runs 4 stages: `cargo
-fmt --all --check`, workspace clippy (`-D warnings`, all targets/features), `cargo nextest run
+`scripts/verify.sh` is the single source of truth for the scripted gate and runs the code-map
+pin (`scripts/codemap/check.sh`) and then 4 stages: `cargo fmt --all --check`, workspace clippy (`-D warnings`, all targets/features), `cargo nextest run
 --workspace --all-features --profile full`, and `cargo test --doc --workspace --exclude
 oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
 script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
@@ -39,6 +39,13 @@ cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiro
 
 Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh` — same 4-stage
 coverage split across legs; the same two-command gap applies.
+
+Code map — read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules
+with layout, size bucket and purpose), then drill into `docs/codemap/<crate>.md` for the per-file
+table. Both are generated: after adding, moving, or deleting a Rust file run `python3
+scripts/codemap/codemap.py` and commit the result; `scripts/codemap/check.sh` (`--check`) is the
+first verify stage and fails on a stale map. `python3 scripts/codemap/codemap.py --sizes` prints
+the live line counts.
 
 ## Tool truth (verified on this box)
 
