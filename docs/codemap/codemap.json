@@ -2655,6 +2655,7 @@
       "CompanionProposal",
       "CompanionProposalCreation",
       "CompanionSoftConfirmation",
+      "HangoutProposalAssembly",
       "OneTimeParticipantToken",
       "ProposalCarrier",
       "ProposalChoice",
@@ -2665,11 +2666,11 @@
      "path": "src/booking/companion_preset.rs",
      "purpose": "ONE-1821 [BK-10] companion booking presets",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
-      "struct": 10
+      "fn": 10,
+      "struct": 11
      }
     },
     {
@@ -8023,12 +8024,60 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AssembledContext",
+      "HydrationBudget",
+      "NotificationItem",
+      "SessionContext",
+      "UnprocessedItem"
+     ],
+     "path": "src/context_board/hydration.rs",
+     "purpose": "The assembled context one hydration call returns: session prefix material (counts, last activity…",
+     "surface": {
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionAssembly",
+      "MemoriesBudget",
+      "MemoriesCursor",
+      "MemoriesSection",
+      "MemoryRow",
+      "MemorySlot",
+      "MemorySource"
+     ],
+     "path": "src/context_board/memories.rs",
+     "purpose": "MEMORIES section — what retrieval pulled: typed rows, the slot budget, the companion echo, and the…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/memories_projection.rs",
+     "purpose": "MEMORIES projection over a finished context pack — \"what retrieval PULLED\" (ARCH-0067 §1)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 4,
-      "re-export": 6
+      "re-export": 9
      }
     },
     {
@@ -8319,16 +8368,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/context_pack/eiri_memory_board.rs",
-     "purpose": "Memory-board view assembled from a finished context pack",
-     "surface": {
-      "fn": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "EmptyContext",
       "EmptyReason"
@@ -8375,7 +8414,7 @@
      "path": "src/context_pack/mod.rs",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
-      "re-export": 7
+      "re-export": 6
      }
     },
     {
@@ -10926,33 +10965,6 @@
      "path": "src/edit_settle/tests.rs",
      "purpose": "ARTL-4 settle tests",
      "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "EiriCompanionAssembly",
-      "EiriHangoutProposalAssembly",
-      "EiriMemoryBoard",
-      "EiriMemoryBoardBudget",
-      "EiriMemoryBoardRow",
-      "EiriMemoryBoardSlot",
-      "EiriMemoryBoardSource",
-      "EiriSessionRagState",
-      "NotificationItem",
-      "ResumeBudget",
-      "ResumeBundle",
-      "SessionContext",
-      "UnprocessedItem"
-     ],
-     "path": "src/eiri.rs",
-     "purpose": "Eiri Context v4 board + session-RAG + companion resume wire types, plus the friend-hangout booking binding…",
-     "surface": {
-      "const": 2,
-      "enum": 2,
-      "fn": 11,
-      "struct": 11
-     }
     },
     {
      "bucket": "m",
@@ -14026,7 +14038,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 26,
-      "mod": 160,
+      "mod": 159,
       "re-export": 71
      }
     },
@@ -22400,7 +22412,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/tests/session_misc.rs",
-     "purpose": "Session/resume serialization, basic entity CRUD, short-ID alias and vault identity",
+     "purpose": "Session/context-board serialization, basic entity CRUD, short-ID alias and vault identity",
      "surface": {}
     },
     {
@@ -24459,14 +24471,14 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 16,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 18,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -24618,13 +24630,6 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
-    },
-    "eiri": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
-     "layout": "file",
-     "purpose": "Eiri Context v4 board + session-RAG + companion resume wire types, plus the friend-hangout booking binding…"
     },
     "embed": {
      "files": 4,
@@ -25357,7 +25362,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1436,
+   "source_files": 1437,
    "test_files": 523
   },
   "oneiron-bench": {
@@ -28114,13 +28119,53 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/cursor.rs",
+     "purpose": "The per-process MEMORIES cursor store, keyed by vault, principal scope and session",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/memories.rs",
+     "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/mod.rs",
+     "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/prefix.rs",
+     "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 88
+      "crate-vis": 58
      }
     },
     {
@@ -28460,7 +28505,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi.rs",
@@ -28477,16 +28522,6 @@
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
       "crate-vis": 11
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/resume.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 13
      }
     },
     {
@@ -28574,7 +28609,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_pack_v4.rs",
-     "purpose": "Context-pack v4 memory-board/session-RAG/companion/assets, session scoping, evidence run-id omission",
+     "purpose": "Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission",
      "surface": {}
     },
     {
@@ -28742,7 +28777,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_routes.rs",
-     "purpose": "Health/runtime/discover redaction, outbound capability contracts, local artifact serving, companion resume…",
+     "purpose": "Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed…",
      "surface": {}
     },
     {
@@ -29900,7 +29935,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/core_discover.rs",
@@ -29974,7 +30009,7 @@
    ],
    "modules": {
     "api": {
-     "files": 100,
+     "files": 103,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -30116,7 +30151,7 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 134,
+   "source_files": 137,
    "test_files": 68
   },
   "oneiron-uniffi": {
