@@ -62,6 +62,8 @@ mod receipts;
 mod storage;
 mod types;
 
+#[cfg(test)]
+pub(crate) use self::ledger::record_escalation_at;
 pub use self::ledger::{
     DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, ESCALATION_STANDING_N_KEY,
     escalation_standing_n, escalation_stats, record_escalation, set_escalation_standing_n,
@@ -69,11 +71,9 @@ pub use self::ledger::{
 pub use self::policy::{
     accept_standing_policy, maybe_propose_standing_policy, standing_policy_for,
 };
-pub(crate) use self::receipts::escalation_receipts;
-#[cfg(test)]
-pub(crate) use self::ledger::record_escalation_at;
 #[cfg(test)]
 pub(crate) use self::policy::{accept_standing_policy_at, maybe_propose_standing_policy_at};
+pub(crate) use self::receipts::escalation_receipts;
 pub use self::receipts::{is_escalation_receipt, is_standing_policy_receipt};
 pub use self::types::{
     EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
