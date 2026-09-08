@@ -44,8 +44,12 @@ env:
 # spend, and a rapid main-merge burst only needs the newest sha's run — the
 # older ones are cancelled.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PR pushes supersede themselves, so cancelling saves real spend. Main
+  # pushes must not: each merge is a distinct state someone may need the
+  # result for, and a merge burst would otherwise cancel the run for the
+  # commit before it. Per-sha group on push, per-PR group on pull_request.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Runners (2026-09-08, HYG-06b): every job runs on our own machines, not a
 # cloud pool. The MacBook and the Mac mini carry the
@@ -141,15 +145,15 @@ jobs:
           cargo clippy --version
       # Honor the workspace's heed exclusion; --all also follows local path dependencies.
       - name: Format
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success'
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo fmt --check
       - name: Clippy (workspace, all features)
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success'
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # Wave-6 acceptance gate (AGENTS.md, featureless builds): the oneiron
       # crate and its test targets must compile and lint with no features.
       - name: Clippy (oneiron, featureless)
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success'
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
       # typos, pinned like cargo-deny: the exact version matters (its
       # dictionary changes between releases, and a host's own typos is
@@ -157,6 +161,7 @@ jobs:
       # its binary from github.com on every run (the first proving run lost
       # that download to a DNS blip). Config is typos.toml.
       - name: typos 1.45.1 (host-local pin under ~/ci/tools)
+        if: ${{ !cancelled() }}
         run: |
           cargo install --locked typos-cli@1.45.1 --root "$HOME/ci/tools"
           "$HOME/ci/tools/bin/typos" --version
@@ -167,12 +172,15 @@ jobs:
       # lives under ~/ci/tools: `cargo install` is a no-op once that exact
       # version is there (one compile per host).
       - name: cargo-deny 0.19.4 (host-local pin under ~/ci/tools)
+        if: ${{ !cancelled() }}
         run: |
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
       - name: Test exact maintenance-risk policy (offline fixtures)
+        if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
       - name: Check dependencies with expiring accepted-risk policy
+        if: ${{ !cancelled() }}
         run: python3 scripts/advisory-policy/check.py
 
   test:
