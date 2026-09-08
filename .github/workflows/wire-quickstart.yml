@@ -113,16 +113,21 @@ jobs:
       # and creating it needs sudo.
       #
       # uv is installed on both macOS runners and ships relocatable CPython
-      # builds, so it holds the exact same 3.10 pin with no host change. Its
-      # bin directory carries `python`, `python3` and `pip`, so every later
-      # step is unchanged.
+      # builds, so it holds the exact same 3.10 pin with no host change.
+      #
+      # The interpreter uv installs is PEP 668 externally-managed, so
+      # `python -m pip install` into it is refused. A seeded venv goes on PATH
+      # instead: `python`, `pip` and the console scripts of anything installed
+      # here (maturin, twine) all resolve to it, and the measured
+      # `python -m venv "$WIRE_PYTHON_ENV"` below still builds a clean 3.10
+      # environment of its own, so nothing about what is measured changes.
       - name: Python 3.10 (uv-managed; see comment above)
         run: |
           command -v uv >/dev/null || export PATH="/opt/homebrew/bin:$PATH"
           uv python install 3.10
-          python_bin="$(uv python find 3.10)"
-          echo "${python_bin%/*}" >> "$GITHUB_PATH"
-          "$python_bin" --version
+          uv venv --python 3.10 --seed "$RUNNER_TEMP/wire-toolchain"
+          echo "$RUNNER_TEMP/wire-toolchain/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/wire-toolchain/bin/python" --version
 
       - name: Install Python build and metadata tooling
         run: python -m pip install --disable-pip-version-check maturin==1.9.4 twine==6.1.0
