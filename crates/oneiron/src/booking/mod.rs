@@ -25,11 +25,12 @@ mod tests;
 pub use companion_preset::{
     COMPANION_PROPOSAL_LINK_PREFIX, COMPANION_PROPOSAL_META_PREFIX, COMPANION_PROPOSAL_TAP_ACTION,
     ChoiceId, CompanionConfirmationMode, CompanionPresetRow, CompanionProposal,
-    CompanionProposalCreation, CompanionSoftConfirmation, OneTimeParticipantToken, ProposalCarrier,
-    ProposalChoice, ProposalId, ProposalTap, TapAggregate, companion_solve_request,
-    create_companion_proposal, load_companion_preset, opaque_proposal_message_link,
-    ranked_authorized_common_intersection, record_proposal_tap, render_companion_proposal,
-    soft_confirm_highest_common_on_home_node,
+    CompanionProposalCreation, CompanionSoftConfirmation, EIRI_FRIEND_HANGOUT_PRESET_ID,
+    EiriHangoutProposalAssembly, OneTimeParticipantToken, ProposalCarrier, ProposalChoice,
+    ProposalId, ProposalTap, TapAggregate, assemble_hangout_proposal_message,
+    companion_solve_request, create_companion_proposal, eiri_friend_hangout_preset,
+    load_companion_preset, opaque_proposal_message_link, ranked_authorized_common_intersection,
+    record_proposal_tap, render_companion_proposal, soft_confirm_highest_common_on_home_node,
 };
 pub use config::{
     BOOKING_EVENT_TYPE_META_PREFIX, BOOKING_EVENT_TYPE_PREDICATE,

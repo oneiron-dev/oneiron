@@ -3,8 +3,8 @@
 //! A companion preset is a second set of *interaction* semantics over the SAME
 //! solver, mask, and home-node writer the business booking page uses. It is not
 //! a second booking system, and this module carries no product name: the
-//! product binding is one small seam in `eiri.rs`, and the preset's behaviour
-//! is pack data, not code and not an entity kind.
+//! friend-hangout binding sits at the end of this file, and the preset's
+//! behaviour is pack data, not code and not an entity kind.
 //!
 //! # What a companion preset changes
 //!
@@ -843,6 +843,65 @@ mod entity_ref_serde {
 }
 
 // -------------------------------------------------------------------------
+// Friend-hangout booking preset (ONE-1821)
+//
+// The whole Eiri-named half of the companion booking path is here: an id, a
+// loader call, and a message assembly. The machinery it drives is generic and
+// product-free above, and the behaviour is pack data, not code.
+// -------------------------------------------------------------------------
+
+/// The friend-hangout preset's stable id, matching the pack-data row.
+pub const EIRI_FRIEND_HANGOUT_PRESET_ID: &str = "booking.eiri.friend_hangout.v1";
+
+/// The pack-data row. Behaviour lives in this JSON, not in a Rust branch.
+const EIRI_FRIEND_HANGOUT_PRESET_V1_JSON: &str =
+    include_str!("presets/eiri_friend_hangout_v1.json");
+
+/// Binds the friend-hangout pack row to the caller's synthetic configuration.
+///
+/// The configuration is supplied rather than looked up: a friend hangout has no
+/// booking page, and the personal-hours profile and flex pool are the caller's
+/// to build.
+pub fn eiri_friend_hangout_preset(
+    synthetic_event_type_config: EventTypeConfig,
+) -> Result<CompanionPresetRow, BookingError> {
+    load_companion_preset(
+        EIRI_FRIEND_HANGOUT_PRESET_V1_JSON.as_bytes(),
+        synthetic_event_type_config,
+    )
+}
+
+/// What Eiri needs to write the message: the proposal's opaque id, the carrier
+/// reference the generic module produced, and the choice labels to read out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EiriHangoutProposalAssembly {
+    pub proposal_id: ProposalId,
+    pub message_link: String,
+    pub choice_labels: Vec<String>,
+}
+
+/// Assembles the message around an EXISTING proposal link.
+///
+/// No link is minted here and no time is invented: the caller passes the
+/// reference `opaque_proposal_message_link` produced, and the labels are the
+/// proposal's own.
+#[must_use]
+pub fn assemble_hangout_proposal_message(
+    proposal: &CompanionProposal,
+    message_link: String,
+) -> EiriHangoutProposalAssembly {
+    EiriHangoutProposalAssembly {
+        proposal_id: proposal.id,
+        message_link,
+        choice_labels: proposal
+            .choices
+            .iter()
+            .map(|choice| choice.label.clone())
+            .collect(),
+    }
+}
+
+// -------------------------------------------------------------------------
 // Oracles
 //
 // Co-located, mirroring `lifecycle.rs`: several of these assertions read
@@ -863,10 +922,6 @@ mod tests {
     use crate::booking::solver::{BookingSolver, NoActiveHolds};
     use crate::booking::{SolveRequest as SeamSolveRequest, SolveResult};
     use crate::calendar::query::CalendarSel;
-    use crate::eiri::{
-        EIRI_FRIEND_HANGOUT_PRESET_ID, assemble_hangout_proposal_message,
-        eiri_friend_hangout_preset,
-    };
     use crate::lens::SelfUiControl;
     use crate::test_util::entity as id;
 
