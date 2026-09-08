@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1087 | 518 | 92 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 67 | 11 | 1 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
-| [oneiron-ffi](codemap/oneiron-ffi.md) | — | 8 | 1 | 0 |
+| [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 1 | 0 | 1 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's [`LlmBackend`] seam | 1 | 0 | 1 |
 | [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 1 | 0 | 1 |
