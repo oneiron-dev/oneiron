@@ -26,7 +26,7 @@ oneiron-remote = { path = "../oneiron-remote" }
 # abi3-py310 matches the 3.10 floor and produces ONE wheel for every later
 # CPython, so the release matrix is a platform list rather than a
 # platform-by-interpreter grid.
-pyo3 = { version = "0.27", features = ["abi3-py310", "extension-module"] }
+pyo3 = { version = "0.29", features = ["abi3-py310", "extension-module"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
