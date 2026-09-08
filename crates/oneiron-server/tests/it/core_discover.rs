@@ -141,21 +141,21 @@ fn str_array_set(value: &Value) -> BTreeSet<&str> {
 }
 
 #[tokio::test]
-async fn companion_resume_requires_auth_and_deserializes() {
+async fn context_board_requires_auth_and_deserializes() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
 
-    let missing = http_post(addr, "/api/companion/resume", None, "{}").await;
+    let missing = http_post(addr, "/v1/core/context-board", None, "{}").await;
     assert_http_status(&missing, 401);
 
-    let wrong = http_post(addr, "/api/companion/resume", Some("wrong"), "{}").await;
+    let wrong = http_post(addr, "/v1/core/context-board", Some("wrong"), "{}").await;
     assert_http_status(&wrong, 401);
 
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
     assert_eq!(bundle.session.api_version, "v1");
     assert_eq!(bundle.notifications, Vec::new());
     assert_eq!(bundle.unprocessed, Vec::new());
@@ -167,7 +167,7 @@ async fn companion_resume_requires_auth_and_deserializes() {
 }
 
 #[tokio::test]
-async fn companion_resume_counts_by_type_and_reports_latest_activity() {
+async fn context_board_counts_by_type_and_reports_latest_activity() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
 
@@ -191,10 +191,10 @@ async fn companion_resume_counts_by_type_and_reports_latest_activity() {
         .unwrap();
 
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
     assert_eq!(
         bundle
@@ -218,15 +218,17 @@ async fn companion_resume_counts_by_type_and_reports_latest_activity() {
 }
 
 #[tokio::test]
-async fn companion_resume_filters_surfaced_notification_by_exact_id() {
+async fn context_board_filters_surfaced_notification_by_exact_id() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
 
+    // The bare secret authenticates as principal `bearer`; notification scope
+    // and surfaced markers key on that identity.
     let surfaced = EntityId::now();
     let pending = EntityId::now();
     let surfaced_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "seen",
-        "surfaced_by": ["default"]
+        "surfaced_by": ["bearer"]
     }))
     .unwrap();
     let pending_body = rmp_serde::to_vec(&serde_json::json!({
@@ -253,10 +255,10 @@ async fn companion_resume_filters_surfaced_notification_by_exact_id() {
         .unwrap();
 
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
     assert_eq!(bundle.notifications[0].id, pending.to_hex());
@@ -267,7 +269,7 @@ async fn companion_resume_filters_surfaced_notification_by_exact_id() {
 }
 
 #[tokio::test]
-async fn companion_resume_skips_malformed_and_non_object_notifications() {
+async fn context_board_skips_malformed_and_non_object_notifications() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
 
@@ -309,10 +311,10 @@ async fn companion_resume_skips_malformed_and_non_object_notifications() {
         .unwrap();
 
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
     assert_eq!(bundle.notifications[0].id, valid.to_hex());
@@ -321,7 +323,7 @@ async fn companion_resume_skips_malformed_and_non_object_notifications() {
 }
 
 #[tokio::test]
-async fn companion_resume_requires_all_present_scope_keys_to_match() {
+async fn context_board_requires_all_present_scope_keys_to_match() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), test_vault_config()).unwrap());
 
@@ -329,14 +331,14 @@ async fn companion_resume_requires_all_present_scope_keys_to_match() {
     let matched = EntityId::now();
     let conflicting_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "conflict",
-        "caller": "default",
+        "caller": "bearer",
         "recipient": "other"
     }))
     .unwrap();
     let matched_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "match",
-        "caller": "default",
-        "recipient": "default"
+        "caller": "bearer",
+        "recipient": "bearer"
     }))
     .unwrap();
 
@@ -360,10 +362,10 @@ async fn companion_resume_requires_all_present_scope_keys_to_match() {
         .unwrap();
 
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
     assert_eq!(bundle.notifications[0].id, matched.to_hex());
@@ -373,7 +375,7 @@ async fn companion_resume_requires_all_present_scope_keys_to_match() {
 }
 
 #[tokio::test]
-async fn companion_resume_bounds_pending_notification_response_to_latest_items() {
+async fn context_board_bounds_pending_notification_response_to_latest_items() {
     const PENDING_ROWS: usize = 130;
     const EXPECTED_LIMIT: usize = 128;
     const ID_BASE: u128 = 0x2142_0000;
@@ -399,10 +401,10 @@ async fn companion_resume_bounds_pending_notification_response_to_latest_items()
     batch.commit().unwrap();
 
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
     assert_eq!(bundle.notifications.len(), EXPECTED_LIMIT);
     assert_eq!(
@@ -420,7 +422,7 @@ async fn companion_resume_bounds_pending_notification_response_to_latest_items()
 }
 
 #[tokio::test]
-async fn companion_resume_returns_latest_pending_notification_over_type_cap() {
+async fn context_board_returns_latest_pending_notification_over_type_cap() {
     const TYPE_CAP: usize = 100_000;
     const HISTORICAL_ROWS: usize = TYPE_CAP + 1;
     const ID_BASE: u128 = 0x2140_0000;
@@ -435,7 +437,7 @@ async fn companion_resume_returns_latest_pending_notification_over_type_cap() {
     .unwrap();
     let surfaced_body = rmp_serde::to_vec(&serde_json::json!({
         "message": "old-surfaced",
-        "surfaced_by": ["default"]
+        "surfaced_by": ["bearer"]
     }))
     .unwrap();
     let pending = seeded_entity_id(ID_BASE + HISTORICAL_ROWS as u128);
@@ -472,10 +474,10 @@ async fn companion_resume_returns_latest_pending_notification_over_type_cap() {
         .unwrap();
 
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
-    let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
+    let response = http_post(addr, "/v1/core/context-board", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
     let bundle: AssembledContext =
-        serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
+        serde_json::from_str(http_body(&response)).expect("context board should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
     assert_eq!(bundle.notifications[0].id, pending.to_hex());
