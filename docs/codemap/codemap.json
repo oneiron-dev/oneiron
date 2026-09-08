@@ -5246,34 +5246,113 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BoardEvent",
+      "DeliveryClass",
+      "DeliveryPolicy",
+      "RouteObservation",
+      "SubscriptionError",
+      "SubscriptionReceipt",
+      "SubscriptionScope"
+     ],
+     "path": "src/context_board/stream/events.rs",
+     "purpose": "Board events and their subscription/delivery classification",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AppliedStreamState",
-      "BindInstanceError",
-      "BoardEvent",
       "BoardRenderMode",
       "BoardSnapshot",
       "BoardStreamFrame",
-      "BoardStreamRegistry",
       "CarrierCoalesceBuffer",
-      "ChildEvent",
       "CoalesceOutcome",
-      "DeliveryClass",
-      "DeliveryPolicy",
       "DeltaRow",
       "FrameApplyOutcome",
       "FrameEnqueueOutcome",
       "FrameKind",
+      "StreamConnectionId"
+     ],
+     "path": "src/context_board/stream/frames.rs",
+     "purpose": "Board stream frames, snapshots and carrier coalescing",
+     "surface": {
+      "enum": 5,
+      "fn": 6,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/stream/mod.rs",
+     "purpose": "Board streaming frames and harness wake dispatch",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChildEvent",
+      "VerifiedOwnTaskEvent"
+     ],
+     "path": "src/context_board/stream/provenance.rs",
+     "purpose": "Verified own-task and child event minting for routed board events",
+     "surface": {
+      "crate-vis": 13,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BoardStreamRegistry",
+      "StreamConnectionState"
+     ],
+     "path": "src/context_board/stream/registry.rs",
+     "purpose": "The board stream registry: connections, subscriptions and event routing",
+     "surface": {
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/stream/routing_tests.rs",
+     "purpose": "Event classification, provenance minting and route_event admission tests",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/stream/tests.rs",
+     "purpose": "Frame, snapshot, coalescing and subscription-lifecycle tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BindInstanceError",
       "HarnessInstanceKey",
       "InstanceBindingReceipt",
-      "RouteObservation",
-      "StreamConnectionId",
-      "StreamConnectionState",
-      "SubscriptionError",
-      "SubscriptionReceipt",
-      "SubscriptionScope",
-      "VerifiedOwnTaskEvent",
       "WakeAdapterKind",
       "WakeDeliveryOutcome",
       "WakeDeliveryReportError",
@@ -5282,15 +5361,40 @@
       "WakeEnvelope",
       "WakeReportDisposition"
      ],
-     "path": "src/context_board/stream.rs",
-     "purpose": "—",
+     "path": "src/context_board/stream/wake.rs",
+     "purpose": "Wake envelopes, harness instance keys and the adapter dispatch ladder",
      "surface": {
-      "const": 1,
-      "crate-vis": 13,
-      "enum": 14,
-      "fn": 27,
-      "struct": 18
+      "crate-vis": 5,
+      "enum": 5,
+      "fn": 3,
+      "struct": 5
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/stream/wake_adapter_tests.rs",
+     "purpose": "Durable-mailbox adapter-install scenario tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/stream/wake_dispatch.rs",
+     "purpose": "The registry's wake half: binding, dispatch, reporting and fallback",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/stream/wake_tests.rs",
+     "purpose": "Instance binding, dispatch fallback and delivery-report fencing tests",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -8503,57 +8607,147 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCard"
+     ],
+     "path": "src/lens/generated_ui/genui_card.rs",
+     "purpose": "Authored-tree [`GeneratedUiCard`] assembly, surface lowering, and validated wire decoding",
+     "surface": {
+      "fn": 12,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCatalog",
+      "GeneratedUiPrebuilt",
+      "GeneratedUiPrimitive",
+      "GeneratedUiSummaryCardPrebuilt",
+      "GeneratedUiSurfaceCapabilities"
+     ],
+     "path": "src/lens/generated_ui/genui_catalog.rs",
+     "purpose": "Closed primitive catalog, surface capability negotiation, and prebuilt card expansion",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "GeneratedLens",
-      "GeneratedUiActionDeclaration",
-      "GeneratedUiActionEvent",
-      "GeneratedUiActionTier",
-      "GeneratedUiArchiveReason",
-      "GeneratedUiCard",
-      "GeneratedUiCardElement",
-      "GeneratedUiCardLifecycle",
-      "GeneratedUiCardPhase",
-      "GeneratedUiCardStart",
-      "GeneratedUiCardStateUpdate",
-      "GeneratedUiCatalog",
-      "GeneratedUiDataModel",
-      "GeneratedUiNode",
-      "GeneratedUiPrebuilt",
-      "GeneratedUiPrimitive",
-      "GeneratedUiRender",
-      "GeneratedUiSegment",
-      "GeneratedUiStatePatch",
-      "GeneratedUiStateSnapshot",
-      "GeneratedUiSummaryCardPrebuilt",
-      "GeneratedUiSurfaceCapabilities",
+      "LensLoadAction",
+      "LensVersionStamp"
+     ],
+     "path": "src/lens/generated_ui/genui_envelope.rs",
+     "purpose": "Versioned [`GeneratedLens`] envelope: wire pair, load-action decision, allocation-guarded wire validation",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LensAtomInventoryChange",
       "LensBehaviorDiff",
       "LensBehaviorFingerprint",
       "LensBehaviorHandle",
+      "LensHandleRoleChange"
+     ],
+     "path": "src/lens/generated_ui/genui_fingerprint.rs",
+     "purpose": "Golden-corpus behavior fingerprint and structured behavior diff",
+     "surface": {
+      "fn": 24,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LensEvaluatedRevision",
-      "LensHandleRoleChange",
-      "LensLoadAction",
       "LensRegenFailure",
       "LensRegenFailurePhase",
       "LensRegenOutcome",
       "LensRegenRequest",
-      "LensRegenerator",
-      "LensVersionStamp",
+      "LensRegenerator"
+     ],
+     "path": "src/lens/generated_ui/genui_regen.rs",
+     "purpose": "Regen request and outcome decision path over behavior fingerprints",
+     "surface": {
+      "enum": 2,
+      "fn": 13,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiCardElement",
+      "GeneratedUiCardStart",
+      "GeneratedUiCardStateUpdate",
+      "GeneratedUiDataModel",
+      "GeneratedUiNode",
+      "GeneratedUiRender",
+      "GeneratedUiSegment"
+     ],
+     "path": "src/lens/generated_ui/genui_render.rs",
+     "purpose": "Flat render validation, segment framing and reassembly, and segment wire validators",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 6,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeneratedUiActionDeclaration",
+      "GeneratedUiActionEvent",
+      "GeneratedUiActionTier",
+      "GeneratedUiArchiveReason",
+      "GeneratedUiCardLifecycle",
+      "GeneratedUiCardPhase",
+      "GeneratedUiStatePatch",
+      "GeneratedUiStateSnapshot",
       "SelfUiBindableProperty",
       "SelfUiBinding",
       "SelfUiStateValue"
      ],
-     "path": "src/lens/generated_ui.rs",
+     "path": "src/lens/generated_ui/genui_state.rs",
+     "purpose": "Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 6,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/generated_ui/mod.rs",
      "purpose": "The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation, the…",
      "surface": {
-      "const": 4,
-      "crate-vis": 7,
-      "enum": 13,
-      "fn": 80,
-      "struct": 24,
-      "trait": 1
+      "crate-vis": 1,
+      "re-export": 7
      }
     },
     {
@@ -8668,13 +8862,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 160,
       "re-export": 71
      }
@@ -9449,7 +9643,76 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/mod.rs",
+     "purpose": "The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910)",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_codec.rs",
+     "purpose": "Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_journal.rs",
+     "purpose": "Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_machine.rs",
+     "purpose": "State machine: stage, advance, CAS, finish/refuse/finalize T2, availability gate, pin release and orphan sweep",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_protocol.rs",
+     "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_tests_a.rs",
+     "purpose": "Tests: fixtures plus provenance, dependency-retention, happy-path, atomicity, availability and CAS-mismatch…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publication/publication_tests_b.rs",
+     "purpose": "Tests: crash-window recovery, advertisement projection, terminal-wins, duplicate-intent, stale-outcome…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OriginCensusDisposition",
@@ -9460,13 +9723,13 @@
       "OriginPublicationRequest",
       "OriginPublicationStatus"
      ],
-     "path": "src/origin/publication.rs",
-     "purpose": "The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910)",
+     "path": "src/origin/publication/publication_types.rs",
+     "purpose": "Pinned constants, protocol enums with string tables, and request/record/receipt/report types",
      "surface": {
       "const": 15,
-      "crate-vis": 3,
+      "crate-vis": 1,
       "enum": 3,
-      "fn": 22,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -12701,20 +12964,82 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/open_gates/hnsw_model_gates.rs",
+     "purpose": "HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration…",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/open_gates/manifest_storage_gates.rs",
+     "purpose": "Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage…",
+     "surface": {
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/open_gates/mod.rs",
+     "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
+     "surface": {
+      "crate-vis": 8,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/open_gates/open_create_door.rs",
+     "purpose": "Create-capable open door: `Store::open` and its helpers",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/open_gates/open_existing_door.rs",
+     "purpose": "Existing-only open door: `Store::open_existing` and its helpers",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DbManifestEntry",
       "StorageMigrationPlan"
      ],
-     "path": "src/store/open_gates.rs",
-     "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
+     "path": "src/store/open_gates/open_version_keys.rs",
+     "purpose": "Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and…",
      "surface": {
       "const": 5,
-      "crate-vis": 42,
+      "crate-vis": 43,
       "enum": 1,
-      "fn": 2,
+      "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/open_gates/vault_root_bind.rs",
+     "purpose": "Vault-root preflight pair classifier plus descriptor-bound root and LMDB header validators",
+     "surface": {
+      "crate-vis": 45
      }
     },
     {
@@ -13077,28 +13402,6 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
-     "kind": "src",
-     "notable": [
-      "LiveQueryTee",
-      "MaterializedDiffSummary",
-      "Materializer",
-      "ObserverAState",
-      "OriginMark",
-      "OutboundSink"
-     ],
-     "path": "src/sync/bridge.rs",
-     "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
-     "surface": {
-      "const": 1,
-      "crate-vis": 13,
-      "fn": 17,
-      "re-export": 1,
-      "struct": 5,
-      "trait": 1
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -13110,11 +13413,84 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/childof.rs",
+     "purpose": "ChildOf replay set, component ordering, and ordered edge-op application",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/companion_identity.rs",
+     "purpose": "Companion-register admission/scrub, identity topology ingest, and edge key/value helpers",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/sync/bridge/diagnostic_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/edges.rs",
+     "purpose": "Edge-delta materialization and per-op quarantine bookkeeping",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/entities.rs",
+     "purpose": "Entity-delta materialization and the per-entity blob writer",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/mod.rs",
+     "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
+     "surface": {
+      "crate-vis": 6,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LiveQueryTee",
+      "MaterializedDiffSummary",
+      "Materializer",
+      "ObserverAState",
+      "OriginMark",
+      "OutboundSink"
+     ],
+     "path": "src/sync/bridge/observers.rs",
+     "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
+     "surface": {
+      "const": 1,
+      "crate-vis": 9,
+      "fn": 13,
+      "struct": 5,
+      "trait": 1
+     }
     },
     {
      "bucket": "XL",
@@ -13123,6 +13499,16 @@
      "path": "src/sync/bridge/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/tombstones.rs",
+     "purpose": "Tombstone materialization, savepoint batching, and protected-header handling",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "L",
@@ -13781,6 +14167,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/source_scan.rs",
+     "purpose": "Test-only-file classification shared by every source-scanning fence",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -13925,26 +14321,97 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "ActorBound",
-      "HydratedShortId",
+      "ActorBound"
+     ],
+     "path": "src/vault/actors_memory.rs",
+     "purpose": "Vault actor binding, structural kinds and code-memory attachment",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 20,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "TextIndexStatus",
-      "Vault",
       "VaultDoctorDbManifestReport",
       "VaultDoctorHnswRecordState",
       "VaultDoctorHnswReport",
       "VaultDoctorReport"
      ],
-     "path": "src/vault.rs",
+     "path": "src/vault/doctor_manifest.rs",
+     "purpose": "Vault doctor report and text-index manifest handshake",
+     "surface": {
+      "crate-vis": 11,
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/edges.rs",
+     "purpose": "Vault edge writes, adjacency queries and graph traversal",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HydratedShortId"
+     ],
+     "path": "src/vault/entities.rs",
+     "purpose": "Vault entity, vector, short-id and type-index reads and writes",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 17,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Vault"
+     ],
+     "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 31,
-      "enum": 1,
-      "fn": 99,
-      "re-export": 1,
-      "struct": 7
+      "crate-vis": 3,
+      "re-export": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/open.rs",
+     "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/search_retrieval.rs",
+     "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 21
      }
     },
     {
@@ -13954,6 +14421,16 @@
      "path": "src/vault/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/transactions.rs",
+     "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
+     "surface": {
+      "fn": 17
+     }
     },
     {
      "bucket": "L",
@@ -14629,7 +15106,7 @@
      "path": "tests/common/mod.rs",
      "purpose": "Shared fixture helpers for `oneiron` integration tests",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -14917,7 +15394,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/of060_fitness.rs",
@@ -15598,7 +16075,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 6,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -15934,9 +16411,9 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 9,
+     "files": 16,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -16011,9 +16488,9 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 21,
+     "files": 28,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
@@ -16333,9 +16810,9 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 22,
+     "files": 28,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…"
     },
@@ -16361,7 +16838,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 31,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -16387,6 +16864,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
+    },
+    "test_util": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir (no mod.rs)",
+     "purpose": "—"
     },
     "tests": {
      "files": 1,
@@ -16424,10 +16908,10 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 2,
+     "files": 9,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
@@ -16487,10 +16971,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 152,
+   "over_bar": 147,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 754,
-   "test_files": 368
+   "source_files": 794,
+   "test_files": 372
   },
   "oneiron-bench": {
    "files": [
@@ -16569,13 +17053,193 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/beam.rs",
+     "path": "src/beam/arms.rs",
+     "purpose": "Deterministic and vanilla arms plus adapter dispatch",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/community.rs",
+     "purpose": "Community-beam run, timing loop, and aggregate gating",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/judge.rs",
+     "purpose": "Pinned majority-judge substrate",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/load.rs",
+     "purpose": "Dataset and contract loading",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/mod.rs",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model.rs",
+     "purpose": "Fixture, manifest, and arm input types",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/ppr_vad.rs",
+     "purpose": "PPR-VAD sweep arm, sampling, and gates",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/report.rs",
+     "purpose": "Report assembly and serialization",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/report_model.rs",
+     "purpose": "Report and contract output types",
+     "surface": {
+      "crate-vis": 40
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/runner.rs",
+     "purpose": "Subcommand run entry points and orchestration",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/scorer.rs",
+     "purpose": "BeamScorer trait and fixed scorer",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_community_eval004.rs",
+     "purpose": "Community and EVAL-004 tests",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_gates.rs",
+     "purpose": "Gate tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_jsonl_contract.rs",
+     "purpose": "JSONL contract tests",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_judge_cost.rs",
+     "purpose": "Judge and cost tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_ppr_vad.rs",
+     "purpose": "PPR-VAD tests",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_smoke_manifest.rs",
+     "purpose": "Smoke and manifest tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/util.rs",
+     "purpose": "Hex, hash, base64, and id-set helpers",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/validate.rs",
+     "purpose": "Fixture and manifest validators",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -16989,10 +17653,10 @@
    ],
    "modules": {
     "beam": {
-     "files": 1,
+     "files": 19,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "eval": {
@@ -17031,9 +17695,9 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 3,
+   "over_bar": 2,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 41,
+   "source_files": 59,
    "test_files": 11
   },
   "oneiron-driver": {
