@@ -1,4 +1,10 @@
-use super::*;
+//! The confirmation receipt's session and invite-identity bindings, read and
+//! bound inside the caller's transaction.
+use super::LifecycleReceiptRow;
+use super::storage::{decode_row, encode_row, engine_failure, put_meta, read_txn, refused};
+use super::types::BOOKING_RECEIPT_META_PREFIX;
+use crate::booking::BookingError;
+use crate::{EntityId, Vault};
 
 pub(super) fn confirmation_receipt_in(
     vault: &Vault,
