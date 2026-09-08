@@ -26,4 +26,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
 | `src/supervisor/tests/mod.rs` | test | s | 12 crate-vis | — | Shared fixtures for the supervisor test suites |
 | `src/supervisor/tests/voice.rs` | test | m | — | — | — |
-| `src/tick.rs` | src | XL | 11 struct · 2 enum · 2 trait · 13 fn · 1 type · 3 crate-vis | AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher, HintSignal, HybridTick, PushTick +7 | Tick sources: what wakes the supervisor (ONE-1684) |
+| `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn | HybridTick | Hybrid tick: biased deadline-versus-push select with deadline priority and session-hint sidecar delegation |
+| `src/tick/mod.rs` | src | s | 1 type · 4 re-export · 2 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
+| `src/tick/model.rs` | src | s | 4 struct · 1 enum · 2 trait · 3 crate-vis | CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
+| `src/tick/push.rs` | src | m | 3 struct · 1 enum · 6 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
+| `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
+| `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
+| `src/tick/tests/tests_push.rs` | test | m | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
+| `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 3 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
