@@ -46,3 +46,48 @@ submodule's items as manifest rows; do not rely on shell excision.
 `consumer_complete.py` asserts every moved pub/pub(crate) item's cross-module consumers —
 inline paths, brace-nested + multi-line use-trees, AND nested-module paths (non-flat
 names) — appear in the stage's `## allowed`. Run at every package-cut (T/V/U).
+
+## `split_check.py` — manifest-free move-only split gate
+
+`split_check.py <base-rev> <old-file> <new-dir>` (paths relative to the cwd; deps:
+`python3` + `git` + `rustfmt`/`RUSTFMT_BIN`). The little sibling of `conformance.sh`
+for the common campaign case — `foo.rs` → `foo/mod.rs` + children — with no manifest:
+the old file at `<base-rev>` IS the manifest. Exit 0 = pure move, 1 = drift (one
+`FAIL …` line per problem, then `SPLIT-CHECK OK <old> -> <n> children (<m> items)` /
+`SPLIT-CHECK FAIL <old>: <k> problem(s)`); any exception fails closed with
+`SPLIT-CHECK-ERROR` + exit 1.
+
+What it checks (new side = working tree, every `*.rs` directly under `<new-dir>`):
+
+- `<old-file>` no longer exists; `<new-dir>/mod.rs` exists and carries a `mod x;`
+  for every child `x.rs`.
+- Base file and each child are rustfmt-normalised whole (`rustlex.rustfmt`, edition
+  2024, comment options off, no repo `rustfmt.toml`), then `rustlex.enumerate_items`
+  on both. Items match by `(scope, kind, name | impl-header canon, cfgs)` and every
+  base item must land in exactly one child: missing / duplicate / extra = FAIL.
+- Bodies (doc comments + attributes included) must be byte-identical after the
+  leading visibility keyword is stripped; a `pub`↔`pub(crate)`↔`pub(super)`↔private
+  change is an `INFO vis …` line, never a failure. A mismatch prints a unified diff of
+  the two normalised fragments (capped at 60 lines); an item that only reflows because
+  it moved between an inline `mod tests` body and a file top level is re-formatted
+  standalone before it is called a mismatch.
+- Scope: `top` = the file body; `tests` = the base file's inline `mod tests { … }`
+  body. On the new side `tests.rs` / `*_tests.rs` children and an inline `mod tests`
+  in any child are the `tests` scope, so moved tests are still 1:1. `tests.rs` /
+  `*_tests.rs` are skipped (INFO) when the base file had no inline `mod tests`.
+- An impl header that lands in more than one child (the usual way a 6k-line
+  `impl Vault {}` gets split), or that the base already carried more than once, is
+  compared per associated item (`method` / `const` / `type`) instead; each part's
+  residue — header, attributes, docs, anything that is not an associated item — must
+  equal the base's.
+- Allowed new-side extras (module plumbing, also ignored on the base side): `use` at
+  any visibility incl. `#[cfg(test)] use …` seams, `mod x;` declarations, `#![…]`
+  inner attributes, `//!` docs, `extern crate`, free comments and blank lines.
+- Anything `enumerate_items` does not recognise (a top-level macro invocation such as
+  `thread_local! { … }`, an `extern "C" { … }` block) is compared as an opaque
+  canon-tokenised residue chunk, also 1:1. Reported line numbers are those of the
+  rustfmt-normalised text, not the file on disk.
+
+Cost: whole-file rustfmt once per side plus a byte-equality fast path; an 18k-line
+file checks in ~0.5 s, so no per-fragment batching is needed. Tests:
+`python3 -m pytest scripts/tests/test_split_check.py -q` (throwaway git repo + fixture).
