@@ -1,0 +1,77 @@
+//! The assembled context one hydration call returns: session prefix material (counts, last activity, notifications, unprocessed work, token meter) beside the MEMORIES cursor and section (ARCH-0067 §2, v5 assembled context). Step two: split into the cached-prefix blocks and the dynamic tail.
+
+use std::collections::BTreeMap;
+
+use super::memories::EiriSessionRagState;
+
+/// Read-only ambient context returned by the companion resume endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionContext {
+    pub api_version: String,
+    pub counts: BTreeMap<String, u64>,
+    pub last_activity: Option<u64>,
+    #[serde(default)]
+    pub rag_state: EiriSessionRagState,
+}
+
+/// Pending notification surfaced during companion resume hydration.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NotificationItem {
+    pub id: String,
+    pub learned_at: u64,
+    pub body: serde_json::Value,
+}
+
+/// Existing work item that still needs caller-side processing.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UnprocessedItem {
+    pub id: String,
+    pub entity_type: u8,
+    pub learned_at: u64,
+    pub body: serde_json::Value,
+}
+
+/// Token meter snapshot included in every companion resume bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ResumeBudget {
+    pub tokens_used: u64,
+    pub tokens_limit: u64,
+    pub tokens_remaining: u64,
+}
+
+impl ResumeBudget {
+    #[must_use]
+    pub fn from_meter(tokens_used: u64, tokens_limit: u64) -> Self {
+        Self {
+            tokens_used,
+            tokens_limit,
+            tokens_remaining: tokens_limit.saturating_sub(tokens_used),
+        }
+    }
+}
+
+/// Single-call companion hydration bundle.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResumeBundle {
+    pub session: SessionContext,
+    pub notifications: Vec<NotificationItem>,
+    pub unprocessed: Vec<UnprocessedItem>,
+    pub budget: ResumeBudget,
+}
+
+impl ResumeBundle {
+    #[must_use]
+    pub fn new(
+        session: SessionContext,
+        notifications: Vec<NotificationItem>,
+        unprocessed: Vec<UnprocessedItem>,
+        budget: ResumeBudget,
+    ) -> Self {
+        Self {
+            session,
+            notifications,
+            unprocessed,
+            budget,
+        }
+    }
+}

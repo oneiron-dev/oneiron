@@ -5,8 +5,11 @@ use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::ClaimSubject;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::context_board::{
+    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoardBudget,
+    assemble_eiri_memory_board,
+};
 use crate::disclosure::DisclosureContext;
-use crate::eiri::{EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoardBudget};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::{ScoredEntity, Signal, WorldScope};

@@ -1,7 +1,12 @@
 //! Typed Context Board render projections.
+//!
+//! Sections present: MEMORIES, TASKS, AGENTS, plugin, stream. SKILLS (§8, 2026-08-28) has no producer here yet.
 
 mod agents;
 mod frame;
+mod hydration;
+mod memories;
+mod memories_projection;
 mod plugin;
 mod stream;
 
@@ -30,6 +35,14 @@ pub use frame::{
     assemble_task_agent_sections, render_board_block, resolve_board_budget,
     section_policy_for_budget_ref, shed,
 };
+pub use hydration::{
+    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+};
+pub use memories::{
+    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
+    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
+};
+pub use memories_projection::assemble_eiri_memory_board;
 pub use plugin::{
     AdmittedPluginSection, AuthorityLaneRef, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
     PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload,

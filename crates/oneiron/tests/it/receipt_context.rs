@@ -10,7 +10,7 @@
 use crate::common::entity;
 use oneiron::{
     EiriMemoryBoard, EiriMemoryBoardBudget, HnswConfig, Result, TimeRange, Vault, VaultConfig,
-    context_pack::assemble_eiri_memory_board, genui::GrantMintIntent, genui::GrantMintIntentScope,
+    context_board::assemble_eiri_memory_board, genui::GrantMintIntent, genui::GrantMintIntentScope,
     outbound::OutboundIntent, outbound::OutboundIntentDraft, outbound::OutboundIntentTrigger,
     prompt::PromptRecompileStamp, prompt::resolve_eiri_v3_prompt,
     prompt::workspace_prompt_package_root, receipt::ContextReceiptFields, receipt::ReceiptQuery,
