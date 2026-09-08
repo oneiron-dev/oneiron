@@ -67,14 +67,65 @@ fn production_file(rel: &str) -> bool {
         && !rel.ends_with("/src/tests_bug.rs")
 }
 
-// Recognize only simple, top-level cfg(test) path mounts. Unknown path syntax
-// keeps every file scanned. Other mounts of the same basename also veto an
-// exclusion, even across directories: false positives are safer than hiding code.
+// A file is test-only when a simple, top-level `#[cfg(test)]` mount reaches it,
+// or when the file mounting it is itself test-only: a `*/tests.rs` sibling, a
+// `/tests/` or `/benches/` file, or a file already reached this way. Mounts
+// inside inline `#[cfg(test)]` modules are masked away with the module. Unknown
+// path syntax keeps every file scanned. Other mounts of the same basename from
+// production files veto an exclusion, even across directories: false positives
+// are safer than hiding code.
 fn cfg_test_external_files(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
+    let repo = repo_root();
+    let Some(mounts) = external_mounts(sources) else {
+        return BTreeSet::new();
+    };
+    let test_only_file = |path: &Path| !production_file(&normalized(relative_path(&repo, path)));
     let mut tests = BTreeSet::new();
-    let mut production_names = BTreeSet::new();
+    loop {
+        let before = tests.len();
+        for mount in &mounts {
+            if mount.cfg_test || tests.contains(&mount.parent) || test_only_file(&mount.parent) {
+                tests.extend(mount.targets.iter().cloned());
+            }
+        }
+        if tests.len() == before {
+            break;
+        }
+    }
+    let production_names = mounts
+        .iter()
+        .filter(|mount| {
+            !mount.cfg_test && !tests.contains(&mount.parent) && !test_only_file(&mount.parent)
+        })
+        .map(|mount| mount.file_name.clone())
+        .collect::<BTreeSet<_>>();
+    tests.retain(|path| {
+        let file_name = path
+            .file_name()
+            .expect("mounted filename")
+            .to_string_lossy();
+        !production_names.contains(file_name.as_ref())
+    });
+    tests
+}
+
+struct ExternalMount {
+    parent: PathBuf,
+    /// Basename of the mounted file, for the cross-directory veto.
+    file_name: String,
+    /// Where the mount resolves on disk; empty when the path is not simple.
+    targets: Vec<PathBuf>,
+    /// A simple, top-level `#[cfg(test)]` (plus optional `#[path]`) mount.
+    cfg_test: bool,
+}
+
+// Every `mod <name>;` declaration outside inline `#[cfg(test)]` modules. `None`
+// means unknown `#[path]` syntax somewhere: keep every file scanned.
+fn external_mounts(sources: &[(PathBuf, String)]) -> Option<Vec<ExternalMount>> {
+    let mut mounts = Vec::new();
     for (parent, source) in sources {
-        let clean = strip_comments_and_literals(source);
+        let clean = production_source(source);
+        let dir = parent.parent().expect("source directory");
         for (start, _) in clean.match_indices("mod") {
             if start > 0 && is_ident_byte(clean.as_bytes()[start - 1]) {
                 continue;
@@ -92,33 +143,6 @@ fn cfg_test_external_files(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
             let prefix_start = clean[..start].rfind([';', '{', '}']).map_or(0, |i| i + 1);
             let prefix = &clean[prefix_start..start];
             let compact = prefix.split_whitespace().collect::<String>();
-            if !compact.contains("path=") {
-                production_names.insert(format!("{name}.rs"));
-                continue;
-            }
-            let Some(path_start) = prefix.find("#[path") else {
-                return BTreeSet::new();
-            };
-            let path_start = prefix_start + path_start + "#[path".len();
-            let Some(path_end) = clean[path_start..start].find(']') else {
-                return BTreeSet::new();
-            };
-            let literal = source[path_start..path_start + path_end]
-                .trim()
-                .strip_prefix('=')
-                .map(str::trim)
-                .and_then(|value| value.strip_prefix('"'))
-                .and_then(|value| value.strip_suffix('"'));
-            let Some(literal) = literal else {
-                return BTreeSet::new();
-            };
-            if literal.contains(['\\', '"']) || compact.matches("path=").count() != 1 {
-                return BTreeSet::new();
-            }
-            let mounted = Path::new(literal);
-            let Some(file_name) = mounted.file_name() else {
-                return BTreeSet::new();
-            };
             let depth = clean[..start]
                 .bytes()
                 .fold(0isize, |depth, byte| match byte {
@@ -126,28 +150,65 @@ fn cfg_test_external_files(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
                     b'}' | b')' | b']' => depth - 1,
                     _ => depth,
                 });
-            if depth == 0
-                && matches!(
-                    compact.as_str(),
-                    "#[cfg(test)]#[path=]" | "#[path=]#[cfg(test)]"
-                )
-                && mounted.components().count() == 1
-                && mounted.is_relative()
-            {
-                tests.insert(parent.parent().expect("source directory").join(mounted));
-            } else {
-                production_names.insert(file_name.to_string_lossy().into_owned());
+            if !compact.contains("path=") {
+                mounts.push(ExternalMount {
+                    parent: parent.clone(),
+                    file_name: format!("{name}.rs"),
+                    targets: module_file_candidates(parent, name),
+                    cfg_test: depth == 0 && compact == "#[cfg(test)]",
+                });
+                continue;
             }
+            let path_start = prefix_start + prefix.find("#[path")? + "#[path".len();
+            let path_end = clean[path_start..start].find(']')?;
+            let literal = source[path_start..path_start + path_end]
+                .trim()
+                .strip_prefix('=')
+                .map(str::trim)
+                .and_then(|value| value.strip_prefix('"'))
+                .and_then(|value| value.strip_suffix('"'))?;
+            if literal.contains(['\\', '"']) || compact.matches("path=").count() != 1 {
+                return None;
+            }
+            let mounted = Path::new(literal);
+            let file_name = mounted.file_name()?.to_string_lossy().into_owned();
+            let simple = mounted.is_relative()
+                && mounted
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)));
+            mounts.push(ExternalMount {
+                parent: parent.clone(),
+                file_name,
+                targets: if simple {
+                    vec![dir.join(mounted)]
+                } else {
+                    Vec::new()
+                },
+                cfg_test: depth == 0
+                    && matches!(
+                        compact.as_str(),
+                        "#[cfg(test)]#[path=]" | "#[path=]#[cfg(test)]"
+                    )
+                    && mounted.components().count() == 1
+                    && mounted.is_relative(),
+            });
         }
     }
-    tests.retain(|path| {
-        let file_name = path
-            .file_name()
-            .expect("mounted filename")
-            .to_string_lossy();
-        !production_names.contains(file_name.as_ref())
-    });
-    tests
+    Some(mounts)
+}
+
+// `mod name;` without `#[path]` resolves next to a `mod.rs`/`lib.rs`/`main.rs`
+// parent, or under the parent's own directory otherwise.
+fn module_file_candidates(parent: &Path, name: &str) -> Vec<PathBuf> {
+    let dir = parent.parent().expect("source directory");
+    let root = match parent.file_name().and_then(|file| file.to_str()) {
+        Some("mod.rs" | "lib.rs" | "main.rs") => dir.to_path_buf(),
+        _ => dir.join(parent.file_stem().expect("source file stem")),
+    };
+    vec![
+        root.join(format!("{name}.rs")),
+        root.join(name).join("mod.rs"),
+    ]
 }
 
 fn production_source(source: &str) -> String {
@@ -273,27 +334,17 @@ fn skip_quoted(bytes: &[u8], out: &mut [u8], mut i: usize, quote: u8) -> usize {
     i
 }
 
+// Mask every inline `#[cfg(test)] mod <ident> { ... }` body, whatever the
+// module is called: cfg(test) items never link into a production build.
 fn mask_cfg_test_modules(source: &str) -> String {
     let mut out = source.as_bytes().to_vec();
     let mut search_start = 0;
     while let Some(rel_cfg) = source[search_start..].find("#[cfg(test)]") {
         let cfg_start = search_start + rel_cfg;
-        let Some(rel_mod) = source[cfg_start..].find("mod tests") else {
-            search_start = cfg_start + "#[cfg(test)]".len();
+        search_start = cfg_start + "#[cfg(test)]".len();
+        let Some(open) = inline_module_open(source, search_start) else {
             continue;
         };
-        let mod_start = cfg_start + rel_mod;
-        if !source[cfg_start + "#[cfg(test)]".len()..mod_start]
-            .chars()
-            .all(char::is_whitespace)
-        {
-            search_start = cfg_start + "#[cfg(test)]".len();
-            continue;
-        }
-        let Some(rel_open) = source[mod_start..].find('{') else {
-            break;
-        };
-        let open = mod_start + rel_open;
         let Some(end) = matching_brace_end(source.as_bytes(), open) else {
             break;
         };
@@ -301,6 +352,22 @@ fn mask_cfg_test_modules(source: &str) -> String {
         search_start = end;
     }
     String::from_utf8(out).expect("masked source remains utf8")
+}
+
+// `mod <ident> {` directly after `start`, with only whitespace between the
+// tokens. Returns the byte index of the opening brace.
+fn inline_module_open(source: &str, start: usize) -> Option<usize> {
+    let body = source[start..].trim_start().strip_prefix("mod")?;
+    if !body.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let body = body.trim_start();
+    let name_len = body.bytes().take_while(|byte| is_ident_byte(*byte)).count();
+    if name_len == 0 {
+        return None;
+    }
+    let tail = body[name_len..].trim_start();
+    tail.starts_with('{').then_some(source.len() - tail.len())
 }
 
 fn matching_brace_end(bytes: &[u8], open: usize) -> Option<usize> {
@@ -409,7 +476,6 @@ fn of060_f1_put_replicated_stays_sync_only() {
     let mut violations = Vec::new();
     let sources = rust_files_under(&repo.join("crates"))
         .into_iter()
-        .filter(|path| production_file(&normalized(relative_path(&repo, path))))
         .map(|path| {
             let source = fs::read_to_string(&path)
                 .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
@@ -419,10 +485,10 @@ fn of060_f1_put_replicated_stays_sync_only() {
     let test_files = cfg_test_external_files(&sources);
 
     for (path, source) in sources {
-        if test_files.contains(&path) {
+        let rel = normalized(relative_path(&repo, &path));
+        if !production_file(&rel) || test_files.contains(&path) {
             continue;
         }
-        let rel = normalized(relative_path(&repo, &path));
         let source = production_source(&source);
         for pattern in [".put_replicated", "::put_replicated"] {
             for hit in find_substring_hits(&source, pattern) {
