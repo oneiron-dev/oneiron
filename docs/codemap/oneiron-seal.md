@@ -23,7 +23,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 14 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
-| `src/native/profile.rs` | src | L | 8 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
+| `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
+| `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
+| `src/native/profile/material.rs` | src | s | 4 crate-vis | — | B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs |
+| `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
+| `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 6 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
 | `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
 | `src/native/verify/verify_chain_gates.rs` | src | s | 9 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |

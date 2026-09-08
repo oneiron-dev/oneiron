@@ -177,7 +177,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server.rs` | src | L | 1 struct · 2 fn · 17 crate-vis | SyncServer | — |
 | `src/server/tests.rs` | test | L | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
-| `src/usage.rs` | src | L | 18 struct · 4 enum · 15 fn · 1 const | ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp, ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState +14 | — |
+| `src/usage/allowance.rs` | src | s | 7 struct · 1 enum · 7 crate-vis | ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp, ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState | Consumer allowance states, warning levels, and top-up request types |
+| `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 8 crate-vis | UsageError | Msgpack codec for ledger records and usage error mapping |
+| `src/usage/keys.rs` | src | s | 23 crate-vis | — | Storage key builders, key length guards, and field validators |
+| `src/usage/ledger.rs` | src | m | 1 struct · 7 fn · 3 crate-vis | UsageLedger | Usage ledger: event recording, rollups, consumer usage reads, and top-ups |
+| `src/usage/mod.rs` | src | s | 4 re-export | — | — |
+| `src/usage/model.rs` | src | m | 10 struct · 2 enum · 7 fn · 1 const · 6 crate-vis | UsageCost, UsageCostInput, UsageCostRates, UsageCounter, UsageDebit, UsageEvent, UsageEventType, UsageMode +4 | Usage domain model: modes, events, costs, rollups, counters, and money helpers |
+| `src/usage/telemetry.rs` | src | s | 1 crate-vis | — | Usage telemetry events and per-token-type spans |
 | `src/usage/tests.rs` | test | m | — | — | — |
 | `src/voice_host/connection.rs` | src | s | 2 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |
