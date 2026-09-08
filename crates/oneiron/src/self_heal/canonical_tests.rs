@@ -28,7 +28,9 @@ fn diagnostic_rejects_noncanonical_body_bytes() -> Result<()> {
     wide.extend_from_slice(&canonical[offset + 1..]);
     decode_diagnostic_event_body(&wide)?;
     assert_eq!(
-        validate_diagnostic_event_body_bytes(&wide).unwrap_err().kind(),
+        validate_diagnostic_event_body_bytes(&wide)
+            .unwrap_err()
+            .kind(),
         ErrorKind::InvalidDiagnosticBody
     );
 
@@ -80,7 +82,10 @@ fn diagnostic_escape_requires_exact_writer_form() -> Result<()> {
         draft.untrusted_detail = Some(hostile.to_owned());
         let bytes = encode_diagnostic_event_body(&draft)?;
         let decoded = validate_diagnostic_event_body_bytes(&bytes)?;
-        assert_eq!(decoded.untrusted_detail, Some(hostile.replace('\\', "\\\\")));
+        assert_eq!(
+            decoded.untrusted_detail,
+            Some(hostile.replace('\\', "\\\\"))
+        );
         assert_eq!(encode_stored_diagnostic_event_body(&decoded)?, bytes);
     }
     Ok(())

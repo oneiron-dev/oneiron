@@ -53,7 +53,6 @@
 mod public_authority;
 use public_authority::booking_writer_with_publication;
 
-
 use rand_core::{OsRng, RngCore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -656,14 +655,22 @@ pub fn enqueue_booking_verb_with_publication(
         requested_at: now_utc,
         public_authority,
     };
-    let public_scope = attempt.public_authority.as_ref().map(encode_row).transpose()?;
+    let public_scope = attempt
+        .public_authority
+        .as_ref()
+        .map(encode_row)
+        .transpose()?;
     let dedupe_key = match public_scope {
-        Some(snapshot) => attempt.request.idempotency_key().map(|key| {
-            format!("public:{}:{key}", blake3::hash(&snapshot).to_hex())
-        }),
+        Some(snapshot) => attempt
+            .request
+            .idempotency_key()
+            .map(|key| format!("public:{}:{key}", blake3::hash(&snapshot).to_hex())),
         // Namespace both arms: a caller's literal key may otherwise equal
         // a public key and coalesce onto an unrestricted queued attempt.
-        None => attempt.request.idempotency_key().map(|key| format!("private:{key}")),
+        None => attempt
+            .request
+            .idempotency_key()
+            .map(|key| format!("private:{key}")),
     };
     let payload = encode_row(&attempt)?;
 
@@ -958,16 +965,29 @@ pub(crate) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
 ) -> Result<BookingVerbReceipt, BookingError> {
     match &attempt.request {
         BookingVerbRequest::Hold(spec) => {
-            execute_hold(vault, spec, now_utc, attempt.public_authority.as_ref()).map(BookingVerbReceipt::Held)
+            execute_hold(vault, spec, now_utc, attempt.public_authority.as_ref())
+                .map(BookingVerbReceipt::Held)
         }
-        BookingVerbRequest::Confirm(spec) => {
-            execute_confirm(vault, oracle, spec, now_utc, invite_actor, invite_sink, attempt.public_authority.as_ref())
-        }
-        BookingVerbRequest::Reschedule(spec) => {
-            execute_reschedule(vault, oracle, spec, now_utc, attempt.public_authority.as_ref()).map(BookingVerbReceipt::Rescheduled)
-        }
+        BookingVerbRequest::Confirm(spec) => execute_confirm(
+            vault,
+            oracle,
+            spec,
+            now_utc,
+            invite_actor,
+            invite_sink,
+            attempt.public_authority.as_ref(),
+        ),
+        BookingVerbRequest::Reschedule(spec) => execute_reschedule(
+            vault,
+            oracle,
+            spec,
+            now_utc,
+            attempt.public_authority.as_ref(),
+        )
+        .map(BookingVerbReceipt::Rescheduled),
         BookingVerbRequest::Cancel(spec) => {
-            execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref()).map(BookingVerbReceipt::Cancelled)
+            execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())
+                .map(BookingVerbReceipt::Cancelled)
         }
     }
 }
@@ -1040,9 +1060,13 @@ pub(crate) fn execute_hold(
     };
     let key = hold_key(&spec.session_key);
     let encoded = encode_row(&row)?;
-    booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Hold(spec.clone()), now_utc, |wtxn| {
-        put_meta(vault, wtxn, &key, &encoded)
-    })?;
+    booking_writer_with_publication(
+        vault,
+        public_authority,
+        &BookingVerbRequest::Hold(spec.clone()),
+        now_utc,
+        |wtxn| put_meta(vault, wtxn, &key, &encoded),
+    )?;
     Ok(HoldReceipt {
         token,
         slot: spec.slot,
@@ -1070,9 +1094,13 @@ pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
     invite_sink: Option<&mut S>,
     public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingVerbReceipt, BookingError> {
-    let decided = booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Confirm(spec.clone()), now_utc, |wtxn| {
-        confirm_in_writer(vault, oracle, spec, wtxn, now_utc)
-    })?;
+    let decided = booking_writer_with_publication(
+        vault,
+        public_authority,
+        &BookingVerbRequest::Confirm(spec.clone()),
+        now_utc,
+        |wtxn| confirm_in_writer(vault, oracle, spec, wtxn, now_utc),
+    )?;
     match decided {
         ConfirmOutcome::Taken { alternatives } => {
             Ok(BookingVerbReceipt::SlotTaken { alternatives })
@@ -1262,94 +1290,100 @@ pub(crate) fn execute_reschedule(
     now_utc: u64,
     public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<RevisionReceipt, BookingError> {
-    booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Reschedule(spec.clone()), now_utc, |wtxn| {
-        let event_ref =
-            resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Reschedule)?;
-        let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
+    booking_writer_with_publication(
+        vault,
+        public_authority,
+        &BookingVerbRequest::Reschedule(spec.clone()),
+        now_utc,
+        |wtxn| {
+            let event_ref =
+                resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Reschedule)?;
+            let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
 
-        // A cancelled booking is not a booking sitting at an inconvenient time.
-        // Its slot is already back in the host's availability and its calendar
-        // status says cancelled, so moving it would attest a Confirmed passport
-        // over a cancelled booking and silently re-occupy a slot someone else
-        // may already hold. Un-cancelling is a different transition, and this
-        // lane does not have one.
-        if booking.status == BookingStatus::Cancelled {
-            return Err(refused("a cancelled booking cannot be rescheduled"));
-        }
+            // A cancelled booking is not a booking sitting at an inconvenient time.
+            // Its slot is already back in the host's availability and its calendar
+            // status says cancelled, so moving it would attest a Confirmed passport
+            // over a cancelled booking and silently re-occupy a slot someone else
+            // may already hold. Un-cancelling is a different transition, and this
+            // lane does not have one.
+            if booking.status == BookingStatus::Cancelled {
+                return Err(refused("a cancelled booking cannot be rescheduled"));
+            }
 
-        // A retry re-presents a move that already happened — which is only true
-        // while the booking still SITS at the target. Once it has moved on, a
-        // request naming that same target is a fresh move back, not a replay:
-        // the old receipt is history, and returning it would report a sequence
-        // the booking left behind while leaving the EVENT where it was.
-        let receipt_key = revision_receipt_key(&event_ref, Some(spec.new_slot));
-        if booking.slot == spec.new_slot
-            && let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)?
-        {
-            return Ok(RevisionReceipt {
-                calendar: recorded.into_revision(),
-            });
-        }
+            // A retry re-presents a move that already happened — which is only true
+            // while the booking still SITS at the target. Once it has moved on, a
+            // request naming that same target is a fresh move back, not a replay:
+            // the old receipt is history, and returning it would report a sequence
+            // the booking left behind while leaving the EVENT where it was.
+            let receipt_key = revision_receipt_key(&event_ref, Some(spec.new_slot));
+            if booking.slot == spec.new_slot
+                && let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)?
+            {
+                return Ok(RevisionReceipt {
+                    calendar: recorded.into_revision(),
+                });
+            }
 
-        let context = booking
-            .context
-            .as_ref()
-            .ok_or_else(|| refused("booking has no immutable host binding"))?;
-        let solved = oracle.solve_bound(
-            &SolveRequest {
-                event_type: booking.event_type.clone(),
-                window: inclusive_occurrence(spec.new_slot)?,
-                constraint: spec.constraint.clone(),
-                visitor_tz: spec.visitor_tz.clone(),
-            },
-            &context.owner_refs,
-        )?;
-        if !offers_slot(&solved.slots, spec.new_slot) {
-            return Err(refused("the requested slot is no longer available"));
-        }
+            let context = booking
+                .context
+                .as_ref()
+                .ok_or_else(|| refused("booking has no immutable host binding"))?;
+            let solved = oracle.solve_bound(
+                &SolveRequest {
+                    event_type: booking.event_type.clone(),
+                    window: inclusive_occurrence(spec.new_slot)?,
+                    constraint: spec.constraint.clone(),
+                    visitor_tz: spec.visitor_tz.clone(),
+                },
+                &context.owner_refs,
+            )?;
+            if !offers_slot(&solved.slots, spec.new_slot) {
+                return Err(refused("the requested slot is no longer available"));
+            }
 
-        // The EVENT's structural row carries the occurrence, so moving the
-        // booking is a re-put of the same id at the new interval — the shape
-        // CAL's feed-drift rewrite uses.
-        vault
-            .batch_in()
-            .put(
+            // The EVENT's structural row carries the occurrence, so moving the
+            // booking is a re-put of the same id at the new interval — the shape
+            // CAL's feed-drift rewrite uses.
+            vault
+                .batch_in()
+                .put(
+                    &event_ref,
+                    ENTITY_TYPE_EVENT,
+                    inclusive_occurrence(spec.new_slot)?,
+                    now_utc,
+                    &encode_event_body(&booking.event_type)?,
+                )
+                .apply(wtxn)
+                .map_err(|error| engine_failure("booking event rewrite", error))?;
+            let revision = supersede_outbound_passport(
+                vault,
+                wtxn,
                 &event_ref,
-                ENTITY_TYPE_EVENT,
-                inclusive_occurrence(spec.new_slot)?,
+                &BookingContent {
+                    page_ref: booking.page_ref,
+                    event_type: booking.event_type,
+                    slot: spec.new_slot,
+                    status: BookingStatus::Confirmed,
+                    emergency_content_hash: None,
+                },
                 now_utc,
-                &encode_event_body(&booking.event_type)?,
-            )
-            .apply(wtxn)
-            .map_err(|error| engine_failure("booking event rewrite", error))?;
-        let revision = supersede_outbound_passport(
-            vault,
-            wtxn,
-            &event_ref,
-            &BookingContent {
-                page_ref: booking.page_ref,
-                event_type: booking.event_type,
-                slot: spec.new_slot,
-                status: BookingStatus::Confirmed,
-                emergency_content_hash: None,
-            },
-            now_utc,
-        )?;
-        write_receipt(
-            vault,
-            wtxn,
-            &receipt_key,
-            &LifecycleReceiptRow {
-                event_ref,
-                uid: revision.uid.clone(),
-                sequence: revision.sequence,
-                session_hash: None,
-                confirmation: None,
-                invite_identity: None,
-            },
-        )?;
-        Ok(RevisionReceipt { calendar: revision })
-    })
+            )?;
+            write_receipt(
+                vault,
+                wtxn,
+                &receipt_key,
+                &LifecycleReceiptRow {
+                    event_ref,
+                    uid: revision.uid.clone(),
+                    sequence: revision.sequence,
+                    session_hash: None,
+                    confirmation: None,
+                    invite_identity: None,
+                },
+            )?;
+            Ok(RevisionReceipt { calendar: revision })
+        },
+    )
 }
 
 /// Cancels a booking, keeping its EVENT and UID.
@@ -1370,67 +1404,73 @@ pub(crate) fn execute_cancel(
     now_utc: u64,
     public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<RevisionReceipt, BookingError> {
-    booking_writer_with_publication(vault, public_authority, &BookingVerbRequest::Cancel(spec.clone()), now_utc, |wtxn| {
-        let event_ref =
-            resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Cancel)?;
-        // Keyed by the BOOKING, so every credential that can cancel it lands on
-        // the same receipt: one logical cancel, one increment, however many
-        // cancel tokens exist.
-        let receipt_key = revision_receipt_key(&event_ref, None);
-        if let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)? {
-            return Ok(RevisionReceipt {
-                calendar: recorded.into_revision(),
-            });
-        }
-        let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
+    booking_writer_with_publication(
+        vault,
+        public_authority,
+        &BookingVerbRequest::Cancel(spec.clone()),
+        now_utc,
+        |wtxn| {
+            let event_ref =
+                resolve_token_event(vault, &*wtxn, &spec.token, LifecycleTokenScope::Cancel)?;
+            // Keyed by the BOOKING, so every credential that can cancel it lands on
+            // the same receipt: one logical cancel, one increment, however many
+            // cancel tokens exist.
+            let receipt_key = revision_receipt_key(&event_ref, None);
+            if let Some(recorded) = read_receipt(vault, &*wtxn, &receipt_key)? {
+                return Ok(RevisionReceipt {
+                    calendar: recorded.into_revision(),
+                });
+            }
+            let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
 
-        supersede_exact_claim(
-            vault,
-            wtxn,
-            &event_ref,
-            BOOKING_STATUS_PREDICATE,
-            encode_claim_value(&BookingStatusValue {
-                status: BookingStatus::Cancelled,
-                recorded_at: now_utc,
-            })?,
-            now_utc,
-        )?;
-        supersede_exact_claim(
-            vault,
-            wtxn,
-            &event_ref,
-            PREDICATE_CALENDAR_STATUS,
-            calendar_status_value(CalendarStatus::Cancelled, now_utc),
-            now_utc,
-        )?;
-        let revision = supersede_outbound_passport(
-            vault,
-            wtxn,
-            &event_ref,
-            &BookingContent {
-                page_ref: booking.page_ref,
-                event_type: booking.event_type,
-                slot: booking.slot,
-                status: BookingStatus::Cancelled,
-                emergency_content_hash: None,
-            },
-            now_utc,
-        )?;
-        write_receipt(
-            vault,
-            wtxn,
-            &receipt_key,
-            &LifecycleReceiptRow {
-                event_ref,
-                uid: revision.uid.clone(),
-                sequence: revision.sequence,
-                session_hash: None,
-                confirmation: None,
-                invite_identity: None,
-            },
-        )?;
-        Ok(RevisionReceipt { calendar: revision })
-    })
+            supersede_exact_claim(
+                vault,
+                wtxn,
+                &event_ref,
+                BOOKING_STATUS_PREDICATE,
+                encode_claim_value(&BookingStatusValue {
+                    status: BookingStatus::Cancelled,
+                    recorded_at: now_utc,
+                })?,
+                now_utc,
+            )?;
+            supersede_exact_claim(
+                vault,
+                wtxn,
+                &event_ref,
+                PREDICATE_CALENDAR_STATUS,
+                calendar_status_value(CalendarStatus::Cancelled, now_utc),
+                now_utc,
+            )?;
+            let revision = supersede_outbound_passport(
+                vault,
+                wtxn,
+                &event_ref,
+                &BookingContent {
+                    page_ref: booking.page_ref,
+                    event_type: booking.event_type,
+                    slot: booking.slot,
+                    status: BookingStatus::Cancelled,
+                    emergency_content_hash: None,
+                },
+                now_utc,
+            )?;
+            write_receipt(
+                vault,
+                wtxn,
+                &receipt_key,
+                &LifecycleReceiptRow {
+                    event_ref,
+                    uid: revision.uid.clone(),
+                    sequence: revision.sequence,
+                    session_hash: None,
+                    confirmation: None,
+                    invite_identity: None,
+                },
+            )?;
+            Ok(RevisionReceipt { calendar: revision })
+        },
+    )
 }
 
 mod confirmation_state;

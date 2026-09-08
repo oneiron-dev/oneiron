@@ -180,9 +180,9 @@ impl VoiceCascadeSession {
         }
         match event.kind {
             AsrEventKind::Partial => {
-                let retrieval = self
-                    .retrieval
-                    .observe_partial(handle, revision, &event.text, enricher)?;
+                let retrieval =
+                    self.retrieval
+                        .observe_partial(handle, revision, &event.text, enricher)?;
                 self.prepared_asr = None;
                 Ok(AsrUpdate::Partial(retrieval))
             }

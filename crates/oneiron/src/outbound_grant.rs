@@ -637,11 +637,24 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
             SCOPE_KIND_SCOPED_MCP
         }
         StandingOutboundGrantScope::BookingPageInvites { .. } => SCOPE_KIND_BOOKING_PAGE_INVITES,
-        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref, envelope_ref, verb_class } => {
+        StandingOutboundGrantScope::ChannelIdentityEnvelope {
+            identity_ref,
+            envelope_ref,
+            verb_class,
+        } => {
             return Value::Map(vec![
-                (Value::from("kind"), Value::from("channel_identity_envelope")),
-                (Value::from("identity_ref"), Value::from(identity_ref.to_hex())),
-                (Value::from("envelope_ref"), Value::from(envelope_ref.to_hex())),
+                (
+                    Value::from("kind"),
+                    Value::from("channel_identity_envelope"),
+                ),
+                (
+                    Value::from("identity_ref"),
+                    Value::from(identity_ref.to_hex()),
+                ),
+                (
+                    Value::from("envelope_ref"),
+                    Value::from(envelope_ref.to_hex()),
+                ),
                 (Value::from("verb_class"), Value::from(verb_class.clone())),
             ]);
         }
@@ -672,7 +685,10 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
         return Err(invalid_grant());
     };
     if required_value(entries, "kind")?.as_str() == Some("channel_identity_envelope") {
-        validate_keys(entries, &["kind", "identity_ref", "envelope_ref", "verb_class"])?;
+        validate_keys(
+            entries,
+            &["kind", "identity_ref", "envelope_ref", "verb_class"],
+        )?;
         return Ok(StandingOutboundGrantScope::ChannelIdentityEnvelope {
             identity_ref: decode_entity_ref(required_value(entries, "identity_ref")?)?,
             envelope_ref: decode_entity_ref(required_value(entries, "envelope_ref")?)?,
@@ -1246,10 +1262,8 @@ fn scoped_mcp_binding_hash_bytes(hasher: &mut blake3::Hasher, value: &[u8]) {
     hasher.update(value);
 }
 
-
 /// One usage row per immutable envelope, shared by all grants naming it.
-pub const CHANNEL_IDENTITY_GRANT_USAGE_PREFIX: &[u8] =
-    b"outbound_grant:channel_identity_usage:v1:";
+pub const CHANNEL_IDENTITY_GRANT_USAGE_PREFIX: &[u8] = b"outbound_grant:channel_identity_usage:v1:";
 
 impl Vault {
     /// Atomically authorizes and reserves an action using the engine clock.
@@ -1278,8 +1292,13 @@ impl Vault {
             return Ok(false);
         };
         let StandingOutboundGrantScope::ChannelIdentityEnvelope {
-            identity_ref, envelope_ref, verb_class,
-        } = &grant.scope else { return Ok(false); };
+            identity_ref,
+            envelope_ref,
+            verb_class,
+        } = &grant.scope
+        else {
+            return Ok(false);
+        };
         let verb = candidate.verb_class.trim().to_ascii_lowercase();
         if *identity_ref != candidate.identity_ref || *verb_class != verb {
             return Ok(false);
@@ -1293,41 +1312,60 @@ impl Vault {
         };
         if envelope.relationship_context != candidate.relationship_context
             || envelope.counterparty_class != candidate.counterparty_class
-        { return Ok(false); }
-        let mode = match self.autonomy_mode_in_txn(&txn, candidate.identity_ref,
-            candidate.relationship_context, now) {
+        {
+            return Ok(false);
+        }
+        let mode = match self.autonomy_mode_in_txn(
+            &txn,
+            candidate.identity_ref,
+            candidate.relationship_context,
+            now,
+        ) {
             Ok(mode) => mode,
             Err(Error::InvalidConsentBound(_)) => return Ok(false),
             Err(error) => return Err(error),
         };
         if mode.action_grant_ref != Some(*grant_ref)
-            || (verb == "mail.send" && mode.rung != ChannelIdentityAutonomyRung::AutonomousWithinEnvelope)
-        { return Ok(false); }
+            || (verb == "mail.send"
+                && mode.rung != ChannelIdentityAutonomyRung::AutonomousWithinEnvelope)
+        {
+            return Ok(false);
+        }
         let mut key = CHANNEL_IDENTITY_GRANT_USAGE_PREFIX.to_vec();
         key.extend_from_slice(envelope_ref.as_bytes());
         let mut started = now;
         let mut effects = Vec::<([u8; 32], [u8; 32])>::new();
         if let Some(raw) = self.store.vault_meta.get(&txn, &key)? {
-            if raw.len() < 12 || (raw.len() - 12) % 64 != 0 { return Err(invalid_grant()); }
+            if raw.len() < 12 || (raw.len() - 12) % 64 != 0 {
+                return Err(invalid_grant());
+            }
             started = u64::from_be_bytes(raw[..8].try_into().map_err(|_| invalid_grant())?);
             let used = u32::from_be_bytes(raw[8..12].try_into().map_err(|_| invalid_grant())?);
             if used as usize != (raw.len() - 12) / 64 || used > envelope.max_actions {
                 return Err(invalid_grant());
             }
             // Clock rollback cannot reset a window or spend a fresh slot.
-            if now < started { return Ok(false); }
+            if now < started {
+                return Ok(false);
+            }
             if now - started < envelope.window_secs {
                 for pair in raw[12..].chunks_exact(64) {
-                    effects.push((pair[..32].try_into().map_err(|_| invalid_grant())?,
-                        pair[32..].try_into().map_err(|_| invalid_grant())?));
+                    effects.push((
+                        pair[..32].try_into().map_err(|_| invalid_grant())?,
+                        pair[32..].try_into().map_err(|_| invalid_grant())?,
+                    ));
                 }
-            } else { started = now; }
+            } else {
+                started = now;
+            }
         }
         let fingerprint = *blake3::hash(verb.as_bytes()).as_bytes();
         if let Some((_, stored)) = effects.iter().find(|(key, _)| *key == candidate.effect_key) {
             return Ok(*stored == fingerprint);
         }
-        if effects.len() >= envelope.max_actions as usize { return Ok(false); }
+        if effects.len() >= envelope.max_actions as usize {
+            return Ok(false);
+        }
         effects.push((candidate.effect_key, fingerprint));
         let mut bytes = started.to_be_bytes().to_vec();
         bytes.extend_from_slice(&(effects.len() as u32).to_be_bytes());
@@ -1337,8 +1375,12 @@ impl Vault {
         }
         self.store.vault_meta.put(&mut txn, &key, &bytes)?;
         let touched = grant.touched(now)?;
-        self.apply_standing_outbound_grant_body(&mut txn, grant_ref, now,
-            encode_standing_outbound_grant_body(&touched)?)?;
+        self.apply_standing_outbound_grant_body(
+            &mut txn,
+            grant_ref,
+            now,
+            encode_standing_outbound_grant_body(&touched)?,
+        )?;
         txn.commit()?;
         Ok(true)
     }

@@ -3,7 +3,10 @@ use super::*;
 use crate::booking::publication::PublicBookingAuthority;
 
 pub(super) fn booking_writer_with_publication<T>(
-    vault: &Vault, authority: Option<&PublicBookingAuthority>, request: &BookingVerbRequest, now: u64,
+    vault: &Vault,
+    authority: Option<&PublicBookingAuthority>,
+    request: &BookingVerbRequest,
+    now: u64,
     apply: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T, BookingError>,
 ) -> Result<T, BookingError> {
     booking_writer(vault, |txn| {
@@ -17,10 +20,15 @@ pub(super) fn booking_writer_with_publication<T>(
 }
 
 fn check_publication_in_writer(
-    vault: &Vault, txn: &heed::RoTxn<'_>, authority: Option<&PublicBookingAuthority>,
-    request: &BookingVerbRequest, now_utc: u64,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authority: Option<&PublicBookingAuthority>,
+    request: &BookingVerbRequest,
+    now_utc: u64,
 ) -> Result<(), BookingError> {
-    let Some(authority) = authority else { return Ok(()); };
+    let Some(authority) = authority else {
+        return Ok(());
+    };
     let (page, event) = match request {
         BookingVerbRequest::Hold(spec) => (spec.page_ref, spec.event_type.clone()),
         BookingVerbRequest::Confirm(spec) => {
@@ -36,7 +44,8 @@ fn check_publication_in_writer(
             }
         }
         BookingVerbRequest::Reschedule(spec) => {
-            let event = resolve_token_event(vault, txn, &spec.token, LifecycleTokenScope::Reschedule)?;
+            let event =
+                resolve_token_event(vault, txn, &spec.token, LifecycleTokenScope::Reschedule)?;
             let facts = read_booking_facts(vault, txn, &event)?;
             (facts.page_ref, facts.event_type)
         }
@@ -48,5 +57,11 @@ fn check_publication_in_writer(
     };
     // Admission's sampled clock is not the commit clock. A delayed attempt
     // must not retain an expired publication even if its caller reuses `now`.
-    authority.check_in_txn(vault, txn, page, &event, crate::unix_seconds_now().max(now_utc))
+    authority.check_in_txn(
+        vault,
+        txn,
+        page,
+        &event,
+        crate::unix_seconds_now().max(now_utc),
+    )
 }

@@ -24,9 +24,9 @@ use super::ledgers::{
 };
 use super::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
-    counterparty_contact_records_for_receipts, finalize_receipt_query_records, finalize_receipt_scan,
-    project_receipts_by_brief, project_receipts_by_counterparty_with_contacts,
-    project_receipts_by_grant_limited,
+    counterparty_contact_records_for_receipts, finalize_receipt_query_records,
+    finalize_receipt_scan, project_receipts_by_brief,
+    project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -93,7 +93,8 @@ impl Vault {
             || query.job_ref.is_some()
         {
             return Err(Error::InvalidConfig(
-                "receipt completeness scan requires outbound-only queries without job_ref".to_owned(),
+                "receipt completeness scan requires outbound-only queries without job_ref"
+                    .to_owned(),
             ));
         }
         query.limit = query.limit.min(MAX_RECEIPT_QUERY_SCAN);

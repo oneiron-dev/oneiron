@@ -408,8 +408,13 @@ pub(crate) async fn execute_booking_operation(
     // ── 1. shape, keys, and the page subject ────────────────────────────
     let public_authority = if transport.transport == BookingTransport::AnonymousHttp {
         let (page_ref, publication) = public::resolve_public_booking_page(server, page_token)?;
-        Some(oneiron::booking::publication::PublicBookingAuthority { page_ref, publication })
-    } else { None };
+        Some(oneiron::booking::publication::PublicBookingAuthority {
+            page_ref,
+            publication,
+        })
+    } else {
+        None
+    };
     let page_ref = match &public_authority {
         Some(authority) => authority.page_ref,
         None => resolve_booking_page(server, page_token)?,
@@ -423,7 +428,12 @@ pub(crate) async fn execute_booking_operation(
 
     // ── 2. the one admission call ───────────────────────────────────────
     let facts = admission_facts(server, page_ref, &request, transport, now)?;
-    let cache = public_availability::cached_response(server, page_ref, &request, public_authority.as_ref())?;
+    let cache = public_availability::cached_response(
+        server,
+        page_ref,
+        &request,
+        public_authority.as_ref(),
+    )?;
     let disposition = match &request {
         BookingOperationRequest::Availability(_) => {
             enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
@@ -613,7 +623,8 @@ async fn execute_confirm(
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
-    let booker_contact = resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
+    let booker_contact =
+        resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
     let receipt = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
