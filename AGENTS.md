@@ -78,8 +78,16 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 
 ## CI truth
 
-- `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
-  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS=-Dwarnings`.
+- `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
+  repo variable pauses every job (wave affordance); drafts do not run. Docs-only diffs
+  (Markdown, `docs/**`) do not trigger it, except `docs/ops/**` and `oneiron.skills.md`, which
+  contract tests `include_str!`. Jobs: changes/fmt/clippy/test/package (`oneiron-server`)/deny
+  (`cargo-deny`)/typos; `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. fmt/clippy/typos are gated on
+  `pull_request`, `test` on rust-diff `pull_request` or `push`, `deny` on `pull_request` or
+  `workflow_dispatch`, and `package` waits for a `v*` tag push that no trigger sends, so that
+  gate is unreachable as written. Under `workflow_dispatch` alone only `changes` (path detector)
+  and `deny` execute. The PR run enforces fmt, clippy and tests pre-merge; `scripts/verify.sh` on
+  the branch stays the local gate.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now

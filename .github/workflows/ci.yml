@@ -1,18 +1,46 @@
 name: CI
 
+# Triggers (2026-09-08, HYG-06): non-draft pull requests, pushes to main,
+# and manual dispatch. Docs-only diffs (Markdown, docs/**) never start a
+# run — except docs/ops/** and the root skills pack, which contract tests
+# include_str! (ops_docs.rs, skills_pack.rs; the pack is also compiled into
+# oneiron-server), so they are re-included below. `paths` with negation is
+# used instead of `paths-ignore` because `paths-ignore` cannot carve those
+# two back in.
+#
+# Wave affordance: setting the repository variable CI_PAUSED=true skips
+# every job (each job's `if:` checks it). A wave that lands many commits
+# fast flips it on and flips it off when the wave closes. Draft PRs also
+# skip every job; `ready_for_review` starts the first real run.
 on:
   workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - 'docs/ops/**'
+      - 'oneiron.skills.md'
+  push:
+    branches: [main]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - 'docs/ops/**'
+      - 'oneiron.skills.md'
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
 
-# A superseded PR push's in-flight run is pure spend — cancel it. Main
-# pushes get a per-sha group: never cancelled, never queued behind each
-# other on rapid merges.
+# One run per workflow+ref. A superseded PR push's in-flight run is pure
+# spend, and a rapid main-merge burst only needs the newest sha's run — the
+# older ones are cancelled.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Cost layout (2026-07-19): Rust jobs are gated off PRs AND main pushes
 # whose diff can't change their outcome (refactor manifests/tooling,
@@ -20,10 +48,15 @@ concurrency:
 # main pushes (fail-open on push if the detector breaks; tag pushes always
 # run); package (publish-integrity) runs on release tags only. deny and
 # typos are seconds — they run on every PR unfiltered.
+#
+# Every job's `if:` starts with the pause/draft guard from the header,
+#   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+# AND-ed with that job's own cost gate.
 jobs:
   changes:
     name: Detect changed paths
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     # paths-filter reads PR changed-files via the REST API — grant it
     # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
     permissions:
@@ -58,7 +91,9 @@ jobs:
     name: Format
     runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -72,7 +107,9 @@ jobs:
     name: Clippy
     runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -117,9 +154,13 @@ jobs:
     # runs the same filter on push), but fail OPEN — if the detector job
     # didn't succeed, run anyway so a filter hiccup can't skip the record
     # of truth. Tag pushes always run (release validation — the filter has
-    # no sane diff base on a tag event).
+    # no sane diff base on a tag event); that clause is inert until a
+    # tag-push trigger returns to `on:` (see `package`). The pause/draft
+    # guard sits inside always() so a paused wave or a draft PR still skips.
     if: >-
-      always() && (
+      always()
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (
         (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
@@ -170,7 +211,14 @@ jobs:
     # it stops billing on every main push. A packaging/standalone break
     # surfaces when a `v*` tag is cut; revisit (weekly cron / paths-gate) if
     # that release-window ever bites.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    #
+    # This job can only run when a `push: tags: ['v*']` trigger is present
+    # in `on:`. Today `push` is `branches: [main]` only, so the gate below
+    # is unreachable — unchanged behaviour, now stated. Re-add the tag
+    # trigger to turn release validation back on.
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
     env:
@@ -183,8 +231,8 @@ jobs:
         with:
           toolchain: "1.96"
       # Sticky disks replace the previous rust-cache here too (each run was
-      # paying a ~400MB actions-cache save/restore cycle). Runs on main
-      # pushes only, so the fork guard is inert but kept for uniformity.
+      # paying a ~400MB actions-cache save/restore cycle). Runs on release
+      # tags only, so the fork guard is inert but kept for uniformity.
       - name: Mount cargo registry (sticky disk)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
@@ -208,7 +256,12 @@ jobs:
   deny:
     name: cargo-deny
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    if: github.event_name == 'workflow_dispatch'
+    # Seconds-cheap, so every non-draft PR runs it unfiltered. Dispatch is
+    # kept (ONE-335 made it the dispatch-era gate) so a manual run still
+    # checks the expiring accepted-risk policy on demand.
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
       # The policy wrapper and tests must use the same inspected cargo-deny version.
@@ -226,7 +279,9 @@ jobs:
   typos:
     name: typos
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    if: github.event_name == 'pull_request'
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@v1.45.1
