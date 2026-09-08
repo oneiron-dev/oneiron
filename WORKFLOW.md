@@ -20,8 +20,8 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
   requires it.
 - Use `rtk` for shell commands, `rg` for text search, `ast-grep` for syntax
   shape or codemod work, and semantic tooling for symbol identity or references.
-- Never run `scripts/review-pr.sh`. It is a stale local reviewer harness and is
-  not part of the current workflow.
+- `scripts/review-pr.sh` does not exist; it was deleted as dead. Any reference
+  to it is stale — do not try to run it.
 
 ## 2. Linear Lifecycle
 
@@ -41,8 +41,9 @@ Run the full gate from the PR worktree after the final change. Repeat until all
 commands pass on the final branch tip.
 
 `scripts/verify.sh` is the single source of truth for the scripted gate — read
-it rather than copying commands here. It runs, in order: `cargo fmt --check`
-(members only, never `--all` — that would reformat the ONE-218 heed vendor),
+it rather than copying commands here. It runs, in order: the code-map pin
+(`scripts/codemap/check.sh`), `cargo fmt --check` (members only, never `--all`
+— that would reformat the ONE-218 heed vendor),
 workspace clippy (`-D warnings`, all targets and features), featureless clippy
 (`-p oneiron --all-targets --no-default-features`), `cargo nextest run
 --workspace --all-features --profile full`, `cargo test -p oneiron --lib
@@ -60,9 +61,11 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo nextest run -p oneiron --features sync --profile full
 ```
 
-For distributed runs, `scripts/verify-leg.sh` splits the same four scripted
-stages across `LEG=fmt-clippy|tests:1/2|tests:2/2`; the two-command gap above
-applies there too.
+For distributed runs, `scripts/verify-leg.sh` covers only the code-map pin,
+fmt, workspace clippy, partitioned nextest and doctests across
+`LEG=fmt-clippy|tests:1/2|tests:2/2`. No leg runs the two featureless stages,
+so the distributed gap is four commands: featureless clippy, featureless lib
+tests, and the two hand-run commands above.
 
 For docs-only or comment-only PRs, still run formatting and no-op checks, then
 run the full cargo gate when practical. If a manager explicitly scopes the gate
