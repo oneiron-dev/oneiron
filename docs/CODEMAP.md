@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 822 | 373 | 142 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 834 | 374 | 140 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 67 | 11 | 1 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 10 | 6 | 1 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 2 | 0 | 1 |
@@ -52,7 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `branch_store_oracle` | dir | 9 | m | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
 | `build_cache` | file+dir | 3 | m | — | Vault-scoped immutable build results |
 | `calendar` | dir | 19 | XL | — | Calendar module home (CAL-00) |
-| `campaign` | file+dir | 18 | XL | — | CRM pack engine-side registration home |
+| `campaign` | file+dir | 25 | XL | — | CRM pack engine-side registration home |
 | `channel_identity` | file+dir | 6 | XL | yes | ChannelIdentity record substrate (OF-347 CID-1) |
 | `channel_identity_autonomy` | file+dir | 2 | L | yes | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
 | `channel_identity_lifecycle` | file+dir | 2 | m | yes | ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2) |
@@ -204,7 +204,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `vault` | dir | 9 | m | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | file+dir | 10 | L | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `voice_cascade` | file+dir | 20 | L | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
-| `voice_identity` | file+dir | 2 | XL | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
+| `voice_identity` | dir | 8 | m | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `voice_segment` | file | 1 | s | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_fetch` | file+dir | 4 | m | — | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |

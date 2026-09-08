@@ -215,7 +215,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign.rs` | src | s | 1 struct · 2 fn · 2 const · 7 mod | CrmPackRegistration | CRM pack engine-side registration home |
 | `src/campaign/claims.rs` | src | L | 10 struct · 5 enum · 19 fn · 9 const · 11 crate-vis | BounceKind, CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, ClaimClassDescriptorRow, CommBounceValue, CommDoNotContactValue +7 | The CRM pack's claim families (CA-01) |
 | `src/campaign/claims/tests.rs` | test | L | — | — | — |
-| `src/campaign/compliance.rs` | src | XL | 7 struct · 8 enum · 11 fn · 7 const · 3 crate-vis | B2bExemption, ComplianceAmendmentClass, ComplianceAmendmentOutcome, ComplianceBlockReason, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow +7 | CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them |
+| `src/campaign/compliance/amend.rs` | src | m | 2 enum · 6 fn | ComplianceAmendmentClass, ComplianceAmendmentOutcome | Propose/stamp amendment transaction: classification, activation, notices, proposal hash |
+| `src/campaign/compliance/codec.rs` | src | s | 9 crate-vis | — | Claim-store readers, comm-party mirror, and the msgpack value toolkit |
+| `src/campaign/compliance/evaluate.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 crate-vis | ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts, HydratedListProvenance | Pure dispatch evaluator: jurisdiction selection, row matching, verdict |
+| `src/campaign/compliance/hydrate.rs` | src | s | 2 crate-vis | — | External-effect gate leg and vault-to-facts hydration (evidence, jurisdiction, message elements) |
+| `src/campaign/compliance/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them |
+| `src/campaign/compliance/pack_store.rs` | src | s | 3 fn · 5 crate-vis | — | Seed loading, pack validation/coverage, and vault persistence plus msgpack encode/decode |
+| `src/campaign/compliance/rules.rs` | src | s | 4 struct · 4 enum · 7 const · 11 crate-vis | B2bExemption, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow, ComplianceSource, ConditionalExemptionEvidence, UnknownJurisdictionDefault | Pack identity consts, predicates, rule-row types, and the CompliancePack container |
+| `src/campaign/compliance/tests.rs` | test | L | — | — | Compliance behaviour: seed shape, evaluator verdicts, hydration, and amendment |
 | `src/campaign/enrollment/detection.rs` | src | m | 2 struct · 1 enum · 4 fn · 1 crate-vis | CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection | Persisted membership-transition events, detection pass, cause routing, and per-query baseline |
 | `src/campaign/enrollment/home_node.rs` | src | m | 2 struct · 2 enum · 9 fn · 2 crate-vis | CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation | Campaign-local MACRO home-node election, designation persistence, and admission checks |
 | `src/campaign/enrollment/mod.rs` | src | s | 5 re-export | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
@@ -1109,8 +1116,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/uds/tests.rs` | test | s | — | — | Source-authored socket tests |
 | `src/voice_cascade/uds/tests/bridge_tests.rs` | test | m | — | — | — |
 | `src/voice_cascade/uds/tests/socket_tests.rs` | test | s | — | — | — |
-| `src/voice_identity.rs` | src | XL | 12 struct · 7 enum · 24 fn · 3 const · 2 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | VOX-02 voice identity substrate: consent log, enrollment, local matching |
+| `src/voice_identity/codec_core.rs` | src | m | 29 crate-vis | — | Shared MessagePack plumbing plus origin/basis/space/consent/sample encode_/decode_ pairs kept together |
+| `src/voice_identity/codec_records.rs` | src | m | 10 crate-vis | — | Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape |
+| `src/voice_identity/math_keys.rs` | src | s | 15 crate-vis | — | Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix… |
+| `src/voice_identity/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | VOX-02 voice identity substrate: consent log, enrollment, local matching |
+| `src/voice_identity/storage_admission.rs` | src | m | 22 crate-vis | — | Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination… |
 | `src/voice_identity/tests.rs` | test | XL | — | — | — |
+| `src/voice_identity/types.rs` | src | m | 12 struct · 7 enum · 17 fn · 3 const · 7 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | Public domain types, request/receipt structs, thresholds, key prefixes, and validators |
+| `src/voice_identity/vault.rs` | src | m | 7 fn · 2 crate-vis | — | Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning |
 | `src/voice_segment.rs` | src | s | 1 fn · 7 const · 1 crate-vis | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `src/wave_orchestration.rs` | src | m | 8 struct · 2 trait · 10 fn · 4 const | BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan, WavePlanReceipt, WavePlanRequest, WavePlanner +2 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `src/wave_orchestration/tests.rs` | test | m | — | — | Wave-orchestration tests (ONE-1905) |
