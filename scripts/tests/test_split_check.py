@@ -360,3 +360,16 @@ def test_bad_base_rev_fails_closed(repo):
     r = run_check(path, "deadbeef")
     assert r.returncode == 1
     assert r.stdout.splitlines()[-1].startswith("SPLIT-CHECK-ERROR")
+
+
+def test_inner_visibility_promotion_is_not_a_body_change(repo):
+    """A split routinely promotes a private field or method to pub(super) so a
+    sibling child can reach it; that must pass (vis only), never FAIL body."""
+    path, sha = repo
+    alpha = ALPHA_RS.replace("    name: String,", "    pub(super) name: String,")
+    alpha = alpha.replace("pub(crate) fn name(", "pub(super) fn name(")
+    assert alpha != ALPHA_RS
+    apply_split(path, {**SPLIT, "alpha.rs": alpha})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not [ln for ln in r.stdout.splitlines() if ln.startswith("FAIL")]
