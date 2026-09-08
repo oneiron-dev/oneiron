@@ -1724,7 +1724,15 @@ fn world_campaign_outreach_sends_as_owners_delegated_identity() {
 
 #[test]
 fn the_selection_module_carries_no_venture_or_person_names() {
-    let source = include_str!("../channel_identity_selection.rs").to_ascii_lowercase();
+    let source = concat!(
+        include_str!("mod.rs"),
+        include_str!("selection_codec.rs"),
+        include_str!("selection_resolution.rs"),
+        include_str!("selection_rules.rs"),
+        include_str!("selection_storage.rs"),
+        include_str!("selection_vocabulary.rs"),
+    )
+    .to_ascii_lowercase();
     // Substring matches, so every token here must be one that cannot appear
     // inside an ordinary English word.
     for banned in [
