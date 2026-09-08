@@ -124,7 +124,9 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   the Wave host — only `test-linux`, `package` and dispatch runs touch it). Workflows target
   `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
 - Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
-  (persistent, outside the checkout, so `clean: true` checkouts never wipe it),
+  (persistent, outside the checkout, so `clean: true` checkouts never wipe it; on macOS it must
+  also stay outside `~/Desktop`, `~/Documents` and `~/Downloads` — the runner is a launchd agent
+  without those TCC grants, and its first `open()` there blocks on a consent prompt nobody sees),
   `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
   `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
   toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and no
