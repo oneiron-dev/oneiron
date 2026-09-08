@@ -159,8 +159,9 @@ const API_LEVEL: &str = "v1";
 /// tokens are derived from `crate::mcp::McpToolName`, so the catalog and the
 /// advertisement cannot drift.
 pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
-// ONE-214 is read-only and adds no notification-specific storage. Keep resume
-// hydration bounded by returning pending notifications from a latest window.
+// ONE-214 is read-only and adds no notification-specific storage. Keep
+// context-board hydration bounded by returning pending notifications from a
+// latest window.
 
 #[derive(OpenApi)]
 #[openapi(
@@ -183,6 +184,7 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         get_core_outbound_capability,
         get_core_outbound_verb_contract,
         core_context_pack,
+        context_board_hydrate,
         core_run_tree,
         core_run_tree_observe,
         core_run_tree_intervene,
@@ -315,6 +317,12 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         ContextBoardMemorySlot,
         ContextBoardMemorySource,
         ContextBoardMemoriesCursor,
+        ContextBoardRequest,
+        ContextBoardResponse,
+        ContextBoardSession,
+        ContextBoardNotification,
+        ContextBoardUnprocessedItem,
+        ContextBoardBudget,
         CoreContextEntity,
         CoreContextEdge,
         CoreContextPackStats,
@@ -413,6 +421,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     let core_routes = Router::new()
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
+        .route("/context-board", post(context_board_hydrate))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
@@ -537,7 +546,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // limit stays a property of this nest alone.
         .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
-        .route("/api/companion/resume", post(resume))
         .route("/v1/consumer/usage", get(get_consumer_usage))
         .route(
             "/v1/consumer/usage/details",
@@ -691,8 +699,6 @@ struct HealthResponse {
 }
 
 // ─── Companion v1 profile access ─────────────────────────────────────────────
-
-// ─── Companion resume ────────────────────────────────────────────────────────
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────
 

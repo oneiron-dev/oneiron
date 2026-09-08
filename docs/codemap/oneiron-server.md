@@ -36,9 +36,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/consumer_usage.rs` | src | m | 10 crate-vis | — | — |
 | `src/api/context_board/cursor.rs` | src | s | 13 crate-vis | — | The per-process MEMORIES cursor store, keyed by vault, principal scope and session |
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
-| `src/api/context_board/mod.rs` | src | s | 3 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
-| `src/api/context_board/prefix.rs` | src | s | 13 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
-| `src/api/context_pack.rs` | src | XL | 56 crate-vis | — | — |
+| `src/api/context_board/mod.rs` | src | s | 10 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
+| `src/api/context_board/prefix.rs` | src | s | 10 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
+| `src/api/context_pack.rs` | src | XL | 58 crate-vis | — | — |
 | `src/api/conversations.rs` | src | m | 8 crate-vis | — | — |
 | `src/api/core.rs` | src | L | 65 crate-vis | — | — |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |

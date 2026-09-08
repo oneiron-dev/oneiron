@@ -224,10 +224,6 @@ pub(crate) struct ContextBoardMemoriesCursor {
 ///
 /// The session scope is the authenticated actor (`principal_ref`, else the
 /// principal); a shared credential has no isolated scope and is refused.
-#[expect(
-    dead_code,
-    reason = "called by the context-board handler, which lands in FOLD B4"
-)]
 pub(crate) fn resolve_memories_request(
     vault: &oneiron::Vault,
     memories: Option<&ContextBoardMemoriesControls>,
