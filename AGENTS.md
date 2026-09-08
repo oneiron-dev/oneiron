@@ -132,10 +132,10 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
   flags let the runner caches share fingerprints with developer builds.
-- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, `typos`,
-  git, `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
-  (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, nextest if a host lacks it) go under
-  `~/ci/tools`, installed by the job on first use and reused after.
+- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
+  `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
+  (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
+  lacks it) go under `~/ci/tools`, installed by the job on first use and reused after.
 - One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
   macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
 - Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
