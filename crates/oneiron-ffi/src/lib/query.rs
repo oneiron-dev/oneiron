@@ -13,9 +13,9 @@ use super::parse::{
     validate_query_len,
 };
 use super::types::{
-    DEFAULT_FFI_SEARCH_LIMIT, OneironBuffer, OneironEdgeInfo,
-    OneironEdgeInfoArray, OneironScoredEntity, OneironScoredEntityArray, OneironStatus,
-    OneironSubtreeEntry, OneironSubtreeEntryArray, OneironVault,
+    DEFAULT_FFI_SEARCH_LIMIT, OneironBuffer, OneironEdgeInfo, OneironEdgeInfoArray,
+    OneironScoredEntity, OneironScoredEntityArray, OneironStatus, OneironSubtreeEntry,
+    OneironSubtreeEntryArray, OneironVault,
 };
 
 /// Store a directed edge between two entities.
