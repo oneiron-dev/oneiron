@@ -2461,20 +2461,50 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/connectors/inbound.rs",
+     "purpose": "Pull orchestration: apply, admit, enqueue, and reconcile",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/connectors/mod.rs",
+     "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "CalendarConnectorError",
-      "CalendarConnectorKillSwitchState",
-      "CalendarConnectorSeatConfig",
-      "CalendarConnectorSeatState",
-      "CalendarConnectorSyncPayload",
       "CalendarRemoteObjectRow",
-      "CalendarRemoteTransport",
-      "CalendarSyncOutcome",
       "CalendarWriteAction",
       "CalendarWriteOutboxRow",
-      "CalendarWriteOutboxState",
+      "CalendarWriteOutboxState"
+     ],
+     "path": "src/calendar/connectors/outbound.rs",
+     "purpose": "Conditional writes plus durable outbox and remote-object cursor store",
+     "surface": {
+      "crate-vis": 11,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CalendarRemoteTransport",
+      "CalendarSyncOutcome",
       "EchoDisposition",
       "RemoteCalendarChange",
       "RemoteCalendarObject",
@@ -2482,14 +2512,34 @@
       "RemoteWriteReceipt",
       "RemoteWriteRequest"
      ],
-     "path": "src/calendar/connectors.rs",
-     "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
+     "path": "src/calendar/connectors/remote.rs",
+     "purpose": "Provider-neutral transport seam, change classification, and ICS render",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 3,
+      "fn": 6,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CalendarConnectorError",
+      "CalendarConnectorKillSwitchState",
+      "CalendarConnectorSeatConfig",
+      "CalendarConnectorSeatState",
+      "CalendarConnectorSyncPayload"
+     ],
+     "path": "src/calendar/connectors/seat.rs",
+     "purpose": "Seat configs, cursors, kill switch, error type, and sync verbs",
      "surface": {
       "const": 4,
-      "enum": 6,
-      "fn": 18,
-      "struct": 10,
-      "trait": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -3905,21 +3955,77 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CodeRevision",
-      "CodeRevisionFork",
-      "CodeRevisionKind"
-     ],
-     "path": "src/code_revision.rs",
-     "purpose": "—",
+     "notable": [],
+     "path": "src/code_revision/codec.rs",
+     "purpose": "Pinned body keys, revision/fork encode-decode, shape validators and msgpack scalar accessors",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
-      "enum": 1,
-      "fn": 17,
-      "struct": 2
+      "crate-vis": 18,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/frontier.rs",
+     "purpose": "Per-session frontier rows and session-trace verification over them",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/graph.rs",
+     "purpose": "child_of lifecycle edges and the entity guards a revision write must clear",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/integrity.rs",
+     "purpose": "Per-revision integrity records and the fold chain proving a revision's ancestry",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/keys.rs",
+     "purpose": "Vault-meta key builders for the code-revision row families",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/storage.rs",
+     "purpose": "Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 8
      }
     },
     {
@@ -3929,6 +4035,23 @@
      "path": "src/code_revision/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRevision",
+      "CodeRevisionFork",
+      "CodeRevisionKind"
+     ],
+     "path": "src/code_revision/types.rs",
+     "purpose": "Code-revision domain values and their constructors",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -7353,33 +7476,68 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "EngineExecutorConfig",
-      "EngineExecutorError",
-      "EngineExecutorLimits",
-      "EngineExecutorOutcome",
-      "EngineExecutorStatus",
-      "EngineNativeExecutor",
-      "ExecutorLegibility",
-      "JsCodeModeHost",
-      "JsCodeModeOutput",
-      "JsCodeModeRuntime",
-      "JsCodeModeStep",
-      "JsCodeModeStepOutcome",
-      "SelfDispatchResponse"
+      "EngineNativeExecutor"
      ],
-     "path": "src/engine_executor.rs",
+     "path": "src/engine_executor/driver.rs",
+     "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/host.rs",
+     "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "const": 5,
-      "crate-vis": 3,
-      "enum": 2,
-      "fn": 12,
-      "struct": 9,
-      "trait": 2,
-      "type": 1
+      "crate-vis": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/record.rs",
+     "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/repl.rs",
+     "purpose": "Durable REPL loop: run(), persistence helpers, and LLM request building",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/store.rs",
+     "purpose": "Output envelope and path helpers for the routed raw-output store",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -7397,6 +7555,45 @@
      "path": "src/engine_executor/tests/speech_identity_regressions.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EngineExecutorConfig",
+      "EngineExecutorError",
+      "EngineExecutorLimits",
+      "EngineExecutorOutcome",
+      "EngineExecutorStatus",
+      "ExecutorLegibility",
+      "JsCodeModeHost",
+      "JsCodeModeOutput",
+      "JsCodeModeRuntime",
+      "JsCodeModeStep",
+      "JsCodeModeStepOutcome",
+      "SelfDispatchResponse"
+     ],
+     "path": "src/engine_executor/types.rs",
+     "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
+     "surface": {
+      "const": 5,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 6,
+      "struct": 8,
+      "trait": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/wire.rs",
+     "purpose": "Reply normalization: fence/exec stripping, console-block scanning, and the structural gate",
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "m",
@@ -9336,47 +9533,99 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "LinkedInAccountRiskLimits",
-      "LinkedInConsentScreenCopy",
       "LinkedInConversationMessage",
       "LinkedInConversationMessageEvent",
-      "LinkedInEscalationConfig",
       "LinkedInInboxSyncConfig",
       "LinkedInInboxSyncProvenanceRow",
       "LinkedInInboxSyncReport",
       "LinkedInInboxSyncRunner",
-      "LinkedInKillSwitchState",
+      "LinkedInMcpInboxSyncTransport"
+     ],
+     "path": "src/linkedin_connector/inbox_sync.rs",
+     "purpose": "Inbox-sync config, runner, claim/provenance helpers, and message parsers",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 10,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInEscalationConfig",
       "LinkedInLoginHandoff",
       "LinkedInManagedTransport",
       "LinkedInMcpConnectorAdapter",
-      "LinkedInMcpInboxSyncTransport",
-      "LinkedInMcpSendMessageRequest",
-      "LinkedInMcpSendTransport",
       "LinkedInMcpServerHarness",
-      "LinkedInMcpVerifiedSendSink",
       "LinkedInNetworkRoute",
       "LinkedInPasswordCustody",
       "LinkedInSandboxHostConfig",
-      "LinkedInSandboxHostHarness",
       "LinkedInSandboxRuntime",
-      "LinkedInSeatDispatchState",
-      "LinkedInSeatPolicyAction",
-      "LinkedInSeatPolicyDecision",
-      "LinkedInSeatSandboxPolicy",
-      "LinkedInSelectorDriver",
-      "LinkedInVerifiedSendPlan"
+      "LinkedInSelectorDriver"
      ],
-     "path": "src/linkedin_connector.rs",
+     "path": "src/linkedin_connector/mod.rs",
      "purpose": "LinkedIn connector adapter surface (ONE-1563 / LNKD-1)",
      "surface": {
       "const": 13,
-      "enum": 6,
-      "fn": 53,
-      "struct": 20,
-      "trait": 3
+      "enum": 5,
+      "fn": 16,
+      "re-export": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linkedin_connector/normalize_keys.rs",
+     "purpose": "Key builders, thread/message id normalization, and bounded validators",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInAccountRiskLimits",
+      "LinkedInConsentScreenCopy",
+      "LinkedInKillSwitchState",
+      "LinkedInSandboxHostHarness",
+      "LinkedInSeatDispatchState",
+      "LinkedInSeatPolicyAction",
+      "LinkedInSeatPolicyDecision",
+      "LinkedInSeatSandboxPolicy"
+     ],
+     "path": "src/linkedin_connector/seat_policy.rs",
+     "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy",
+     "surface": {
+      "enum": 1,
+      "fn": 19,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInMcpSendMessageRequest",
+      "LinkedInMcpSendTransport",
+      "LinkedInMcpVerifiedSendSink",
+      "LinkedInVerifiedSendPlan"
+     ],
+     "path": "src/linkedin_connector/verified_send.rs",
+     "purpose": "Verify-after-send plan, sink, observation, and receipt helpers",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 8,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -14320,18 +14569,62 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/egress.rs",
+     "purpose": "Window egress: packing policy, secret scrub, exports, and mirror replay",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/forward.rs",
+     "purpose": "Forward rematerialization of window state into the CRDT doc",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LoadedWindow"
      ],
-     "path": "src/sync/window.rs",
+     "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 13,
-      "fn": 17,
+      "crate-vis": 8,
+      "fn": 6,
       "mod": 1,
+      "re-export": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/reverse.rs",
+     "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/test_hooks.rs",
+     "purpose": "Test-only hook for the REDACTION_AUDIT rematerialization race pin",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -14341,6 +14634,17 @@
      "path": "src/sync/window/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/tombstones.rs",
+     "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3
+     }
     },
     {
      "bucket": "m",
@@ -16416,7 +16720,7 @@
      "purpose": "Vault-scoped immutable build results"
     },
     "calendar": {
-     "files": 19,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -16507,10 +16811,10 @@
      "purpose": "—"
     },
     "code_revision": {
-     "files": 2,
+     "files": 9,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "—"
     },
     "code_run": {
@@ -16808,10 +17112,10 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 3,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_id": {
@@ -16990,10 +17294,10 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 1,
+     "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "LinkedIn connector adapter surface (ONE-1563 / LNKD-1)"
     },
     "linkedin_lead_preload": {
@@ -17396,7 +17700,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 37,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -17529,9 +17833,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 139,
+   "over_bar": 135,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 842,
+   "source_files": 869,
    "test_files": 374
   },
   "oneiron-bench": {
