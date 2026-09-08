@@ -195,7 +195,7 @@ pub mod secret_lease;
 pub mod secret_manifest;
 pub mod secret_rotation;
 pub mod secret_snapshot;
-// ===== Surfaces & hosts ===== memory facade, Eiri wire types, settings, Context Board, voice
+// ===== Surfaces & hosts ===== memory facade, Context Board wire types, settings, voice
 pub mod agent_inbox_lens;
 pub mod board_verb;
 pub mod context_board;
@@ -320,8 +320,8 @@ pub use crate::config::{
     VaultPrivacyConfig,
 };
 pub use crate::context_board::{
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriSessionRagState, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
+    AssembledContext, CompanionAssembly, HydrationBudget, MEMORIES_SECTION_VERSION_V4,
+    MemoriesBudget, MemoriesCursor, MemoriesSection, NotificationItem, SessionContext,
     UnprocessedItem,
 };
 pub use crate::context_pack::{

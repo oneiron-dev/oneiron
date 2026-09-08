@@ -1219,37 +1219,36 @@ fn test_prompt_stamp() -> PromptRecompileStamp {
     }
 }
 
-fn test_memory_board(claim_score: f32) -> EiriMemoryBoard {
-    use crate::context_board::EIRI_CONTEXT_VERSION_V4;
-    use crate::context_board::EiriMemoryBoardBudget;
-    use crate::context_board::EiriMemoryBoardRow;
-    use crate::context_board::EiriMemoryBoardSlot;
-    use crate::context_board::EiriMemoryBoardSource;
+fn test_memory_board(claim_score: f32) -> MemoriesSection {
+    use crate::context_board::MEMORIES_SECTION_VERSION_V4;
+    use crate::context_board::MemoriesBudget;
+    use crate::context_board::MemoryRow;
+    use crate::context_board::MemorySlot;
+    use crate::context_board::MemorySource;
 
-    let row =
-        |row_index: usize, seed: u8, slot: EiriMemoryBoardSlot, score: f32| EiriMemoryBoardRow {
-            row_index,
-            slot,
-            source: EiriMemoryBoardSource::Result,
-            id: entity(seed).to_hex(),
-            short_id: format!("mem{seed:02x}"),
-            content_hash: format!("{seed:02x}"),
-            entity_type: if slot == EiriMemoryBoardSlot::Claims {
-                crate::registry::ENTITY_TYPE_CLAIM
-            } else {
-                crate::registry::ENTITY_TYPE_SUMMARY
-            },
-            asset_ref: None,
-            score,
-        };
+    let row = |row_index: usize, seed: u8, slot: MemorySlot, score: f32| MemoryRow {
+        row_index,
+        slot,
+        source: MemorySource::Result,
+        id: entity(seed).to_hex(),
+        short_id: format!("mem{seed:02x}"),
+        content_hash: format!("{seed:02x}"),
+        entity_type: if slot == MemorySlot::Claims {
+            crate::registry::ENTITY_TYPE_CLAIM
+        } else {
+            crate::registry::ENTITY_TYPE_SUMMARY
+        },
+        asset_ref: None,
+        score,
+    };
 
-    EiriMemoryBoard {
-        version: EIRI_CONTEXT_VERSION_V4.to_owned(),
-        budget: EiriMemoryBoardBudget::new(2, 0, 1, 0, 0, 0),
+    MemoriesSection {
+        version: MEMORIES_SECTION_VERSION_V4.to_owned(),
+        budget: MemoriesBudget::new(2, 0, 1, 0, 0, 0),
         rows: vec![
-            row(0, 0x21, EiriMemoryBoardSlot::Claims, claim_score),
-            row(1, 0x22, EiriMemoryBoardSlot::Claims, 0.25),
-            row(2, 0x31, EiriMemoryBoardSlot::Summaries, 0.125),
+            row(0, 0x21, MemorySlot::Claims, claim_score),
+            row(1, 0x22, MemorySlot::Claims, 0.25),
+            row(2, 0x31, MemorySlot::Summaries, 0.125),
         ],
         companion: None,
         disclosure: None,
@@ -1281,7 +1280,7 @@ fn context_receipt_field_set_rides_emit_receipts_and_round_trips() {
     assert!(context.board_state_ref.starts_with("board:"));
     assert_eq!(
         context.board_state_ref,
-        eiri_memory_board_state_ref(&board).expect("assembled board hashes")
+        memories_state_ref(&board).expect("assembled board hashes")
     );
 
     let mut receipt = projected_receipt(
@@ -1365,13 +1364,13 @@ fn context_receipt_field_set_is_rejected_on_non_emit_receipts() {
 fn board_state_ref_records_the_board_as_shown() -> Result<()> {
     let board = test_memory_board(0.5);
     assert_eq!(
-        eiri_memory_board_state_ref(&board)?,
-        eiri_memory_board_state_ref(&test_memory_board(0.5))?,
+        memories_state_ref(&board)?,
+        memories_state_ref(&test_memory_board(0.5))?,
         "same board as shown, same ref"
     );
     assert_ne!(
-        eiri_memory_board_state_ref(&board)?,
-        eiri_memory_board_state_ref(&test_memory_board(0.75))?,
+        memories_state_ref(&board)?,
+        memories_state_ref(&test_memory_board(0.75))?,
         "retrieval drift changes the ref"
     );
     Ok(())

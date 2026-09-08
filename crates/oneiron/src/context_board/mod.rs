@@ -36,13 +36,13 @@ pub use frame::{
     section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
-    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+    AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,
 };
 pub use memories::{
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
+    CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesCursor,
+    MemoriesSection, MemoryRow, MemorySlot, MemorySource,
 };
-pub use memories_projection::assemble_eiri_memory_board;
+pub use memories_projection::project_memories_section;
 pub use plugin::{
     AdmittedPluginSection, AuthorityLaneRef, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
     PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload,

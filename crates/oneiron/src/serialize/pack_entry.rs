@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
-use crate::context_board::ResumeBundle;
+use crate::context_board::AssembledContext;
 use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
 use crate::context_pack::FieldProfile;
@@ -186,8 +186,8 @@ fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackT
     }
 }
 
-pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
-    serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
+pub fn serialize_assembled_context(bundle: &AssembledContext) -> Vec<u8> {
+    serde_json::to_vec(bundle).expect("AssembledContext JSON serialization should not fail")
 }
 
 /// Builds the compact text preview stored beside raw code-run output bytes.

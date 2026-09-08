@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::memories::EiriSessionRagState;
+use super::memories::MemoriesCursor;
 
 /// Read-only ambient context returned by the companion resume endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -11,7 +11,7 @@ pub struct SessionContext {
     pub counts: BTreeMap<String, u64>,
     pub last_activity: Option<u64>,
     #[serde(default)]
-    pub rag_state: EiriSessionRagState,
+    pub rag_state: MemoriesCursor,
 }
 
 /// Pending notification surfaced during companion resume hydration.
@@ -33,13 +33,13 @@ pub struct UnprocessedItem {
 
 /// Token meter snapshot included in every companion resume bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ResumeBudget {
+pub struct HydrationBudget {
     pub tokens_used: u64,
     pub tokens_limit: u64,
     pub tokens_remaining: u64,
 }
 
-impl ResumeBudget {
+impl HydrationBudget {
     #[must_use]
     pub fn from_meter(tokens_used: u64, tokens_limit: u64) -> Self {
         Self {
@@ -52,20 +52,20 @@ impl ResumeBudget {
 
 /// Single-call companion hydration bundle.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ResumeBundle {
+pub struct AssembledContext {
     pub session: SessionContext,
     pub notifications: Vec<NotificationItem>,
     pub unprocessed: Vec<UnprocessedItem>,
-    pub budget: ResumeBudget,
+    pub budget: HydrationBudget,
 }
 
-impl ResumeBundle {
+impl AssembledContext {
     #[must_use]
     pub fn new(
         session: SessionContext,
         notifications: Vec<NotificationItem>,
         unprocessed: Vec<UnprocessedItem>,
-        budget: ResumeBudget,
+        budget: HydrationBudget,
     ) -> Self {
         Self {
             session,
