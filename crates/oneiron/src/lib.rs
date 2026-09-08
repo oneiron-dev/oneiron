@@ -1,3 +1,17 @@
+//! Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces.
+//! Families in file order, one banner each; only `sync` is feature-gated; map: `docs/CODEMAP.md`:
+//! - Vault core & maintenance: `vault`, `store`, `batch`, `registry`, `error`, `config`
+//! - Read path: `analyzer`, `bm25`, `hnsw`, `pipeline`, `context_pack`, `llm`
+//! - Knowledge model: `claim`, `provenance`, `corpus`, `affect`, `companion`
+//! - Gates, consent & authority: `gate`, `consent`, `policy_model`, `authority`, `share`
+//! - Identity & counterparties: `channel_identity`, `identity_topology`, `interlocutor`
+//! - Tasks, commitments & scheduling: `task_verb`, `commitment`, `calendar`, `booking`, `habit`
+//! - Outbound effects, connectors & sync: `outbound`, `comm`, `ingest`, `web_fetch`, `sync`
+//! - Agent runtime: `agent_def`, `agent_dispatch`, `attempt_queue`, `run_tree`, `code_run`
+//! - Dreamer & skills: `dreamer_wake`, `dreamer_consolidation`, `inbox`, `skill`, `skill_hub`
+//! - Code, artifacts & custody: `codebase`, `git_wire`, `blob_artifact`, `secret_custody`
+//! - Surfaces & hosts: `memory`, `eiri`, `context_board`, `genui`, `voice_cascade`
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
@@ -5,69 +19,141 @@ thread_local! {
     static PANIC_ON_UNIX_SECONDS_NOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-pub mod access_grant;
+// ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
+pub mod batch;
+pub mod config;
+pub mod deletion;
+pub mod edge;
+pub mod entity_id;
+pub mod error;
+pub(crate) mod identity;
+pub(crate) mod limits;
+pub mod maintain;
+pub mod off_record;
+pub(crate) mod overlay_db;
+pub mod recovery;
+pub mod registry;
+pub(crate) mod session_overlay;
+pub mod slim;
+pub mod store;
+pub(crate) mod sweep;
+pub mod temporal;
+mod vault;
+pub mod write_envelope;
+// ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
+pub mod analyzer;
+pub(crate) mod bm25;
+pub mod compaction;
+pub mod context_pack;
+pub mod context_projection;
+pub(crate) mod distance;
+pub mod embed;
+pub(crate) mod fusion;
+pub mod graph_fs;
+pub(crate) mod hnsw;
+pub mod llm;
+pub mod pipeline;
+pub(crate) mod ppr;
+pub mod ppr_community;
+pub mod prompt;
+pub mod query_expansion;
+pub mod rerank;
+pub mod retrieval_depth;
+pub mod retrieval_quality;
+pub mod saved_query;
+pub mod serialize;
+pub mod speculative;
+pub mod tokenizer;
+// ===== Knowledge model ===== typed record families: claims, provenance, corpus, affect, people
 pub mod actor_claims;
 pub mod affect;
-pub mod agent_def;
-pub mod agent_dispatch;
-pub mod agent_inbox_lens;
-pub mod agent_run_status;
-pub mod analyzer;
-pub mod anchored_annotation;
-pub mod artifact_hosting;
-pub mod attempt_queue;
+pub mod claim;
+pub mod companion;
+pub mod corpus;
+pub mod extraction_eval;
+pub mod note;
+pub mod persona_snapshot;
+pub mod provenance;
+pub mod provider_confidence;
+pub mod psych_profile;
+// ===== Gates, consent & authority ===== every write passes the Gate; consent, policy, grants
+pub mod access_grant;
 pub mod authority;
-pub mod autoreason_campaign;
-pub mod batch;
-pub mod blob_artifact;
-pub(crate) mod bm25;
-pub mod board_verb;
-pub mod booking;
-pub mod build_cache;
-pub mod calendar;
-pub mod campaign;
+// DEC-0006 unified consent-mode: the pinned import path is `oneiron::consent::ActorBound`.
+pub mod consent;
+pub mod consent_graduation;
+pub mod federation;
+pub(crate) mod gate;
+pub mod policy_model;
+pub mod receipt;
+pub mod share;
+pub mod workspace_roster;
+// ===== Identity & counterparties ===== channel identities, topology, interlocutors, threads
 pub mod channel_identity;
 pub mod channel_identity_autonomy;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod channel_identity_selection;
-pub mod checkout;
-pub mod claim;
-pub mod cluster;
-pub mod code_artifact;
-pub mod code_memory;
-pub mod code_revision;
-pub mod code_run;
-pub mod code_sandbox;
-pub mod code_symbol;
-pub mod codebase;
-pub mod comm;
+pub mod counterparty_contact;
+pub mod disclosure;
+pub mod identity_redirect;
+pub mod identity_reputation;
+pub mod identity_topology;
+pub mod interlocutor;
+pub mod subject_model;
+pub mod surface_event;
+pub mod thread_lens;
+pub mod thread_passport;
+// ===== Tasks, commitments & scheduling ===== TASK verbs, commitments, calendar, booking, habits
+pub mod booking;
+pub mod calendar;
 pub mod commitment;
 pub mod commitment_ledger;
 pub mod commitment_lifecycle;
 pub mod commitment_schedule;
 pub mod commitment_wake;
-pub mod compaction;
-pub mod companion;
-pub mod config;
+pub mod habit;
+pub mod human_task;
+pub mod linear_sync;
+pub mod task_authority;
+pub mod task_verb;
+// ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
+pub mod campaign;
+pub mod comm;
 pub mod connector_key;
-// DEC-0006 unified consent-mode: the pinned import path is `oneiron::consent::ActorBound`.
-pub mod consent;
-pub mod consent_graduation;
-pub mod consult_ladder;
-pub mod context_board;
-pub mod context_pack;
-pub mod context_projection;
-pub mod corpus;
-pub mod counterparty_contact;
-pub(crate) mod credential_door;
-pub mod critic;
-pub mod deletion;
 pub mod delivery_window;
-pub mod disclosure;
+pub mod feedback;
+pub mod ingest;
+pub mod linkedin_connector;
+pub mod linkedin_lead_preload;
+pub mod outbound;
+pub(crate) mod outbound_chokepoint;
+pub mod outbound_consent;
+pub mod outbound_grant;
+pub mod outbound_intent_ledger;
+#[cfg(feature = "sync")]
+pub mod sync;
+pub mod web_fetch;
+// ===== Agent runtime ===== agent defs, dispatch, attempt queue, run tree, sessions, code-mode
+pub mod agent_def;
+pub mod agent_dispatch;
+pub mod agent_run_status;
+pub mod attempt_queue;
+pub mod code_run;
+pub mod code_sandbox;
+pub mod consult_ladder;
 pub mod dispatch_byoa;
-pub(crate) mod distance;
+pub mod engine_executor;
+pub mod failure_ladder;
+pub mod run_tree;
+pub mod self_heal;
+pub mod session_lifecycle;
+pub mod wave_orchestration;
+// ===== Dreamer & skills ===== background consolidation, tournaments, inbox, cleanup; skills loop
+pub mod autoreason_campaign;
+pub mod cluster;
+pub mod critic;
 pub mod dreamer_consolidation;
 pub mod dreamer_plugin_suggest;
 pub mod dreamer_prefilter;
@@ -75,82 +161,8 @@ pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod dreamer_wake;
-pub mod edge;
-pub mod edit_distance;
-pub mod edit_roundtrip;
-pub mod edit_settle;
-pub mod eiri;
-pub mod embed;
-pub mod engine_executor;
-pub mod entity_id;
-pub mod error;
-pub mod extraction_eval;
-pub mod failure_ladder;
 pub mod fanout_auto;
-pub mod federation;
-pub mod feedback;
-pub(crate) mod fusion;
-pub(crate) mod gate;
-pub mod genui;
-pub mod git_wire;
-pub mod graph_fs;
-pub mod habit;
-pub(crate) mod hnsw;
-pub mod human_task;
-pub(crate) mod identity;
-pub mod identity_redirect;
-pub mod identity_reputation;
-pub mod identity_topology;
 pub mod inbox;
-pub mod ingest;
-pub mod interlocutor;
-pub mod lens;
-pub(crate) mod limits;
-pub mod linear_sync;
-pub mod linkedin_connector;
-pub mod linkedin_lead_preload;
-pub mod llm;
-pub mod maintain;
-pub mod memory;
-pub mod note;
-pub mod off_record;
-pub mod origin;
-pub mod outbound;
-pub(crate) mod outbound_chokepoint;
-pub mod outbound_consent;
-pub mod outbound_grant;
-pub mod outbound_intent_ledger;
-pub(crate) mod overlay_db;
-pub mod persona_snapshot;
-pub mod pipeline;
-pub mod policy_model;
-pub(crate) mod ppr;
-pub mod ppr_community;
-pub mod prompt;
-pub mod provenance;
-pub mod provider_confidence;
-pub mod psych_profile;
-pub mod query_expansion;
-pub mod receipt;
-pub mod recovery;
-pub mod registry;
-pub mod repo_mutation;
-pub mod rerank;
-pub mod retrieval_depth;
-pub mod retrieval_quality;
-pub mod run_tree;
-pub mod saved_query;
-pub mod secret_custody;
-pub mod secret_lease;
-pub mod secret_manifest;
-pub mod secret_rotation;
-pub mod secret_snapshot;
-pub mod self_heal;
-pub mod serialize;
-pub mod session_lifecycle;
-pub(crate) mod session_overlay;
-pub mod settings;
-pub mod share;
 pub mod skill;
 pub mod skill_attribution;
 pub mod skill_convert;
@@ -158,32 +170,46 @@ pub mod skill_hub;
 pub mod skill_optimize;
 pub mod skill_reliability;
 pub mod skill_scan;
-pub mod slim;
-pub mod speculative;
-pub mod store;
-pub mod subject_model;
-pub mod surface_event;
-pub(crate) mod sweep;
-#[cfg(feature = "sync")]
-pub mod sync;
-pub mod task_authority;
-pub mod task_verb;
-pub mod temporal;
-pub mod thread_lens;
-pub mod thread_passport;
-pub mod tokenizer;
-mod vault;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
+// ===== Code, artifacts & custody ===== code memory, git wire, build cache, artifacts, secrets
+pub mod anchored_annotation;
+pub mod artifact_hosting;
+pub mod blob_artifact;
+pub mod build_cache;
+pub mod checkout;
+pub mod code_artifact;
+pub mod code_memory;
+pub mod code_revision;
+pub mod code_symbol;
+pub mod codebase;
+pub(crate) mod credential_door;
+pub mod edit_distance;
+pub mod edit_roundtrip;
+pub mod edit_settle;
+pub mod git_wire;
+pub mod origin;
+pub mod repo_mutation;
+pub mod secret_custody;
+pub mod secret_lease;
+pub mod secret_manifest;
+pub mod secret_rotation;
+pub mod secret_snapshot;
+// ===== Surfaces & hosts ===== memory facade, Eiri wire types, settings, Context Board, voice
+pub mod agent_inbox_lens;
+pub mod board_verb;
+pub mod context_board;
+pub mod eiri;
+pub mod genui;
+pub mod lens;
+pub mod memory;
+pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
 pub mod voice_identity;
 pub mod voice_segment;
-pub mod wave_orchestration;
-pub mod web_fetch;
-pub mod workspace_roster;
-pub mod write_envelope;
 
+// ===== Root re-export surface =====
 // Root re-export surface (curated). A name lives here only when a downstream
 // consumer imports it at the crate root — plus `Error`, pinned by the docs
 // contract, and the signature closure: a type a public signature exposes (an
