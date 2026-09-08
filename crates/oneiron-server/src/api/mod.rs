@@ -5,56 +5,22 @@
 //!
 //! Auth: shared secret header for Phase 1.
 
-use crate::auth::CoreAuth;
-use crate::auth::require_owner_auth;
 #[cfg(test)]
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
-use crate::error::ApiErrorDetails;
-use crate::error::ApiErrorEnvelope;
-use crate::error::ErrorCode;
 use crate::idempotency::IdempotencyLayerState;
 use crate::idempotency::idempotency_middleware;
-use crate::projection::View;
-use crate::protocol::CountMode;
-use crate::protocol::PaginatedResponse;
-use crate::protocol::ResponseMeta;
 use crate::runtime::RuntimeHealthStatus;
-use crate::runtime::RuntimeMode;
-use crate::runtime::RuntimeProviderKind;
-use crate::runtime::RuntimeRole;
-use crate::runtime::RuntimeRoute;
-use crate::runtime::RuntimeRouteProvenance;
-use crate::runtime::RuntimeRouteReason;
-use crate::runtime::RuntimeRouteSource;
-use crate::runtime::RuntimeRouteState;
-use crate::runtime::RuntimeStatus;
 use crate::server::SyncServer;
 use crate::skills_pack as skills_pack_artifact;
-use crate::usage::ConsumerAllowanceState;
-use crate::usage::ConsumerAllowanceWarning;
-use crate::usage::ConsumerAllowanceWarningLevel;
-use crate::usage::ConsumerTopUp;
-use crate::usage::ConsumerTopUpRequest;
-use crate::usage::ConsumerTopUpState;
-use crate::usage::ConsumerUsageDetails;
-use crate::usage::ConsumerUsageState;
-use crate::usage::UsageEvent;
-use crate::usage::UsageRecordResult;
-use crate::usage::UsageRollup;
 use axum::Router;
 #[cfg(test)]
 use axum::body::Bytes;
-use axum::extract::Query;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::rejection::QueryRejection;
-use axum::http::HeaderMap;
 #[cfg(test)]
 use axum::http::header::CACHE_CONTROL;
 #[cfg(test)]
 use axum::http::header::CONTENT_SECURITY_POLICY;
-use axum::http::header::CONTENT_TYPE;
 #[cfg(test)]
 use axum::http::header::ETAG;
 #[cfg(test)]
@@ -66,21 +32,43 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use axum::routing::get;
 use axum::routing::post;
-use oneiron::ErrorKind;
 #[cfg(test)]
 use oneiron::registry::ENTITY_TYPE_TURN;
-use serde::Deserialize;
 use serde::Serialize;
 #[cfg(test)]
 use serde_json::json;
 #[cfg(test)]
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
-use utoipa::IntoParams;
-use utoipa::OpenApi;
 use utoipa::ToSchema;
+
+// Test-only seam: `api/tests` names these bare through `use super::*`, but no
+// production path in this module does anymore (the items live in the children
+// above). A plain import would warn as unused in non-test builds.
+#[cfg(test)]
+use crate::auth::CoreAuth;
+#[cfg(test)]
+use crate::error::ApiErrorDetails;
+#[cfg(test)]
+use crate::error::ErrorCode;
+#[cfg(test)]
+use crate::projection::View;
+#[cfg(test)]
+use crate::protocol::CountMode;
+#[cfg(test)]
+use crate::protocol::PaginatedResponse;
+#[cfg(test)]
+use crate::protocol::ResponseMeta;
+#[cfg(test)]
+use crate::runtime::RuntimeMode;
+#[cfg(test)]
+use crate::runtime::RuntimeProviderKind;
+#[cfg(test)]
+use crate::runtime::RuntimeRole;
+#[cfg(test)]
+use axum::extract::Query;
+#[cfg(test)]
+use axum::http::HeaderMap;
 
 mod artifacts;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
@@ -100,6 +88,7 @@ mod conversations;
 mod core;
 mod discover;
 mod entity;
+mod error_map;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
 // surface, nested at `/v1/core/facade`. Its own file because it is its own
 // contract — one route per public verb, engine DTOs verbatim, and a facade
@@ -119,6 +108,8 @@ mod memory;
 // citation gate over whatever a host composer returns.
 pub(crate) mod memory_reason;
 mod openapi;
+mod openapi_registry;
+mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the
@@ -128,6 +119,7 @@ mod context_board;
 mod reactive;
 mod run_tree;
 mod saved_query;
+mod scoped_auth;
 mod search;
 mod surface_events;
 mod vad;
@@ -142,13 +134,21 @@ pub(crate) use self::conversations::*;
 pub(crate) use self::core::*;
 pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
+use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
 pub(crate) use self::mcp_gateway::*;
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
+pub(crate) use self::openapi_registry::ApiDoc;
+pub(crate) use self::params::ViewQuery;
+use self::params::{
+    default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
+    parse_optional_entity_id, query_params, unix_seconds_now,
+};
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
+use self::scoped_auth::{check_api_auth, scoped_read_for_core_auth, scoped_read_for_legacy_api};
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
 pub(crate) use self::vad::*;
@@ -162,236 +162,6 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
 // ONE-214 is read-only and adds no notification-specific storage. Keep
 // context-board hydration bounded by returning pending notifications from a
 // latest window.
-
-#[derive(OpenApi)]
-#[openapi(
-    paths(
-        openapi_json,
-        skills_pack,
-        health,
-        discover,
-        search_vector,
-        search_text,
-        get_entity,
-        get_edges,
-        core_batch,
-        core_query,
-        core_hydrate,
-        core_batch_short_id_hydrate,
-        core_memory_timeline,
-        core_memory_verb,
-        list_core_outbound_capabilities,
-        get_core_outbound_capability,
-        get_core_outbound_verb_contract,
-        core_context_pack,
-        context_board_hydrate,
-        core_run_tree,
-        core_run_tree_observe,
-        core_run_tree_intervene,
-        submit_core_surface_event,
-        get_core_surface_event,
-        list_core_conversations,
-        create_core_conversation,
-        list_core_conversation_turns,
-        create_core_conversation_turn,
-        get_core_turn,
-        annotate_turn_vad,
-        read_turn_vad_annotation,
-        booking_agent_instructions,
-        booking_availability,
-        booking_book,
-        booking_reschedule,
-        booking_cancel,
-        create_companion_access_grant,
-        revoke_companion_access_grant,
-        get_companion_profile,
-        refresh_companion_profile,
-        create_companion_register_record,
-        get_companion_register_record,
-        update_companion_register_record,
-        retire_companion_register_record,
-        end_companion_register_relationship,
-        companion_memory_reason,
-        record_usage_event,
-        get_usage_rollup,
-        get_consumer_usage,
-        get_consumer_usage_details,
-        top_up_consumer,
-        lease_revoke
-    ),
-    components(schemas(
-        CountMode,
-        PaginatedResponse<SearchResult>,
-        ResponseMeta,
-        View,
-        HealthResponse,
-        DiscoverResponse,
-        SkillPackDiscovery,
-        BoundContext,
-        DiscoveredEntity,
-        FeatureFlags,
-        OutboundCapabilityDiscovery,
-        OutboundConnectorManifestSummary,
-        RateLimitStatus,
-        RuntimeMode,
-        RuntimeProviderKind,
-        RuntimeRole,
-        RuntimeRoute,
-        RuntimeRouteProvenance,
-        RuntimeRouteReason,
-        RuntimeRouteSource,
-        RuntimeRouteState,
-        RuntimeStatus,
-        ApiError,
-        ApiErrorEnvelope,
-        ApiErrorDetails,
-        ErrorCode,
-        VectorSearchQuery,
-        SearchResult,
-        TextSearchQuery,
-        EdgeResult,
-        CoreBatchRequest,
-        CoreBatchEntityInput,
-        CoreBatchEntityResult,
-        CoreBatchResponse,
-        CoreRunTreeQuery,
-        CoreRunTreeInterventionRequest,
-        CoreRunTreeInterventionKind,
-        CoreRunTreeInterventionResponse,
-        CoreRunTreeInterventionEffect,
-        CoreRunTreeResponse,
-        CoreRunTreeNode,
-        CoreRunTreeStatus,
-        CoreRunTreeTimestamps,
-        CoreRunTreeFailure,
-        CoreRunTreeEvent,
-        CoreRunTreeEventKind,
-        CoreRunTreeRepair,
-        SurfaceEventSubmitRequest,
-        SurfaceEventSourcePayload,
-        SurfaceSourceAppPayload,
-        SurfaceEventActionPayload,
-        SurfaceInteractionKindPayload,
-        SurfaceCounterpartyPayload,
-        SurfaceEventAckResponse,
-        SurfaceEventRejectionResponse,
-        SurfaceEventStatusResponse,
-        SurfaceEventHandoffStatePayload,
-        CoreTextField,
-        CoreQueryRequest,
-        CoreHydrateRequest,
-        CoreHydrateResponse,
-        CoreHydrateStatus,
-        CoreHydrateDeletionMetadata,
-        CoreHydrateDeletionSource,
-        CoreHydrateDeletionReason,
-        CoreBatchShortIdHydrateRequest,
-        CoreBatchShortIdHydrateResponse,
-        CoreBatchShortIdHydrateItem,
-        CoreShortIdHydrateOutcome,
-        CoreShortIdHydrateError,
-        CoreShortIdHydrateErrorKind,
-        CoreMemoryTimelineResponse,
-        CoreMemoryTimelineRecord,
-        CoreMemoryTimelineRecordState,
-        CoreMemoryVerbRequest,
-        CoreMemoryVerbResponse,
-        CoreMemoryVerbDeleteOutcome,
-        CoreMemoryVerbDeleteReason,
-        CoreMemoryOperationKind,
-        ContextPackDepthControls,
-        ContextPackPolicyControls,
-        ContextPackTimeControls,
-        ContextPackRetrievalBudgetControls,
-        ContextPackBudgetControls,
-        ContextBoardMemoriesControls,
-        ContextBoardMemoriesSlotControls,
-        ContextBoardSessionControls,
-        ContextBoardCompanionControls,
-        CoreContextPackRequest,
-        CoreContextPackResponse,
-        ContextBoardCompanionAssembly,
-        ContextBoardMemories,
-        ContextBoardMemoriesBudget,
-        ContextBoardMemoryRow,
-        ContextBoardMemorySlot,
-        ContextBoardMemorySource,
-        ContextBoardMemoriesCursor,
-        ContextBoardRequest,
-        ContextBoardResponse,
-        ContextBoardSession,
-        ContextBoardNotification,
-        ContextBoardUnprocessedItem,
-        ContextBoardBudget,
-        CoreContextEntity,
-        CoreContextEdge,
-        CoreContextPackStats,
-        CoreContextPackItemAccounting,
-        CoreContextPackState,
-        CoreContextPackStateKind,
-        CoreContextPackStateReason,
-        CoreContextPackScoreComponent,
-        CoreContextPackScoreEvidence,
-        CoreContextPackEvidence,
-        CoreListQuery,
-        CoreCreateEntityRequest,
-        CoreCreateTurnRequest,
-        CoreEntityWriteResponse,
-        VadPayload,
-        TurnVadAnnotationSource,
-        TurnVadAnnotateRequest,
-        TurnVadAnnotateQuery,
-        TurnVadAnnotateResponse,
-        CompanionAccessGrantScopePayload,
-        CompanionAccessGrantResponse,
-        CompanionCreateAccessGrantRequest,
-        CompanionRevokeAccessGrantRequest,
-        CompanionProfileAccess,
-        CompanionProfileConfidencePayload,
-        CompanionProfileDriftAnchor,
-        CompanionProfileNextAction,
-        CompanionProfilePayload,
-        CompanionProfileRefreshRequest,
-        CompanionProfileResponse,
-        CompanionProfileStaleReasonPayload,
-        CompanionRegisterScopePayload,
-        CompanionRegisterRelationshipRefPayload,
-        CompanionRegisterSubjectPayload,
-        CompanionRegisterProvenancePayload,
-        CompanionRegisterRecordPayload,
-        CompanionRegisterCreateRecordRequest,
-        CompanionRegisterUpdateRecordRequest,
-        CompanionRegisterRetireRecordRequest,
-        CompanionEndRelationshipRequest,
-        CompanionGoodbyeArtifactHookPayload,
-        CompanionEndRelationshipResponse,
-        CompanionRegisterRecordResponse,
-        MemoryReasonRequest,
-        MemoryReasonResponse,
-        MemoryReasonFormat,
-        MemoryReasonSessionContext,
-        MemoryReasonTrace,
-        LeaseRevokeRequest,
-        LeaseRevokeResponse,
-        ConsumerAllowanceState,
-        ConsumerAllowanceWarning,
-        ConsumerAllowanceWarningLevel,
-        ConsumerTopUp,
-        ConsumerTopUpRequest,
-        ConsumerTopUpState,
-        ConsumerUsageDetails,
-        ConsumerUsageState,
-        UsageEvent,
-        UsageRecordResult,
-        UsageRollup
-    )),
-    info(
-        title = "Oneiron Server API",
-        version = "0.1.0",
-        description = "Local Oneiron sync daemon HTTP API for search, entity reads, context-pack requests, and lease recovery."
-    )
-)]
-pub(crate) struct ApiDoc;
 
 /// Builds the HTTP API routes.
 pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
@@ -609,73 +379,6 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
     })
 }
 
-/// Gates the legacy `/api/*` routes on an owner-grade bearer.
-///
-/// These routes read the whole vault under one actor ref, so they stay a
-/// trust-root surface: scoped `/v1` delegation tokens do not reach them.
-fn check_api_auth(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
-    require_owner_auth(headers, &server.config, server.vault().as_ref()).map(drop)
-}
-
-const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
-
-fn scoped_read_for_core_auth<'a>(
-    vault: &'a oneiron::Vault,
-    auth: &CoreAuth,
-) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
-    let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
-    scoped_read_for_actor_ref(vault, actor_ref)
-}
-
-fn scoped_read_for_legacy_api(
-    vault: &oneiron::Vault,
-) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
-    scoped_read_for_actor_ref(vault, LEGACY_SCOPED_READ_ACTOR_REF)
-}
-
-fn scoped_read_for_actor_ref<'a>(
-    vault: &'a oneiron::Vault,
-    actor_ref: &str,
-) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
-    let actor_key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
-        .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
-    Ok(vault.scoped_read(actor_key))
-}
-
-fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
-    let Query(params) = query.map_err(query_rejection_error)?;
-    Ok(params)
-}
-
-fn query_rejection_error(rejection: QueryRejection) -> ApiError {
-    if rejection.body_text().contains("invalid_view") {
-        ApiError::bad_request("view must be one of summary, standard, full", Some("view"))
-    } else {
-        ApiError::bad_request("invalid query parameters", None)
-    }
-}
-
-fn json_payload<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
-    let Json(payload) = payload.map_err(json_rejection_error)?;
-    Ok(payload)
-}
-
-fn json_rejection_error(_rejection: JsonRejection) -> ApiError {
-    ApiError::bad_request("invalid JSON request body", None)
-}
-
-fn has_json_content_type(headers: &HeaderMap) -> bool {
-    headers
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .is_some_and(|media_type| {
-            let media_type = media_type.trim();
-            media_type.eq_ignore_ascii_case("application/json")
-                || media_type.to_ascii_lowercase().ends_with("+json")
-        })
-}
-
 // ─── Discovery / capability metadata ─────────────────────────────────────────
 
 /// Health response returned by `/api/health`.
@@ -702,124 +405,6 @@ struct HealthResponse {
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────
 
-// ─── Search Routes ────────────────────────────────────────────────────────────
-
-fn default_limit() -> usize {
-    10
-}
-
-// ─── Entity Routes ────────────────────────────────────────────────────────────
-
-#[derive(Deserialize, ToSchema, IntoParams)]
-#[into_params(parameter_in = Query)]
-pub(crate) struct ViewQuery {
-    /// Optional projection view. Entity reads default to `standard`; edge reads default to `summary`.
-    #[schema(example = "standard")]
-    #[param(example = "standard")]
-    view: Option<View>,
-}
-
-// ─── Core API parity routes ─────────────────────────────────────────────────
-
-fn parse_optional_entity_id(
-    value: Option<&str>,
-    field: &'static str,
-) -> Result<oneiron::EntityId, ApiError> {
-    value.map_or_else(
-        || Ok(oneiron::EntityId::now()),
-        |value| parse_entity_id_param(value, field),
-    )
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
-}
-
-fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
-    match error.kind() {
-        ErrorKind::DimensionMismatch
-        | ErrorKind::InvalidVector
-        | ErrorKind::InvalidKey
-        | ErrorKind::InvalidConfig
-        | ErrorKind::InvalidTemporalExpression
-        | ErrorKind::InvalidEntityType
-        | ErrorKind::InvalidTimeRange
-        | ErrorKind::InvalidClaimBody
-        | ErrorKind::InvalidAccessGrantBody
-        | ErrorKind::InvalidCounterpartyContactBody
-        | ErrorKind::InvalidCommRecordBody
-        | ErrorKind::InvalidTaskBody
-        | ErrorKind::InvalidCodeArtifactBody
-        | ErrorKind::InvalidBlobArtifactBody
-        | ErrorKind::InvalidWitnessMessageBody
-        | ErrorKind::InvalidEditManifest
-        | ErrorKind::InvalidSkillBody
-        | ErrorKind::InvalidCodebaseSnapshotBody
-        | ErrorKind::InvalidCodeSymbolManifestBody
-        | ErrorKind::InvalidAttemptQueueRecord
-        | ErrorKind::InvalidAttemptQueueTransition
-        | ErrorKind::MaintenanceKindNotWritable
-        | ErrorKind::EntityTypeImmutable
-        | ErrorKind::StructuralKindZoneViolation
-        | ErrorKind::StructuralKindCollision
-        | ErrorKind::InvalidStructuralKindRegistration
-        | ErrorKind::ClaimSelfSupersession
-        | ErrorKind::ProvenanceClaimLifecycle
-        | ErrorKind::AgentNotDispatchable
-        | ErrorKind::InvalidAgentDispatchInput
-        | ErrorKind::AgentDefinitionNotFound
-        | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
-        ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
-        ErrorKind::CycleDetected | ErrorKind::ChildOfCardinality => {
-            ApiError::invalid_state(Some("child_of_constraint"))
-        }
-        ErrorKind::ClaimAlreadyClosed | ErrorKind::ProvenanceClaimAlreadyClosed => {
-            ApiError::invalid_state(Some("memory_lifecycle_closed"))
-        }
-        ErrorKind::HostedMediaHashMatchKnownMatch => ApiError::new(
-            error.to_string(),
-            ApiErrorDetails::InvalidState {
-                state: Some("hosted_media_hash_match_known_match".to_owned()),
-            },
-            [
-                "Remove public access, preserve evidence, and follow the known-CSAM hosted media runbook.",
-            ],
-        ),
-        ErrorKind::GateWriteRejected => ApiError::new(
-            error.to_string(),
-            ApiErrorDetails::InvalidState {
-                state: Some("gate_write_rejected".to_owned()),
-            },
-            ["Route the write through policy review before retrying."],
-        ),
-        ErrorKind::GateConsentStale => ApiError::new(
-            error.to_string(),
-            ApiErrorDetails::InvalidState {
-                state: Some("gate_consent_stale".to_owned()),
-            },
-            ["Restart policy review from the current diff and read frontier."],
-        ),
-        _ => ApiError::internal_server_error(message),
-    }
-}
-
-// ─── Turn VAD annotation ─────────────────────────────────────────────────────
-
-fn parse_entity_id_param(value: &str, field: &'static str) -> Result<oneiron::EntityId, ApiError> {
-    oneiron::EntityId::from_hex(value).map_err(|_| {
-        ApiError::bad_request(
-            format!("{field} must be a 32-character hex entity id"),
-            Some(field),
-        )
-    })
-}
-
 fn require_entity_type(
     server: &SyncServer,
     id: &oneiron::EntityId,
@@ -838,12 +423,6 @@ fn require_entity_type(
             Err(ApiError::internal_server_error("entity type lookup failed"))
         }
     }
-}
-
-fn unix_seconds_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }
 
 // ─── Lease revocation (ONE-1140, OD-8) ────────────────────────────────────────
