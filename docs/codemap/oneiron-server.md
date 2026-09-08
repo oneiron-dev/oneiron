@@ -120,9 +120,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/usage/tests.rs` | test | m | — | — | — |
 | `src/voice_host/connection.rs` | src | s | 2 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |
-| `src/voice_host/mod.rs` | src | s | 5 struct · 1 enum · 7 fn · 1 re-export | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
+| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 1 re-export | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 3 fn | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
-| `src/voice_host/tests.rs` | test | s | — | — | Source-only proofs with a manually released backend |
+| `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
 | `tests/it/booking_agent_api.rs` | test | XL | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
