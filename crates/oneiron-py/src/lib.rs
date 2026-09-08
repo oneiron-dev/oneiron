@@ -216,6 +216,14 @@ impl NativeClient {
 }
 
 /// The private extension module: `oneiron._native`.
+///
+/// PyO3 0.28 flipped the `gil_used` default, so the module now declares
+/// free-threaded support instead of forcing the GIL back on at import. That
+/// default is kept rather than opted out of, because the preconditions already
+/// hold: `NativeClient` is `Sync`, exposes only `&self` methods over a shared
+/// `OneironClient`, and runs every backend call under `Python::detach` — two
+/// Python threads can already be inside the engine at once on a GIL build. The
+/// declaration is inert there and only takes effect on a free-threaded build.
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeClient>()?;
