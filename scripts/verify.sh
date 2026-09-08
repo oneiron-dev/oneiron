@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Full verify gate: fmt (check-mode) -> all-feature and featureless clippy ->
-# full all-feature nextest tier -> featureless oneiron library tests -> doctests.
+# Full verify gate: code-map pin -> fmt (check-mode) -> all-feature and
+# featureless clippy -> full all-feature nextest tier -> featureless oneiron
+# library tests -> doctests.
 #
 # Markers are printed to stdout so they land INSIDE the tee'd log — the marker in
 # the log is the only verify truth; wrapper/ssh exit codes are not evidence.
@@ -33,6 +34,9 @@ run_stage() {
   fi
 }
 
+# Generated code map first: cheap, and a stale map is a docs bug that must not
+# hide behind a long compile.
+run_stage codemap             scripts/codemap/check.sh
 # Honor the workspace's heed exclusion; --all also follows local path dependencies.
 run_stage fmt                 cargo fmt --check
 run_stage clippy              cargo clippy --workspace --all-targets --all-features -- -D warnings

@@ -223,10 +223,7 @@ fn out_of_order_calls_conserve_rows_floors_shared_and_caps() {
     let pending = meter_snapshot(&guard);
     assert_eq!(pending.used_units, 7);
     assert_eq!(pending.reserved_units, 8);
-    assert_eq!(
-        pending.rows,
-        vec![(7, 4, 2, 4), (7, 8, 0, 4), (0, 4, 0, 0)]
-    );
+    assert_eq!(pending.rows, vec![(7, 4, 2, 4), (7, 8, 0, 4), (0, 4, 0, 0)]);
     assert_eq!(pending.shared_used_units, 5);
     assert_eq!(pending.shared_reserved_units, 0);
     guard.settle_per_call(&second.lease, &usage(9, 9)).unwrap();
@@ -319,11 +316,8 @@ fn concurrent_distinct_and_duplicate_calls_charge_once_under_shared_mutex() {
 
 #[test]
 fn per_call_usage_and_tallies_saturate_and_admitted_overshoot_still_settles() {
-    let table = BudgetPolicyTable::from_rows(vec![purpose_row(
-        CallPurpose::Extraction,
-        None,
-        Some(10),
-    )]);
+    let table =
+        BudgetPolicyTable::from_rows(vec![purpose_row(CallPurpose::Extraction, None, Some(10))]);
     let guard = BudgetGuard::with_policy_table(
         "overflow",
         10,

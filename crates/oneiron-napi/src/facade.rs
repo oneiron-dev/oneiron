@@ -11,7 +11,9 @@
 //! JSON-serialized engine `MemoryError` (`{code, message, suggestions}`),
 //! so the TS wrapper (deferred this wave) can rehydrate typed errors.
 
+#[path = "facade/input_error.rs"]
 mod input_error;
+#[path = "facade/numeric.rs"]
 mod numeric;
 
 use std::sync::Arc;

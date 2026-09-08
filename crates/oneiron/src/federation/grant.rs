@@ -1,0 +1,542 @@
+//! Federation grant record, role/preset policy, and grant body MessagePack codec.
+
+use std::io::Cursor;
+
+use rmpv::Value;
+
+use super::codec::{
+    decode_canonical_entity_ref, decode_entity_ref, encode_msgpack_value, optional_value,
+    required_value,
+};
+
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+
+/// Current FederationGrant body schema version.
+///
+/// Stays 1 across the Delegate tier: the body grew two ROLE-CONDITIONAL keys
+/// that only a Delegate carries, so every pre-Delegate body is still exactly a
+/// valid current body. A reader on the old five-key set fails CLOSED on a
+/// seven-key Delegate body (its key allowlist rejects `expires_at`), which is
+/// the desired direction — an old peer never silently reads a delegate grant as
+/// a non-expiring one.
+pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 1;
+
+/// Maximum delegate time-to-live: 90 days.
+pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
+
+/// Pinned ON-DISK MessagePack key set for FEDERATION_GRANT bodies.
+///
+/// The first `FEDERATION_GRANT_REQUIRED_KEYS` entries are required on every
+/// body; `expires_at` and `delegated_by` are role-conditional — required for
+/// [`FederationGrantRole::Delegate`], forbidden for every other role.
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 7] = [
+    "schema_version",
+    "scope",
+    "member_ref",
+    "role",
+    "preset",
+    "expires_at",
+    "delegated_by",
+];
+
+/// Count of unconditionally required keys at the head of
+/// [`FEDERATION_GRANT_BODY_KEYS`].
+const FEDERATION_GRANT_REQUIRED_KEYS: usize = 5;
+
+pub(crate) const FEDERATION_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "role", "preset"];
+
+pub(crate) const FEDERATION_GRANT_FIELDS_STANDARD: &[&str] =
+    &["scope", "member_ref", "role", "preset"];
+
+// Explicit, NOT an alias of the on-disk key set: the body grew to seven keys,
+// context-pack hydration deliberately did not. Delegate expiry and parentage
+// are authorization facts read at the selector door, not pack content.
+pub(crate) const FEDERATION_GRANT_FIELDS_FULL: &[&str] =
+    &["schema_version", "scope", "member_ref", "role", "preset"];
+
+pub(super) const KEY_SCHEMA_VERSION: &str = FEDERATION_GRANT_BODY_KEYS[0];
+
+pub(super) const KEY_SCOPE: &str = FEDERATION_GRANT_BODY_KEYS[1];
+
+// Stored as EntityId hex so generic context-pack hydration preserves the principal.
+pub(super) const KEY_MEMBER_REF: &str = FEDERATION_GRANT_BODY_KEYS[2];
+
+pub(super) const KEY_ROLE: &str = FEDERATION_GRANT_BODY_KEYS[3];
+
+pub(super) const KEY_PRESET: &str = FEDERATION_GRANT_BODY_KEYS[4];
+
+pub(super) const KEY_EXPIRES_AT: &str = FEDERATION_GRANT_BODY_KEYS[5];
+
+pub(super) const KEY_DELEGATED_BY: &str = FEDERATION_GRANT_BODY_KEYS[6];
+
+pub(super) const FEDERATION_GRANT_SCOPE_KEYS: [&str; 2] = ["kind", "vault_id"];
+
+pub(super) const SCOPE_KIND_VAULT: &str = "vault";
+
+/// Scope addressed by a federation grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FederationGrantScope {
+    /// Membership in a shared vault.
+    Vault { vault_id: u64 },
+}
+
+impl FederationGrantScope {
+    /// Constructs a shared-vault scope.
+    #[must_use]
+    pub const fn vault(vault_id: u64) -> Self {
+        Self::Vault { vault_id }
+    }
+
+    pub(super) fn validate(self) -> Result<()> {
+        match self {
+            Self::Vault { vault_id: 0 } => Err(invalid_grant()),
+            Self::Vault { .. } => Ok(()),
+        }
+    }
+}
+
+/// Role assigned by a federation grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FederationGrantRole {
+    /// Full owner privileges for the shared vault.
+    Owner,
+    /// Administrative privileges without owner transfer semantics.
+    Admin,
+    /// Read/write member privileges.
+    Member,
+    /// Read-only member privileges.
+    Viewer,
+    /// Audit-only read privileges.
+    Auditor,
+    /// One-hop, expiring read privileges attenuated from an admin parent.
+    ///
+    /// A delegate is never administrative and can never itself delegate, so
+    /// the tier cannot self-widen: the only minting path is
+    /// [`FederationGrant::attenuated_delegate`] from an [`Self::is_admin`]
+    /// parent.
+    Delegate,
+}
+
+impl FederationGrantRole {
+    /// Returns the pinned on-disk string for this role.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Admin => "admin",
+            Self::Member => "member",
+            Self::Viewer => "viewer",
+            Self::Auditor => "auditor",
+            Self::Delegate => "delegate",
+        }
+    }
+
+    /// Parses a pinned on-disk role string.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "owner" => Some(Self::Owner),
+            "admin" => Some(Self::Admin),
+            "member" => Some(Self::Member),
+            "viewer" => Some(Self::Viewer),
+            "auditor" => Some(Self::Auditor),
+            "delegate" => Some(Self::Delegate),
+            _ => None,
+        }
+    }
+
+    /// Returns whether this role can administer membership or policy.
+    #[must_use]
+    pub const fn is_admin(self) -> bool {
+        matches!(self, Self::Owner | Self::Admin)
+    }
+}
+
+/// Capability preset bounding a federation grant role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FederationGrantPreset {
+    /// Owner-grade capability envelope.
+    Owner,
+    /// Admin-grade capability envelope.
+    Admin,
+    /// Read/write member capability envelope.
+    Member,
+    /// Read-only capability envelope.
+    ReadOnly,
+    /// Audit-only capability envelope.
+    Audit,
+    /// Attenuated one-hop delegate envelope.
+    Delegate,
+}
+
+impl FederationGrantPreset {
+    /// Returns the pinned on-disk string for this preset.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Admin => "admin",
+            Self::Member => "member",
+            Self::ReadOnly => "read_only",
+            Self::Audit => "audit",
+            Self::Delegate => "delegate",
+        }
+    }
+
+    /// Parses a pinned on-disk preset string.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "owner" => Some(Self::Owner),
+            "admin" => Some(Self::Admin),
+            "member" => Some(Self::Member),
+            "read_only" => Some(Self::ReadOnly),
+            "audit" => Some(Self::Audit),
+            "delegate" => Some(Self::Delegate),
+            _ => None,
+        }
+    }
+
+    /// Returns whether this preset can carry `role`.
+    ///
+    /// Delegate is a 1:1 pair, in both directions: the Delegate preset carries
+    /// only the Delegate role, and the Delegate role rides only the Delegate
+    /// preset — including under Owner, which is otherwise universal. Letting
+    /// the Owner envelope carry a Delegate role would hand a delegate the owner
+    /// capability set while it still reads as attenuated.
+    #[must_use]
+    pub const fn permits_role(self, role: FederationGrantRole) -> bool {
+        match self {
+            Self::Owner => !matches!(role, FederationGrantRole::Delegate),
+            Self::Admin => !matches!(
+                role,
+                FederationGrantRole::Owner | FederationGrantRole::Delegate
+            ),
+            Self::Member => matches!(
+                role,
+                FederationGrantRole::Member
+                    | FederationGrantRole::Viewer
+                    | FederationGrantRole::Auditor
+            ),
+            Self::ReadOnly => matches!(
+                role,
+                FederationGrantRole::Viewer | FederationGrantRole::Auditor
+            ),
+            Self::Audit => matches!(role, FederationGrantRole::Auditor),
+            Self::Delegate => matches!(role, FederationGrantRole::Delegate),
+        }
+    }
+}
+
+/// Shared-vault membership record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FederationGrant {
+    /// Shared-vault scope for this membership record.
+    pub scope: FederationGrantScope,
+    /// Entity representing the member/principal receiving access.
+    pub member_ref: EntityId,
+    /// Assigned membership role.
+    pub role: FederationGrantRole,
+    /// Capability preset bounding the assigned role.
+    pub preset: FederationGrantPreset,
+    /// Unix-seconds instant at which a Delegate grant stops conferring.
+    ///
+    /// Required for [`FederationGrantRole::Delegate`], forbidden for every
+    /// other role.
+    pub expires_at: Option<u64>,
+    /// `member_ref` of the parent grant this Delegate was attenuated from.
+    ///
+    /// The PARENT'S PRINCIPAL, not the parent grant's entity id: the delegate
+    /// names who delegated, and a grant record can be re-minted while the
+    /// principal stays the same. Required for
+    /// [`FederationGrantRole::Delegate`], forbidden for every other role.
+    pub delegated_by: Option<EntityId>,
+}
+
+impl FederationGrant {
+    /// Constructs a non-delegate federation grant.
+    ///
+    /// Both role-conditional fields are `None`, so a `Delegate` role built
+    /// through this door fails [`Self::validate`]. Delegates mint only through
+    /// [`Self::attenuated_delegate`].
+    #[must_use]
+    pub const fn new(
+        scope: FederationGrantScope,
+        member_ref: EntityId,
+        role: FederationGrantRole,
+        preset: FederationGrantPreset,
+    ) -> Self {
+        Self {
+            scope,
+            member_ref,
+            role,
+            preset,
+            expires_at: None,
+            delegated_by: None,
+        }
+    }
+
+    /// Mints a one-hop delegate attenuated from an administrative `parent`.
+    ///
+    /// The delegate inherits the parent's scope, names the parent's principal
+    /// in `delegated_by`, and expires no later than
+    /// [`MAX_DELEGATE_TTL_SECS`] past `now_secs`. Only an
+    /// [`FederationGrantRole::is_admin`] parent may delegate, so the chain is
+    /// exactly one hop deep and no role can widen itself.
+    pub fn attenuated_delegate(
+        parent: &FederationGrant,
+        member_ref: EntityId,
+        now_secs: u64,
+        expires_at_secs: u64,
+    ) -> Result<Self> {
+        parent.validate()?;
+        if !parent.role.is_admin() {
+            return Err(invalid_grant());
+        }
+        let ceiling = now_secs
+            .checked_add(MAX_DELEGATE_TTL_SECS)
+            .ok_or_else(invalid_grant)?;
+        if expires_at_secs <= now_secs || expires_at_secs > ceiling {
+            return Err(invalid_grant());
+        }
+
+        // No re-validation of the freshly built delegate: every `validate`
+        // clause holds by construction here (validated parent's scope, the 1:1
+        // Delegate role/preset pair, both role-conditional fields `Some`, and
+        // `expires_at_secs > now_secs >= 0` rules out zero), and the struct's
+        // `pub` fields make any construction-time invariant unenforceable
+        // anyway. Encode and decode remain the validating doors.
+        Ok(Self {
+            scope: parent.scope,
+            member_ref,
+            role: FederationGrantRole::Delegate,
+            preset: FederationGrantPreset::Delegate,
+            expires_at: Some(expires_at_secs),
+            delegated_by: Some(parent.member_ref),
+        })
+    }
+
+    /// Validates scope, role/preset policy, and role-conditional field shape.
+    pub fn validate(&self) -> Result<()> {
+        self.scope.validate()?;
+        if !self.preset.permits_role(self.role) {
+            return Err(invalid_grant());
+        }
+        let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);
+        if expects_delegation != self.expires_at.is_some()
+            || expects_delegation != self.delegated_by.is_some()
+        {
+            return Err(invalid_grant());
+        }
+        if self.expires_at == Some(0) {
+            return Err(invalid_grant());
+        }
+        Ok(())
+    }
+
+    /// Returns whether this grant confers at `now_secs`.
+    ///
+    /// The expiry second itself DENIES. Grants without an expiry — every
+    /// non-delegate role — confer regardless of age.
+    #[must_use]
+    pub const fn confers_at(&self, now_secs: u64) -> bool {
+        match self.expires_at {
+            None => true,
+            Some(expires_at) => now_secs < expires_at,
+        }
+    }
+
+    /// Returns whether this grant carries an administrative role.
+    #[must_use]
+    pub const fn is_admin(&self) -> bool {
+        self.role.is_admin()
+    }
+}
+
+/// Encodes a FederationGrant body in canonical MessagePack field order.
+///
+/// A non-delegate emits exactly the five pre-Delegate keys, byte-for-byte as
+/// before; a delegate appends `expires_at` and `delegated_by` in
+/// [`FEDERATION_GRANT_BODY_KEYS`] order.
+pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> {
+    grant.validate()?;
+    let mut entries = vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(FEDERATION_GRANT_SCHEMA_VERSION),
+        ),
+        (Value::from(KEY_SCOPE), encode_scope(grant.scope)),
+        (
+            Value::from(KEY_MEMBER_REF),
+            Value::from(grant.member_ref.to_hex()),
+        ),
+        (Value::from(KEY_ROLE), Value::from(grant.role.as_str())),
+        (Value::from(KEY_PRESET), Value::from(grant.preset.as_str())),
+    ];
+    if let Some(expires_at) = grant.expires_at {
+        entries.push((Value::from(KEY_EXPIRES_AT), Value::from(expires_at)));
+    }
+    if let Some(delegated_by) = grant.delegated_by {
+        entries.push((
+            Value::from(KEY_DELEGATED_BY),
+            Value::from(delegated_by.to_hex()),
+        ));
+    }
+
+    encode_msgpack_value(
+        &Value::Map(entries),
+        "federation grant body MessagePack encode failed",
+    )
+}
+
+/// Decodes and validates a FederationGrant body.
+pub fn decode_federation_grant_body(bytes: &[u8]) -> Result<FederationGrant> {
+    let mut cursor = Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_grant())?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(invalid_grant());
+    }
+
+    decode_federation_grant_value(&value)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_federation_grant_body_bytes(bytes: &[u8]) -> Result<()> {
+    decode_federation_grant_body(bytes).map(|_| ())
+}
+
+fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_grant());
+    };
+    validate_body_keys(entries)?;
+
+    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
+        != Some(FEDERATION_GRANT_SCHEMA_VERSION)
+    {
+        return Err(invalid_grant());
+    }
+
+    let scope = decode_scope(required_value(entries, KEY_SCOPE)?)?;
+    let member_ref = decode_entity_ref(required_value(entries, KEY_MEMBER_REF)?)?;
+    let role = required_value(entries, KEY_ROLE)?
+        .as_str()
+        .and_then(FederationGrantRole::parse)
+        .ok_or_else(invalid_grant)?;
+    let preset = required_value(entries, KEY_PRESET)?
+        .as_str()
+        .and_then(FederationGrantPreset::parse)
+        .ok_or_else(invalid_grant)?;
+
+    let expires_at = optional_value(entries, KEY_EXPIRES_AT)
+        .map(|value| value.as_u64().ok_or_else(invalid_grant))
+        .transpose()?;
+    let delegated_by = optional_value(entries, KEY_DELEGATED_BY)
+        .map(decode_canonical_entity_ref)
+        .transpose()?;
+
+    let grant = FederationGrant {
+        scope,
+        member_ref,
+        role,
+        preset,
+        expires_at,
+        delegated_by,
+    };
+    // Role-conditional presence is enforced here: a five-key Delegate body and
+    // a seven-key Owner body both die at `validate`, not at the key allowlist.
+    grant.validate()?;
+    Ok(grant)
+}
+
+pub(crate) fn encode_scope(scope: FederationGrantScope) -> Value {
+    match scope {
+        FederationGrantScope::Vault { vault_id } => Value::Map(vec![
+            (
+                Value::from(FEDERATION_GRANT_SCOPE_KEYS[0]),
+                Value::from(SCOPE_KIND_VAULT),
+            ),
+            (
+                Value::from(FEDERATION_GRANT_SCOPE_KEYS[1]),
+                Value::from(vault_id),
+            ),
+        ]),
+    }
+}
+
+fn decode_scope(value: &Value) -> Result<FederationGrantScope> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_grant());
+    };
+    validate_scope_keys(entries)?;
+
+    let kind = required_value(entries, FEDERATION_GRANT_SCOPE_KEYS[0])?
+        .as_str()
+        .ok_or_else(invalid_grant)?;
+    if kind != SCOPE_KIND_VAULT {
+        return Err(invalid_grant());
+    }
+
+    let vault_id = required_value(entries, FEDERATION_GRANT_SCOPE_KEYS[1])?
+        .as_u64()
+        .ok_or_else(invalid_grant)?;
+    let scope = FederationGrantScope::Vault { vault_id };
+    scope.validate()?;
+    Ok(scope)
+}
+
+/// Rejects unknown and duplicate keys, and any missing REQUIRED key.
+///
+/// Presence of the two role-conditional tail keys is not decided here — that
+/// is [`FederationGrant::validate`]'s job, because it depends on the role.
+fn validate_body_keys(entries: &[(Value, Value)]) -> Result<()> {
+    let mut seen = [false; FEDERATION_GRANT_BODY_KEYS.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or_else(invalid_grant)?;
+        let Some(index) = FEDERATION_GRANT_BODY_KEYS
+            .iter()
+            .position(|known| *known == key)
+        else {
+            return Err(invalid_grant());
+        };
+        if seen[index] {
+            return Err(invalid_grant());
+        }
+        seen[index] = true;
+    }
+    if seen[..FEDERATION_GRANT_REQUIRED_KEYS].iter().all(|v| *v) {
+        Ok(())
+    } else {
+        Err(invalid_grant())
+    }
+}
+
+fn validate_scope_keys(entries: &[(Value, Value)]) -> Result<()> {
+    let mut seen = [false; FEDERATION_GRANT_SCOPE_KEYS.len()];
+    for (key, _) in entries {
+        let key = key.as_str().ok_or_else(invalid_grant)?;
+        let Some(index) = FEDERATION_GRANT_SCOPE_KEYS
+            .iter()
+            .position(|known| *known == key)
+        else {
+            return Err(invalid_grant());
+        };
+        if seen[index] {
+            return Err(invalid_grant());
+        }
+        seen[index] = true;
+    }
+    if seen.into_iter().all(|value| value) {
+        Ok(())
+    } else {
+        Err(invalid_grant())
+    }
+}
+
+pub(super) fn invalid_grant() -> Error {
+    Error::InvalidFederationGrantBody("body failed validation")
+}

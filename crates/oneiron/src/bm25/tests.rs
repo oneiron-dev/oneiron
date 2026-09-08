@@ -44,10 +44,20 @@ fn contains_id(results: &[ScoredEntity], id: &EntityId) -> bool {
     results.iter().any(|r| r.id == *id)
 }
 
-fn reset_bm25_diagnostics() {
+/// The BM25 diagnostic counters are process-global, and `cargo test` runs
+/// tests as threads of one process, so the tests that reset the counters and
+/// assert deltas must not interleave.
+static BM25_DIAGNOSTICS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Zero the counters and hold the lock until the caller drops the guard.
+fn reset_bm25_diagnostics() -> std::sync::MutexGuard<'static, ()> {
+    let guard = BM25_DIAGNOSTICS_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for counter in &BM25_DIAGNOSTIC_COUNTERS {
         counter.store(0, AtomicOrdering::Relaxed);
     }
+    guard
 }
 
 fn put_text_doc(vault: &Vault, id: &EntityId, text: &str) -> Result<()> {
@@ -1854,7 +1864,7 @@ fn bm25_diagnostics_snapshot_has_stable_privacy_preserving_labels() {
 
 #[test]
 fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
-    reset_bm25_diagnostics();
+    let _diagnostics = reset_bm25_diagnostics();
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
@@ -1929,7 +1939,7 @@ fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
 
 #[test]
 fn deindex_self_heals_missing_postings_and_records_diagnostics() -> Result<()> {
-    reset_bm25_diagnostics();
+    let _diagnostics = reset_bm25_diagnostics();
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();

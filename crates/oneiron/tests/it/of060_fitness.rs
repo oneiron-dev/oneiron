@@ -8,6 +8,16 @@ use oneiron::{
     code_sandbox::SandboxImportClass,
 };
 
+// Which FILES count as production is decided once, in the shared scanner
+// (`src/test_util/source_scan.rs`, mounted here through `common`): test-only
+// files by name, by a `tests/`/`benches/` directory, or transitively through
+// `#[cfg(test)]` and `#[path]` mounts. This file keeps the needles, the pinned
+// baselines and the in-file `#[cfg(test)]` masking it always had.
+use crate::common::source_scan::{
+    SourceTree, cfg_test_external_files, is_ident_byte, is_ident_start, normalized,
+    production_source, test_only_by_path,
+};
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RawHit {
     path: String,
@@ -25,307 +35,6 @@ fn repo_root() -> PathBuf {
 
 fn relative_path<'a>(repo: &Path, path: &'a Path) -> &'a Path {
     path.strip_prefix(repo).unwrap_or(path)
-}
-
-fn normalized(path: &Path) -> String {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn rust_files_under(root: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    collect_rust_files(root, &mut out);
-    out.sort();
-    out
-}
-
-fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).unwrap_or_else(|err| panic!("read {}: {err}", dir.display())) {
-        let entry = entry.expect("directory entry");
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if path.is_dir() {
-            if matches!(name.as_ref(), ".git" | "target") {
-                continue;
-            }
-            collect_rust_files(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
-        }
-    }
-}
-
-fn production_file(rel: &str) -> bool {
-    // `<module>/tests.rs` siblings are test mounts (`#[cfg(test)] mod tests;`),
-    // never production code — same standing as an inline `mod tests` body.
-    !rel.contains("/tests/")
-        && !rel.contains("/benches/")
-        && !rel.ends_with("/tests.rs")
-        && !rel.ends_with("/src/tests_bug.rs")
-}
-
-// Recognize only simple, top-level cfg(test) path mounts. Unknown path syntax
-// keeps every file scanned. Other mounts of the same basename also veto an
-// exclusion, even across directories: false positives are safer than hiding code.
-fn cfg_test_external_files(sources: &[(PathBuf, String)]) -> BTreeSet<PathBuf> {
-    let mut tests = BTreeSet::new();
-    let mut production_names = BTreeSet::new();
-    for (parent, source) in sources {
-        let clean = strip_comments_and_literals(source);
-        for (start, _) in clean.match_indices("mod") {
-            if start > 0 && is_ident_byte(clean.as_bytes()[start - 1]) {
-                continue;
-            }
-            let tail = &clean[start + 3..];
-            if !tail.starts_with(char::is_whitespace) {
-                continue;
-            }
-            let tail = tail.trim_start();
-            let name_end = tail.bytes().take_while(|byte| is_ident_byte(*byte)).count();
-            if name_end == 0 || !tail[name_end..].trim_start().starts_with(';') {
-                continue;
-            }
-            let name = &tail[..name_end];
-            let prefix_start = clean[..start].rfind([';', '{', '}']).map_or(0, |i| i + 1);
-            let prefix = &clean[prefix_start..start];
-            let compact = prefix.split_whitespace().collect::<String>();
-            if !compact.contains("path=") {
-                production_names.insert(format!("{name}.rs"));
-                continue;
-            }
-            let Some(path_start) = prefix.find("#[path") else {
-                return BTreeSet::new();
-            };
-            let path_start = prefix_start + path_start + "#[path".len();
-            let Some(path_end) = clean[path_start..start].find(']') else {
-                return BTreeSet::new();
-            };
-            let literal = source[path_start..path_start + path_end]
-                .trim()
-                .strip_prefix('=')
-                .map(str::trim)
-                .and_then(|value| value.strip_prefix('"'))
-                .and_then(|value| value.strip_suffix('"'));
-            let Some(literal) = literal else {
-                return BTreeSet::new();
-            };
-            if literal.contains(['\\', '"']) || compact.matches("path=").count() != 1 {
-                return BTreeSet::new();
-            }
-            let mounted = Path::new(literal);
-            let Some(file_name) = mounted.file_name() else {
-                return BTreeSet::new();
-            };
-            let depth = clean[..start]
-                .bytes()
-                .fold(0isize, |depth, byte| match byte {
-                    b'{' | b'(' | b'[' => depth + 1,
-                    b'}' | b')' | b']' => depth - 1,
-                    _ => depth,
-                });
-            if depth == 0
-                && matches!(
-                    compact.as_str(),
-                    "#[cfg(test)]#[path=]" | "#[path=]#[cfg(test)]"
-                )
-                && mounted.components().count() == 1
-                && mounted.is_relative()
-            {
-                tests.insert(parent.parent().expect("source directory").join(mounted));
-            } else {
-                production_names.insert(file_name.to_string_lossy().into_owned());
-            }
-        }
-    }
-    tests.retain(|path| {
-        let file_name = path
-            .file_name()
-            .expect("mounted filename")
-            .to_string_lossy();
-        !production_names.contains(file_name.as_ref())
-    });
-    tests
-}
-
-fn production_source(source: &str) -> String {
-    mask_cfg_test_modules(&strip_comments_and_literals(source))
-}
-
-fn strip_comments_and_literals(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut out = vec![b' '; bytes.len()];
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\n' {
-            out[i] = b'\n';
-            i += 1;
-        } else if bytes[i..].starts_with(b"//") {
-            i = copy_until_newline(bytes, &mut out, i);
-        } else if bytes[i..].starts_with(b"/*") {
-            i = skip_block_comment(bytes, &mut out, i);
-        } else if raw_string_hashes(bytes, i).is_some() {
-            i = skip_raw_string(bytes, &mut out, i);
-        } else if bytes[i] == b'"' {
-            i = skip_quoted(bytes, &mut out, i, b'"');
-        } else if bytes[i] == b'\'' && looks_like_char_literal(bytes, i) {
-            i = skip_quoted(bytes, &mut out, i, b'\'');
-        } else {
-            out[i] = bytes[i];
-            i += 1;
-        }
-    }
-    String::from_utf8(out).expect("sanitized source is ASCII/newline")
-}
-
-fn copy_until_newline(bytes: &[u8], out: &mut [u8], mut i: usize) -> usize {
-    while i < bytes.len() {
-        if bytes[i] == b'\n' {
-            out[i] = b'\n';
-            return i + 1;
-        }
-        i += 1;
-    }
-    i
-}
-
-fn skip_block_comment(bytes: &[u8], out: &mut [u8], mut i: usize) -> usize {
-    let mut depth = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == b'\n' {
-            out[i] = b'\n';
-            i += 1;
-        } else if bytes[i..].starts_with(b"/*") {
-            depth += 1;
-            i += 2;
-        } else if bytes[i..].starts_with(b"*/") {
-            depth = depth.saturating_sub(1);
-            i += 2;
-            if depth == 0 {
-                return i;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    i
-}
-
-fn raw_string_hashes(bytes: &[u8], start: usize) -> Option<usize> {
-    if bytes.get(start) != Some(&b'r') {
-        return None;
-    }
-    if start > 0 && is_ident_byte(bytes[start - 1]) {
-        return None;
-    }
-
-    let mut i = start + 1;
-    while bytes.get(i) == Some(&b'#') {
-        i += 1;
-    }
-    (bytes.get(i) == Some(&b'"')).then_some(i - start - 1)
-}
-
-fn skip_raw_string(bytes: &[u8], out: &mut [u8], start: usize) -> usize {
-    let hashes = raw_string_hashes(bytes, start).expect("raw string start");
-    let terminator = vec![b'#'; hashes];
-    let mut i = start + hashes + 2;
-    while i < bytes.len() {
-        if bytes[i] == b'\n' {
-            out[i] = b'\n';
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b'"' && bytes.get(i + 1..i + 1 + hashes) == Some(&terminator[..]) {
-            return i + hashes + 1;
-        }
-        i += 1;
-    }
-    i
-}
-
-fn looks_like_char_literal(bytes: &[u8], start: usize) -> bool {
-    let mut i = start + 1;
-    if bytes.get(i) == Some(&b'\\') {
-        i += 2;
-    } else {
-        i += 1;
-    }
-    bytes.get(i) == Some(&b'\'')
-}
-
-fn skip_quoted(bytes: &[u8], out: &mut [u8], mut i: usize, quote: u8) -> usize {
-    i += 1;
-    while i < bytes.len() {
-        if bytes[i] == b'\n' {
-            out[i] = b'\n';
-            i += 1;
-        } else if bytes[i] == b'\\' {
-            i = (i + 2).min(bytes.len());
-        } else if bytes[i] == quote {
-            return i + 1;
-        } else {
-            i += 1;
-        }
-    }
-    i
-}
-
-fn mask_cfg_test_modules(source: &str) -> String {
-    let mut out = source.as_bytes().to_vec();
-    let mut search_start = 0;
-    while let Some(rel_cfg) = source[search_start..].find("#[cfg(test)]") {
-        let cfg_start = search_start + rel_cfg;
-        let Some(rel_mod) = source[cfg_start..].find("mod tests") else {
-            search_start = cfg_start + "#[cfg(test)]".len();
-            continue;
-        };
-        let mod_start = cfg_start + rel_mod;
-        if !source[cfg_start + "#[cfg(test)]".len()..mod_start]
-            .chars()
-            .all(char::is_whitespace)
-        {
-            search_start = cfg_start + "#[cfg(test)]".len();
-            continue;
-        }
-        let Some(rel_open) = source[mod_start..].find('{') else {
-            break;
-        };
-        let open = mod_start + rel_open;
-        let Some(end) = matching_brace_end(source.as_bytes(), open) else {
-            break;
-        };
-        mask_range_preserving_newlines(&mut out, cfg_start, end);
-        search_start = end;
-    }
-    String::from_utf8(out).expect("masked source remains utf8")
-}
-
-fn matching_brace_end(bytes: &[u8], open: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (idx, byte) in bytes.iter().enumerate().skip(open) {
-        match byte {
-            b'{' => depth += 1,
-            b'}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(idx + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn mask_range_preserving_newlines(bytes: &mut [u8], start: usize, end: usize) {
-    for byte in &mut bytes[start..end] {
-        if *byte != b'\n' {
-            *byte = b' ';
-        }
-    }
 }
 
 fn line_number(source: &str, byte_idx: usize) -> usize {
@@ -395,35 +104,15 @@ fn raw_escape_hits(rel: &str, source: &str) -> Vec<RawHit> {
     hits
 }
 
-fn is_ident_start(byte: u8) -> bool {
-    byte == b'_' || byte.is_ascii_alphabetic()
-}
-
-fn is_ident_byte(byte: u8) -> bool {
-    is_ident_start(byte) || byte.is_ascii_digit()
-}
-
 #[test]
 fn of060_f1_put_replicated_stays_sync_only() {
     let repo = repo_root();
     let mut violations = Vec::new();
-    let sources = rust_files_under(&repo.join("crates"))
-        .into_iter()
-        .filter(|path| production_file(&normalized(relative_path(&repo, path))))
-        .map(|path| {
-            let source = fs::read_to_string(&path)
-                .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
-            (path, source)
-        })
-        .collect::<Vec<_>>();
-    let test_files = cfg_test_external_files(&sources);
+    let tree = SourceTree::read(&repo.join("crates"));
 
-    for (path, source) in sources {
-        if test_files.contains(&path) {
-            continue;
-        }
-        let rel = normalized(relative_path(&repo, &path));
-        let source = production_source(&source);
+    for (path, source) in tree.production_sources() {
+        let rel = normalized(relative_path(&repo, path));
+        let source = production_source(source);
         for pattern in [".put_replicated", "::put_replicated"] {
             for hit in find_substring_hits(&source, pattern) {
                 if !rel.starts_with("crates/oneiron/src/sync/") {
@@ -454,38 +143,87 @@ fn of060_f1_recognizes_actual_cfg_test_external_path_mount() {
         })
         .collect::<Vec<_>>();
 
-    assert!(production_file(&normalized(relative_path(&repo, &mounted))));
+    assert!(test_only_by_path(&normalized(relative_path(
+        &repo, &mounted
+    ))));
     assert!(production_source(&sources[1].1).contains(".put_replicated"));
-    assert_eq!(cfg_test_external_files(&sources), BTreeSet::from([mounted]));
+    assert_eq!(
+        cfg_test_external_files(&repo, &sources),
+        BTreeSet::from([mounted])
+    );
 }
 
 #[test]
 fn of060_f1_external_mount_keeps_production_controls_scanned() {
+    let root = Path::new("");
     let parent = PathBuf::from("src/indexes.rs");
-    let mounted = PathBuf::from("src/fixture_tests.rs");
-    let test_mount = "#[cfg(test)]\n#[path = \"fixture_tests.rs\"]\nmod tests;";
+    // Named so only the transitive rule can exclude it: a `*_tests.rs` name
+    // would be test-only by itself.
+    let mounted = PathBuf::from("src/fixture_probe.rs");
+    let test_mount = "#[cfg(test)]\n#[path = \"fixture_probe.rs\"]\nmod tests;";
     let production = "fn seed() { vault.put_replicated(); }";
     let classify = |source: &str| {
-        cfg_test_external_files(&[
-            (parent.clone(), source.to_owned()),
-            (mounted.clone(), production.to_owned()),
-        ])
+        cfg_test_external_files(
+            root,
+            &[
+                (parent.clone(), source.to_owned()),
+                (mounted.clone(), production.to_owned()),
+            ],
+        )
     };
-    assert_eq!(classify(test_mount), BTreeSet::from([mounted.clone()]));
-    assert!(production_file(&normalized(&mounted)));
+    assert!(!test_only_by_path(&normalized(&mounted)));
+    // A visibility does not change the mount; a mount inside an inline module
+    // resolves under the parent's stem plus the module chain (Rust reference,
+    // "The path attribute"), so those targets differ from the top-level one.
+    for (source, target) in [
+        (test_mount, "src/fixture_probe.rs"),
+        (
+            "#[cfg(test)]\n#[path = \"fixture_probe.rs\"]\npub(crate) mod tests;",
+            "src/fixture_probe.rs",
+        ),
+        (
+            "#[cfg(test)]\n#[path = \"fixture_probe.rs\"]\npub mod tests;",
+            "src/fixture_probe.rs",
+        ),
+        (
+            r#"#[cfg(test)] mod helpers { #[path = "fixture_probe.rs"] mod probe; }"#,
+            "src/indexes/helpers/fixture_probe.rs",
+        ),
+        (
+            r#"mod outer { #[cfg(test)] #[path = "fixture_probe.rs"] mod probe; }"#,
+            "src/indexes/outer/fixture_probe.rs",
+        ),
+    ] {
+        assert_eq!(
+            classify(source),
+            BTreeSet::from([PathBuf::from(target)]),
+            "must exclude the test mount: {source}"
+        );
+    }
+    // The shared scanner's own mount: `mod source_scan;` inside the inline
+    // `#[cfg(test)] pub(crate) mod test_util { .. }` of a mod-rs root.
+    let root_mount = cfg_test_external_files(
+        root,
+        &[(
+            PathBuf::from("src/lib.rs"),
+            "#[cfg(test)]\npub(crate) mod test_util {\n    mod source_scan;\n}".to_owned(),
+        )],
+    );
+    assert!(root_mount.contains(Path::new("src/test_util/source_scan.rs")));
     for source in [
         "",
-        r#"#[path = "fixture_tests.rs"] mod fixture;"#,
-        "mod fixture_tests;",
-        r#"#[cfg(not(test))] #[path = "fixture_tests.rs"] mod fixture;"#,
-        r#"#[cfg(any(test, feature = "sync"))] #[path = "fixture_tests.rs"] mod fixture;"#,
-        "// #[cfg(test)]\n#[path = \"fixture_tests.rs\"] mod fixture;",
-        r#"/* #[cfg(test)] */ #[path = "fixture_tests.rs"] mod fixture;"#,
-        r##"const DOC: &str = r#"#[cfg(test)] #[path = "fixture_tests.rs"] mod tests;"#;"##,
-        r##"const DOC: &str = "#[cfg(test)]"; #[path = "fixture_tests.rs"] mod fixture;"##,
-        r#"#[cfg(test)] const MARKER: () = (); #[path = "fixture_tests.rs"] mod fixture;"#,
-        r#"macro_rules! quote { () => { #[cfg(test)] #[path = "fixture_tests.rs"] mod tests; }; }"#,
-        r##"#[cfg(test)] #[path = r#"fixture_tests.rs"#] mod tests;"##,
+        r#"#[path = "fixture_probe.rs"] mod fixture;"#,
+        "mod fixture_probe;",
+        r#"#[cfg(not(test))] #[path = "fixture_probe.rs"] mod fixture;"#,
+        r#"#[cfg(any(test, feature = "sync"))] #[path = "fixture_probe.rs"] mod fixture;"#,
+        "// #[cfg(test)]\n#[path = \"fixture_probe.rs\"] mod fixture;",
+        r#"/* #[cfg(test)] */ #[path = "fixture_probe.rs"] mod fixture;"#,
+        r##"const DOC: &str = r#"#[cfg(test)] #[path = "fixture_probe.rs"] mod tests;"#;"##,
+        r##"const DOC: &str = "#[cfg(test)]"; #[path = "fixture_probe.rs"] mod fixture;"##,
+        r#"#[cfg(test)] const MARKER: () = (); #[path = "fixture_probe.rs"] mod fixture;"#,
+        r#"macro_rules! quote { () => { #[cfg(test)] #[path = "fixture_probe.rs"] mod tests; }; }"#,
+        r#"fn body() { #[cfg(test)] #[path = "fixture_probe.rs"] mod tests; }"#,
+        r##"#[cfg(test)] #[path = r#"fixture_probe.rs"#] mod tests;"##,
     ] {
         assert!(
             classify(source).is_empty(),
@@ -497,15 +235,15 @@ fn of060_f1_external_mount_keeps_production_controls_scanned() {
         );
     }
     for production_mount in [
-        r#"#[path = "fixture_tests.rs"] mod live;"#,
-        "mod fixture_tests;",
+        r#"#[path = "fixture_probe.rs"] mod live;"#,
+        "mod fixture_probe;",
     ] {
         assert!(classify(&format!("{test_mount}\n{production_mount}")).is_empty());
         let another_parent = [
             (parent.clone(), test_mount.to_owned()),
             (PathBuf::from("src/live.rs"), production_mount.to_owned()),
         ];
-        assert!(cfg_test_external_files(&another_parent).is_empty());
+        assert!(cfg_test_external_files(root, &another_parent).is_empty());
     }
 }
 
@@ -514,13 +252,13 @@ fn of060_f2_surface_raw_escape_hatches_are_pinned() {
     let repo = repo_root();
     let mut actual = BTreeMap::<RawHit, usize>::new();
 
-    for path in rust_files_under(&repo.join("crates")) {
-        let rel = normalized(relative_path(&repo, &path));
-        if !production_file(&rel) || !f2_surface_path(&rel) {
+    let tree = SourceTree::read(&repo.join("crates"));
+    for (path, source) in tree.production_sources() {
+        let rel = normalized(relative_path(&repo, path));
+        if !f2_surface_path(&rel) {
             continue;
         }
-        let source = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {rel}: {err}"));
-        for hit in raw_escape_hits(&rel, &production_source(&source)) {
+        for hit in raw_escape_hits(&rel, &production_source(source)) {
             *actual.entry(hit).or_default() += 1;
         }
     }
@@ -536,7 +274,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
     BTreeMap::from([
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_edge".to_owned(),
                 line: "pub fn put_edge(&self, src: Buffer, kind: u32, tgt: Buffer, weight: f64) -> napi::Result<()> {".to_owned(),
             },
@@ -544,7 +282,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_edge".to_owned(),
                 line: ".put_edge(&src_id, edge_kind, &tgt_id, weight as f32)".to_owned(),
             },
@@ -552,7 +290,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_vector".to_owned(),
                 line: "pub fn put_vector(&self, id: Buffer, vector: Vec<f64>) -> napi::Result<()> {".to_owned(),
             },
@@ -560,7 +298,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_vector".to_owned(),
                 line: "self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err)".to_owned(),
             },
@@ -593,7 +331,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // Pin only these two call lines; every new raw hit still fails below.
         (
             RawHit {
-                path: "crates/oneiron-server/src/managed.rs".to_owned(),
+                path: "crates/oneiron-server/src/managed/vault_gates.rs".to_owned(),
                 ident: "sync_state_put".to_owned(),
                 line: ".sync_state_put(DEK_MAC_KEY, mac.as_bytes())".to_owned(),
             },
@@ -601,7 +339,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/managed.rs".to_owned(),
+                path: "crates/oneiron-server/src/managed/ledger.rs".to_owned(),
                 ident: "sync_state_put".to_owned(),
                 line: ".sync_state_put(LEDGER_REV_KEY, &rev.to_le_bytes())".to_owned(),
             },
@@ -621,7 +359,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             RawHit {
                 path: "crates/oneiron-server/src/api/booking/subject.rs".to_owned(),
                 ident: "with_write_txn".to_owned(),
-                line: "server.vault.with_write_txn(|txn| {".to_owned(),
+                line: ".with_write_txn(|txn| {".to_owned(),
             },
             1,
         ),
@@ -634,7 +372,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // grounding-read race the ticket closes.
         (
             RawHit {
-                path: "crates/oneiron-server/src/api/mcp_gateway.rs".to_owned(),
+                path: "crates/oneiron-server/src/api/mcp_gateway/facade_verbs.rs".to_owned(),
                 ident: "with_write_txn".to_owned(),
                 line: ".with_write_txn(|wtxn| {".to_owned(),
             },
@@ -642,7 +380,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "try_with_write_txn".to_owned(),
                 line: ".try_with_write_txn(|wtxn| -> Result<LedgerWriteResult, UsageError> {".to_owned(),
             },
@@ -650,7 +388,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: ".sync_state_put_in_write_txn(wtxn, &tenant_key, &tenant_raw)?;".to_owned(),
             },
@@ -658,7 +396,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: ".sync_state_put_in_write_txn(wtxn, &vault_key, &vault_raw)?;".to_owned(),
             },
@@ -666,7 +404,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: ".sync_state_put_in_write_txn(wtxn, &event_key, &entry_raw)?;".to_owned(),
             },
@@ -674,7 +412,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "try_with_write_txn".to_owned(),
                 line: ".try_with_write_txn(|wtxn| -> Result<TopUpWriteResult, UsageError> {".to_owned(),
             },
@@ -682,7 +420,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: "self.vault.sync_state_put_in_write_txn(".to_owned(),
             },
@@ -695,7 +433,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
 fn of060_f2_extra_booking_write_txn_is_not_pinned() {
     let expected = f2_expected_raw_escape_hits();
     let booking_path = "crates/oneiron-server/src/api/booking/subject.rs";
-    let approved_line = "server.vault.with_write_txn(|txn| {";
+    let approved_line = ".with_write_txn(|txn| {";
     let approved_hits = raw_escape_hits(booking_path, &production_source(approved_line));
     assert_eq!(approved_hits.len(), 1);
     assert_eq!(expected.get(&approved_hits[0]), Some(&1));
@@ -704,10 +442,13 @@ fn of060_f2_extra_booking_write_txn_is_not_pinned() {
     // same file or the same line in another booking file must also fail F2.
     for (rel, extra_line) in [
         (booking_path, approved_line),
-        (booking_path, "server.vault.with_write_txn(|extra_txn| {"),
-        ("crates/oneiron-server/src/api/booking/extra.rs", approved_line),
+        (booking_path, ".with_write_txn(|extra_txn| {"),
+        (
+            "crates/oneiron-server/src/api/booking/extra.rs",
+            approved_line,
+        ),
     ] {
-        assert!(production_file(rel) && f2_surface_path(rel));
+        assert!(!test_only_by_path(rel) && f2_surface_path(rel));
         let extra_hits = raw_escape_hits(rel, &production_source(extra_line));
         assert_eq!(extra_hits.len(), 1);
         let mut actual = expected.clone();
@@ -725,7 +466,7 @@ fn f2_surface_path(rel: &str) -> bool {
     rel.starts_with("crates/oneiron-server/src/")
         || rel.starts_with("crates/oneiron-napi/src/")
         || rel.starts_with("crates/oneiron/src/code_run/")
-        || rel == "crates/oneiron/src/code_sandbox.rs"
+        || rel.starts_with("crates/oneiron/src/code_sandbox/")
 }
 
 #[test]
@@ -797,13 +538,10 @@ fn of060_f3_core_does_not_import_gateway_or_server_code() {
     let repo = repo_root();
     let mut violations = Vec::new();
 
-    for path in rust_files_under(&repo.join("crates/oneiron/src")) {
-        let rel = normalized(relative_path(&repo, &path));
-        if !production_file(&rel) {
-            continue;
-        }
-        let source = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {rel}: {err}"));
-        let source = production_source(&source);
+    let tree = SourceTree::read(&repo.join("crates/oneiron/src"));
+    for (path, source) in tree.production_sources() {
+        let rel = normalized(relative_path(&repo, path));
+        let source = production_source(source);
         for pattern in [
             "oneiron_server::",
             "oneiron-server",

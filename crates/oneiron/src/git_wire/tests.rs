@@ -1,4 +1,3 @@
-use std::ffi::OsStr;
 use std::fs;
 
 use tempfile::TempDir;
@@ -7,6 +6,7 @@ use super::*;
 use crate::VaultConfig;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseState, CheckoutTaskClass};
 use crate::entity_id::EntityId;
+use crate::test_util::source_scan::SourceTree;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1518,9 +1518,15 @@ fn git_wire_is_the_only_production_git_subprocess_constructor() {
     // Literal-text guard only: dynamic constructors, including
     // ServeCommand::spawn, are not covered by this scan.
     let needle = format!("Command::new({}git{})", '"', '"');
-    let allowed = ["codebase/tests.rs", "artifact_hosting/tests.rs"];
-    let mut offenders = Vec::new();
-    scan_for_needle(&root, &root, &needle, &allowed, &mut offenders);
+    // Test-only files (`tests.rs`, `*_tests.rs`, `tests/` directories and
+    // `#[cfg(test)]` mounts) are classified by the shared scanner; every
+    // other file is scanned with its `#[cfg(test)]` items masked below.
+    let tree = SourceTree::read(&root);
+    let offenders = tree
+        .production_sources()
+        .filter(|(_, text)| text.contains(&needle) && contains_production_needle(text, &needle))
+        .map(|(path, _)| tree.relative(path))
+        .collect::<Vec<_>>();
     assert!(
         offenders.is_empty(),
         "literal git subprocess constructors must stay in git_wire.rs: {offenders:?}"
@@ -1611,43 +1617,5 @@ fn production_git_constructor_scan_excludes_only_test_scopes() {
             contains_production_needle(&source, &needle),
             "production constructor was hidden: {source}"
         );
-    }
-}
-
-fn scan_for_needle(
-    dir: &Path,
-    root: &Path,
-    needle: &str,
-    allowed: &[&str],
-    offenders: &mut Vec<String>,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            scan_for_needle(&path, root, needle, allowed, offenders);
-            continue;
-        }
-        if path.extension().and_then(OsStr::to_str) != Some("rs") {
-            continue;
-        }
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        if !text.contains(needle) {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(root)
-            .map(|suffix| suffix.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if allowed.contains(&relative.as_str()) {
-            continue;
-        }
-        if contains_production_needle(&text, needle) {
-            offenders.push(relative);
-        }
     }
 }

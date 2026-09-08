@@ -57,7 +57,8 @@ pub(super) fn resolve_public_booking_page(
     page_token: &str,
 ) -> Result<(EntityId, BookingPagePublication), ApiError> {
     let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
-        .map_err(|_| public_booking_not_found())?.ok_or_else(public_booking_not_found)?;
+        .map_err(|_| public_booking_not_found())?
+        .ok_or_else(public_booking_not_found)?;
     let publication = load_public_booking_page(&server.vault, page_ref, now_secs()?)
         .map_err(|_| public_booking_not_found())?
         .ok_or_else(public_booking_not_found)?;
@@ -99,7 +100,14 @@ pub(crate) async fn render_public_booking_page(
     };
     // The shared solver produces the data; the existing disclosure seam owns
     // the public clamp and validates its final half-open mask.
-    let mask = slot_mask(&request, SolveResult { slots, flex_used, host_bindings: Vec::new() });
+    let mask = slot_mask(
+        &request,
+        SolveResult {
+            slots,
+            flex_used,
+            host_bindings: Vec::new(),
+        },
+    );
     let slots = oneiron::booking::bounded_public_slots(mask).map_err(booking_error)?;
     // Do not emit an obsolete snapshot after an owner revokes or edits it
     // while admission is awaiting. No second admission or solver call.
@@ -140,7 +148,14 @@ async fn public_booking_availability(
     resolve_public_booking_page(&server, &token)?;
     let input = json_payload(payload)?;
     let transport = public_http_transport_context(peer)?;
-    execute_booking_operation(&server, &token, BookingOperationRequest::Availability(input), &transport).await.map(Json)
+    execute_booking_operation(
+        &server,
+        &token,
+        BookingOperationRequest::Availability(input),
+        &transport,
+    )
+    .await
+    .map(Json)
 }
 
 /// A parser-backed allowlist, not a second verb registry.
@@ -270,6 +285,9 @@ async fn public_booking_response(mut response: Response) -> Response {
 }
 
 #[cfg(test)]
+#[path = "public_availability_tests.rs"]
+mod availability_tests;
+#[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
 #[cfg(test)]
@@ -278,6 +296,3 @@ mod lifecycle_tests;
 #[cfg(test)]
 #[path = "public_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "public_availability_tests.rs"]
-mod availability_tests;

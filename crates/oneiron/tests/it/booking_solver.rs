@@ -1310,14 +1310,47 @@ fn booking_seam_has_one_definition_home() {
     );
 }
 
+/// The booking source `name` stands for: the flat file if one is there, and
+/// otherwise every `*.rs` child of the directory module of the same stem, read
+/// recursively in path order and concatenated. `solver.rs` is a directory
+/// module since the split, so a fence that reads it by name reads nothing —
+/// this walk keeps the scan as wide as the single file was. `tests.rs` is
+/// included for the same reason: the old file carried its inline tests too.
+fn booking_source(root: &std::path::Path, name: &str) -> String {
+    let flat = root.join(name);
+    if flat.is_file() {
+        return std::fs::read_to_string(&flat).expect("read booking source");
+    }
+    let mut files = Vec::new();
+    let mut stack = vec![root.join(name.trim_end_matches(".rs"))];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read booking source") {
+            let path = entry.expect("read booking source").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+        .iter()
+        .map(|path| std::fs::read_to_string(path).expect("read booking source"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn booking_source_carries_no_third_party_time_type() {
-    // The two files this ticket owns. Sibling booking files are not asserted
+    // The two sources this ticket owns. Sibling booking files are not asserted
     // here: an oracle over source it does not own goes stale the moment a
-    // sibling lands.
+    // sibling lands. `solver.rs` is a directory module now, so the fence reads
+    // every one of its children: the forbidden names must stay out of all of
+    // them, not only out of the child that kept the module name.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/booking");
     for name in ["config.rs", "solver.rs"] {
-        let source = std::fs::read_to_string(root.join(name)).expect("read booking source");
+        let source = booking_source(&root, name);
         for forbidden in [
             "chrono",
             "chrono_tz",

@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=src/lib");
     println!("cargo:rerun-if-changed=cbindgen.toml");
 
     let crate_dir = PathBuf::from(

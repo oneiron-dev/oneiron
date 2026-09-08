@@ -534,8 +534,17 @@ async fn public_booking_needs_live_surfaceable_publication_and_matching_configur
         let mut body = original.clone();
         body.approval = approval;
         body.stale = stale;
-        assert!(fixture.server.vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1).is_err());
-        assert_eq!(fixture.route("GET", &path, Value::Null).await.status(), StatusCode::OK);
+        assert!(
+            fixture
+                .server
+                .vault
+                .put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)
+                .is_err()
+        );
+        assert_eq!(
+            fixture.route("GET", &path, Value::Null).await.status(),
+            StatusCode::OK
+        );
     }
     let mut config = fixture
         .server

@@ -20,9 +20,26 @@ use crate::test_util::entity as test_id;
 mod failure_integrity;
 
 /// This module's own source, read for the mechanical negative-scope proofs.
-const FAILURE_LADDER_SOURCE: &str = include_str!("../failure_ladder.rs");
+const FAILURE_LADDER_SOURCE: &str = concat!(
+    include_str!("mod.rs"),
+    include_str!("blocked_reports.rs"),
+    include_str!("classify.rs"),
+    include_str!("ladder.rs"),
+    include_str!("lineage.rs"),
+    include_str!("scope.rs"),
+    include_str!("transitions.rs"),
+);
 /// The healer-slot wrapper's source, read for the same proofs.
-const AGENT_DISPATCH_SOURCE: &str = include_str!("../agent_dispatch.rs");
+const AGENT_DISPATCH_SOURCE: &str = concat!(
+    include_str!("../agent_dispatch/mod.rs"),
+    include_str!("../agent_dispatch/attenuation.rs"),
+    include_str!("../agent_dispatch/codec.rs"),
+    include_str!("../agent_dispatch/context.rs"),
+    include_str!("../agent_dispatch/dispatch.rs"),
+    include_str!("../agent_dispatch/kill.rs"),
+    include_str!("../agent_dispatch/kill_spawn_tests.rs"),
+    include_str!("../agent_dispatch/types.rs"),
+);
 
 const LEASE_OWNER: &str = "failure-ladder-worker";
 const RUN_ID: &str = "run-1887";
