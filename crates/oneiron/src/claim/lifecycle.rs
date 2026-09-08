@@ -89,7 +89,7 @@ impl Vault {
         }
         if !is_engine_owned_reserved_predicate(&body.predicate) {
             return Err(Error::InvalidClaimBody(
-                "reserved claim lifecycle door only admits skill and actor predicates",
+                "reserved claim lifecycle door only admits engine-owned predicates",
             ));
         }
         Ok((body, header))

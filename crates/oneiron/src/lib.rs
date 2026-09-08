@@ -170,6 +170,7 @@ pub mod task_authority;
 pub mod task_verb;
 pub mod temporal;
 pub mod thread_lens;
+pub mod thread_passport;
 pub mod tokenizer;
 mod vault;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
@@ -180,6 +181,7 @@ pub mod voice_identity;
 pub mod voice_segment;
 pub mod wave_orchestration;
 pub mod web_fetch;
+pub mod workspace_roster;
 pub mod write_envelope;
 
 // Root re-export surface (curated). A name lives here only when a downstream
@@ -478,6 +480,10 @@ pub use crate::task_authority::{
     TaskAuthorityFactKind, TaskAuthorityState,
 };
 pub use crate::temporal::TimeRange;
+pub use crate::thread_passport::{
+    CanonicalMessageId, StickyMaskDecision, ThreadMask, ThreadPassport, ThreadPassportInput,
+    ThreadPassportResolution, canonical_message_id, canonical_message_id_list,
+};
 pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack_tokens};
 // Beyond the two consumer-kept names, the rest are signature-kept: `Vault`'s
 // public `doctor`, `text_index_status`, and `as_actor` return them directly
@@ -511,6 +517,11 @@ pub use crate::wave_orchestration::{
     BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan,
     WavePlanReceipt, WavePlanRequest, WavePlanner, WaveTaskPort, WaveTaskWrite,
     blocked_by_edge_write,
+};
+pub use crate::workspace_roster::{
+    CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
+    MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterPreset,
+    WorkspaceRosterRole,
 };
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,

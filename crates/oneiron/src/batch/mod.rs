@@ -3,6 +3,7 @@ pub(crate) mod secret_scan;
 
 mod agent_definition_create;
 mod authority_log;
+mod base_apply;
 mod builder;
 mod child_of_overlay;
 mod claim_candidate_apply;
@@ -17,6 +18,7 @@ mod ops_pipeline;
 mod phonetic_apply;
 mod put_apply;
 mod short_id;
+mod thread_claim_index;
 mod txn_builder;
 mod types;
 mod vad_postcommit;
@@ -30,6 +32,7 @@ pub use self::txn_builder::TxnBatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
+pub(crate) use self::base_apply::{apply_ops_with_origin, apply_session_bundle_claim_puts};
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::child_of_overlay::child_of_prefix;
 pub(crate) use self::claim_materialization::{ClaimMaterialization, apply_owner_bound_claim_puts};
@@ -48,8 +51,8 @@ pub(crate) use self::gate_mode::ApplyOpsGateMode;
 pub(crate) use self::gate_staging::StagedClaimGateOutcome;
 use self::gate_staging::{stage_preflight_decision, staged_claim_gate_outcomes};
 pub(crate) use self::ops_pipeline::{
-    BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode, apply_ops_with_origin,
-    apply_session_bundle_claim_puts, reject_overlay_member_base_write,
+    BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
+    reject_overlay_member_base_write,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
 pub(crate) use self::put_apply::delete_entity_index_rows;
@@ -81,5 +84,6 @@ use self::ops_pipeline::*;
 use self::phonetic_apply::*;
 use self::put_apply::*;
 use self::short_id::*;
+use self::thread_claim_index::*;
 use self::types::*;
 use self::vector_apply::*;

@@ -16,6 +16,14 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     open_test_vault_with(cfg)
 }
 
+fn subject_owner(vault: &Vault) -> Result<crate::write_envelope::WriteActor> {
+    let owner = seed(vault, entity(0xE0), crate::registry::ENTITY_TYPE_PERSON);
+    let writer = crate::write_envelope::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
+    // Signed genesis and a live owner binding, not an Agent capability exemption.
+    crate::subject_model::tests::authorization::root_owner(vault, writer, 0xE0)?;
+    Ok(writer)
+}
+
 fn identity(address: &str, agent_ref: EntityId, state: ChannelIdentityState) -> ChannelIdentity {
     let mut identity = ChannelIdentity::requested(
         "email",
@@ -1142,7 +1150,7 @@ fn routed_event_carries_actor_facet_and_subject_stamps() -> Result<()> {
         &vault,
         actor_ref,
         person,
-        crate::write_envelope::WriteActor::new(actor_ref, crate::edge::EdgeActorClass::Agent),
+        subject_owner(&vault)?,
         1_800_000_000,
     )?;
 
@@ -1271,8 +1279,7 @@ fn routing_resolves_merge_and_omits_split_subject_without_rewriting_anchor() -> 
         let survivor = seed(&vault, entity(0xC6), subject_type);
         let other = seed(&vault, entity(0xC7), subject_type);
         let facet = seed(&vault, entity(0xC8), crate::registry::ENTITY_TYPE_FACET);
-        let author =
-            crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::System);
+        let author = subject_owner(&vault)?;
         let anchor_id = crate::subject_model::anchor_actor_subject(
             &vault,
             actor,
@@ -1336,7 +1343,7 @@ fn subject_projection_failure_does_not_replace_identity_rejection_receipts() -> 
     let (_dir, vault) = test_vault();
     let actor = seed(&vault, entity(0xB8), crate::registry::ENTITY_TYPE_MACHINE);
     let person = seed(&vault, entity(0xB9), crate::registry::ENTITY_TYPE_PERSON);
-    let author = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::System);
+    let author = subject_owner(&vault)?;
     let id = crate::subject_model::anchor_actor_subject(&vault, actor, person, author, 100)?;
     let mut malformed = vault.get_claim(&id)?.expect("anchor");
     malformed.value = rmpv::Value::from("malformed-subject-ref");
@@ -1396,4 +1403,60 @@ fn landing_surface_handoff_keeps_its_lease_projection() {
         SurfaceEventHandoffState::from_attempt_state(AttemptState::Landing),
         SurfaceEventHandoffState::Leased,
     );
+}
+
+#[test]
+fn subject_stamp_uses_event_received_at_not_processing_time() -> Result<()> {
+    for state in [
+        ChannelIdentityState::Active,
+        ChannelIdentityState::Rotating,
+        ChannelIdentityState::Released,
+        ChannelIdentityState::Quarantine,
+    ] {
+        let (_dir, vault) = test_vault();
+        let actor = seed(&vault, entity(0xD0), crate::registry::ENTITY_TYPE_AGENT_DEF);
+        let person = seed(&vault, entity(0xD1), crate::registry::ENTITY_TYPE_PERSON);
+        let facet = seed(&vault, entity(0xD2), crate::registry::ENTITY_TYPE_FACET);
+        let owner = subject_owner(&vault)?;
+        // The anchor starts at the normal input fixture's received_at and
+        // expires two seconds later. Earlier events must not see a future fact.
+        let start = 1_800_000_123;
+        let id = crate::subject_model::anchor_actor_subject(&vault, actor, person, owner, start)?;
+        let mut body = vault.get_claim(&id)?.expect("anchor");
+        body.valid_to = Some(start + 2);
+        vault.with_write_txn(|txn| {
+            vault.put_reserved_claim_in_txn(
+                txn,
+                &id,
+                &body,
+                crate::temporal::TimeRange { start, end: start },
+                start,
+            )
+        })?;
+        let before = vault.get(&id)?;
+        let mut record = identity("timed@example.com", actor, state);
+        record.binding = ChannelIdentityBinding::actor_with_facet(actor, facet);
+        vault.create_channel_identity(&entity(0xD3), &record)?;
+        for (at, present) in [
+            (start + 2, false),
+            (start - 1, false),
+            (start, true),
+            (start + 1, true),
+        ] {
+            let mut incoming = input(
+                "timed@example.com",
+                SurfaceCounterpartyStamp::unknown("sender@example.com"),
+            );
+            incoming.received_at = at;
+            let receipt = vault.route_inbound_surface_event(incoming)?;
+            assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+            let event = receipt.surface_event.expect("routed event");
+            assert_eq!(event.received_at, at);
+            assert_eq!(event.actor_ref, actor.to_hex());
+            assert_eq!(event.facet_ref, Some(facet.to_hex()));
+            assert_eq!(event.subject_ref, present.then(|| person.to_hex()));
+        }
+        assert_eq!(vault.get(&id)?, before);
+    }
+    Ok(())
 }
