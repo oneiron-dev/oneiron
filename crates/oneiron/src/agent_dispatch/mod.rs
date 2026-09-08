@@ -42,7 +42,7 @@ pub use self::types::{
 };
 
 #[cfg(test)]
-mod kill_spawn;
+mod kill_spawn_tests;
 #[cfg(test)]
 mod tests;
 

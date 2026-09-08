@@ -2564,7 +2564,7 @@ const AGENT_DISPATCH_HEALER_SOURCE: &str = concat!(
     include_str!("context.rs"),
     include_str!("dispatch.rs"),
     include_str!("kill.rs"),
-    include_str!("kill_spawn.rs"),
+    include_str!("kill_spawn_tests.rs"),
     include_str!("types.rs"),
 );
 
