@@ -41,10 +41,13 @@ Run the full gate from the PR worktree after the final change. Repeat until all
 commands pass on the final branch tip.
 
 `scripts/verify.sh` is the single source of truth for the scripted gate — read
-it rather than copying commands here. It runs, in order: `cargo fmt --all
---check`, workspace clippy (`-D warnings`, all targets and features), `cargo
-nextest run --workspace --all-features --profile full`, and `cargo test --doc
---workspace --exclude oneiron-bench --all-features`.
+it rather than copying commands here. It runs, in order: `cargo fmt --check`
+(members only, never `--all` — that would reformat the ONE-218 heed vendor),
+workspace clippy (`-D warnings`, all targets and features), featureless clippy
+(`-p oneiron --all-targets --no-default-features`), `cargo nextest run
+--workspace --all-features --profile full`, `cargo test -p oneiron --lib
+--no-default-features`, and `cargo test --doc --workspace --exclude
+oneiron-bench --all-features`.
 
 `nextest --profile full` is the canonical test tier and includes slow tests.
 Doctests run separately because nextest does not run them.
