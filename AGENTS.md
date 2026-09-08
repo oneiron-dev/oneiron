@@ -2,10 +2,10 @@
 
 General doctrine (consumer boundary): `CLAUDE.md`. PR/verify workflow: `WORKFLOW.md`. Review
 posture: `REVIEW.md`. Storage-ABI decision history — not agent guidance, read only for "why does
-this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (43KB, over
+this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (~55KB, over
 most agents' single-read truncation threshold — fetch by tier, don't load the whole file):
-`oneiron.skills.md` — Tier-1 endpoint index at L51, Tier-2 endpoint detail at L298, Tier-3
-schemas/error catalog at L801.
+`oneiron.skills.md` — locate a tier by its heading, not by line number: `## Tier-1: Endpoint
+Activation Index`, `## Tier-2: Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
 
 Oneiron is a general-purpose memory engine (Rust workspace; core crate `crates/oneiron`, server
 `crates/oneiron-server`, bindings `crates/oneiron-napi`). Consumer-agnostic, public repo.
@@ -39,8 +39,11 @@ script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCF
 cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
 --profile full`.
 
-Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh` — same 4-stage
-coverage split across legs; the same two-command gap applies.
+Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh`. Leg coverage is
+narrower than the script: `fmt-clippy` runs the code-map pin, fmt and workspace clippy;
+`tests:1/2` runs nextest partition `hash:1/2` plus doctests; `tests:2/2` runs partition
+`hash:2/2`. No leg runs the two featureless stages, so a distributed run has a four-command
+gap: featureless clippy, featureless lib tests, `cargo doc`, and the sync-profile nextest run.
 
 Code map — read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules
 with layout, size bucket and purpose), then drill into `docs/codemap/<crate>.md` for the per-file
@@ -68,8 +71,9 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
   §5.
 - Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
 - Featureless builds: the crate declares NO default features. The library **and its test
-  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates
-  and run in addition to (never instead of) the all-features gates in `scripts/verify.sh`:
+  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates;
+  `scripts/verify.sh` runs them as its `clippy-featureless` and `test-featureless` stages, in
+  addition to (never instead of) the all-features stages:
 
       cargo test -p oneiron --lib --no-default-features
       cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
@@ -88,18 +92,29 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 ## CI truth
 
 - `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
-  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS=-Dwarnings`.
+  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. Under
+  the dispatch-only trigger only `changes` (path detector) and `deny` (gated on
+  `workflow_dispatch`) execute: fmt/clippy/typos are gated on `pull_request`, `test` on
+  `pull_request` or `push`, and `package` waits for a `v*` tag push that can never trigger the
+  workflow, so that gate is unreachable as written. Nothing pre-merge enforces fmt, clippy or
+  tests; `scripts/verify.sh` on the branch is the gate.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
   agree.
 - `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; installs ripgrep and runs
-  `scripts/ratchet/check.sh`. Main-only on purpose: a stacked wave's middle commits can sit
-  transiently above baseline for a state that never lands.
+  `scripts/ratchet/check.sh`, `scripts/codemap/check.sh` and
+  `scripts/ratchet/root-surface-check.sh`. It is a post-merge reporter: it cannot block a merge,
+  it can only turn `main` red after one. Main-only on purpose: a stacked wave's middle commits
+  can sit transiently above baseline for a state that never lands.
 - `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
   control).
-- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding
-  compile proof.
+- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi` (plus the workflow
+  file and `Cargo.lock`), and `workflow_dispatch`; Swift-binding compile proof.
+- `wire-quickstart.yml` — PR to `main` and `push` to `main`, both path-scoped to
+  `packages/oneiron`, `crates/oneiron{,-py,-remote,-napi,-server}`, the wire scripts
+  (`scripts/wire-test-server.sh`, `scripts/tests/test_wire_*.py`) and the Cargo/toolchain
+  files; plus `workflow_dispatch`. Installs the shipped SDK surface and proves four-verb parity.
 
 ## Where new code goes
 
