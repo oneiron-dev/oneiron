@@ -25,16 +25,6 @@ policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(policy)
 BEFORE = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
 EXPECTED = {
-    ("RUSTSEC-2024-0413", "atk", "0.18.2"),
-    ("RUSTSEC-2024-0416", "atk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0412", "gdk", "0.18.2"),
-    ("RUSTSEC-2024-0418", "gdk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0411", "gdkwayland-sys", "0.18.2"),
-    ("RUSTSEC-2024-0417", "gdkx11", "0.18.2"),
-    ("RUSTSEC-2024-0414", "gdkx11-sys", "0.18.2"),
-    ("RUSTSEC-2024-0415", "gtk", "0.18.2"),
-    ("RUSTSEC-2024-0420", "gtk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0419", "gtk3-macros", "0.18.2"),
     ("RUSTSEC-2024-0370", "proc-macro-error", "1.0.4"),
     ("RUSTSEC-2025-0081", "unic-char-property", "0.9.0"),
     ("RUSTSEC-2025-0075", "unic-char-range", "0.9.0"),
@@ -111,7 +101,7 @@ class PolicyTests(unittest.TestCase):
         entries = policy.validate_policy(self.data, self.lock, now)
         policy.validate_advisories(entries, self.database)
 
-    def test_authority_exact19_and_allowed(self):
+    def test_authority_exact9_and_allowed(self):
         self.assertEqual({(e["id"], e["package"], e["version"]) for e in self.data["entries"]}, EXPECTED)
         self.validate()
         # Also pin the real current lock, not the superseded baseline packet.
@@ -120,7 +110,7 @@ class PolicyTests(unittest.TestCase):
     def test_permanent_exceptions_preserved_and_no_new_ids(self):
         base = policy.validate_config(self.config)
         rendered = tomllib.loads(policy.accepted_config(self.config, self.data["entries"]))
-        self.assertEqual(rendered["advisories"]["ignore"][19:], base["advisories"]["ignore"])
+        self.assertEqual(rendered["advisories"]["ignore"][9:], base["advisories"]["ignore"])
         self.assertEqual({e["id"] for e in base["advisories"]["ignore"]}, policy.EXISTING_IDS)
         for section in ("graph", "licenses", "bans", "sources"):
             self.assertEqual(rendered[section], base[section])
@@ -156,7 +146,8 @@ class PolicyTests(unittest.TestCase):
             elif change == "source":
                 lock["package"][0]["source"] = "git+https://example.invalid/fork"
             else:
-                lock["package"].append({"name": "new-parent", "version": "1.0.0", "dependencies": ["atk"]})
+                accepted = self.data["entries"][0]["package"]
+                lock["package"].append({"name": "new-parent", "version": "1.0.0", "dependencies": [accepted]})
             with self.subTest(change=change), self.assertRaises(policy.PolicyError):
                 policy.validate_policy(self.data, lock, BEFORE)
 
@@ -185,7 +176,8 @@ class PolicyTests(unittest.TestCase):
         entry = self.data["entries"][0]
         path = write_advisory(self.database, entry)
         original = path.read_text()
-        for text in ('not toml', '```toml\n[advisory]', original.replace('package = "atk"', 'package = "other"')):
+        renamed = original.replace(f'package = "{entry["package"]}"', 'package = "other"')
+        for text in ('not toml', '```toml\n[advisory]', renamed):
             path.write_text(text)
             with self.subTest(text=text), self.assertRaises(policy.PolicyError):
                 self.validate()
@@ -326,7 +318,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn("--target", command)
         self.final_config = Path(command[command.index("--config") + 1])
         config = tomllib.loads(self.final_config.read_text())
-        self.assertEqual(len(config["advisories"]["ignore"]), 23)
+        self.assertEqual(len(config["advisories"]["ignore"]), 13)
         self.assertEqual(config["advisories"]["yanked"], "deny")
         private = Path(config["advisories"]["db-path"])
         self.assertNotEqual(private, self.cache)
@@ -366,7 +358,24 @@ class EffectiveCommandTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(shutil.which("cargo"), "install cargo and cargo-deny 0.19.4")
         result = subprocess.run(["cargo", "deny", "--version"], capture_output=True, text=True, check=True)
-        self.assertEqual(result.stdout.strip(), "cargo-deny " + policy.CARGO_DENY_VERSION)
+        found, expected = result.stdout.strip(), "cargo-deny " + policy.CARGO_DENY_VERSION
+        if found != expected:
+            # These tests drive the real binary, because the exact version's
+            # ignore semantics are the thing under test. A mismatch used to
+            # fail here in setUp, which aborted the test body and made the
+            # failure look like a version complaint - it masked five genuine
+            # failures during the 2026-09-09 retirement, caught only by CI.
+            # Skip locally so nothing hides behind it; in CI the pinned
+            # version is installed on purpose, so its absence is a real fault.
+            message = (
+                f"{found} is on PATH; these tests exercise {expected}. Install the pin with:\n"
+                f"  cargo install --locked cargo-deny@{policy.CARGO_DENY_VERSION} --root ~/ci/tools\n"
+                "then put ~/ci/tools/bin first on PATH, which is what CI does. The rest of the "
+                "suite still runs and still reports real failures."
+            )
+            if os.environ.get("CI"):
+                self.fail(message)
+            raise unittest.SkipTest(message)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.work = Path(self.temp.name)
@@ -468,7 +477,7 @@ class EffectiveCommandTests(unittest.TestCase):
         return subprocess.run(command, cwd=self.work, capture_output=True, text=True,
                               env=dict(os.environ, CARGO_NET_OFFLINE="true", CARGO_TERM_COLOR="never"))
 
-    def test_raw_deny_blocks_but_exact19_and_old_exception_are_accepted(self):
+    def test_raw_deny_blocks_but_exact9_and_old_exception_are_accepted(self):
         raw = self.run_deny(accepted=False)
         self.assertNotEqual(raw.returncode, 0, raw.stdout + raw.stderr)
         self.assertIn("unmaintained", raw.stderr)
@@ -476,12 +485,13 @@ class EffectiveCommandTests(unittest.TestCase):
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
 
     def test_new_id_same_package_and_unlisted_package_stay_blocked(self):
-        for name in ("atk", "new-unlisted-package"):
+        accepted = self.data["entries"][0]
+        for name in (accepted["package"], "new-unlisted-package"):
             with self.subTest(package=name):
-                entry = {"id": "RUSTSEC-2026-9001", "package": name, "version": "0.18.2"}
+                entry = {"id": "RUSTSEC-2026-9001", "package": name, "version": accepted["version"]}
                 path = write_advisory(self.database, entry)
                 self.commit_database()
-                if name != "atk":
+                if name != accepted["package"]:
                     self.metadata = self.write_metadata(self.data["entries"] + [self.legacy, entry])
                 result = self.run_deny()
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -489,7 +499,7 @@ class EffectiveCommandTests(unittest.TestCase):
                 path.unlink()
 
     def test_new_vulnerability_on_accepted_package_stays_blocked(self):
-        entry = {"id": "RUSTSEC-2026-9002", "package": "atk"}
+        entry = {"id": "RUSTSEC-2026-9002", "package": self.data["entries"][0]["package"]}
         write_advisory(self.database, entry, None)
         self.commit_database()
         result = self.run_deny()
@@ -500,7 +510,7 @@ class EffectiveCommandTests(unittest.TestCase):
     def test_new_notice_and_unsound_on_accepted_package_stay_blocked(self):
         for classification in ("notice", "unsound"):
             with self.subTest(classification=classification):
-                entry = {"id": "RUSTSEC-2026-9003", "package": "atk"}
+                entry = {"id": "RUSTSEC-2026-9003", "package": self.data["entries"][0]["package"]}
                 write_advisory(self.database, entry, classification)
                 self.commit_database()
                 result = self.run_deny()
@@ -521,7 +531,7 @@ class EffectiveCommandTests(unittest.TestCase):
         entries = deepcopy(self.data["entries"])
         entries[0]["version"] = "99.0.0"
         self.metadata = self.write_metadata(entries + [self.legacy])
-        next(p for p in self.lock["package"] if p["name"] == "atk")["version"] = "99.0.0"
+        next(p for p in self.lock["package"] if p["name"] == entries[0]["package"])["version"] = "99.0.0"
         unsafe = self.run_deny(unsafe_id_only=True)
         self.assertEqual(unsafe.returncode, 0, unsafe.stdout + unsafe.stderr)
         with self.assertRaises(policy.PolicyError):
