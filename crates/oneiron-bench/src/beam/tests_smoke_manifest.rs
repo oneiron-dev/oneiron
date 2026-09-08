@@ -228,20 +228,20 @@ pub(crate) mod tests {
     #[test]
     fn serialized_context_pack_ids_ignore_nested_yaml_id_fields() {
         let serialized = r#"
-    results:
-      memory:
-        - id: result:01
-          txt: Budgeted result text
-          title: kept
-          nested:
-            - id: dropped-result:02
-    neighbors:
-      memory:
-        - id: neighbor:03
-          txt: "Budgeted neighbor text"
-          nested:
-            - id: dropped-neighbor:04
-    "#;
+results:
+  memory:
+    - id: result:01
+      txt: Budgeted result text
+      title: kept
+      nested:
+        - id: dropped-result:02
+neighbors:
+  memory:
+    - id: neighbor:03
+      txt: "Budgeted neighbor text"
+      nested:
+        - id: dropped-neighbor:04
+"#;
 
         let ids = serialized_context_pack_ids(serialized);
 
