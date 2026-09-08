@@ -16,17 +16,17 @@ use std::time::UNIX_EPOCH;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
 
-pub(crate) fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
+pub(super) fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
     let Query(params) = query.map_err(query_rejection_error)?;
     Ok(params)
 }
 
-pub(crate) fn json_payload<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
+pub(super) fn json_payload<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
     let Json(payload) = payload.map_err(json_rejection_error)?;
     Ok(payload)
 }
 
-pub(crate) fn has_json_content_type(headers: &HeaderMap) -> bool {
+pub(super) fn has_json_content_type(headers: &HeaderMap) -> bool {
     headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -40,7 +40,7 @@ pub(crate) fn has_json_content_type(headers: &HeaderMap) -> bool {
 
 // ─── Core API parity routes ─────────────────────────────────────────────────
 
-pub(crate) fn parse_optional_entity_id(
+pub(super) fn parse_optional_entity_id(
     value: Option<&str>,
     field: &'static str,
 ) -> Result<oneiron::EntityId, ApiError> {
@@ -52,7 +52,7 @@ pub(crate) fn parse_optional_entity_id(
 
 // ─── Turn VAD annotation ─────────────────────────────────────────────────────
 
-pub(crate) fn parse_entity_id_param(
+pub(super) fn parse_entity_id_param(
     value: &str,
     field: &'static str,
 ) -> Result<oneiron::EntityId, ApiError> {
@@ -64,7 +64,7 @@ pub(crate) fn parse_entity_id_param(
     })
 }
 
-pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
+pub(super) fn hex_bytes(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -74,7 +74,7 @@ pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
     encoded
 }
 
-pub(crate) fn unix_seconds_now() -> u64 {
+pub(super) fn unix_seconds_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
@@ -82,7 +82,7 @@ pub(crate) fn unix_seconds_now() -> u64 {
 
 // ─── Search Routes ────────────────────────────────────────────────────────────
 
-pub(crate) fn default_limit() -> usize {
+pub(super) fn default_limit() -> usize {
     10
 }
 

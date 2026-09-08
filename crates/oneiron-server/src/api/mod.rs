@@ -134,22 +134,21 @@ pub(crate) use self::conversations::*;
 pub(crate) use self::core::*;
 pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
-pub(crate) use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
+use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
 pub(crate) use self::mcp_gateway::*;
 pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
 pub(crate) use self::openapi_registry::ApiDoc;
-pub(crate) use self::params::{
-    ViewQuery, default_limit, has_json_content_type, hex_bytes, json_payload,
-    parse_entity_id_param, parse_optional_entity_id, query_params, unix_seconds_now,
+pub(crate) use self::params::ViewQuery;
+use self::params::{
+    default_limit, has_json_content_type, hex_bytes, json_payload, parse_entity_id_param,
+    parse_optional_entity_id, query_params, unix_seconds_now,
 };
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
-pub(crate) use self::scoped_auth::{
-    check_api_auth, scoped_read_for_core_auth, scoped_read_for_legacy_api,
-};
+use self::scoped_auth::{check_api_auth, scoped_read_for_core_auth, scoped_read_for_legacy_api};
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
 pub(crate) use self::vad::*;
