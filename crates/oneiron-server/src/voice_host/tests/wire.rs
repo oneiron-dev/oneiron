@@ -16,7 +16,9 @@ impl Brain for TestBrain {
         self.starts.push(request.clone());
         Ok(())
     }
-    fn update_context(&mut self, _request: &BrainRequest) -> oneiron::Result<()> { Ok(()) }
+    fn update_context(&mut self, _request: &BrainRequest) -> oneiron::Result<()> {
+        Ok(())
+    }
     fn cancel(&mut self, generation: GenerationEpoch) -> oneiron::Result<()> {
         self.cancelled.push(generation);
         Ok(())
@@ -35,7 +37,9 @@ impl TtsSeamClient for TestTts {
 #[derive(Default)]
 struct TestControl(Vec<ControlEvent>);
 impl CascadeControl for TestControl {
-    fn flush_queued_pcm(&mut self, _generation: GenerationEpoch) -> oneiron::Result<()> { Ok(()) }
+    fn flush_queued_pcm(&mut self, _generation: GenerationEpoch) -> oneiron::Result<()> {
+        Ok(())
+    }
     fn submit(&mut self, event: ControlEvent) -> oneiron::Result<()> {
         self.0.push(event);
         Ok(())
@@ -61,7 +65,9 @@ async fn private_wire_validates_input_submits_existing_brain_and_dispatches_disc
     let (read, mut write) = client.into_split();
     let mut read = BufReader::new(read);
     let mut outputs = VoiceOutputs {
-        brain: TestBrain::default(), tts: TestTts::default(), control: TestControl::default(),
+        brain: TestBrain::default(),
+        tts: TestTts::default(),
+        control: TestControl::default(),
     };
     let (served, ()) = tokio::join!(host.serve(server, &mut outputs), async {
         send_json(&mut write, json!({"op": "open", "utterance_id": "u"})).await;
@@ -70,7 +76,11 @@ async fn private_wire_validates_input_submits_existing_brain_and_dispatches_disc
         send_json(&mut write, json!({"op": "final", "handle": token, "revision": 1, "text": "text", "salient_terms": ["injected"]})).await;
         assert_eq!(read_json(&mut read).await["code"], json!("invalid_request"));
         assert!(calls.try_recv().is_err());
-        send_json(&mut write, json!({"op": "final", "handle": token, "revision": 1, "text": "text"})).await;
+        send_json(
+            &mut write,
+            json!({"op": "final", "handle": token, "revision": 1, "text": "text"}),
+        )
+        .await;
         calls.recv().await.unwrap().reply.send(Ok(empty())).unwrap();
         let final_response = read_json(&mut read).await;
         assert_eq!(final_response["op"], json!("final"));
@@ -83,7 +93,10 @@ async fn private_wire_validates_input_submits_existing_brain_and_dispatches_disc
     assert_eq!(outputs.brain.starts[0].transcript, "text");
     assert!(outputs.brain.starts[0].externally_tainted);
     assert!(!outputs.brain.starts[0].interlocutors.supervised());
-    assert_eq!(outputs.brain.cancelled, [outputs.brain.starts[0].generation]);
+    assert_eq!(
+        outputs.brain.cancelled,
+        [outputs.brain.starts[0].generation]
+    );
     assert!(outputs.control.0.contains(&ControlEvent::SessionEnded));
     assert_eq!(vault.retrieval_runs(200).unwrap().len(), 1);
     assert_eq!(budget.read().reserved_units, 0);
@@ -97,13 +110,19 @@ async fn wire_close_interrupts_provider_wait_and_releases_budget() {
     let (read, mut write) = client.into_split();
     let mut read = BufReader::new(read);
     let mut outputs = VoiceOutputs {
-        brain: TestBrain::default(), tts: TestTts::default(), control: TestControl::default(),
+        brain: TestBrain::default(),
+        tts: TestTts::default(),
+        control: TestControl::default(),
     };
     let (served, ()) = tokio::join!(host.serve(server, &mut outputs), async {
         send_json(&mut write, json!({"op": "open", "utterance_id": "u"})).await;
         let opened = read_json(&mut read).await;
         let token = opened["handle"].as_str().unwrap();
-        send_json(&mut write, json!({"op": "final", "handle": token, "revision": 1, "text": "pending"})).await;
+        send_json(
+            &mut write,
+            json!({"op": "final", "handle": token, "revision": 1, "text": "pending"}),
+        )
+        .await;
         let call = calls.recv().await.unwrap();
         assert_eq!(budget.read().reserved_units, 8_000);
         send_json(&mut write, json!({"op": "close", "handle": token})).await;
@@ -127,7 +146,12 @@ async fn provider_timeout_preserves_revision_and_releases_lease() {
         tokio::time::advance(std::time::Duration::from_secs(6)).await;
         call
     });
-    assert!(matches!(result, Err(HostError::Llm(LlmError::Retryable(RetryableLlmError::Timeout)))));
+    assert!(matches!(
+        result,
+        Err(HostError::Llm(LlmError::Retryable(
+            RetryableLlmError::Timeout
+        )))
+    ));
     assert!(call.reply.send(Ok(empty())).is_err());
     assert_eq!(budget.read().reserved_units, 0);
     assert!(host.prepare(&token, 1, "pending".to_owned(), true).is_ok());
@@ -141,23 +165,40 @@ async fn wire_revision_replacement_cancels_old_work_and_correlates_partial_resul
     let (read, mut write) = client.into_split();
     let mut read = BufReader::new(read);
     let mut outputs = VoiceOutputs {
-        brain: TestBrain::default(), tts: TestTts::default(), control: TestControl::default(),
+        brain: TestBrain::default(),
+        tts: TestTts::default(),
+        control: TestControl::default(),
     };
     let (served, ()) = tokio::join!(host.serve(server, &mut outputs), async {
         send_json(&mut write, json!({"op": "open", "utterance_id": "u"})).await;
         let opened = read_json(&mut read).await;
         let token = opened["handle"].as_str().unwrap();
-        send_json(&mut write, json!({"op": "partial", "handle": token, "revision": 1, "text": "old"})).await;
+        send_json(
+            &mut write,
+            json!({"op": "partial", "handle": token, "revision": 1, "text": "old"}),
+        )
+        .await;
         let old = calls.recv().await.unwrap();
-        send_json(&mut write, json!({"op": "partial", "handle": token, "revision": 2, "text": "new"})).await;
+        send_json(
+            &mut write,
+            json!({"op": "partial", "handle": token, "revision": 2, "text": "new"}),
+        )
+        .await;
         let current = calls.recv().await.unwrap();
         assert_ne!(old.lease_id, current.lease_id);
-        assert_eq!(budget.read().reserved_units, 8_000, "only the replacement owns a lease");
+        assert_eq!(
+            budget.read().reserved_units,
+            8_000,
+            "only the replacement owns a lease"
+        );
         assert!(old.reply.send(Ok(empty())).is_err());
         let ContentPart::Text { text } = &current.request.messages[1].content[0] else {
             panic!("text input");
         };
-        assert_eq!(serde_json::from_str::<serde_json::Value>(text).unwrap(), json!({"text": "new"}));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(text).unwrap(),
+            json!({"text": "new"})
+        );
         // A stale close must not drop the replacement future or its reservation.
         send_json(&mut write, json!({"op": "close", "handle": "unknown"})).await;
         assert_eq!(read_json(&mut read).await["code"], json!("stale_request"));
@@ -183,12 +224,18 @@ async fn wire_eof_during_provider_wait_cancels_lease_and_ends_session() {
     let (read, mut write) = client.into_split();
     let mut read = BufReader::new(read);
     let mut outputs = VoiceOutputs {
-        brain: TestBrain::default(), tts: TestTts::default(), control: TestControl::default(),
+        brain: TestBrain::default(),
+        tts: TestTts::default(),
+        control: TestControl::default(),
     };
     let (served, call) = tokio::join!(host.serve(server, &mut outputs), async {
         send_json(&mut write, json!({"op": "open", "utterance_id": "u"})).await;
         let opened = read_json(&mut read).await;
-        send_json(&mut write, json!({"op": "final", "handle": opened["handle"], "revision": 1, "text": "pending"})).await;
+        send_json(
+            &mut write,
+            json!({"op": "final", "handle": opened["handle"], "revision": 1, "text": "pending"}),
+        )
+        .await;
         let call = calls.recv().await.unwrap();
         assert_eq!(budget.read().reserved_units, 8_000);
         write.shutdown().await.unwrap();

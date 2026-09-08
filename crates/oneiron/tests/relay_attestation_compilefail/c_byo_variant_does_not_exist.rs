@@ -12,5 +12,5 @@ fn main() {
     // Hypothetical BYO arm on the hosted-edge domain. Neither the module that
     // holds it nor the type itself is nameable outside the crate — that
     // privacy fact is all this case proves.
-    let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
+    let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
 }

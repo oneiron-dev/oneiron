@@ -1,7 +1,8 @@
 # @oneiron/xlsx-viewer
 
-OF-336 **xlsx viewer instrument** — the D8 lens from
-[`OF-368` (artifact edit lens)](../../../../fable-queue/oneiron/designs/OF-368-artifact-edit-lens-DESIGN.md).
+OF-336 **xlsx viewer instrument** — the D8 lens from the OF-368 artifact-edit-lens
+design (docs repo; the seams it names are mirrored in-repo under `src/annotations/`
+and `src/manifest/types.ts`, see "Reconciliation seams" below).
 A view-only spreadsheet grid that a human anchors Google-Docs-style comments on,
 so an agent can implement the requested change and have every edit versioned,
 consented, and receipted.
@@ -37,12 +38,12 @@ the grid is a **host-mounted instrument region**, parallel to `render_instrument
 with the affordances around it (comment threads, receipts, scrubber) as ordinary
 atom-kit lenses.
 
-The eventual runtime home is the private `oneiron-cloud` app (Phase C, not yet
-built). This package is placed as a **self-contained package in the engine repo**
+The eventual runtime home is a downstream host app (Phase C, not yet built).
+This package is placed as a **self-contained package in the engine repo**
 because (1) OF-368 D10 explicitly permits the Univer fork + SheetJS CE in-repo
 (both Apache-2.0), and (2) OF-368 blesses an engine-optional standalone MVP whose
-shapes (anchors / manifests / receipts) are format-stable, so it folds into the
-`oneiron-cloud` host without a rewrite when that host materialises.
+shapes (anchors / manifests / receipts) are format-stable, so it folds into that
+host without a rewrite when it materialises.
 
 ## Fork-vs-dependency call
 

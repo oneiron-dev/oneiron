@@ -45,6 +45,10 @@ jobs:
         run: rg --version
       - name: Check ratchet baselines
         run: scripts/ratchet/check.sh
+      # The committed code map (docs/CODEMAP.md, docs/codemap/) is generated;
+      # a stale map is CODEMAP-STALE and the regenerate hint is in the log.
+      - name: Check code map
+        run: scripts/codemap/check.sh
       # Same main-only rationale as the counts: a stacked wave reshapes
       # lib.rs transiently, so main is the only tree whose surface is real.
       - name: Check root-surface pin

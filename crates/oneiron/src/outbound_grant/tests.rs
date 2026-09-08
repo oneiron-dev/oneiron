@@ -79,10 +79,7 @@ fn schema_v1_contact_grant_with_five_key_scope_is_rejected() -> Result<()> {
         [0xB6; 32],
     )?;
     let mut legacy_value = Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(1_u64),
-        ),
+        (Value::from(KEY_SCHEMA_VERSION), Value::from(1_u64)),
         (
             Value::from(KEY_PRINCIPAL_REF),
             Value::from(grant.principal_ref.clone()),
@@ -126,12 +123,18 @@ fn schema_v1_contact_grant_with_five_key_scope_is_rejected() -> Result<()> {
     rmpv::encode::write_value(&mut encoded, &legacy_value)
         .expect("encode legacy schema-v1 grant fixture");
 
-    assert_eq!(decode_standing_outbound_grant_body(&encoded).unwrap_err().kind(),
-        crate::ErrorKind::InvalidOutboundGrantBody);
+    assert_eq!(
+        decode_standing_outbound_grant_body(&encoded)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidOutboundGrantBody
+    );
     assert!(validate_standing_outbound_grant_body_bytes(&encoded).is_err());
 
     // The version, not the pre-existing scope shape, causes the rejection.
-    let Value::Map(entries) = &mut legacy_value else { panic!("map"); };
+    let Value::Map(entries) = &mut legacy_value else {
+        panic!("map");
+    };
     entries[0].1 = Value::from(OUTBOUND_GRANT_SCHEMA_VERSION);
     encoded.clear();
     rmpv::encode::write_value(&mut encoded, &legacy_value).unwrap();
@@ -629,41 +632,81 @@ fn scoped_mcp_admission_shares_the_safe_server_rule() {
     }
 }
 
-
 #[test]
 fn schema_v2_carries_every_outbound_scope_and_rejects_other_versions() -> Result<()> {
     use crate::test_util::entity;
     let scopes = [
-        StandingOutboundGrantScope::Contact { contact_ref: "contact:1".to_owned() },
-        StandingOutboundGrantScope::VerbClass { verb_class: "send".to_owned() },
-        StandingOutboundGrantScope::Channel { channel: "email".to_owned() },
-        StandingOutboundGrantScope::BriefVerbClass { brief_ref: "brief:1".to_owned(), verb_class: "send".to_owned() },
-        StandingOutboundGrantScope::ScopedMcp { server: "files".to_owned(), tool: "read_file".to_owned(),
-            data_class_ceiling: DataClass::Personal, endpoint_allowlist: vec!["https://files.example.test".to_owned()] },
-        StandingOutboundGrantScope::BookingPageInvites { page_ref: entity(0x91) },
-        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref: entity(0x92), envelope_ref: entity(0x93), verb_class: "mail.send".to_owned() },
+        StandingOutboundGrantScope::Contact {
+            contact_ref: "contact:1".to_owned(),
+        },
+        StandingOutboundGrantScope::VerbClass {
+            verb_class: "send".to_owned(),
+        },
+        StandingOutboundGrantScope::Channel {
+            channel: "email".to_owned(),
+        },
+        StandingOutboundGrantScope::BriefVerbClass {
+            brief_ref: "brief:1".to_owned(),
+            verb_class: "send".to_owned(),
+        },
+        StandingOutboundGrantScope::ScopedMcp {
+            server: "files".to_owned(),
+            tool: "read_file".to_owned(),
+            data_class_ceiling: DataClass::Personal,
+            endpoint_allowlist: vec!["https://files.example.test".to_owned()],
+        },
+        StandingOutboundGrantScope::BookingPageInvites {
+            page_ref: entity(0x91),
+        },
+        StandingOutboundGrantScope::ChannelIdentityEnvelope {
+            identity_ref: entity(0x92),
+            envelope_ref: entity(0x93),
+            verb_class: "mail.send".to_owned(),
+        },
     ];
     assert_eq!(OUTBOUND_GRANT_SCHEMA_VERSION, 2);
     for scope in scopes {
         let mut grant = StandingOutboundGrant::from_grant_mint_intent(
-            &intent(GrantMintIntentScope::VerbClass { verb_class: "send".to_owned() }), 10, vec![1; 32], [2; 32])?;
+            &intent(GrantMintIntentScope::VerbClass {
+                verb_class: "send".to_owned(),
+            }),
+            10,
+            vec![1; 32],
+            [2; 32],
+        )?;
         grant.scope = scope;
         let bytes = encode_standing_outbound_grant_body(&grant)?;
         assert_eq!(decode_standing_outbound_grant_body(&bytes)?, grant);
         let value = rmpv::decode::read_value(&mut Cursor::new(&bytes)).unwrap();
-        let Value::Map(entries) = value else { panic!("map"); };
+        let Value::Map(entries) = value else {
+            panic!("map");
+        };
         assert_eq!(entries[0].1, Value::from(2_u64));
-        for version in [Value::from(0_u64), Value::from(1_u64), Value::from(3_u64),
-            Value::from(-1), Value::from("2"), Value::from(2.0), Value::Nil] {
+        for version in [
+            Value::from(0_u64),
+            Value::from(1_u64),
+            Value::from(3_u64),
+            Value::from(-1),
+            Value::from("2"),
+            Value::from(2.0),
+            Value::Nil,
+        ] {
             let mut invalid = entries.clone();
             invalid[0].1 = version;
             let mut invalid_bytes = Vec::new();
             rmpv::encode::write_value(&mut invalid_bytes, &Value::Map(invalid)).unwrap();
-            assert_eq!(decode_standing_outbound_grant_body(&invalid_bytes).unwrap_err().kind(),
-                crate::ErrorKind::InvalidOutboundGrantBody);
+            assert_eq!(
+                decode_standing_outbound_grant_body(&invalid_bytes)
+                    .unwrap_err()
+                    .kind(),
+                crate::ErrorKind::InvalidOutboundGrantBody
+            );
             assert!(validate_standing_outbound_grant_body_bytes(&invalid_bytes).is_err());
         }
-        if matches!(grant.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }) {
+        if matches!(
+            grant.scope,
+            StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }
+        ) {
             assert!(!grant.scope.matches_effect("mail.send", "email", None, None));
         }
     }

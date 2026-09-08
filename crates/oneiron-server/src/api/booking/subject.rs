@@ -50,18 +50,34 @@ pub(super) fn resolve_booker_contact(
         .vault
         .get_entity_type(&contact_ref)
         .map_err(engine_read_error)?;
-    server.vault.with_write_txn(|txn| {
-        if let Some(authority) = public_authority {
-            authority.recheck_in_txn(&server.vault, txn, now)
-                .map_err(|_| oneiron::Error::InvalidClaimBody("public booking authority ended"))?;
-        }
-        if existing.is_none() {
-            server.vault.batch_in().put(
-                &contact_ref, ENTITY_TYPE_PERSON, TimeRange { start: now, end: now },
-                now, email.trim().to_lowercase().as_bytes(),
-            ).apply(txn)?;
-        }
-        Ok(())
-    }).map_err(engine_read_error)?;
+    server
+        .vault
+        .with_write_txn(|txn| {
+            if let Some(authority) = public_authority {
+                authority
+                    .recheck_in_txn(&server.vault, txn, now)
+                    .map_err(|_| {
+                        oneiron::Error::InvalidClaimBody("public booking authority ended")
+                    })?;
+            }
+            if existing.is_none() {
+                server
+                    .vault
+                    .batch_in()
+                    .put(
+                        &contact_ref,
+                        ENTITY_TYPE_PERSON,
+                        TimeRange {
+                            start: now,
+                            end: now,
+                        },
+                        now,
+                        email.trim().to_lowercase().as_bytes(),
+                    )
+                    .apply(txn)?;
+            }
+            Ok(())
+        })
+        .map_err(engine_read_error)?;
     Ok(contact_ref)
 }

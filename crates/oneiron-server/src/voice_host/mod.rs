@@ -168,11 +168,14 @@ impl VoiceHost {
         }
         let mut state = self.lock()?;
         let serial = state.next_handle.checked_add(1).ok_or(HostError::Stopped)?;
-        let handle = state.core.open_utterance(utterance_id, SpeculativeSessionConfig {
-            max_fires: 4,
-            fire_limit: 8,
-            final_limit: 32,
-        })?;
+        let handle = state.core.open_utterance(
+            utterance_id,
+            SpeculativeSessionConfig {
+                max_fires: 4,
+                fire_limit: 8,
+                final_limit: 32,
+            },
+        )?;
         // Connection-local, monotonically unique correlation. Not authentication.
         let token = serial.to_string();
         state.next_handle = serial;
@@ -203,7 +206,11 @@ impl VoiceHost {
         let mut state = self.lock()?;
         let handle = state.handle(token)?;
         let event = AsrEvent {
-            kind: if final_text { AsrEventKind::Final } else { AsrEventKind::Partial },
+            kind: if final_text {
+                AsrEventKind::Final
+            } else {
+                AsrEventKind::Partial
+            },
             text,
             tokens: Vec::new(),
             provider_latency_ms: None,
@@ -211,9 +218,14 @@ impl VoiceHost {
             error: None,
         };
         // The untrusted wire cannot clear context taint or assert owner identity.
-        let prepared = state.core.prepare_asr(&handle, revision, event, true)?
+        let prepared = state
+            .core
+            .prepare_asr(&handle, revision, event, true)?
             .ok_or(HostError::Stale)?;
-        Ok(EnrichmentWork { host: self, prepared: Some(prepared) })
+        Ok(EnrichmentWork {
+            host: self,
+            prepared: Some(prepared),
+        })
     }
 
     fn end(&self) -> Result<OutputStop, HostError> {
@@ -236,8 +248,11 @@ impl Drop for VoiceHost {
 
 impl SessionState {
     fn handle(&self, token: &str) -> Result<UtteranceHandle, HostError> {
-        self.open.as_ref().filter(|(current, _)| current == token)
-            .map(|(_, handle)| handle.clone()).ok_or(HostError::Stale)
+        self.open
+            .as_ref()
+            .filter(|(current, _)| current == token)
+            .map(|(_, handle)| handle.clone())
+            .ok_or(HostError::Stale)
     }
 }
 
@@ -268,7 +283,11 @@ impl EnrichmentWork<'_> {
         self.host.require_running()?;
         let prepared = self.prepared.take().ok_or(HostError::Stale)?;
         let result = state.core.apply_prepared_asr(prepared, enrichment);
-        if state.open.as_ref().is_some_and(|(_, handle)| !state.core.is_utterance_open(handle)) {
+        if state
+            .open
+            .as_ref()
+            .is_some_and(|(_, handle)| !state.core.is_utterance_open(handle))
+        {
             state.open = None;
         }
         // Final core retrieval errors consume its handle, unlike provider errors.

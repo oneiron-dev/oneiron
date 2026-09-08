@@ -105,7 +105,10 @@ impl TestOrigin {
         let dir = tempfile::tempdir().expect("vault tempdir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
         let root = smart_http::origin_serving_root(&vault).expect("serving root");
-        git(&root, &["init", "--bare", "--initial-branch=main", "demo.git"]);
+        git(
+            &root,
+            &["init", "--bare", "--initial-branch=main", "demo.git"],
+        );
         let repo_dir = root.join("demo.git");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind origin");
@@ -716,7 +719,11 @@ fn git_smart_http_binary_diff_push_streams_whole_through_landed_scan() {
     );
     let stored = git_output(&origin.repo_dir, &["cat-file", "blob", "main:logo.png"]);
     assert!(stored.status.success(), "read the landed whole blob");
-    assert_eq!(stored.stdout.as_slice(), bytes, "all payload bytes survived");
+    assert_eq!(
+        stored.stdout.as_slice(),
+        bytes,
+        "all payload bytes survived"
+    );
     let landed = origin.landed();
     assert_eq!(landed.len(), 1, "the binary-diff push was journaled");
     assert_eq!(landed[0].door.verdict, DoorWindowVerdict::Clean);

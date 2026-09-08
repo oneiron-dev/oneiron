@@ -2557,7 +2557,16 @@ fn spawn_context_can_only_narrow_and_rides_the_payload_unresolved() -> Result<()
 // contingent test therefore pins the refusal AND the absence of any leak.
 
 /// This module's healer-slot source, read for the force-cancel proof.
-const AGENT_DISPATCH_HEALER_SOURCE: &str = include_str!("../agent_dispatch.rs");
+const AGENT_DISPATCH_HEALER_SOURCE: &str = concat!(
+    include_str!("mod.rs"),
+    include_str!("attenuation.rs"),
+    include_str!("codec.rs"),
+    include_str!("context.rs"),
+    include_str!("dispatch.rs"),
+    include_str!("kill.rs"),
+    include_str!("kill_spawn_tests.rs"),
+    include_str!("types.rs"),
+);
 
 fn healer_case_fixture(failing: AttemptId, agent: EntityId) -> HealerCase {
     HealerCase {

@@ -77,12 +77,12 @@ pub use lifecycle::{
 pub use public_lens::{
     BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard,
     PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingAction, PublicBookingPageToken, ThemeTokens,
-    validate_booking_page_model, bounded_public_slots,
+    bounded_public_slots, validate_booking_page_model,
 };
 pub use publication::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,
-    PublicBookingAvailability, decode_public_booking_page_value, encode_public_booking_page_value,
-    load_public_booking_page, booking_config_hash, resolve_public_booking_token,
+    PublicBookingAvailability, booking_config_hash, decode_public_booking_page_value,
+    encode_public_booking_page_value, load_public_booking_page, resolve_public_booking_token,
 };
 pub use solver::{
     ActiveHoldSource, BookingCountBucket, BookingCounts, BookingSolver, NoActiveHolds, slot_mask,

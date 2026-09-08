@@ -1347,18 +1347,9 @@ fn subject_projection_failure_does_not_replace_identity_rejection_receipts() -> 
     let id = crate::subject_model::anchor_actor_subject(&vault, actor, person, author, 100)?;
     let mut malformed = vault.get_claim(&id)?.expect("anchor");
     malformed.value = rmpv::Value::from("malformed-subject-ref");
-    vault.with_write_txn(|wtxn| {
-        vault.put_reserved_claim_in_txn(
-            wtxn,
-            &id,
-            &malformed,
-            crate::temporal::TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-        )
-    })?;
+    // Damage the stored row body in place: the checked reserved door refuses a
+    // malformed actor.subject_ref, and this test observes the reader, not admission.
+    crate::subject_model::tests::corrupt_subject_fixture(&vault, &id, &malformed)?;
     for (identity_id, address, state, expected) in [
         (
             entity(0xBA),

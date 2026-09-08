@@ -2,10 +2,10 @@
 
 General doctrine (consumer boundary): `CLAUDE.md`. PR/verify workflow: `WORKFLOW.md`. Review
 posture: `REVIEW.md`. Storage-ABI decision history — not agent guidance, read only for "why does
-this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (43KB, over
+this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (~55KB, over
 most agents' single-read truncation threshold — fetch by tier, don't load the whole file):
-`oneiron.skills.md` — Tier-1 endpoint index at L51, Tier-2 endpoint detail at L298, Tier-3
-schemas/error catalog at L801.
+`oneiron.skills.md` — locate a tier by its heading, not by line number: `## Tier-1: Endpoint
+Activation Index`, `## Tier-2: Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
 
 Oneiron is a general-purpose memory engine (Rust workspace; core crate `crates/oneiron`, server
 `crates/oneiron-server`, bindings `crates/oneiron-napi`). Consumer-agnostic, public repo.
@@ -21,7 +21,8 @@ Dev-loop iteration — scoped, fast, default nextest profile, retries=0:
 
     cargo nextest run -p oneiron --all-features [-E 'test(<module>)']
 
-Sync-lane iteration uses `--features sync` instead. A feature flag is no longer required: the
+The `default` profile skips a slow set — see *nextest tiers* below; a green dev loop is not a
+green gate. Sync-lane iteration uses `--features sync` instead. A feature flag is no longer required: the
 plain featureless build compiles its library *and* its test targets, and carries its own gates —
 see the featureless-build entry under Landmines.
 
@@ -29,21 +30,64 @@ Full verify gate — run at VERDICT time only, never for iteration:
 
     scripts/verify.sh
 
-`scripts/verify.sh` is the single source of truth for the scripted gate and runs 4 stages: `cargo
-fmt --all --check`, workspace clippy (`-D warnings`, all targets/features), `cargo nextest run
---workspace --exclude oneiron-napi --all-features --profile full`, and `cargo test --doc
---workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT
-yet wired into the script (`WORKFLOW.md` §3) — run them by hand until that gap closes:
-`RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps` and `cargo nextest
-run -p oneiron --features sync --profile full`.
+`scripts/verify.sh` is the single source of truth for the scripted gate and runs the code-map
+pin (`scripts/codemap/check.sh`) and then 6 stages: `cargo fmt --check` (members only — never `--all`, which would follow the path dependency into the
+ONE-218 heed vendor), workspace clippy (`-D warnings`, all targets/features), featureless clippy
+(`cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings`), `cargo nextest run
+--workspace --exclude oneiron-napi --all-features --profile full` (napi cannot link its test binary
+off a Node host — ONE-1997), `cargo test -p oneiron --lib --no-default-features`,
+and `cargo test --doc --workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
+script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
+cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
+--profile full`.
 
-Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh` — same 4-stage
-coverage split across legs; the same two-command gap applies.
+Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh`. Leg coverage is
+narrower than the script: `fmt-clippy` runs the code-map pin, fmt and workspace clippy;
+`tests:1/2` runs nextest partition `hash:1/2` plus doctests; `tests:2/2` runs partition
+`hash:2/2`. No leg runs the two featureless stages, so a distributed run has a four-command
+gap: featureless clippy, featureless lib tests, `cargo doc`, and the sync-profile nextest run.
+
+## nextest tiers
+
+The dev-loop command runs the `default` profile, which skips the slow set pinned in
+`.config/nextest.toml`: `vault_open_drop_cycles_survive_pthread_key_limit`, the two
+`hnsw_recall_at_10_*` recall benches, and the whole `sync_convergence_props` suite in the
+`it_sync` binary. `--profile full` runs them with `retries = 2`; `default` is `retries = 0`.
+Run `--profile full` (or `scripts/verify.sh`) before claiming a VERDICT.
+
+## macOS test host
+
+Linux is the reference host. On macOS:
+
+- `TMPDIR` must be a real path, e.g. `mkdir -p /private/tmp/oneiron-t && export
+  TMPDIR=/private/tmp/oneiron-t`. The default `/var/folders/…` is a symlink and 10
+  `secret_lease::tests` refuse it.
+- `oneiron-napi` cannot link its test binary on macOS: add `--exclude oneiron-napi` to
+  workspace nextest runs.
+- 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
+  UnsupportedPlatform` and pass on Linux. Known; ticket pending.
+- Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
+
+## Code map
+
+Read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules with layout,
+size bucket and purpose), then drill into `docs/codemap/<crate>.md` for the per-file table. Both
+are generated deterministically by `scripts/codemap/` and pinned by `scripts/codemap/check.sh`
+(stage 0 of `scripts/verify.sh`, also run by `ratchet.yml`): a stale map fails with
+`CODEMAP-STALE` and prints the regenerate command. After adding, moving, or deleting a Rust file
+run `python3 scripts/codemap/codemap.py` and commit the output in the same change. `python3
+scripts/codemap/codemap.py --sizes` prints the live line counts.
+
+Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present):
+
+    rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files
+    rg -l 'crate::pipeline\b' crates --type rust                                     # who names a module
+    rg -oIN '\bcrate::[a-z_]+' crates/oneiron/src/pipeline | sort | uniq -c | sort -rn  # what a module names
 
 ## Tool truth (verified on this box)
 
-Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — don't assume them:
-`just`, `tokei`, `cargo-modules`, `cargo-public-api`.
+Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9, `rg` (ripgrep 15). NOT installed —
+don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
 
 ## Landmines
 
@@ -62,8 +106,9 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
   §5.
 - Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
 - Featureless builds: the crate declares NO default features. The library **and its test
-  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates
-  and run in addition to (never instead of) the all-features gates in `scripts/verify.sh`:
+  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates;
+  `scripts/verify.sh` runs them as its `clippy-featureless` and `test-featureless` stages, in
+  addition to (never instead of) the all-features stages:
 
       cargo test -p oneiron --lib --no-default-features
       cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
@@ -151,13 +196,18 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
 ## Where new code goes
 
-The former monolith files are gone: `store`, `gate`, `task_verb`, `batch`, and the fifteen
-2026-08 wave-6 wells (`session_overlay`, `repo_mutation`, `dreamer_consolidation`,
-`connector_key`, `code_run`, `consent`, `receipt`, `deletion`, `outbound`,
-`booking/anti_abuse`, `saved_query`, `dreamer_runner`, `pipeline`, `skill_hub`) are all
-directory modules now (old→new map: `docs/ops/w6-module-split-map.md`). Don't grow an existing
-child file past the 800-line ratchet bar — a new concern gets its own file under the owning
-module directory:
+The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
+wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 91 more over-bar
+modules the same way, so a directory module is now the normal shape for anything substantial.
+Twenty files still sit over the bar and every one is deliberate — see the `_attribution` block
+in `scripts/ratchet/baseline.json`, which names the twelve deferred behind the context-board
+fold and the eight ruled indivisible. Do not use those twenty as precedent.
+
+Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
+regenerated deterministically and are the only current answer to "where does X live now".
+(`docs/ops/w6-module-split-map.md` covers the wave-6 fifteen only and is history, not a map of
+the tree today.) Don't grow an existing child file past the 800-line ratchet bar — a new concern
+gets its own file under the owning module directory:
 
 | New concern is about... | Goes in...                      |
 |--------------------------|-----------------------------------|
@@ -167,6 +217,22 @@ module directory:
 | batch application          | its own file under `batch/`       |
 
 Never create `utils.rs` or `helpers.rs` — name a file for what it does.
+
+## Module style
+
+Two file shapes are legal; never convert one to the other for style alone.
+
+- Under the giant-file bar (`scripts/ratchet/check.sh` fails a non-test file at or over 800
+  lines; `tests/` directories, `tests.rs` and `*_tests.rs` are excluded from the count): a module
+  stays `foo.rs` with its tests in `foo/tests.rs`.
+- Over the bar: the module becomes a directory module `foo/mod.rs` + children. Seam shape is
+  `crates/oneiron/src/pipeline/mod.rs` — `mod` declarations, a `pub use` seam that keeps every
+  `crate::foo::*` path unchanged, and a `#[cfg(test)] use self::{…}` shim so `tests.rs` resolves
+  as before. Children are `pub(super)`, never widened; the seam re-exports what the crate needs.
+- A split is move-only. Check it with
+  `scripts/refactor/tools/split_check.py <base-rev> <old-file> <new-dir>` (fails closed with
+  `SPLIT-CHECK-ERROR`). The manifest-driven `scripts/refactor/conformance.sh` is not needed for
+  the common case.
 
 ## Closest wins
 

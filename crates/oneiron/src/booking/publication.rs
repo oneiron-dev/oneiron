@@ -6,8 +6,8 @@
 //! publication's half-open lifetime. No index, grant inference, or allowlist is
 //! publication authority. Theme and human copy are supplied by the owner.
 
-use std::io::Cursor;
 use std::collections::BTreeMap;
+use std::io::Cursor;
 
 use serde::{Deserialize, Serialize};
 
@@ -102,15 +102,26 @@ impl BookingPagePublication {
             return Err("public booking requires owner display and event cards");
         }
         crate::booking::public_lens::validate_presentation_fields(
-            &self.owner_display, &self.event_types, &self.constraint_field, &self.theme,
-        ).map_err(|_| "public booking presentation exceeds lens bounds")?;
+            &self.owner_display,
+            &self.event_types,
+            &self.constraint_field,
+            &self.theme,
+        )
+        .map_err(|_| "public booking presentation exceeds lens bounds")?;
         if self.event_config_hashes.len() != self.event_types.len() {
             return Err("public booking must bind every event configuration");
         }
         for (index, event) in self.event_types.iter().enumerate() {
-            if !self.event_config_hashes.get(&event.key.0).is_some_and(|hash| {
-                hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            }) {
+            if !self
+                .event_config_hashes
+                .get(&event.key.0)
+                .is_some_and(|hash| {
+                    hash.len() == 64
+                        && hash
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+            {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
             if event.key.0.trim().is_empty()
@@ -281,9 +292,9 @@ pub(crate) fn load_public_booking_page_in_txn(
 mod mutation;
 pub use mutation::PublicBookingAuthority;
 mod write_index;
-pub(crate) use write_index::{guard_publication_put, index_publication_in_txn};
-pub use write_index::{booking_config_hash, resolve_public_booking_token};
 use write_index::indexed_publication;
+pub use write_index::{booking_config_hash, resolve_public_booking_token};
+pub(crate) use write_index::{guard_publication_put, index_publication_in_txn};
 
 #[cfg(test)]
 mod tests;

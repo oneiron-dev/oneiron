@@ -361,8 +361,21 @@ fn copy() -> PrepLensCopy {
 }
 
 fn prep_source() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/calendar/prep.rs");
-    std::fs::read_to_string(path).expect("read prep source")
+    // `prep` is a directory module, so the guard reads every child: a forbidden
+    // primitive must not be smuggled in by adding a new file next to `mod.rs`.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/calendar/prep");
+    let mut children = std::fs::read_dir(&dir)
+        .expect("read prep module directory")
+        .map(|entry| entry.expect("prep module entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect::<Vec<_>>();
+    children.sort();
+    assert!(!children.is_empty(), "prep module has no Rust children");
+    children
+        .iter()
+        .map(|path| std::fs::read_to_string(path).expect("read prep source"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Flattens a pack into `(kind, text)` rows in rendered order.
