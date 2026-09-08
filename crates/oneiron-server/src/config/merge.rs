@@ -1,0 +1,614 @@
+//! Layered merge: file, environment, and argv values into `ServeConfig`.
+
+use std::collections::HashMap;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use oneiron::HostingPrivacyPosture;
+use serde::Deserialize;
+
+use super::lookup::{
+    DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
+    lookup_path, lookup_path_list, normalize_list, redacted_secret,
+};
+use super::serve_args::{ServeArgs, runtime_override_from_args};
+use super::server_config::ServeConfig;
+use crate::runtime::{
+    RuntimeConfigOverride, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleTargetOverride,
+};
+
+/// Environment-derived serve settings.
+#[derive(Clone, Debug, Default)]
+pub struct EnvConfig {
+    pub config_path: Option<PathBuf>,
+    values: PartialServeConfig,
+}
+
+impl EnvConfig {
+    pub fn from_process() -> anyhow::Result<Self> {
+        // Privacy inputs fail closed by presence. Read each once and never
+        // attach VarError::NotUnicode, whose diagnostics expose the raw value.
+        let privacy_value = |key: &str| match std::env::var(key) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(anyhow::anyhow!("{key} must contain valid Unicode"))
+            }
+        };
+        let privacy_posture = privacy_value("ONEIRON_PRIVACY_POSTURE")?;
+        let hosted_kms_key_ref = privacy_value("ONEIRON_HOSTED_KMS_KEY_REF")?;
+        Self::from_lookup(|key| match key {
+            "ONEIRON_PRIVACY_POSTURE" => privacy_posture.clone(),
+            "ONEIRON_HOSTED_KMS_KEY_REF" => hosted_kms_key_ref.clone(),
+            // Keep the existing semantics for every unrelated environment key.
+            _ => std::env::var(key).ok(),
+        })
+    }
+
+    pub fn from_pairs<I, K, V>(pairs: I) -> anyhow::Result<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let values: HashMap<String, String> = pairs
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_owned(), value.as_ref().to_owned()))
+            .collect();
+        Self::from_lookup(|key| values.get(key).cloned())
+    }
+
+    fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> anyhow::Result<Self> {
+        let mut values = PartialServeConfig::default();
+        let config_path = lookup("ONEIRON_CONFIG").map(PathBuf::from);
+
+        values.vault_path = lookup_path(&mut lookup, "ONEIRON_VAULT_PATH");
+        values.host = lookup("ONEIRON_HOST");
+        values.port = lookup_parse(&mut lookup, "ONEIRON_PORT")?;
+        values.auth_secret = lookup("ONEIRON_AUTH_SECRET");
+        values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
+        values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
+        values.oauth_resource_indicator = lookup("ONEIRON_OAUTH_RESOURCE_INDICATOR");
+        values.allow_unauthenticated =
+            lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
+        values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
+        values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
+        values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
+        values.log_level = lookup("ONEIRON_LOG_LEVEL");
+        values.dict_search_paths = lookup_path_list(&mut lookup, "ONEIRON_DICT_SEARCH_PATHS");
+        values.assistant_display_names =
+            lookup_list(&mut lookup, "ONEIRON_ASSISTANT_DISPLAY_NAMES");
+        values.default_window_count = lookup_parse(&mut lookup, "ONEIRON_DEFAULT_WINDOW_COUNT")?;
+        values.compaction_threshold_bytes =
+            lookup_parse(&mut lookup, "ONEIRON_COMPACTION_THRESHOLD_BYTES")?;
+        values.compaction_throttle_secs =
+            lookup_parse(&mut lookup, "ONEIRON_COMPACTION_THROTTLE_SECS")?;
+        values.bulk_chunk_size = lookup_parse(&mut lookup, "ONEIRON_BULK_CHUNK_SIZE")?;
+        values.max_frame_size = lookup_parse(&mut lookup, "ONEIRON_MAX_FRAME_SIZE")?;
+        values.max_update_payload = lookup_parse(&mut lookup, "ONEIRON_MAX_UPDATE_PAYLOAD")?;
+        values.max_windows_per_connection =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_WINDOWS_PER_CONNECTION")?;
+        values.max_federation_windows_per_connection =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_FEDERATION_WINDOWS_PER_CONNECTION")?;
+        values.federation_flood_pause_secs =
+            lookup_parse(&mut lookup, "ONEIRON_FEDERATION_FLOOD_PAUSE_SECS")?;
+        values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
+        values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
+        values.max_ephemeral_payload_bytes =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_PAYLOAD_BYTES")?;
+        values.max_ephemeral_snapshot_bytes =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES")?;
+        values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
+        values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
+        values.runtime = lookup_runtime_override(&mut lookup)?;
+        values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
+        values.hosted_kms_key_ref = lookup("ONEIRON_HOSTED_KMS_KEY_REF");
+
+        Ok(Self {
+            config_path,
+            values,
+        })
+    }
+}
+
+pub fn resolve_serve_config(args: &ServeArgs) -> anyhow::Result<ServeConfig> {
+    resolve_serve_config_with_sources(args, EnvConfig::from_process()?, default_config_path())
+}
+
+pub fn resolve_serve_config_with_sources(
+    args: &ServeArgs,
+    env: EnvConfig,
+    default_config_path: Option<PathBuf>,
+) -> anyhow::Result<ServeConfig> {
+    let flag_values = PartialServeConfig::from(args);
+    let config_path = args
+        .config
+        .clone()
+        .or_else(|| env.config_path.clone())
+        .or(default_config_path);
+    let explicit_config = args.config.is_some() || env.config_path.is_some();
+    let file_values = match config_path {
+        Some(path) if path.exists() => load_file_config(&path)?,
+        Some(path) if explicit_config => {
+            anyhow::bail!("config file {} does not exist", path.display());
+        }
+        _ => PartialServeConfig::default(),
+    };
+
+    let mut resolved = ServeConfig::default();
+    let mut posture_source = None;
+    let mut key_ref_source = None;
+    for (source, values) in [file_values, env.values, flag_values]
+        .into_iter()
+        .enumerate()
+    {
+        if values.privacy_posture.is_some() {
+            posture_source = Some(source);
+        }
+        if values.hosted_kms_key_ref.is_some() {
+            key_ref_source = Some(source);
+        }
+        values.apply_to(&mut resolved);
+    }
+    // Only the final posture may discard inherited custody. An intermediate
+    // self-host layer can still be overridden by a later hosted layer, which
+    // needs the highest-precedence reference even when it came from the file.
+    if resolved.privacy_posture == HostingPrivacyPosture::SelfHostLocal
+        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
+        && key_ref_source < posture_source
+    {
+        resolved.hosted_kms_key_ref = None;
+    }
+    // Same-source or higher-precedence references remain for validation to
+    // refuse rather than silently fixing a contradictory self-host request.
+    validate_serve_config(&resolved)?;
+    Ok(resolved)
+}
+
+fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
+    if config.ephemeral_timeout_ms <= 0 {
+        anyhow::bail!("ephemeral_timeout_ms must be positive");
+    }
+    if config.max_ephemeral_payload_bytes == 0 {
+        anyhow::bail!("max_ephemeral_payload_bytes must be positive");
+    }
+    if config.max_ephemeral_snapshot_bytes == 0 {
+        anyhow::bail!("max_ephemeral_snapshot_bytes must be positive");
+    }
+    // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
+    // refused while it is still a config error with an operator-facing
+    // remedy, not only at open time.
+    match config.privacy_posture {
+        HostingPrivacyPosture::Hosted => {
+            let key_ref = config.hosted_kms_key_ref.as_deref().unwrap_or_default();
+            if key_ref.trim().is_empty() {
+                anyhow::bail!(
+                    "hosted privacy posture requires a non-empty host-managed KMS key reference (--hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF)"
+                );
+            }
+        }
+        HostingPrivacyPosture::SelfHostLocal => {
+            // ANY reference, including a whitespace-only one, is refused: a
+            // self-hosted owner holds their own key and stores no host
+            // reference.
+            if config.hosted_kms_key_ref.is_some() {
+                anyhow::bail!(
+                    "self_host_local privacy posture rejects host-managed KMS key custody; drop --hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF or select --privacy-posture hosted"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn default_config_path() -> Option<PathBuf> {
+    if let Some(base) = std::env::var_os("XDG_CONFIG_HOME") {
+        return Some(
+            PathBuf::from(base)
+                .join(DEFAULT_CONFIG_DIR)
+                .join(DEFAULT_CONFIG_FILE),
+        );
+    }
+
+    std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join(".config")
+            .join(DEFAULT_CONFIG_DIR)
+            .join(DEFAULT_CONFIG_FILE)
+    })
+}
+
+fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read config file {}", path.display()))?;
+    let config: FileServeConfig =
+        toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
+    Ok(config.into())
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct FileServeConfig {
+    vault_path: Option<PathBuf>,
+    host: Option<String>,
+    port: Option<u16>,
+    auth_secret: Option<String>,
+    oauth_issuer: Option<String>,
+    oauth_jwks_uri: Option<String>,
+    oauth_resource_indicator: Option<String>,
+    allow_unauthenticated: Option<bool>,
+    allowed_origins: Option<Vec<String>>,
+    lease_vault_id: Option<u64>,
+    dimensions: Option<usize>,
+    map_size: Option<usize>,
+    log_level: Option<String>,
+    dict_search_paths: Option<Vec<PathBuf>>,
+    assistant_display_names: Option<Vec<String>>,
+    default_window_count: Option<u8>,
+    compaction_threshold_bytes: Option<u32>,
+    compaction_throttle_secs: Option<u32>,
+    bulk_chunk_size: Option<usize>,
+    max_frame_size: Option<usize>,
+    max_update_payload: Option<usize>,
+    max_windows_per_connection: Option<usize>,
+    max_federation_windows_per_connection: Option<usize>,
+    federation_flood_pause_secs: Option<u64>,
+    max_messages_per_sec: Option<u32>,
+    ephemeral_timeout_ms: Option<i64>,
+    max_ephemeral_payload_bytes: Option<usize>,
+    max_ephemeral_snapshot_bytes: Option<usize>,
+    max_entity_blob: Option<usize>,
+    max_bulk_decompressed: Option<usize>,
+    runtime: Option<RuntimeConfigOverride>,
+    privacy_posture: Option<HostingPrivacyPosture>,
+    hosted_kms_key_ref: Option<String>,
+}
+
+impl From<FileServeConfig> for PartialServeConfig {
+    fn from(value: FileServeConfig) -> Self {
+        Self {
+            vault_path: value.vault_path,
+            host: value.host,
+            port: value.port,
+            auth_secret: value.auth_secret,
+            oauth_issuer: value.oauth_issuer,
+            oauth_jwks_uri: value.oauth_jwks_uri,
+            oauth_resource_indicator: value.oauth_resource_indicator,
+            allow_unauthenticated: value.allow_unauthenticated,
+            allowed_origins: value.allowed_origins,
+            lease_vault_id: value.lease_vault_id,
+            dimensions: value.dimensions,
+            map_size: value.map_size,
+            log_level: value.log_level,
+            dict_search_paths: value.dict_search_paths,
+            assistant_display_names: value.assistant_display_names,
+            default_window_count: value.default_window_count,
+            compaction_threshold_bytes: value.compaction_threshold_bytes,
+            compaction_throttle_secs: value.compaction_throttle_secs,
+            bulk_chunk_size: value.bulk_chunk_size,
+            max_frame_size: value.max_frame_size,
+            max_update_payload: value.max_update_payload,
+            max_windows_per_connection: value.max_windows_per_connection,
+            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
+            federation_flood_pause_secs: value.federation_flood_pause_secs,
+            max_messages_per_sec: value.max_messages_per_sec,
+            ephemeral_timeout_ms: value.ephemeral_timeout_ms,
+            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
+            max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
+            max_entity_blob: value.max_entity_blob,
+            max_bulk_decompressed: value.max_bulk_decompressed,
+            runtime: value.runtime,
+            privacy_posture: value.privacy_posture,
+            hosted_kms_key_ref: value.hosted_kms_key_ref,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct PartialServeConfig {
+    vault_path: Option<PathBuf>,
+    host: Option<String>,
+    port: Option<u16>,
+    auth_secret: Option<String>,
+    oauth_issuer: Option<String>,
+    oauth_jwks_uri: Option<String>,
+    oauth_resource_indicator: Option<String>,
+    allow_unauthenticated: Option<bool>,
+    allowed_origins: Option<Vec<String>>,
+    lease_vault_id: Option<u64>,
+    dimensions: Option<usize>,
+    map_size: Option<usize>,
+    log_level: Option<String>,
+    dict_search_paths: Option<Vec<PathBuf>>,
+    assistant_display_names: Option<Vec<String>>,
+    default_window_count: Option<u8>,
+    compaction_threshold_bytes: Option<u32>,
+    compaction_throttle_secs: Option<u32>,
+    bulk_chunk_size: Option<usize>,
+    max_frame_size: Option<usize>,
+    max_update_payload: Option<usize>,
+    max_windows_per_connection: Option<usize>,
+    max_federation_windows_per_connection: Option<usize>,
+    federation_flood_pause_secs: Option<u64>,
+    max_messages_per_sec: Option<u32>,
+    ephemeral_timeout_ms: Option<i64>,
+    max_ephemeral_payload_bytes: Option<usize>,
+    max_ephemeral_snapshot_bytes: Option<usize>,
+    max_entity_blob: Option<usize>,
+    max_bulk_decompressed: Option<usize>,
+    runtime: Option<RuntimeConfigOverride>,
+    privacy_posture: Option<HostingPrivacyPosture>,
+    hosted_kms_key_ref: Option<String>,
+}
+
+impl fmt::Debug for PartialServeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PartialServeConfig")
+            .field("vault_path", &self.vault_path)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("auth_secret", &redacted_secret(&self.auth_secret))
+            .field("oauth_issuer", &self.oauth_issuer)
+            .field("oauth_jwks_uri", &self.oauth_jwks_uri)
+            .field("oauth_resource_indicator", &self.oauth_resource_indicator)
+            .field("allow_unauthenticated", &self.allow_unauthenticated)
+            .field("allowed_origins", &self.allowed_origins)
+            .field("lease_vault_id", &self.lease_vault_id)
+            .field("dimensions", &self.dimensions)
+            .field("map_size", &self.map_size)
+            .field("log_level", &self.log_level)
+            .field("dict_search_paths", &self.dict_search_paths)
+            .field("assistant_display_names", &self.assistant_display_names)
+            .field("default_window_count", &self.default_window_count)
+            .field(
+                "compaction_threshold_bytes",
+                &self.compaction_threshold_bytes,
+            )
+            .field("compaction_throttle_secs", &self.compaction_throttle_secs)
+            .field("bulk_chunk_size", &self.bulk_chunk_size)
+            .field("max_frame_size", &self.max_frame_size)
+            .field("max_update_payload", &self.max_update_payload)
+            .field(
+                "max_windows_per_connection",
+                &self.max_windows_per_connection,
+            )
+            .field(
+                "max_federation_windows_per_connection",
+                &self.max_federation_windows_per_connection,
+            )
+            .field(
+                "federation_flood_pause_secs",
+                &self.federation_flood_pause_secs,
+            )
+            .field("max_messages_per_sec", &self.max_messages_per_sec)
+            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
+            .field(
+                "max_ephemeral_payload_bytes",
+                &self.max_ephemeral_payload_bytes,
+            )
+            .field(
+                "max_ephemeral_snapshot_bytes",
+                &self.max_ephemeral_snapshot_bytes,
+            )
+            .field("max_entity_blob", &self.max_entity_blob)
+            .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("runtime", &self.runtime)
+            .field("privacy_posture", &self.privacy_posture)
+            .field(
+                "hosted_kms_key_ref",
+                &redacted_secret(&self.hosted_kms_key_ref),
+            )
+            .finish()
+    }
+}
+
+impl PartialServeConfig {
+    fn apply_to(self, resolved: &mut ServeConfig) {
+        if let Some(value) = self.vault_path {
+            resolved.vault_path = expand_home(value);
+        }
+        if let Some(value) = self.host {
+            resolved.host = value;
+        }
+        if let Some(value) = self.port {
+            resolved.port = value;
+        }
+        if let Some(value) = self.auth_secret {
+            resolved.auth_secret = Some(value);
+        }
+        if let Some(value) = self.oauth_issuer {
+            resolved.oauth_issuer = Some(value);
+        }
+        if let Some(value) = self.oauth_jwks_uri {
+            resolved.oauth_jwks_uri = Some(value);
+        }
+        if let Some(value) = self.oauth_resource_indicator {
+            resolved.oauth_resource_indicator = Some(value);
+        }
+        if let Some(value) = self.allow_unauthenticated {
+            resolved.allow_unauthenticated = value;
+        }
+        if let Some(value) = self.allowed_origins {
+            resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.lease_vault_id {
+            resolved.lease_vault_id = value;
+        }
+        if let Some(value) = self.dimensions {
+            resolved.dimensions = value;
+        }
+        if let Some(value) = self.map_size {
+            resolved.map_size = value;
+        }
+        if let Some(value) = self.log_level {
+            resolved.log_level = value;
+        }
+        if let Some(value) = self.dict_search_paths {
+            resolved.dict_search_paths = value.into_iter().map(expand_home).collect();
+        }
+        if let Some(value) = self.assistant_display_names {
+            resolved.assistant_display_names = value;
+        }
+        if let Some(value) = self.default_window_count {
+            resolved.default_window_count = value;
+        }
+        if let Some(value) = self.compaction_threshold_bytes {
+            resolved.compaction_threshold_bytes = value;
+        }
+        if let Some(value) = self.compaction_throttle_secs {
+            resolved.compaction_throttle_secs = value;
+        }
+        if let Some(value) = self.bulk_chunk_size {
+            resolved.bulk_chunk_size = value;
+        }
+        if let Some(value) = self.max_frame_size {
+            resolved.max_frame_size = value;
+        }
+        if let Some(value) = self.max_update_payload {
+            resolved.max_update_payload = value;
+        }
+        if let Some(value) = self.max_windows_per_connection {
+            resolved.max_windows_per_connection = value;
+        }
+        if let Some(value) = self.max_federation_windows_per_connection {
+            resolved.max_federation_windows_per_connection = value;
+        }
+        if let Some(value) = self.federation_flood_pause_secs {
+            resolved.federation_flood_pause_secs = value;
+        }
+        if let Some(value) = self.max_messages_per_sec {
+            resolved.max_messages_per_sec = value;
+        }
+        if let Some(value) = self.ephemeral_timeout_ms {
+            resolved.ephemeral_timeout_ms = value;
+        }
+        if let Some(value) = self.max_ephemeral_payload_bytes {
+            resolved.max_ephemeral_payload_bytes = value;
+        }
+        if let Some(value) = self.max_ephemeral_snapshot_bytes {
+            resolved.max_ephemeral_snapshot_bytes = value;
+        }
+        if let Some(value) = self.max_entity_blob {
+            resolved.max_entity_blob = value;
+        }
+        if let Some(value) = self.max_bulk_decompressed {
+            resolved.max_bulk_decompressed = value;
+        }
+        if let Some(value) = self.runtime {
+            resolved.runtime.apply_override(value);
+        }
+        if let Some(value) = self.privacy_posture {
+            resolved.privacy_posture = value;
+        }
+        if let Some(value) = self.hosted_kms_key_ref {
+            resolved.hosted_kms_key_ref = Some(value);
+        }
+    }
+}
+
+impl From<&ServeArgs> for PartialServeConfig {
+    fn from(value: &ServeArgs) -> Self {
+        Self {
+            // `--data-dir` is the managed spelling of the same directory, so
+            // the unmanaged merger honours it too rather than accepting it and
+            // silently ignoring it. Strictly lower precedence than
+            // `--vault-path`, so an argv without `--data-dir` resolves exactly
+            // as it did before the flag existed.
+            vault_path: value.vault_path.clone().or_else(|| value.data_dir.clone()),
+            host: value.host.clone(),
+            port: value.port,
+            auth_secret: value.auth_secret.clone(),
+            oauth_issuer: value.oauth_issuer.clone(),
+            oauth_jwks_uri: value.oauth_jwks_uri.clone(),
+            oauth_resource_indicator: value.oauth_resource_indicator.clone(),
+            allow_unauthenticated: value.insecure_allow_unauthenticated,
+            allowed_origins: value.allowed_origins.clone(),
+            lease_vault_id: value.lease_vault_id,
+            dimensions: value.dimensions,
+            map_size: value.map_size,
+            log_level: value.log_level.clone(),
+            dict_search_paths: value.dict_search_paths.clone(),
+            assistant_display_names: value.assistant_display_names.clone(),
+            default_window_count: value.default_window_count,
+            compaction_threshold_bytes: value.compaction_threshold_bytes,
+            compaction_throttle_secs: value.compaction_throttle_secs,
+            bulk_chunk_size: value.bulk_chunk_size,
+            max_frame_size: value.max_frame_size,
+            max_update_payload: value.max_update_payload,
+            max_windows_per_connection: value.max_windows_per_connection,
+            max_federation_windows_per_connection: value.max_federation_windows_per_connection,
+            federation_flood_pause_secs: value.federation_flood_pause_secs,
+            max_messages_per_sec: value.max_messages_per_sec,
+            ephemeral_timeout_ms: value.ephemeral_timeout_ms,
+            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
+            max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
+            max_entity_blob: value.max_entity_blob,
+            max_bulk_decompressed: value.max_bulk_decompressed,
+            runtime: runtime_override_from_args(value),
+            privacy_posture: value.privacy_posture,
+            hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
+        }
+    }
+}
+
+fn lookup_runtime_override(
+    lookup: &mut impl FnMut(&str) -> Option<String>,
+) -> anyhow::Result<Option<RuntimeConfigOverride>> {
+    let mut runtime = RuntimeConfigOverride::default();
+    let mut has_runtime = false;
+
+    if let Some(mode) = lookup_parse(lookup, "ONEIRON_RUNTIME_MODE")? {
+        runtime.merge(RuntimeConfigOverride::mode(mode));
+        has_runtime = true;
+    }
+    if let Some(byo_key_env) = lookup("ONEIRON_RUNTIME_BYO_KEY_ENV") {
+        runtime.merge(RuntimeConfigOverride::with_byo_key_env(Some(byo_key_env)));
+        has_runtime = true;
+    }
+
+    for role in RuntimeRole::ALL {
+        let prefix = role_env_prefix(role);
+        let mode_key = format!("{prefix}_MODE");
+        let provider_key = format!("{prefix}_PROVIDER_KIND");
+        let model_key = format!("{prefix}_MODEL");
+        let mode = lookup(&mode_key)
+            .map(|value| {
+                value
+                    .parse::<RuntimeMode>()
+                    .map_err(|e| anyhow::anyhow!("parse {mode_key}={value:?}: {e}"))
+            })
+            .transpose()?;
+        let provider_kind = lookup(&provider_key)
+            .map(|value| {
+                value
+                    .parse::<RuntimeProviderKind>()
+                    .map_err(|e| anyhow::anyhow!("parse {provider_key}={value:?}: {e}"))
+            })
+            .transpose()?;
+        let model = lookup(&model_key);
+
+        if mode.is_some() || provider_kind.is_some() || model.is_some() {
+            runtime.merge(RuntimeConfigOverride::with_role_override(
+                role,
+                RuntimeRoleTargetOverride {
+                    mode,
+                    provider_kind,
+                    model,
+                },
+            ));
+            has_runtime = true;
+        }
+    }
+
+    Ok(has_runtime.then_some(runtime))
+}
+
+fn role_env_prefix(role: RuntimeRole) -> &'static str {
+    match role {
+        RuntimeRole::Orchestrator => "ONEIRON_RUNTIME_ORCHESTRATOR",
+        RuntimeRole::Subagent => "ONEIRON_RUNTIME_SUBAGENT",
+        RuntimeRole::Summarizer => "ONEIRON_RUNTIME_SUMMARIZER",
+    }
+}
