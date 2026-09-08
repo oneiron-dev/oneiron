@@ -1,7 +1,6 @@
 //! BookingSolver: the SlotOracle implementation and pipeline driver.
 
 use super::civil_date::visitor_zone_error;
-use super::{BookingCounts, load_booking_counts};
 use super::hold_source::ActiveHoldSource;
 use super::interval::{half_open, inclusive};
 use super::stages::{
@@ -9,6 +8,7 @@ use super::stages::{
     enforce_notice_and_window, rank_and_emit, route_host_masks, subtract_live_holds,
     working_hours_mask,
 };
+use super::{BookingCounts, load_booking_counts};
 use crate::booking::config::{EventTypeConfig, RoutingMode, load_event_type_config};
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::{BookingError, SlotOracle, SolveRequest, SolveResult};
