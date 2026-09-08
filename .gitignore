@@ -8,3 +8,5 @@
 .DS_Store
 *.mdb
 *.lmdb
+apps/macos/src-tauri/gen/
+__pycache__/
