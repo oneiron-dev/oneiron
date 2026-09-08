@@ -15,20 +15,11 @@ CARGO_DENY_VERSION = "0.19.4"
 EXPIRY = "2026-10-07T00:00:00Z"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 DB_URL = "https://github.com/rustsec/advisory-db"
-# The 2026-09-07 owner grant plus exact3 standing-authority extension (19 total).
+# The 2026-09-07 owner grant plus exact3 standing-authority extension, less the ten gtk-rs
+# acceptances retired 2026-09-09 when RustSec withdrew those advisories (9 total).
 # Future equivalents need inspected, explicit owner entries in this set AND policy data;
 # standing delegation is not a runtime blanket allow. See POSTWAVE.md.
 AUTHORIZED = {
-    ("RUSTSEC-2024-0413", "atk", "0.18.2"),
-    ("RUSTSEC-2024-0416", "atk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0412", "gdk", "0.18.2"),
-    ("RUSTSEC-2024-0418", "gdk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0411", "gdkwayland-sys", "0.18.2"),
-    ("RUSTSEC-2024-0417", "gdkx11", "0.18.2"),
-    ("RUSTSEC-2024-0414", "gdkx11-sys", "0.18.2"),
-    ("RUSTSEC-2024-0415", "gtk", "0.18.2"),
-    ("RUSTSEC-2024-0420", "gtk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0419", "gtk3-macros", "0.18.2"),
     ("RUSTSEC-2024-0370", "proc-macro-error", "1.0.4"),
     ("RUSTSEC-2025-0081", "unic-char-property", "0.9.0"),
     ("RUSTSEC-2025-0075", "unic-char-range", "0.9.0"),
@@ -70,11 +61,11 @@ def validate_policy(policy, lock, now):
     if review["post_wave_at"] is not None:
         require(now < utc_time(review["post_wave_at"]), "post-wave review due; acceptance ended")
     entries = policy["entries"]
-    require(len(entries) == 19, "expected exactly 19 authorized maintenance risks")
+    require(len(entries) == 9, "expected exactly 9 authorized maintenance risks")
     require({(e["id"], e["package"], e["version"]) for e in entries} == AUTHORIZED,
             "entry identity/version is outside the exact owner grant")
-    require(len({e["id"] for e in entries}) == 19, "duplicate advisory ID")
-    require(len({e["package"] for e in entries}) == 19, "duplicate package")
+    require(len({e["id"] for e in entries}) == 9, "duplicate advisory ID")
+    require(len({e["package"] for e in entries}) == 9, "duplicate package")
     for entry in entries:
         name = entry["package"]
         require(entry["id"] not in EXISTING_IDS, "cannot replace a pre-existing exception")
