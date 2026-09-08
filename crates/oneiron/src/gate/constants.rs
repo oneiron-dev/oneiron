@@ -144,4 +144,4 @@ pub(crate) const POLICY_ROW_WORLD_REF_KEY: &str = "world_ref";
 // actor-bound generic claim API can supply per-caller Gate inputs.
 pub(super) const LOCAL_WRITE_ACTOR_CLASS: &str = "first_party";
 pub(super) const LOCAL_WRITE_ACTOR_ENTITY_REF: [u8; ENTITY_ID_LEN] = [0x47; ENTITY_ID_LEN];
-pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; ENTITY_ID_LEN];
+pub(crate) const FIRST_PARTY_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; ENTITY_ID_LEN];

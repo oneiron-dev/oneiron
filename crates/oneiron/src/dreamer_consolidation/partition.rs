@@ -406,7 +406,10 @@ pub(crate) fn read_partition_turns_in_txn(
             ))?;
         let facts =
             super::watermark::decode_turn_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
-        let role = crate::dreamer_runner::dreamer_turn_role(facts.speaker.as_deref());
+        let role = crate::dreamer_runner::dreamer_turn_role(
+            facts.speaker.as_deref(),
+            &vault.config.assistant_display_names,
+        );
         if !crate::dreamer_runner::dreamer_extraction_role_admissible(role) {
             return Err(invalid_consolidation(
                 "dreamer planned turn is not admissible",

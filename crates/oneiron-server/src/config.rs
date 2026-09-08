@@ -329,6 +329,11 @@ pub struct ServeArgs {
     #[arg(long = "dict-search-paths", value_delimiter = ',', num_args = 1..)]
     pub dict_search_paths: Option<Vec<PathBuf>>,
 
+    /// Comma-separated host display names that classify a stored turn speaker
+    /// as the assistant during dreamer consolidation.
+    #[arg(long = "assistant-display-names", value_delimiter = ',', num_args = 1..)]
+    pub assistant_display_names: Option<Vec<String>>,
+
     /// Number of default windows to preload.
     #[arg(long)]
     pub default_window_count: Option<u8>,
@@ -472,6 +477,7 @@ impl fmt::Debug for ServeArgs {
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)
+            .field("assistant_display_names", &self.assistant_display_names)
             .field("default_window_count", &self.default_window_count)
             .field(
                 "compaction_threshold_bytes",
@@ -558,6 +564,7 @@ pub struct ServeConfig {
     pub map_size: usize,
     pub log_level: String,
     pub dict_search_paths: Vec<PathBuf>,
+    pub assistant_display_names: Vec<String>,
     pub default_window_count: u8,
     pub compaction_threshold_bytes: u32,
     pub compaction_throttle_secs: u32,
@@ -602,6 +609,7 @@ impl Default for ServeConfig {
             map_size: vault.map_size,
             log_level: "info".to_owned(),
             dict_search_paths: vault.dict_search_paths,
+            assistant_display_names: vault.assistant_display_names,
             default_window_count: server.default_window_count,
             compaction_threshold_bytes: server.compaction_threshold_bytes,
             compaction_throttle_secs: server.compaction_throttle_secs,
@@ -640,6 +648,7 @@ impl fmt::Debug for ServeConfig {
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)
+            .field("assistant_display_names", &self.assistant_display_names)
             .field("default_window_count", &self.default_window_count)
             .field(
                 "compaction_threshold_bytes",
@@ -724,6 +733,7 @@ impl ServeConfig {
         config.dimensions = self.dimensions;
         config.map_size = self.map_size;
         config.dict_search_paths = self.dict_search_paths.clone();
+        config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
         config
     }
@@ -811,6 +821,8 @@ impl EnvConfig {
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
         values.log_level = lookup("ONEIRON_LOG_LEVEL");
         values.dict_search_paths = lookup_path_list(&mut lookup, "ONEIRON_DICT_SEARCH_PATHS");
+        values.assistant_display_names =
+            lookup_list(&mut lookup, "ONEIRON_ASSISTANT_DISPLAY_NAMES");
         values.default_window_count = lookup_parse(&mut lookup, "ONEIRON_DEFAULT_WINDOW_COUNT")?;
         values.compaction_threshold_bytes =
             lookup_parse(&mut lookup, "ONEIRON_COMPACTION_THRESHOLD_BYTES")?;
@@ -976,6 +988,7 @@ struct FileServeConfig {
     map_size: Option<usize>,
     log_level: Option<String>,
     dict_search_paths: Option<Vec<PathBuf>>,
+    assistant_display_names: Option<Vec<String>>,
     default_window_count: Option<u8>,
     compaction_threshold_bytes: Option<u32>,
     compaction_throttle_secs: Option<u32>,
@@ -1013,6 +1026,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             map_size: value.map_size,
             log_level: value.log_level,
             dict_search_paths: value.dict_search_paths,
+            assistant_display_names: value.assistant_display_names,
             default_window_count: value.default_window_count,
             compaction_threshold_bytes: value.compaction_threshold_bytes,
             compaction_throttle_secs: value.compaction_throttle_secs,
@@ -1051,6 +1065,7 @@ struct PartialServeConfig {
     map_size: Option<usize>,
     log_level: Option<String>,
     dict_search_paths: Option<Vec<PathBuf>>,
+    assistant_display_names: Option<Vec<String>>,
     default_window_count: Option<u8>,
     compaction_threshold_bytes: Option<u32>,
     compaction_throttle_secs: Option<u32>,
@@ -1092,6 +1107,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)
+            .field("assistant_display_names", &self.assistant_display_names)
             .field("default_window_count", &self.default_window_count)
             .field(
                 "compaction_threshold_bytes",
@@ -1179,6 +1195,9 @@ impl PartialServeConfig {
         if let Some(value) = self.dict_search_paths {
             resolved.dict_search_paths = value.into_iter().map(expand_home).collect();
         }
+        if let Some(value) = self.assistant_display_names {
+            resolved.assistant_display_names = value;
+        }
         if let Some(value) = self.default_window_count {
             resolved.default_window_count = value;
         }
@@ -1258,6 +1277,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             map_size: value.map_size,
             log_level: value.log_level.clone(),
             dict_search_paths: value.dict_search_paths.clone(),
+            assistant_display_names: value.assistant_display_names.clone(),
             default_window_count: value.default_window_count,
             compaction_threshold_bytes: value.compaction_threshold_bytes,
             compaction_throttle_secs: value.compaction_throttle_secs,

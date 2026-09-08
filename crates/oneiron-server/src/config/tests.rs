@@ -291,6 +291,34 @@ max_frame_size = 11
 }
 
 #[test]
+fn assistant_display_names_resolve_from_flag_env_and_config_file() {
+    let cli = TestCli::try_parse_from(["oneiron-server", "--assistant-display-names", "Eiri,Aish"])
+        .unwrap();
+    let resolved = resolve_serve_config_with_sources(
+        &cli.serve,
+        EnvConfig::from_pairs::<_, &str, &str>([]).unwrap(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(resolved.assistant_display_names, ["Eiri", "Aish"]);
+
+    let env = EnvConfig::from_pairs([("ONEIRON_ASSISTANT_DISPLAY_NAMES", "Eiri, Aish")]).unwrap();
+    let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
+    assert_eq!(resolved.assistant_display_names, ["Eiri", "Aish"]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("oneiron.toml");
+    std::fs::write(
+        &config_path,
+        "assistant_display_names = [\"Eiri\", \"Aish\"]\n",
+    )
+    .unwrap();
+    let env = EnvConfig::from_pairs([("ONEIRON_CONFIG", config_path.to_str().unwrap())]).unwrap();
+    let resolved = resolve_serve_config_with_sources(&ServeArgs::default(), env, None).unwrap();
+    assert_eq!(resolved.assistant_display_names, ["Eiri", "Aish"]);
+}
+
+#[test]
 fn runtime_flags_parse_as_serve_args() {
     let cli = TestCli::try_parse_from([
         "oneiron-server",

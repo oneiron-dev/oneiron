@@ -6,7 +6,6 @@
 
 mod builder;
 mod edge_walk;
-mod eiri_memory_board;
 mod empty_pack;
 mod hydration;
 mod mcp_ref;
@@ -21,7 +20,6 @@ mod world_partition;
 mod tests;
 
 pub use builder::{ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack};
-pub use eiri_memory_board::assemble_eiri_memory_board;
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
 pub use mcp_ref::{MCP_CONTEXT_PACK_REF_SCHEMA_VERSION, McpContextPackRef, McpContextPackRefError};
 pub use psych_mirror::{

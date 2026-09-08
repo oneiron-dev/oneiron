@@ -244,13 +244,14 @@ pub(super) fn retrieval_quality_success_snapshot() -> String {
     let mut expected: Value =
         serde_json::from_str(V1_CORE_SUCCESS_CONTRACT_SNAPSHOT).expect("success fixture");
     for exchange in expected.as_array_mut().expect("exchanges") {
-        if !matches!(
-            exchange["name"].as_str(),
-            Some("core_context_pack" | "core_context_pack_v4")
-        ) {
+        let is_pack = exchange["name"].as_str() == Some("core_context_pack");
+        let is_board = exchange["name"].as_str() == Some("core_context_board");
+        if !is_pack && !is_board {
             continue;
         }
+        // The board carries its retrieval pack nested under `pack`.
         let body = &mut exchange["response"]["body"];
+        let body = if is_board { &mut body["pack"] } else { body };
         body["quality"] = json!("passthrough");
         body["confidenceAdjustment"] = json!(-0.35);
         if let Some(empty) = body.get_mut("empty") {

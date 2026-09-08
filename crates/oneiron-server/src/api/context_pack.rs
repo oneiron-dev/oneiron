@@ -1,4 +1,6 @@
+use super::MemoriesRequest;
 use super::VadPayload;
+use super::advance_memories_cursor;
 use super::auth_bound_principal_ref;
 use super::core_engine_error;
 use super::default_limit;
@@ -24,20 +26,8 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::OnceLock;
-use tokio::sync::Mutex;
 use utoipa::ToSchema;
-
-pub(crate) const EIRI_SESSION_RAG_STATE_MAX_ENTRIES: usize = 1024;
-
-pub(crate) const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
-
-pub(crate) const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
-
-pub(crate) const SHARED_EIRI_SESSION_SCOPE_IDS: &[&str] =
-    &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
 
 /// Maximum `interlocutors.third_parties` entries per context-pack request.
 /// Each party can trigger vault reads during resolution, so the block is
@@ -54,97 +44,6 @@ pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
 /// scale as the counterparty key so up to [`MAX_INTERLOCUTOR_THIRD_PARTIES`]
 /// labels stay a bounded echo/work cost.
 pub(crate) const MAX_INTERLOCUTOR_LABEL_BYTES: usize = 512;
-
-pub(crate) static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
-
-#[derive(Default)]
-pub(crate) struct EiriSessionRagStore {
-    pub(crate) entries: BTreeMap<String, oneiron::EiriSessionRagState>,
-    active_sessions: BTreeMap<String, String>,
-    insertion_order: VecDeque<String>,
-}
-
-impl EiriSessionRagStore {
-    pub(crate) fn current(
-        &mut self,
-        key: String,
-        session_id: &str,
-    ) -> oneiron::EiriSessionRagState {
-        if let Some(state) = self.entries.get(&key) {
-            return state.clone();
-        }
-
-        self.evict_if_full();
-        let state = oneiron::EiriSessionRagState::new(session_id);
-        self.entries.insert(key.clone(), state.clone());
-        self.insertion_order.push_back(key);
-        state
-    }
-
-    fn current_for_scope(
-        &mut self,
-        scope_key: String,
-        default_key: String,
-        default_session_id: &str,
-    ) -> oneiron::EiriSessionRagState {
-        if let Some(active_key) = self.active_sessions.get(&scope_key).cloned() {
-            if let Some(state) = self.entries.get(&active_key) {
-                return state.clone();
-            }
-            self.active_sessions.remove(&scope_key);
-        }
-
-        self.current(default_key, default_session_id)
-    }
-
-    pub(crate) fn advance(
-        &mut self,
-        scope_key: String,
-        key: String,
-        session_id: &str,
-        pack: &oneiron::ContextPack,
-        evidence: &CoreContextPackEvidence,
-    ) -> oneiron::EiriSessionRagState {
-        if !self.entries.contains_key(&key) {
-            self.evict_if_full();
-            self.entries
-                .insert(key.clone(), oneiron::EiriSessionRagState::new(session_id));
-            self.insertion_order.push_back(key.clone());
-        }
-
-        let state = self
-            .entries
-            .get_mut(&key)
-            .expect("entry inserted before mutation");
-        state.revision = state.revision.saturating_add(1);
-        state.query_count = state.query_count.saturating_add(1);
-        state.last_retrieval_run_id = evidence.retrieval_run_id.clone();
-        state.last_result_ids = pack
-            .results
-            .iter()
-            .take(EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX)
-            .map(|entity| entity.id.to_hex())
-            .collect();
-        let state = state.clone();
-        self.active_sessions.insert(scope_key, key);
-        state
-    }
-
-    fn evict_if_full(&mut self) {
-        while self.entries.len() >= EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
-            let Some(key) = self.insertion_order.pop_front() else {
-                self.entries.clear();
-                self.active_sessions.clear();
-                break;
-            };
-            if self.entries.remove(&key).is_some() {
-                self.active_sessions
-                    .retain(|_, active_key| active_key != &key);
-                break;
-            }
-        }
-    }
-}
 
 /// Edge expansion depth controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
@@ -264,64 +163,6 @@ pub(crate) struct ContextPackBudgetControls {
     retrieval: Option<ContextPackRetrievalBudgetControls>,
 }
 
-/// Eiri Context v4 memory-board per-slot row caps.
-#[derive(Debug, Default, Deserialize, ToSchema)]
-pub(crate) struct EiriMemoryBoardSlotControls {
-    #[serde(default)]
-    #[schema(example = 4)]
-    pub(crate) claims: Option<usize>,
-    #[serde(default)]
-    #[schema(example = 2)]
-    pub(crate) turns: Option<usize>,
-    #[serde(default)]
-    #[schema(example = 2)]
-    pub(crate) summaries: Option<usize>,
-    #[serde(default)]
-    #[schema(example = 1)]
-    pub(crate) facets: Option<usize>,
-    #[serde(default)]
-    #[schema(example = 1)]
-    pub(crate) companions: Option<usize>,
-    #[serde(default)]
-    #[schema(example = 1)]
-    pub(crate) other: Option<usize>,
-}
-
-/// Eiri Context v4 memory-board controls.
-#[derive(Debug, Default, Deserialize, ToSchema)]
-pub(crate) struct EiriMemoryBoardControls {
-    /// Whether to emit the v4 memory board. Defaults to true when v4 is requested.
-    #[serde(default)]
-    #[schema(example = true)]
-    pub(crate) enabled: Option<bool>,
-    /// Exact per-slot row caps for the memory board.
-    #[serde(default)]
-    pub(crate) slots: Option<EiriMemoryBoardSlotControls>,
-}
-
-/// Eiri Context v4 session RAG controls.
-#[derive(Debug, Default, Deserialize, ToSchema)]
-pub(crate) struct EiriSessionRagControls {
-    /// Stable caller/session key used to carry RAG state across calls.
-    #[serde(default, rename = "session_id", alias = "sessionId")]
-    #[schema(example = "default")]
-    session_id: Option<String>,
-}
-
-/// Companion context that influences Eiri Context v4 assembly.
-#[derive(Debug, Default, Deserialize, ToSchema)]
-pub(crate) struct EiriCompanionControls {
-    #[serde(default, rename = "person_ref", alias = "personRef")]
-    #[schema(example = "0123456789abcdef0123456789abcdef")]
-    person_ref: Option<String>,
-    #[serde(default, rename = "persona_ref", alias = "personaRef")]
-    #[schema(example = "fedcba9876543210fedcba9876543210")]
-    persona_ref: Option<String>,
-    #[serde(default)]
-    #[schema(example = "warm")]
-    expression: Option<String>,
-}
-
 /// Interlocutor presence controls for context-pack assembly (OF-365 ILD-1).
 ///
 /// The wire shape deliberately cannot express interlocutor class or presence
@@ -404,13 +245,6 @@ pub(crate) struct CoreInterlocutorStamp {
     claims_not_instructions: bool,
 }
 
-pub(crate) struct EiriContextV4Request {
-    memory_board_budget: Option<oneiron::EiriMemoryBoardBudget>,
-    session_scope_id: String,
-    session_id: String,
-    companion: Option<oneiron::EiriCompanionAssembly>,
-}
-
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -473,22 +307,19 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional retrieval and serialization budget controls.
     #[serde(default)]
     budget: Option<ContextPackBudgetControls>,
-    /// Optional context format version. Use "v4" to request Eiri Context v4 fields.
-    #[serde(default, rename = "context_version", alias = "contextVersion")]
-    #[schema(example = "v4")]
-    context_version: Option<String>,
-    /// Optional Eiri Context v4 memory-board controls.
-    #[serde(default, rename = "memory_board", alias = "memoryBoard")]
-    memory_board: Option<EiriMemoryBoardControls>,
-    /// Optional Eiri Context v4 session RAG controls.
-    #[serde(default, rename = "session_rag", alias = "sessionRag")]
-    session_rag: Option<EiriSessionRagControls>,
-    /// Optional companion scope for Eiri Context v4 assembly.
-    #[serde(default)]
-    companion: Option<EiriCompanionControls>,
     /// Optional interlocutor presence controls (OF-365 ILD-1).
     #[serde(default)]
     interlocutors: Option<CoreInterlocutorControls>,
+}
+
+impl CoreContextPackRequest {
+    /// The `(limit, max_neighbors)` shape the MEMORIES slot defaults derive
+    /// from, resolved the same way the pipeline resolves depth.
+    pub(crate) fn retrieval_budget_shape(&self) -> (usize, usize) {
+        let (_, _, max_neighbors, _) =
+            resolved_context_pack_depth(self.depth.as_ref(), self.edge_hop, self.max_neighbors);
+        (self.limit, max_neighbors)
+    }
 }
 
 /// Hydrated context edge.
@@ -663,149 +494,6 @@ pub(crate) struct CoreContextPackEvidence {
     pub(crate) scores: Vec<CoreContextPackScoreEvidence>,
 }
 
-/// Stable Eiri Context v4 memory-board slot name.
-#[allow(dead_code)]
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CoreEiriMemoryBoardSlot {
-    Claims,
-    Turns,
-    Summaries,
-    Facets,
-    Companions,
-    Other,
-}
-
-/// Source section for one Eiri Context v4 memory-board row.
-#[allow(dead_code)]
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CoreEiriMemoryBoardSource {
-    Result,
-    Neighbor,
-}
-
-/// Per-slot row caps for an Eiri Context v4 memory board.
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct CoreEiriMemoryBoardBudget {
-    /// Claim row cap.
-    #[schema(example = 2)]
-    claims: usize,
-    /// Turn/message row cap.
-    #[schema(example = 4)]
-    turns: usize,
-    /// Summary row cap.
-    #[schema(example = 1)]
-    summaries: usize,
-    /// Facet row cap.
-    #[schema(example = 1)]
-    facets: usize,
-    /// Companion-register row cap.
-    #[schema(example = 0)]
-    companions: usize,
-    /// Row cap for all other entity types.
-    #[schema(example = 2)]
-    other: usize,
-}
-
-/// Companion assembly metadata echoed with an Eiri Context v4 memory board.
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct CoreEiriCompanionAssembly {
-    /// Effective caller/session identity used for the v4 board.
-    #[schema(example = "session-123")]
-    caller: Option<String>,
-    /// Effective companion scope selected from active companion records.
-    #[schema(example = "personal")]
-    scope: Option<String>,
-    /// Active record class that selected the companion scope.
-    #[serde(rename = "scope_source")]
-    #[schema(example = "persona_and_relationship_records")]
-    scope_source: Option<String>,
-    /// Optional person entity id for companion-aware assembly metadata.
-    #[serde(rename = "person_ref")]
-    #[schema(example = "11111111111111111111111111111111")]
-    person_ref: Option<String>,
-    /// Optional persona entity id for companion-aware assembly metadata.
-    #[serde(rename = "persona_ref")]
-    #[schema(example = "22222222222222222222222222222222")]
-    persona_ref: Option<String>,
-    /// Effective expression register boundary.
-    #[schema(example = "warm")]
-    expression: Option<String>,
-}
-
-/// Stable row in an Eiri Context v4 memory board.
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct CoreEiriMemoryBoardRow {
-    /// Zero-based index after stable sorting and slot-budget filtering.
-    #[serde(rename = "row_index")]
-    #[schema(example = 0)]
-    row_index: usize,
-    /// Budget slot that owns this row.
-    slot: CoreEiriMemoryBoardSlot,
-    /// Whether the row came from primary results or neighbors.
-    source: CoreEiriMemoryBoardSource,
-    /// Hex entity id.
-    #[schema(example = "0123456789abcdef0123456789abcdef")]
-    id: String,
-    /// Short id used for compact display.
-    #[serde(rename = "short_id")]
-    #[schema(example = "tr_a1b2c3d4")]
-    short_id: String,
-    /// One-byte content hash as two lowercase hex digits.
-    #[serde(rename = "content_hash")]
-    #[schema(example = "a7")]
-    content_hash: String,
-    /// Numeric entity type byte.
-    #[serde(rename = "entity_type")]
-    #[schema(example = 1)]
-    entity_type: u8,
-    /// Short ref for ASSET and ASSET_TEXT rows. Consumers pass this to the core hydrate resolver.
-    #[serde(rename = "asset_ref", skip_serializing_if = "Option::is_none")]
-    #[schema(example = "tx123:a7")]
-    asset_ref: Option<String>,
-    /// Retrieval score.
-    #[schema(example = 0.87)]
-    score: f32,
-}
-
-/// Eiri Context v4 memory-board response envelope.
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct CoreEiriMemoryBoard {
-    /// Context version for this memory-board envelope.
-    #[schema(example = "v4")]
-    version: String,
-    /// Applied per-slot row budget.
-    budget: CoreEiriMemoryBoardBudget,
-    /// Stable memory-board rows.
-    rows: Vec<CoreEiriMemoryBoardRow>,
-    /// Companion assembly metadata when v4 companion controls are present.
-    companion: Option<CoreEiriCompanionAssembly>,
-}
-
-/// Eiri Context v4 session RAG cursor response.
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct CoreEiriSessionRagState {
-    /// Effective v4 session id.
-    #[serde(rename = "session_id")]
-    #[schema(example = "session-123")]
-    session_id: String,
-    /// Monotonic cursor revision for this session.
-    #[schema(example = 2_u64)]
-    revision: u64,
-    /// Number of context-pack queries observed for this session.
-    #[serde(rename = "query_count")]
-    #[schema(example = 2_u64)]
-    query_count: u64,
-    /// Last persisted retrieval telemetry run id, when available.
-    #[serde(rename = "last_retrieval_run_id")]
-    #[schema(example = "0123456789abcdef0123456789abcdef")]
-    last_retrieval_run_id: Option<String>,
-    /// Bounded list of most recent context-pack result ids for this session.
-    #[serde(rename = "last_result_ids")]
-    last_result_ids: Vec<String>,
-}
-
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
@@ -824,10 +512,6 @@ pub(crate) struct CoreContextPackResponse {
     )]
     #[schema(value_type = Option<f32>, example = -0.15)]
     confidence_adjustment: Option<ConfidenceAdjustment>,
-    /// Optional context format version for v4 response extensions.
-    #[serde(rename = "context_version", skip_serializing_if = "Option::is_none")]
-    #[schema(example = "v4")]
-    context_version: Option<String>,
     /// Primary hydrated retrieval results.
     results: Vec<CoreContextEntity>,
     /// Neighbor entities hydrated through edge expansion.
@@ -838,14 +522,6 @@ pub(crate) struct CoreContextPackResponse {
     state: CoreContextPackState,
     /// Retrieval evidence and score breakdown.
     evidence: CoreContextPackEvidence,
-    /// Eiri Context v4 memory-board rows when requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<CoreEiriMemoryBoard>)]
-    memory_board: Option<oneiron::EiriMemoryBoard>,
-    /// Eiri Context v4 session RAG state when requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<CoreEiriSessionRagState>)]
-    session_rag: Option<oneiron::EiriSessionRagState>,
     /// Resolved per-speaker interlocutor stamps when an interlocutors block
     /// was supplied or the auth is principal_ref-scoped (OF-365 ILD-1).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -882,8 +558,31 @@ pub(crate) async fn core_context_pack(
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
+    let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
+    Ok(Json(response))
+}
+
+/// The shared context-pack pipeline behind `/v1/core/context-pack` and the
+/// context board: validation, scoped retrieval, projection, and evidence.
+///
+/// When a memories request rides along, the MEMORIES section is projected
+/// over the finished pack and the caller's cursor is advanced; both come back
+/// beside the response. The caller has already required `CoreScope::Read`.
+pub(crate) async fn run_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    req: CoreContextPackRequest,
+    memories: Option<MemoriesRequest>,
+) -> Result<
+    (
+        CoreContextPackResponse,
+        Option<oneiron::MemoriesSection>,
+        Option<oneiron::MemoriesCursor>,
+    ),
+    ApiError,
+> {
     let interlocutors =
-        resolve_core_interlocutor_set(&server.vault, &auth, req.interlocutors.as_ref())?;
+        resolve_core_interlocutor_set(&server.vault, auth, req.interlocutors.as_ref())?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
@@ -911,22 +610,13 @@ pub(crate) async fn core_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)
         })?;
-    let eiri_context = resolve_eiri_context_v4_request(
-        &server.vault,
-        req.context_version.as_deref(),
-        req.memory_board.as_ref(),
-        req.session_rag.as_ref(),
-        req.companion.as_ref(),
-        (req.limit, max_neighbors),
-        &auth,
-    )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
     // the one applied (design §11 rule 6).
@@ -968,7 +658,7 @@ pub(crate) async fn core_context_pack(
         builder = builder.disclosure_context(ctx.clone());
     }
 
-    let mut response = run_context_pack_builder(
+    let (mut response, memories, cursor) = run_context_pack_builder(
         &server.vault,
         &scoped_read,
         builder,
@@ -978,12 +668,12 @@ pub(crate) async fn core_context_pack(
             neighbors: max_neighbors,
             retrieval: retrieval_budget,
         },
-        eiri_context,
+        memories,
         disclosure,
     )
     .await?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
-    Ok(Json(response))
+    Ok((response, memories, cursor))
 }
 
 /// Resolves the effective interlocutor set for a core context-pack request
@@ -1424,150 +1114,6 @@ pub(crate) fn widen_context_pack_retrieval_budget(
     )
 }
 
-pub(crate) fn resolve_eiri_context_v4_request(
-    vault: &oneiron::Vault,
-    context_version: Option<&str>,
-    memory_board: Option<&EiriMemoryBoardControls>,
-    session_rag: Option<&EiriSessionRagControls>,
-    companion: Option<&EiriCompanionControls>,
-    budget_shape: (usize, usize),
-    auth: &CoreAuth,
-) -> Result<Option<EiriContextV4Request>, ApiError> {
-    let requested = context_version.is_some()
-        || memory_board.is_some()
-        || session_rag.is_some()
-        || companion.is_some();
-    if !requested {
-        return Ok(None);
-    }
-
-    let version = context_version.unwrap_or(oneiron::EIRI_CONTEXT_VERSION_V4);
-    if version != oneiron::EIRI_CONTEXT_VERSION_V4 {
-        return Err(ApiError::bad_request(
-            "context_version must be v4",
-            Some("context_version"),
-        ));
-    }
-
-    let session_scope_id = auth.principal_ref().unwrap_or(auth.principal()).trim();
-    validate_eiri_session_id(session_scope_id, "session_rag.scope")?;
-    if is_shared_eiri_session_scope_id(session_scope_id) {
-        return Err(ApiError::bad_request(
-            "session_rag.session_id requires an isolated caller identity",
-            Some("session_rag.session_id"),
-        ));
-    }
-
-    let session_id = session_rag
-        .and_then(|state| state.session_id.as_deref())
-        .unwrap_or(session_scope_id)
-        .trim();
-    validate_eiri_session_id(session_id, "session_rag.session_id")?;
-
-    let memory_board_budget = memory_board
-        .and_then(|controls| controls.enabled)
-        .unwrap_or(true)
-        .then(|| eiri_memory_board_budget(memory_board, budget_shape.0, budget_shape.1));
-
-    let companion = resolve_eiri_companion_assembly(vault, companion, session_id, auth)?;
-
-    Ok(Some(EiriContextV4Request {
-        memory_board_budget,
-        session_scope_id: session_scope_id.to_owned(),
-        session_id: session_id.to_owned(),
-        companion: Some(companion),
-    }))
-}
-
-pub(crate) fn resolve_eiri_companion_assembly(
-    vault: &oneiron::Vault,
-    companion: Option<&EiriCompanionControls>,
-    session_id: &str,
-    companion_auth: &CoreAuth,
-) -> Result<oneiron::EiriCompanionAssembly, ApiError> {
-    let (person_ref_wire, person_ref) = parse_companion_ref(
-        companion.and_then(|controls| controls.person_ref.as_deref()),
-        "companion.person_ref",
-    )?;
-    let (persona_ref_wire, persona_ref) = parse_companion_ref(
-        companion.and_then(|controls| controls.persona_ref.as_deref()),
-        "companion.persona_ref",
-    )?;
-    let requested_expression = companion
-        .and_then(|controls| controls.expression.as_deref())
-        .map(|value| {
-            oneiron::CompanionExpression::parse(value).ok_or_else(|| {
-                ApiError::bad_request(
-                    "companion.expression must be professional, warm, or unrestricted",
-                    Some("companion.expression"),
-                )
-            })
-        })
-        .transpose()?;
-    let fallback_expression =
-        requested_expression.unwrap_or(oneiron::CompanionExpression::Professional);
-    if !companion_scope_resolution_authorized(vault, companion_auth, person_ref, persona_ref)? {
-        return Ok(oneiron::EiriCompanionAssembly {
-            caller: Some(session_id.to_owned()),
-            scope: Some(companion_scope_wire(&oneiron::CompanionScope::neutral()).to_owned()),
-            scope_source: Some(
-                oneiron::CompanionScopeResolutionSource::NeutralDefault
-                    .as_str()
-                    .to_owned(),
-            ),
-            person_ref: person_ref_wire,
-            persona_ref: persona_ref_wire,
-            expression: Some(fallback_expression.as_str().to_owned()),
-        });
-    }
-    let register = vault.companion_register().map_err(|error| {
-        tracing::error!(error = %error, "companion scope resolution failed");
-        core_engine_error("companion scope resolution failed", error)
-    })?;
-    let relationship_ref = person_ref.zip(persona_ref);
-    let mut expressions = oneiron::CompanionExpressionRegister::new();
-    let resolution = if let Some(expression) = requested_expression {
-        let seed_resolution = register.resolve_companion_scope(
-            &expressions,
-            person_ref,
-            persona_ref,
-            relationship_ref,
-        );
-        if let Some(key) = seed_resolution
-            .relationship_key
-            .as_ref()
-            .or(seed_resolution.persona_key.as_ref())
-        {
-            expressions
-                .update(key.clone(), expression)
-                .map_err(|error| {
-                    tracing::error!(error = %error, "companion expression registration failed");
-                    core_engine_error("companion expression registration failed", error)
-                })?;
-            register.resolve_companion_scope(
-                &expressions,
-                person_ref,
-                persona_ref,
-                relationship_ref,
-            )
-        } else {
-            seed_resolution
-        }
-    } else {
-        register.resolve_companion_scope(&expressions, person_ref, persona_ref, relationship_ref)
-    };
-    let expression = requested_expression.unwrap_or(resolution.expression);
-
-    Ok(oneiron::EiriCompanionAssembly {
-        caller: Some(session_id.to_owned()),
-        scope: Some(companion_scope_wire(&resolution.scope).to_owned()),
-        scope_source: Some(resolution.source.as_str().to_owned()),
-        person_ref: person_ref_wire,
-        persona_ref: persona_ref_wire,
-        expression: Some(expression.as_str().to_owned()),
-    })
-}
-
 pub(crate) fn companion_scope_resolution_authorized(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -1596,135 +1142,6 @@ pub(crate) fn companion_scope_resolution_authorized(
             );
             core_engine_error("companion profile grant lookup failed", error)
         })
-}
-
-pub(crate) fn parse_companion_ref(
-    value: Option<&str>,
-    field: &'static str,
-) -> Result<(Option<String>, Option<oneiron::EntityId>), ApiError> {
-    let Some(raw) = value else {
-        return Ok((None, None));
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok((None, None));
-    }
-    if trimmed.len() == 32 && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        let id = parse_entity_id_param(trimmed, field)?;
-        return Ok((Some(id.to_hex()), Some(id)));
-    }
-    Ok((Some(trimmed.to_owned()), None))
-}
-
-pub(crate) fn validate_eiri_session_id(
-    session_id: &str,
-    field: &'static str,
-) -> Result<(), ApiError> {
-    if session_id.trim().is_empty() {
-        return Err(ApiError::bad_request(
-            format!("{field} must be non-empty"),
-            Some(field),
-        ));
-    }
-    if session_id.len() > EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES {
-        return Err(ApiError::bad_request(
-            format!("{field} must be at most {EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES} bytes"),
-            Some(field),
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn is_shared_eiri_session_scope_id(session_scope_id: &str) -> bool {
-    SHARED_EIRI_SESSION_SCOPE_IDS.contains(&session_scope_id)
-}
-
-pub(crate) fn companion_scope_wire(scope: &oneiron::CompanionScope) -> &'static str {
-    match scope {
-        oneiron::CompanionScope::Neutral => "neutral",
-        oneiron::CompanionScope::Personal { .. } => "personal",
-        oneiron::CompanionScope::SharedVault { .. } => "shared_vault",
-        _ => "unknown",
-    }
-}
-
-pub(crate) fn eiri_memory_board_budget(
-    controls: Option<&EiriMemoryBoardControls>,
-    limit: usize,
-    default_selected_edges: usize,
-) -> oneiron::EiriMemoryBoardBudget {
-    let retrieval_defaults = oneiron::ContextPackRetrievalBudget::from_limit(
-        limit,
-        oneiron::TokenAllocation::default(),
-        default_selected_edges,
-    );
-    let defaults = oneiron::EiriMemoryBoardBudget::new(
-        retrieval_defaults.claims,
-        retrieval_defaults.turns,
-        retrieval_defaults.summaries,
-        retrieval_defaults.facets,
-        0,
-        retrieval_defaults.other,
-    );
-    let Some(slots) = controls.and_then(|controls| controls.slots.as_ref()) else {
-        return defaults;
-    };
-
-    let companions = slots.companions.unwrap_or(defaults.companions);
-    let other = slots
-        .other
-        .unwrap_or_else(|| retrieval_defaults.other.saturating_sub(companions));
-    oneiron::EiriMemoryBoardBudget::new(
-        slots.claims.unwrap_or(defaults.claims),
-        slots.turns.unwrap_or(defaults.turns),
-        slots.summaries.unwrap_or(defaults.summaries),
-        slots.facets.unwrap_or(defaults.facets),
-        companions,
-        other,
-    )
-}
-
-pub(crate) fn eiri_session_rag_store() -> &'static Mutex<EiriSessionRagStore> {
-    EIRI_SESSION_RAG_STATE.get_or_init(|| Mutex::new(EiriSessionRagStore::default()))
-}
-
-pub(crate) fn eiri_session_rag_key(
-    vault: &oneiron::Vault,
-    scope_id: &str,
-    session_id: &str,
-) -> String {
-    format!("{vault:p}:{scope_id}:{session_id}")
-}
-
-pub(crate) fn eiri_session_rag_scope_key(vault: &oneiron::Vault, scope_id: &str) -> String {
-    format!("{vault:p}:{scope_id}")
-}
-
-pub(crate) async fn current_eiri_session_rag_state(
-    vault: &oneiron::Vault,
-    scope_id: &str,
-) -> oneiron::EiriSessionRagState {
-    let scope_key = eiri_session_rag_scope_key(vault, scope_id);
-    let default_key = eiri_session_rag_key(vault, scope_id, scope_id);
-    eiri_session_rag_store()
-        .lock()
-        .await
-        .current_for_scope(scope_key, default_key, scope_id)
-}
-
-pub(crate) async fn advance_eiri_session_rag_state(
-    vault: &oneiron::Vault,
-    scope_id: &str,
-    session_id: &str,
-    pack: &oneiron::ContextPack,
-    evidence: &CoreContextPackEvidence,
-) -> oneiron::EiriSessionRagState {
-    let scope_key = eiri_session_rag_scope_key(vault, scope_id);
-    let key = eiri_session_rag_key(vault, scope_id, session_id);
-    eiri_session_rag_store()
-        .lock()
-        .await
-        .advance(scope_key, key, session_id, pack, evidence)
 }
 
 #[derive(Clone, Copy)]
@@ -1796,9 +1213,16 @@ pub(crate) async fn run_context_pack_builder(
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
     response_limits: ContextPackResponseLimits,
-    eiri_context: Option<EiriContextV4Request>,
+    memories: Option<MemoriesRequest>,
     disclosure: Option<oneiron::DisclosureContext>,
-) -> Result<CoreContextPackResponse, ApiError> {
+) -> Result<
+    (
+        CoreContextPackResponse,
+        Option<oneiron::MemoriesSection>,
+        Option<oneiron::MemoriesCursor>,
+    ),
+    ApiError,
+> {
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
         tracing::error!(error = %error, "core context-pack failed");
         core_engine_error("core context-pack failed", error)
@@ -1818,43 +1242,32 @@ pub(crate) async fn run_context_pack_builder(
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
-    let memory_board = eiri_context
-        .as_ref()
-        .and_then(|context| context.memory_board_budget)
-        .map(|budget| {
-            oneiron::context_pack::assemble_eiri_memory_board(
-                &pack,
-                budget,
-                eiri_context
-                    .as_ref()
-                    .and_then(|context| context.companion.clone()),
-                assembly.clone(),
-            )
-        });
-    let session_rag = if let Some(context) = eiri_context.as_ref() {
-        Some(
-            advance_eiri_session_rag_state(
+    let (section, cursor) = match memories.as_ref() {
+        Some(request) => {
+            let section = request.memory_board_budget.map(|budget| {
+                oneiron::context_board::project_memories_section(
+                    &pack,
+                    budget,
+                    request.companion.clone(),
+                    assembly.clone(),
+                )
+            });
+            let cursor = advance_memories_cursor(
                 vault,
-                &context.session_scope_id,
-                &context.session_id,
+                &request.session_scope_id,
+                &request.session_id,
                 &pack,
                 &evidence,
             )
-            .await,
-        )
-    } else {
-        None
+            .await;
+            (section, Some(cursor))
+        }
+        None => (None, None),
     };
-    let context_version = eiri_context
-        .as_ref()
-        .map(|_| oneiron::EIRI_CONTEXT_VERSION_V4.to_owned());
-    Ok(core_context_pack_response(
-        pack,
-        evidence,
-        context_version,
-        memory_board,
-        session_rag,
-        assembly,
+    Ok((
+        core_context_pack_response(pack, evidence, assembly),
+        section,
+        cursor,
     ))
 }
 
@@ -1903,9 +1316,6 @@ pub(crate) fn core_context_pack_evidence_for_results(
 pub(crate) fn core_context_pack_response(
     pack: oneiron::ContextPack,
     evidence: CoreContextPackEvidence,
-    context_version: Option<String>,
-    memory_board: Option<oneiron::EiriMemoryBoard>,
-    session_rag: Option<oneiron::EiriSessionRagState>,
     disclosure: Option<oneiron::DisclosureAssembly>,
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
@@ -1914,7 +1324,6 @@ pub(crate) fn core_context_pack_response(
         degradation: (!pack.retrieval_quality.degradation.is_empty())
             .then_some(pack.retrieval_quality.degradation),
         confidence_adjustment: Some(pack.retrieval_quality.confidence_adjustment),
-        context_version,
         results: pack.results.into_iter().map(core_context_entity).collect(),
         neighbors: pack
             .neighbors
@@ -1924,8 +1333,6 @@ pub(crate) fn core_context_pack_response(
         stats: core_context_pack_stats(pack.stats),
         state,
         evidence,
-        memory_board,
-        session_rag,
         interlocutors: None,
         disclosure,
         empty: pack

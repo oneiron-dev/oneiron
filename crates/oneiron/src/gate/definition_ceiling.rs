@@ -7,10 +7,10 @@ use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
 use super::ceiling::PolicyApprovalCeiling;
-use super::constants::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID;
+use super::constants::FIRST_PARTY_CONNECTOR_ACTOR_ID;
 
-pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
-    bytes_to_hex_lower(&FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+pub(crate) fn first_party_connector_actor_ref() -> String {
+    bytes_to_hex_lower(&FIRST_PARTY_CONNECTOR_ACTOR_ID)
 }
 
 /// Resolves the AGENT_DEF-authored ceiling bound for a write actor, live at

@@ -10,13 +10,13 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
+use crate::context_board::AssembledContext;
 use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
 use crate::context_pack::FieldProfile;
 use crate::context_pack::PackFormat;
 use crate::context_pack::PackStats;
 use crate::context_pack::TokenAllocation;
-use crate::eiri::ResumeBundle;
 
 use super::group_labels::group_key;
 use super::json_format::{json_rows, section_object};
@@ -186,8 +186,8 @@ fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackT
     }
 }
 
-pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
-    serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
+pub fn serialize_assembled_context(bundle: &AssembledContext) -> Vec<u8> {
+    serde_json::to_vec(bundle).expect("AssembledContext JSON serialization should not fail")
 }
 
 /// Builds the compact text preview stored beside raw code-run output bytes.

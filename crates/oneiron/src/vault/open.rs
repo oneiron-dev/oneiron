@@ -6,11 +6,13 @@ use super::doctor_manifest::{
     write_text_index_manifest_if_empty,
 };
 use crate::analyzer::MultilingualAnalyzer;
+#[cfg(feature = "test-support")]
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::{HostingPrivacyPosture, VaultConfig};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
+#[cfg(feature = "test-support")]
 use crate::temporal::TimeRange;
 use std::path::Path;
 

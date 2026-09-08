@@ -34,8 +34,8 @@ use std::time::Duration;
 
 use crate::test_util::{entity as test_id, entity_record, put_policy_manifest_bytes};
 
-fn first_party_eiri_connector_actor_ref() -> String {
-    super::first_party_eiri_connector_actor_ref()
+fn first_party_connector_actor_ref() -> String {
+    super::first_party_connector_actor_ref()
 }
 
 mod pending_lookup;
@@ -99,11 +99,10 @@ use support::{
     claim_candidate_write_parts, claim_candidate_write_parts_for_actor,
     core_read_scoped_grant_entry, core_read_world_grant_manifest,
     dreamer_claim_candidate_write_parts, edge_provenance_flags,
-    encode_first_party_eiri_default_policy_manifest, encode_policy_manifest,
-    external_effect_gate_input, external_effect_scoped_grant_entry,
-    first_party_eiri_connector_actor_id, gate_evaluator_input, gate_reason_strs,
-    has_pending_gate_consent, pinned_actor_id, public_stamped, put_agent_def_row, put_claim_body,
-    put_claim_text_body, put_dangling_short_id, put_malformed_access_grant_bytes,
+    encode_first_party_default_policy_manifest, encode_policy_manifest, external_effect_gate_input,
+    external_effect_scoped_grant_entry, first_party_connector_actor_id, gate_evaluator_input,
+    gate_reason_strs, has_pending_gate_consent, pinned_actor_id, public_stamped, put_agent_def_row,
+    put_claim_body, put_claim_text_body, put_dangling_short_id, put_malformed_access_grant_bytes,
     put_raw_entity_row, put_text_entity, put_vector_entity,
     receipt_required_core_read_scoped_grant_entry, replace_actor_ceilings, resolve,
     resolved_ceiling, rewrite_policy_manifest_entries, scoped_grants_entry, signatures_entry,

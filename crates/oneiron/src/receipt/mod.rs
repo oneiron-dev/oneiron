@@ -20,7 +20,7 @@ mod tests;
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, append_context_receipt_fields, append_pack_manifest_fields,
-    eiri_memory_board_state_ref,
+    memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
@@ -96,7 +96,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::attempt_queue::{AttemptId, ManifestEntry, ManifestKind};
 #[cfg(test)]
-use crate::eiri::EiriMemoryBoard;
+use crate::context_board::MemoriesSection;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

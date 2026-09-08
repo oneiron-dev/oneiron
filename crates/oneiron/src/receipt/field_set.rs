@@ -12,7 +12,7 @@ use super::kernel::{
 #[cfg(doc)]
 use super::kernel::ReceiptKind;
 use crate::attempt_queue::{ManifestEntry, ManifestKind};
-use crate::eiri::EiriMemoryBoard;
+use crate::context_board::MemoriesSection;
 use crate::error::{Error, Result};
 use crate::prompt::PromptRecompileStamp;
 
@@ -43,8 +43,8 @@ pub struct ContextReceiptFields {
     /// The claim/summary entity ids actually placed in context this emit,
     /// in board row order.
     pub activated_memory_ids: Vec<String>,
-    /// Content-hash ref of the Eiri activated-memories board
-    /// ([`EiriMemoryBoard`]) at emit — a distinct surface from the
+    /// Content-hash ref of the activated MEMORIES section
+    /// ([`MemoriesSection`]) at emit — a distinct surface from the
     /// `[CONTEXT_BOARD]` render block, which is never hashed here.
     pub board_state_ref: String,
     /// Provenance join: ref of the MODEL substrate entity in effect.
@@ -73,17 +73,17 @@ impl ContextReceiptFields {
     ///
     /// `persona_compile_stamp` records the compile id of the resolved
     /// standing-block prompt in effect; `activated_memory_ids` and
-    /// `board_state_ref` record the Eiri activated-memories board
-    /// ([`EiriMemoryBoard`]) as shown — not the `[CONTEXT_BOARD]` render
+    /// `board_state_ref` record the activated MEMORIES section
+    /// ([`MemoriesSection`]) as shown — not the `[CONTEXT_BOARD]` render
     /// block, which is a distinct surface.
-    pub fn from_assembly(persona: &PromptRecompileStamp, board: &EiriMemoryBoard) -> Result<Self> {
+    pub fn from_assembly(persona: &PromptRecompileStamp, board: &MemoriesSection) -> Result<Self> {
         Ok(Self {
             persona_compile_stamp: format!(
                 "{}:{}",
                 persona.schema_version, persona.resolved_fingerprint
             ),
             activated_memory_ids: board.rows.iter().map(|row| row.id.clone()).collect(),
-            board_state_ref: eiri_memory_board_state_ref(board)?,
+            board_state_ref: memories_state_ref(board)?,
             substrate_ref: None,
             model: None,
             reasoning_effort: None,
@@ -160,14 +160,14 @@ impl ContextReceiptFields {
     }
 }
 
-/// Computes the content-hash ref of the Eiri activated-memories board
-/// ([`EiriMemoryBoard`]) — a distinct surface from the `[CONTEXT_BOARD]`
+/// Computes the content-hash ref of the activated MEMORIES section
+/// ([`MemoriesSection`]) — a distinct surface from the `[CONTEXT_BOARD]`
 /// render block, which is never hashed here.
 ///
 /// The ref covers the board as shown (rows, scores, budget, companion), so
 /// any drift in retrieval output produces a different ref while already
 /// recorded receipts keep the ref captured at their emit.
-pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> Result<String> {
+pub fn memories_state_ref(board: &MemoriesSection) -> Result<String> {
     let bytes = rmp_serde::to_vec_named(board)
         .map_err(|_| Error::InvariantViolation("context board state ref encode failed"))?;
     Ok(format!(

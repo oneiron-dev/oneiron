@@ -5,29 +5,29 @@ use super::*;
 #[test]
 fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&vault, test_id(0xBE), &data)?;
     let policy = resolve(&vault)?;
     let signed_auto_frontier = policy.read_frontier_hash()?;
 
     assert_eq!(policy.signatures().len(), 1);
     assert_eq!(
-        policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+        policy.actor_ceiling("agent", Some(&first_party_connector_actor_ref())),
         PolicyApprovalCeiling::Auto
     );
 
     let (_revoked_tmp, revoked_vault) = temp_vault();
-    let mut revoked_data = encode_first_party_eiri_default_policy_manifest();
+    let mut revoked_data = encode_first_party_default_policy_manifest();
     append_actor_ceiling(
         &mut revoked_data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "proposed"),
     );
     put_policy_manifest_bytes(&revoked_vault, test_id(0xBF), &revoked_data)?;
     let revoked_policy = resolve(&revoked_vault)?;
 
     assert_eq!(revoked_policy.signatures().len(), 1);
     assert_eq!(
-        revoked_policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+        revoked_policy.actor_ceiling("agent", Some(&first_party_connector_actor_ref())),
         PolicyApprovalCeiling::Proposed
     );
     assert_ne!(signed_auto_frontier, revoked_policy.read_frontier_hash()?);

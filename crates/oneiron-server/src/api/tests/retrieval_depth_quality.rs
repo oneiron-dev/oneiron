@@ -563,7 +563,7 @@ fn retrieval_quality_server_scope_projection_preserves_degradation() {
     );
     let (_dir, server) = test_server();
     let evidence = core_context_pack_evidence(&server.vault, None).expect("empty evidence");
-    let response = core_context_pack_response(pack, evidence, None, None, None, None);
+    let response = core_context_pack_response(pack, evidence, None);
     let wire = serde_json::to_value(response).expect("context JSON");
     assert_eq!(wire["quality"], "degraded");
     assert_eq!(wire["degradation"], json!(["ppr_cache_miss"]));

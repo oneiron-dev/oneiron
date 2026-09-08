@@ -72,11 +72,17 @@ max_frame_size = 4194304
 max_update_payload = 2097152
 max_messages_per_sec = 200
 dict_search_paths = ["~/.local/share/oneiron/dicts"]
+assistant_display_names = ["mira"]
 ```
 
 Environment overrides use `ONEIRON_` names, for example
-`ONEIRON_PORT`, `ONEIRON_AUTH_SECRET`, `ONEIRON_ALLOWED_ORIGINS`, and
-`ONEIRON_DICT_SEARCH_PATHS`.
+`ONEIRON_PORT`, `ONEIRON_AUTH_SECRET`, `ONEIRON_ALLOWED_ORIGINS`,
+`ONEIRON_DICT_SEARCH_PATHS`, and `ONEIRON_ASSISTANT_DISPLAY_NAMES`.
+
+`assistant_display_names` (flag `--assistant-display-names`, comma-separated)
+lists the host's assistant voice names. Stored turns spoken under one of those
+names count as assistant turns during consolidation, beside the generic
+`assistant`, `agent`, `ai`, and `model` speakers. The default is empty.
 
 ## CJK Dictionaries
 

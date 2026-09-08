@@ -112,8 +112,10 @@ pub(super) fn mint_extracted_people(
                     break;
                 }
                 let facts = read_turn_facts_in_txn(vault, txn, &turn)?;
-                if !dreamer_extraction_role_admissible(dreamer_turn_role(facts.speaker.as_deref()))
-                {
+                if !dreamer_extraction_role_admissible(dreamer_turn_role(
+                    facts.speaker.as_deref(),
+                    &vault.config.assistant_display_names,
+                )) {
                     admissible = false;
                     break;
                 }

@@ -145,7 +145,7 @@ fn corpus_inputs(corpus: &[(&'static str, &'static str, bool)]) -> Vec<Prefilter
             bytes[1] = u8::try_from(ordinal).expect("corpus ordinal fits a byte");
             let turn = WorkingSetTurn {
                 turn_id: EntityId::from_bytes(bytes).expect("fixture turn id"),
-                role: dreamer_turn_role(Some(speaker)),
+                role: dreamer_turn_role(Some(speaker), &[]),
                 learned_at: 2_000 + ordinal as u64,
                 conversation: None,
             };
@@ -171,7 +171,7 @@ fn score_is_bounded_and_the_default_threshold_keeps_everything() {
         let verdict = prefilter_turn(
             &config,
             text,
-            dreamer_turn_role(Some(speaker)),
+            dreamer_turn_role(Some(speaker), &[]),
             &known,
             &window,
         );

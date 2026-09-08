@@ -21,7 +21,7 @@ fn precommit_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
     ]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
     Ok((tmp, vault))
@@ -66,7 +66,7 @@ fn attempt_precommit_write(
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         vault,
         body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         PRECOMMIT_RUN_ID,
     )?;
     vault
@@ -856,7 +856,7 @@ fn dreamer_detector_envelope(
     provenance: Value,
 ) -> Result<WriteEnvelope> {
     Ok(WriteEnvelope::new(
-        WriteActor::new(first_party_eiri_connector_actor_id(), actor_class),
+        WriteActor::new(first_party_connector_actor_id(), actor_class),
         source,
         WriteProvenance::new(provenance)?,
         ClaimApprovalStatus::Proposed,
@@ -966,7 +966,7 @@ fn dreamer_write_parts_with_source(
     body: &ClaimBody,
     source: ClaimSource,
 ) -> Result<(ClaimCandidate, WriteEnvelope)> {
-    let actor = first_party_eiri_connector_actor_id();
+    let actor = first_party_connector_actor_id();
     let (candidate, _) = dreamer_claim_candidate_write_parts(vault, body, actor, PRECOMMIT_RUN_ID)?;
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Agent),

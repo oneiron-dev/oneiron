@@ -186,11 +186,10 @@ pub mod secret_lease;
 pub mod secret_manifest;
 pub mod secret_rotation;
 pub mod secret_snapshot;
-// ===== Surfaces & hosts ===== memory facade, Eiri wire types, settings, Context Board, voice
+// ===== Surfaces & hosts ===== memory facade, Context Board wire types, settings, voice
 pub mod agent_inbox_lens;
 pub mod board_verb;
 pub mod context_board;
-pub mod eiri;
 pub mod genui;
 pub mod lens;
 pub mod memory;
@@ -311,6 +310,11 @@ pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
 };
+pub use crate::context_board::{
+    AssembledContext, CompanionAssembly, HydrationBudget, MEMORIES_SECTION_VERSION_V4,
+    MemoriesBudget, MemoriesCursor, MemoriesSection, NotificationItem, SessionContext,
+    UnprocessedItem,
+};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
@@ -350,11 +354,6 @@ pub use crate::dreamer_wake::{
     WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger,
 };
 pub use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind};
-pub use crate::eiri::{
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriSessionRagState, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
-    UnprocessedItem,
-};
 pub use crate::entity_id::{EntityId, parse_presentation_id};
 pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]

@@ -161,13 +161,12 @@ fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
-    ResumeBundle::new(
+fn sample_assembled_context(tokens_used: u64, tokens_limit: u64) -> AssembledContext {
+    AssembledContext::new(
         SessionContext {
             api_version: "v1".to_owned(),
             counts: BTreeMap::from([("16".to_owned(), 1)]),
             last_activity: Some(42),
-            rag_state: EiriSessionRagState::new("default"),
         },
         vec![NotificationItem {
             id: seeded_entity_id(0x2141).to_hex(),
@@ -175,7 +174,9 @@ fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
             body: serde_json::json!({"message": "fresh"}),
         }],
         Vec::new(),
-        ResumeBudget::from_meter(tokens_used, tokens_limit),
+        HydrationBudget::from_meter(tokens_used, tokens_limit),
+        MemoriesCursor::new("default"),
+        None,
     )
 }
 

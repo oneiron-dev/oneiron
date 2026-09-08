@@ -1,56 +1,23 @@
-use super::API_LEVEL;
-use super::check_api_auth;
-use super::current_eiri_session_rag_state;
-use super::is_agent_visible_entity_type;
-use super::validate_eiri_session_id;
+//! Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter.
+
+use super::super::API_LEVEL;
+use super::super::is_agent_visible_entity_type;
 use crate::error::ApiError;
 use crate::server::SyncServer;
-use axum::extract::State;
-use axum::http::HeaderMap;
-use axum::response::Json;
+use oneiron::HydrationBudget;
 use oneiron::NotificationItem;
-use oneiron::ResumeBudget;
-use oneiron::ResumeBundle;
 use oneiron::SessionContext;
 use oneiron::UnprocessedItem;
 use oneiron::registry::ENTITY_TYPE_NOTIFICATION;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
-pub(crate) const RESUME_NOTIFICATION_LIMIT: usize = 128;
+pub(crate) const PREFIX_NOTIFICATION_LIMIT: usize = 128;
 
-pub(crate) const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
+pub(crate) const PREFIX_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 
-/// One-shot read-only companion hydration.
-/// POST /api/companion/resume
-pub(crate) async fn resume(
-    headers: HeaderMap,
-    State(server): State<Arc<SyncServer>>,
-) -> Result<Json<ResumeBundle>, ApiError> {
-    check_api_auth(&headers, &server)?;
-    let caller = resume_caller(&headers);
-    resume_bundle(&server, &caller).await.map(Json)
-}
-
-pub(crate) async fn resume_bundle(
-    server: &SyncServer,
-    caller: &str,
-) -> Result<ResumeBundle, ApiError> {
-    Ok(ResumeBundle::new(
-        resume_session_context(server, caller).await?,
-        pending_notifications(server, caller)?,
-        pending_unprocessed_items(server, caller),
-        current_resume_budget(server),
-    ))
-}
-
-pub(crate) async fn resume_session_context(
-    server: &SyncServer,
-    caller: &str,
-) -> Result<SessionContext, ApiError> {
-    validate_eiri_session_id(caller, "x-oneiron-caller")?;
+pub(crate) async fn session_prefix(server: &SyncServer) -> Result<SessionContext, ApiError> {
     let mut counts = BTreeMap::new();
 
     for entity_type in u8::MIN..=u8::MAX {
@@ -62,9 +29,9 @@ pub(crate) async fn resume_session_context(
             .vault
             .count_entities_by_type(entity_type)
             .inspect_err(|e| {
-                tracing::error!(error = %e, entity_type, "resume session count scan failed");
+                tracing::error!(error = %e, entity_type, "session prefix count scan failed");
             })
-            .map_err(|_| ApiError::internal_server_error("resume session count scan failed"))?;
+            .map_err(|_| ApiError::internal_server_error("session prefix count scan failed"))?;
 
         if count == 0 {
             continue;
@@ -80,16 +47,17 @@ pub(crate) async fn resume_session_context(
             .vault
             .latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])
             .inspect_err(|e| {
-                tracing::error!(error = %e, "resume activity summary failed");
+                tracing::error!(error = %e, "session prefix activity summary failed");
             })
-            .map_err(|_| ApiError::internal_server_error("resume activity summary failed"))?
+            .map_err(|_| {
+                ApiError::internal_server_error("session prefix activity summary failed")
+            })?
     };
 
     Ok(SessionContext {
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
-        rag_state: current_eiri_session_rag_state(&server.vault, caller).await,
     })
 }
 
@@ -103,13 +71,13 @@ pub(crate) fn pending_notifications(
         .vault
         .latest_entity_bodies_by_type(
             ENTITY_TYPE_NOTIFICATION,
-            RESUME_NOTIFICATION_LIMIT,
-            RESUME_NOTIFICATION_SCAN_LIMIT,
+            PREFIX_NOTIFICATION_LIMIT,
+            PREFIX_NOTIFICATION_SCAN_LIMIT,
         )
         .inspect_err(|e| {
-            tracing::error!(error = %e, "resume notification latest scan failed");
+            tracing::error!(error = %e, "pending notification latest scan failed");
         })
-        .map_err(|_| ApiError::internal_server_error("resume notification scan failed"))?;
+        .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
 
     for (id, learned_at, raw_body) in rows {
         let Some(body) = notification_body_json(&raw_body) else {
@@ -138,17 +106,8 @@ pub(crate) fn pending_unprocessed_items(
     Vec::new()
 }
 
-pub(crate) fn current_resume_budget(_server: &SyncServer) -> ResumeBudget {
-    ResumeBudget::from_meter(0, 0)
-}
-
-pub(crate) fn resume_caller(headers: &HeaderMap) -> String {
-    headers
-        .get("x-oneiron-caller")
-        .and_then(|v| v.to_str().ok())
-        .filter(|v| !v.is_empty())
-        .unwrap_or("default")
-        .to_owned()
+pub(crate) fn current_hydration_budget(_server: &SyncServer) -> HydrationBudget {
+    HydrationBudget::from_meter(0, 0)
 }
 
 pub(crate) fn notification_body_json(raw_body: &[u8]) -> Option<Value> {

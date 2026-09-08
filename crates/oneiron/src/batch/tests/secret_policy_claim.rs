@@ -2,13 +2,13 @@
 
 use super::*;
 
-fn first_party_eiri_connector_actor_id() -> Result<EntityId> {
-    EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
-        .map_err(|_| Error::InvariantViolation("invalid first-party Eiri actor fixture id"))
+fn first_party_connector_actor_id() -> Result<EntityId> {
+    EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
+        .map_err(|_| Error::InvariantViolation("invalid first-party actor fixture id"))
 }
 
-fn first_party_eiri_connector_actor_ref() -> String {
-    crate::gate::first_party_eiri_connector_actor_ref()
+fn first_party_connector_actor_ref() -> String {
+    crate::gate::first_party_connector_actor_ref()
 }
 
 const GITHUB_PAT_SECRET_FIXTURE: &[u8] = b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
@@ -170,14 +170,14 @@ fn evidence_entry<'a>(evidence: &'a Value, key: &str) -> &'a Value {
 fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
 
-    let first_party_eiri_actor = first_party_eiri_connector_actor_id()?;
-    let first_party_eiri_actor_ref = first_party_eiri_connector_actor_ref();
+    let first_party_actor = first_party_connector_actor_id()?;
+    let first_party_actor_ref = first_party_connector_actor_ref();
     let policy = {
         let wtxn = vault.store.env.write_txn()?;
         crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?
     };
     assert_eq!(
-        policy.actor_ceiling("agent", Some(&first_party_eiri_actor_ref)),
+        policy.actor_ceiling("agent", Some(&first_party_actor_ref)),
         crate::gate::PolicyApprovalCeiling::Auto
     );
     assert_eq!(policy.signatures().len(), 1);
@@ -186,7 +186,7 @@ fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> R
     let subject = EntityId::now();
     let occurred = test_time_range(1, 1);
     vault.put_entity(
-        &first_party_eiri_actor,
+        &first_party_actor,
         ENTITY_TYPE_PERSON,
         occurred,
         1,
@@ -196,7 +196,7 @@ fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> R
 
     let claim = EntityId::now();
     let envelope = WriteEnvelope::new(
-        WriteActor::new(first_party_eiri_actor, EdgeActorClass::Agent),
+        WriteActor::new(first_party_actor, EdgeActorClass::Agent),
         ClaimSource::ToolOutput,
         WriteProvenance::new(Value::from("fixture"))?,
         ClaimApprovalStatus::Auto,
@@ -277,7 +277,7 @@ fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> R
     assert_eq!(decision.actor_class, "agent");
     assert_eq!(
         decision.actor_ref.as_deref(),
-        Some(first_party_eiri_actor_ref.as_str())
+        Some(first_party_actor_ref.as_str())
     );
 
     let policy_after_write = {

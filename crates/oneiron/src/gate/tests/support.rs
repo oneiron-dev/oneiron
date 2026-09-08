@@ -267,7 +267,7 @@ pub(super) fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<
     out
 }
 
-pub(super) fn encode_first_party_eiri_default_policy_manifest() -> Vec<u8> {
+pub(super) fn encode_first_party_default_policy_manifest() -> Vec<u8> {
     default_policy_manifest()
 }
 
@@ -464,9 +464,8 @@ pub(super) fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> 
     resolve_policy_manifest(&vault.store, &rtxn)
 }
 
-pub(super) fn first_party_eiri_connector_actor_id() -> EntityId {
-    EntityId::from_bytes(FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
-        .expect("first-party Eiri actor fixture id")
+pub(super) fn first_party_connector_actor_id() -> EntityId {
+    EntityId::from_bytes(FIRST_PARTY_CONNECTOR_ACTOR_ID).expect("first-party Eiri actor fixture id")
 }
 
 pub(super) fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {

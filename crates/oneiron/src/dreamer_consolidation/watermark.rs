@@ -493,7 +493,10 @@ fn enumerate_admissible_turns(
             continue;
         }
         let body = decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..]);
-        let role = dreamer_turn_role(body.speaker.as_deref());
+        let role = dreamer_turn_role(
+            body.speaker.as_deref(),
+            &vault.config.assistant_display_names,
+        );
         if !dreamer_extraction_role_admissible(role) {
             continue;
         }

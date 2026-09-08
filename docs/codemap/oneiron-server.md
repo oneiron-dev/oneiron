@@ -40,7 +40,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/campaign.rs` | src | s | 12 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/companion.rs` | src | XL | 75 crate-vis | — | — |
 | `src/api/consumer_usage.rs` | src | m | 10 crate-vis | — | — |
-| `src/api/context_pack.rs` | src | XL | 88 crate-vis | — | — |
+| `src/api/context_board/cursor.rs` | src | s | 13 crate-vis | — | The per-process MEMORIES cursor store, keyed by vault, principal scope and session |
+| `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
+| `src/api/context_board/mod.rs` | src | s | 10 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
+| `src/api/context_board/prefix.rs` | src | s | 10 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
+| `src/api/context_pack.rs` | src | XL | 58 crate-vis | — | — |
 | `src/api/conversations.rs` | src | m | 8 crate-vis | — | — |
 | `src/api/core.rs` | src | L | 65 crate-vis | — | — |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
@@ -76,9 +80,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/memory_reason/render_tests.rs` | test | s | — | — | — |
-| `src/api/openapi.rs` | src | L | 18 crate-vis | — | — |
+| `src/api/openapi.rs` | src | XL | 18 crate-vis | — | — |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
-| `src/api/resume.rs` | src | s | 13 crate-vis | — | — |
 | `src/api/run_tree.rs` | src | m | 27 crate-vis | — | — |
 | `src/api/run_tree/breaker_tests.rs` | test | s | — | — | — |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
@@ -88,7 +91,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/billing_usage.rs` | test | L | — | — | Usage-event runtime debit boundaries, consumer top-up idempotency/validation, usage allowance + breakdowns |
 | `src/api/tests/companion.rs` | test | L | — | — | Companion profile access grants, tiers/missing/stale/refresh reads, register CRUD/retire/end-relationship |
 | `src/api/tests/context_pack_disclosure.rs` | test | L | — | — | Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance |
-| `src/api/tests/context_pack_v4.rs` | test | m | — | — | Context-pack v4 memory-board/session-RAG/companion/assets, session scoping, evidence run-id omission |
+| `src/api/tests/context_pack_v4.rs` | test | m | — | — | Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission |
 | `src/api/tests/contract_snapshots.rs` | test | L | — | — | v1 core OpenAPI/success/error contract fixture snapshots plus generated-OpenAPI spec assertions |
 | `src/api/tests/core_memory_conversations.rs` | test | L | — | — | Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements |
 | `src/api/tests/depth_quality.rs` | test | m | 1 crate-vis | — | — |
@@ -108,7 +111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/support_contract.rs` | test | s | 12 crate-vis | — | Shared contract/OpenAPI projection helpers for the API tests |
 | `src/api/tests/support_mcp.rs` | test | m | 32 crate-vis | — | Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures |
 | `src/api/tests/surface_events.rs` | test | m | — | — | Surface-event submit/replay/receipts, scope enforcement, idempotency + durability, malformed-input mapping |
-| `src/api/tests/surface_routes.rs` | test | m | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, companion resume… |
+| `src/api/tests/surface_routes.rs` | test | m | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
 | `src/api/tests/vad_and_error_mapping.rs` | test | m | — | — | Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix |
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/auth.rs` | src | m | 25 crate-vis | — | HTTP authentication helpers for legacy and `/v1/core` routes |
@@ -204,7 +207,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
 | `tests/it/booking_agent_api.rs` | test | XL | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
-| `tests/it/core_discover.rs` | test | m | — | — | — |
+| `tests/it/core_discover.rs` | test | L | — | — | — |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |

@@ -121,7 +121,7 @@ fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
     let mut data = encode_policy_manifest(entries);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     data
 }
@@ -153,7 +153,7 @@ fn dreamer_parts(
     dreamer_claim_candidate_write_parts(
         vault,
         body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         CHECKER_RUN_ID,
     )
 }
@@ -915,10 +915,7 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         put_policy_manifest_bytes(
             &vault,
             test_id(0x22),
-            &lineage_manifest(
-                Some(CHECKER_REF),
-                Some(first_party_eiri_connector_actor_id()),
-            ),
+            &lineage_manifest(Some(CHECKER_REF), Some(first_party_connector_actor_id())),
         )?;
         let claim_id = test_id(0x33);
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
@@ -1029,10 +1026,7 @@ fn source_aware_checker_holds_tool_output_history_with_observed_declaration() ->
     put_policy_manifest_bytes(
         &vault,
         test_id(0x22),
-        &lineage_manifest(
-            Some(CHECKER_REF),
-            Some(first_party_eiri_connector_actor_id()),
-        ),
+        &lineage_manifest(Some(CHECKER_REF), Some(first_party_connector_actor_id())),
     )?;
     let claim_id = test_id(0x33);
     let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
@@ -1135,7 +1129,7 @@ fn lineage_checker_exclusions_keep_ordinary_allow() -> Result<()> {
         let actor = if human {
             test_id(0x20)
         } else {
-            first_party_eiri_connector_actor_id()
+            first_party_connector_actor_id()
         };
         put_policy_manifest_bytes(&vault, test_id(0x22), &lineage_manifest(knob, Some(actor)))?;
         let claim_id = test_id(0x33);
