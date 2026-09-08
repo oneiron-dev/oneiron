@@ -12195,65 +12195,41 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AutoCheckCandidate",
       "AutoCheckCandidateOwned",
       "AutoCheckOutcome",
       "AutoChecker",
-      "BoundedAutoChecker",
-      "BudgetDenied",
-      "BudgetLease",
-      "CallClass",
-      "CallEnvelope",
-      "CallPurpose",
-      "ContentPart",
-      "DeterministicFallback",
-      "FatalLlmError",
-      "FinishReason",
-      "ImageContent",
-      "LlmBackend",
-      "LlmCapability",
-      "LlmCatalogCost",
-      "LlmCatalogEntry",
-      "LlmError",
-      "LlmInputUsage",
-      "LlmMessage",
-      "LlmMessageRole",
-      "LlmOutputUsage",
-      "LlmRequest",
-      "LlmResponse",
-      "LlmRole",
-      "LlmStream",
-      "LlmStreamEvent",
-      "LlmToolSpec",
-      "LlmUsage",
-      "ModelId",
-      "ModelIdError",
-      "ModelLocality",
-      "ModelTierRef",
-      "PinnedConfigViolation",
-      "PinnedModelConfig",
-      "ReasoningEffort",
-      "ResponseFormat",
-      "RetryableLlmError",
-      "RoleModelDefaults",
-      "SafeguardModelBinding",
-      "SafeguardModelBindingError",
-      "TierPrecedence",
-      "UnsupportedCapability"
+      "BoundedAutoChecker"
      ],
-     "path": "src/llm.rs",
-     "purpose": "Engine-facing LLM invocation seam",
+     "path": "src/llm/autocheck.rs",
+     "purpose": "Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 5,
-      "enum": 21,
-      "fn": 35,
-      "re-export": 2,
-      "struct": 22,
-      "trait": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetLease",
+      "LlmBackend",
+      "LlmStream"
+     ],
+     "path": "src/llm/backend.rs",
+     "purpose": "Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1,
       "type": 3
      }
     },
@@ -12315,6 +12291,133 @@
      "path": "src/llm/budget/tests/request_usage.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallClass",
+      "CallEnvelope",
+      "CallPurpose",
+      "DeterministicFallback",
+      "LlmRole",
+      "ModelLocality",
+      "ModelTierRef",
+      "PinnedConfigViolation",
+      "PinnedModelConfig",
+      "ResponseFormat",
+      "RoleModelDefaults",
+      "TierPrecedence"
+     ],
+     "path": "src/llm/call.rs",
+     "purpose": "Per-call description: envelope, pin admission, role defaults, tier precedence, response format, and locality",
+     "surface": {
+      "enum": 6,
+      "fn": 11,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LlmCapability",
+      "LlmCatalogCost",
+      "LlmCatalogEntry",
+      "ReasoningEffort"
+     ],
+     "path": "src/llm/catalog.rs",
+     "purpose": "Capability catalog: flags, entries with supports/require, costs, and reasoning effort",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetDenied",
+      "FatalLlmError",
+      "LlmError",
+      "RetryableLlmError",
+      "UnsupportedCapability"
+     ],
+     "path": "src/llm/error.rs",
+     "purpose": "Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail",
+     "surface": {
+      "enum": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/mod.rs",
+     "purpose": "Engine-facing LLM invocation seam",
+     "surface": {
+      "crate-vis": 4,
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelId",
+      "ModelIdError"
+     ],
+     "path": "src/llm/model_id.rs",
+     "purpose": "Validated provider/name@revision model identifier with segment checks and shared constructors",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContentPart",
+      "FinishReason",
+      "ImageContent",
+      "LlmInputUsage",
+      "LlmMessage",
+      "LlmMessageRole",
+      "LlmOutputUsage",
+      "LlmRequest",
+      "LlmResponse",
+      "LlmStreamEvent",
+      "LlmToolSpec",
+      "LlmUsage"
+     ],
+     "path": "src/llm/protocol.rs",
+     "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 4,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SafeguardModelBinding",
+      "SafeguardModelBindingError"
+     ],
+     "path": "src/llm/safeguard.rs",
+     "purpose": "Safeguard-classifier binding selector with parsing, display, serde, and tier/model projections",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 5
+     }
     },
     {
      "bucket": "s",
@@ -20937,10 +21040,10 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 17,
+     "files": 25,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "L",
+     "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
     "m8_forward_oracle": {
@@ -21462,9 +21565,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 92,
+   "over_bar": 91,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1087,
+   "source_files": 1095,
    "test_files": 518
   },
   "oneiron-bench": {
