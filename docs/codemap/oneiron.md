@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `benches/sync_memory.rs` | src | m | — | — | yrs memory benchmark for Oneiron sync GO/NO-GO gate |
 | `examples/provision_imessage_identity.rs` | src | s | — | — | Operator door that provisions the ACTIVE, agent-bound `imessage_self_host_bridge` receiving identity a… |
-| `src/access_grant.rs` | src | m | 2 struct · 3 enum · 24 fn · 2 const · 9 crate-vis | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant control-plane record substrate |
+| `src/access_grant.rs` | src | L | 2 struct · 3 enum · 24 fn · 2 const · 9 crate-vis | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant control-plane record substrate |
 | `src/access_grant/tests.rs` | test | m | — | — | — |
 | `src/actor_claims.rs` | src | XL | 5 struct · 2 enum · 1 trait · 13 fn · 12 const · 6 crate-vis | ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind, SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
 | `src/actor_claims/tests.rs` | test | L | — | — | — |
@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch.rs` | src | XL | 8 struct · 5 enum · 16 fn · 7 const · 1 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, AttenuatedDispatchTarget, DispatchAgent +5 | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `src/agent_dispatch/tests.rs` | test | XL | — | — | AGENT-3 (ONE-1445) tests, mapped 1:1 to the brief's acceptance criteria: snapshot round-trip, system-preset… |
 | `src/agent_inbox_lens.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 const | AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, InboxImpact | Renderer-neutral inbox query |
-| `src/agent_inbox_lens/tests.rs` | test | s | — | — | — |
+| `src/agent_inbox_lens/tests.rs` | test | m | — | — | — |
 | `src/agent_run_status.rs` | src | s | 1 struct · 2 enum · 8 fn · 3 const | AgentRunStatus, ExecutorTerminalCause, InvalidAgentRunStatusTransition | AgentRunStatus contract shared by Context Board and run-tree viewers |
 | `src/analyzer/chinese.rs` | src | m | 2 struct · 1 enum · 10 fn · 2 const | CharByteTable, ChineseAnalyzer, DictLoadError | Chinese analyzer |
 | `src/analyzer/cjk_ngram.rs` | src | m | 1 fn · 1 crate-vis | — | Script-safe CJK n-gram generator |
@@ -163,7 +163,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/lifecycle_public.rs` | src | s | 1 crate-vis | — | Transactional public authority check for all four lifecycle mutations |
 | `src/booking/mod.rs` | src | s | 13 mod · 10 re-export | — | Engine-generic booking module |
 | `src/booking/public_lens.rs` | src | m | 6 struct · 2 enum · 8 fn · 1 const · 1 crate-vis | BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard, PublicBookingAction, PublicBookingPageToken, ThemeTokens | Public booking model and projection onto the existing lens atom kit |
-| `src/booking/publication.rs` | src | s | 2 struct · 4 fn · 2 const · 2 re-export · 3 crate-vis | BookingPagePublication, PublicBookingAvailability | Owner-controlled public booking publication on the ordinary claim store |
+| `src/booking/publication.rs` | src | m | 2 struct · 4 fn · 2 const · 2 re-export · 3 crate-vis | BookingPagePublication, PublicBookingAvailability | Owner-controlled public booking publication on the ordinary claim store |
 | `src/booking/publication/mutation.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | PublicBookingAuthority | Snapshot carried by public attempts, rechecked by the lifecycle writer |
 | `src/booking/publication/regressions.rs` | src | m | — | — | — |
 | `src/booking/publication/tests.rs` | test | m | — | — | — |
@@ -210,8 +210,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity/tests.rs` | test | m | — | — | — |
 | `src/channel_identity/tests/codec.rs` | test | m | — | — | — |
 | `src/channel_identity/tests/subject_binding.rs` | test | s | — | — | — |
-| `src/channel_identity_autonomy.rs` | src | m | 11 struct · 2 enum · 16 fn · 6 const · 6 crate-vis | ChannelIdentityActionEnvelope, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung, ChannelIdentityAutonomyState, ChannelIdentityEffectCandidate, ChannelIdentityGrantWindowUsage, DraftReviewOutcome +5 | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
-| `src/channel_identity_autonomy/tests.rs` | test | m | — | — | — |
+| `src/channel_identity_autonomy.rs` | src | L | 11 struct · 2 enum · 16 fn · 6 const · 6 crate-vis | ChannelIdentityActionEnvelope, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung, ChannelIdentityAutonomyState, ChannelIdentityEffectCandidate, ChannelIdentityGrantWindowUsage, DraftReviewOutcome +5 | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
+| `src/channel_identity_autonomy/tests.rs` | test | XL | — | — | — |
 | `src/channel_identity_lifecycle.rs` | src | m | 10 struct · 3 enum · 8 fn · 1 crate-vis | BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent, ChannelIdentityLifecyclePolicyRisk, ChannelIdentityLifecycleRequest, ChannelIdentityLifecycleResult +5 | ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2) |
 | `src/channel_identity_lifecycle/tests.rs` | test | m | — | — | — |
 | `src/channel_identity_manifest.rs` | src | m | 4 struct · 4 enum · 9 fn · 1 const | ChannelIdentityCapabilityMatrix, ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError, ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities, ChannelIdentityReputationSignal | Channel identity capability manifests (OF-347 CID-4) |
@@ -954,7 +954,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/safeguard.rs` | src | s | 3 struct · 7 fn | SafeguardRequest, SentenceEnforcement, SentenceWork | Correlated sentence work |
 | `src/voice_cascade/session.rs` | src | m | 3 struct · 1 enum · 17 fn · 1 re-export | AsrUpdate, SafeguardUpdate, VoiceCascadeSession, VoiceSessionConfig | Session transitions only |
 | `src/voice_cascade/tests.rs` | test | m | — | — | Authored source-only in the bounded phase |
-| `src/voice_cascade/tests/preparation.rs` | test | s | — | — | — |
+| `src/voice_cascade/tests/preparation.rs` | test | m | — | — | — |
 | `src/voice_cascade/tests/retrieval.rs` | test | s | — | — | — |
 | `src/voice_cascade/tests/safeguard.rs` | test | m | — | — | — |
 | `src/voice_cascade/tests/session.rs` | test | m | — | — | — |

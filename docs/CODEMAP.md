@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Embedded retrieval engine for memory-first applications | 691 | 361 | 156 |
+| [oneiron](codemap/oneiron.md) | Embedded retrieval engine for memory-first applications | 691 | 361 | 158 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 41 | 11 | 3 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 4 | 2 | 2 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 2 | 0 | 1 |
@@ -31,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | impl Vault | purpose |
 |---|---|---|---|---|---|
-| `access_grant` | file+dir | 2 | m | yes | AccessGrant control-plane record substrate |
+| `access_grant` | file+dir | 2 | L | yes | AccessGrant control-plane record substrate |
 | `actor_claims` | file+dir | 2 | XL | — | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
 | `affect` | file+dir | 2 | XL | yes | — |
 | `agent_def` | file+dir | 2 | XL | yes | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
@@ -54,7 +54,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `calendar` | dir | 19 | XL | — | Calendar module home (CAL-00) |
 | `campaign` | file+dir | 11 | XL | — | CRM pack engine-side registration home |
 | `channel_identity` | file+dir | 6 | XL | yes | ChannelIdentity record substrate (OF-347 CID-1) |
-| `channel_identity_autonomy` | file+dir | 2 | m | yes | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
+| `channel_identity_autonomy` | file+dir | 2 | L | yes | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
 | `channel_identity_lifecycle` | file+dir | 2 | m | yes | ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2) |
 | `channel_identity_manifest` | file | 1 | m | — | Channel identity capability manifests (OF-347 CID-4) |
 | `channel_identity_provider` | file+dir | 3 | XL | — | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
@@ -307,7 +307,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `server` | file+dir | 2 | L | — |
 | `skills_pack` | file | 1 | s | — |
 | `usage` | file+dir | 2 | L | — |
-| `voice_host` | dir | 6 | s | Private voice request adapter, not an audio/provider scheduler |
+| `voice_host` | dir | 6 | m | Private voice request adapter, not an audio/provider scheduler |
 
 ## oneiron-uniffi
 

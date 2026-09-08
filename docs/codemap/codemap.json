@@ -19,7 +19,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AccessGrant",
@@ -207,7 +207,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/agent_inbox_lens/tests.rs",
@@ -2081,7 +2081,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BookingPagePublication",
@@ -2897,7 +2897,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ChannelIdentityActionEnvelope",
@@ -2925,7 +2925,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/channel_identity_autonomy/tests.rs",
@@ -13426,7 +13426,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/preparation.rs",
@@ -14472,7 +14472,7 @@
     "access_grant": {
      "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "AccessGrant control-plane record substrate"
     },
@@ -14633,7 +14633,7 @@
     "channel_identity_autonomy": {
      "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation"
     },
@@ -15716,7 +15716,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 156,
+   "over_bar": 158,
    "purpose": "Embedded retrieval engine for memory-first applications",
    "source_files": 691,
    "test_files": 361
@@ -18384,7 +18384,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EnrichmentWork",
@@ -18418,7 +18418,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/voice_host/tests.rs",
@@ -18659,7 +18659,7 @@
     "voice_host": {
      "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
