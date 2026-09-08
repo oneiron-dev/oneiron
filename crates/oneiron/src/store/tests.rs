@@ -692,8 +692,8 @@ fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<(
 /// the primary-gate-decision guard above uses.
 #[test]
 fn the_pending_consent_tray_validates_against_its_own_version() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/pending_gate_consent.rs");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/store/pending_gate_consent/records.rs");
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
     let start = src
