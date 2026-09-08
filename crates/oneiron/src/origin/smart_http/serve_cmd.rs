@@ -47,7 +47,7 @@ impl ServeRequest {
     /// Whether this request is the smart-HTTP ref advertisement.
     ///
     /// This is the ONE response that carries a ref list, and therefore the one
-    /// response [`Vault::published_origin_refs`] gates.
+    /// response [`Vault::published_origin_refs`](crate::Vault::published_origin_refs) gates.
     #[must_use]
     pub fn is_ref_advertisement(&self) -> bool {
         self.method.eq_ignore_ascii_case("GET")

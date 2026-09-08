@@ -85,7 +85,7 @@ impl Vault {
     /// lock in the git common directory that every queued repo mutation and
     /// every GitWire ref effect also take — so the origin's receive-pack is the
     /// single writer and no queued mutation can interleave with it. Served
-    /// through [`serve`] the guard is already held for the whole mutation
+    /// through [`serve`](super::serve()) the guard is already held for the whole mutation
     /// window and this acquisition is the re-entrant depth bump; called
     /// directly (a replay, a recovery) it is the acquisition itself. Either way
     /// the landing never runs without it.

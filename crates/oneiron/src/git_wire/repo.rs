@@ -35,7 +35,7 @@ impl GitWireRepoIdentity {
 /// have all been proven to agree.
 ///
 /// There is no field constructor: the only way to obtain one is
-/// [`GitWire::open_repo`], which performs the proof.
+/// [`GitWire::open_repo`](crate::git_wire::GitWire::open_repo), which performs the proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitWireRepo {
     pub(super) repo_ref: RepoRef,
