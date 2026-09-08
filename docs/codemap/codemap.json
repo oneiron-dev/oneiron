@@ -1984,16 +1984,162 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BookingConfirmationContext"
+     ],
+     "path": "src/booking/lifecycle/claim.rs",
+     "purpose": "Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/confirmation_state.rs",
+     "purpose": "The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BookingLifecycleConsumerInput",
+      "BookingLifecycleTurn",
+      "BookingOracleRequest"
+     ],
+     "path": "src/booking/lifecycle/door.rs",
+     "purpose": "The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run…",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/emergency.rs",
+     "purpose": "BK-09's emergency-reschedule transitions: the home-node guard, the durable pick row, and the commit that…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultActiveHoldSource"
+     ],
+     "path": "src/booking/lifecycle/hold_source.rs",
+     "purpose": "The vault-backed [`ActiveHoldSource`] the solver asks for live holds, with the self-exclusion a confirm needs",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/mod.rs",
+     "purpose": "ONE-1813 [BK-02] booking lifecycle verbs",
+     "surface": {
+      "crate-vis": 13,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/occurrence.rs",
+     "purpose": "Interval algebra between the engine's inclusive [`TimeRange`] and the half-open convention the solver and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/passport.rs",
+     "purpose": "The outbound calendar passport written at sequence 0 and superseded by reschedule and cancel",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/public_authority.rs",
+     "purpose": "Transactional public authority check for all four lifecycle mutations",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/storage.rs",
+     "purpose": "The single-writer lease and the vault_meta/receipt key-value primitives, the versioned row codec, the…",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/lifecycle/tests.rs",
+     "purpose": "Crate-internal invariants",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HoldLeaseSpec",
+      "OpaqueCheckoutLeaseToken",
+      "OpaqueLifecycleToken",
+      "SessionKey"
+     ],
+     "path": "src/booking/lifecycle/token.rs",
+     "purpose": "Opaque bearer credentials and session keys: minting, domain-separated digests, and the token/hold row reads…",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/lifecycle/transition.rs",
+     "purpose": "The four ordinary transitions inside the writer lease: hold, confirm, reschedule, cancel",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BookingBookerContactValue",
-      "BookingConfirmationContext",
       "BookingEventTypeRefValue",
       "BookingLifecycleAttempt",
-      "BookingLifecycleConsumerInput",
-      "BookingLifecycleTurn",
-      "BookingOracleRequest",
       "BookingSourcePageValue",
       "BookingStatus",
       "BookingStatusValue",
@@ -2004,46 +2150,21 @@
       "CancelSpec",
       "ConfirmReceipt",
       "ConfirmSpec",
-      "HoldLeaseSpec",
       "HoldReceipt",
       "HoldSpec",
       "LifecycleTokenScope",
-      "OpaqueCheckoutLeaseToken",
-      "OpaqueLifecycleToken",
       "RescheduleSpec",
       "RevisionReceipt",
-      "SessionKey",
-      "SoftHoldRow",
-      "VaultActiveHoldSource"
+      "SoftHoldRow"
      ],
-     "path": "src/booking/lifecycle.rs",
-     "purpose": "ONE-1813 [BK-02] booking lifecycle verbs",
+     "path": "src/booking/lifecycle/types.rs",
+     "purpose": "The lifecycle's domain types: pinned constants and predicates, the verb enum, the request specs, the hold…",
      "surface": {
       "const": 13,
-      "crate-vis": 28,
-      "enum": 7,
-      "fn": 19,
-      "struct": 21
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/booking/lifecycle/confirmation_state.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/booking/lifecycle_public.rs",
-     "purpose": "Transactional public authority check for all four lifecycle mutations",
-     "surface": {
-      "crate-vis": 1
+      "crate-vis": 6,
+      "enum": 5,
+      "fn": 5,
+      "struct": 14
      }
     },
     {
@@ -2166,13 +2287,85 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/branch_store_oracle.rs",
+     "path": "src/branch_store_oracle/mod.rs",
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/seam/binding.rs",
+     "purpose": "Seam: error mappers, crash/reopen, job/taint/scoped-read probes, executor binding-mismatch and route-flip…",
      "surface": {
-      "crate-vis": 67
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/seam/mod.rs",
+     "purpose": "Thinnest plausible seam for the machinery the arming tickets own; the oracle tests reach it through these…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/seam/session.rs",
+     "purpose": "Seam: the session handle — `SessionVault` enter/bind/witness/stage/search/close/promote — and the typed…",
+     "surface": {
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/seam/substrate.rs",
+     "purpose": "Seam: executor verbs on the session handle, the overlay-vs-model harness, and the…",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/tests_executor.rs",
+     "purpose": "P4b ONE-1729 executor-binding tests: effect-level policy survives the binding, mid-run flips and stale…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/tests_leak_sweep.rs",
+     "purpose": "P3 ONE-1727 session-lifecycle tests and the P4a ONE-1728 reader-visibility, embedding-rule and taint-guard…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/tests_promote.rs",
+     "purpose": "P5 ONE-1730 promote tests, the P6 ONE-1731 fence-symbol census and the P7 ONE-1732 storage-ABI gate",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/branch_store_oracle/tests_substrate.rs",
+     "purpose": "Oracle fixtures (temp vault, base turn, zero-residue census) and the P2 ONE-1726 SessionOverlay substrate…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -3749,22 +3942,12 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "AskRequest",
-      "AskResponse",
-      "CloudVaultReadAdapter",
-      "CodeExecuteRequest",
-      "CodeExecuteResponse",
-      "CodeSearchRequest",
-      "CodeSearchResponse",
       "ContextPackBudgetControls",
       "ContextPackDepthControls",
       "ContextPackRetrievalBudgetControls",
-      "CoreBatchShortIdHydrateItem",
-      "CoreBatchShortIdHydrateRequest",
-      "CoreBatchShortIdHydrateResponse",
       "CoreContextPackAccounting",
       "CoreContextPackAccountingReason",
       "CoreContextPackEdgeProvenance",
@@ -3780,7 +3963,145 @@
       "CoreContextPackSignal",
       "CoreContextPackStats",
       "CoreContextPackTokenStats",
-      "CoreContextPackVad",
+      "CoreContextPackVad"
+     ],
+     "path": "src/code_run/vault_read/context_pack.rs",
+     "purpose": "Context-pack request controls, record shapes, stats and projection types",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultReadAdapterKind",
+      "VaultReadAvailability",
+      "VaultReadClient",
+      "VaultReadMethod",
+      "VaultReadMethodMapping",
+      "VaultReadRequest",
+      "VaultReadResponse",
+      "VaultReadWireOp"
+     ],
+     "path": "src/code_run/vault_read/contract.rs",
+     "purpose": "The one declarative contract table and every surface the macro generates from it",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "enum": 6,
+      "fn": 8,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/vault_read/dispatch.rs",
+     "purpose": "The one validated dispatch path: runtime stop, validation, then the sealed backend call",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultReadError"
+     ],
+     "path": "src/code_run/vault_read/error.rs",
+     "purpose": "The vault-read error vocabulary and its stable engine codes",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InProcessVaultReadAdapter"
+     ],
+     "path": "src/code_run/vault_read/in_process.rs",
+     "purpose": "The in-process adapter: scoped reads against a live vault plus retrieval-budget control",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/vault_read/mod.rs",
+     "purpose": "One Rust vault-read contract whose behavior does not change with deployment topology (ONE-1433)",
+     "surface": {
+      "crate-vis": 4,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/vault_read/projection.rs",
+     "purpose": "Turning vault-side records into the contract's response shapes",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CloudVaultReadAdapter",
+      "WireTransport",
+      "WireTransportVaultReadAdapter"
+     ],
+     "path": "src/code_run/vault_read/remote.rs",
+     "purpose": "Transport-injected and cloud adapters over the same validated dispatch",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_run/vault_read/tests.rs",
+     "purpose": "Contract, validation, projection and adapter tests for the vault-read module",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_run/vault_read/tests/regressions.rs",
+     "purpose": "Regressions for request policy freshness, wire identity, opaque bodies and post-filter durable trace…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AskRequest",
+      "AskResponse",
+      "CodeExecuteRequest",
+      "CodeExecuteResponse",
+      "CodeSearchRequest",
+      "CodeSearchResponse",
+      "CoreBatchShortIdHydrateItem",
+      "CoreBatchShortIdHydrateRequest",
+      "CoreBatchShortIdHydrateResponse",
       "CoreEntityRecord",
       "CoreHydrateRequest",
       "CoreHydrateResponse",
@@ -3793,39 +4114,27 @@
       "CoreQueryResponse",
       "CoreShortIdHydrateOutcome",
       "CountMode",
-      "InProcessVaultReadAdapter",
-      "VaultReadAdapterKind",
-      "VaultReadAvailability",
-      "VaultReadClient",
-      "VaultReadError",
-      "VaultReadMethod",
-      "VaultReadMethodMapping",
-      "VaultReadRequest",
-      "VaultReadResponse",
-      "VaultReadWireOp",
-      "View",
-      "WireTransport",
-      "WireTransportVaultReadAdapter"
+      "View"
      ],
-     "path": "src/code_run/vault_read.rs",
-     "purpose": "One Rust vault-read contract whose behavior does not change with deployment topology (ONE-1433)",
+     "path": "src/code_run/vault_read/types.rs",
+     "purpose": "Query, hydrate, timeline and runtime-deferred request/response shapes",
      "surface": {
-      "const": 4,
-      "crate-vis": 5,
-      "enum": 14,
-      "fn": 12,
-      "struct": 38,
-      "trait": 2,
-      "type": 1
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 1,
+      "struct": 18
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
-     "path": "src/code_run/vault_read/tests/regressions.rs",
-     "purpose": "Regressions for request policy freshness, wire identity, opaque bodies and post-filter durable trace…",
-     "surface": {}
+     "path": "src/code_run/vault_read/validate.rs",
+     "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "L",
@@ -3985,7 +4294,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ClaimClassDescriptorRow",
@@ -3996,15 +4305,79 @@
       "SendOverrideMatch",
       "SendOverrideScope"
      ],
-     "path": "src/comm.rs",
-     "purpose": "Communication standing-state claims and the ARCH-0035 projector",
+     "path": "src/comm/claims.rs",
+     "purpose": "Claim family predicates, key vocabulary, typed values, body build/parse/validate",
      "surface": {
       "const": 7,
-      "crate-vis": 9,
+      "crate-vis": 8,
       "enum": 5,
-      "fn": 25,
+      "fn": 8,
       "struct": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/consent.rs",
+     "purpose": "Human consent gates, send overrides and standing opt-out folds",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/mod.rs",
+     "purpose": "Communication standing-state claims and the ARCH-0035 projector",
+     "surface": {
+      "crate-vis": 4,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/parties.rs",
+     "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/projection_writes.rs",
+     "purpose": "Deterministic claim ids, idempotent claim writes and standing-state matching",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/projector.rs",
+     "purpose": "Ordered idempotent projector pass and the record verbs that feed it",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/records.rs",
+     "purpose": "COMM_RECORD event/gate/receipt storage, MessagePack codec and shared value helpers",
+     "surface": {
+      "crate-vis": 24
      }
     },
     {
@@ -7290,43 +7663,197 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/argv.rs",
+     "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
+     "surface": {
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/bridge.rs",
+     "purpose": "`repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/checkout.rs",
+     "purpose": "Checkout custody: owned handle directories plus the `CheckoutRepoOps` trait impl",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/config.rs",
+     "purpose": "Every `GIT_WIRE_*` constant: schema, domain, bounds, env baseline, closed config policy",
+     "surface": {
+      "const": 9,
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "GitCommitHeader",
-      "GitCommitRequest",
+      "GitWireProcessEnv"
+     ],
+     "path": "src/git_wire/env.rs",
+     "purpose": "Pinned process baseline: executable resolution, bounds, and the test-only binary override",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitWireFailure",
+      "GitWireFailureClass"
+     ],
+     "path": "src/git_wire/failure.rs",
+     "purpose": "Failure taxonomy and redaction: classified git failures plus the two error-constructor helpers",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GitOid",
       "GitRefExpectation",
       "GitRefName",
       "GitRefPublication",
-      "GitTreeEntry",
-      "GitWire",
-      "GitWireCommitOutcome",
-      "GitWireEffectClass",
-      "GitWireFailure",
-      "GitWireFailureClass",
-      "GitWireObjectWrite",
-      "GitWireOperation",
-      "GitWirePlan",
-      "GitWirePlannedOid",
-      "GitWirePrepared",
-      "GitWireProcessEnv",
-      "GitWireReceipt",
-      "GitWireRecordState",
-      "GitWireRejection",
-      "GitWireRepo",
-      "GitWireRepoIdentity",
       "ObservedGitRef"
      ],
-     "path": "src/git_wire.rs",
+     "path": "src/git_wire/ids.rs",
+     "purpose": "Validated git identity newtypes: ref names, object ids, observations, expectations, publications",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 9,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "const": 9,
-      "crate-vis": 6,
-      "enum": 9,
-      "fn": 77,
-      "struct": 15,
-      "type": 1
+      "crate-vis": 4,
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitCommitHeader",
+      "GitCommitRequest",
+      "GitTreeEntry"
+     ],
+     "path": "src/git_wire/objects.rs",
+     "purpose": "Commit and tree object model: tree entries, commit headers, commit-request bytes, tree parsers",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitWireEffectClass",
+      "GitWireOperation"
+     ],
+     "path": "src/git_wire/operation.rs",
+     "purpose": "Operation enum, effect classes, and the stable wire-name mapping",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitWireObjectWrite",
+      "GitWirePlan",
+      "GitWirePlannedOid"
+     ],
+     "path": "src/git_wire/plan.rs",
+     "purpose": "Two-phase plan assembly: object writes plus the ref publications they authorize",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/process.rs",
+     "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitWireCommitOutcome",
+      "GitWirePrepared",
+      "GitWireReceipt",
+      "GitWireRecordState",
+      "GitWireRejection"
+     ],
+     "path": "src/git_wire/record.rs",
+     "purpose": "Durable journal row: record state machine, key builders, MessagePack codec, stored conversions",
+     "surface": {
+      "crate-vis": 22,
+      "enum": 3,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GitWireRepo",
+      "GitWireRepoIdentity"
+     ],
+     "path": "src/git_wire/repo.rs",
+     "purpose": "Proven repository identity plus the cross-thread, cross-process repository lock",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -7336,6 +7863,64 @@
      "path": "src/git_wire/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/wire_publish.rs",
+     "purpose": "Journaled ref publication: the one transactional path and its finishing rules",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GitWire"
+     ],
+     "path": "src/git_wire/wire_reads.rs",
+     "purpose": "The `GitWire` handle, its constructors, the process seam, and the read path",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 14,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/wire_stage.rs",
+     "purpose": "Two-phase staging: stage, commit-prepared, recovery, and keep-ref naming",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/wire_store.rs",
+     "purpose": "Vault record IO: load, scan, put, drop, and the terminal-state transition",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/wire_worktree.rs",
+     "purpose": "Journaled worktree effects: list, prune, add, remove, and crash-journal settlement",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 5
+     }
     },
     {
      "bucket": "XL",
@@ -8886,37 +9471,223 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/advertise.rs",
+     "purpose": "The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/advertise_tests.rs",
+     "purpose": "Advertisement gate and stock-client roundtrip tests, plus the LFS attach/detach landing tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/cgi_finish.rs",
+     "purpose": "CGI response framing, observed-ref narrowing, and the exchange-to-report landing commit",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DoorAdmissionStamp",
-      "DoorHooksDir",
-      "DoorSeam",
+      "DoorSeam"
+     ],
+     "path": "src/origin/smart_http/door.rs",
+     "purpose": "The door seam: admission stamp, the always-present hook trait with its noop default and landed wiring, and…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/door_serve_tests.rs",
+     "purpose": "Serve command and door tests: closed env/argv, vetted hook, unlandable names, framed blobs, coordinator…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "DoorWindowReport",
-      "DoorWindowVerdict",
+      "DoorWindowVerdict"
+     ],
+     "path": "src/origin/smart_http/door_window.rs",
+     "purpose": "The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ObservedRef",
       "PackStats",
-      "ReceivePackAttribution",
-      "ReceivePackLanding",
       "ReceivePackOutcome",
-      "ReceivePackRefResult",
-      "ReceivePackRefStatus",
-      "RefUpdate",
-      "ServeChild",
-      "ServeCommand",
-      "ServeReport",
-      "ServeRequest",
-      "ServeSink"
+      "RefUpdate"
      ],
-     "path": "src/origin/smart_http.rs",
+     "path": "src/origin/smart_http/evidence.rs",
+     "purpose": "Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the…",
+     "surface": {
+      "crate-vis": 15,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DoorHooksDir"
+     ],
+     "path": "src/origin/smart_http/hooks.rs",
+     "purpose": "The per-request door-owned hook directory and the vetted pre-receive script it carries",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReceivePackRefResult",
+      "ReceivePackRefStatus"
+     ],
+     "path": "src/origin/smart_http/intent.rs",
+     "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/intent_recovery_tests.rs",
+     "purpose": "Crash/recovery contract: pre-outcome crash, declined effects, partial resume, supersede, delete-only…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReceivePackAttribution",
+      "ReceivePackLanding"
+     ],
+     "path": "src/origin/smart_http/landing.rs",
+     "purpose": "The single-writer landing: apply path, per-ref publication fan-out, and wire-outcome mapping",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/landing_lfs.rs",
+     "purpose": "LFS pointer admission and the per-ref tree walk that attaches pointers to the refs that carry them",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/landing_tests.rs",
+     "purpose": "Landing and attribution tests: unauthenticated push, delete-only pin, secret scan, sync-plane silence…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/mod.rs",
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
+      "crate-vis": 1,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/paths.rs",
+     "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
+     "surface": {
       "const": 10,
-      "crate-vis": 6,
-      "enum": 3,
-      "fn": 30,
-      "struct": 14,
+      "crate-vis": 10,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ServeReport",
+      "ServeSink"
+     ],
+     "path": "src/origin/smart_http/serve.rs",
+     "purpose": "One-request orchestration: coordinator lock, reconcile, threaded exchange, finish",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServeChild",
+      "ServeCommand",
+      "ServeRequest"
+     ],
+     "path": "src/origin/smart_http/serve_cmd.rs",
+     "purpose": "The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 12,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/tests.rs",
+     "purpose": "Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin",
+     "surface": {
+      "crate-vis": 24
      }
     },
     {
@@ -12142,7 +12913,7 @@
      "path": "src/subject_model/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -14589,17 +15360,17 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 45,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Engine-generic booking module"
     },
     "branch_store_oracle": {
-     "files": 1,
+     "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "build_cache": {
@@ -14708,9 +15479,9 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 12,
+     "files": 22,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
@@ -14736,10 +15507,10 @@
      "purpose": "—"
     },
     "comm": {
-     "files": 4,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector"
     },
     "commitment": {
@@ -15079,10 +15850,10 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 2,
+     "files": 20,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)"
     },
     "graph_fs": {
@@ -15240,7 +16011,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 4,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -15716,10 +16487,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 158,
+   "over_bar": 152,
    "purpose": "Embedded retrieval engine for memory-first applications",
-   "source_files": 691,
-   "test_files": 361
+   "source_files": 754,
+   "test_files": 368
   },
   "oneiron-bench": {
    "files": [
