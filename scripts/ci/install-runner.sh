@@ -9,6 +9,8 @@
 #                     or self-hosted,linux,x64, so include those plus a host tag
 #   os-arch           runner package flavour: osx-arm64 | linux-x64 | linux-arm64
 #   cargo-target-dir  persistent build cache OUTSIDE any checkout, e.g. ~/ci/target
+#                     (macOS: never under ~/Desktop, ~/Documents or ~/Downloads — the
+#                     runner service has no TCC grant there and blocks on a prompt)
 #   tmpdir            macOS only: a real (non-symlink) TMPDIR, e.g. /private/tmp/ci-t
 #
 # RUNNER_TOKEN is the short-lived registration token from Settings -> Actions ->
