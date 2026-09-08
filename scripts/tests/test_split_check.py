@@ -966,3 +966,89 @@ def test_single_base_block_landing_twice_is_still_a_duplicate():
         f"FAIL duplicate unrecognised block ');' lands in {NEW}/a.rs:5, {NEW}/b.rs:7",
         f"FAIL extra unrecognised block in {NEW}/b.rs:7 (');')",
     ]
+
+
+# --- items that share one key: anonymous `const _` asserts --------------------
+
+TWIN_ASSERT_BASE = textwrap.dedent('''\
+    pub struct A;
+    pub struct B;
+
+    const _: () = assert!(std::mem::size_of::<A>() == 0);
+    const _: () = assert!(std::mem::size_of::<B>() == 0);
+''')
+TWIN_ASSERT_MOD_RS = "mod a;\nmod b;\n\npub use a::A;\npub use b::B;\n"
+TWIN_ASSERT_A_RS = "pub struct A;\n\nconst _: () = assert!(std::mem::size_of::<A>() == 0);\n"
+TWIN_ASSERT_B_RS = "pub struct B;\n\nconst _: () = assert!(std::mem::size_of::<B>() == 0);\n"
+
+
+def test_same_key_items_pair_by_body(tmp_path):
+    """Two `const _` compile-time asserts share one item key; each lands in
+    the child of the type it guards. Paired by body, in any order."""
+    path, sha = make_repo(tmp_path, TWIN_ASSERT_BASE)
+    apply_split(path, {"mod.rs": TWIN_ASSERT_MOD_RS, "a.rs": TWIN_ASSERT_A_RS, "b.rs": TWIN_ASSERT_B_RS})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert fails(r) == []
+
+
+def test_same_key_item_landing_twice_is_a_duplicate(tmp_path):
+    path, sha = make_repo(tmp_path, TWIN_ASSERT_BASE)
+    twice = TWIN_ASSERT_B_RS + "\nconst _: () = assert!(std::mem::size_of::<A>() == 0);\n"
+    apply_split(path, {"mod.rs": TWIN_ASSERT_MOD_RS, "a.rs": TWIN_ASSERT_A_RS, "b.rs": twice})
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == [f"FAIL duplicate const _ lands in {NEW}/a.rs, {NEW}/b.rs, {NEW}/b.rs"]
+
+
+# --- a promoted method whose longer signature rustfmt reflows -----------------
+
+REFLOW_BASE = textwrap.dedent('''\
+    pub enum WindowSyncMode {
+        Unbound,
+        Bound,
+    }
+
+    pub struct ProtocolError;
+
+    pub struct ConnState {
+        mode: WindowSyncMode,
+    }
+
+    impl ConnState {
+        fn bind_window_sync_mode(&mut self, mode: WindowSyncMode) -> Result<(), ProtocolError> {
+            self.mode = mode;
+            Ok(())
+        }
+    }
+''')
+REFLOW_MOD_RS = "mod conn_state;\nmod types;\n\npub use conn_state::ConnState;\npub use types::{ProtocolError, WindowSyncMode};\n"
+REFLOW_TYPES_RS = "pub enum WindowSyncMode {\n    Unbound,\n    Bound,\n}\n\npub struct ProtocolError;\n"
+REFLOW_CONN_STATE_RS = textwrap.dedent('''\
+    use super::types::{ProtocolError, WindowSyncMode};
+
+    pub struct ConnState {
+        mode: WindowSyncMode,
+    }
+
+    impl ConnState {
+        pub(super) fn bind_window_sync_mode(
+            &mut self,
+            mode: WindowSyncMode,
+        ) -> Result<(), ProtocolError> {
+            self.mode = mode;
+            Ok(())
+        }
+    }
+''')
+
+
+def test_promoted_method_reflowed_by_rustfmt_is_a_vis_change_only(tmp_path):
+    """`pub(super)` pushes the method signature past the width limit, so the
+    new side is reflowed onto four lines. Visibility is stripped before the
+    fragment is formatted, so both sides format identically."""
+    path, sha = make_repo(tmp_path, REFLOW_BASE)
+    apply_split(path, {"mod.rs": REFLOW_MOD_RS, "types.rs": REFLOW_TYPES_RS, "conn_state.rs": REFLOW_CONN_STATE_RS})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert fails(r) == []
