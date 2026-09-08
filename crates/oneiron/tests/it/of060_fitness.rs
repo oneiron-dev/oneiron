@@ -380,7 +380,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "try_with_write_txn".to_owned(),
                 line: ".try_with_write_txn(|wtxn| -> Result<LedgerWriteResult, UsageError> {".to_owned(),
             },
@@ -388,7 +388,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: ".sync_state_put_in_write_txn(wtxn, &tenant_key, &tenant_raw)?;".to_owned(),
             },
@@ -396,7 +396,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: ".sync_state_put_in_write_txn(wtxn, &vault_key, &vault_raw)?;".to_owned(),
             },
@@ -404,7 +404,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: ".sync_state_put_in_write_txn(wtxn, &event_key, &entry_raw)?;".to_owned(),
             },
@@ -412,7 +412,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "try_with_write_txn".to_owned(),
                 line: ".try_with_write_txn(|wtxn| -> Result<TopUpWriteResult, UsageError> {".to_owned(),
             },
@@ -420,7 +420,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/usage.rs".to_owned(),
+                path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
                 ident: "sync_state_put_in_write_txn".to_owned(),
                 line: "self.vault.sync_state_put_in_write_txn(".to_owned(),
             },
