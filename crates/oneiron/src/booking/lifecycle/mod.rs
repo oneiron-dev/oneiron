@@ -11,7 +11,7 @@
 //! [`BOOKING_LIFECYCLE_ATTEMPT_KIND`] on the generic attempt queue
 //! ([`enqueue_booking_verb`]). Execution happens in exactly one place:
 //! [`run_booking_lifecycle_once`], the home-node consumer that claims that
-//! attempt kind ([`AttemptQueue::claim_kind`], mirroring `task_verb.rs`'s
+//! attempt kind ([`AttemptQueue::claim_kind`](crate::attempt_queue::AttemptQueue::claim_kind), mirroring `task_verb.rs`'s
 //! realization consumer) and runs the transition. There is no public door onto
 //! any `execute_*` function, so a caller cannot confirm a booking outside the
 //! writer.
@@ -44,9 +44,9 @@
 //!
 //! A booking is an existing EVENT plus claims — never a new entity kind, and
 //! never a `booking.uid` claim. The outbound calendar identity is CAL-00's
-//! [`CalendarPassportValue`] written on the EVENT at sequence 0, indexed
-//! through CAL-02's [`index_passport_uid`], and superseded at `last_sequence +
-//! 1` by reschedule and cancel. [`BookingError`] wraps calendar failures
+//! [`CalendarPassportValue`](crate::calendar::CalendarPassportValue) written on the EVENT at sequence 0, indexed
+//! through CAL-02's [`index_passport_uid`](crate::calendar::index_passport_uid), and superseded at `last_sequence +
+//! 1` by reschedule and cancel. [`BookingError`](crate::booking::BookingError) wraps calendar failures
 //! opaquely; no `CalendarError` variant is matched or restated here.
 
 mod claim;

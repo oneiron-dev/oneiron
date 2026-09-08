@@ -19,7 +19,7 @@
 //! Request DTOs copy the accepted route serde exactly (canonical spellings plus
 //! every accepted alias) and are pinned by hand-written golden vectors.
 //! Response DTOs are local engine-canonical records constructible ENTIRELY from
-//! [`ScopedRead`] and public [`ContextPack`] fields: this module imports no
+//! [`ScopedRead`](crate::claim::ScopedRead) and public [`ContextPack`](crate::context_pack::ContextPack) fields: this module imports no
 //! `facade`/`memory` DTO type (`EntityView`, `MemoryPack`, `Memory::recall`),
 //! and never performs a naked-vault read or a second unscoped existence check
 //! after `ScopedRead` answers absence. Scope denial and absence are therefore
