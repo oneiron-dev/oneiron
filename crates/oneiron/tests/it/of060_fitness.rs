@@ -331,7 +331,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // Pin only these two call lines; every new raw hit still fails below.
         (
             RawHit {
-                path: "crates/oneiron-server/src/managed.rs".to_owned(),
+                path: "crates/oneiron-server/src/managed/vault_gates.rs".to_owned(),
                 ident: "sync_state_put".to_owned(),
                 line: ".sync_state_put(DEK_MAC_KEY, mac.as_bytes())".to_owned(),
             },
@@ -339,7 +339,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/managed.rs".to_owned(),
+                path: "crates/oneiron-server/src/managed/ledger.rs".to_owned(),
                 ident: "sync_state_put".to_owned(),
                 line: ".sync_state_put(LEDGER_REV_KEY, &rev.to_le_bytes())".to_owned(),
             },
