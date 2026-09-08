@@ -29,7 +29,7 @@ const AGENT_DISPATCH_SOURCE: &str = concat!(
     include_str!("../agent_dispatch/context.rs"),
     include_str!("../agent_dispatch/dispatch.rs"),
     include_str!("../agent_dispatch/kill.rs"),
-    include_str!("../agent_dispatch/kill_spawn.rs"),
+    include_str!("../agent_dispatch/kill_spawn_tests.rs"),
     include_str!("../agent_dispatch/types.rs"),
 );
 
