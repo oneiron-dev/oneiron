@@ -1138,13 +1138,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/attempt_queue/validate.rs",
+     "path": "src/attempt_queue/validate/cancel_receipt_landing.rs",
+     "purpose": "Cancel-receipt shape table, landing validators, and receipt/event append mutators",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/validate/field_validators.rs",
+     "purpose": "Length caps, error literals, and per-field validators plus lease/manifest mutators",
+     "surface": {
+      "crate-vis": 78
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/validate/mod.rs",
      "purpose": "Input validators and in-place record mutators guarding the attempt-queue doors",
      "surface": {
-      "crate-vis": 85
+      "crate-vis": 3
      }
     },
     {
@@ -4467,7 +4487,37 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/presets/content.rs",
+     "purpose": "Ratified consultancy-preset content: stage order, reply codes, and brief dials",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/presets/loader.rs",
+     "purpose": "Host-config loader plus the CA-04 ladder unknown-field guard",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/presets/mod.rs",
+     "purpose": "CA-08 consultancy preset: the CONTRACT, never the copy",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BriefSectionData",
@@ -4483,12 +4533,11 @@
       "RhythmCheckpointData",
       "SnoozePolicyData"
      ],
-     "path": "src/campaign/presets.rs",
-     "purpose": "CA-08 consultancy preset: the CONTRACT, never the copy",
+     "path": "src/campaign/presets/shape.rs",
+     "purpose": "Typed consultancy-preset shape: identity consts plus every pub struct and enum",
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 1,
       "struct": 10
      }
     },
@@ -4499,6 +4548,16 @@
      "path": "src/campaign/presets/tests.rs",
      "purpose": "CA-08 preset-content tests",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/presets/validate.rs",
+     "purpose": "Content-invariant validators plus the require_text and preset_error helpers",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "m",
@@ -5227,7 +5286,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CheckoutEnvPlan",
@@ -5235,28 +5294,34 @@
       "EnvBlueprintError",
       "EnvBlueprintStages",
       "EnvBlueprintStore",
-      "EnvKey",
-      "EnvSecretRef",
       "EnvStep",
-      "EnvStepId",
       "EnvValue",
       "KnowledgeInput",
       "KnowledgeSourceSpec",
       "MaterializationSpec",
-      "RepoRelativeGlob",
-      "RepoRelativePath",
       "VaultEnvBlueprintStore"
      ],
-     "path": "src/checkout/env_blueprint.rs",
-     "purpose": "Declarative per-repository environment blueprints for checkouts (CSTDY-07)",
+     "path": "src/checkout/env_blueprint/blueprint.rs",
+     "purpose": "Blueprint model, deterministic validation pass (incl. shell-string lint), materialization policy, vault…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
-      "fn": 21,
-      "struct": 11,
+      "fn": 10,
+      "struct": 6,
       "trait": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/env_blueprint/mod.rs",
+     "purpose": "Declarative per-repository environment blueprints for checkouts (CSTDY-07)",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 2
      }
     },
     {
@@ -5266,6 +5331,24 @@
      "path": "src/checkout/env_blueprint/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EnvKey",
+      "EnvSecretRef",
+      "EnvStepId",
+      "RepoRelativeGlob",
+      "RepoRelativePath"
+     ],
+     "path": "src/checkout/env_blueprint/values.rs",
+     "purpose": "Typed string newtypes (step id, repo paths/globs, env keys, secret refs) and their shared check_*…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 11,
+      "struct": 5
+     }
     },
     {
      "bucket": "m",
@@ -8698,16 +8781,56 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/facade.rs",
+     "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/headerless.rs",
+     "purpose": "Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/markers.rs",
+     "purpose": "pt:/ac: marker and gate-decision commit helpers plus the cleanup-archive door",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DeleteEntityOutcome"
      ],
-     "path": "src/deletion/delete.rs",
-     "purpose": "—",
+     "path": "src/deletion/delete/outcome.rs",
+     "purpose": "Reason-aware delete result type and its missing() constructor",
      "surface": {
-      "crate-vis": 5,
-      "fn": 2,
+      "crate-vis": 1,
       "struct": 1
      }
     },
@@ -9976,21 +10099,56 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeltaCaptureContext"
+     ],
+     "path": "src/edit_distance/delta/lanes.rs",
+     "purpose": "The three delta capture lanes plus the precedence chooser; pure over inputs",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/delta/mod.rs",
+     "purpose": "ED-01 (ARCH-0056 §2, ONE-1757): the amendment-Δ schema, its two capture lanes, and the chooser every…",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AmendmentDelta",
-      "DeltaCaptureContext",
       "DeltaSource",
       "OpsSummary"
      ],
-     "path": "src/edit_distance/delta.rs",
-     "purpose": "ED-01 (ARCH-0056 §2, ONE-1757): the amendment-Δ schema, its two capture lanes, and the chooser every…",
+     "path": "src/edit_distance/delta/schema.rs",
+     "purpose": "Delta schema types, the shared d_norm metric, encode/decode, and version/count helpers",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 12,
-      "struct": 3
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/delta/store.rs",
+     "purpose": "Delta side-ledger writes, receipt attachment, and the identity-topology projection pass",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2
      }
     },
     {
@@ -10308,26 +10466,70 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/publisher/dial.rs",
+     "purpose": "Publisher share dial: explicit, install-profile, and compiled-default resolution",
+     "surface": {
+      "const": 3,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "CountKey",
       "InterviewSession",
-      "InterviewState",
-      "IssueCategory",
-      "IssueSignature",
-      "PublisherError",
-      "SendOutcome",
-      "SignatureSendState"
+      "InterviewState"
      ],
-     "path": "src/edit_distance/publisher.rs",
+     "path": "src/edit_distance/publisher/interview.rs",
+     "purpose": "Agent-conducted interview digests on ED-00/ED-01's doors",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherError"
+     ],
+     "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
-      "const": 10,
-      "enum": 5,
-      "fn": 30,
-      "struct": 3,
+      "enum": 1,
+      "re-export": 7,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IssueSignature"
+     ],
+     "path": "src/edit_distance/publisher/signature.rs",
+     "purpose": "Content-free issue signature record and its judged-outcome inlet",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 9,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/publisher/signature_store.rs",
+     "purpose": "Stored signature rows: codec and vault_meta keys",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -10337,6 +10539,37 @@
      "path": "src/edit_distance/publisher/tests.rs",
      "purpose": "ONE-1764 (ED-08) unit tests: the leak NEG battery that makes rung-1's \"structurally impossible\" claim…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SendOutcome",
+      "SignatureSendState"
+     ],
+     "path": "src/edit_distance/publisher/transport.rs",
+     "purpose": "Publisher comm transport: counterparty, send states, and the send door",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CountKey",
+      "IssueCategory"
+     ],
+     "path": "src/edit_distance/publisher/vocab.rs",
+     "purpose": "Closed issue vocabulary: defect categories and count keys",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 5
+     }
     },
     {
      "bucket": "m",
@@ -10364,7 +10597,59 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/keys.rs",
+     "purpose": "Pinned ledger keys and receipt fields",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/ladder.rs",
+     "purpose": "Rollout ladder promotion",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/mod.rs",
+     "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the MODEL GENERATION…",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/read.rs",
+     "purpose": "Routing weight and data-bar reads",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/rebuild.rs",
+     "purpose": "CID-7 projection rebuild",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "RolloutRung",
@@ -10372,12 +10657,11 @@
       "RoutingScopeStats",
       "WeightHint"
      ],
-     "path": "src/edit_distance/routing.rs",
-     "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the MODEL GENERATION…",
+     "path": "src/edit_distance/routing/scope.rs",
+     "purpose": "Routing scope and rung types",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
-      "fn": 12,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -10388,6 +10672,28 @@
      "path": "src/edit_distance/routing/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/version.rs",
+     "purpose": "Model stack versioning",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/write.rs",
+     "purpose": "Judged-amendment fold writes",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
     },
     {
      "bucket": "m",
@@ -10924,35 +11230,96 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BlockedReportRef",
+      "FailureIssueEntry"
+     ],
+     "path": "src/failure_ladder/blocked_reports.rs",
+     "purpose": "Blocked-report refs, verification against the vault, and Issues ingestion",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DetectorTier",
       "FailureClass",
-      "FailureEscalationMode",
-      "FailureIssueEntry",
-      "FailureLadder",
+      "TypedFailureEvidence",
+      "TypedFailureVerdict"
+     ],
+     "path": "src/failure_ladder/classify.rs",
+     "purpose": "Typed failure vocabulary and classifier (class, verdict, tier, evidence)",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FailureLadder"
+     ],
+     "path": "src/failure_ladder/ladder.rs",
+     "purpose": "FailureLadder entry point, surface context, healer routing, and correlation refs",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FailureLadderOutcome",
-      "FailureScope",
-      "FailureScopePolicy",
       "HandleAttemptFailure",
       "HealerCase",
       "HealerRepairRoute",
       "RetryLineagePathology",
       "RetryOrdinal",
-      "SurfacedFailure",
-      "TypedFailureEvidence",
-      "TypedFailureVerdict"
+      "SurfacedFailure"
      ],
-     "path": "src/failure_ladder.rs",
+     "path": "src/failure_ladder/lineage.rs",
+     "purpose": "Retry-lineage walk/ordinal, healer case/route, and surfaced-failure outcome types",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_ladder/mod.rs",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface",
      "surface": {
-      "const": 1,
-      "crate-vis": 3,
-      "enum": 8,
-      "fn": 7,
-      "struct": 9
+      "crate-vis": 2,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FailureEscalationMode",
+      "FailureScope",
+      "FailureScopePolicy"
+     ],
+     "path": "src/failure_ladder/scope.rs",
+     "purpose": "Escalation mode, failure scope, and per-scope consecutive-transient policy",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -10970,6 +11337,16 @@
      "path": "src/failure_ladder/tests/failure_integrity.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_ladder/transitions.rs",
+     "purpose": "Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once)",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "m",
@@ -11335,13 +11712,53 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/gate/decode.rs",
+     "path": "src/gate/decode/decode_manifest.rs",
+     "purpose": "Manifest envelope plus DecodedPolicyManifest assembly",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_map_util.rs",
+     "purpose": "Generic MessagePack map accessors, signature values, and semver compare",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_policy_tables.rs",
+     "purpose": "Rule, axis, ceiling, grant, and owner-row table parsers",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_trust_budget.rs",
+     "purpose": "Source-trust ceilings and budget-policy parsers",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -14696,7 +15113,58 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/affiliated.rs",
+     "purpose": "Attributed takes, companion records, and imported-claim admission verbs",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/codec.rs",
+     "purpose": "Edge-kind string codec and registry kind lookups for structural puts",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/guards.rs",
+     "purpose": "Create-only guards for the structural write door (ONE-1889)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/mod.rs",
+     "purpose": "Structural puts (habit checkins, companion records, imported-claim admission, blob artifacts) and…",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/puts.rs",
+     "purpose": "Generic structural puts, habit check-ins, and blob artifact verbs",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AdmitImportedClaimInput",
@@ -14710,11 +15178,9 @@
       "StructuralPutInput",
       "TextIndexField"
      ],
-     "path": "src/memory/structural.rs",
-     "purpose": "Structural puts (habit checkins, companion records, imported-claim admission, blob artifacts) and…",
+     "path": "src/memory/structural/types.rs",
+     "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
-      "crate-vis": 2,
-      "fn": 8,
       "struct": 10
      }
     },
@@ -15524,17 +15990,58 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/frozen_payload.rs",
+     "purpose": "Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/mod.rs",
+     "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
+     "surface": {
+      "crate-vis": 4,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
      ],
-     "path": "src/outbound/dispatch_pipeline.rs",
-     "purpose": "—",
+     "path": "src/outbound/dispatch_pipeline/pipeline.rs",
+     "purpose": "O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 2,
+      "crate-vis": 1,
+      "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/policy_risk.rs",
+     "purpose": "Pending gate-outcome name and gate-vs-manifest policy-risk resolution",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/retry_after.rs",
+     "purpose": "Provider cool-down receipt/execution field names and whole-seconds parser",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -15545,6 +16052,27 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/transport.rs",
+     "purpose": "Chokepoint OutboundTransport adapter: frozen-call guard, header/invite rehydration, sink execute",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/vault.rs",
+     "purpose": "Vault facade seams for dispatching outbound intents",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -15755,13 +16283,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/outbound_chokepoint.rs",
-     "purpose": "Replay-first outbound effect execution",
+     "path": "src/outbound_chokepoint/admission.rs",
+     "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 2
      }
     },
     {
@@ -15783,12 +16311,42 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/mod.rs",
+     "purpose": "Replay-first outbound effect execution",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/replay.rs",
+     "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound_chokepoint/tests.rs",
      "purpose": "Recovery-side governance tests (ONE-1885)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/types.rs",
+     "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "m",
@@ -16494,13 +17052,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/pipeline/trace.rs",
-     "purpose": "—",
+     "path": "src/pipeline/trace/mod.rs",
+     "purpose": "Retrieval trace recording and deterministic replay fork-hashing",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/trace/trace_fork_hash.rs",
+     "purpose": "Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/trace/trace_records.rs",
+     "purpose": "Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -18868,13 +19446,53 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/session_overlay/overlay.rs",
-     "purpose": "—",
+     "path": "src/session_overlay/overlay/lifecycle.rs",
+     "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/mod.rs",
+     "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/retire.rs",
+     "purpose": "Promoted-closure retirement reusing Store key builders",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/rows.rs",
+     "purpose": "Row staging, preflight, budget checks, read probes",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/overlay/segment.rs",
+     "purpose": "Txn segment install, leases, commit/apply guards",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -20958,19 +21576,59 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/queue/codec.rs",
+     "purpose": "Key/value encode/decode plus metadata codecs",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/queue/core.rs",
+     "purpose": "SyncQueue impl: push/drain/clear/prune",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "QueuedEmbedJob",
       "QueuedUpdate",
       "SyncQueue"
      ],
-     "path": "src/sync/queue.rs",
+     "path": "src/sync/queue/mod.rs",
      "purpose": "Persistent offline queue backed by LMDB",
      "surface": {
-      "crate-vis": 6,
-      "fn": 12,
+      "crate-vis": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/queue/scrub.rs",
+     "purpose": "Carrier scrubs plus test injection hook",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/queue/seq.rs",
+     "purpose": "Seq allocation, delete-bearing seqs, embed-job txn helpers",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -23514,9 +24172,9 @@
      "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
     },
     "attempt_queue": {
-     "files": 29,
+     "files": 31,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
@@ -23591,9 +24249,9 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 40,
+     "files": 44,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "CRM pack engine-side registration home"
     },
@@ -23640,9 +24298,9 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "checkout": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
@@ -23850,9 +24508,9 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 11,
+     "files": 15,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARCH-0038 deletion/redaction contract types"
     },
@@ -23941,9 +24599,9 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 43,
+     "files": 59,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
@@ -24004,10 +24662,10 @@
      "purpose": "—"
     },
     "failure_ladder": {
-     "files": 3,
+     "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "s",
+     "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "fanout_auto": {
@@ -24039,9 +24697,9 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 67,
+     "files": 71,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
@@ -24193,9 +24851,9 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 44,
+     "files": 49,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
@@ -24221,17 +24879,17 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 25,
+     "files": 31,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 4,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
@@ -24270,7 +24928,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 35,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -24452,9 +25110,9 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "session_overlay": {
-     "files": 8,
+     "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
@@ -24564,7 +25222,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 61,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -24697,9 +25355,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 26,
+   "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1374,
+   "source_files": 1436,
    "test_files": 523
   },
   "oneiron-bench": {
