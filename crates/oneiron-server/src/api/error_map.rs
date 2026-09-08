@@ -6,7 +6,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use oneiron::ErrorKind;
 
-pub(crate) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
+pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
     match error.kind() {
         ErrorKind::DimensionMismatch
         | ErrorKind::InvalidVector
@@ -74,7 +74,7 @@ pub(crate) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
     }
 }
 
-pub(crate) fn query_rejection_error(rejection: QueryRejection) -> ApiError {
+pub(super) fn query_rejection_error(rejection: QueryRejection) -> ApiError {
     if rejection.body_text().contains("invalid_view") {
         ApiError::bad_request("view must be one of summary, standard, full", Some("view"))
     } else {
@@ -82,6 +82,6 @@ pub(crate) fn query_rejection_error(rejection: QueryRejection) -> ApiError {
     }
 }
 
-pub(crate) fn json_rejection_error(_rejection: JsonRejection) -> ApiError {
+pub(super) fn json_rejection_error(_rejection: JsonRejection) -> ApiError {
     ApiError::bad_request("invalid JSON request body", None)
 }
