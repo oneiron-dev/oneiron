@@ -4,7 +4,8 @@
 
 - Captured candidate: PR #881, head `c09a07f4b70961423950a45d962a1d53c26ba1b1`.
 - Inputs: `QODO-C09-FINDINGS.md` and `PR881-INLINE.json` under
-  `/home/lexi/.codex/reports/factory-wave6-launch-20260906/v11/mass-coverage/front-dispatch/ONE-208/`.
+  `<harness-report-dir>/factory-wave6-launch-20260906/v11/mass-coverage/front-dispatch/ONE-208/`
+  (the dispatch harness's report directory on the worker host; not part of this repo).
 - Changes are limited to the three captured findings, their source-contract adaptations,
   and focused regressions. Existing quality tests and source are retained.
 - File-only repair in the isolated ONE-208 workspace. No ONE-207 workspace was accessed

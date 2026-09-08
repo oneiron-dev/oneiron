@@ -47,12 +47,14 @@ The total is now **19 explicit temporary acceptances**. The four pre-existing
 atomic-polyfill, bincode, smallstr, and rsa decisions stay separate and are not
 renewed or broadened; no new vulnerability waiver is granted.
 
-Evidence provenance (external owner records, not runtime policy inputs):
+Evidence provenance (external owner records, not runtime policy inputs;
+`<harness-report-dir>` is the dispatch harness's report directory on the worker
+host, not part of this repo):
 
-- Authority: `/home/lexi/.codex/reports/factory-wave6-launch-20260906/v11/mass-coverage/supervision-correction/owner-exact-maintenance-exception-20260907/OWNER-STANDING-EXTENSION-AUTHORITY.json`.
+- Authority: `<harness-report-dir>/factory-wave6-launch-20260906/v11/mass-coverage/supervision-correction/owner-exact-maintenance-exception-20260907/OWNER-STANDING-EXTENSION-AUTHORITY.json`.
   Recorded at `2026-09-07T10:34:58.159134+00:00`; it preserves the original16 grant
   in `OWNER-AUTHORITY.json` in the same directory.
-- Fresh disposition: `/home/lexi/.codex/reports/factory-wave6-launch-20260906/v11/mass-coverage/front-dispatch/ONE-335/FRESH-THREE-ADVISORY-DISPOSITION.json`.
+- Fresh disposition: `<harness-report-dir>/factory-wave6-launch-20260906/v11/mass-coverage/front-dispatch/ONE-335/FRESH-THREE-ADVISORY-DISPOSITION.json`.
   Its candidate is `738846849279acdadd98f873fae1b5606963d926`; its source is
   `OWNER-EXCEPTION-FRESH-CHECK.log` in the same directory. That check blocked
   these then-unlisted advisories. The later standing authority explicitly adds

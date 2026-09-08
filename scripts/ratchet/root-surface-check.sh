@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Root-surface pin: the `oneiron` crate root re-exports EXACTLY the names in
 # scripts/ratchet/root-surface.txt. The list is the curated public surface
-# (the 2,549 -> 281 curation plus the 281 -> 288 signature closure); any
+# (the 2,549 -> 281 curation, the 281 -> 288 signature closure, and every
+# reviewed --regen since: 370 names as of 2026-09-08 — `wc -l` the file for
+# the live count); any
 # drift — growth OR shrinkage — fails this check, so every root-surface
 # change is an explicit, reviewed decision.
 #
