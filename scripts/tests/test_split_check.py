@@ -1052,3 +1052,26 @@ def test_promoted_method_reflowed_by_rustfmt_is_a_vis_change_only(tmp_path):
     r = run_check(path, sha)
     assert r.returncode == 0, r.stdout + r.stderr
     assert fails(r) == []
+
+
+def test_base_declared_directory_child_is_plumbing(tmp_path):
+    """The base file already mounted `mod step;` -> src/big/step/mod.rs. The
+    split's mod.rs must keep that decl (walk_dir demands it) and the decl must
+    not read as an extra mod. A directory the base never had stays extra."""
+    step = "pub fn step() -> u8 {\n    2\n}\n"
+    path, sha = make_repo(tmp_path, BASE + "mod step;\n", extra={"src/big/step/mod.rs": step})
+    apply_split(path, {**SPLIT, "mod.rs": MOD_RS + "mod step;\n"})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert fails(r) == []
+    assert f"INFO skipped {NEW}/step/mod.rs (pre-existing, unchanged)" in r.stdout.splitlines()
+    # dropping the decl is still a missing declaration
+    apply_split(path, {**SPLIT, "mod.rs": MOD_RS}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL {NEW}/mod.rs does not declare `mod step;`"]
+    # a directory child the base never had is still an extra mod
+    apply_split(path, {**SPLIT, "mod.rs": MOD_RS + "mod step;\nmod fresh;\n", "fresh/mod.rs": "//! fresh\n"},
+                remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL extra mod fresh in {NEW}/mod.rs"]
+
