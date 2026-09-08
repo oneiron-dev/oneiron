@@ -807,15 +807,25 @@ def compare_mods(base_mods, new_mods, extras=None):
 
 
 def compare_chunks(base_chunks, new_chunks, extras=None):
+    """Every unrecognised block of the base must land exactly once.
+
+    The base may itself hold byte-identical twins (two `proptest!` tails,
+    two closing `);` lines): a twin on the new side is only a duplicate when
+    the new side holds MORE copies than the base still has to place."""
     problems = []
     remaining = list(new_chunks)
+    base_left = {}
+    for canon_text, _first, _where, _line in base_chunks:
+        base_left[canon_text] = base_left.get(canon_text, 0) + 1
     for canon_text, first, where, line in base_chunks:
         hits = [c for c in remaining if c[0] == canon_text]
         if not hits:
             problems.append("FAIL missing unrecognised block from base %s:%d (%r) not found in any child" % (where, line, first))
+            base_left[canon_text] -= 1
             continue
-        if len(hits) > 1:
+        if len(hits) > base_left[canon_text]:
             problems.append("FAIL duplicate unrecognised block %r lands in %s" % (first, ", ".join("%s:%d" % (h[2], h[3]) for h in hits)))
+        base_left[canon_text] -= 1
         remaining.remove(hits[0])
     for canon_text, first, where, line in remaining:
         if extras is not None:
