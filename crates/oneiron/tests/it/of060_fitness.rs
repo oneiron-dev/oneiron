@@ -274,7 +274,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
     BTreeMap::from([
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_edge".to_owned(),
                 line: "pub fn put_edge(&self, src: Buffer, kind: u32, tgt: Buffer, weight: f64) -> napi::Result<()> {".to_owned(),
             },
@@ -282,7 +282,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_edge".to_owned(),
                 line: ".put_edge(&src_id, edge_kind, &tgt_id, weight as f32)".to_owned(),
             },
@@ -290,7 +290,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_vector".to_owned(),
                 line: "pub fn put_vector(&self, id: Buffer, vector: Vec<f64>) -> napi::Result<()> {".to_owned(),
             },
@@ -298,7 +298,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-napi/src/lib.rs".to_owned(),
+                path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
                 ident: "put_vector".to_owned(),
                 line: "self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err)".to_owned(),
             },
@@ -466,7 +466,7 @@ fn f2_surface_path(rel: &str) -> bool {
     rel.starts_with("crates/oneiron-server/src/")
         || rel.starts_with("crates/oneiron-napi/src/")
         || rel.starts_with("crates/oneiron/src/code_run/")
-        || rel == "crates/oneiron/src/code_sandbox.rs"
+        || rel.starts_with("crates/oneiron/src/code_sandbox/")
 }
 
 #[test]
