@@ -625,7 +625,28 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/codec.rs",
+     "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/mod.rs",
+     "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "A1Range",
@@ -640,14 +661,25 @@
       "TaskBrief",
       "ThreadState"
      ],
-     "path": "src/anchored_annotation.rs",
-     "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
+     "path": "src/anchored_annotation/model.rs",
+     "purpose": "Domain types: A1 ranges, format-typed locators, anchors, thread/comment/brief structs, and the re-anchor op…",
      "surface": {
       "const": 6,
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 4,
-      "fn": 19,
+      "fn": 9,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/reanchor.rs",
+     "purpose": "Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -657,6 +689,17 @@
      "path": "src/anchored_annotation/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/threads.rs",
+     "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 8
+     }
     },
     {
      "bucket": "m",
@@ -1601,37 +1644,119 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExportAuthorityManifest",
+      "VaultImportClassification",
+      "VaultImportMismatch",
+      "VaultImportReceipt"
+     ],
+     "path": "src/batch/export/export_authority.rs",
+     "purpose": "Export authority digests, import classification, and label validation",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CompanionExportLayer",
-      "CompanionExportRecord",
-      "ExportAuthorityManifest",
+      "CompanionExportRecord"
+     ],
+     "path": "src/batch/export/export_companion.rs",
+     "purpose": "Companion-layer export filtering",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/export_egress.rs",
+     "purpose": "Whole-vault manifest egress doors and the Vault export surface",
+     "surface": {
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ExportDataShapeManifest",
       "ExportDbManifestEntry",
       "ExportManifest",
       "ExportManifestArtifact",
       "ExportSecretsNulledManifest",
-      "ExportSerializerManifest",
+      "ExportSerializerManifest"
+     ],
+     "path": "src/batch/export/export_manifest.rs",
+     "purpose": "Whole-vault export manifest artifact types and stanza impls",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 35,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ForeignVaultImportSource",
       "StagedVaultImport",
-      "VaultImportClassification",
       "VaultImportConfirmation",
       "VaultImportFailure",
-      "VaultImportMismatch",
-      "VaultImportReceipt",
       "VaultImportStageReceipt",
       "VaultImportStageStatus"
      ],
-     "path": "src/batch/export.rs",
+     "path": "src/batch/export/foreign_stage/export_foreign_receipt.rs",
+     "purpose": "Sync-gated import receipt codec, key consts, and status types",
+     "surface": {
+      "const": 4,
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/foreign_stage/export_foreign_stage.rs",
+     "purpose": "Sync-gated foreign-import staging operations and test hooks",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/foreign_stage/mod.rs",
+     "purpose": "Sync-gated foreign-import staging submodule",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "const": 10,
-      "crate-vis": 3,
-      "enum": 5,
-      "fn": 70,
-      "re-export": 1,
-      "struct": 13
+      "re-export": 5
      }
     },
     {
@@ -7057,13 +7182,53 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/credential_door.rs",
+     "path": "src/credential_door/door_credential.rs",
+     "purpose": "DoorCredential attenuation, lifetime math, and floor-naming evaluation",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/credential_door/door_policy.rs",
+     "purpose": "Policy model: effectors, dials, floors, merge rules, and map helpers",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/credential_door/door_service.rs",
+     "purpose": "CredentialDoorService: admission, lease tickets, one-shot redemption, witnesses",
+     "surface": {
+      "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/credential_door/door_types.rs",
+     "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
+     "surface": {
+      "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/credential_door/mod.rs",
      "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)",
      "surface": {
-      "crate-vis": 74
+      "crate-vis": 9
      }
     },
     {
@@ -11833,24 +11998,89 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/executor.rs",
+     "purpose": "Second OffRecordSession block: executor witness doors, routed shells and executor traps",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/mod.rs",
+     "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/registry.rs",
+     "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OffRecordSession",
+      "OffRecordSessionVault"
+     ],
+     "path": "src/off_record/lifecycle/session.rs",
+     "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, promote_turn, close",
+     "surface": {
+      "crate-vis": 18,
+      "fn": 11,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/telemetry.rs",
+     "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ExecutorUtterance",
       "OffRecordBackendClass",
       "OffRecordCloseOutcome",
       "OffRecordMode",
-      "OffRecordSession",
-      "OffRecordSessionRecord",
-      "OffRecordSessionVault"
+      "OffRecordSessionRecord"
      ],
-     "path": "src/off_record/lifecycle.rs",
-     "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
+     "path": "src/off_record/lifecycle/types.rs",
+     "purpose": "Public records, enums, constants and the executor-utterance label shared by all off-record children",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 3,
       "enum": 3,
-      "fn": 19,
-      "struct": 4
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/vault_api.rs",
+     "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 6
      }
     },
     {
@@ -16482,22 +16712,77 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "FederationAdmissionRole",
+      "FederationAdmissionRole"
+     ],
+     "path": "src/sync/selector/admission.rs",
+     "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/authorize.rs",
+     "purpose": "Grant and pact authorization with EmptyAxis coupling, guest-share stripping, and the closed-subgraph filter…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "SelectorVvRequest",
       "SyncSelector",
       "SyncSelectorWorld"
      ],
-     "path": "src/sync/selector.rs",
-     "purpose": "Grant-backed closed-subgraph sync selectors",
+     "path": "src/sync/selector/codec.rs",
+     "purpose": "Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 11,
+      "crate-vis": 15,
+      "enum": 1,
+      "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/edge.rs",
+     "purpose": "Admitted-edge copy with reserved-kind rejection and the FacetOf off-table verdict",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/mod.rs",
+     "purpose": "Grant-backed closed-subgraph sync selectors",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/scope.rs",
+     "purpose": "Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -18858,10 +19143,10 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 2,
+     "files": 6,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
@@ -18893,9 +19178,9 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 43,
+     "files": 50,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -19194,10 +19479,10 @@
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)"
     },
     "credential_door": {
-     "files": 2,
+     "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)"
     },
     "critic": {
@@ -19565,9 +19850,9 @@
      "purpose": "ARCH-0032 NOTE primitive, cut to the single kind this ticket lands: `opinion/take` (registry record OF-330)"
     },
     "off_record": {
-     "files": 4,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
@@ -19922,9 +20207,9 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 42,
+     "files": 47,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
@@ -20055,9 +20340,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 117,
+   "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 966,
+   "source_files": 992,
    "test_files": 515
   },
   "oneiron-bench": {
@@ -22978,13 +23263,13 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/handler.rs",
-     "purpose": "WebSocket upgrade handler and connection lifecycle",
+     "path": "src/handler/app_tier.rs",
+     "purpose": "Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -22996,12 +23281,82 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/conn_state.rs",
+     "purpose": "Per-connection budgets, quotas, rate limit, and sync-mode binding",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/connection.rs",
+     "purpose": "Upgrade route, hello bootstrap, and the single-owner connection event loop",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/ephemeral.rs",
+     "purpose": "Ephemeral presence lane: validation, hub budget, and canonical fan-out frames",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/hello.rs",
+     "purpose": "First-frame protocol-version negotiation gate",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mod.rs",
+     "purpose": "WebSocket upgrade handler and connection lifecycle",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/handler/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/transport.rs",
+     "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/window_sync.rs",
+     "purpose": "WindowSync sub-tag dispatcher with selector and VV paths",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -23927,10 +24282,10 @@
      "purpose": "Structured HTTP API errors and their schema catalog"
     },
     "handler": {
-     "files": 3,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
     "idempotency": {
@@ -24018,9 +24373,9 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 13,
+   "over_bar": 12,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 105,
+   "source_files": 112,
    "test_files": 67
   },
   "oneiron-uniffi": {
