@@ -2437,19 +2437,57 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "BookingPageInviteContext",
-      "ConfirmedBookingInvite",
-      "PublishBookingPageGrantRequest"
-     ],
-     "path": "src/booking/invite_grant.rs",
+     "notable": [],
+     "path": "src/booking/invite_grant/authorization.rs",
+     "purpose": "Whether a page's standing grant covers a recipient, read from persisted claims only",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/invite_grant/codec.rs",
+     "purpose": "Claim-value decode and the booking error constructors this lane uses",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/invite_grant/dispatch.rs",
+     "purpose": "Builds the outbound dispatch for the first confirm's invite and commits its passport",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/invite_grant/mint.rs",
+     "purpose": "Mints the one standing page invite grant and finds the live one for a page",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/invite_grant/mod.rs",
      "purpose": "ONE-1814 [BK-A-3] the booking page's standing invite grant",
      "surface": {
-      "crate-vis": 4,
-      "fn": 4,
-      "struct": 3
+      "crate-vis": 2,
+      "re-export": 4
      }
     },
     {
@@ -2459,6 +2497,29 @@
      "path": "src/booking/invite_grant/tests/faceted_sender.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/invite_grant/tests/mod.rs",
+     "purpose": "Lane tests for the booking page's standing invite grant",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingPageInviteContext",
+      "ConfirmedBookingInvite",
+      "PublishBookingPageGrantRequest"
+     ],
+     "path": "src/booking/invite_grant/types.rs",
+     "purpose": "Caller-facing shapes for the booking page's standing invite grant",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -5077,30 +5138,98 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MicroVmSandboxAdapter"
+     ],
+     "path": "src/code_sandbox/microvm/adapter.rs",
+     "purpose": "The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract",
+     "surface": {
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DevProcessBackend",
+      "MicroVmBackend"
+     ],
+     "path": "src/code_sandbox/microvm/backend.rs",
+     "purpose": "The backend trait, tier-based selection, and the cfg-gated dev and Firecracker implementations",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 5,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CredentialAllowlist",
       "CredentialDestination",
       "CredentialEgressProxy",
       "CredentialInjection",
-      "CredentialResolver",
-      "DevProcessBackend",
+      "CredentialResolver"
+     ],
+     "path": "src/code_sandbox/microvm/credential.rs",
+     "purpose": "Destination allowlisting, resolution and the egress proxy that injects a credential outside the guest",
+     "surface": {
+      "const": 3,
+      "fn": 17,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExecutionBudget",
       "GuestImage",
-      "MicroVmBackend",
       "MicroVmExit",
-      "MicroVmHandle",
-      "MicroVmSandboxAdapter"
+      "MicroVmHandle"
      ],
-     "path": "src/code_sandbox/microvm.rs",
+     "path": "src/code_sandbox/microvm/handle.rs",
+     "purpose": "The VM value objects: guest image, running handle, exit and execution budget",
+     "surface": {
+      "fn": 10,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/microvm/mod.rs",
      "purpose": "MicroVM execution lane for foreign and ingested guest code",
      "surface": {
-      "const": 4,
-      "fn": 42,
-      "struct": 10,
-      "trait": 2
+      "re-export": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/microvm/overlay.rs",
+     "purpose": "The host-side scratch root and the bounded overlay walk that turns guest writes into proposals",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_sandbox/microvm/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -5369,7 +5498,49 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment/codec.rs",
+     "purpose": "Commitment claim codec: candidate builders and closed-schema helpers",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commitment/codec_tests.rs",
+     "purpose": "Commitment schema, codec and transition tests plus shared test helpers",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment/lapse_batch.rs",
+     "purpose": "Crate-private Open-to-Lapsed batch grounding and apply halves",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment/mod.rs",
+     "purpose": "Commitment claim substrate (CMT-1)",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CommitmentBirthKind",
@@ -5382,14 +5553,32 @@
       "CommitmentStrength",
       "FulfillmentSource"
      ],
-     "path": "src/commitment.rs",
-     "purpose": "Commitment claim substrate (CMT-1)",
+     "path": "src/commitment/types.rs",
+     "purpose": "Pinned commitment schema consts, key sets, bounds, and domain types",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 17,
       "enum": 5,
-      "fn": 27,
+      "fn": 16,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commitment/verbs_tests.rs",
+     "purpose": "Commitment vault-verb, stale-target, rejection and dispatch tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment/write.rs",
+     "purpose": "Vault commitment write verbs over the gated claim path",
+     "surface": {
+      "fn": 6
      }
     },
     {
@@ -6784,23 +6973,59 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CounterpartyContactRecord",
-      "CounterpartyContactStatus",
-      "CounterpartyFirstTouch",
-      "CounterpartyOptOut",
-      "CounterpartyOptOutReason"
-     ],
-     "path": "src/counterparty_contact.rs",
+     "notable": [],
+     "path": "src/counterparty_contact/codec.rs",
+     "purpose": "Counterparty contact MessagePack codecs, claim validators, and normalize helpers",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/doors.rs",
+     "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/lifecycle.rs",
+     "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/mod.rs",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)",
      "surface": {
-      "const": 14,
-      "crate-vis": 20,
-      "enum": 3,
-      "fn": 35,
-      "struct": 2
+      "crate-vis": 4,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/counterparty_contact/storage.rs",
+     "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11,
+      "fn": 2
      }
     },
     {
@@ -6810,6 +7035,26 @@
      "path": "src/counterparty_contact/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CounterpartyContactRecord",
+      "CounterpartyContactStatus",
+      "CounterpartyFirstTouch",
+      "CounterpartyOptOut",
+      "CounterpartyOptOutReason"
+     ],
+     "path": "src/counterparty_contact/types.rs",
+     "purpose": "Counterparty contact domain vocabulary: schema version, body and predicate keys, record types",
+     "surface": {
+      "const": 13,
+      "crate-vis": 22,
+      "enum": 3,
+      "fn": 22,
+      "struct": 2
+     }
     },
     {
      "bucket": "XL",
@@ -12625,13 +12870,41 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
-     "path": "src/pipeline/execution.rs",
-     "purpose": "—",
+     "path": "src/pipeline/execution/channels.rs",
+     "purpose": "Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/mod.rs",
+     "purpose": "Retrieval-transaction execution: channel fan-out, the outer context-pack driver, and attempt plumbing",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/pack.rs",
+     "purpose": "Outer context-pack driver: the HyDE assess/retry loop, telemetry write, and validation helpers",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/types.rs",
+     "purpose": "Attempt plumbing for the retrieval transaction: attempt overrides, the transaction output, and the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -18648,7 +18921,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 56,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -18774,9 +19047,9 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 4,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
@@ -18802,10 +19075,10 @@
      "purpose": "Communication standing-state claims and the ARCH-0035 projector"
     },
     "commitment": {
-     "files": 1,
+     "files": 7,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Commitment claim substrate (CMT-1)"
     },
     "commitment_ledger": {
@@ -18914,10 +19187,10 @@
      "purpose": "Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry…"
     },
     "counterparty_contact": {
-     "files": 2,
+     "files": 7,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)"
     },
     "credential_door": {
@@ -19355,9 +19628,9 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 32,
+     "files": 35,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -19782,10 +20055,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 121,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 944,
-   "test_files": 511
+   "source_files": 966,
+   "test_files": 515
   },
   "oneiron-bench": {
    "files": [
