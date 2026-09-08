@@ -3,8 +3,8 @@
 use crate::entity_id::EntityId;
 
 use super::rules::{
-    B2bExemption, CHANNEL_WILDCARD, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind,
-    ComplianceRuleRow, JURISDICTION_NONE, UnknownJurisdictionDefault,
+    B2bExemption, CHANNEL_WILDCARD, ComplianceExemptionEvidence, CompliancePack,
+    ComplianceRuleKind, ComplianceRuleRow, JURISDICTION_NONE, UnknownJurisdictionDefault,
 };
 
 // ---------------------------------------------------------------------------
