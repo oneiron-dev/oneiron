@@ -1,6 +1,18 @@
 //! Alias-aware communication membership. Source events and claims keep their
 //! original references; projection and contact reads use one canonical slot.
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::claims::{
+    CommClaim, CommClaimValue, CommError, CommResult, PREDICATE_COMM_THREAD_MEMBER,
+};
+use super::projection_writes::{
+    latest_claim_transition_boundary, put_projected_comm_claim_in_txn, require_at_most_one,
+};
+use super::projector::ProjectorAction;
+use super::records::{CommEventKind, CommRecord, comm_records_in_txn};
+use super::{CommProjectorIndex, PartyThreadKey, ProjectedCommEvent, ProjectorIndexDelta};
+use crate::Vault;
+use crate::entity_id::EntityId;
 
 pub(super) fn canonical_member_ref<'a>(
     aliases: &'a BTreeMap<String, String>,
