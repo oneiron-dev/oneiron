@@ -16,8 +16,8 @@ use super::shape::{
 use crate::Result;
 use crate::campaign::claims::{StageEvidenceClass, StageKey};
 use crate::campaign::stage::{
-    NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule, ReplyCode, ReplyDisposition, StageLadderDefinition,
-    validate_ladder,
+    NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule, ReplyCode, ReplyDisposition,
+    StageLadderDefinition, validate_ladder,
 };
 use crate::error::Error;
 
