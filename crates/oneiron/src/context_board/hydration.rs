@@ -2,19 +2,17 @@
 
 use std::collections::BTreeMap;
 
-use super::memories::MemoriesCursor;
+use super::memories::{MemoriesCursor, MemoriesSection};
 
-/// Read-only ambient context returned by the companion resume endpoint.
+/// Read-only session prefix: entity counts by type and the latest activity.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionContext {
     pub api_version: String,
     pub counts: BTreeMap<String, u64>,
     pub last_activity: Option<u64>,
-    #[serde(default)]
-    pub rag_state: MemoriesCursor,
 }
 
-/// Pending notification surfaced during companion resume hydration.
+/// Pending notification surfaced during context-board hydration.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NotificationItem {
     pub id: String,
@@ -31,7 +29,7 @@ pub struct UnprocessedItem {
     pub body: serde_json::Value,
 }
 
-/// Token meter snapshot included in every companion resume bundle.
+/// Token meter snapshot included in every assembled context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HydrationBudget {
     pub tokens_used: u64,
@@ -50,13 +48,20 @@ impl HydrationBudget {
     }
 }
 
-/// Single-call companion hydration bundle.
+/// The assembled context one hydration call returns.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AssembledContext {
     pub session: SessionContext,
     pub notifications: Vec<NotificationItem>,
     pub unprocessed: Vec<UnprocessedItem>,
     pub budget: HydrationBudget,
+    /// Per-session MEMORIES retrieval cursor, advanced when this call ran
+    /// retrieval and otherwise the current one for the caller.
+    #[serde(default)]
+    pub cursor: MemoriesCursor,
+    /// This turn's MEMORIES section; absent when retrieval was skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memories: Option<MemoriesSection>,
 }
 
 impl AssembledContext {
@@ -66,12 +71,16 @@ impl AssembledContext {
         notifications: Vec<NotificationItem>,
         unprocessed: Vec<UnprocessedItem>,
         budget: HydrationBudget,
+        cursor: MemoriesCursor,
+        memories: Option<MemoriesSection>,
     ) -> Self {
         Self {
             session,
             notifications,
             unprocessed,
             budget,
+            cursor,
+            memories,
         }
     }
 }

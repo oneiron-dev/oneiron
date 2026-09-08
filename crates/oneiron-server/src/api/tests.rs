@@ -9190,13 +9190,10 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
     let (status, resume_body) = route_json(server, resume_request).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        resume_body["session"]["rag_state"]["session_id"],
+        resume_body["cursor"]["session_id"],
         Value::from(principal_ref)
     );
-    assert_eq!(
-        resume_body["session"]["rag_state"]["query_count"],
-        Value::from(2)
-    );
+    assert_eq!(resume_body["cursor"]["query_count"], Value::from(2));
 }
 
 #[tokio::test]
@@ -9687,24 +9684,18 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
     let (status, caller_a_resume) = route_json(server.clone(), resume_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        caller_a_resume["session"]["rag_state"]["session_id"],
+        caller_a_resume["cursor"]["session_id"],
         Value::from("shared-session-name")
     );
-    assert_eq!(
-        caller_a_resume["session"]["rag_state"]["query_count"],
-        Value::from(2)
-    );
+    assert_eq!(caller_a_resume["cursor"]["query_count"], Value::from(2));
 
     let (status, caller_b_resume) = route_json(server, resume_request(&caller_b)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        caller_b_resume["session"]["rag_state"]["session_id"],
+        caller_b_resume["cursor"]["session_id"],
         Value::from("shared-session-name")
     );
-    assert_eq!(
-        caller_b_resume["session"]["rag_state"]["query_count"],
-        Value::from(1)
-    );
+    assert_eq!(caller_b_resume["cursor"]["query_count"], Value::from(1));
 }
 
 #[tokio::test]

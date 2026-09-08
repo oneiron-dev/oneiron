@@ -45,6 +45,8 @@ pub(crate) async fn resume_bundle(
         pending_notifications(server, caller)?,
         pending_unprocessed_items(server, caller),
         current_hydration_budget(server),
+        current_memories_cursor(&server.vault, caller).await,
+        None,
     ))
 }
 
@@ -91,7 +93,6 @@ pub(crate) async fn session_prefix(
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
-        rag_state: current_memories_cursor(&server.vault, caller).await,
     })
 }
 
