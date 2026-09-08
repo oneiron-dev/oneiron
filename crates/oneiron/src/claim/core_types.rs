@@ -585,6 +585,8 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_coreference_share_consent_claim_structure(&body)?;
     } else if body.predicate == crate::identity_topology::PREDICATE_ENTITY_DISTINCT_FROM {
         crate::identity_topology::validate_distinct_from_claim_structure(&body)?;
+    } else if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+        crate::thread_passport::validate_thread_claim_structure(&body)?;
     } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
     } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
@@ -594,6 +596,10 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::provider_confidence::validate_actor_confidence_prior_claim_structure(&body)?;
     } else if crate::provider_confidence::is_provider_enrichment_claim_predicate(&body.predicate) {
         crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
+    } else if body.predicate == crate::subject_model::PREDICATE_ACTOR_SUBJECT_REF {
+        crate::subject_model::validate_actor_subject_claim_structure(&body)?;
+    } else if body.predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE {
+        crate::subject_model::validate_person_substrate_claim_structure(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::validate_actor_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
@@ -627,4 +633,81 @@ pub(crate) fn validate_claim_body_and_decode(
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
     validate_claim_body_and_decode(data, allow_reserved_predicate).map(|_| ())
+}
+
+#[cfg(test)]
+mod import_validation_tests {
+    use super::*;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+    use crate::test_util::{entity, open_test_vault_with};
+
+    #[test]
+    fn provider_enrichment_replicated_import_accepts_valid_and_rejects_invalid() -> Result<()> {
+        let doors = &[
+            false,
+            #[cfg(feature = "sync")]
+            true,
+        ];
+        for &transactional in doors {
+            let mut config = crate::config::VaultConfig::device();
+            config.map_size = 16 * 1024 * 1024;
+            config.dimensions = 4;
+            config.embedding_model = None;
+            let (_dir, vault) = open_test_vault_with(config);
+            let subject = entity(0x91);
+            let id = entity(0x92);
+            let at = TimeRange {
+                start: 100,
+                end: 100,
+            };
+            vault.put_entity(&subject, ENTITY_TYPE_PERSON, at, 100, b"person")?;
+            let admit = |body: &ClaimBody| -> Result<()> {
+                let data = encode_claim_body(body)?;
+                #[cfg(feature = "sync")]
+                if transactional {
+                    return vault.with_write_txn(|txn| {
+                        vault
+                            .batch_in()
+                            .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)
+                            .apply(txn)
+                    });
+                }
+                let _ = transactional;
+                vault
+                    .batch()
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)
+                    .commit()
+            };
+            let mut body = ClaimBody::new(
+                crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT,
+                ClaimSubject::Entity(subject),
+                Value::Map(vec![(Value::from("provider"), Value::from("fixture"))]),
+                0.8,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            );
+            body.source = Some(ClaimSource::Imported);
+            admit(&body)?;
+            assert_eq!(vault.get_claim(&id)?, Some(body.clone()));
+            let before = vault.get(&id)?;
+            for (value, expected) in [
+                (
+                    Value::from("model"),
+                    "provider-attributed claim value must be a map",
+                ),
+                (
+                    Value::Map(Vec::new()),
+                    "provider-attributed claim value is missing provider",
+                ),
+            ] {
+                body.value = value;
+                assert!(matches!(
+                    admit(&body),
+                    Err(Error::InvalidClaimBody(reason)) if reason == expected
+                ));
+                assert_eq!(vault.get(&id)?, before);
+            }
+        }
+        Ok(())
+    }
 }

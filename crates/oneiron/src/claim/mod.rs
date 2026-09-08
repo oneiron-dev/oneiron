@@ -59,6 +59,7 @@ mod scope;
 mod scoped_read;
 mod source_trust;
 mod status;
+mod write_target;
 
 pub use core_types::*;
 pub use decay::*;
@@ -70,6 +71,7 @@ pub(crate) use scope::*;
 pub use scoped_read::*;
 pub use source_trust::*;
 pub use status::*;
+pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
 mod tests;

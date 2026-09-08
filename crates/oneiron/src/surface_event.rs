@@ -950,18 +950,20 @@ fn route_inbound_surface_event(
         }
     };
 
+    // Subject eligibility follows the adapter event, not queue processing time.
+    let at = input.received_at;
     match identity.state {
         ChannelIdentityState::Active | ChannelIdentityState::Rotating => routed_receipt(
             input,
             identity_ref,
-            ActorStamps::resolve(vault, actor_ref, facet_ref)?,
+            ActorStamps::resolve(vault, actor_ref, facet_ref, at)?,
             false,
             claims_not_instructions,
         ),
         ChannelIdentityState::Released | ChannelIdentityState::Quarantine => routed_receipt(
             input,
             identity_ref,
-            ActorStamps::resolve(vault, actor_ref, facet_ref)?,
+            ActorStamps::resolve(vault, actor_ref, facet_ref, at)?,
             true,
             claims_not_instructions,
         ),
@@ -998,7 +1000,12 @@ struct ActorStamps {
 }
 
 impl ActorStamps {
-    fn resolve(vault: &Vault, actor_ref: EntityId, facet_ref: Option<EntityId>) -> Result<Self> {
+    fn resolve(
+        vault: &Vault,
+        actor_ref: EntityId,
+        facet_ref: Option<EntityId>,
+        at: u64,
+    ) -> Result<Self> {
         let rtxn = vault.store.env.read_txn()?;
         if let Some(facet) = facet_ref
             && vault.get_entity_type_in_txn(&rtxn, &facet)?
@@ -1009,7 +1016,7 @@ impl ActorStamps {
             ));
         }
         let subject_ref =
-            crate::subject_model::actor_subject_anchor_in_txn(vault, &rtxn, &actor_ref)?
+            crate::subject_model::actor_subject_anchor_in_txn(vault, &rtxn, &actor_ref, at)?
                 .map(|anchor| anchor.subject_ref);
         Ok(Self {
             actor_ref,

@@ -214,11 +214,11 @@ pub(super) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
-    // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
+    crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
+    // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is
     // reached only after that gate, so it does not re-validate the type byte.
-    //
     // D18: every type-0 (CLAIM) write — put_entity, both batch builders, and
     // sync replay — is structurally validated before any byte is staged.
     // Registered maintenance kinds with pinned body schemas get the same
@@ -237,6 +237,8 @@ pub(super) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
+        crate::subject_model::validate_subject_model_claim_in_txn(store, wtxn, &body)?;
+        crate::thread_passport::validate_thread_claim_in_txn(store, wtxn, &id, &body, replicated)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
             if !id
@@ -528,10 +530,7 @@ pub(super) fn apply_put(
     // before short-id planning hashes it and before the old-record comparison
     // decides whether the body changed, so nothing downstream ever sees the
     // discarded counters.
-    let data = match task_body_without_streaks.as_deref() {
-        Some(stripped) => stripped,
-        None => data,
-    };
+    let data = task_body_without_streaks.as_deref().unwrap_or(data);
     // A sync replay deliberately bypasses the local claim gate. If it changes
     // a claim with a persisted critical-confirm attachment, that attachment
     // binds the old body and cannot authorize the new one. Delete it in this
@@ -827,6 +826,11 @@ pub(super) fn apply_put(
         )?;
     }
     if let Some(body) = decoded_claim_body.as_ref() {
+        // Thread readers reuse ClaimOf, not a private unsynchronized cache.
+        // Raw puts and replicated materialization must maintain that same index.
+        if crate::thread_passport::is_thread_claim_predicate(&body.predicate) {
+            index_thread_claim_subject(store, wtxn, &id, body, learned_at)?;
+        }
         crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
             store, wtxn, &id, body, learned_at,
         )?;

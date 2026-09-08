@@ -294,6 +294,16 @@ impl SessionStoreView<'_> {
         self.overlay.install_txn_segment()
     }
 
+    /// Captures entity rows at the current write-segment position for admission.
+    /// Earlier staged dependencies are visible, but future ops are not. The
+    /// caller's logical read view keeps its original immutable snapshot.
+    pub(crate) fn entity_rows_for_write(&self) -> Result<OverlayDb> {
+        self.entities.with_overlay(
+            self.overlay.clone(),
+            crate::session_overlay::OverlayKeyspace::Entities,
+        )
+    }
+
     /// Mode-aware VaultMeta write half consumed by
     /// `OffRecordSession::vault_meta_put`. Reuses the existing raw key/value
     /// representation; this pins routing, not a new encoding.

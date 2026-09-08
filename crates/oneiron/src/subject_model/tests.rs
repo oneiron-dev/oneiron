@@ -7,17 +7,97 @@ use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
     ReassignmentMap, SplitOp, SurvivorshipPlan,
 };
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_PLACE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_PLACE,
+};
 use crate::temporal::TimeRange;
 use crate::test_util::{entity, open_test_vault_with, seed_agent_definition};
 
-fn test_vault() -> (tempfile::TempDir, Vault) {
+// Read times below name the operation being observed: initial writes at 100
+// (or 1_800_000_000), merge/split at 300, undo/retry at 400, replacement
+// at 500. Rejection checks use the attempted write's time, not wall clock.
+mod anchor_admission;
+mod anchor_session_admission;
+pub(crate) mod authorization;
+mod evaluation_time;
+mod head_admission;
+#[cfg(feature = "sync")]
+mod replicated_anchor;
+#[cfg(feature = "sync")]
+mod replicated_substrate;
+mod substrate_admission;
+mod substrate_authorization;
+mod write_doors;
+
+fn put_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        vault.put_reserved_claim_in_txn(
+            txn,
+            id,
+            body,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+    })
+}
+
+// Reader corruption tests must not ask the checked admission door to accept
+// invalid substrate. Preserve the existing row header and indexes, and damage
+// only its body, as an on-disk corruption fixture (never a production door).
+fn corrupt_subject_fixture(vault: &Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+    let bytes = crate::claim::encode_claim_body(body)?;
+    vault.with_write_txn(|txn| {
+        let mut raw = vault
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .expect("seeded claim row")
+            .to_vec();
+        raw.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+        raw.extend_from_slice(&bytes);
+        vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+        Ok(())
+    })
+}
+
+fn ensure_actor_subject(
+    vault: &Vault,
+    actor: EntityId,
+    subject: EntityId,
+    writer: WriteActor,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        validate_writer_in_txn(vault, txn, writer)?;
+        vault.verify_owner_write_actor_in_txn(txn, &writer)?;
+        ensure_actor_subject_in_txn(vault, txn, actor, subject, writer, at)
+    })
+}
+
+fn ensure_model_person(vault: &Vault, person: EntityId, writer: WriteActor, at: u64) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        validate_writer_in_txn(vault, txn, writer)?;
+        vault.verify_owner_write_actor_in_txn(txn, &writer)?;
+        ensure_model_person_in_txn(vault, txn, person, writer, at)
+    })
+}
+
+fn unrooted_test_vault() -> (tempfile::TempDir, Vault) {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 16 * 1024 * 1024;
     cfg.dimensions = 4;
     cfg.embedding_model = None;
-    let (dir, vault) = open_test_vault_with(cfg);
-    seed(&vault, entity(0x9F), crate::registry::ENTITY_TYPE_MACHINE);
+    open_test_vault_with(cfg)
+}
+
+fn test_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = unrooted_test_vault();
+    seed(&vault, writer().entity_ref(), ENTITY_TYPE_PERSON);
+    authorization::root_owner(&vault, writer(), 0xE1).expect("root owner fixture");
     (dir, vault)
 }
 
@@ -41,7 +121,7 @@ fn seed(vault: &Vault, id: EntityId, entity_type: u8) -> EntityId {
 }
 
 fn writer() -> WriteActor {
-    WriteActor::new(entity(0x9F), EdgeActorClass::System)
+    WriteActor::new(entity(0x9F), EdgeActorClass::Human)
 }
 
 #[test]
@@ -52,7 +132,10 @@ fn anchor_to_person_round_trips() -> Result<()> {
 
     anchor_actor_subject(&vault, actor, person, writer(), 1_800_000_000)?;
 
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(person));
+    assert_eq!(
+        actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
+        Some(person)
+    );
     Ok(())
 }
 
@@ -64,7 +147,10 @@ fn anchor_to_org_round_trips() -> Result<()> {
 
     anchor_actor_subject(&vault, actor, org, writer(), 1_800_000_000)?;
 
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(org));
+    assert_eq!(
+        actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
+        Some(org)
+    );
     Ok(())
 }
 
@@ -75,7 +161,7 @@ fn plumbing_actor_has_no_anchor_and_is_not_an_error() -> Result<()> {
     let (_dir, vault) = test_vault();
     let actor = seed(&vault, entity(0x23), ENTITY_TYPE_AGENT_DEF);
 
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, None);
+    assert_eq!(actor_subject_anchor(&vault, &actor, 1_800_000_000)?, None);
 
     // Nothing was minted to fill the hole.
     assert!(vault.claims_for_subject(&actor)?.is_empty());
@@ -104,7 +190,7 @@ fn anchor_subject_must_be_person_or_org() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     // Nothing landed on any rejection.
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, None);
+    assert_eq!(actor_subject_anchor(&vault, &actor, 1_800_000_000)?, None);
     Ok(())
 }
 
@@ -120,7 +206,10 @@ fn reanchoring_supersedes_the_prior_anchor() -> Result<()> {
     anchor_actor_subject(&vault, actor, first, writer(), 1_800_000_000)?;
     anchor_actor_subject(&vault, actor, second, writer(), 1_800_000_100)?;
 
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(second));
+    assert_eq!(
+        actor_subject_anchor(&vault, &actor, 1_800_000_100)?,
+        Some(second)
+    );
     Ok(())
 }
 
@@ -131,7 +220,10 @@ fn substrate_accepts_exactly_meat_and_model_on_a_person() -> Result<()> {
 
     for substrate in [PersonSubstrate::Meat, PersonSubstrate::Model] {
         set_person_substrate(&vault, person, substrate, writer(), 1_800_000_000)?;
-        assert_eq!(person_substrate(&vault, &person)?, Some(substrate));
+        assert_eq!(
+            person_substrate(&vault, &person, 1_800_000_000)?,
+            Some(substrate)
+        );
     }
 
     // The wire vocabulary is closed at exactly two spellings.
@@ -165,7 +257,7 @@ fn substrate_is_person_only() -> Result<()> {
         .expect_err("non-PERSON substrate must be refused");
         assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
         // The refusal is total: no partial row landed on the subject.
-        assert_eq!(person_substrate(&vault, &subject)?, None);
+        assert_eq!(person_substrate(&vault, &subject, 1_800_000_000)?, None);
     }
     Ok(())
 }
@@ -195,11 +287,12 @@ fn substrate_never_forks_the_entity_kind() -> Result<()> {
 /// Both writes carry the authenticated writer into durable evidence.
 #[test]
 fn writes_stamp_the_authenticated_writer() -> Result<()> {
-    let (_dir, vault) = test_vault();
+    let (_dir, vault) = unrooted_test_vault();
     let person = seed(&vault, entity(0x31), ENTITY_TYPE_PERSON);
     let actor = seed(&vault, entity(0x32), ENTITY_TYPE_AGENT_DEF);
     let author_ref = seed(&vault, entity(0x33), ENTITY_TYPE_PERSON);
     let author = WriteActor::new(author_ref, EdgeActorClass::Human);
+    authorization::root_owner(&vault, author, 0xE7)?;
 
     let anchor_claim = anchor_actor_subject(&vault, actor, person, author, 1_800_000_000)?;
     let substrate_claim =
@@ -229,7 +322,10 @@ fn merged_subject_resolves_to_survivor() -> Result<()> {
         let survivor = seed(&vault, entity(0xF3), entity_type);
 
         let claim_id = anchor_actor_subject(&vault, actor, absorbed, writer(), 1_800_000_000)?;
-        assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(absorbed));
+        assert_eq!(
+            actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
+            Some(absorbed)
+        );
 
         let outcome = vault.apply_identity_topology_op(
             &IdentityTopologyOp::Merge(MergeOp {
@@ -247,7 +343,10 @@ fn merged_subject_resolves_to_survivor() -> Result<()> {
         assert!(matches!(outcome, IdentityOpOutcome::Applied { .. }));
 
         // The READ canonicalizes...
-        assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(survivor));
+        assert_eq!(
+            actor_subject_anchor(&vault, &actor, 1_800_000_500)?,
+            Some(survivor)
+        );
 
         // ...while the LEDGER still says exactly what the writer stated. No second
         // same-as table, no historical claim rewrite.
@@ -268,7 +367,10 @@ fn ambiguous_split_subject_resolves_to_no_determinate_someone() -> Result<()> {
     let head_b = seed(&vault, entity(0x44), ENTITY_TYPE_PERSON);
 
     let claim_id = anchor_actor_subject(&vault, actor, conflated, writer(), 1_800_000_000)?;
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(conflated));
+    assert_eq!(
+        actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
+        Some(conflated)
+    );
 
     vault.apply_identity_topology_op(
         &IdentityTopologyOp::Split(SplitOp {
@@ -285,7 +387,7 @@ fn ambiguous_split_subject_resolves_to_no_determinate_someone() -> Result<()> {
     )?;
 
     assert_eq!(
-        actor_subject_anchor(&vault, &actor)?,
+        actor_subject_anchor(&vault, &actor, 1_800_000_500)?,
         None,
         "two candidate someones is not one someone"
     );
@@ -298,7 +400,7 @@ fn ambiguous_split_subject_resolves_to_no_determinate_someone() -> Result<()> {
 
 #[test]
 fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
-    let (_dir, vault) = test_vault();
+    let (_dir, vault) = unrooted_test_vault();
     let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
     let person = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
     let anchor = ActorSubjectAnchor {
@@ -307,12 +409,16 @@ fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
         subject_kind: SubjectKind::Person,
     };
     let author = WriteActor::new(person, EdgeActorClass::Human);
+    authorization::root_owner(&vault, author, 0xE8)?;
     let claim_id = vault.set_actor_subject_anchor(anchor, &author, 1_800_000_000)?;
-    assert_eq!(vault.actor_subject_anchor(&actor)?, Some(anchor));
+    assert_eq!(
+        vault.actor_subject_anchor(&actor, 1_800_000_000)?,
+        Some(anchor)
+    );
     let substrate_id =
         vault.set_person_substrate(person, PersonSubstrate::Model, &author, 1_800_000_000)?;
     assert_eq!(
-        vault.person_substrate(&person)?,
+        vault.person_substrate(&person, 1_800_000_000)?,
         Some(PersonSubstrate::Model)
     );
     for id in [claim_id, substrate_id] {
@@ -335,11 +441,63 @@ fn typed_vault_subject_doors_check_kind_and_provenance() -> Result<()> {
             .kind(),
         ErrorKind::InvalidClaimBody,
     );
-    assert_eq!(vault.actor_subject_anchor(&actor)?, Some(anchor));
+    assert_eq!(
+        vault.actor_subject_anchor(&actor, 1_800_000_100)?,
+        Some(anchor)
+    );
     assert_eq!(
         vault.get_claim(&claim_id)?.expect("old anchor").lifecycle,
         ClaimLifecycleStatus::Active,
     );
+    Ok(())
+}
+
+#[test]
+fn typed_anchor_door_requires_the_same_owner_as_the_free_door() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0xB1), ENTITY_TYPE_AGENT_DEF);
+    let person = seed(&vault, entity(0xB2), ENTITY_TYPE_PERSON);
+    let other = seed(&vault, entity(0xB3), ENTITY_TYPE_ORG);
+    let stranger = seed(&vault, entity(0xB4), ENTITY_TYPE_PERSON);
+    let machine = seed(&vault, entity(0xB5), crate::registry::ENTITY_TYPE_MACHINE);
+    let anchor = ActorSubjectAnchor {
+        actor_ref: actor,
+        subject_ref: person,
+        subject_kind: SubjectKind::Person,
+    };
+    let outsiders = [
+        WriteActor::new(stranger, EdgeActorClass::Human),
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        WriteActor::new(machine, EdgeActorClass::System),
+    ];
+    for outsider in outsiders {
+        assert!(
+            vault
+                .set_actor_subject_anchor(anchor, &outsider, 100)
+                .is_err()
+        );
+        assert!(vault.claims_for_subject(&actor)?.is_empty());
+    }
+    let claim = vault.set_actor_subject_anchor(anchor, &writer(), 100)?;
+    let before = vault.get_claim(&claim)?;
+    let claims = vault.claims_for_subject(&actor)?;
+    let replacement = ActorSubjectAnchor {
+        subject_ref: other,
+        subject_kind: SubjectKind::Org,
+        ..anchor
+    };
+    for outsider in outsiders {
+        assert!(
+            vault
+                .set_actor_subject_anchor(replacement, &outsider, 101)
+                .is_err()
+        );
+        assert_eq!(vault.actor_subject_anchor(&actor, 101)?, Some(anchor));
+        assert_eq!(vault.get_claim(&claim)?, before);
+        assert_eq!(vault.claims_for_subject(&actor)?, claims);
+    }
+    vault.set_actor_subject_anchor(replacement, &writer(), 102)?;
+    assert_eq!(vault.actor_subject_anchor(&actor, 102)?, Some(replacement));
     Ok(())
 }
 
@@ -380,6 +538,18 @@ fn missing_or_misclassified_writer_cannot_change_subject_claims() -> Result<()> 
                 .kind(),
             expected,
         );
+        assert_eq!(
+            ensure_actor_subject(&vault, actor, person, author, 1_800_000_100)
+                .expect_err("an idempotent ensure still checks its writer")
+                .kind(),
+            expected,
+        );
+        assert_eq!(
+            ensure_model_person(&vault, person, author, 1_800_000_100)
+                .expect_err("model ensure checks its writer before the prior fact")
+                .kind(),
+            expected,
+        );
     }
     for id in [first, substrate] {
         assert_eq!(
@@ -388,7 +558,7 @@ fn missing_or_misclassified_writer_cannot_change_subject_claims() -> Result<()> 
         );
     }
     assert_eq!(
-        vault.person_substrate(&person)?,
+        vault.person_substrate(&person, 1_800_000_100)?,
         Some(PersonSubstrate::Meat)
     );
     Ok(())
@@ -418,13 +588,16 @@ fn conflicting_anchor_heads_fail_closed_and_reanchoring_closes_them_all() -> Res
     })?;
     assert_eq!(
         vault
-            .actor_subject_anchor(&actor)
+            .actor_subject_anchor(&actor, 1_800_000_000)
             .expect_err("never choose the first active head")
             .kind(),
         ErrorKind::InvalidClaimBody,
     );
     let replacement = anchor_actor_subject(&vault, actor, second_subject, writer(), 1_800_000_100)?;
-    assert_eq!(actor_subject_anchor(&vault, &actor)?, Some(second_subject));
+    assert_eq!(
+        actor_subject_anchor(&vault, &actor, 1_800_000_100)?,
+        Some(second_subject)
+    );
     for id in [first, second] {
         let body = vault.get_claim(&id)?.expect("historical claim");
         assert_eq!(body.lifecycle, ClaimLifecycleStatus::Superseded);
@@ -461,7 +634,7 @@ fn malformed_subject_values_are_not_projected_as_plumbing() -> Result<()> {
         })?;
         assert_eq!(
             vault
-                .actor_subject_anchor(&actor)
+                .actor_subject_anchor(&actor, 1_800_000_000)
                 .expect_err("corrupt anchor")
                 .kind(),
             ErrorKind::InvalidClaimBody,
@@ -488,18 +661,13 @@ fn substrate_reader_refuses_generic_claims_with_invalid_value_or_subject() -> Re
             ClaimLifecycleStatus::Active,
         );
         body.source = Some(ClaimSource::Observed);
-        vault.put_claim(
-            &id,
-            &body,
-            TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-        )?;
+        let mut seed_body = body.clone();
+        seed_body.predicate = "person.corruption_fixture".to_owned();
+        put_subject_fixture(&vault, &id, &seed_body)?;
+        corrupt_subject_fixture(&vault, &id, &body)?;
         assert_eq!(
             vault
-                .person_substrate(&subject)
+                .person_substrate(&subject, 100)
                 .expect_err("invalid substrate must not project")
                 .kind(),
             ErrorKind::InvalidClaimBody,
@@ -541,12 +709,15 @@ fn substrate_follows_merged_anchor_and_supersedes_across_historical_subjects() -
     merge_substrate_person(&vault, absorbed, middle)?;
     merge_substrate_person(&vault, middle, survivor)?;
     let canonical = vault
-        .actor_subject_anchor(&actor)?
+        .actor_subject_anchor(&actor, 300)?
         .expect("canonical anchor")
         .subject_ref;
     assert_eq!(canonical, survivor);
     for id in [absorbed, middle, canonical] {
-        assert_eq!(vault.person_substrate(&id)?, Some(PersonSubstrate::Model));
+        assert_eq!(
+            vault.person_substrate(&id, 300)?,
+            Some(PersonSubstrate::Model)
+        );
     }
     assert_eq!(vault.get_claim(&first)?, Some(original.clone()));
 
@@ -563,7 +734,10 @@ fn substrate_follows_merged_anchor_and_supersedes_across_historical_subjects() -
     assert_eq!(latest.subject, ClaimSubject::Entity(absorbed));
     assert_eq!(latest.lifecycle, ClaimLifecycleStatus::Active);
     for id in [absorbed, middle, survivor] {
-        assert_eq!(vault.person_substrate(&id)?, Some(PersonSubstrate::Model));
+        assert_eq!(
+            vault.person_substrate(&id, 500)?,
+            Some(PersonSubstrate::Model)
+        );
     }
     Ok(())
 }
@@ -577,7 +751,7 @@ fn substrate_merge_undo_restores_original_subject_without_rewriting_claims() -> 
     let original = vault.get_claim(&claim)?;
     let merge = merge_substrate_person(&vault, absorbed, survivor)?;
     assert_eq!(
-        vault.person_substrate(&survivor)?,
+        vault.person_substrate(&survivor, 300)?,
         Some(PersonSubstrate::Meat)
     );
     vault.undo_identity_topology_event(
@@ -585,9 +759,9 @@ fn substrate_merge_undo_restores_original_subject_without_rewriting_claims() -> 
         &IdentityOpWrite::auto(ClaimSource::Inferred),
         400,
     )?;
-    assert_eq!(vault.person_substrate(&survivor)?, None);
+    assert_eq!(vault.person_substrate(&survivor, 400)?, None);
     assert_eq!(
-        vault.person_substrate(&absorbed)?,
+        vault.person_substrate(&absorbed, 400)?,
         Some(PersonSubstrate::Meat)
     );
     assert_eq!(vault.get_claim(&claim)?, original);
@@ -621,7 +795,7 @@ fn substrate_split_refuses_ambiguous_reads_and_writes_without_closing_history() 
         for subject in std::iter::once(original).chain(heads[..head_count].iter().copied()) {
             assert_eq!(
                 vault
-                    .person_substrate(&subject)
+                    .person_substrate(&subject, 300)
                     .expect_err("split is not one person")
                     .kind(),
                 ErrorKind::InvalidClaimBody,
@@ -652,28 +826,12 @@ fn substrate_merged_conflicting_or_malformed_heads_fail_closed_atomically() -> R
             let mut body = vault.get_claim(&first)?.expect("substrate");
             body.subject = ClaimSubject::Entity(survivor);
             body.value = Value::from(value);
-            vault.put_claim(
-                &second,
-                &body,
-                TimeRange {
-                    start: 100,
-                    end: 100,
-                },
-                100,
-            )?;
+            put_subject_fixture(&vault, &second, &body)?;
             claims.push(second);
         } else {
             let mut body = vault.get_claim(&first)?.expect("substrate");
             body.value = Value::from("not-a-substrate");
-            vault.put_claim(
-                &first,
-                &body,
-                TimeRange {
-                    start: 100,
-                    end: 100,
-                },
-                100,
-            )?;
+            corrupt_subject_fixture(&vault, &first, &body)?;
         }
         merge_substrate_person(&vault, absorbed, survivor)?;
         let before = claims
@@ -683,7 +841,7 @@ fn substrate_merged_conflicting_or_malformed_heads_fail_closed_atomically() -> R
         for subject in [absorbed, survivor] {
             assert_eq!(
                 vault
-                    .person_substrate(&subject)
+                    .person_substrate(&subject, 300)
                     .expect_err("no arbitrary head")
                     .kind(),
                 ErrorKind::InvalidClaimBody,
@@ -735,7 +893,7 @@ fn substrate_rejects_malformed_dangling_wrong_kind_and_cyclic_redirects() -> Res
         })?;
         assert_eq!(
             vault
-                .person_substrate(&person)
+                .person_substrate(&person, 400)
                 .expect_err("bad redirect")
                 .kind(),
             kind
@@ -749,5 +907,420 @@ fn substrate_rejects_malformed_dangling_wrong_kind_and_cyclic_redirects() -> Res
         );
         assert_eq!(vault.get_claim(&claim)?, historical);
     }
+    Ok(())
+}
+
+#[test]
+fn onboarding_anchor_ensure_is_idempotent_and_never_reanchors() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0x61), ENTITY_TYPE_AGENT_DEF);
+    let first = seed(&vault, entity(0x62), ENTITY_TYPE_PERSON);
+    let second = seed(&vault, entity(0x63), ENTITY_TYPE_ORG);
+    ensure_actor_subject(&vault, actor, first, writer(), 100)?;
+    let claims = vault.claims_for_subject(&actor)?;
+    ensure_actor_subject(&vault, actor, first, writer(), 100)?;
+    assert_eq!(vault.claims_for_subject(&actor)?.len(), claims.len());
+    let err = ensure_actor_subject(&vault, actor, second, writer(), 101)
+        .expect_err("ensure cannot re-anchor");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_eq!(actor_subject_anchor(&vault, &actor, 101)?, Some(first));
+    let claim = vault.get_claim(&claims[0])?.expect("onboarding anchor");
+    assert_eq!(claim.evidence, Some(writer_evidence(writer())));
+    assert_eq!(claim.source, Some(ClaimSource::Observed));
+    let survivor = seed(&vault, entity(0x64), ENTITY_TYPE_PERSON);
+    merge_substrate_person(&vault, first, survivor)?;
+    ensure_actor_subject(&vault, actor, first, writer(), 400)?;
+    assert_eq!(
+        ensure_actor_subject(&vault, actor, survivor, writer(), 400)
+            .expect_err("a canonical read must not rewrite the stored anchor")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert_eq!(actor_subject_anchor(&vault, &actor, 400)?, Some(survivor));
+    assert_eq!(vault.get_claim(&claims[0])?, Some(claim));
+    assert_eq!(vault.claims_for_subject(&actor)?, claims);
+    Ok(())
+}
+
+#[test]
+fn model_ensure_never_reclassifies_a_meat_person() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let person = seed(&vault, entity(0x64), ENTITY_TYPE_PERSON);
+    set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 100)?;
+    let err = ensure_model_person(&vault, person, writer(), 101)
+        .expect_err("a meat person cannot become a companion");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert_eq!(
+        person_substrate(&vault, &person, 101)?,
+        Some(PersonSubstrate::Meat)
+    );
+    let survivor = seed(&vault, entity(0x65), ENTITY_TYPE_PERSON);
+    merge_substrate_person(&vault, person, survivor)?;
+    let history = vault.claims_for_subject(&person)?;
+    let survivor_claims = vault.claims_for_subject(&survivor)?;
+    assert_eq!(
+        ensure_model_person(&vault, survivor, writer(), 400)
+            .expect_err("merged meat is not an absent substrate")
+            .kind(),
+        ErrorKind::InvalidClaimBody,
+    );
+    assert_eq!(vault.claims_for_subject(&person)?, history);
+    assert_eq!(vault.claims_for_subject(&survivor)?, survivor_claims);
+    let model = seed(&vault, entity(0x66), ENTITY_TYPE_PERSON);
+    ensure_model_person(&vault, model, writer(), 100)?;
+    let claims = vault.claims_for_subject(&model)?;
+    ensure_model_person(&vault, model, writer(), 101)?;
+    assert_eq!(vault.claims_for_subject(&model)?, claims);
+    assert_eq!(
+        person_substrate(&vault, &model, 101)?,
+        Some(PersonSubstrate::Model)
+    );
+    Ok(())
+}
+
+#[test]
+fn concurrent_onboarding_cannot_reanchor_the_same_house() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0x65), ENTITY_TYPE_AGENT_DEF);
+    let first = seed(&vault, entity(0x66), ENTITY_TYPE_ORG);
+    let second = seed(&vault, entity(0x67), ENTITY_TYPE_ORG);
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let one = scope.spawn(|| {
+            barrier.wait();
+            ensure_actor_subject(&vault, actor, first, writer(), 100)
+        });
+        let two = scope.spawn(|| {
+            barrier.wait();
+            ensure_actor_subject(&vault, actor, second, writer(), 100)
+        });
+        [
+            one.join().expect("first thread"),
+            two.join().expect("second thread"),
+        ]
+    });
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(vault.claims_for_subject(&actor)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn agreeing_same_stored_subject_heads_project_and_all_supersede() -> Result<()> {
+    for redirected in [false, true] {
+        let (_dir, vault) = test_vault();
+        let stored = seed(&vault, entity(0x73), ENTITY_TYPE_PERSON);
+        let survivor = seed(&vault, entity(0x74), ENTITY_TYPE_PERSON);
+        let ids = [entity(0x75), entity(0x76)];
+        for (id, approval) in ids
+            .into_iter()
+            .zip([ClaimApprovalStatus::Auto, ClaimApprovalStatus::Approved])
+        {
+            let mut body = subject_fact(
+                PREDICATE_PERSON_SUBSTRATE,
+                stored,
+                Value::from("model"),
+                writer(),
+                100,
+            );
+            body.approval = approval;
+            put_subject_fixture(&vault, &id, &body)?;
+        }
+        let queried = if redirected {
+            merge_substrate_person(&vault, stored, survivor)?;
+            survivor
+        } else {
+            stored
+        };
+        let before = ids
+            .iter()
+            .map(|id| vault.get(id))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(
+            vault.person_substrate(&queried, 400)?,
+            Some(PersonSubstrate::Model)
+        );
+        let stored_claims = vault.claims_for_subject(&stored)?;
+        let queried_claims = vault.claims_for_subject(&queried)?;
+        ensure_model_person(&vault, queried, writer(), 400)?;
+        assert_eq!(vault.claims_for_subject(&stored)?, stored_claims);
+        assert_eq!(vault.claims_for_subject(&queried)?, queried_claims);
+        assert_eq!(
+            ids.iter()
+                .map(|id| vault.get(id))
+                .collect::<Result<Vec<_>>>()?,
+            before
+        );
+        let replacement =
+            vault.set_person_substrate(queried, PersonSubstrate::Meat, &writer(), 500)?;
+        for id in ids {
+            let body = vault.get_claim(&id)?.expect("historical head");
+            assert_eq!(body.subject, ClaimSubject::Entity(stored));
+            assert_eq!(body.value, Value::from("model"));
+            assert_eq!(body.evidence, Some(writer_evidence(writer())));
+            assert_eq!(body.lifecycle, ClaimLifecycleStatus::Superseded);
+            assert_eq!(body.valid_to, Some(500));
+            let superseders = vault
+                .edges_in(&id)?
+                .into_iter()
+                .filter(|edge| edge.kind == crate::edge::EdgeKind::Supersedes)
+                .collect::<Vec<_>>();
+            assert_eq!(superseders.len(), 1);
+            assert_eq!(superseders[0].target, replacement);
+        }
+        assert_eq!(
+            vault.person_substrate(&stored, 500)?,
+            Some(PersonSubstrate::Meat)
+        );
+        assert_eq!(
+            vault.person_substrate(&queried, 500)?,
+            Some(PersonSubstrate::Meat)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn conflicting_or_malformed_active_substrates_fail_closed() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let person = seed(&vault, entity(0x68), ENTITY_TYPE_PERSON);
+    for (id, value) in [(entity(0x69), "meat"), (entity(0x6A), "model")] {
+        let body = subject_fact(
+            PREDICATE_PERSON_SUBSTRATE,
+            person,
+            Value::from(value),
+            writer(),
+            100,
+        );
+        put_subject_fixture(&vault, &id, &body)?;
+    }
+    let history = vault.claims_for_subject(&person)?;
+    let before = history
+        .iter()
+        .map(|id| vault.get(id))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        person_substrate(&vault, &person, 100)
+            .expect_err("ambiguous fact")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+    assert_eq!(
+        ensure_model_person(&vault, person, writer(), 100)
+            .expect_err("not absent")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+
+    assert_eq!(
+        set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 200)
+            .expect_err("conflicting heads cannot be superseded")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+    assert_eq!(vault.claims_for_subject(&person)?, history);
+    assert_eq!(
+        history
+            .iter()
+            .map(|id| vault.get(id))
+            .collect::<Result<Vec<_>>>()?,
+        before
+    );
+
+    let other = seed(&vault, entity(0x6B), ENTITY_TYPE_PERSON);
+    let body = subject_fact(
+        PREDICATE_PERSON_SUBSTRATE,
+        other,
+        Value::from("unknown"),
+        writer(),
+        100,
+    );
+    let id = entity(0x6C);
+    assert_eq!(
+        put_subject_fixture(&vault, &id, &body)
+            .expect_err("malformed fact must not be stored")
+            .kind(),
+        ErrorKind::InvalidClaimBody
+    );
+    assert!(vault.get(&id)?.is_none());
+    assert_eq!(person_substrate(&vault, &other, 100)?, None);
+    Ok(())
+}
+
+#[test]
+fn typed_subject_reads_use_the_callers_historical_evaluation_time() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let actor = seed(&vault, entity(0xB0), ENTITY_TYPE_AGENT_DEF);
+    let person = seed(&vault, entity(0xB1), ENTITY_TYPE_PERSON);
+    let anchor = ActorSubjectAnchor {
+        actor_ref: actor,
+        subject_ref: person,
+        subject_kind: SubjectKind::Person,
+    };
+    let anchor_id = vault.set_actor_subject_anchor(anchor, &writer(), 200)?;
+    let substrate_id =
+        vault.set_person_substrate(person, PersonSubstrate::Model, &writer(), 200)?;
+    for id in [anchor_id, substrate_id] {
+        let mut body = vault.get_claim(&id)?.expect("subject fact");
+        body.valid_to = Some(202);
+        put_subject_fixture(&vault, &id, &body)?;
+    }
+    // Both facts occur at 200 and expire at 202. Read out of order to prove
+    // that neither wall clock nor the most recent evaluation supplies time.
+    for (at, present) in [(202, false), (199, false), (201, true), (200, true)] {
+        assert_eq!(
+            vault.actor_subject_anchor(&actor, at)?,
+            present.then_some(anchor)
+        );
+        assert_eq!(
+            actor_subject_anchor(&vault, &actor, at)?,
+            present.then_some(person)
+        );
+        assert_eq!(
+            vault.person_substrate(&person, at)?,
+            present.then_some(PersonSubstrate::Model)
+        );
+        assert_eq!(
+            person_substrate(&vault, &person, at)?,
+            present.then_some(PersonSubstrate::Model)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn time_filter_preserves_stored_subject_ambiguity_and_excluded_history() -> Result<()> {
+    for same_stored_subject in [false, true] {
+        let (_dir, vault) = test_vault();
+        let absorbed = seed(&vault, entity(0xB2), ENTITY_TYPE_PERSON);
+        let survivor = seed(&vault, entity(0xB3), ENTITY_TYPE_PERSON);
+        let first = vault.set_person_substrate(absorbed, PersonSubstrate::Model, &writer(), 100)?;
+        let agreeing = entity(0xB4);
+        let body = vault.get_claim(&first)?.expect("first head");
+        put_subject_fixture(&vault, &agreeing, &body)?;
+        let future = entity(0xB5);
+        let mut future_body = body;
+        future_body.subject = ClaimSubject::Entity(if same_stored_subject {
+            absorbed
+        } else {
+            survivor
+        });
+        future_body.valid_from = Some(500);
+        put_subject_fixture(&vault, &future, &future_body)?;
+        merge_substrate_person(&vault, absorbed, survivor)?;
+        let future_bytes = vault.get(&future)?;
+        // The merge occurs at 300. At 400 the head beginning at 500 is not
+        // eligible; at 500 its STORED identity must still distinguish shells.
+        assert_eq!(
+            vault.person_substrate(&survivor, 400)?,
+            Some(PersonSubstrate::Model)
+        );
+        if same_stored_subject {
+            assert_eq!(
+                vault.person_substrate(&survivor, 500)?,
+                Some(PersonSubstrate::Model)
+            );
+        } else {
+            assert_eq!(
+                vault
+                    .person_substrate(&survivor, 500)
+                    .expect_err("distinct historical subjects")
+                    .kind(),
+                ErrorKind::InvalidClaimBody
+            );
+        }
+        // The future fact is invisible to the read at 400, but overlaps an
+        // unbounded replacement. Snapshot all entity rows and both edge tables.
+        let snapshot = || -> Result<_> {
+            let txn = vault.store.env.read_txn()?;
+            let mut tables = Vec::new();
+            for db in [
+                &vault.store.entities,
+                &vault.store.edges_in,
+                &vault.store.edges_out,
+            ] {
+                let mut rows = Vec::new();
+                for row in db.iter(&txn)? {
+                    let (key, value) = row?;
+                    rows.push((key.to_vec(), value.to_vec()));
+                }
+                tables.push(rows);
+            }
+            Ok(tables)
+        };
+        let before = snapshot()?;
+        let absorbed_claims = vault.claims_for_subject(&absorbed)?;
+        let survivor_claims = vault.claims_for_subject(&survivor)?;
+        assert!(matches!(
+            vault.set_person_substrate(survivor, PersonSubstrate::Meat, &writer(), 400),
+            Err(Error::InvalidClaimBody(
+                "subject model write overlaps retained or future history"
+            ))
+        ));
+        assert_eq!(snapshot()?, before);
+        assert_eq!(vault.claims_for_subject(&absorbed)?, absorbed_claims);
+        assert_eq!(vault.claims_for_subject(&survivor)?, survivor_claims);
+        assert_eq!(vault.get(&future)?, future_bytes);
+        assert_eq!(vault.get_claim(&future)?, Some(future_body));
+        assert!(
+            vault
+                .edges_in(&future)?
+                .iter()
+                .all(|edge| edge.kind != crate::edge::EdgeKind::Supersedes)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn no_overlap_replacement_closes_agreeing_heads_and_preserves_sealed_history() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let absorbed = seed(&vault, entity(0xB2), ENTITY_TYPE_PERSON);
+    let survivor = seed(&vault, entity(0xB3), ENTITY_TYPE_PERSON);
+    let first = vault.set_person_substrate(absorbed, PersonSubstrate::Model, &writer(), 100)?;
+    let agreeing = entity(0xB4);
+    let body = vault.get_claim(&first)?.expect("first head");
+    put_subject_fixture(&vault, &agreeing, &body)?;
+    merge_substrate_person(&vault, absorbed, survivor)?;
+    assert_eq!(
+        vault.person_substrate(&survivor, 400)?,
+        Some(PersonSubstrate::Model)
+    );
+    let replacement =
+        vault.set_person_substrate(survivor, PersonSubstrate::Meat, &writer(), 400)?;
+    for id in [first, agreeing] {
+        let historical = vault.get_claim(&id)?.expect("closed eligible head");
+        assert_eq!(historical.subject, ClaimSubject::Entity(absorbed));
+        assert_eq!(historical.value, Value::from("model"));
+        assert_eq!(historical.valid_from, Some(100));
+        assert_eq!(historical.lifecycle, ClaimLifecycleStatus::Superseded);
+        assert_eq!(historical.valid_to, Some(400));
+        assert_eq!(historical.evidence, Some(writer_evidence(writer())));
+        let superseders = vault
+            .edges_in(&id)?
+            .into_iter()
+            .filter(|edge| edge.kind == crate::edge::EdgeKind::Supersedes)
+            .collect::<Vec<_>>();
+        assert_eq!(superseders.len(), 1);
+        assert_eq!(superseders[0].target, replacement);
+    }
+    assert_eq!(
+        vault.get_claim(&replacement)?.expect("replacement").subject,
+        ClaimSubject::Entity(survivor)
+    );
+    let sealed = [vault.get(&first)?, vault.get(&agreeing)?];
+    // Current reads exclude closed history; historical reads use its sealed
+    // interval without mutating lifecycle or rewriting stored identities.
+    for queried in [absorbed, survivor] {
+        for (at, expected) in [
+            (400, Some(PersonSubstrate::Meat)),
+            (399, Some(PersonSubstrate::Model)),
+            (99, None),
+            (100, Some(PersonSubstrate::Model)),
+            (500, Some(PersonSubstrate::Meat)),
+        ] {
+            assert_eq!(vault.person_substrate(&queried, at)?, expected);
+        }
+    }
+    assert_eq!([vault.get(&first)?, vault.get(&agreeing)?], sealed);
     Ok(())
 }
