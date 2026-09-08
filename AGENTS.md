@@ -78,27 +78,67 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 
 ## CI truth
 
+Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
+contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
+
 - `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
   repo variable pauses every job (wave affordance); drafts do not run. Docs-only diffs
   (Markdown, `docs/**`) do not trigger it, except `docs/ops/**` and `oneiron.skills.md`, which
-  contract tests `include_str!`. Jobs: changes/fmt/clippy/test/package (`oneiron-server`)/deny
-  (`cargo-deny`)/typos; `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. fmt/clippy/typos are gated on
-  `pull_request`, `test` on rust-diff `pull_request` or `push`, `deny` on `pull_request` or
-  `workflow_dispatch`, and `package` waits for a `v*` tag push that no trigger sends, so that
-  gate is unreachable as written. Under `workflow_dispatch` alone only `changes` (path detector)
-  and `deny` execute. The PR run enforces fmt, clippy and tests pre-merge; `scripts/verify.sh` on
-  the branch stays the local gate.
+  contract tests `include_str!`. Jobs: `changes` (path detector) / `checks` (fmt, workspace +
+  featureless clippy, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
+  `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
+  `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. `checks` runs on every `pull_request` (its cargo steps
+  only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
+  (`--exclude oneiron-napi`, the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
+  filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff `pull_request` or `push`; `test-linux` runs the unfiltered
+  `--profile full` suite plus the same two stages on `push` to `main` and `workflow_dispatch`
+  only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
+  trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy and
+  tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
-  agree.
-- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; installs ripgrep and runs
-  `scripts/ratchet/check.sh`. Main-only on purpose: a stacked wave's middle commits can sit
-  transiently above baseline for a state that never lands.
-- `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
-  control).
-- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding
-  compile proof.
+  agree. Runs on the macOS runners without a container: uv 0.12.1, CPython 3.12 and pyhanko
+  0.35.2 (`uv.lock`) are pinned in the job; `pdfsig` is the host's poppler.
+- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; runs
+  `scripts/ratchet/check.sh` and `scripts/ratchet/root-surface-check.sh` with the host's
+  ripgrep. It is a post-merge reporter:
+  it cannot block a merge, it can only turn `main` red after one. Main-only on purpose: a
+  stacked wave's middle commits can sit transiently above baseline for a state that never lands.
+- `uniffi-stub.yml` — PR-triggered (non-draft), path-scoped to `crates/oneiron-uniffi` (plus the
+  workflow file and `Cargo.lock`), and `workflow_dispatch`; Swift-binding compile proof on the
+  macOS runners' Xcode toolchain.
+- `wire-quickstart.yml` — PR (non-draft) to `main` and `push` to `main`, both path-scoped to
+  `packages/oneiron`, `crates/oneiron{,-py,-remote,-napi,-server}`, the wire scripts
+  (`scripts/wire-test-server.sh`, `scripts/tests/test_wire_*.py`) and the Cargo/toolchain
+  files; plus `workflow_dispatch`. Installs the shipped SDK surface and proves four-verb parity.
+
+## Self-hosted runners
+
+- Hosts and labels: MacBook `self-hosted,macos,arm64,mbp` (16 cores, the first and strongest);
+  the Mac mini joins with the same macOS labels; Arch box `self-hosted,linux,x64,arch` (16 cores,
+  the Wave host — only `test-linux`, `package` and dispatch runs touch it). Workflows target
+  `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
+- Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
+  (persistent, outside the checkout, so `clean: true` checkouts never wipe it),
+  `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
+  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
+  toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and every
+  cargo workflow shares `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"` so fingerprints match.
+- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
+  `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
+  (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, nextest if a host lacks it) go under
+  `~/ci/tools`, installed by the job on first use and reused after.
+- One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
+  macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
+- Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
+  in every workflow skips; flip it back when the wave closes.
+- Adding a runner: mint a registration token (repo Settings → Actions → Runners → New
+  self-hosted runner) and run it from the environment only, never from a file or a commit:
+  `RUNNER_TOKEN=… scripts/ci/install-runner.sh <name> <labels> <os-arch> <cargo-target-dir> [tmpdir]`,
+  e.g. `… install-runner.sh mac-mini self-hosted,macos,arm64,mini osx-arm64 ~/ci/target
+  /private/tmp/ci-t`; then `./run.sh` or `./svc.sh install && ./svc.sh start` in `~/actions-runner`.
+- Fork PRs from outside collaborators need approval before they run (repo setting, already set).
 
 ## Where new code goes
 
