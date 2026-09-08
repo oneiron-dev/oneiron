@@ -105,7 +105,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_distance` | file+dir | 22 | XL | — | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `edit_roundtrip` | file+dir | 4 | L | — | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `edit_settle` | file+dir | 2 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
-| `eiri` | file | 1 | m | — | Eiri Context v4 board + session-RAG + companion resume wire types, plus the friend-hangout booking binding… |
+| `eiri` | file | 1 | s | — | Eiri Context v4 board + session-RAG + companion resume wire types, plus the friend-hangout booking binding… |
 | `embed` | file+dir | 4 | m | — | — |
 | `engine_executor` | file+dir | 3 | XL | — | Engine-native JS code-mode executor |
 | `entity_id` | file | 1 | m | — | `EntityId` + world-id newtypes + id parsing/hex |

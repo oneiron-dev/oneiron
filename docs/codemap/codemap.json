@@ -1698,6 +1698,7 @@
       "CompanionProposal",
       "CompanionProposalCreation",
       "CompanionSoftConfirmation",
+      "EiriHangoutProposalAssembly",
       "OneTimeParticipantToken",
       "ProposalCarrier",
       "ProposalChoice",
@@ -1708,11 +1709,11 @@
      "path": "src/booking/companion_preset.rs",
      "purpose": "ONE-1821 [BK-10] companion booking presets",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
-      "struct": 10
+      "fn": 10,
+      "struct": 11
      }
     },
     {
@@ -6967,11 +6968,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EiriCompanionAssembly",
-      "EiriHangoutProposalAssembly",
       "EiriMemoryBoard",
       "EiriMemoryBoardBudget",
       "EiriMemoryBoardRow",
@@ -6987,10 +6987,10 @@
      "path": "src/eiri.rs",
      "purpose": "Eiri Context v4 board + session-RAG + companion resume wire types, plus the friend-hangout booking binding…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 2,
-      "fn": 11,
-      "struct": 11
+      "fn": 9,
+      "struct": 10
      }
     },
     {
@@ -16238,7 +16238,7 @@
     "eiri": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Eiri Context v4 board + session-RAG + companion resume wire types, plus the friend-hangout booking binding…"
     },
