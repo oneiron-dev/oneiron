@@ -11,4 +11,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | L | 8 struct · 2 enum · 1 trait · 18 fn · 2 type · 1 const | AnthropicMessagesBackend, AnthropicMessagesConfig, AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse, AnthropicMessagesLlmStream, AnthropicMessagesStreamAccumulator, AnthropicMessagesStreamFrame, AnthropicMessagesTransport +3 | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+| `src/lib/backend.rs` | src | s | 2 struct · 7 fn · 2 crate-vis | AnthropicMessagesBackend, AnthropicMessagesConfig | Backend assembly: config, backend struct, LlmBackend impl, and capability gating |
+| `src/lib/mod.rs` | src | s | 5 re-export | — | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
+| `src/lib/options.rs` | src | s | 2 struct · 4 fn · 1 const | AnthropicProviderOptions, AnthropicThinkingOptions | Namespaced provider options and thinking controls with wire-field projection |
+| `src/lib/stream.rs` | src | s | 2 struct · 4 fn | AnthropicMessagesLlmStream, AnthropicMessagesStreamAccumulator | SSE accumulation into LlmStreamEvent sequences with abort and empty-content rules |
+| `src/lib/tests.rs` | test | s | — | — | — |
+| `src/lib/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse, AnthropicMessagesStreamFrame, AnthropicMessagesTransport, AnthropicMessagesTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
+| `src/lib/wire.rs` | src | m | 3 fn · 2 crate-vis | — | Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status… |
