@@ -12,7 +12,13 @@ use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
 /// The feedback module source, read at compile time so the network-freedom and
 /// secret-hygiene guards are structural rather than aspirational.
-const FEEDBACK_SOURCE: &str = include_str!("../feedback.rs");
+const FEEDBACK_SOURCE: &str = concat!(
+    include_str!("mod.rs"),
+    include_str!("bundle.rs"),
+    include_str!("consent.rs"),
+    include_str!("dispatch.rs"),
+    include_str!("error.rs"),
+);
 
 /// Text that must never leave the vault: it stands in for a configuration
 /// value the whitelist projection deliberately does not carry.
