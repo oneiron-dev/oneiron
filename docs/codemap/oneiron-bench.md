@@ -88,4 +88,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/trust/tests.rs` | test | s | — | — | ONE-1961 regressions over the trust tables |
 | `src/perf/wake.rs` | src | s | 1 crate-vis | — | ONE-1579 axis 2: process spawn-to-ready wake latency |
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
-| `src/vector.rs` | src | L | 22 crate-vis | — | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
+| `src/vector/mod.rs` | src | s | 4 crate-vis | — | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
+| `src/vector/vector_config.rs` | src | s | 17 crate-vis | — | Vector bench targets, settings, and CLI flag parsing |
+| `src/vector/vector_report.rs` | src | s | 1 crate-vis | — | Vector bench text report rendering |
+| `src/vector/vector_run.rs` | src | m | 15 crate-vis | — | Vector bench execution, measurement, and gate evaluation |
+| `src/vector/vector_tests.rs` | test | s | — | — | Vector bench contract and end-to-end tests |
