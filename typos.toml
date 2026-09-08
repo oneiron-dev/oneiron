@@ -1,6 +1,10 @@
 [files]
 extend-exclude = [
     "docs/**/*.svg",
+    # Pinned upstream vendor of heed 0.20.5 — never edited here (crates/heed/PROVENANCE.md).
+    "crates/heed/vendor/**",
+    # Generated from source by scripts/codemap/codemap.py — fix the source, not the map.
+    "docs/codemap/**",
     "target/**",
     "**/*.lock",
 ]
@@ -10,8 +14,30 @@ anc = "anc"
 ba = "ba"
 Caf = "Caf"
 caf = "caf"
+# Truncated lookalike fixture in campaign/claims/tests.rs — must NOT equal `do_not_contact`.
+contac = "contac"
 Flate = "Flate"
 flate = "flate"
+# From the coined compound "edge-ful" (an op that writes identity edges); typos splits the hyphen.
+ful = "ful"
 mis = "mis"
+# Short-id prefix fixture ("pn", "pn1") in maintain/tests.rs and a parameter name in split_check.py.
+pn = "pn"
+# Engine consent term (DEC-0006): a "non-rememberable" class can never back a standing grant.
+rememberable = "rememberable"
 SINIC = "SINIC"
 unparseable = "unparseable"
+
+[default.extend-identifiers]
+# Prose plural of the CODE_SYMBOL entity type; typos splits `…SYMBOLs` into `SYMBO` + `Ls`.
+CODE_SYMBOLs = "CODE_SYMBOLs"
+# Deliberately invalid relationship label in federation/tests.rs (digit inside the word).
+fri3nd = "fri3nd"
+# "literals" — local and return name in scripts/refactor/tools/split_check.py.
+lits = "lits"
+# Prose plural of the MESSAGE entity type; typos splits `MESSAGEs` into `MESSAG` + `Es`.
+MESSAGEs = "MESSAGEs"
+# The O(ND) name of Myers' diff algorithm in edit_distance/myers.rs.
+ND = "ND"
+# Prose plural of the REQUEST record type; typos splits `REQUESTs` into `REQUES` + `Ts`.
+REQUESTs = "REQUESTs"
