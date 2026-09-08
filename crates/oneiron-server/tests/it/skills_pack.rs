@@ -18,7 +18,7 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/search/text",
     "/api/entity/{id}",
     "/api/edges/{id}",
-    "/api/companion/resume",
+    "/v1/core/context-board",
     "/v1/companion/register/records/{record_id}/end-relationship",
     "/api/lease/revoke",
     "/v1/core/outbound/capabilities",
