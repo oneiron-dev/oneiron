@@ -49,7 +49,9 @@ Rules (see README.md for the full list):
     its `///` doc + non-cfg attributes must be on the decl verbatim or as
     `//!` / `#![..]` at the top of `X/mod.rs` / `X.rs`, otherwise INFO. A
     new-side bodied mod or a decl that mounts a directory the base never had
-    is FAIL extra; tests mounts and decls for child files are plumbing.
+    is FAIL extra; tests mounts, decls for child files and decls that re-mount
+    a directory child the base file itself declared (`mod x;` with `x/mod.rs`
+    already there at base) are plumbing.
   - Bodies are compared with the leading visibility keyword stripped; a
     visibility change is reported as INFO, not a failure.
   - String literals (normal, byte, C, raw with any number of `#`) are
@@ -189,7 +191,9 @@ class ModRec:
     """A module boundary: a bodied `mod X {..}` (base or new side) or a
     `mod X;` declaration in a new-side file. `scope` is the scope the mod
     sits in; the mod's own scope is `_sub_scope(scope, name)`. `target` on a
-    decl: "file" (a child `.rs`), "dir" (a `mod.rs`) or None (dangling).
+    decl: "file" (a child `.rs`), "dir" (a `mod.rs` the base never
+    declared), "base-dir" (a `mod.rs` the base file declared too) or None
+    (dangling).
     `lead` = (doc lines, non-cfg attribute canons); `file_lead` = the same
     read from the top of the target file (`//!` / `#![..]`)."""
 
@@ -224,6 +228,7 @@ class Side:
         self.items = []
         self.chunks = []
         self.mods = []          # ModRec: bodied mods (both sides) + decls (new side)
+        self.decls = set()      # (scope, name) of every `mod x;` decl seen while collecting
         self.tests_scopes = set()  # scopes whose inline `mod tests` was seen, e.g. {"tests", "seam::tests"}
 
     def mods_in(self, scope):
@@ -576,7 +581,8 @@ def collect(doc, where, scope, side):
     `<scope>::tests` in side.tests_scopes and its body is walked with that
     scope; any other bodied `mod X` becomes a ModRec and its body is walked
     with scope `<scope>::X`. `mod x;` declarations are plumbing here (the
-    directory walk records the new-side ones)."""
+    directory walk records the new-side ones); their (scope, name) pairs go
+    to side.decls so a re-mounted base directory child is recognised."""
     covered = set()
     for it in enumerate_items(doc):
         covered.update(range(it["lead_start"], it["end_line"] + 1))
@@ -584,6 +590,7 @@ def collect(doc, where, scope, side):
             continue
         if it["kind"] == "mod":
             if it["body_open_line"] is None:
+                side.decls.add((scope, it["name"]))
                 continue
             sub = _sub_scope(scope, it["name"])
             if it["name"] == "tests":
@@ -807,7 +814,8 @@ def compare_mods(base_mods, new_mods, extras=None):
     file of that scope): cfg mismatch = FAIL, vis change = INFO, doc/attribute
     lead neither on the decl nor at the top of the target file = INFO. A
     new-side record without a base one is FAIL extra (or handed to `extras`)
-    unless it is a tests mount or a decl for a child file (plumbing)."""
+    unless it is a tests mount, a decl for a child file or a decl re-mounting
+    a directory child the base file declared (plumbing)."""
     problems, infos = [], []
     new_groups = _group(new_mods)
     for b in base_mods:
@@ -829,7 +837,7 @@ def compare_mods(base_mods, new_mods, extras=None):
     for key, cands in new_groups.items():
         for n in cands:
             if _is_tests_mod(n.name) or (not n.bodied and n.target != "dir"):
-                continue  # tests mount / decl for a child file / dangling decl = plumbing
+                continue  # tests mount / child-file, base-dir or dangling decl = plumbing
             if extras is not None:
                 extras.append(n)
             else:
@@ -979,6 +987,8 @@ class Walker:
                 kind, target = _resolve_decl(doc, it, dir_abs, fname)
                 if target:
                     declared.add(target)
+                if kind == "dir" and (fscope, it["name"]) in self.base.decls:
+                    kind = "base-dir"  # the base file mounted this directory child too
                 if not pre[fname]:
                     self.new.mods.append(ModRec(fscope, it["name"], it["cfgs"], it["vis"], _mod_lead(doc, it), rel,
                                                 bodied=False, target=kind,
