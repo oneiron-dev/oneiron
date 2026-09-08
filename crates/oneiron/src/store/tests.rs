@@ -562,28 +562,23 @@ fn grant_ref_lookup_after_delete_is_consistent() -> Result<()> {
 /// deliberately not counted.
 ///
 /// The scanned source is gathered by reading the `store/` directory at test
-/// time — every `*.rs` file except this one, sorted for determinism — so a
+/// time — every production `*.rs` file, sorted for determinism — so a
 /// submodule added later cannot escape the invariant while the guard keeps
-/// passing. A minimum-file-count floor keeps an empty or mislocated directory
-/// from passing vacuously.
+/// passing. Test-only files (this one, and anything mounted under
+/// `#[cfg(test)]`) are classified by the shared scanner in `test_util`. A
+/// minimum-file-count floor keeps an empty or mislocated directory from
+/// passing vacuously.
 #[test]
 fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
     use std::collections::HashSet;
 
-    let store_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store");
-    let mut sources: Vec<std::path::PathBuf> = std::fs::read_dir(&store_dir)
-        .expect("the store module directory must be readable")
-        .map(|entry| {
-            entry
-                .expect("store directory entries must be readable")
-                .path()
-        })
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "rs")
-                && path.file_name().is_some_and(|name| name != "tests.rs")
-        })
+    let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let store_dir = src_root.join("store");
+    let tree = crate::test_util::source_scan::SourceTree::read(&src_root);
+    let sources: Vec<(&std::path::Path, &str)> = tree
+        .production_sources()
+        .filter(|(path, _)| path.parent() == Some(store_dir.as_path()))
         .collect();
-    sources.sort();
 
     // Fail-closed floor: the store module held 13 non-test files when this
     // guard was written. The floor is a minimum, not a count — files added
@@ -597,10 +592,7 @@ fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
 
     let store_src: String = sources
         .iter()
-        .map(|path| {
-            std::fs::read_to_string(path)
-                .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()))
-        })
+        .map(|(_, source)| *source)
         .collect::<Vec<_>>()
         .join("\n");
     let store_src = store_src.as_str();
