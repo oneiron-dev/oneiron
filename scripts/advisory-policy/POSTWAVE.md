@@ -60,6 +60,41 @@ host, not part of this repo):
   these then-unlisted advisories. The later standing authority explicitly adds
   the exact three; it does not turn the earlier failure into a passing check.
 
+## 2026-09-09 retirement: the ten gtk-rs acceptances
+
+**Retired, not renewed.** RustSec withdrew all ten gtk-rs family advisories on 2026-08-14, after the
+gtk-rs repository was unarchived and development resumed. The accepted maintenance risk no longer
+exists, so the entries are removed from `check.py`'s `AUTHORIZED` set and from `exceptions.json`.
+
+| Advisory | Package | Withdrawn |
+| --- | --- | --- |
+| RUSTSEC-2024-0411 | gdkwayland-sys 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0412 | gdk 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0413 | atk 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0414 | gdkx11-sys 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0415 | gtk 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0416 | atk-sys 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0417 | gdkx11 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0418 | gdk-sys 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0419 | gtk3-macros 0.18.2 | 2026-08-14 |
+| RUSTSEC-2024-0420 | gtk-sys 0.18.2 | 2026-08-14 |
+
+This is the re-evaluation the checker demanded, not a waiver of it. `check.py` requires each accepted
+advisory's metadata keys to stay within {id, package, date, url, informational, keywords}; `withdrawn`
+falls outside that set, so the gate failed closed with
+`BLOCKED: RUSTSEC-2024-0413: classification metadata changed; re-evaluate` and named only the first
+of the ten it reached. Every advisory was fetched fresh from the RustSec database on 2026-09-09 and
+each carries `withdrawn = "2026-08-14"`. Nothing degraded: no advisory became a vulnerability, and
+`informational` is still `unmaintained` on all of them.
+
+The other nine acceptances were checked at the same time and are unchanged, still
+informational-unmaintained: proc-macro-error, the five unic crates, bitmaps, im and sized-chunks.
+
+**Scope.** The total falls from 19 temporary acceptances to **9**, and effective exceptions from 23
+to **13**. This narrows the accepted set. It does not extend the expiry, which stays
+**2026-10-07T00:00:00Z** for the surviving nine, and it grants nothing new. The four pre-existing
+atomic-polyfill, bincode, smallstr and rsa decisions in `deny.toml` are untouched.
+
 ## Standing delegation and review boundary
 
 The owner stated: "Hey, sure, you can extend and don't ask going forward".

@@ -1,7 +1,7 @@
 # Exact maintenance-risk acceptance (ONE-335)
 
 These are **accepted maintenance risks, not fixes**. The 2026-09-07 owner grant
-and standing-authority extension cover only the **19** advisory ID / package /
+and standing-authority extension cover only the **9** advisory ID / package /
 locked-version triples in `exceptions.json` and `check.py`'s `AUTHORIZED` set:
 the original 16 plus `bitmaps 2.1.0` / `RUSTSEC-2026-0247`, `im 15.1.0` /
 `RUSTSEC-2026-0248`, and `sized-chunks 0.6.5` / `RUSTSEC-2026-0251`.
@@ -66,7 +66,7 @@ The wrapper:
    `informational = "unmaintained"`, and unchanged all-versions affected scope
    qualify. Missing/duplicate/moved/malformed records, vulnerability classification,
    CVSS/alias/affected metadata, withdrawal, and version-range changes block.
-4. Adds only the 19 IDs to a **temporary** copy of `deny.toml` and invokes:
+4. Adds only the 9 IDs to a **temporary** copy of `deny.toml` and invokes:
    `cargo deny --locked check --disable-fetch --config <temporary-config>` without
    CLI lint-level overrides. Pinned cargo-deny 0.19.4 makes non-ignored vulnerability,
    unmaintained, notice, and unsound findings errors. Ignored IDs emit notes with
@@ -77,7 +77,7 @@ The wrapper:
    suppression occurs. The guard checks time and lockfile integrity again before
    and after the check, and removes the temporary configuration on exit.
 
-The permanent `deny.toml` deliberately does **not** contain these 19 ignores.
+The permanent `deny.toml` deliberately does **not** contain these 9 ignores.
 A plain `cargo deny check` remains stricter; it cannot accidentally use expired
 acceptances. Existing atomic-polyfill, bincode, smallstr, and rsa decisions are
 preserved separately and are not renewed by this grant. In particular, the
@@ -94,7 +94,8 @@ along with the tool version. A changed layout/tool must fail, not skip tests.
 
 The current `Cargo.lock` was read, not recreated: SHA-256
 `1d31f3cdb3ac79e9fb610c8a76cb7349949caba096cb9a7918018ecfadc84ad6`.
-All 19 versions match the original grant and exact3 extension; chacha20 is
+All 9 versions match the original grant and exact3 extension, less the ten gtk-rs
+acceptances retired on 2026-09-09; chacha20 is
 already 0.10.2. The old baseline packet's lock hash is not a required lockfile
 image.
 
@@ -117,11 +118,11 @@ of this extension on the current candidate.
 A standard-library regression pins the manual-only trigger and the deny job's
 matching condition, with no upstream job dependency that could skip it. The
 original 23 tests and their assertions are retained, with count-sensitive
-expectations updated to 19 temporary / 23 effective exceptions. Two exact3
+expectations updated to 9 temporary / 13 effective exceptions. Two exact3
 regressions bring the total to 25: required Loro links and every direct-parent
 edge must stay intact, and missing new advisory records must fail closed.
 
-The deterministic suite includes all 19 exact entries, version/source/context
+The deterministic suite includes all 9 exact entries, version/source/context
 changes, extra/new/unlisted IDs, vulnerabilities, classification changes,
 expiry boundaries, earlier review, no renewal, command exit propagation, and
 private-config cleanup. Real cargo-deny tests create a temporary local Git
