@@ -465,8 +465,7 @@ pub(super) fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> 
 }
 
 pub(super) fn first_party_connector_actor_id() -> EntityId {
-    EntityId::from_bytes(FIRST_PARTY_CONNECTOR_ACTOR_ID)
-        .expect("first-party Eiri actor fixture id")
+    EntityId::from_bytes(FIRST_PARTY_CONNECTOR_ACTOR_ID).expect("first-party Eiri actor fixture id")
 }
 
 pub(super) fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {

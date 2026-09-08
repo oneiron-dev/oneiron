@@ -915,10 +915,7 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
         put_policy_manifest_bytes(
             &vault,
             test_id(0x22),
-            &lineage_manifest(
-                Some(CHECKER_REF),
-                Some(first_party_connector_actor_id()),
-            ),
+            &lineage_manifest(Some(CHECKER_REF), Some(first_party_connector_actor_id())),
         )?;
         let claim_id = test_id(0x33);
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
@@ -1029,10 +1026,7 @@ fn source_aware_checker_holds_tool_output_history_with_observed_declaration() ->
     put_policy_manifest_bytes(
         &vault,
         test_id(0x22),
-        &lineage_manifest(
-            Some(CHECKER_REF),
-            Some(first_party_connector_actor_id()),
-        ),
+        &lineage_manifest(Some(CHECKER_REF), Some(first_party_connector_actor_id())),
     )?;
     let claim_id = test_id(0x33);
     let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
