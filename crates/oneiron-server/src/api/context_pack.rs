@@ -312,6 +312,16 @@ pub(crate) struct CoreContextPackRequest {
     interlocutors: Option<CoreInterlocutorControls>,
 }
 
+impl CoreContextPackRequest {
+    /// The `(limit, max_neighbors)` shape the MEMORIES slot defaults derive
+    /// from, resolved the same way the pipeline resolves depth.
+    pub(crate) fn retrieval_budget_shape(&self) -> (usize, usize) {
+        let (_, _, max_neighbors, _) =
+            resolved_context_pack_depth(self.depth.as_ref(), self.edge_hop, self.max_neighbors);
+        (self.limit, max_neighbors)
+    }
+}
+
 /// Hydrated context edge.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextEdge {

@@ -18867,7 +18867,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 10
      }
     },
     {
@@ -18877,7 +18877,7 @@
      "path": "src/api/context_board/prefix.rs",
      "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 10
      }
     },
     {
@@ -18887,7 +18887,7 @@
      "path": "src/api/context_pack.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 58
      }
     },
     {
