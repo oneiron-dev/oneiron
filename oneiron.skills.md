@@ -3,14 +3,14 @@ name: oneiron-http-memory-api
 description: "Use this skill when an external agent needs to discover Oneiron's current HTTP memory API, fetch the static skill pack from a running server, choose the right endpoint, and understand how read, retrieval, context-pack, discovery, and lease-revocation calls relate to Oneiron MCP tools."
 when_to_use:
   - "An agent needs route-level awareness of the existing Oneiron HTTP API."
-  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, resume companion state, discover vault capabilities, fetch the skill pack, inspect the OpenAPI schema, or revoke a device lease."
+  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, hydrate the context board, discover vault capabilities, fetch the skill pack, inspect the OpenAPI schema, or revoke a device lease."
   - "A connector needs the static skill layer: how to think about memory before it calls MCP or HTTP tools."
 trigger_phrases:
   - "query Oneiron memory"
   - "search the vault"
   - "read an entity"
   - "get context pack"
-  - "resume companion state"
+  - "hydrate the context board"
   - "discover Oneiron capabilities"
   - "fetch Oneiron skill pack"
   - "inspect OpenAPI schema"
@@ -354,14 +354,14 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "cancel this subagent run"
 - safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state.
 
-#### companion-resume - `POST /api/companion/resume`
+#### core-context-board - `POST /v1/core/context-board`
 
-- when-to-use: Hydrate companion resume state in one read-only call, including session context, pending notifications, unprocessed items, and budget counters.
+- when-to-use: Hydrate the assembled context in one call: the session prefix, pending notifications, unprocessed items, the token meter, this turn's retrieval with its MEMORIES projection, and the per-session cursor.
 - trigger phrases:
-  - "resume companion session"
-  - "hydrate resume bundle"
+  - "hydrate the context board"
+  - "assemble this turn's context"
   - "get pending notifications"
-- safety: Read-only aggregation with a POST body; requires the configured bearer credential unless the server is explicitly in unauthenticated development mode.
+- safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
 
 #### companion-relationship-end - `POST /v1/companion/register/records/{record_id}/end-relationship`
 
@@ -494,7 +494,7 @@ Response fields:
 
 - `status`: `"ok"` when the server process is alive.
 - `service`: `"oneiron-server"`.
-- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `core.context_pack`, and `lease.revoke`.
+- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `core.context_pack`, `core.context_board`, and `lease.revoke`.
 - `capabilities.modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
@@ -870,22 +870,30 @@ Current response:
 
 Agent note: Treat `state.kind` and `state.reason` as the typed missing-data or low-confidence signal when no usable context is returned.
 
-### Companion Resume
+### Context Board
 
 Method: `POST`
 
-Authentication: `Authorization: Bearer <credential>` unless development config allows unauthenticated access.
+Authentication: `Authorization: Bearer <credential>` with `core:read`, unless development config allows unauthenticated access. The caller identity is the authenticated principal (`principal_ref` when bound); it scopes notifications and keys the cursor.
 
-Request body: Empty JSON object.
+Request body (every block is optional; `{}` returns the prefix beside the caller's current cursor):
+
+- `retrieval` optional: a Context Pack request body (see above). When present, retrieval runs and its pack rides the response.
+- `memories` optional: `enabled` (default `true`) and `slots` per-slot row caps (`claims`, `turns`, `summaries`, `facets`, `companions`, `other`).
+- `session` optional: `session_id` that carries the cursor across calls; defaults to the caller identity.
+- `companion` optional: `person_ref`, `persona_ref`, and `expression` (`professional`, `warm`, or `unrestricted`).
 
 Response fields:
 
 - `session`: current API version, entity counts by numeric type, and latest activity timestamp.
 - `notifications`: latest pending notification items scoped to the caller, excluding already surfaced or acknowledged items.
-- `unprocessed`: items not processed since the caller's last resume; currently an empty array when none are available.
+- `unprocessed`: items the caller has not processed yet; currently an empty array when none are available.
 - `budget`: `tokens_used`, `tokens_limit`, and saturated `tokens_remaining`.
+- `cursor`: `session_id`, `revision`, `query_count`, `last_retrieval_run_id`, and `last_result_ids`; advanced when retrieval ran, otherwise the caller's current cursor.
+- `memories` (present when retrieval ran and `memories.enabled` is not `false`): `version`, the applied `budget`, stable `rows`, and the `companion` assembly echo.
+- `pack` (present when retrieval ran): the Context Pack response.
 
-Example response:
+Example response for an empty request body:
 
 ```json
 {
@@ -906,6 +914,13 @@ Example response:
     "tokens_used": 0,
     "tokens_limit": 0,
     "tokens_remaining": 0
+  },
+  "cursor": {
+    "session_id": "session-123",
+    "revision": 0,
+    "query_count": 0,
+    "last_retrieval_run_id": null,
+    "last_result_ids": []
   }
 }
 ```
