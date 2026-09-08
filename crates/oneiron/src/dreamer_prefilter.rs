@@ -40,6 +40,8 @@
 //! operator act ([`Vault::set_prefilter_config`]), never a side effect of
 //! upgrading. The scores are still computed under the default so an operator
 //! can watch the distribution before choosing a cut.
+//!
+//! [`dreamer_extraction_role_admissible`]: crate::dreamer_runner::dreamer_extraction_role_admissible
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -421,7 +423,7 @@ impl NoveltyWindow {
     }
 
     /// Admits one turn's text, evicting the oldest beyond
-    /// [`NOVELTY_WINDOW_TURNS`].
+    /// `NOVELTY_WINDOW_TURNS`.
     pub fn observe(&mut self, text: &str) {
         let tokens = normalized_tokens(text);
         self.recent.push_back(shingles(&tokens));
@@ -524,15 +526,15 @@ const fn role_weight(role: DreamerTurnRole) -> f32 {
 ///
 /// Five axes, each landing in `[0, 1]`:
 ///
-/// * `len` — token count against [`LEN_SATURATION_TOKENS`].
+/// * `len` — token count against `LEN_SATURATION_TOKENS`.
 /// * `ttr` — type/token ratio, SCALED BY `len`. The raw ratio is degenerate
 ///   at the short end: `"ok"` has perfect lexical variety and no information,
 ///   and an unscaled ratio would score it above a repetitive paragraph. The
 ///   scaling is what makes the axis mean "variety worth having" rather than
 ///   "variety per token".
 /// * `entity_density` — mentions per token against
-///   [`ENTITY_DENSITY_SATURATION`], over a denominator floored at
-///   [`ENTITY_DENSITY_MIN_TOKENS`]. Deliberately NOT scaled by length the way
+///   `ENTITY_DENSITY_SATURATION`, over a denominator floored at
+///   `ENTITY_DENSITY_MIN_TOKENS`. Deliberately NOT scaled by length the way
 ///   the two axes above are: naming a specific thing is evidence at any
 ///   length, and a four-word turn that names two people is exactly the short
 ///   turn worth keeping. The denominator floor is the narrower correction the

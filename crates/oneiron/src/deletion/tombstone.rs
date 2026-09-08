@@ -20,7 +20,7 @@ pub enum DeleteReason {
     /// receipt (the cron receipts its OWN decisions once per run instead).
     ///
     /// Unlike every other reason it also publishes NO CRDT tombstone
-    /// ([`Self::publishes_crdt_tombstone`]): archiving a claim-less shell is
+    /// (`Self::publishes_crdt_tombstone`): archiving a claim-less shell is
     /// LOCAL vault hygiene, not a cross-device deletion intent, and keeping
     /// it local is what lets [`crate::Vault::restore_archived`] undo it
     /// without withdrawing a tombstone other devices have already obeyed.
