@@ -29,10 +29,12 @@ Full verify gate — run at VERDICT time only, never for iteration:
 
     scripts/verify.sh
 
-`scripts/verify.sh` is the single source of truth for the scripted gate and runs 4 stages: `cargo
-fmt --all --check`, workspace clippy (`-D warnings`, all targets/features), `cargo nextest run
---workspace --all-features --profile full`, and `cargo test --doc --workspace --exclude
-oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
+`scripts/verify.sh` is the single source of truth for the scripted gate and runs 6 stages: `cargo
+fmt --check` (members only — never `--all`, which would follow the path dependency into the
+ONE-218 heed vendor), workspace clippy (`-D warnings`, all targets/features), featureless clippy
+(`cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings`), `cargo nextest run
+--workspace --all-features --profile full`, `cargo test -p oneiron --lib --no-default-features`,
+and `cargo test --doc --workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
 script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
 cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
 --profile full`.
