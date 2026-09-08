@@ -2,12 +2,15 @@
 
 The machinery that produced `../conformance.sh` and everything under `../moves/`.
 Committed so the manifests are reproducible and reviewable (not tmp-only). All
-scripts default to `ROOT = /Volumes/Cinema/pink-worktrees/t1443` and
-`BASE_REV = b2437d700` (the cut worktree/base; gen_t.py defaults to
+scripts default to `ROOT` = this repository (derived from the script's own
+location) and `BASE_REV = b2437d700` (the wave's cut base; gen_t.py defaults to
 `da0458dda`, the base its committed manifests were recut against) — override
-with the `GEN_ROOT`
-and `BASE_REV` env vars (empty values fall back to the defaults) to reuse
-elsewhere. Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt on PATH).
+with the `REFACTOR_ROOT` (older name `GEN_ROOT`, still honoured) and `BASE_REV`
+env vars (empty values fall back to the defaults) to point at a cut worktree.
+Generated output that is not a manifest goes under the gitignored `target/`:
+`REFACTOR_REPORT_DIR` (line reports, default `target/refactor-linereports/`) and
+`REFACTOR_HANDOFF_OUT` (handoff packages, default `target/refactor-handoffs/`).
+Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt on PATH).
 
 | file | purpose | invocation |
 |---|---|---|
@@ -19,12 +22,12 @@ elsewhere. Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt on PAT
 | `gen_t.py` | Stage-T (types.rs dissolution): partition + census + sweep + decl simulation → T1-T12. | `gen_t.py` |
 | `gen_v.py` | Stage-V (vault-CRUD insertion): V-0 + 7 clean + 4 intricate entities. | `gen_v.py` |
 | `gen_u.py` | Stage U (types.rs `#[path]` un-mount) decl + consumer sweep. | `gen_u.py` |
-| `handoff_v2.py` | Emits the 34 Codex handoff packages to `fable-queue/oneiron/handoffs/`. | `handoff_v2.py` |
+| `handoff_v2.py` | Emits the 34 Codex handoff packages to `$REFACTOR_HANDOFF_OUT` (default `target/refactor-handoffs/`). | `handoff_v2.py` |
 | `v2_selftest.py` | Synthetic self-test of the v2 checks (move-to-new-file + insertion + edit + comment + flat-name + HEAD-src removal). | `v2_selftest.py` |
 
 **Regenerate everything from base:** `gen_s1.py && gen_t.py && gen_v.py && gen_u.py`
-then B1/tests-s2-export (inline snippets in the state doc), then `build_conformance.py`,
-then `handoff_v2.py`. See `../../../fable-queue/oneiron/handoffs/S0-CONTINUATION-STATE.md`.
+then B1/tests-s2-export (inline snippets in the wave's continuation-state doc, which
+is kept outside this repo), then `build_conformance.py`, then `handoff_v2.py`.
 
 ## Freshness (D-2 guard)
 
