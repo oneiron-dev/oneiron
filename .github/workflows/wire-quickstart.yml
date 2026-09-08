@@ -45,7 +45,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
+  # No RUSTFLAGS, as in ci.yml: the vendored heed path dependency is not
+  # lint-capped, and unset flags share the runner cache with dev builds.
   PYTHONNOUSERSITE: "1"
   PYTHONPATH: ""
 

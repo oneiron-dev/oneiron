@@ -33,7 +33,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
+  # No RUSTFLAGS on purpose (proving run, 2026-09-08): `-Dwarnings` there
+  # also reaches the vendored `crates/heed` path dependency, which cargo
+  # does not lint-cap, and its 1.96 lifetime-elision warnings turned every
+  # test build red. Warnings are gated where scripts/verify.sh gates them —
+  # clippy's `-D warnings` over the workspace crates — and with no flags the
+  # runner caches share fingerprints with developer builds.
 
 # One run per workflow+ref. A superseded PR push's in-flight run is pure
 # spend, and a rapid main-merge burst only needs the newest sha's run — the
@@ -148,11 +153,8 @@ jobs:
       # exact cargo-deny version it was validated against, and the host's
       # own cargo-deny is whatever the developer keeps. So the pinned copy
       # lives under ~/ci/tools: `cargo install` is a no-op once that exact
-      # version is there (one compile per host). RUSTFLAGS is cleared for the
-      # install so `-Dwarnings` cannot fail somebody else's crate.
+      # version is there (one compile per host).
       - name: cargo-deny 0.19.4 (host-local pin under ~/ci/tools)
-        env:
-          RUSTFLAGS: ""
         run: |
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
@@ -195,11 +197,8 @@ jobs:
           rustup show active-toolchain
           cargo --version
       # nextest is part of the host contract; if a host lacks it, install the
-      # pinned copy under ~/ci/tools once (RUSTFLAGS cleared so -Dwarnings
-      # cannot fail somebody else's crate) and reuse it on every later run.
+      # pinned copy under ~/ci/tools once and reuse it on every later run.
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
-        env:
-          RUSTFLAGS: ""
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/ci/tools/bin:$PATH"
@@ -268,11 +267,8 @@ jobs:
           rustup show active-toolchain
           cargo --version
       # nextest is part of the host contract; if a host lacks it, install the
-      # pinned copy under ~/ci/tools once (RUSTFLAGS cleared so -Dwarnings
-      # cannot fail somebody else's crate) and reuse it on every later run.
+      # pinned copy under ~/ci/tools once and reuse it on every later run.
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
-        env:
-          RUSTFLAGS: ""
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/ci/tools/bin:$PATH"

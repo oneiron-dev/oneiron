@@ -87,10 +87,11 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   contract tests `include_str!`. Jobs: `changes` (path detector) / `checks` (fmt, workspace +
   featureless clippy, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
   `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
-  `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. `checks` runs on every `pull_request` (its cargo steps
-  only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
+  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` runs on every `pull_request` (its cargo
+  steps only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
   (`--exclude oneiron-napi`, the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
-  filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff `pull_request` or `push`; `test-linux` runs the unfiltered
+  filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff
+  `pull_request` or `push`; `test-linux` runs the unfiltered
   `--profile full` suite plus the same two stages on `push` to `main` and `workflow_dispatch`
   only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
   trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy and
@@ -124,7 +125,10 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
   `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
   toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and every
-  cargo workflow shares `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"` so fingerprints match.
+  workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
+  dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
+  proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
+  flags let the runner caches share fingerprints with developer builds.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
   `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
   (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, nextest if a host lacks it) go under
