@@ -19,7 +19,25 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `benches/materializer_mutex/reporting.rs` | src | s | 11 crate-vis | — | Stable JSON rows, percentiles, calibration, and fail-closed report output |
 | `benches/materializer_mutex/worker.rs` | src | m | 16 crate-vis | — | Worker phases, entity encoding, and complete materialization evidence |
 | `build.rs` | src | s | — | — | ONE-1579: capture the settings this artifact is ACTUALLY COMPILED with |
-| `src/beam.rs` | src | XL | 27 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
+| `src/beam/arms.rs` | src | m | 15 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
+| `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
+| `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
+| `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
+| `src/beam/mod.rs` | src | s | 7 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
+| `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
+| `src/beam/ppr_vad.rs` | src | m | 22 crate-vis | — | PPR-VAD sweep arm, sampling, and gates |
+| `src/beam/report.rs` | src | m | 23 crate-vis | — | Report assembly and serialization |
+| `src/beam/report_model.rs` | src | m | 40 crate-vis | — | Report and contract output types |
+| `src/beam/runner.rs` | src | s | 11 crate-vis | — | Subcommand run entry points and orchestration |
+| `src/beam/scorer.rs` | src | s | 3 crate-vis | — | BeamScorer trait and fixed scorer |
+| `src/beam/tests_community_eval004.rs` | src | m | 19 crate-vis | — | Community and EVAL-004 tests |
+| `src/beam/tests_gates.rs` | src | m | 1 crate-vis | — | Gate tests |
+| `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
+| `src/beam/tests_judge_cost.rs` | src | m | 1 crate-vis | — | Judge and cost tests |
+| `src/beam/tests_ppr_vad.rs` | src | m | 5 crate-vis | — | PPR-VAD tests |
+| `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
+| `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
+| `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/tests.rs` | test | L | — | — | — |
 | `src/interface_bench.rs` | src | XL | 4 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
