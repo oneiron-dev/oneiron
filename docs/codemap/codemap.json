@@ -18661,22 +18661,60 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "EphemeralChangeOrigin",
-      "SyncClient",
-      "SyncClientConfig",
-      "SyncEvent",
-      "SyncStatus"
+      "SyncClient"
      ],
-     "path": "src/sync/client.rs",
+     "path": "src/sync/client/base.rs",
+     "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 14,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/federated.rs",
+     "purpose": "Federated admission and staged vault-import confirmation",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/inbound.rs",
+     "purpose": "Inbound wire dispatch, window-update import, and bulk history transfer",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/sync_frames.rs",
+     "purpose": "Initial-connect and re-bootstrap sync frame builders",
+     "surface": {
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 27,
-      "struct": 2
+      "fn": 4
      }
     },
     {
@@ -18686,6 +18724,23 @@
      "path": "src/sync/client/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EphemeralChangeOrigin",
+      "SyncClientConfig",
+      "SyncEvent",
+      "SyncStatus"
+     ],
+     "path": "src/sync/client/types.rs",
+     "purpose": "Sync client configuration, events, and sync_state key constants",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 3,
+      "struct": 1
+     }
     },
     {
      "bucket": "L",
@@ -22495,7 +22550,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 52,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -22628,9 +22683,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 71,
+   "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1190,
+   "source_files": 1195,
    "test_files": 518
   },
   "oneiron-bench": {
