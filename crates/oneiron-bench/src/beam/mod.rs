@@ -20,9 +20,9 @@ const MAX_NORMALIZABLE_COST_USD: f64 = f64::MAX / COST_USD_SCALE;
 
 const LOW_CONFIDENCE_RETRIEVAL_LIMIT: usize = 1;
 
-const BUILTIN_FIXTURE_JSON: &str = include_str!("../fixtures/beam_128k_smoke.fixture.json");
+const BUILTIN_FIXTURE_JSON: &str = include_str!("../../fixtures/beam_128k_smoke.fixture.json");
 
-const BUILTIN_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_smoke.run.json");
+const BUILTIN_MANIFEST_JSON: &str = include_str!("../../fixtures/beam_128k_smoke.run.json");
 
 const EVAL_CONTRACT_VERSION: &str = "oneiron-eval.contract.v1";
 
