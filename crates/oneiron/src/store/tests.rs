@@ -562,11 +562,12 @@ fn grant_ref_lookup_after_delete_is_consistent() -> Result<()> {
 /// deliberately not counted.
 ///
 /// The scanned source is gathered by reading the `store/` directory at test
-/// time — every production `*.rs` file, sorted for determinism — so a
-/// submodule added later cannot escape the invariant while the guard keeps
-/// passing. Test-only files (this one, and anything mounted under
-/// `#[cfg(test)]`) are classified by the shared scanner in `test_util`. A
-/// minimum-file-count floor keeps an empty or mislocated directory from
+/// time — every production `*.rs` file directly inside it plus the
+/// `gate_decision/` directory module the ledger was split into, sorted for
+/// determinism — so a submodule added later cannot escape the invariant while
+/// the guard keeps passing. Test-only files (this one, and anything mounted
+/// under `#[cfg(test)]`) are classified by the shared scanner in `test_util`.
+/// A minimum-file-count floor keeps an empty or mislocated directory from
 /// passing vacuously.
 #[test]
 fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
@@ -574,10 +575,14 @@ fn only_the_central_helper_deletes_a_primary_gate_decision_row() {
 
     let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let store_dir = src_root.join("store");
+    let gate_decision_dir = store_dir.join("gate_decision");
     let tree = crate::test_util::source_scan::SourceTree::read(&src_root);
     let sources: Vec<(&std::path::Path, &str)> = tree
         .production_sources()
-        .filter(|(path, _)| path.parent() == Some(store_dir.as_path()))
+        .filter(|(path, _)| {
+            path.parent() == Some(store_dir.as_path())
+                || path.parent() == Some(gate_decision_dir.as_path())
+        })
         .collect();
 
     // Fail-closed floor: the store module held 13 non-test files when this
@@ -687,8 +692,8 @@ fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<(
 /// the primary-gate-decision guard above uses.
 #[test]
 fn the_pending_consent_tray_validates_against_its_own_version() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/pending_gate_consent.rs");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/store/pending_gate_consent/records.rs");
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
     let start = src

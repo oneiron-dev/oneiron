@@ -34,7 +34,8 @@ Full verify gate — run at VERDICT time only, never for iteration:
 pin (`scripts/codemap/check.sh`) and then 6 stages: `cargo fmt --check` (members only — never `--all`, which would follow the path dependency into the
 ONE-218 heed vendor), workspace clippy (`-D warnings`, all targets/features), featureless clippy
 (`cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings`), `cargo nextest run
---workspace --all-features --profile full`, `cargo test -p oneiron --lib --no-default-features`,
+--workspace --exclude oneiron-napi --all-features --profile full` (napi cannot link its test binary
+off a Node host — ONE-1997), `cargo test -p oneiron --lib --no-default-features`,
 and `cargo test --doc --workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
 script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
 cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
@@ -90,6 +91,9 @@ don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
 
 ## Landmines
 
+- `oneiron-napi` cannot link its test binary on any host (the `napi_*` symbols come from a Node
+  host at load time; Linux fails the same way): every workspace nextest run carries
+  `--exclude oneiron-napi`, `scripts/verify.sh` included.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
@@ -122,40 +126,88 @@ don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
 
 ## CI truth
 
-- `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
-  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. Under
-  the dispatch-only trigger only `changes` (path detector) and `deny` (gated on
-  `workflow_dispatch`) execute: fmt/clippy/typos are gated on `pull_request`, `test` on
-  `pull_request` or `push`, and `package` waits for a `v*` tag push that can never trigger the
-  workflow, so that gate is unreachable as written. Nothing pre-merge enforces fmt, clippy or
-  tests; `scripts/verify.sh` on the branch is the gate.
+Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
+contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
+
+- `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
+  repo variable pauses every job (wave affordance); drafts do not run. Docs-only diffs
+  (Markdown, `docs/**`) do not trigger it, except `docs/ops/**` and `oneiron.skills.md`, which
+  contract tests `include_str!`. Jobs: `changes` (path detector) / `checks` (fmt, workspace +
+  featureless clippy, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
+  `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
+  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` runs on every `pull_request` (its cargo
+  steps only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
+  (`--exclude oneiron-napi`, the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
+  filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff
+  `pull_request` or `push`; `test-linux` runs the `--profile full` suite with only the napi
+  exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
+  only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
+  trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy and
+  tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
-  agree.
-- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; installs ripgrep and runs
-  `scripts/ratchet/check.sh`, `scripts/codemap/check.sh` and
-  `scripts/ratchet/root-surface-check.sh`. It is a post-merge reporter: it cannot block a merge,
-  it can only turn `main` red after one. Main-only on purpose: a stacked wave's middle commits
-  can sit transiently above baseline for a state that never lands.
-- `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
-  control).
-- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi` (plus the workflow
-  file and `Cargo.lock`), and `workflow_dispatch`; Swift-binding compile proof.
-- `wire-quickstart.yml` — PR to `main` and `push` to `main`, both path-scoped to
+  agree. Runs on the macOS runners without a container: uv 0.12.1, CPython 3.12 and pyhanko
+  0.35.2 (`uv.lock`) are pinned in the job; `pdfsig` is the host's poppler.
+- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; runs
+  `scripts/ratchet/check.sh` and `scripts/ratchet/root-surface-check.sh` with the host's
+  ripgrep. It is a post-merge reporter:
+  it cannot block a merge, it can only turn `main` red after one. Main-only on purpose: a
+  stacked wave's middle commits can sit transiently above baseline for a state that never lands.
+- `uniffi-stub.yml` — PR-triggered (non-draft), path-scoped to `crates/oneiron-uniffi` (plus the
+  workflow file and `Cargo.lock`), and `workflow_dispatch`; Swift-binding compile proof on the
+  macOS runners' Xcode toolchain.
+- `wire-quickstart.yml` — PR (non-draft) to `main` and `push` to `main`, both path-scoped to
   `packages/oneiron`, `crates/oneiron{,-py,-remote,-napi,-server}`, the wire scripts
   (`scripts/wire-test-server.sh`, `scripts/tests/test_wire_*.py`) and the Cargo/toolchain
   files; plus `workflow_dispatch`. Installs the shipped SDK surface and proves four-verb parity.
 
+## Self-hosted runners
+
+- Hosts and labels: MacBook `self-hosted,macos,arm64,mbp` (16 cores, the first and strongest);
+  the Mac mini joins with the same macOS labels; Arch box `self-hosted,linux,x64,arch` (16 cores,
+  the Wave host — only `test-linux`, `package` and dispatch runs touch it). Workflows target
+  `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
+- Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
+  (persistent, outside the checkout, so `clean: true` checkouts never wipe it; on macOS it must
+  also stay outside `~/Desktop`, `~/Documents` and `~/Downloads` — the runner is a launchd agent
+  without those TCC grants, and its first `open()` there blocks on a consent prompt nobody sees),
+  `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
+  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
+  toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and no
+  workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
+  dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
+  proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
+  flags let the runner caches share fingerprints with developer builds.
+- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
+  `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
+  (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
+  lacks it) go under `~/ci/tools`, installed by the job on first use and reused after.
+- One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
+  macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
+- Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
+  in every workflow skips; flip it back when the wave closes.
+- Adding a runner: mint a registration token (repo Settings → Actions → Runners → New
+  self-hosted runner) and run it from the environment only, never from a file or a commit:
+  `RUNNER_TOKEN=… scripts/ci/install-runner.sh <name> <labels> <os-arch> <cargo-target-dir> [tmpdir]`,
+  e.g. `… install-runner.sh mac-mini self-hosted,macos,arm64,mini osx-arm64 ~/ci/target
+  /private/tmp/ci-t`; then `./run.sh` or `./svc.sh install && ./svc.sh start` in `~/actions-runner`.
+- Fork PRs from outside collaborators need approval before they run (repo setting, already set).
+
 ## Where new code goes
 
-The former monolith files are gone: `store`, `gate`, `task_verb`, `batch`, and the fifteen
-2026-08 wave-6 wells (`session_overlay`, `repo_mutation`, `dreamer_consolidation`,
-`connector_key`, `code_run`, `consent`, `receipt`, `deletion`, `outbound`,
-`booking/anti_abuse`, `saved_query`, `dreamer_runner`, `pipeline`, `skill_hub`) are all
-directory modules now (old→new map: `docs/ops/w6-module-split-map.md`). Don't grow an existing
-child file past the 800-line ratchet bar — a new concern gets its own file under the owning
-module directory:
+The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
+wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 91 more over-bar
+modules the same way, so a directory module is now the normal shape for anything substantial.
+Twenty files still sit over the bar and every one is deliberate — see the `_attribution` block
+in `scripts/ratchet/baseline.json`, which names the twelve deferred behind the context-board
+fold and the eight ruled indivisible. Do not use those twenty as precedent.
+
+Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
+regenerated deterministically and are the only current answer to "where does X live now".
+(`docs/ops/w6-module-split-map.md` covers the wave-6 fifteen only and is history, not a map of
+the tree today.) Don't grow an existing child file past the 800-line ratchet bar — a new concern
+gets its own file under the owning module directory:
 
 | New concern is about... | Goes in...                      |
 |--------------------------|-----------------------------------|

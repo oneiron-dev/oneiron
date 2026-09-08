@@ -334,7 +334,7 @@ def scan_modules(crate_dir: Path, files: list[dict]) -> dict:
 def scan_crate(crate_dir: Path) -> dict:
     files = [scan_file(p, p.relative_to(crate_dir).as_posix()) for p in rust_files(crate_dir)]
     purpose = "—"
-    for root_file in ("src/lib.rs", "src/main.rs"):
+    for root_file in ("src/lib.rs", "src/main.rs", "src/lib/mod.rs", "src/main/mod.rs"):
         info = next((f for f in files if f["path"] == root_file), None)
         if info and info["purpose"] != "—":
             purpose = info["purpose"]

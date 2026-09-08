@@ -1,29 +1,89 @@
 name: CI
 
+# Triggers (2026-09-08, HYG-06): non-draft pull requests, pushes to main,
+# and manual dispatch. Docs-only diffs (Markdown, docs/**) never start a
+# run — except docs/ops/** and the root skills pack, which contract tests
+# include_str! (ops_docs.rs, skills_pack.rs; the pack is also compiled into
+# oneiron-server), so they are re-included below. `paths` with negation is
+# used instead of `paths-ignore` because `paths-ignore` cannot carve those
+# two back in.
+#
+# Wave affordance: setting the repository variable CI_PAUSED=true skips
+# every job (each job's `if:` checks it). A wave that lands many commits
+# fast flips it on and flips it off when the wave closes. Draft PRs also
+# skip every job; `ready_for_review` starts the first real run.
 on:
   workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - 'docs/ops/**'
+      - 'oneiron.skills.md'
+  push:
+    branches: [main]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - 'docs/ops/**'
+      - 'oneiron.skills.md'
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
+  # No RUSTFLAGS on purpose (proving run, 2026-09-08): `-Dwarnings` there
+  # also reaches the vendored `crates/heed` path dependency, which cargo
+  # does not lint-cap, and its 1.96 lifetime-elision warnings turned every
+  # test build red. Warnings are gated where scripts/verify.sh gates them —
+  # clippy's `-D warnings` over the workspace crates — and with no flags the
+  # runner caches share fingerprints with developer builds.
 
-# A superseded PR push's in-flight run is pure spend — cancel it. Main
-# pushes get a per-sha group: never cancelled, never queued behind each
-# other on rapid merges.
+# One run per workflow+ref. A superseded PR push's in-flight run is pure
+# spend, and a rapid main-merge burst only needs the newest sha's run — the
+# older ones are cancelled.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  # PR pushes supersede themselves, so cancelling saves real spend. Main
+  # pushes must not: each merge is a distinct state someone may need the
+  # result for, and a merge burst would otherwise cancel the run for the
+  # commit before it. Per-sha group on push, per-PR group on pull_request.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Cost layout (2026-07-19): Rust jobs are gated off PRs AND main pushes
-# whose diff can't change their outcome (refactor manifests/tooling,
-# docs). fmt/clippy run PR-only; Test runs on rust-diff PRs and rust-diff
-# main pushes (fail-open on push if the detector breaks; tag pushes always
-# run); package (publish-integrity) runs on release tags only. deny and
-# typos are seconds — they run on every PR unfiltered.
+# Runners (2026-09-08, HYG-06b): every job runs on our own machines, not a
+# cloud pool. The MacBook and the Mac mini carry the
+# `self-hosted,macos,arm64` labels; the Arch box carries
+# `self-hosted,linux,x64` and is the Wave host, so only the main-push and
+# dispatch lanes touch it. A runner runs ONE job at a time, so the cheap
+# checks share a single job (one checkout, one slot).
+#
+# Caches are the host's, not the workflow's: each runner's `.env` exports a
+# persistent CARGO_TARGET_DIR (~/ci/target), CARGO_INCREMENTAL=0 and a PATH
+# with ~/.cargo/bin; the toolchain is the host rustup resolving
+# rust-toolchain.toml. So: no rust-cache action, no toolchain action, and
+# never set CARGO_TARGET_DIR here. `clean: true` on every checkout because
+# `_work` persists between runs. Pinned CI-only tools live under
+# ~/ci/tools — a job installs one on first use and every later run reuses it.
+#
+# Gate layout: `changes` detects rust-relevant diffs; `checks` (fmt, clippy
+# workspace + featureless, typos, cargo-deny policy) runs on every non-draft
+# PR — the cargo steps only when the diff is rust-relevant — and on dispatch
+# (deny is the dispatch-era gate, ONE-335); `test` runs the macOS recipe on
+# rust-diff PRs, on main pushes and on dispatch (fail-open on push if the detector
+# breaks; tag pushes always run); `test-linux` runs the unfiltered suite on
+# the Linux reference host for main pushes and dispatch only; `package`
+# (publish-integrity) runs on release tags only.
+#
+# Every job's `if:` starts with the pause/draft guard from the header,
+#   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+# AND-ed with that job's own gate.
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 10
+    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     # paths-filter reads PR changed-files via the REST API — grant it
     # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
     permissions:
@@ -33,6 +93,8 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -54,73 +116,92 @@ jobs:
               - 'oneiron.skills.md'
               - 'packages/prompts/**'
 
-  fmt:
-    name: Format
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+  checks:
+    name: Checks
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 60
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+    # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
+    # PR takes one runner slot and one checkout for all of them. Runs on every
+    # non-draft PR and on dispatch; the cargo steps below gate themselves on a
+    # rust-relevant diff (always on dispatch: a manual run is the full gate;
+    # fail-open if the detector broke), typos and deny always. Inside
+    # always(): dispatch is the deny gate's unconditional route (ONE-335,
+    # pinned by scripts/advisory-policy/test_policy.py), so a broken
+    # `changes` job must not skip it; the pause/draft guard still applies.
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.96"
-          components: rustfmt
+          clean: true
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+          cargo fmt --version
+          cargo clippy --version
       # Honor the workspace's heed exclusion; --all also follows local path dependencies.
-      - run: cargo fmt --check
-
-  clippy:
-    name: Clippy
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.96"
-          components: clippy
-      # Sticky disks replace rust-cache: no tar/prune/upload cycle (the old
-      # Post-save step cost 71-143s); disks mount in ~3s and commit on unmount.
-      # Guarded off for fork PRs so a fork can never poison shared build state
-      # (cold build there is the correct fallback). Registry disk is shared
-      # across jobs; target disk is per-job. $0.50/GB/mo — if disks bloat over
-      # months, add a scheduled useblacksmith/stickydisk-delete cleanup.
-      - name: Mount cargo registry (sticky disk)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
-        with:
-          key: ${{ github.repository }}-cargo-registry
-          path: ~/.cargo/registry
-      - name: Mount target dir (sticky disk)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
-        with:
-          key: ${{ github.repository }}-target-clippy
-          path: ./target
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Format
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: cargo fmt --check
+      - name: Clippy (workspace, all features)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # Wave-6 acceptance gate (AGENTS.md, featureless builds): the oneiron
+      # crate and its test targets must compile and lint with no features.
+      - name: Clippy (oneiron, featureless)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+      # typos, pinned like cargo-deny: the exact version matters (its
+      # dictionary changes between releases, and a host's own typos is
+      # whatever brew last installed), and the crate-ci action re-downloads
+      # its binary from github.com on every run (the first proving run lost
+      # that download to a DNS blip). Config is typos.toml.
+      - name: typos 1.45.1 (host-local pin under ~/ci/tools)
+        if: ${{ !cancelled() }}
+        run: |
+          cargo install --locked typos-cli@1.45.1 --root "$HOME/ci/tools"
+          "$HOME/ci/tools/bin/typos" --version
+          "$HOME/ci/tools/bin/typos"
+      # The policy wrapper (scripts/advisory-policy/check.py) requires the
+      # exact cargo-deny version it was validated against, and the host's
+      # own cargo-deny is whatever the developer keeps. So the pinned copy
+      # lives under ~/ci/tools: `cargo install` is a no-op once that exact
+      # version is there (one compile per host).
+      - name: cargo-deny 0.19.4 (host-local pin under ~/ci/tools)
+        if: ${{ !cancelled() }}
+        run: |
+          cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+      - name: Test exact maintenance-risk policy (offline fixtures)
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
+      - name: Check dependencies with expiring accepted-risk policy
+        if: ${{ !cancelled() }}
+        run: python3 scripts/advisory-policy/check.py
 
   test:
     name: Test
-    # PRs test on ARM (0.625x cost) — the agent/logic code is arch-portable, so
-    # PR-CI's real job runs fine there. main pushes + release tags test on x86,
-    # the production arch. Both hand-written SIMD paths (AVX2 on x86, NEON on
-    # arm — crates/oneiron/src/distance.rs) thus get CI coverage across the
-    # PR -> merge -> release lifecycle. cargo-deny/clippy/package stay x86.
-    # 4vcpu on both lanes: the suite's wall time stops scaling past ~4
-    # cores (full x86 suite, 2026-07 spend audit: ~361s at 8vcpu vs ~360s
-    # at 4vcpu; arm A/B on this PR: 285-309s at 4vcpu vs ~218s warm at
-    # 8vcpu), so 8vcpu bills ~2x the vcpu-seconds to win nothing on x86
-    # and only ~80s of wall on the arm PR lane.
-    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-4vcpu-ubuntu-2404-arm' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 90
     needs: changes
-    # PRs: rust diffs only. Main pushes: rust diffs too (the changes job
+    # Dispatch: always (a manual run is the full gate). PRs: rust diffs only.
+    # Main pushes: rust diffs too (the changes job
     # runs the same filter on push), but fail OPEN — if the detector job
     # didn't succeed, run anyway so a filter hiccup can't skip the record
     # of truth. Tag pushes always run (release validation — the filter has
-    # no sane diff base on a tag event).
+    # no sane diff base on a tag event); that clause is inert until a
+    # tag-push trigger returns to `on:` (see `package`). The pause/draft
+    # guard sits inside always() so a paused wave or a draft PR still skips.
     if: >-
-      always() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
+      always()
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (
+        github.event_name == 'workflow_dispatch'
+        || (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
           || needs.changes.outputs.rust == 'true'
@@ -129,48 +210,119 @@ jobs:
       )
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.96"
-      # Sticky disks replace rust-cache: no tar/prune/upload cycle (the old
-      # Post-save step cost 71-143s); disks mount in ~3s and commit on unmount.
-      # Guarded off for fork PRs so a fork can never poison shared build state
-      # (cold build there is the correct fallback). Registry disk is shared
-      # across jobs; target disk is per-job. $0.50/GB/mo — if disks bloat over
-      # months, add a scheduled useblacksmith/stickydisk-delete cleanup.
-      - name: Mount cargo registry (sticky disk)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
+          clean: true
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # nextest is part of the host contract; if a host lacks it, install the
+      # pinned copy under ~/ci/tools once and reuse it on every later run.
+      - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        run: |
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ci/tools/bin:$PATH"
+          if ! cargo nextest --version >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
+          fi
+          cargo nextest --version
+      # The macOS recipe from AGENTS.md ("macOS test host"), full tier
+      # (ONE-1144: process-per-test isolation, retries = 2, slow set in):
+      #   * `--exclude oneiron-napi` — the napi cdylib cannot link its test
+      #     binary anywhere (needs a Node host for the napi_* symbols);
+      #   * the filterset drops the 7 oneiron-bench eval::tests that fail on
+      #     macOS with `VaultRootPreflight … UnsupportedPlatform` (ONE-1996)
+      #     and pass on Linux. Exact names, not a prefix: the 13 sibling
+      #     eval_outcome_ingest_* / eval_tune_* tests pass here and stay in.
+      # The bench carve-out runs unfiltered on the Linux reference lane below.
+      - name: Workspace tests (nextest, full tier, macOS recipe)
+        run: |
+          MACOS_SKIP='not (package(oneiron-bench) & (
+              test(=eval::tests::eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault)
+            | test(=eval::tests::eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config)
+            | test(=eval::tests::eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index)
+            | test(=eval::tests::eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune)
+            | test(=eval::tests::eval_tune_honors_the_max_runs_bound)
+            | test(=eval::tests::eval_tune_opens_a_non_device_vault_through_the_explicit_config)
+            | test(=eval::tests::eval_tune_persists_and_prints_the_bounded_weight_table_entry)
+          ))'
+          cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast -E "$MACOS_SKIP"
+      # The two stages scripts/verify.sh runs after nextest: the featureless
+      # library build is a Wave-6 acceptance gate, and nextest does not run
+      # doctests.
+      - name: Featureless oneiron library tests
+        run: cargo test -p oneiron --lib --no-default-features
+      - name: Doctests
+        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+
+  test-linux:
+    name: Test (Linux reference)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 90
+    needs: changes
+    # Linux is the reference host (AGENTS.md): this lane runs the suite with
+    # no bench carve-out — the 7 ONE-1996 bench tests pass here — so it is
+    # the record of truth for what the macOS job cannot run. oneiron-napi is
+    # excluded on every host: its test binary needs the napi_* symbols a
+    # Node host provides at load time and links nowhere (proving run
+    # 2026-09-08 failed on Arch with the same undefined symbols as macOS).
+    # Main pushes and dispatch only:
+    # the Arch box is the Wave host, and a per-PR lane there would queue
+    # every PR behind wave builds. Same push gate as `test` (rust diff,
+    # fail-open, tags), same pause guard inside always().
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true'
+      && (
+        github.event_name == 'workflow_dispatch'
+        || (github.event_name == 'push' && (
+          startsWith(github.ref, 'refs/tags/')
+          || needs.changes.outputs.rust == 'true'
+          || needs.changes.result != 'success'
+        ))
+      )
+    steps:
+      - uses: actions/checkout@v4
         with:
-          key: ${{ github.repository }}-cargo-registry
-          path: ~/.cargo/registry
-      - name: Mount target dir (sticky disk)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
-        with:
-          # Arch-specific: the PR (arm) and main-push (x86) lanes must not share
-          # a target dir, or cargo rebuilds cold every switch. -arm on PRs.
-          key: ${{ github.repository }}-target-test${{ github.event_name == 'pull_request' && '-arm' || '' }}
-          path: ./target
-      - uses: taiki-e/install-action@nextest
-      # Canonical runner (ONE-1144): process-per-test isolation. Main pushes
-      # run the full tier (record of truth); PRs run the fast `ci-pr` tier
-      # (skips the ~130s slow set but keeps retries=2 — the `default` tier is
-      # retries=0 for the local fail-fast loop, which we must NOT inherit on
-      # CI). A slow-set regression surfaces on the next main-push full run.
-      - run: cargo nextest run --workspace --all-features --profile ${{ github.event_name == 'push' && 'full' || 'ci-pr' }}
-      # nextest does not run doctests; keep them covered separately.
-      - run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+          clean: true
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # nextest is part of the host contract; if a host lacks it, install the
+      # pinned copy under ~/ci/tools once and reuse it on every later run.
+      - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        run: |
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ci/tools/bin:$PATH"
+          if ! cargo nextest --version >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
+          fi
+          cargo nextest --version
+      - name: Workspace tests (nextest, full tier, bench included)
+        run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
+      - name: Featureless oneiron library tests
+        run: cargo test -p oneiron --lib --no-default-features
+      - name: Doctests
+        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   package:
     name: Package oneiron-server
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 60
     # Publish-integrity + standalone-build check. Not needed per-merge at
-    # 0.1.0 (we don't publish every merge) — gate to release tags only, so
-    # it stops billing on every main push. A packaging/standalone break
-    # surfaces when a `v*` tag is cut; revisit (weekly cron / paths-gate) if
-    # that release-window ever bites.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # 0.1.0 (we don't publish every merge) — gate to release tags only. A
+    # packaging/standalone break surfaces when a `v*` tag is cut; revisit
+    # (weekly cron / paths-gate) if that release-window ever bites. Linux
+    # because the published artefact is validated on the reference host.
+    #
+    # This job can only run when a `push: tags: ['v*']` trigger is present
+    # in `on:`. Today `push` is `branches: [main]` only, so the gate below
+    # is unreachable — unchanged behaviour, now stated. Re-add the tag
+    # trigger to turn release validation back on.
+    if: >-
+      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
     env:
@@ -179,54 +331,18 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          toolchain: "1.96"
-      # Sticky disks replace the previous rust-cache here too (each run was
-      # paying a ~400MB actions-cache save/restore cycle). Runs on main
-      # pushes only, so the fork guard is inert but kept for uniformity.
-      - name: Mount cargo registry (sticky disk)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
-        with:
-          key: ${{ github.repository }}-cargo-registry
-          path: ~/.cargo/registry
-      - name: Mount target dir (sticky disk)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
-        with:
-          key: ${{ github.repository }}-target-package
-          path: ./target
-      - run: rm -rf target/package/oneiron-server-*
+          clean: true
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # The runner's .env points CARGO_TARGET_DIR outside the checkout, so
+      # the package staging dir lives there, never under ./target.
+      - run: rm -rf "${CARGO_TARGET_DIR:-target}/package/oneiron-server-"*
       - run: cargo package -p oneiron-server --list --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
       - run: cargo package -p oneiron-server --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
       - run: |
-          package_manifest="$(find target/package -mindepth 2 -maxdepth 2 -path 'target/package/oneiron-server-*/Cargo.toml' -print -quit)"
+          package_dir="${CARGO_TARGET_DIR:-target}/package"
+          package_manifest="$(find "${package_dir}" -mindepth 2 -maxdepth 2 -path "${package_dir}/oneiron-server-*/Cargo.toml" -print -quit)"
           test -n "${package_manifest}"
           cargo test --manifest-path "${package_manifest}" --all-features --config "${LOCAL_ONEIRON_PATCH}"
-
-  deny:
-    name: cargo-deny
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    if: github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v4
-      # The policy wrapper and tests must use the same inspected cargo-deny version.
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.96"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny@0.19.4
-      - name: Test exact maintenance-risk policy (offline fixtures)
-        run: python3 -m unittest discover -s scripts/advisory-policy -p 'test_*.py' -v
-      - name: Check dependencies with expiring accepted-risk policy
-        run: python3 scripts/advisory-policy/check.py
-
-  typos:
-    name: typos
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: crate-ci/typos@v1.45.1

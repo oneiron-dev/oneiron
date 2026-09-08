@@ -9,6 +9,9 @@ name: UniFFI stub
 on:
   pull_request:
     branches: [main]
+    # `ready_for_review` so a draft that becomes ready gets its first run
+    # (the guard below skips drafts).
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'crates/oneiron-uniffi/**'
       - '.github/workflows/uniffi-stub.yml'
@@ -17,6 +20,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # No RUSTFLAGS, as in ci.yml: the vendored heed path dependency is not
+  # lint-capped, and unset flags share the runner cache with dev builds.
 
 concurrency:
   group: uniffi-stub-${{ github.event.pull_request.number || github.sha }}
@@ -25,21 +30,26 @@ concurrency:
 jobs:
   uniffi-stub:
     name: UniFFI definition + Swift compile proof
-    # Swift 6 comes from the runner image's Xcode; the Rust toolchain is
-    # pinned to the workspace channel.
-    runs-on: macos-15
+    # Self-hosted macOS runner (HYG-06b, see ci.yml's runner header): Swift 6
+    # comes from the host Xcode toolchain, Rust from the host rustup with
+    # rust-toolchain.toml pinning the channel. Same pause/draft guard as
+    # ci.yml.
+    runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 30
+    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     steps:
       # fetch-depth 0 so the PR-only forbidden-path guard can always reach
       # the base SHA, with no implementer-chosen baseline.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          clean: true
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.96"
-          components: rustfmt, clippy
+      - name: Toolchains (host rustup + Xcode Swift)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+          swift --version
 
       - name: Format
         run: cargo fmt --check --package oneiron-uniffi

@@ -690,7 +690,18 @@ fn vault_cleanup_registers_on_the_timer_wake_only() {
 #[path = "destructive_door_scan.rs"]
 mod destructive_door_scan;
 
-const MODULE_SOURCE: &str = include_str!("../vault_cleanup.rs");
+const MODULE_SOURCE: &str = concat!(
+    include_str!("mod.rs"),
+    include_str!("cleanup_types.rs"),
+    include_str!("tripwire.rs"),
+    include_str!("proposals_archive.rs"),
+    include_str!("codec_receipts.rs"),
+    include_str!("person_provenance.rs"),
+    include_str!("rollout.rs"),
+    include_str!("run_record.rs"),
+    include_str!("scan.rs"),
+    include_str!("visibility.rs"),
+);
 
 /// The module's source with every comment line dropped.
 ///
