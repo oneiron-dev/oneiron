@@ -120,10 +120,14 @@ jobs:
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
     # PR takes one runner slot and one checkout for all of them. Runs on every
     # non-draft PR and on dispatch; the cargo steps below gate themselves on a
-    # rust-relevant diff (always on dispatch: a manual run is the full gate),
-    # typos and deny always (deny is the dispatch-era gate).
+    # rust-relevant diff (always on dispatch: a manual run is the full gate;
+    # fail-open if the detector broke), typos and deny always. Inside
+    # always(): dispatch is the deny gate's unconditional route (ONE-335,
+    # pinned by scripts/advisory-policy/test_policy.py), so a broken
+    # `changes` job must not skip it; the pause/draft guard still applies.
     if: >-
-      vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      always()
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
     steps:
       - uses: actions/checkout@v4
@@ -137,15 +141,15 @@ jobs:
           cargo clippy --version
       # Honor the workspace's heed exclusion; --all also follows local path dependencies.
       - name: Format
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success'
         run: cargo fmt --check
       - name: Clippy (workspace, all features)
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # Wave-6 acceptance gate (AGENTS.md, featureless builds): the oneiron
       # crate and its test targets must compile and lint with no features.
       - name: Clippy (oneiron, featureless)
-        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
+        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success'
         run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
       # typos, pinned like cargo-deny: the exact version matters (its
       # dictionary changes between releases, and a host's own typos is
