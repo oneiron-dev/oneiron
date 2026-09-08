@@ -463,8 +463,8 @@ pub(crate) mod tests {
             std::fs::write(&input, BUILTIN_FIXTURE_JSON).expect("fixture file");
             let manifest = fixture_file_manifest(dir.path(), "data/fixture.json", output);
             assert!(matches!(run_manifest_path(&manifest),
-                    Err(BeamError::InvalidManifest { reason, .. })
-                        if reason.contains("must not resolve to the input fixture path")));
+                Err(BeamError::InvalidManifest { reason, .. })
+                    if reason.contains("must not resolve to the input fixture path")));
             assert_eq!(
                 std::fs::read(&input).expect("preserved input"),
                 BUILTIN_FIXTURE_JSON.as_bytes()
@@ -488,8 +488,8 @@ pub(crate) mod tests {
             };
             let manifest = fixture_file_manifest(dir.path(), source, output);
             assert!(matches!(run_manifest_path(&manifest),
-                    Err(BeamError::InvalidManifest { reason, .. })
-                        if reason.contains("must not resolve to the input fixture path")));
+                Err(BeamError::InvalidManifest { reason, .. })
+                    if reason.contains("must not resolve to the input fixture path")));
             assert_eq!(
                 std::fs::read(&input).expect("preserved input"),
                 BUILTIN_FIXTURE_JSON.as_bytes()
