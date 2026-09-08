@@ -149,13 +149,18 @@ don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
 
 ## Where new code goes
 
-The former monolith files are gone: `store`, `gate`, `task_verb`, `batch`, and the fifteen
-2026-08 wave-6 wells (`session_overlay`, `repo_mutation`, `dreamer_consolidation`,
-`connector_key`, `code_run`, `consent`, `receipt`, `deletion`, `outbound`,
-`booking/anti_abuse`, `saved_query`, `dreamer_runner`, `pipeline`, `skill_hub`) are all
-directory modules now (old→new map: `docs/ops/w6-module-split-map.md`). Don't grow an existing
-child file past the 800-line ratchet bar — a new concern gets its own file under the owning
-module directory:
+The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
+wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 91 more over-bar
+modules the same way, so a directory module is now the normal shape for anything substantial.
+Twenty files still sit over the bar and every one is deliberate — see the `_attribution` block
+in `scripts/ratchet/baseline.json`, which names the twelve deferred behind the context-board
+fold and the eight ruled indivisible. Do not use those twenty as precedent.
+
+Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
+regenerated deterministically and are the only current answer to "where does X live now".
+(`docs/ops/w6-module-split-map.md` covers the wave-6 fifteen only and is history, not a map of
+the tree today.) Don't grow an existing child file past the 800-line ratchet bar — a new concern
+gets its own file under the owning module directory:
 
 | New concern is about... | Goes in...                      |
 |--------------------------|-----------------------------------|
