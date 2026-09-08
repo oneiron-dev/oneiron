@@ -934,3 +934,35 @@ def test_dedent_and_canon_keep_literals():
     assert sc.literal_compare_form('"a \\\n     b"') == '"a \\\nb"'
     assert sc.literal_compare_form('r"a \\\n     b"') == 'r"a \\\n     b"'
     assert sc.literal_compare_form('"a \\\\\n  b"') == '"a \\\\\n  b"'
+
+
+# --- unrecognised blocks: byte-identical twins in the base --------------------
+
+def _chunk(canon, where, line):
+    return (canon, canon.splitlines()[0], where, line)
+
+
+def test_identical_base_twins_land_once_each():
+    """Two byte-identical unrecognised blocks in the base (the tails of two
+    `proptest!` invocations) may land one per child: not a duplicate."""
+    base = [_chunk(");", OLD, 10), _chunk(");", OLD, 40)]
+    new = [_chunk(");", f"{NEW}/a.rs", 5), _chunk(");", f"{NEW}/b.rs", 7)]
+    assert sc.compare_chunks(base, new) == []
+
+
+def test_base_twins_landing_three_times_is_a_duplicate():
+    base = [_chunk(");", OLD, 10), _chunk(");", OLD, 40)]
+    new = [_chunk(");", f"{NEW}/a.rs", 5), _chunk(");", f"{NEW}/b.rs", 7), _chunk(");", f"{NEW}/c.rs", 9)]
+    problems = sc.compare_chunks(base, new)
+    assert problems[0].startswith("FAIL duplicate unrecognised block ');' lands in")
+    assert problems[-1] == f"FAIL extra unrecognised block in {NEW}/c.rs:9 (');')"
+
+
+def test_single_base_block_landing_twice_is_still_a_duplicate():
+    base = [_chunk(");", OLD, 10)]
+    new = [_chunk(");", f"{NEW}/a.rs", 5), _chunk(");", f"{NEW}/b.rs", 7)]
+    problems = sc.compare_chunks(base, new)
+    assert problems == [
+        f"FAIL duplicate unrecognised block ');' lands in {NEW}/a.rs:5, {NEW}/b.rs:7",
+        f"FAIL extra unrecognised block in {NEW}/b.rs:7 (');')",
+    ]
