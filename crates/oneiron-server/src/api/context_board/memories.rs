@@ -11,59 +11,70 @@ use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Eiri Context v4 memory-board per-slot row caps.
+/// MEMORIES per-slot row caps.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextBoardMemoriesSlotControls {
+    /// Claim row cap.
     #[serde(default)]
     #[schema(example = 4)]
     pub(crate) claims: Option<usize>,
+    /// Turn/message row cap.
     #[serde(default)]
     #[schema(example = 2)]
     pub(crate) turns: Option<usize>,
+    /// Summary row cap.
     #[serde(default)]
     #[schema(example = 2)]
     pub(crate) summaries: Option<usize>,
+    /// Facet row cap.
     #[serde(default)]
     #[schema(example = 1)]
     pub(crate) facets: Option<usize>,
+    /// Companion-register row cap.
     #[serde(default)]
     #[schema(example = 1)]
     pub(crate) companions: Option<usize>,
+    /// Row cap for all other entity types; defaults to the retrieval
+    /// budget's other cap minus companions.
     #[serde(default)]
     #[schema(example = 1)]
     pub(crate) other: Option<usize>,
 }
 
-/// Eiri Context v4 memory-board controls.
+/// MEMORIES section controls.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextBoardMemoriesControls {
-    /// Whether to emit the v4 memory board. Defaults to true when v4 is requested.
+    /// Whether to project the MEMORIES section. Defaults to true.
     #[serde(default)]
     #[schema(example = true)]
     pub(crate) enabled: Option<bool>,
-    /// Exact per-slot row caps for the memory board.
+    /// Exact per-slot row caps for the MEMORIES section.
     #[serde(default)]
     pub(crate) slots: Option<ContextBoardMemoriesSlotControls>,
 }
 
-/// Eiri Context v4 session RAG controls.
+/// Session controls for the MEMORIES cursor.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextBoardSessionControls {
-    /// Stable caller/session key used to carry RAG state across calls.
+    /// Stable session key that carries the MEMORIES cursor across calls.
+    /// Defaults to the caller's own identity.
     #[serde(default, rename = "session_id", alias = "sessionId")]
-    #[schema(example = "default")]
+    #[schema(example = "session-123")]
     session_id: Option<String>,
 }
 
-/// Companion context that influences Eiri Context v4 assembly.
+/// Companion scope that influences MEMORIES assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextBoardCompanionControls {
+    /// Optional person entity id (32 hex) or opaque person label.
     #[serde(default, rename = "person_ref", alias = "personRef")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     person_ref: Option<String>,
+    /// Optional persona entity id (32 hex) or opaque persona label.
     #[serde(default, rename = "persona_ref", alias = "personaRef")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
     persona_ref: Option<String>,
+    /// Requested expression register: professional, warm, or unrestricted.
     #[serde(default)]
     #[schema(example = "warm")]
     expression: Option<String>,
@@ -76,7 +87,7 @@ pub(crate) struct MemoriesRequest {
     pub(crate) companion: Option<oneiron::CompanionAssembly>,
 }
 
-/// Stable Eiri Context v4 memory-board slot name.
+/// Stable MEMORIES slot name.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -89,7 +100,7 @@ pub(crate) enum ContextBoardMemorySlot {
     Other,
 }
 
-/// Source section for one Eiri Context v4 memory-board row.
+/// Source of one MEMORIES row.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -98,7 +109,7 @@ pub(crate) enum ContextBoardMemorySource {
     Neighbor,
 }
 
-/// Per-slot row caps for an Eiri Context v4 memory board.
+/// Per-slot row caps for a MEMORIES section.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardMemoriesBudget {
     /// Claim row cap.
@@ -121,10 +132,10 @@ pub(crate) struct ContextBoardMemoriesBudget {
     other: usize,
 }
 
-/// Companion assembly metadata echoed with an Eiri Context v4 memory board.
+/// Companion assembly metadata echoed with a MEMORIES section.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardCompanionAssembly {
-    /// Effective caller/session identity used for the v4 board.
+    /// Effective caller/session identity used for the MEMORIES section.
     #[schema(example = "session-123")]
     caller: Option<String>,
     /// Effective companion scope selected from active companion records.
@@ -147,7 +158,7 @@ pub(crate) struct ContextBoardCompanionAssembly {
     expression: Option<String>,
 }
 
-/// Stable row in an Eiri Context v4 memory board.
+/// One stable row in a MEMORIES section.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardMemoryRow {
     /// Zero-based index after stable sorting and slot-budget filtering.
@@ -182,24 +193,24 @@ pub(crate) struct ContextBoardMemoryRow {
     score: f32,
 }
 
-/// Eiri Context v4 memory-board response envelope.
+/// MEMORIES section envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardMemories {
-    /// Context version for this memory-board envelope.
+    /// Section format version.
     #[schema(example = "v4")]
     version: String,
     /// Applied per-slot row budget.
     budget: ContextBoardMemoriesBudget,
-    /// Stable memory-board rows.
+    /// Stable MEMORIES rows.
     rows: Vec<ContextBoardMemoryRow>,
-    /// Companion assembly metadata when v4 companion controls are present.
+    /// Companion assembly metadata when companion controls are present.
     companion: Option<ContextBoardCompanionAssembly>,
 }
 
-/// Eiri Context v4 session RAG cursor response.
+/// The caller's MEMORIES cursor.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ContextBoardMemoriesCursor {
-    /// Effective v4 session id.
+    /// Effective session id.
     #[serde(rename = "session_id")]
     #[schema(example = "session-123")]
     session_id: String,
