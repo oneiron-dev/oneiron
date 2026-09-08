@@ -25,16 +25,6 @@ policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(policy)
 BEFORE = datetime(2026, 9, 7, 12, tzinfo=timezone.utc)
 EXPECTED = {
-    ("RUSTSEC-2024-0413", "atk", "0.18.2"),
-    ("RUSTSEC-2024-0416", "atk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0412", "gdk", "0.18.2"),
-    ("RUSTSEC-2024-0418", "gdk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0411", "gdkwayland-sys", "0.18.2"),
-    ("RUSTSEC-2024-0417", "gdkx11", "0.18.2"),
-    ("RUSTSEC-2024-0414", "gdkx11-sys", "0.18.2"),
-    ("RUSTSEC-2024-0415", "gtk", "0.18.2"),
-    ("RUSTSEC-2024-0420", "gtk-sys", "0.18.2"),
-    ("RUSTSEC-2024-0419", "gtk3-macros", "0.18.2"),
     ("RUSTSEC-2024-0370", "proc-macro-error", "1.0.4"),
     ("RUSTSEC-2025-0081", "unic-char-property", "0.9.0"),
     ("RUSTSEC-2025-0075", "unic-char-range", "0.9.0"),
@@ -111,7 +101,7 @@ class PolicyTests(unittest.TestCase):
         entries = policy.validate_policy(self.data, self.lock, now)
         policy.validate_advisories(entries, self.database)
 
-    def test_authority_exact19_and_allowed(self):
+    def test_authority_exact9_and_allowed(self):
         self.assertEqual({(e["id"], e["package"], e["version"]) for e in self.data["entries"]}, EXPECTED)
         self.validate()
         # Also pin the real current lock, not the superseded baseline packet.
@@ -120,7 +110,7 @@ class PolicyTests(unittest.TestCase):
     def test_permanent_exceptions_preserved_and_no_new_ids(self):
         base = policy.validate_config(self.config)
         rendered = tomllib.loads(policy.accepted_config(self.config, self.data["entries"]))
-        self.assertEqual(rendered["advisories"]["ignore"][19:], base["advisories"]["ignore"])
+        self.assertEqual(rendered["advisories"]["ignore"][9:], base["advisories"]["ignore"])
         self.assertEqual({e["id"] for e in base["advisories"]["ignore"]}, policy.EXISTING_IDS)
         for section in ("graph", "licenses", "bans", "sources"):
             self.assertEqual(rendered[section], base[section])
@@ -156,7 +146,8 @@ class PolicyTests(unittest.TestCase):
             elif change == "source":
                 lock["package"][0]["source"] = "git+https://example.invalid/fork"
             else:
-                lock["package"].append({"name": "new-parent", "version": "1.0.0", "dependencies": ["atk"]})
+                accepted = self.data["entries"][0]["package"]
+                lock["package"].append({"name": "new-parent", "version": "1.0.0", "dependencies": [accepted]})
             with self.subTest(change=change), self.assertRaises(policy.PolicyError):
                 policy.validate_policy(self.data, lock, BEFORE)
 
@@ -185,7 +176,8 @@ class PolicyTests(unittest.TestCase):
         entry = self.data["entries"][0]
         path = write_advisory(self.database, entry)
         original = path.read_text()
-        for text in ('not toml', '```toml\n[advisory]', original.replace('package = "atk"', 'package = "other"')):
+        renamed = original.replace(f'package = "{entry["package"]}"', 'package = "other"')
+        for text in ('not toml', '```toml\n[advisory]', renamed):
             path.write_text(text)
             with self.subTest(text=text), self.assertRaises(policy.PolicyError):
                 self.validate()
@@ -326,7 +318,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn("--target", command)
         self.final_config = Path(command[command.index("--config") + 1])
         config = tomllib.loads(self.final_config.read_text())
-        self.assertEqual(len(config["advisories"]["ignore"]), 23)
+        self.assertEqual(len(config["advisories"]["ignore"]), 13)
         self.assertEqual(config["advisories"]["yanked"], "deny")
         private = Path(config["advisories"]["db-path"])
         self.assertNotEqual(private, self.cache)
@@ -468,7 +460,7 @@ class EffectiveCommandTests(unittest.TestCase):
         return subprocess.run(command, cwd=self.work, capture_output=True, text=True,
                               env=dict(os.environ, CARGO_NET_OFFLINE="true", CARGO_TERM_COLOR="never"))
 
-    def test_raw_deny_blocks_but_exact19_and_old_exception_are_accepted(self):
+    def test_raw_deny_blocks_but_exact9_and_old_exception_are_accepted(self):
         raw = self.run_deny(accepted=False)
         self.assertNotEqual(raw.returncode, 0, raw.stdout + raw.stderr)
         self.assertIn("unmaintained", raw.stderr)
