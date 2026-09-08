@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # One distributed verify leg. Select with LEG:
-#   LEG=fmt-clippy   fmt (check-mode) + workspace clippy
+#   LEG=fmt-clippy   code-map pin + fmt (check-mode) + workspace clippy
 #   LEG=tests:1/2    nextest full tier, partition hash:1/2, + doctests
 #   LEG=tests:2/2    nextest full tier, partition hash:2/2
 #
 # Markers printed to stdout so they land INSIDE the tee'd log (the only truth):
 #   VERIFY-LEG-OK <leg>
-#   VERIFY-LEG-FAIL-<stage> <leg>    stage in fmt | clippy | test | doctest
+#   VERIFY-LEG-FAIL-<stage> <leg>    stage in codemap | fmt | clippy | test | doctest
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -29,6 +29,7 @@ run_stage() {
 
 case "$LEG" in
   fmt-clippy)
+    run_stage codemap scripts/codemap/check.sh
     # Honor the workspace's heed exclusion; --all also follows local path dependencies.
     run_stage fmt    cargo fmt --check
     run_stage clippy cargo clippy --workspace --all-targets --all-features -- -D warnings
