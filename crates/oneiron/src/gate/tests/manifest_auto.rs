@@ -118,9 +118,7 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
     // The evidence floor applies to every Dreamer-authored write; the fixture
     // actor is a real seeded entity, so the signature denial (not the floor)
     // is what this test observes.
-    body.evidence = Some(precommit_evidence(vec![
-        first_party_connector_actor_id(),
-    ]));
+    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
@@ -154,9 +152,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
 
     let claim_id = test_id(0xC7);
     let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-    body.evidence = Some(precommit_evidence(vec![
-        first_party_connector_actor_id(),
-    ]));
+    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
