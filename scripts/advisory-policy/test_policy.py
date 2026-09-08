@@ -81,7 +81,10 @@ class WorkflowTests(unittest.TestCase):
         # policy runs inside the `checks` job (HYG-06b folded fmt/clippy/typos/
         # deny into one runner slot), and a manual dispatch must always reach
         # it — the job condition starts with always() so a broken path detector
-        # cannot skip it, and the two policy steps carry no per-step gate.
+        # cannot skip it, and the two policy steps carry no gate that could
+        # skip them. The single exception is `!cancelled()`, which makes them
+        # run MORE: without it GitHub skips every step after an earlier one
+        # fails, so a formatting error alone used to skip this policy.
         self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:\n")
         job = re.search(r"(?m)^  checks:\n((?:    .*\n|\n)*)", workflow)
         self.assertIsNotNone(job)
@@ -94,7 +97,9 @@ class WorkflowTests(unittest.TestCase):
                         "python3 scripts/advisory-policy/check.py"):
             step = re.search(r"(?m)^      - name: [^\n]*\n((?:        .*\n)*?)        run: " + re.escape(command), job[1])
             self.assertIsNotNone(step, command)
-            self.assertNotIn("if:", step[1], command)
+            gate = re.search(r"(?m)^        if: (.+)$", step[1])
+            if gate is not None:
+                self.assertEqual(gate[1].strip(), "${{ !cancelled() }}", command)
 
 
 class PolicyTests(unittest.TestCase):
