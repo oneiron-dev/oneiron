@@ -1521,7 +1521,16 @@ fn canonical_prompt_package_block_drives_system_and_turn_wire_teaching() {
         crate::prompt::ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH
     );
 
-    let engine_rust = include_str!("../engine_executor.rs");
+    let engine_rust = concat!(
+        include_str!("mod.rs"),
+        include_str!("types.rs"),
+        include_str!("driver.rs"),
+        include_str!("repl.rs"),
+        include_str!("host.rs"),
+        include_str!("record.rs"),
+        include_str!("wire.rs"),
+        include_str!("store.rs")
+    );
     for teaching_line in canonical.lines().filter(|line| !line.trim().is_empty()) {
         assert!(
             !engine_rust.contains(teaching_line),
