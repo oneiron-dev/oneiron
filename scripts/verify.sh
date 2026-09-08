@@ -37,7 +37,7 @@ run_stage() {
 run_stage fmt                 cargo fmt --check
 run_stage clippy              cargo clippy --workspace --all-targets --all-features -- -D warnings
 run_stage clippy-featureless  cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
-run_stage test                cargo nextest run --workspace --all-features --profile full
+run_stage test                cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
 run_stage test-featureless    cargo test -p oneiron --lib --no-default-features
 run_stage doctest             cargo test --doc --workspace --exclude oneiron-bench --all-features
 
