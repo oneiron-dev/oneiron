@@ -31,11 +31,11 @@ Full verify gate — run at VERDICT time only, never for iteration:
 
 `scripts/verify.sh` is the single source of truth for the scripted gate and runs 4 stages: `cargo
 fmt --all --check`, workspace clippy (`-D warnings`, all targets/features), `cargo nextest run
---workspace --all-features --profile full`, and `cargo test --doc --workspace --exclude
-oneiron-bench --all-features`. Two more commands are current policy but NOT yet wired into the
-script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCFLAGS="-D warnings"
-cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
---profile full`.
+--workspace --exclude oneiron-napi --all-features --profile full`, and `cargo test --doc
+--workspace --exclude oneiron-bench --all-features`. Two more commands are current policy but NOT
+yet wired into the script (`WORKFLOW.md` §3) — run them by hand until that gap closes:
+`RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps` and `cargo nextest
+run -p oneiron --features sync --profile full`.
 
 Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh` — same 4-stage
 coverage split across legs; the same two-command gap applies.
@@ -47,6 +47,9 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 
 ## Landmines
 
+- `oneiron-napi` cannot link its test binary on any host (the `napi_*` symbols come from a Node
+  host at load time; Linux fails the same way): every workspace nextest run carries
+  `--exclude oneiron-napi`, `scripts/verify.sh` included.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
@@ -91,8 +94,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   steps only on a rust diff) and on `workflow_dispatch`; `test` runs the macOS recipe
   (`--exclude oneiron-napi`, the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
   filtered out by name — ONE-1996 — then the featureless lib tests and doctests) on rust-diff
-  `pull_request` or `push`; `test-linux` runs the unfiltered
-  `--profile full` suite plus the same two stages on `push` to `main` and `workflow_dispatch`
+  `pull_request` or `push`; `test-linux` runs the `--profile full` suite with only the napi
+  exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
   only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
   trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy and
   tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
@@ -129,8 +132,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
   flags let the runner caches share fingerprints with developer builds.
-- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
-  `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
+- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, `typos`,
+  git, `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
   (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, nextest if a host lacks it) go under
   `~/ci/tools`, installed by the job on first use and reused after.
 - One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
