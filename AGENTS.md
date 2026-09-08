@@ -2,10 +2,10 @@
 
 General doctrine (consumer boundary): `CLAUDE.md`. PR/verify workflow: `WORKFLOW.md`. Review
 posture: `REVIEW.md`. Storage-ABI decision history — not agent guidance, read only for "why does
-this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (43KB, over
+this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (~55KB, over
 most agents' single-read truncation threshold — fetch by tier, don't load the whole file):
-`oneiron.skills.md` — Tier-1 endpoint index at L51, Tier-2 endpoint detail at L298, Tier-3
-schemas/error catalog at L801.
+`oneiron.skills.md` — locate a tier by its heading, not by line number: `## Tier-1: Endpoint
+Activation Index`, `## Tier-2: Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
 
 Oneiron is a general-purpose memory engine (Rust workspace; core crate `crates/oneiron`, server
 `crates/oneiron-server`, bindings `crates/oneiron-napi`). Consumer-agnostic, public repo.
@@ -21,7 +21,8 @@ Dev-loop iteration — scoped, fast, default nextest profile, retries=0:
 
     cargo nextest run -p oneiron --all-features [-E 'test(<module>)']
 
-Sync-lane iteration uses `--features sync` instead. A feature flag is no longer required: the
+The `default` profile skips a slow set — see *nextest tiers* below; a green dev loop is not a
+green gate. Sync-lane iteration uses `--features sync` instead. A feature flag is no longer required: the
 plain featureless build compiles its library *and* its test targets, and carries its own gates —
 see the featureless-build entry under Landmines.
 
@@ -39,20 +40,53 @@ script (`WORKFLOW.md` §3) — run them by hand until that gap closes: `RUSTDOCF
 cargo doc --workspace --all-features --no-deps` and `cargo nextest run -p oneiron --features sync
 --profile full`.
 
-Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh` — same 4-stage
-coverage split across legs; the same two-command gap applies.
+Distributed form: `LEG=fmt-clippy|tests:1/2|tests:2/2 scripts/verify-leg.sh`. Leg coverage is
+narrower than the script: `fmt-clippy` runs the code-map pin, fmt and workspace clippy;
+`tests:1/2` runs nextest partition `hash:1/2` plus doctests; `tests:2/2` runs partition
+`hash:2/2`. No leg runs the two featureless stages, so a distributed run has a four-command
+gap: featureless clippy, featureless lib tests, `cargo doc`, and the sync-profile nextest run.
 
-Code map — read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules
-with layout, size bucket and purpose), then drill into `docs/codemap/<crate>.md` for the per-file
-table. Both are generated: after adding, moving, or deleting a Rust file run `python3
-scripts/codemap/codemap.py` and commit the result; `scripts/codemap/check.sh` (`--check`) is the
-first verify stage and fails on a stale map. `python3 scripts/codemap/codemap.py --sizes` prints
-the live line counts.
+## nextest tiers
+
+The dev-loop command runs the `default` profile, which skips the slow set pinned in
+`.config/nextest.toml`: `vault_open_drop_cycles_survive_pthread_key_limit`, the two
+`hnsw_recall_at_10_*` recall benches, and the whole `sync_convergence_props` suite in the
+`it_sync` binary. `--profile full` runs them with `retries = 2`; `default` is `retries = 0`.
+Run `--profile full` (or `scripts/verify.sh`) before claiming a VERDICT.
+
+## macOS test host
+
+Linux is the reference host. On macOS:
+
+- `TMPDIR` must be a real path, e.g. `mkdir -p /private/tmp/oneiron-t && export
+  TMPDIR=/private/tmp/oneiron-t`. The default `/var/folders/…` is a symlink and 10
+  `secret_lease::tests` refuse it.
+- `oneiron-napi` cannot link its test binary on macOS: add `--exclude oneiron-napi` to
+  workspace nextest runs.
+- 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
+  UnsupportedPlatform` and pass on Linux. Known; ticket pending.
+- Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
+
+## Code map
+
+Read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules with layout,
+size bucket and purpose), then drill into `docs/codemap/<crate>.md` for the per-file table. Both
+are generated deterministically by `scripts/codemap/` and pinned by `scripts/codemap/check.sh`
+(stage 0 of `scripts/verify.sh`, also run by `ratchet.yml`): a stale map fails with
+`CODEMAP-STALE` and prints the regenerate command. After adding, moving, or deleting a Rust file
+run `python3 scripts/codemap/codemap.py` and commit the output in the same change. `python3
+scripts/codemap/codemap.py --sizes` prints the live line counts.
+
+Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present):
+
+    rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files
+    rg -l 'crate::pipeline\b' crates --type rust                                     # who names a module
+    rg -oIN '\bcrate::[a-z_]+' crates/oneiron/src/pipeline | sort | uniq -c | sort -rn  # what a module names
 
 ## Tool truth (verified on this box)
 
-Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — don't assume them:
-`just`, `tokei`, `cargo-modules`, `cargo-public-api`.
+Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9, `rg` (ripgrep 15). NOT installed —
+don't assume them: `just`, `tokei`, `cargo-modules`, `cargo-public-api`.
 
 ## Landmines
 
@@ -68,8 +102,9 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
   §5.
 - Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
 - Featureless builds: the crate declares NO default features. The library **and its test
-  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates
-  and run in addition to (never instead of) the all-features gates in `scripts/verify.sh`:
+  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates;
+  `scripts/verify.sh` runs them as its `clippy-featureless` and `test-featureless` stages, in
+  addition to (never instead of) the all-features stages:
 
       cargo test -p oneiron --lib --no-default-features
       cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
@@ -88,18 +123,29 @@ Present: `rtk` v0.44, `ast-grep` v0.44, `cargo-nextest` 0.9. NOT installed — d
 ## CI truth
 
 - `ci.yml` — `workflow_dispatch` only, no auto-trigger; jobs: changes/fmt/clippy/test/package
-  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS=-Dwarnings`.
+  (`oneiron-server`)/deny (`cargo-deny`)/typos; `RUSTFLAGS="-Dwarnings -Cdebuginfo=0"`. Under
+  the dispatch-only trigger only `changes` (path detector) and `deny` (gated on
+  `workflow_dispatch`) execute: fmt/clippy/typos are gated on `pull_request`, `test` on
+  `pull_request` or `push`, and `package` waits for a `v*` tag push that can never trigger the
+  workflow, so that gate is unreachable as written. Nothing pre-merge enforces fmt, clippy or
+  tests; `scripts/verify.sh` on the branch is the gate.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
   agree.
 - `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; installs ripgrep and runs
-  `scripts/ratchet/check.sh`. Main-only on purpose: a stacked wave's middle commits can sit
-  transiently above baseline for a state that never lands.
+  `scripts/ratchet/check.sh`, `scripts/codemap/check.sh` and
+  `scripts/ratchet/root-surface-check.sh`. It is a post-merge reporter: it cannot block a merge,
+  it can only turn `main` red after one. Main-only on purpose: a stacked wave's middle commits
+  can sit transiently above baseline for a state that never lands.
 - `stickydisk-cleanup.yml` — twice-weekly cron sweep of sticky-disk cargo artifacts (cost
   control).
-- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi`; Swift-binding
-  compile proof.
+- `uniffi-stub.yml` — PR-triggered, path-scoped to `crates/oneiron-uniffi` (plus the workflow
+  file and `Cargo.lock`), and `workflow_dispatch`; Swift-binding compile proof.
+- `wire-quickstart.yml` — PR to `main` and `push` to `main`, both path-scoped to
+  `packages/oneiron`, `crates/oneiron{,-py,-remote,-napi,-server}`, the wire scripts
+  (`scripts/wire-test-server.sh`, `scripts/tests/test_wire_*.py`) and the Cargo/toolchain
+  files; plus `workflow_dispatch`. Installs the shipped SDK surface and proves four-verb parity.
 
 ## Where new code goes
 
@@ -119,6 +165,22 @@ module directory:
 | batch application          | its own file under `batch/`       |
 
 Never create `utils.rs` or `helpers.rs` — name a file for what it does.
+
+## Module style
+
+Two file shapes are legal; never convert one to the other for style alone.
+
+- Under the giant-file bar (`scripts/ratchet/check.sh` fails a non-test file at or over 800
+  lines; `tests/` directories, `tests.rs` and `*_tests.rs` are excluded from the count): a module
+  stays `foo.rs` with its tests in `foo/tests.rs`.
+- Over the bar: the module becomes a directory module `foo/mod.rs` + children. Seam shape is
+  `crates/oneiron/src/pipeline/mod.rs` — `mod` declarations, a `pub use` seam that keeps every
+  `crate::foo::*` path unchanged, and a `#[cfg(test)] use self::{…}` shim so `tests.rs` resolves
+  as before. Children are `pub(super)`, never widened; the seam re-exports what the crate needs.
+- A split is move-only. Check it with
+  `scripts/refactor/tools/split_check.py <base-rev> <old-file> <new-dir>` (fails closed with
+  `SPLIT-CHECK-ERROR`). The manifest-driven `scripts/refactor/conformance.sh` is not needed for
+  the common case.
 
 ## Closest wins
 
