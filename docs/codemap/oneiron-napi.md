@@ -16,5 +16,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade.rs` | src | XL | 45 struct · 40 fn · 5 crate-vis | ActorScopedVault, NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventView, NapiCalendarFreebusyInterval, NapiCalendarInviteInput, NapiCalendarRange +37 | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
-| `src/lib.rs` | src | L | 1 struct · 29 fn · 1 re-export | NapiVault | — |
+| `src/lib/boundary.rs` | src | s | 25 crate-vis | — | Shared caps, parse/validate helpers and napi error mapping for the legacy surface |
+| `src/lib/codebase.rs` | src | s | 4 crate-vis | — | Codebase snapshot conversion and codebase-scoped query filters |
+| `src/lib/email.rs` | src | s | 2 fn · 2 crate-vis | — | Email identity adapter conversion and inbound surface-event parsing |
+| `src/lib/mod.rs` | src | s | 3 re-export · 2 crate-vis | — | — |
+| `src/lib/vault.rs` | src | m | 1 struct · 27 fn | NapiVault | Legacy buffer-oriented NapiVault binding and all its verbs |
 | `src/types.rs` | src | s | 8 struct | NapiBatchEntity, NapiCodebaseFileEntry, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig, NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry | — |

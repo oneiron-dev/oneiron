@@ -30,7 +30,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/subject.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/transport.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/booking/validate.rs` | src | s | 2 crate-vis | — | — |
-| `src/api/booking_anti_abuse.rs` | src | L | 7 crate-vis | — | ONE-1817 [BK-06] booking anti-abuse route guards |
+| `src/api/booking_anti_abuse/cache.rs` | src | s | 2 crate-vis | — | Slot-list response cache helpers |
+| `src/api/booking_anti_abuse/guards.rs` | src | s | 7 crate-vis | — | Slot-list/hold/book anti-abuse enforcement guards |
+| `src/api/booking_anti_abuse/mod.rs` | src | s | 2 crate-vis | — | ONE-1817 [BK-06] booking anti-abuse route guards |
+| `src/api/booking_anti_abuse/support.rs` | src | s | 5 crate-vis | — | Time, error, JSON, and logging helpers for booking anti-abuse guards |
+| `src/api/booking_anti_abuse/tests_guards.rs` | src | s | 1 crate-vis | — | Guard behavior tests for booking anti-abuse enforcement |
+| `src/api/booking_anti_abuse/tests_quarantine.rs` | src | s | 1 crate-vis | — | Quarantine-behavior tests for booking anti-abuse enforcement |
+| `src/api/booking_anti_abuse/tests_support.rs` | src | s | 15 crate-vis | — | Shared test fixtures for booking anti-abuse guard tests |
 | `src/api/campaign.rs` | src | s | 12 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/companion.rs` | src | XL | 75 crate-vis | — | — |
 | `src/api/consumer_usage.rs` | src | m | 10 crate-vis | — | — |
@@ -45,8 +51,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/entity.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/facade.rs` | src | m | 1 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/tests.rs` | test | s | — | — | — |
-| `src/api/git_http.rs` | src | XL | 4 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
-| `src/api/git_lfs.rs` | src | L | 6 crate-vis | — | Git-LFS routes (ARCH-0068 Phase A, ONE-1909) |
+| `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
+| `src/api/git_http/mod.rs` | src | s | 1 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
+| `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
+| `src/api/git_http/serve.rs` | src | m | 7 crate-vis | — | Streaming bridge between axum and the blocking smart-HTTP serve plane |
+| `src/api/git_http/status_codec.rs` | src | s | 4 crate-vis | — | Receive-pack status pkt-line codec |
+| `src/api/git_http/tests_auth.rs` | src | m | — | — | Authentication-gate tests for Git smart-HTTP |
+| `src/api/git_http/tests_push.rs` | src | m | — | — | Push round-trip and status-codec tests for Git smart-HTTP |
+| `src/api/git_lfs/gate.rs` | src | s | 4 crate-vis | — | LFS authentication gate and principal checks |
+| `src/api/git_lfs/handlers.rs` | src | s | 4 crate-vis | — | LFS batch, upload, download, and verify handlers |
+| `src/api/git_lfs/mod.rs` | src | s | 3 crate-vis | — | Git-LFS routes (ARCH-0068 Phase A, ONE-1909) |
+| `src/api/git_lfs/support.rs` | src | s | 9 crate-vis | — | LFS size, href, time, and JSON helpers |
+| `src/api/git_lfs/tests.rs` | test | m | — | — | LFS handler tests |
+| `src/api/git_lfs/wire.rs` | src | s | 10 crate-vis | — | Git-LFS wire DTOs and batch types |
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/admission.rs` | src | s | 4 crate-vis | — | Scoped-call admission and actor resolution |
@@ -174,7 +191,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server.rs` | src | L | 1 struct · 2 fn · 17 crate-vis | SyncServer | — |
 | `src/server/tests.rs` | test | L | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
-| `src/usage.rs` | src | L | 18 struct · 4 enum · 15 fn · 1 const | ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp, ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState +14 | — |
+| `src/usage/allowance.rs` | src | s | 7 struct · 1 enum · 7 crate-vis | ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp, ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState | Consumer allowance states, warning levels, and top-up request types |
+| `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 8 crate-vis | UsageError | Msgpack codec for ledger records and usage error mapping |
+| `src/usage/keys.rs` | src | s | 23 crate-vis | — | Storage key builders, key length guards, and field validators |
+| `src/usage/ledger.rs` | src | m | 1 struct · 7 fn · 3 crate-vis | UsageLedger | Usage ledger: event recording, rollups, consumer usage reads, and top-ups |
+| `src/usage/mod.rs` | src | s | 4 re-export | — | — |
+| `src/usage/model.rs` | src | m | 10 struct · 2 enum · 7 fn · 1 const · 6 crate-vis | UsageCost, UsageCostInput, UsageCostRates, UsageCounter, UsageDebit, UsageEvent, UsageEventType, UsageMode +4 | Usage domain model: modes, events, costs, rollups, counters, and money helpers |
+| `src/usage/telemetry.rs` | src | s | 1 crate-vis | — | Usage telemetry events and per-token-type spans |
 | `src/usage/tests.rs` | test | m | — | — | — |
 | `src/voice_host/connection.rs` | src | s | 2 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |

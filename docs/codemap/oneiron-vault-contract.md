@@ -11,4 +11,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | L | 6 struct · 7 enum · 16 fn · 1 type · 10 const · 1 mod | Credentials, CtlRequest, CtlResponse, LedgerAck, LedgerUpdate, QuotaWindow, Schedule, ShedBlockerWire +4 | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
+| `src/lib/ctl.rs` | src | s | 1 struct · 4 enum · 2 fn | CtlRequest, CtlResponse, ShedBlockerWire, ShedCause, ShedStatus | Supervisor ctl request/response wire types and shed/slim validation |
+| `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
+| `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
+| `src/lib/mod.rs` | src | s | 1 mod · 6 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
+| `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
+| `src/lib/version.rs` | src | s | 1 fn · 2 const | — | Wire version constants and SLIM gating |
+| `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |

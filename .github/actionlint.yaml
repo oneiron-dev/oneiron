@@ -1,7 +1,7 @@
+# Labels our self-hosted runners carry (2026-09-08, HYG-06b). `self-hosted`,
+# `macos`, `linux`, `arm64` and `x64` are GitHub's default labels, which
+# actionlint already knows; these two name the hosts.
 self-hosted-runner:
   labels:
-    - blacksmith-2vcpu-ubuntu-2404
-    - blacksmith-4vcpu-ubuntu-2404
-    - blacksmith-4vcpu-ubuntu-2404-arm
-    - blacksmith-8vcpu-ubuntu-2404
-    - blacksmith-8vcpu-ubuntu-2404-arm
+    - mbp
+    - arch

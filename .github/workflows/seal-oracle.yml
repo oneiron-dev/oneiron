@@ -12,6 +12,13 @@ name: Seal Oracle
 #
 # This leg runs ONLY the pyHanko/pdfsig differential oracle; no EU-DSS
 # validation is claimed or performed here.
+#
+# Host (2026-09-08, HYG-06b): the self-hosted macOS runners. The
+# digest-pinned python:3.12 container of the cloud era cannot run there
+# (a `container:` job needs a Linux Docker host), so the §9 pins moved into
+# the job itself: uv 0.12.1 in a job-local venv, CPython 3.12 resolved by
+# uv, pyhanko 0.35.2 from the committed uv.lock. pdfsig (poppler) is part
+# of the runner host contract (AGENTS.md "Self-hosted runners").
 on:
   push:
     branches: [main]
@@ -23,6 +30,11 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  # No RUSTFLAGS, as in ci.yml: the vendored heed path dependency is not
+  # lint-capped, and unset flags share the runner cache with dev builds.
+
 concurrency:
   group: seal-oracle-${{ github.ref }}
   cancel-in-progress: false
@@ -30,29 +42,33 @@ concurrency:
 jobs:
   oracle:
     name: Differential oracle (pyHanko + pdfsig)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Hermetic image pinned by digest (§9 posture): CPython for the pinned
-    # pyHanko oracle; the Rust toolchain, poppler (pdfsig), and uv are
-    # provisioned on top.
-    container:
-      image: python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 60
+    if: vars.CI_PAUSED != 'true'
     steps:
-      - name: Install system tooling (pdfsig, linker, curl)
-        run: apt-get update && apt-get install -y --no-install-recommends curl gcc poppler-utils
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.96"
+          clean: true
+      - name: Host tools (pdfsig from poppler, python3 for the uv bootstrap)
+        run: |
+          pdfsig -v
+          python3 --version
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
       # pyHanko is a CI oracle only (A6): installed from the committed
       # uv.lock pin (pyhanko == 0.35.2), never shipped or referenced at
-      # runtime. uv itself is version-pinned; `uv sync --locked` enforces
-      # the content pins below it.
+      # runtime. uv itself is version-pinned inside a throwaway venv under
+      # the runner's temp dir; `uv sync --locked` enforces the content pins
+      # below it and `--python 3.12` keeps the interpreter major.minor the
+      # container used to pin.
       - name: Install pinned pyHanko oracle
         run: |
-          pip install "uv==0.12.1"
-          uv sync --locked --project crates/oneiron-seal/oracle
+          python3 -m venv "$RUNNER_TEMP/uv"
+          "$RUNNER_TEMP/uv/bin/pip" install --disable-pip-version-check "uv==0.12.1"
+          "$RUNNER_TEMP/uv/bin/uv" sync --locked --python 3.12 --project crates/oneiron-seal/oracle
           echo "$(pwd)/crates/oneiron-seal/oracle/.venv/bin" >> "$GITHUB_PATH"
       # Oracle matrix rows 2 (native seal -> pyHanko validate) and 4
       # (native seal -> pdfsig validate) plus rows 1/3 coverage of the

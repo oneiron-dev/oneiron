@@ -14,12 +14,26 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api.rs` | src | m | 13 struct · 14 enum · 4 trait · 2 fn · 1 type · 2 const · 1 mod · 1 re-export | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +23 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
 | `src/lib.rs` | src | s | 1 mod · 5 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
-| `src/native/cms.rs` | src | L | 46 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
+| `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
+| `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
+| `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
+| `src/native/cms/oids.rs` | src | s | 14 crate-vis | — | Canonical CMS, suite, and attribute OID constants |
+| `src/native/cms/parse.rs` | src | s | 5 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
+| `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
+| `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
 | `src/native/engine.rs` | src | s | 1 struct · 2 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 3 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
-| `src/native/pdf.rs` | src | XL | 13 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
-| `src/native/profile.rs` | src | L | 8 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
+| `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
+| `src/native/pdf/mod.rs` | src | s | 4 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
+| `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
+| `src/native/pdf/parse.rs` | src | m | 14 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
+| `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
+| `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
+| `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
+| `src/native/profile/material.rs` | src | s | 4 crate-vis | — | B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs |
+| `src/native/profile/mod.rs` | src | s | 3 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
+| `src/native/profile/tests.rs` | test | m | — | — | Profile assembly tests: operation ids, error mapping, DSS bounds, CRL freshness and gather rows |
 | `src/native/tsp.rs` | src | m | 6 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
 | `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
 | `src/native/verify/verify_chain_gates.rs` | src | s | 9 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |

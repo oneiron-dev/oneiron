@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
+    # `ready_for_review` so a draft that becomes ready gets its first run
+    # (the guard below skips drafts).
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "packages/oneiron/**"
       - "crates/oneiron-py/**"
@@ -42,7 +45,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
+  # No RUSTFLAGS, as in ci.yml: the vendored heed path dependency is not
+  # lint-capped, and unset flags share the runner cache with dev builds.
   PYTHONNOUSERSITE: "1"
   PYTHONPATH: ""
 
@@ -53,29 +57,41 @@ concurrency:
 jobs:
   wire-quickstart:
     name: Install-and-run both SDKs
-    runs-on: ubuntu-latest
+    # Self-hosted macOS runner (HYG-06b, see ci.yml's runner header): Rust
+    # from the host rustup, build cache from the runner's persistent target
+    # dir (no rust-cache action). Bun, Node and Python stay version-pinned
+    # through their setup actions, which populate the runner's own tool
+    # cache (_work/_tool) on first use. Same pause/draft guard as ci.yml.
+    runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 30
+    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     defaults:
       run:
         shell: bash
-    env:
-      WIRE_DIST: ${{ runner.temp }}/wire-dist
-      WIRE_NODE_PROJECT: ${{ runner.temp }}/wire-node
-      WIRE_PYTHON_ENV: ${{ runner.temp }}/wire-python
-      WIRE_RESULTS: ${{ runner.temp }}/wire-results
 
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          clean: true
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.96"
+      # The `runner` context is not available in job-level `env`, so the
+      # stage directories are derived from $RUNNER_TEMP here (the runner's
+      # per-job _work/_temp, wiped between jobs) and exported for every
+      # later step.
+      - name: Stage directories under the runner temp dir
+        run: |
+          {
+            echo "WIRE_DIST=$RUNNER_TEMP/wire-dist"
+            echo "WIRE_NODE_PROJECT=$RUNNER_TEMP/wire-node"
+            echo "WIRE_PYTHON_ENV=$RUNNER_TEMP/wire-python"
+            echo "WIRE_RESULTS=$RUNNER_TEMP/wire-results"
+          } >> "$GITHUB_ENV"
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: wire-quickstart
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       # Bun orchestrates source builds/tests. Node runs the installed artifact.
       - uses: oven-sh/setup-bun@v2

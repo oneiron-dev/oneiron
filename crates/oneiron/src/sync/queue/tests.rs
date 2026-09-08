@@ -11,7 +11,7 @@ use crate::sync::quarantine;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::forward_rematerialize;
 use crate::temporal::TimeRange;
-use core::assert_matches;
+use ::core::assert_matches;
 
 const RECEIVER_SCRUB_WINDOW: &str = "2026-03";
 const RECEIVER_SCRUB_LEARNED_AT: u64 = 1_772_400_000;
