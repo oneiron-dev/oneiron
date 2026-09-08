@@ -238,7 +238,7 @@ jobs:
             | test(=eval::tests::eval_tune_opens_a_non_device_vault_through_the_explicit_config)
             | test(=eval::tests::eval_tune_persists_and_prints_the_bounded_weight_table_entry)
           ))'
-          cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full -E "$MACOS_SKIP"
+          cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast -E "$MACOS_SKIP"
       # The two stages scripts/verify.sh runs after nextest: the featureless
       # library build is a Wave-6 acceptance gate, and nextest does not run
       # doctests.
@@ -292,7 +292,7 @@ jobs:
           fi
           cargo nextest --version
       - name: Workspace tests (nextest, full tier, bench included)
-        run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
+        run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
       - name: Featureless oneiron library tests
         run: cargo test -p oneiron --lib --no-default-features
       - name: Doctests
