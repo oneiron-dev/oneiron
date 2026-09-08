@@ -180,7 +180,7 @@ macro_rules! vault_read_contract {
         /// The ONE Rust client contract.
         ///
         /// Sealed on purpose: hosts inject transport behavior through
-        /// [`WireTransport`], they do not create a fourth client that could skip
+        /// [`WireTransport`](super::WireTransport), they do not create a fourth client that could skip
         /// accepted validation or redefine parity. Every method is a generated
         /// wrapper around one validated dispatch path.
         #[allow(
@@ -294,7 +294,7 @@ pub struct VaultReadMethodMapping {
     pub availability: VaultReadAvailability,
 }
 
-/// Which adapter produced an [`VaultReadError::Unimplemented`].
+/// Which adapter produced an [`VaultReadError::Unimplemented`](super::VaultReadError::Unimplemented).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VaultReadAdapterKind {

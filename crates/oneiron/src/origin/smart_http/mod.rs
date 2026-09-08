@@ -49,7 +49,7 @@
 //!   a queued repo mutation. The advance is journaled through GitWire's
 //!   transactional publication. Repo refs and objects ride the git wire;
 //!   nothing here writes the sync plane.
-//! - **Receipts and replay.** Every landing produces a [`GitWireReceipt`]. The
+//! - **Receipts and replay.** Every landing produces a [`GitWireReceipt`](crate::git_wire::GitWireReceipt). The
 //!   durable record is keyed by the exact publication, so a replayed outcome is
 //!   answered from the record instead of re-running git, and no second record
 //!   is written.

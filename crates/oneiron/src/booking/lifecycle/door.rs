@@ -94,7 +94,7 @@ pub fn enqueue_booking_verb_with_publication(
 /// Issues a server-side checkout lease bound to `session_key`.
 ///
 /// This is the server's own door, not a visitor door: the only thing that
-/// satisfies [`HoldLeaseSpec::CheckoutExtension`] is a token minted here, so a
+/// satisfies [`HoldLeaseSpec::CheckoutExtension`](super::HoldLeaseSpec::CheckoutExtension) is a token minted here, so a
 /// public caller cannot fabricate an extension binding. Payment stays
 /// note-only — there is no provider, checkout API, or payment state machine
 /// behind this, only a session-bound expiry the hold door verifies.
@@ -127,7 +127,7 @@ pub fn issue_checkout_lease(
 /// for one claimed attempt.
 ///
 /// `exclude_session_key` is the load-bearing field: [`crate::booking::BookingSolver`]
-/// asks its [`ActiveHoldSource`] for every live hold and passes `None` for the
+/// asks its [`ActiveHoldSource`](crate::booking::ActiveHoldSource) for every live hold and passes `None` for the
 /// trait's own exclusion argument, so a confirm whose oracle does not exclude
 /// its own session's hold would be blocked by the very hold it is redeeming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -67,7 +67,7 @@ fn validate_full_ref_name(value: &str) -> Result<()> {
 /// A validated 40-character lower-hex, non-zero git object id.
 ///
 /// `checkout::lease` owns a byte-array `GitOid` of its own; the two convert
-/// through hex at the [`CheckoutRepoOps`] boundary and never alias.
+/// through hex at the [`CheckoutRepoOps`](crate::checkout::CheckoutRepoOps) boundary and never alias.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GitOid(String);
 

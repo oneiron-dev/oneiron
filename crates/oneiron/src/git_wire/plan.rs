@@ -47,7 +47,7 @@ pub(super) struct PlannedPublication {
 /// A phase-one plan: object writes plus the ref publications they authorize.
 ///
 /// This is the whole public two-phase entry. A caller assembles a plan with
-/// typed builders, hands it to [`GitWire::stage`], and commits the returned
+/// typed builders, hands it to [`GitWire::stage`](crate::git_wire::GitWire::stage), and commits the returned
 /// capability — no private field is ever needed, and a ref-moving operation
 /// such as `notes add` cannot enter phase one because no plan step can express
 /// one.

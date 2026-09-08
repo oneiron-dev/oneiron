@@ -39,7 +39,7 @@ pub const SERVE_BASE_ENV_KEYS: [&str; 5] = [
 ];
 
 /// The closed CGI request half of the child environment. Every value is
-/// constructed from the typed [`ServeRequest`]; none is read from the ambient
+/// constructed from the typed [`ServeRequest`](super::ServeRequest); none is read from the ambient
 /// environment.
 ///
 /// These are exactly the request-scoped names `git http-backend` reads:
