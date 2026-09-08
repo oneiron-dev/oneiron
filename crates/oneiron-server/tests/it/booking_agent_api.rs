@@ -296,9 +296,35 @@ fn availability_body(window_hours: u64, constraint: Value) -> Value {
     })
 }
 
+/// Production source under `relative` (a file, or a directory module whose
+/// non-test children are concatenated in path order — `tests.rs` files and
+/// `tests/` directories are test-only and skipped).
 fn source(relative: &str) -> String {
-    std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative))
-        .unwrap()
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+    if root.is_file() {
+        return std::fs::read_to_string(&root).unwrap();
+    }
+    let mut files = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if path.is_dir() {
+                if name != "tests" {
+                    stack.push(path);
+                }
+            } else if name.ends_with(".rs") && name != "tests.rs" {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+        .iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Every JSON string reachable from `value`, so a disclosure or identifier
@@ -1192,7 +1218,7 @@ async fn booking_anti_abuse_admission_runs_once_in_shared_executor() {
     // guard is called from exactly one place in the whole crate, and that
     // place is the shared executor.
     let executor = source("src/api/booking.rs");
-    let gateway = source("src/api/mcp_gateway.rs");
+    let gateway = source("src/api/mcp_gateway");
     for guard in ["enforce_slot_list", "enforce_hold", "enforce_book"] {
         assert_eq!(
             executor.matches(&format!("{guard}(State(")).count(),
@@ -1280,7 +1306,7 @@ async fn booking_http_and_mcp_share_executor() {
     }
     assert!(
         executor.contains("pub(crate) async fn execute_booking_operation_for_mcp(")
-            && source("src/api/mcp_gateway.rs")
+            && source("src/api/mcp_gateway")
                 .contains("super::booking::execute_booking_operation_for_mcp("),
         "the MCP adapter reaches the same executor"
     );
@@ -1345,10 +1371,7 @@ fn booking_public_dtos_contain_no_entity_id() {
     );
 
     // The MCP arguments reach only opaque tokens too.
-    let tool = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/mcp.rs"),
-    )
-    .unwrap();
+    let tool = source("src/mcp");
     let args = tool
         .split_once("pub struct McpBookToolArgs {")
         .expect("the booking tool args exist")

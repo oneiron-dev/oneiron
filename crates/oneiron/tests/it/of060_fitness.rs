@@ -372,7 +372,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // grounding-read race the ticket closes.
         (
             RawHit {
-                path: "crates/oneiron-server/src/api/mcp_gateway.rs".to_owned(),
+                path: "crates/oneiron-server/src/api/mcp_gateway/facade_verbs.rs".to_owned(),
                 ident: "with_write_txn".to_owned(),
                 line: ".with_write_txn(|wtxn| {".to_owned(),
             },
