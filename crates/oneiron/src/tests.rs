@@ -245,13 +245,12 @@ fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> AssembledContext {
+fn sample_assembled_context(tokens_used: u64, tokens_limit: u64) -> AssembledContext {
     AssembledContext::new(
         SessionContext {
             api_version: "v1".to_owned(),
             counts: BTreeMap::from([("16".to_owned(), 1)]),
             last_activity: Some(42),
-            rag_state: MemoriesCursor::new("default"),
         },
         vec![NotificationItem {
             id: seeded_entity_id(0x2141).to_hex(),
@@ -260,19 +259,21 @@ fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> AssembledContext
         }],
         Vec::new(),
         HydrationBudget::from_meter(tokens_used, tokens_limit),
+        MemoriesCursor::new("default"),
+        None,
     )
 }
 
 #[test]
-fn resume_budget_invariant_uses_meter_delta() {
-    let bundle = sample_resume_bundle(400, 1_000);
+fn hydration_budget_invariant_uses_meter_delta() {
+    let bundle = sample_assembled_context(400, 1_000);
     assert_eq!(bundle.budget.tokens_used, 400);
     assert_eq!(bundle.budget.tokens_limit, 1_000);
     assert_eq!(bundle.budget.tokens_remaining, 600);
 }
 
 #[test]
-fn resume_budget_saturates_when_used_exceeds_limit() {
+fn hydration_budget_saturates_when_used_exceeds_limit() {
     let budget = HydrationBudget::from_meter(1_200, 1_000);
     assert_eq!(budget.tokens_used, 1_200);
     assert_eq!(budget.tokens_limit, 1_000);
@@ -280,30 +281,69 @@ fn resume_budget_saturates_when_used_exceeds_limit() {
 }
 
 #[test]
-fn resume_bundle_serde_top_level_keys_are_exact() {
-    let value = serde_json::to_value(sample_resume_bundle(400, 1_000)).unwrap();
-    let object = value
-        .as_object()
-        .expect("resume bundle should be an object");
-    let keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+fn assembled_context_serde_top_level_keys_are_exact() {
+    let top_level_keys = |context: &AssembledContext| {
+        let value = serde_json::to_value(context).unwrap();
+        value
+            .as_object()
+            .expect("assembled context should be an object")
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+    };
+
+    let without_memories = sample_assembled_context(400, 1_000);
     assert_eq!(
-        keys,
-        BTreeSet::from(["budget", "notifications", "session", "unprocessed"])
+        top_level_keys(&without_memories),
+        BTreeSet::from(
+            [
+                "budget",
+                "cursor",
+                "notifications",
+                "session",
+                "unprocessed"
+            ]
+            .map(str::to_owned)
+        )
+    );
+
+    let mut with_memories = without_memories;
+    with_memories.memories = Some(MemoriesSection {
+        version: MEMORIES_SECTION_VERSION_V4.to_owned(),
+        budget: MemoriesBudget::default(),
+        rows: Vec::new(),
+        companion: None,
+        disclosure: None,
+    });
+    assert_eq!(
+        top_level_keys(&with_memories),
+        BTreeSet::from(
+            [
+                "budget",
+                "cursor",
+                "memories",
+                "notifications",
+                "session",
+                "unprocessed"
+            ]
+            .map(str::to_owned)
+        )
     );
 }
 
 #[test]
-fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
+fn assembled_context_empty_surfaces_serialize_as_empty_arrays() {
     let bundle = AssembledContext::new(
         SessionContext {
             api_version: "v1".to_owned(),
             counts: BTreeMap::new(),
             last_activity: None,
-            rag_state: MemoriesCursor::new("default"),
         },
         Vec::new(),
         Vec::new(),
         HydrationBudget::from_meter(0, 0),
+        MemoriesCursor::new("default"),
+        None,
     );
 
     assert_eq!(bundle.notifications, Vec::<NotificationItem>::new());
@@ -318,18 +358,10 @@ fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
         json.contains("\"unprocessed\":[]"),
         "unprocessed must serialize as an empty array: {json}"
     );
-}
-
-#[test]
-fn session_context_deserializes_legacy_without_rag_state() {
-    let session: SessionContext = serde_json::from_value(serde_json::json!({
-        "api_version": "v1",
-        "counts": {},
-        "last_activity": null
-    }))
-    .expect("legacy session context should deserialize");
-
-    assert_eq!(session.rag_state, MemoriesCursor::default());
+    assert!(
+        !json.contains("\"memories\""),
+        "a skipped retrieval must omit the memories key: {json}"
+    );
 }
 
 fn seeded_entity_id(counter: u128) -> EntityId {
