@@ -9,4 +9,7 @@
 *.mdb
 *.lmdb
 apps/macos/src-tauri/gen/
+
+# Python bytecode (the advisory-policy scripts and their tests)
 __pycache__/
+*.pyc
