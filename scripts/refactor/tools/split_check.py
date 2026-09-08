@@ -52,6 +52,15 @@ Rules (see README.md for the full list):
     is FAIL extra; tests mounts and decls for child files are plumbing.
   - Bodies are compared with the leading visibility keyword stripped; a
     visibility change is reported as INFO, not a failure.
+  - String literals (normal, byte, C, raw with any number of `#`) are
+    compared byte-for-byte: every whitespace normalisation the checker runs
+    (the mod-body / impl-method dedent, the visibility strip, the standalone
+    rustfmt pass, the canon tokenisation of residue) sees each literal as a
+    one-line placeholder and the literal is put back byte-exact afterwards.
+    Whitespace inside a multi-line literal (YAML / JSON fixtures, expected
+    output) is semantic; re-indenting it along with the code is FAIL body.
+    The one run the compiler itself discards, the whitespace after a
+    `\\`-newline continuation in a non-raw string, is compared as skipped.
   - An impl block whose header lands in more than one child (or that the base
     file already carried more than once) is compared per associated item
     instead; the header/attribute residue of every part must match the base.
@@ -75,6 +84,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rustlex import Doc, canon, enumerate_items, item_text, normalized_fragment, rustfmt, strip_item_vis  # noqa: E402
+from rustlex import _CHAR, _RAW_OPEN, _STR_OPEN, _is_ident  # noqa: E402  (string-literal lexing rules, shared with mask())
 
 DIFF_CAP = 60
 PLUMBING_KINDS = ("use",)
@@ -220,13 +230,169 @@ class Side:
         return {m.name for m in self.mods if m.scope == scope and m.bodied}
 
 
+# ---------------------------------------------------------------------------
+# string literals: compared byte-for-byte
+# ---------------------------------------------------------------------------
+#
+# Whitespace inside a string literal is semantic (YAML / JSON fixtures,
+# expected output). Every normalisation the checker applies to compared text
+# -- textwrap.dedent of a mod body or impl method, the visibility strip, the
+# standalone rustfmt pass with its 4-space de-wrap, the canon tokenisation of
+# residue chunks -- would otherwise touch the leading whitespace of a
+# literal's continuation lines, and symmetric damage on both sides hides a
+# real difference (a raw YAML fixture re-indented by four spaces when its
+# test moved out of an inline `mod tests` parsed differently and failed while
+# the checker said OK). So each literal is swapped for a one-line placeholder
+# string before any such transform and spliced back byte-exact after it.
+
+_PLACEHOLDER = '"@@SPLIT-CHECK-LITERAL-%d@@"'
+_PLACEHOLDER_RE = re.compile(r'"@@SPLIT-CHECK-LITERAL-(\d+)@@"')
+_PLACEHOLDER_MARK = "@@SPLIT-CHECK-LITERAL-"
+
+
+def string_spans(text):
+    """[(start, end)] of every string literal in `text` (end exclusive,
+    prefix included): normal / byte / C strings with escapes, raw strings
+    with any number of `#`. Comments and char literals (`'"'`) are skipped
+    with the rules rustlex.mask() uses, so the two never disagree about
+    where a literal is. An unterminated literal runs to the end of text."""
+    spans = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c == "/" and text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth += 1
+                    j += 2
+                elif text.startswith("*/", j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            i = j
+            continue
+        boundary = i == 0 or not _is_ident(text[i - 1])
+        m = None
+        if boundary:
+            m = _RAW_OPEN.match(text, i)
+            if m:
+                close = '"' + m.group(1)
+                end = text.find(close, m.end())
+                end = n if end < 0 else end + len(close)
+                spans.append((i, end))
+                i = end
+                continue
+            m = _STR_OPEN.match(text, i)
+        elif c == '"':
+            m = _STR_OPEN.match(text, i)
+        if m:
+            j = m.end()
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                j += 1
+                if text[j - 1] == '"':
+                    break
+            spans.append((i, min(j, n)))
+            i = j
+            continue
+        if c == "'":
+            m = _CHAR.match(text, i)
+            i = m.end() if m else i + 1
+            continue
+        i += 1
+    return spans
+
+
+def protect_literals(text):
+    """(text with every string literal replaced by a one-line placeholder
+    string, [the literals in order]). The placeholder is itself a string
+    literal, so every transform in the pipeline (dedent, vis strip, rustfmt,
+    canon) carries it through untouched; restore_literals() undoes it."""
+    if _PLACEHOLDER_MARK in text:
+        raise RuntimeError("source already contains the literal placeholder marker %r" % _PLACEHOLDER_MARK)
+    lits, out, pos = [], [], 0
+    for s, e in string_spans(text):
+        out.append(text[pos:s])
+        out.append(_PLACEHOLDER % len(lits))
+        lits.append(text[s:e])
+        pos = e
+    out.append(text[pos:])
+    return "".join(out), lits
+
+
+def restore_literals(text, lits):
+    """Splice the literals from protect_literals() back, byte-exact. Every
+    placeholder must come back exactly once; anything else means a transform
+    ate one, and the checker fails closed rather than compare a lie."""
+    seen = []
+
+    def sub(m):
+        k = int(m.group(1))
+        seen.append(k)
+        return lits[k]
+
+    out = _PLACEHOLDER_RE.sub(sub, text)
+    if sorted(seen) != list(range(len(lits))):
+        raise RuntimeError("string-literal placeholders lost in normalisation (%d of %d restored)" % (len(seen), len(lits)))
+    return out
+
+
+def literal_compare_form(lit):
+    """A literal as the compiler reads its whitespace. In a non-raw string
+    the newline after a trailing `\\` and every whitespace byte at the start
+    of the next line are skipped (string continuation escape), so that run
+    is compared as the bare `\\` + newline and a mover re-indenting the
+    continuation line with the code is not a change. Every other byte is
+    kept; raw strings are returned unchanged. Return `lit` here to compare
+    continuation whitespace strictly."""
+    if _RAW_OPEN.match(lit):
+        return lit
+    out, i, n = [], 0, len(lit)
+    while i < n:
+        c = lit[i]
+        if c == "\\" and i + 1 < n:
+            if lit[i + 1] == "\n" or lit.startswith("\r\n", i + 1):
+                out.append("\\\n")
+                i += 2 if lit[i + 1] == "\n" else 3
+                while i < n and lit[i] in " \t\r\n":
+                    i += 1
+                continue
+            out.append(lit[i:i + 2])
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _dedent(text):
-    return textwrap.dedent(text)
+    """textwrap.dedent over the code lines only: the margin is computed
+    from, and stripped from, lines outside string literals; a literal's
+    continuation lines (the ones whose start lies inside it, closing-quote
+    line included) come back byte-exact."""
+    protected, lits = protect_literals(text)
+    return restore_literals(textwrap.dedent(protected), lits)
+
+
+def _canon(text):
+    """rustlex.canon with string literals carried through byte-exact (canon
+    keeps a plain `"…"` as one token but re-lexes the interior of a raw
+    string holding quotes)."""
+    protected, lits = protect_literals(text)
+    return restore_literals(canon(protected), lits)
 
 
 def _mod_body(doc, it):
-    """Dedented body text of a bodied `mod x { .. }` item (lines strictly
-    between the opening and closing brace lines)."""
+    """Body text of a bodied `mod x { .. }` item (lines strictly between the
+    opening and closing brace lines), code lines dedented."""
     return _dedent("\n".join(doc.lines[it["body_open_line"] + 1:it["end_line"]]))
 
 
@@ -401,7 +567,7 @@ def _impl_parts(doc, it, scope, where):
                             _dedent(item_text(doc, m)), where))
         covered.update(range(m["lead_start"], m["end_line"] + 1))
     rest = [doc.lines[i] for i in range(it["lead_start"], it["end_line"] + 1) if i not in covered]
-    return methods, _elide_lifetimes(canon("\n".join(rest)))
+    return methods, _elide_lifetimes(_canon("\n".join(rest)))
 
 
 def collect(doc, where, scope, side):
@@ -452,16 +618,17 @@ def _chunk(doc, lines, where):
     if first.startswith("#![") or first.startswith("extern crate"):
         return None  # inner attribute / extern crate = plumbing
     text = "\n".join(doc.lines[i] for i in lines)
-    return (canon(text), doc.lines[lines[0]].strip(), where, lines[0] + 1)
+    return (_canon(text), doc.lines[lines[0]].strip(), where, lines[0] + 1)
 
 
 # ---------------------------------------------------------------------------
 # comparison
 # ---------------------------------------------------------------------------
 
-def _normalised(item, assoc):
-    """rustfmt-normalised, vis-stripped fragment (the slow path)."""
-    return normalized_fragment(item.text, assoc, True)
+def _normalised(text, assoc):
+    """rustfmt-normalised, vis-stripped fragment (the slow path); `text` is
+    the placeholder-protected item text."""
+    return normalized_fragment(text, assoc, True)
 
 
 _INNER_VIS = re.compile(r"^(\s*)pub(?:\((?:crate|super|self|in\s+[A-Za-z0-9_:]+)\))?\s+", re.M)
@@ -483,13 +650,20 @@ def bodies_equal(base, new, assoc=False):
     fragment on its own (absorbs the indentation-dependent reflow of an item
     that moved from an inline `mod tests` body to a file top level).
     Visibility tokens are stripped on every line on both sides (inner
-    promotions such as `pub(super) fn` / `pub(super) field:` are allowed)."""
-    b = strip_inner_vis(strip_item_vis(base.text))
-    n = strip_inner_vis(strip_item_vis(new.text))
+    promotions such as `pub(super) fn` / `pub(super) field:` are allowed).
+    String literals ride through both paths as placeholders and are put
+    back byte-exact (continuation whitespace as the compiler reads it, see
+    literal_compare_form) before the texts are compared and diffed."""
+    bt, blits = protect_literals(base.text)
+    nt, nlits = protect_literals(new.text)
+    blits = [literal_compare_form(lit) for lit in blits]
+    nlits = [literal_compare_form(lit) for lit in nlits]
+    b = restore_literals(strip_inner_vis(strip_item_vis(bt)), blits)
+    n = restore_literals(strip_inner_vis(strip_item_vis(nt)), nlits)
     if b == n:
         return True, b, n
-    b = strip_inner_vis(_normalised(base, assoc))
-    n = strip_inner_vis(_normalised(new, assoc))
+    b = restore_literals(strip_inner_vis(_normalised(bt, assoc)), blits)
+    n = restore_literals(strip_inner_vis(_normalised(nt, assoc)), nlits)
     return b == n, b, n
 
 
