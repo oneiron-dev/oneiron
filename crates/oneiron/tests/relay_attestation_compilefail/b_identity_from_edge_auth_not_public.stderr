@@ -4,7 +4,7 @@ error[E0624]: associated function `from_edge_auth` is private
 20 |       let identity = oneiron::policy_model::AuthenticatedConnectionIdentity::from_edge_auth(
    |                                                                              ^^^^^^^^^^^^^^ private associated function
    |
-  ::: src/policy_model/relay.rs
+  ::: src/policy_model/relay/trust.rs
    |
    | /     pub(crate) fn from_edge_auth(
    | |         service_identity: &str,
