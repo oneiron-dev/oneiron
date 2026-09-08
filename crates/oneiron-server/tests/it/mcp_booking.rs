@@ -92,9 +92,35 @@ fn decoded(operation: Value) -> McpBookToolArgs {
     }
 }
 
+/// Production source under `relative` (a file, or a directory module whose
+/// non-test children are concatenated in path order — `tests.rs` files and
+/// `tests/` directories are test-only and skipped).
 fn source(relative: &str) -> String {
-    std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative))
-        .unwrap()
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+    if root.is_file() {
+        return std::fs::read_to_string(&root).unwrap();
+    }
+    let mut files = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if path.is_dir() {
+                if name != "tests" {
+                    stack.push(path);
+                }
+            } else if name.ends_with(".rs") && name != "tests.rs" {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+        .iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A grant that authorizes exactly the endpoints named, at the ceiling named.
@@ -249,7 +275,7 @@ fn mcp_book_actor_must_match_credential() {
     // takes, before any tool executes. (The connector registry is
     // crate-private, so this is asserted on the wiring rather than driven
     // through a registered credential.)
-    let gateway = source("src/api/mcp_gateway.rs");
+    let gateway = source("src/api/mcp_gateway");
     let actor_arms = gateway
         .split_once("pub(crate) fn mcp_validated_actor(")
         .expect("the actor extractor exists")
@@ -370,7 +396,7 @@ fn mcp_book_requires_scoped_grant() {
 
     // The gateway requires the grant BEFORE the shared executor, performs no
     // admission pre-check, and fails closed when no grant is named.
-    let gateway = source("src/api/mcp_gateway.rs");
+    let gateway = source("src/api/mcp_gateway");
     let book = gateway
         .split_once("pub(crate) async fn execute_mcp_book(")
         .expect("the booking dispatcher exists")
@@ -460,7 +486,7 @@ fn mcp_book_preserves_calendar_tool_ownership() {
 
     // The gateway still dispatches calendar through its own executor, and the
     // booking arm is additive.
-    let gateway = source("src/api/mcp_gateway.rs");
+    let gateway = source("src/api/mcp_gateway");
     assert!(
         gateway.contains(
             "McpValidatedToolArgs::Calendar(args) => execute_mcp_calendar(server, args, actor)"
