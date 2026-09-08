@@ -154,6 +154,93 @@ TESTS_RS = textwrap.dedent('''\
 
 SPLIT = {"mod.rs": MOD_RS, "alpha.rs": ALPHA_RS, "kinds.rs": KINDS_RS, "tests.rs": TESTS_RS}
 
+# --- nested directory modules: a bodied `mod seam { .. }` in the base --------
+
+NESTED_BASE = textwrap.dedent('''\
+    //! Nested docs.
+
+    /// Seam docs.
+    mod seam {
+        pub(super) fn open() -> u8 {
+            helper() + 1
+        }
+
+        fn helper() -> u8 {
+            2
+        }
+
+        pub(super) struct Handle {
+            pub(super) id: u8,
+        }
+    }
+
+    pub fn run() -> u8 {
+        seam::open()
+    }
+''')
+
+NESTED_MOD_RS = textwrap.dedent('''\
+    //! Nested docs.
+
+    /// Seam docs.
+    mod seam;
+
+    pub fn run() -> u8 {
+        seam::open()
+    }
+''')
+
+SEAM_MOD_RS = textwrap.dedent('''\
+    mod handle;
+    mod open;
+
+    pub(super) use handle::Handle;
+    pub(super) use open::open;
+''')
+
+SEAM_OPEN_RS = textwrap.dedent('''\
+    use super::handle::helper;
+
+    pub(super) fn open() -> u8 {
+        helper() + 1
+    }
+''')
+
+# `helper` is promoted private -> pub(super) so open.rs can reach it
+SEAM_HANDLE_RS = textwrap.dedent('''\
+    pub(super) fn helper() -> u8 {
+        2
+    }
+
+    pub(super) struct Handle {
+        pub(super) id: u8,
+    }
+''')
+
+# the same module flattened into one file; the mod doc travels as `//!`
+SEAM_FLAT_RS = textwrap.dedent('''\
+    //! Seam docs.
+
+    pub(super) fn open() -> u8 {
+        helper() + 1
+    }
+
+    fn helper() -> u8 {
+        2
+    }
+
+    pub(super) struct Handle {
+        pub(super) id: u8,
+    }
+''')
+
+NESTED_DIR_SPLIT = {
+    "mod.rs": NESTED_MOD_RS,
+    "seam/mod.rs": SEAM_MOD_RS,
+    "seam/open.rs": SEAM_OPEN_RS,
+    "seam/handle.rs": SEAM_HANDLE_RS,
+}
+
 
 def _git(repo, *args):
     return subprocess.run(
@@ -162,23 +249,34 @@ def _git(repo, *args):
     ).stdout
 
 
-@pytest.fixture
-def repo(tmp_path):
-    """Throwaway repo with BASE committed at src/big.rs; returns (path, base_sha)."""
+def make_repo(tmp_path, base_text):
+    """Throwaway repo with base_text committed at src/big.rs; returns (path, base_sha)."""
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
-    (repo / OLD).write_text(BASE)
+    (repo / OLD).write_text(base_text)
     _git(repo, "init", "-q")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "base")
     return repo, _git(repo, "rev-parse", "HEAD").strip()
 
 
+@pytest.fixture
+def repo(tmp_path):
+    return make_repo(tmp_path, BASE)
+
+
+@pytest.fixture
+def nested_repo(tmp_path):
+    return make_repo(tmp_path, NESTED_BASE)
+
+
 def apply_split(repo, files, remove_old=True):
+    """files: {relative path under NEW: text}; nested paths create subdirs."""
     if remove_old:
         (repo / OLD).unlink()
     (repo / NEW).mkdir(exist_ok=True)
     for name, text in files.items():
+        (repo / NEW / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / NEW / name).write_text(text)
 
 
@@ -373,3 +471,135 @@ def test_inner_visibility_promotion_is_not_a_body_change(repo):
     r = run_check(path, sha)
     assert r.returncode == 0, r.stdout + r.stderr
     assert not [ln for ln in r.stdout.splitlines() if ln.startswith("FAIL")]
+
+
+# --- nested directory modules -------------------------------------------------
+
+def test_nested_mod_to_subdir_ok(nested_repo):
+    """(a) bodied `mod seam` -> seam/{mod.rs, open.rs, handle.rs}; one private ->
+    pub(super) promotion inside the nested mod is INFO, never FAIL."""
+    path, sha = nested_repo
+    apply_split(path, NESTED_DIR_SPLIT)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = r.stdout.splitlines()
+    assert f"INFO vis fn helper (in seam): private -> pub ( super ) ({NEW}/seam/handle.rs)" in lines
+    assert not [ln for ln in lines if ln.startswith("INFO doc")]
+    # seam::open, seam::helper, seam::Handle, run
+    assert lines[-1] == f"SPLIT-CHECK OK {OLD} -> 4 children (4 items)"
+    # a tests file inside the nested module is skipped (INFO) when the base
+    # mod had no inline `mod tests`, exactly like the top level
+    files = {**NESTED_DIR_SPLIT, "seam/mod.rs": SEAM_MOD_RS + "#[cfg(test)]\nmod tests;\n",
+             "seam/tests.rs": "use super::*;\n"}
+    apply_split(path, files, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"INFO skipped {NEW}/seam/tests.rs (base mod seam had no inline `mod tests`)" in r.stdout.splitlines()
+
+
+def test_nested_mod_to_flat_file_ok(nested_repo):
+    """(b) bodied `mod seam` -> a single seam.rs; its `///` doc moves to `//!`
+    at the top of that file, which is accepted without an INFO."""
+    path, sha = nested_repo
+    files = {"mod.rs": NESTED_MOD_RS.replace("/// Seam docs.\n", ""), "seam.rs": SEAM_FLAT_RS}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = r.stdout.splitlines()
+    assert not [ln for ln in lines if ln.startswith("INFO")]
+    assert lines[-1] == f"SPLIT-CHECK OK {OLD} -> 2 children (4 items)"
+
+
+def test_nested_mod_body_drift_fails(nested_repo):
+    """(c) a fn body edited inside the nested mod is a body FAIL in scope seam."""
+    path, sha = nested_repo
+    apply_split(path, {**NESTED_DIR_SPLIT, "seam/open.rs": SEAM_OPEN_RS.replace("helper() + 1", "helper() + 2")})
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == ["FAIL body fn open (in seam) differs:"]
+
+
+def test_nested_mod_missing_item_fails(nested_repo):
+    """(d) a nested item dropped on the way is missing in scope seam."""
+    path, sha = nested_repo
+    handle = SEAM_HANDLE_RS.replace("\npub(super) struct Handle {\n    pub(super) id: u8,\n}\n", "")
+    assert handle != SEAM_HANDLE_RS
+    apply_split(path, {**NESTED_DIR_SPLIT, "seam/handle.rs": handle})
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == [f"FAIL missing struct Handle (in seam) (base {OLD}) not found in any child"]
+
+
+def test_nested_mod_cfg_dropped_fails(tmp_path):
+    """(e) `#[cfg(feature = "sync")]` on the base mod must be on the new decl."""
+    path, sha = make_repo(tmp_path, NESTED_BASE.replace("mod seam {", '#[cfg(feature = "sync")]\nmod seam {'))
+    apply_split(path, NESTED_DIR_SPLIT)
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == [f'FAIL cfg on mod seam differs: #[cfg(feature = "sync")] -> none ({NEW}/mod.rs)']
+    # the same cfg on the decl is a clean split
+    apply_split(path, {**NESTED_DIR_SPLIT, "mod.rs": NESTED_MOD_RS.replace(
+        "mod seam;", '#[cfg(feature = "sync")]\nmod seam;')}, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_nested_mod_with_inline_tests_to_tests_rs_ok(tmp_path):
+    """(f) base `mod seam { .. mod tests { .. } }` -> seam/mod.rs + seam/tests.rs."""
+    inline_tests = (
+        "\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n\n        #[test]\n"
+        "        fn opens() {\n            assert_eq!(open(), 3);\n        }\n    }\n}\n")
+    base = NESTED_BASE.replace("        pub(super) id: u8,\n    }\n}\n", "        pub(super) id: u8,\n    }\n" + inline_tests)
+    assert base != NESTED_BASE
+    path, sha = make_repo(tmp_path, base)
+    files = {**NESTED_DIR_SPLIT, "seam/mod.rs": SEAM_MOD_RS + "\n#[cfg(test)]\nmod tests;\n",
+             "seam/tests.rs": "use super::*;\n\n#[test]\nfn opens() {\n    assert_eq!(open(), 3);\n}\n"}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 5 children (5 items)"
+    # the moved test is compared 1:1 in scope seam::tests
+    apply_split(path, {**files, "seam/tests.rs": files["seam/tests.rs"].replace("3);", "4);")}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == ["FAIL body fn opens (in seam::tests) differs:"]
+
+
+def test_two_level_nesting_ok(tmp_path):
+    """(g) base `mod a { mod b { fn f() {} } }` -> a/mod.rs declaring `mod b;` + a/b.rs."""
+    path, sha = make_repo(tmp_path, "mod a {\n    mod b {\n        fn f() {}\n    }\n}\n")
+    files = {"mod.rs": "mod a;\n", "a/mod.rs": "mod b;\n", "a/b.rs": "fn f() {}\n"}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 3 children (1 items)"
+    # the nested mod.rs must declare its child, and the base `mod b` record
+    # then has no counterpart
+    apply_split(path, {**files, "a/mod.rs": "//! a\n"}, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == [
+        f"FAIL {NEW}/a/mod.rs does not declare `mod b;`",
+        f"FAIL missing mod b (in a) (base {OLD}) not found in any child",
+    ]
+
+
+def test_nested_mod_extra_and_doc_drift(nested_repo):
+    """A new-side module the base never had is FAIL extra; a reworded mod doc
+    that is neither on the decl nor at the top of the module file is INFO."""
+    path, sha = nested_repo
+    files = {**NESTED_DIR_SPLIT, "mod.rs": NESTED_MOD_RS.replace("/// Seam docs.", "/// Seam docs, reworded.")}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"INFO doc on mod seam moved/changed ({NEW}/mod.rs)" in r.stdout.splitlines()
+    files = {**NESTED_DIR_SPLIT, "mod.rs": NESTED_MOD_RS.replace("mod seam;", "mod seam;\nmod extra;"),
+             "extra/mod.rs": "//! nothing here\n",
+             "seam/open.rs": SEAM_OPEN_RS + "\nmod hidden {\n    fn h() {}\n}\n"}
+    apply_split(path, files, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == [
+        f"FAIL extra mod extra in {NEW}/mod.rs",
+        f"FAIL extra mod hidden (in seam) in {NEW}/seam/open.rs",
+        f"FAIL extra fn h (in seam::hidden) in {NEW}/seam/open.rs",
+    ]
