@@ -218,6 +218,19 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     };
     let expected_pending = serde_json::to_value(memory.pending_writes(100).unwrap()).unwrap();
     assert!(!expected_pending.as_array().unwrap().is_empty());
+    // The first recall observes a PPR cache miss and reports it in
+    // retrieval_meta. Warm the shared cache once so the snapshot below and the
+    // RPC read observe the same execution report.
+    memory
+        .recall(
+            "solar",
+            Effort::Standard,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
     let cases = [
         (
             "hydrate",

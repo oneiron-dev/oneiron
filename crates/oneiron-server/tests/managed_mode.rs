@@ -423,13 +423,13 @@ fn an_unknown_contract_version_is_refused_before_any_io() {
     let dir = tempfile::tempdir().unwrap();
     let full = managed_argv(dir.path());
 
-    let bad = with_flag_value(&full, "--contract-version", "2");
+    let bad = with_flag_value(&full, "--contract-version", "3");
     let error = ManagedArgs::from_serve_args(&parse_serve(&bad)).unwrap_err();
     assert!(
         matches!(
             error,
             ManagedError::UnknownContractVersion {
-                found: 2,
+                found: 3,
                 expected: CONTRACT_VERSION
             }
         ),
