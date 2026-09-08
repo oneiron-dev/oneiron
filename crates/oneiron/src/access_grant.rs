@@ -82,7 +82,10 @@ pub enum AccessGrantScope {
         rung: DisclosureRung,
     },
     /// Read one identity through an immutable mailbox envelope.
-    ChannelIdentity { identity_ref: EntityId, envelope_ref: EntityId },
+    ChannelIdentity {
+        identity_ref: EntityId,
+        envelope_ref: EntityId,
+    },
     /// Read one opaque brief through a render-time redaction maximum.
     SharedBrief {
         /// Rendering-layer document handle, not a document copy.
@@ -123,7 +126,9 @@ impl AccessGrantScope {
                 grant_person_ref.as_bytes() == person_ref.as_bytes()
                     && grant_persona_ref.as_bytes() == persona_ref.as_bytes()
             }
-            Self::Calendar { .. } | Self::SharedBrief { .. } | Self::ChannelIdentity { .. } => false,
+            Self::Calendar { .. } | Self::SharedBrief { .. } | Self::ChannelIdentity { .. } => {
+                false
+            }
         }
     }
 
@@ -164,10 +169,10 @@ impl AccessGrantScope {
                 calendar_ref: grant_calendar_ref,
                 rung,
             } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(*rung),
-            Self::Calendar { .. } | Self::CompanionProfile { .. } | Self::SharedBrief { .. }
-            | Self::ChannelIdentity { .. } => {
-                None
-            }
+            Self::Calendar { .. }
+            | Self::CompanionProfile { .. }
+            | Self::SharedBrief { .. }
+            | Self::ChannelIdentity { .. } => None,
         }
     }
 }
@@ -481,10 +486,19 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
 fn encode_scope(scope: &AccessGrantScope) -> Value {
     match scope {
         AccessGrantScope::SharedBrief { .. } => crate::share::encode_shared_brief_scope(scope),
-        AccessGrantScope::ChannelIdentity { identity_ref, envelope_ref } => Value::Map(vec![
+        AccessGrantScope::ChannelIdentity {
+            identity_ref,
+            envelope_ref,
+        } => Value::Map(vec![
             (Value::from("kind"), Value::from("channel_identity")),
-            (Value::from("identity_ref"), Value::from(identity_ref.to_hex())),
-            (Value::from("envelope_ref"), Value::from(envelope_ref.to_hex())),
+            (
+                Value::from("identity_ref"),
+                Value::from(identity_ref.to_hex()),
+            ),
+            (
+                Value::from("envelope_ref"),
+                Value::from(envelope_ref.to_hex()),
+            ),
         ]),
         AccessGrantScope::CompanionProfile {
             person_ref,
@@ -603,14 +617,25 @@ pub(crate) fn invalid_grant() -> Error {
 }
 
 impl Vault {
-    fn check_channel_identity_access_write(&self, txn: &heed::RoTxn<'_>, id: &EntityId, grant: &AccessGrant) -> Result<()> {
+    fn check_channel_identity_access_write(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        grant: &AccessGrant,
+    ) -> Result<()> {
         if matches!(grant.scope, AccessGrantScope::ChannelIdentity { .. }) {
             return Err(invalid_grant());
         }
         if let Some(raw) = self.store.entities.get(txn, id.as_bytes())?
-            && EntityMetadataHeader::parse(&raw).is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
-            && matches!(decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope, AccessGrantScope::ChannelIdentity { .. })
-        { return Err(invalid_grant()); }
+            && EntityMetadataHeader::parse(&raw)
+                .is_some_and(|h| h.entity_type == ENTITY_TYPE_ACCESS_GRANT)
+            && matches!(
+                decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope,
+                AccessGrantScope::ChannelIdentity { .. }
+            )
+        {
+            return Err(invalid_grant());
+        }
         Ok(())
     }
 

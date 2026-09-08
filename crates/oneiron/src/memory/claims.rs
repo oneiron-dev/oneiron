@@ -560,11 +560,14 @@ impl Memory<'_> {
                 {
                     return Ok(true);
                 }
-                let publication_write = input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+                let publication_write =
+                    input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
                 if publication_write {
                     super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
                     if let Some(old_id) = prior {
-                        super::booking_publication::stage_publication_write(self.vault, wtxn, old_id)?;
+                        super::booking_publication::stage_publication_write(
+                            self.vault, wtxn, old_id,
+                        )?;
                     }
                 }
                 apply_ops_with_gate_mode(
@@ -588,10 +591,14 @@ impl Memory<'_> {
                         .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)?;
                 }
                 if publication_write {
-                    crate::booking::publication::index_publication_in_txn(self.vault, wtxn, subject, id)?;
+                    crate::booking::publication::index_publication_in_txn(
+                        self.vault, wtxn, subject, id,
+                    )?;
                     super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
                     if let Some(old_id) = prior {
-                        super::booking_publication::finish_publication_write(self.vault, wtxn, old_id)?;
+                        super::booking_publication::finish_publication_write(
+                            self.vault, wtxn, old_id,
+                        )?;
                     }
                 }
                 Ok(false)

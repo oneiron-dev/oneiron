@@ -38,5 +38,6 @@ do not add new ones while it is pending.
   anything touching storage, sync, or gates.
 - Skills / deeper agent guidance: `oneiron.skills.md`.
 - Architecture docs and decisions live in the separate docs repo (bespoke Astro pages, compiled to
-  markdown mirrors); this repo's `docs/` folder holds only operational notes.
+  markdown mirrors); this repo's `docs/` folder holds the generated code map, operational runbooks
+  (`docs/ops/`), the checked-in architecture/deployment/storage diagrams, and a few research notes.
 - Never commit secrets; the repo is public.

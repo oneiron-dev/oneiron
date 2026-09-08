@@ -384,22 +384,36 @@ fn resolve_employment(
         &[&source_ref, "linkedin.employed_by"],
     )?;
     let evidence = rmpv::Value::Map(vec![
-        (rmpv::Value::from("kind"), rmpv::Value::from("imported_evidence")),
-        (rmpv::Value::from("source_id"), rmpv::Value::from("linkedin-lead-corpus")),
-        (rmpv::Value::from("source_record_id"), rmpv::Value::from(source_ref)),
+        (
+            rmpv::Value::from("kind"),
+            rmpv::Value::from("imported_evidence"),
+        ),
+        (
+            rmpv::Value::from("source_id"),
+            rmpv::Value::from("linkedin-lead-corpus"),
+        ),
+        (
+            rmpv::Value::from("source_record_id"),
+            rmpv::Value::from(source_ref),
+        ),
     ]);
     let weight = kind.default_weight().ok_or(Error::InvariantViolation(
         "EmployedBy has no default weight",
     ))?;
-    let created = vault.resolve_imported_edge_provenance(crate::provenance::ImportedEdgeProvenance {
-        claim_id,
-        subject: crate::provenance::EdgeRef::new(person, kind, company),
-        actor,
-        evidence,
-        weight,
-        learned_at: unix_seconds_now(),
-    })?;
-    Ok(if created { Disposition::Created } else { Disposition::Reused })
+    let created =
+        vault.resolve_imported_edge_provenance(crate::provenance::ImportedEdgeProvenance {
+            claim_id,
+            subject: crate::provenance::EdgeRef::new(person, kind, company),
+            actor,
+            evidence,
+            weight,
+            learned_at: unix_seconds_now(),
+        })?;
+    Ok(if created {
+        Disposition::Created
+    } else {
+        Disposition::Reused
+    })
 }
 
 pub(crate) fn apply_linkedin_lead_corpus(

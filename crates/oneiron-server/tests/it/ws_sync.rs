@@ -1468,7 +1468,9 @@ async fn http_search_text_response_defaults_to_estimate_meta() {
         body["meta"],
         serde_json::json!({
             "total": 0,
-            "countMode": "estimate"
+            "countMode": "estimate",
+            "quality": "passthrough",
+            "confidenceAdjustment": -0.35
         })
     );
 
@@ -1491,7 +1493,9 @@ async fn http_search_text_estimate_counts_before_page_truncation() {
         body["meta"],
         serde_json::json!({
             "total": 3,
-            "countMode": "estimate"
+            "countMode": "estimate",
+            "quality": "passthrough",
+            "confidenceAdjustment": -0.35
         })
     );
 
@@ -1521,7 +1525,9 @@ async fn http_search_text_count_mode_none_returns_zero_none_meta() {
         body["meta"],
         serde_json::json!({
             "total": 0,
-            "countMode": "none"
+            "countMode": "none",
+            "quality": "passthrough",
+            "confidenceAdjustment": -0.35
         })
     );
 
@@ -1548,7 +1554,9 @@ async fn http_search_vector_response_defaults_to_estimate_meta() {
         body["meta"],
         serde_json::json!({
             "total": 0,
-            "countMode": "estimate"
+            "countMode": "estimate",
+            "quality": "passthrough",
+            "confidenceAdjustment": -0.35
         })
     );
 
@@ -1576,7 +1584,9 @@ async fn http_search_vector_estimate_counts_before_page_truncation() {
         body["meta"],
         serde_json::json!({
             "total": 3,
-            "countMode": "estimate"
+            "countMode": "estimate",
+            "quality": "passthrough",
+            "confidenceAdjustment": -0.35
         })
     );
 

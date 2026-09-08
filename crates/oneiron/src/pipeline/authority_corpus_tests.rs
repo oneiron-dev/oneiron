@@ -10,7 +10,10 @@ use crate::temporal::{TemporalAnchorMode, TimeRange};
 mod tests {
     use super::*;
 
-    pub(super) fn put_authority_corpus_claims(vault: &Vault, selected: CorpusId) -> Result<EntityId> {
+    pub(super) fn put_authority_corpus_claims(
+        vault: &Vault,
+        selected: CorpusId,
+    ) -> Result<EntityId> {
         let other = CorpusId::from_entity_id(entity_id(0xE5));
         let eligible = entity_id(0x43);
         // Both excluded rows outrank the eligible stale row. One fails only the

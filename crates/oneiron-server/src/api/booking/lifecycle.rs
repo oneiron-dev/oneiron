@@ -33,7 +33,12 @@ pub(super) async fn run_booking_verb(
 ) -> Result<BookingVerbReceipt, ApiError> {
     let vault: &Vault = &server.vault;
     let local_node_id = local_booking_node_id(server)?;
-    oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(vault, request, now, public_authority)?;
+    oneiron::booking::lifecycle::enqueue_booking_verb_with_publication(
+        vault,
+        request,
+        now,
+        public_authority,
+    )?;
     let turn = run_booking_lifecycle_once(
         vault,
         |oracle_request: &BookingOracleRequest| {

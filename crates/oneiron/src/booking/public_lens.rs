@@ -91,7 +91,12 @@ pub fn validate_booking_page_model(
     // Reuse the seam's half-open-mask validator. Never coerce another rung.
     project_at_rung(&[], DisclosureRung::Slots, SurfaceClass::Public, Some(mask))
         .map_err(|_| BookingPageModelError::InvalidSlotMask)?;
-    validate_presentation_fields(&model.owner_display, &model.event_types, &model.constraint_field, &model.theme)?;
+    validate_presentation_fields(
+        &model.owner_display,
+        &model.event_types,
+        &model.constraint_field,
+        &model.theme,
+    )?;
     validate_model_field(&model.slots)?;
     if model.owner_display.trim().is_empty() {
         return Err(BookingPageModelError::EmptyOwnerDisplay);
@@ -116,7 +121,10 @@ fn validate_model_field(value: &impl Serialize) -> core::result::Result<(), Book
 }
 
 pub(crate) fn validate_presentation_fields(
-    owner: &str, events: &[EventTypeCard], constraint: &ConstraintFieldConfig, theme: &ThemeTokens,
+    owner: &str,
+    events: &[EventTypeCard],
+    constraint: &ConstraintFieldConfig,
+    theme: &ThemeTokens,
 ) -> core::result::Result<(), BookingPageModelError> {
     validate_model_field(&owner)?;
     validate_model_field(&events)?;
@@ -133,7 +141,12 @@ pub fn bounded_public_slots(
     loop {
         let projection = RungProjection::Slots(mask.clone());
         if validate_model_field(&projection).is_ok() {
-            return project_at_rung(&[], DisclosureRung::Slots, SurfaceClass::Public, Some(&mask));
+            return project_at_rung(
+                &[],
+                DisclosureRung::Slots,
+                SurfaceClass::Public,
+                Some(&mask),
+            );
         }
         if mask.slots.pop().is_none() {
             return Err(BookingError::Surface(
@@ -585,9 +598,13 @@ mod tests {
             panic!("slots");
         };
         mask.slots[0].end_utc = mask.slots[0].start_utc;
-        let expected =
-            project_at_rung(&[], DisclosureRung::Slots, SurfaceClass::Public, Some(&mask))
-                .expect_err("invalid mask");
+        let expected = project_at_rung(
+            &[],
+            DisclosureRung::Slots,
+            SurfaceClass::Public,
+            Some(&mask),
+        )
+        .expect_err("invalid mask");
         let error: BookingError =
             bounded_public_slots(mask).expect_err("invalid mask must fail closed");
         assert_eq!(error, expected);
@@ -610,16 +627,38 @@ mod tests {
     #[test]
     fn public_slot_projection_caps_large_solver_output_and_still_renders() {
         let mut model = model();
-        let RungProjection::Slots(mut mask) = model.slots.clone() else { panic!("slots"); };
+        let RungProjection::Slots(mut mask) = model.slots.clone() else {
+            panic!("slots");
+        };
         mask.window_end_utc = 1_000_000;
-        mask.slots = (0..2_000).map(|i| RankedSlot {
-            start_utc: 100 + i * 60, end_utc: 700 + i * 60, rank: 0.5,
-        }).collect();
-        assert!(BookingPageModel::new(model.owner_display.clone(), model.event_types.clone(), RungProjection::Slots(mask.clone()), model.constraint_field.clone(), model.theme.clone()).is_err());
+        mask.slots = (0..2_000)
+            .map(|i| RankedSlot {
+                start_utc: 100 + i * 60,
+                end_utc: 700 + i * 60,
+                rank: 0.5,
+            })
+            .collect();
+        assert!(
+            BookingPageModel::new(
+                model.owner_display.clone(),
+                model.event_types.clone(),
+                RungProjection::Slots(mask.clone()),
+                model.constraint_field.clone(),
+                model.theme.clone()
+            )
+            .is_err()
+        );
         model.slots = bounded_public_slots(mask).expect("bounded projection");
-        let RungProjection::Slots(mask) = &model.slots else { panic!("slots"); };
+        let RungProjection::Slots(mask) = &model.slots else {
+            panic!("slots");
+        };
         assert!(!mask.slots.is_empty() && mask.slots.len() <= 128);
         assert_eq!(mask.slots[0].start_utc, 100);
-        assert!(BookingPageLens::card(&model).expect("card").render().is_ok());
+        assert!(
+            BookingPageLens::card(&model)
+                .expect("card")
+                .render()
+                .is_ok()
+        );
     }
 }

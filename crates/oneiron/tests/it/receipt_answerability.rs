@@ -356,8 +356,14 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
         chain: Vec::new(),
         source_meet: evidence_chain_source(&vault, &[], &[missing_evidence_ref])?,
     };
+    let no_evidence = ClaimCandidate::new(
+        "profile.party_guest_count",
+        ClaimSubject::Entity(subject),
+        Value::from("confirm final guest count before sending venue update"),
+        0.82,
+    );
     for (case, unsupported) in [
-        ("missing evidence", candidate.clone()),
+        ("missing evidence", no_evidence),
         (
             "unresolved evidence ref",
             candidate

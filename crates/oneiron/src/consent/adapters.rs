@@ -93,8 +93,13 @@ pub fn access_grant_projection_is_active(grant: &AccessGrant) -> bool {
 pub fn action_grant_from_standing_outbound_grant(
     grant: &StandingOutboundGrant,
 ) -> Result<ActionGrant> {
-    if matches!(grant.scope, StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }) {
-        return Err(invalid_bound("channel identity actions require atomic volume consumption"));
+    if matches!(
+        grant.scope,
+        StandingOutboundGrantScope::ChannelIdentityEnvelope { .. }
+    ) {
+        return Err(invalid_bound(
+            "channel identity actions require atomic volume consumption",
+        ));
     }
     let actor = ActorBound::new(grant.principal_ref.as_str())?;
     let (class, selectors, target) = outbound_scope_axes(&grant.scope);
@@ -117,9 +122,16 @@ pub(super) fn outbound_scope_axes(
     scope: &StandingOutboundGrantScope,
 ) -> (String, Vec<String>, Option<String>) {
     match scope {
-        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref, envelope_ref, verb_class } => (
+        StandingOutboundGrantScope::ChannelIdentityEnvelope {
+            identity_ref,
+            envelope_ref,
+            verb_class,
+        } => (
             verb_class.clone(),
-            vec![format!("identity:{}", identity_ref.to_hex()), format!("envelope:{}", envelope_ref.to_hex())],
+            vec![
+                format!("identity:{}", identity_ref.to_hex()),
+                format!("envelope:{}", envelope_ref.to_hex()),
+            ],
             Some(identity_ref.to_hex()),
         ),
         StandingOutboundGrantScope::Contact { contact_ref } => (

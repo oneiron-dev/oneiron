@@ -75,7 +75,7 @@ def test_python_sdist_contains_rust_and_cargo_inputs(python_sdist):
             "oneiron-remote/Cargo.toml",
             "oneiron-remote/src/lib.rs",
             "oneiron-vault-contract/Cargo.toml",
-            "oneiron-vault-contract/src/lib.rs",
+            "oneiron-vault-contract/src/lib/mod.rs",
             "heed-0.20.5/Cargo.toml",
             "heed-0.20.5/src/lib.rs",
             "heed-0.20.5/src/env.rs",

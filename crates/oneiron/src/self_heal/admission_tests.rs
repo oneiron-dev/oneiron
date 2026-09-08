@@ -75,7 +75,9 @@ fn diagnostic_admission_binds_address_and_indexed_validity() -> Result<()> {
             (id, at(1_000)),
         ] {
             assert_eq!(
-                local_put(&vault, id, wrong, body.clone()).unwrap_err().kind(),
+                local_put(&vault, id, wrong, body.clone())
+                    .unwrap_err()
+                    .kind(),
                 ErrorKind::InvalidDiagnosticBody
             );
             assert_eq!(
@@ -117,7 +119,11 @@ fn diagnostic_admission_binds_address_and_indexed_validity() -> Result<()> {
         assert_eq!(header.occurred_end, occurred.end);
         let txn = vault.store.env.read_txn()?;
         let key = Store::encode_temporal_key(occurred.end, &id);
-        let indexed = vault.store.temporal_long_intervals.get(&txn, &key)?.is_some();
+        let indexed = vault
+            .store
+            .temporal_long_intervals
+            .get(&txn, &key)?
+            .is_some();
         assert_eq!(indexed, end.is_none());
         drop(txn);
         vault
@@ -145,7 +151,11 @@ impl DeterministicDetector for MisattributedDetector {
 fn diagnostic_identity_is_validated_before_any_write() -> Result<()> {
     let mut event = sample_event();
     let canonical = encode_diagnostic_event_body(&event)?;
-    for invalid in ["".to_owned(), "UPPER".to_owned(), "a".repeat(MAX_TOKEN_LEN + 1)] {
+    for invalid in [
+        "".to_owned(),
+        "UPPER".to_owned(),
+        "a".repeat(MAX_TOKEN_LEN + 1),
+    ] {
         event.detector_id = invalid.clone();
         assert!(encode_diagnostic_event_body(&event).is_err());
         let mut entries = body_entries(&canonical);

@@ -9,9 +9,7 @@ use std::time::Duration;
 
 use oneiron::speculative::SpeculativeFireDecision;
 use oneiron::voice_cascade::uds::MAX_FRAME_BYTES;
-use oneiron::voice_cascade::{
-    AsrUpdate, Brain, CascadeControl, RetrievalContext, TtsSeamClient,
-};
+use oneiron::voice_cascade::{AsrUpdate, Brain, CascadeControl, RetrievalContext, TtsSeamClient};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -23,23 +21,49 @@ use super::{HostError, VoiceHost, VoiceOutputs};
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Request {
-    Open { utterance_id: String },
-    Partial { handle: String, revision: u64, text: String },
-    Final { handle: String, revision: u64, text: String },
-    Close { handle: String },
+    Open {
+        utterance_id: String,
+    },
+    Partial {
+        handle: String,
+        revision: u64,
+        text: String,
+    },
+    Final {
+        handle: String,
+        revision: u64,
+        text: String,
+    },
+    Close {
+        handle: String,
+    },
 }
 
 #[derive(Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Response {
-    Opened { handle: String },
-    Partial { handle: String, revision: u64, decision: &'static str, context: Option<RetrievalContext> },
-    Final { handle: String, revision: u64, context: RetrievalContext },
+    Opened {
+        handle: String,
+    },
+    Partial {
+        handle: String,
+        revision: u64,
+        decision: &'static str,
+        context: Option<RetrievalContext>,
+    },
+    Final {
+        handle: String,
+        revision: u64,
+        context: RetrievalContext,
+    },
     Closed,
-    Error { code: &'static str },
+    Error {
+        code: &'static str,
+    },
 }
 
-type Pending<'a> = Pin<Box<dyn Future<Output = (String, u64, Result<AsrUpdate, HostError>)> + Send + 'a>>;
+type Pending<'a> =
+    Pin<Box<dyn Future<Output = (String, u64, Result<AsrUpdate, HostError>)> + Send + 'a>>;
 
 impl VoiceHost {
     /// Serve only a stream admitted by the existing lifecycle owner from its
@@ -51,7 +75,8 @@ impl VoiceHost {
         stream: UnixStream,
         outputs: &mut VoiceOutputs<B, T, C>,
     ) -> io::Result<()> {
-        self.serve_until(stream, outputs, std::future::pending()).await
+        self.serve_until(stream, outputs, std::future::pending())
+            .await
     }
 
     pub(super) async fn serve_until<B: Brain, T: TtsSeamClient, C: CascadeControl>(
@@ -62,7 +87,9 @@ impl VoiceHost {
     ) -> io::Result<()> {
         let end_on_drop = EndOnDrop(self);
         let result = self.serve_inner(stream, &mut outputs.brain, stop).await;
-        let stop = self.end().map_err(|_| io::Error::other("voice teardown failed"))?;
+        let stop = self
+            .end()
+            .map_err(|_| io::Error::other("voice teardown failed"))?;
         let errors = stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
         drop(end_on_drop);
         result?;
@@ -174,7 +201,9 @@ impl VoiceHost {
                     result.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice write timeout"))??;
                 }
             }
-            if errors >= 8 { break; }
+            if errors >= 8 {
+                break;
+            }
         }
         Ok(())
     }
@@ -182,15 +211,17 @@ impl VoiceHost {
 
 fn response_error(error: &HostError) -> Response {
     // Never reflect provider, parser, vault or transcript content to the wire.
-    Response::Error { code: match error {
-        HostError::InvalidRequest => "invalid_request",
-        HostError::Stale => "stale_request",
-        HostError::Stopped => "stopped",
-        HostError::InvalidResponse => "invalid_enrichment",
-        HostError::Llm(oneiron::llm::LlmError::BudgetDenied(_)) => "budget_denied",
-        HostError::Llm(_) => "provider_error",
-        HostError::Core(_) => "bridge_error",
-    } }
+    Response::Error {
+        code: match error {
+            HostError::InvalidRequest => "invalid_request",
+            HostError::Stale => "stale_request",
+            HostError::Stopped => "stopped",
+            HostError::InvalidResponse => "invalid_enrichment",
+            HostError::Llm(oneiron::llm::LlmError::BudgetDenied(_)) => "budget_denied",
+            HostError::Llm(_) => "provider_error",
+            HostError::Core(_) => "bridge_error",
+        },
+    }
 }
 
 struct EndOnDrop<'a>(&'a VoiceHost);
@@ -210,16 +241,25 @@ struct FrameReader {
 
 impl FrameReader {
     fn new() -> Self {
-        Self { bytes: Vec::new(), deadline: Instant::now() + Duration::from_secs(30) }
+        Self {
+            bytes: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(30),
+        }
     }
 
     async fn read(&mut self, reader: &mut BufReader<OwnedReadHalf>) -> io::Result<Option<Vec<u8>>> {
         loop {
-            let available = timeout_at(self.deadline, reader.fill_buf()).await
+            let available = timeout_at(self.deadline, reader.fill_buf())
+                .await
                 .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice read timeout"))??;
             if available.is_empty() {
-                return if self.bytes.is_empty() { Ok(None) } else {
-                    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated voice frame"))
+                return if self.bytes.is_empty() {
+                    Ok(None)
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "truncated voice frame",
+                    ))
                 };
             }
             if self.bytes.is_empty() {
@@ -228,7 +268,10 @@ impl FrameReader {
             let newline = available.iter().position(|byte| *byte == b'\n');
             let count = newline.unwrap_or(available.len());
             if count > MAX_FRAME_BYTES - self.bytes.len() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "voice frame exceeds limit"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "voice frame exceeds limit",
+                ));
             }
             self.bytes.extend_from_slice(&available[..count]);
             reader.consume(count + usize::from(newline.is_some()));

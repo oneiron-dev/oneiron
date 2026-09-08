@@ -23,9 +23,22 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
     let publication = BookingPagePublication {
         schema_version: BOOKING_PUBLIC_PAGE_SCHEMA_VERSION,
         published: true,
-        event_config_hashes: [("intro-call".to_owned(), crate::booking::booking_config_hash(
-            &decode_event_type_claim_value(&vault.get_claim(&id(0x57)).expect("claim").expect("config").value).expect("config value").config
-        ).expect("hash"))].into(),
+        event_config_hashes: [(
+            "intro-call".to_owned(),
+            crate::booking::booking_config_hash(
+                &decode_event_type_claim_value(
+                    &vault
+                        .get_claim(&id(0x57))
+                        .expect("claim")
+                        .expect("config")
+                        .value,
+                )
+                .expect("config value")
+                .config,
+            )
+            .expect("hash"),
+        )]
+        .into(),
         owner_display: "Fixture owner".to_owned(),
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro-call".to_owned()),

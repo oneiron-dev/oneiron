@@ -57,13 +57,13 @@ pub(crate) use self::kernel::{
     FIELD_SKILL_EDIT_SCORE_BEFORE, FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST,
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
-#[cfg(test)]
-pub(crate) use self::ledgers::{
-    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
-};
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, delivered_send_receipt_for_task, persist_send_receipt,
     stamp_attempt_pack_receipt_in_txn,
+};
+#[cfg(test)]
+pub(crate) use self::ledgers::{
+    overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;

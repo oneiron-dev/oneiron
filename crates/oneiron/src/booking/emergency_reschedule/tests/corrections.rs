@@ -319,7 +319,9 @@ fn verified_effect_admission_requires_the_same_gate_principal() {
     let owner = plan.request.owner_ref;
     for axis in ["actor_class", "actor_ref", "actor_entity_ref"] {
         let mut actor = OutboundDispatchActor {
-            actor_class: crate::edge::EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_class: crate::edge::EdgeActorClass::Human
+                .gate_actor_class()
+                .to_owned(),
             actor_ref: Some(owner.to_hex()),
             actor_entity_ref: Some(owner),
         };

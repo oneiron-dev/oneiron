@@ -888,6 +888,24 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     set_schema_property_description(
         spec,
         "CoreContextPackResponse",
+        "quality",
+        "Execution quality projected from the engine's shared report: full, degraded, or passthrough.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "degradation",
+        "Observed reasons for degraded execution; absent when none were recorded.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "confidenceAdjustment",
+        "Pinned presentation confidence adjustment for the execution tier: 0, -0.15, or -0.35.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
         "empty",
         "Structured empty-result context when no entities surface.",
     );

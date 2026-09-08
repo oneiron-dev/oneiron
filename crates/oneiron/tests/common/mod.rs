@@ -6,6 +6,12 @@
 //! two in sync.
 #![allow(dead_code)] // each integration binary uses a subset of these helpers
 
+/// Test-only-file classification for the source-scanning fences. One file,
+/// mounted here and as `crate::test_util::source_scan`, so unit and
+/// integration fences agree on what counts as test code.
+#[path = "../../src/test_util/source_scan.rs"]
+pub(crate) mod source_scan;
+
 use oneiron::EntityId;
 
 /// Mirror of `test_util::PINNED_ID_BYTES`; see the canonical doc comment.
