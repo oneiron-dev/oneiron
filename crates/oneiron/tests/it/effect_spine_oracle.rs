@@ -1774,7 +1774,15 @@ mod one1891 {
         include_str!("../../src/provider_confidence/transaction_memo.rs");
     pub(super) const BATCH_TXN_BUILDER_SOURCE: &str =
         include_str!("../../src/batch/txn_builder.rs");
-    pub(super) const BATCH_BUILDER_SOURCE: &str = include_str!("../../src/batch/builder.rs");
+    pub(super) const BATCH_BUILDER_SOURCE: &str = concat!(
+        include_str!("../../src/batch/builder/mod.rs"),
+        include_str!("../../src/batch/builder/ops.rs"),
+        include_str!("../../src/batch/builder/puts.rs"),
+        include_str!("../../src/batch/builder/claims.rs"),
+        include_str!("../../src/batch/builder/edges.rs"),
+        include_str!("../../src/batch/builder/commit.rs"),
+        include_str!("../../src/batch/builder/preflight.rs"),
+    );
 
     /// A vault WITHOUT the default policy manifest, for the two legs whose
     /// subject is a claim WRITE rather than the waterfall read: the Gate's
