@@ -227,7 +227,9 @@ pub(crate) fn verify_frozen_effect_in(
         || value["actor_entity_ref"].as_str() != Some(owner.as_str())
         || value["counterparty_ref"].as_str() != Some(item.plan.recipient.as_str())
     {
-        return Err(refused("frozen emergency effect has a different gate binding"));
+        return Err(refused(
+            "frozen emergency effect has a different gate binding",
+        ));
     }
     if crate::booking::lifecycle::emergency_current_revision_in(
         vault,

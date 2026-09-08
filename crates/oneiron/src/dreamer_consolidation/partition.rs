@@ -167,7 +167,7 @@ fn decode_cursor(raw: &[u8]) -> Result<ConsolidationCursor> {
 ///
 /// The OF-361 statistical screen (ONE-1525) runs FIRST, over the whole input:
 /// the scan's GATE-10 role gate has already ruled on which turns MAY be
-/// extracted, and [`prefilter_partition_input`] rules on which of those are
+/// extracted, and `prefilter_partition_input` rules on which of those are
 /// worth the budget. The order is not interchangeable — eligibility, then
 /// value. This API is a preview only. [`enqueue_partition_attempts`] rebuilds
 /// the plans and their screening receipts together in its write transaction;

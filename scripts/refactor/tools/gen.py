@@ -17,9 +17,13 @@ import collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustlex as R
 
-ROOT = os.environ.get("GEN_ROOT") or "/Volumes/Cinema/pink-worktrees/t1443"
+# Repo root by default (this file lives at scripts/refactor/tools/); override with
+# REFACTOR_ROOT (GEN_ROOT is honoured as the older name) to point at a cut worktree.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+ROOT = os.environ.get("REFACTOR_ROOT") or os.environ.get("GEN_ROOT") or _REPO_ROOT
 OUT = os.path.join(ROOT, "scripts/refactor/moves")
-REPORT_DIR = "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp/linereports"
+# Per-stage line-number reports land under the (gitignored) target dir unless redirected.
+REPORT_DIR = os.environ.get("REFACTOR_REPORT_DIR") or os.path.join(ROOT, "target", "refactor-linereports")
 
 BUMPABLE = {"fn", "struct", "enum", "type", "const", "static"}
 

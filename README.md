@@ -126,9 +126,9 @@ profiles and the slow-test tier live in `.config/nextest.toml`. Plain
   scoped token must switch to the trust-root credential or move to the
   equivalent `/v1/core/*` route; `/v1/consumer/*` and `/v1/usage/*` have no
   scoped equivalent.
-- `ANALYZER_VERSION = "v2"` changes analyzer-manifest hashes to capture
-  Han `whichlang` routing behavior. Existing text indexes built with older
-  analyzer manifests must be rebuilt after upgrading; create a `VaultConfig`,
+- `ANALYZER_VERSION = "v3"` (portable emoji lane; `v2` added Han `whichlang`
+  routing) changes analyzer-manifest hashes. Existing text indexes built with
+  older analyzer manifests must be rebuilt after upgrading; create a `VaultConfig`,
   set `config.skip_text_index_manifest_check = true`, reopen with that config,
   run `MaintenanceBuilder::clear_text_index`, reopen normally, then reindex
   documents.
@@ -145,11 +145,12 @@ profiles and the slow-test tier live in `.config/nextest.toml`. Plain
 </picture>
 </div>
 
-Full details in the design docs:
+Full details:
 
-- [`SCHEMA-DESIGN.md`](./SCHEMA-DESIGN.md) — database layout, key formats, encoding
-- [`BUILD-PROMPT.md`](./BUILD-PROMPT.md) — architecture, algorithms, API surface
 - [`DEPLOYMENT.md`](./DEPLOYMENT.md) — local daemon install, config, and service templates
+- [`MIGRATIONS.md`](./MIGRATIONS.md) — storage-ABI decision history
+- Schema and architecture design docs live in the separate docs repo; this repo
+  keeps the diagrams above under `docs/`.
 
 ## License
 

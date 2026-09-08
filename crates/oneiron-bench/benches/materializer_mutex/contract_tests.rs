@@ -2,17 +2,21 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{TimeRange, Vault, VaultConfig};
 
 use super::configuration::*;
-use super::measurement::{run_case_with_runtime, run_measured_case};
 use super::observers::*;
-use super::reporting::*;
 use super::worker::*;
+
+// This module is compiled into BOTH targets that share `materializer_mutex.rs`
+// (`crates/oneiron-bench/Cargo.toml`): both carry `cfg(test)`, but only the
+// libtest target gets `--test`, so in the `harness = false` bench binary every
+// `#[test]` fn below is stripped. Imports that only those fns consume therefore
+// live inside the fn that uses them; at module level they would be unused
+// imports in the bench binary.
 
 /// Deliberately tiny: the 1/4/16 x 32 x 100 x 1,000 matrix is a BENCH run,
 /// not a unit test. These fixtures assert contracts, not timings.
@@ -107,6 +111,8 @@ fn materializer_mutex_workload_equivalence() {
 /// serialization into the JSON the run writes alongside Criterion.
 #[test]
 fn materializer_mutex_report_has_p50_and_p99() {
+    use super::measurement::run_measured_case;
+
     let case = fixture_case(2);
     let outcome = run_measured_case(&case, Implementation::ShadowStd, &mut |_fleet: &Fleet| {})
         .expect("valid shadow workload produces a report");
@@ -157,6 +163,11 @@ fn materializer_mutex_report_has_p50_and_p99() {
 /// a timing assertion at this size would be noise, not a contract.
 #[test]
 fn materializer_shadow_std_tracks_real_observer_b() {
+    use super::measurement::run_measured_case;
+    use super::reporting::{
+        CALIBRATION_TOLERANCE, CalibrationVerdict, calibration_relative_delta, calibration_verdict,
+    };
+
     assert_eq!(
         calibration_verdict(100.0, 100.0),
         CalibrationVerdict::Comparable
@@ -362,6 +373,8 @@ impl ObserverFactory for EmptyObserverFactory {
 
 #[test]
 fn materializer_mutex_rejects_empty_callbacks_before_sampling_or_reporting() {
+    use super::measurement::run_case_with_runtime;
+
     let mut case = fixture_case(1);
     case.warmup_bursts = 0;
     let runtime = ImplementationRuntime {
@@ -382,6 +395,8 @@ fn materializer_mutex_rejects_empty_callbacks_before_sampling_or_reporting() {
 
 #[test]
 fn materializer_mutex_rejects_errors_from_later_sampling() {
+    use super::measurement::run_case_with_runtime;
+
     let case = fixture_case(1);
     let runtime = Implementation::ShadowStd.runtime();
     let counters = runtime
@@ -403,6 +418,9 @@ fn materializer_mutex_rejects_errors_from_later_sampling() {
 
 #[test]
 fn materializer_mutex_report_requires_all_samples_and_positive_elapsed() {
+    use super::reporting::summarize;
+    use std::time::Duration;
+
     let case = MaterializerCase {
         workers: 2,
         updates_per_burst: 4,

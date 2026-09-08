@@ -15,16 +15,26 @@ pub(crate) fn publication_write_key(id: EntityId) -> Vec<u8> {
 }
 
 pub(crate) fn stage_publication_write(
-    vault: &Vault, txn: &mut heed::RwTxn<'_>, id: EntityId,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
 ) -> crate::Result<()> {
-    vault.store.vault_meta.put(txn, &publication_write_key(id), b"owner")?;
+    vault
+        .store
+        .vault_meta
+        .put(txn, &publication_write_key(id), b"owner")?;
     Ok(())
 }
 
 pub(crate) fn finish_publication_write(
-    vault: &Vault, txn: &mut heed::RwTxn<'_>, id: EntityId,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
 ) -> crate::Result<()> {
-    vault.store.vault_meta.delete(txn, &publication_write_key(id))?;
+    vault
+        .store
+        .vault_meta
+        .delete(txn, &publication_write_key(id))?;
     Ok(())
 }
 

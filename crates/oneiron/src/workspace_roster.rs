@@ -100,7 +100,7 @@ pub const WORKSPACE_ROSTER_PRESET_KEY_PREFIX: &[u8] = b"workspace_roster:preset:
 /// `vault_meta` prefix owned by the per-member roster row.
 ///
 /// Full key is `prefix ++ workspace_ref ++ 0x00 ++ member_person_hex`. The NUL
-/// separator is unambiguous because [`WorkspaceRosterPreset::validate`] refuses
+/// separator is unambiguous because `WorkspaceRosterPreset::validate` refuses
 /// a `workspace_ref` containing one.
 pub const WORKSPACE_ROSTER_MEMBER_KEY_PREFIX: &[u8] = b"workspace_roster:member:v1:";
 

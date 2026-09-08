@@ -1640,10 +1640,17 @@ fn record_content_digest_has_no_json_detour() {
     // order. `derive_intent_id` is the sole exception — it hashes the shipped
     // identity preimage — so its body is sliced out and everything that remains
     // must be JSON-free.
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/outbound_intent_ledger.rs");
-    let src = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
+    // The ledger is a directory module: audit the whole module surface, not one file.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/outbound_intent_ledger");
+    let mut src = String::new();
+    for name in ["mod.rs", "types.rs", "dispatch.rs", "store.rs", "codec.rs"] {
+        let path = dir.join(name);
+        src.push_str(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display())),
+        );
+        src.push('\n');
+    }
     let start = src
         .find("\npub fn derive_intent_id(")
         .expect("the identity derivation must be findable by its signature")
@@ -2210,8 +2217,8 @@ fn listing_storage_errors_stay_top_level_by_construction() {
     // guard is structural because the byte-identical iteration line also lives
     // in the recovery walks, so a whole-file `contains` would prove nothing —
     // and no LMDB fault-injection harness exists or is wanted.
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/outbound_intent_ledger.rs");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/outbound_intent_ledger/dispatch.rs");
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display()));
     let iteration = "let (key, value) = row?;";

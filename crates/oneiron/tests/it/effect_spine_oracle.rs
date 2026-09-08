@@ -1764,7 +1764,14 @@ mod one1891 {
     };
     use rmpv::Value;
 
-    pub(super) const INGEST_SOURCE: &str = include_str!("../../src/ingest.rs");
+    pub(super) const INGEST_SOURCE: &str = concat!(
+        include_str!("../../src/ingest/mod.rs"),
+        include_str!("../../src/ingest/resolution.rs"),
+        include_str!("../../src/ingest/types.rs"),
+        include_str!("../../src/ingest/admission.rs"),
+        include_str!("../../src/ingest/registry.rs"),
+        include_str!("../../src/ingest/transcripts.rs"),
+    );
     pub(super) const CLAIM_CORE_TYPES_SOURCE: &str = include_str!("../../src/claim/core_types.rs");
     pub(super) const PROVIDER_CONFIDENCE_SOURCE: &str =
         include_str!("../../src/provider_confidence.rs");
@@ -1774,7 +1781,15 @@ mod one1891 {
         include_str!("../../src/provider_confidence/transaction_memo.rs");
     pub(super) const BATCH_TXN_BUILDER_SOURCE: &str =
         include_str!("../../src/batch/txn_builder.rs");
-    pub(super) const BATCH_BUILDER_SOURCE: &str = include_str!("../../src/batch/builder.rs");
+    pub(super) const BATCH_BUILDER_SOURCE: &str = concat!(
+        include_str!("../../src/batch/builder/mod.rs"),
+        include_str!("../../src/batch/builder/ops.rs"),
+        include_str!("../../src/batch/builder/puts.rs"),
+        include_str!("../../src/batch/builder/claims.rs"),
+        include_str!("../../src/batch/builder/edges.rs"),
+        include_str!("../../src/batch/builder/commit.rs"),
+        include_str!("../../src/batch/builder/preflight.rs"),
+    );
 
     /// A vault WITHOUT the default policy manifest, for the two legs whose
     /// subject is a claim WRITE rather than the waterfall read: the Gate's

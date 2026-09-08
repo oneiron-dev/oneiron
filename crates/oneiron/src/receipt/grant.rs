@@ -465,7 +465,10 @@ fn append_access_grant_scope_fields(
     scope: &AccessGrantScope,
 ) {
     match scope {
-        AccessGrantScope::ChannelIdentity { identity_ref, envelope_ref } => {
+        AccessGrantScope::ChannelIdentity {
+            identity_ref,
+            envelope_ref,
+        } => {
             fields.insert("scope".to_owned(), "channel_identity".to_owned());
             fields.insert("identity_ref".to_owned(), identity_ref.to_hex());
             fields.insert("envelope_ref".to_owned(), envelope_ref.to_hex());
@@ -494,7 +497,11 @@ fn append_outbound_grant_scope_fields(
     scope: &StandingOutboundGrantScope,
 ) {
     match scope {
-        StandingOutboundGrantScope::ChannelIdentityEnvelope { identity_ref, envelope_ref, verb_class } => {
+        StandingOutboundGrantScope::ChannelIdentityEnvelope {
+            identity_ref,
+            envelope_ref,
+            verb_class,
+        } => {
             fields.insert("scope".to_owned(), "channel_identity_envelope".to_owned());
             fields.insert("identity_ref".to_owned(), identity_ref.to_hex());
             fields.insert("envelope_ref".to_owned(), envelope_ref.to_hex());

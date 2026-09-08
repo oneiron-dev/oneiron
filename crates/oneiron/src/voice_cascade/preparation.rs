@@ -54,8 +54,13 @@ impl VoiceCascadeSession {
         if self.ended || !self.retrieval.is_open(handle) {
             return Ok(None);
         }
-        if event.text.len() > 8 * 1024 || event.tokens.len() > 256
-            || event.tokens.iter().fold(0usize, |size, token| size.saturating_add(token.text.len())) > 8 * 1024
+        if event.text.len() > 8 * 1024
+            || event.tokens.len() > 256
+            || event
+                .tokens
+                .iter()
+                .fold(0usize, |size, token| size.saturating_add(token.text.len()))
+                > 8 * 1024
             || event.error.as_ref().is_some_and(|error| error.len() > 1024)
         {
             return Err(invalid("ASR preparation exceeds limits"));
@@ -68,17 +73,26 @@ impl VoiceCascadeSession {
         self.check_prepared_revision(handle, revision, &event, externally_tainted)?;
         if event.kind == AsrEventKind::Final {
             if self.generation.is_some() {
-                return Err(invalid("finish or interrupt the previous generation before final"));
+                return Err(invalid(
+                    "finish or interrupt the previous generation before final",
+                ));
             }
-            self.epoch.checked_add(1).ok_or_else(|| invalid("generation epoch exhausted"))?;
+            self.epoch
+                .checked_add(1)
+                .ok_or_else(|| invalid("generation epoch exhausted"))?;
         }
-        let serial = self.preparation_serial.checked_add(1)
+        let serial = self
+            .preparation_serial
+            .checked_add(1)
             .ok_or_else(|| invalid("ASR preparation serial exhausted"))?;
         let prepared = PreparedAsr {
             session: self.id,
             serial,
             epoch: self.epoch,
-            generation: self.generation.as_ref().map(|active| active.request.generation),
+            generation: self
+                .generation
+                .as_ref()
+                .map(|active| active.request.generation),
             handle: handle.clone(),
             revision,
             event,
@@ -116,9 +130,16 @@ impl VoiceCascadeSession {
             && self.preparation_active
             && prepared.session == self.id
             && prepared.epoch == self.epoch
-            && prepared.generation == self.generation.as_ref().map(|active| active.request.generation)
+            && prepared.generation
+                == self
+                    .generation
+                    .as_ref()
+                    .map(|active| active.request.generation)
             && self.prepared_asr.as_ref() == Some(prepared)
-            && self.retrieval.check_revision(&prepared.handle, prepared.revision).is_ok()
+            && self
+                .retrieval
+                .check_revision(&prepared.handle, prepared.revision)
+                .is_ok()
     }
 
     /// Invalidate this attempt only. An old task cannot cancel its successor.
@@ -170,7 +191,9 @@ impl PartialEnricher for ExactEnricher {
         if text != self.text {
             return Err(invalid("prepared enrichment text mismatch"));
         }
-        self.value.take().ok_or_else(|| invalid("prepared enrichment already consumed"))
+        self.value
+            .take()
+            .ok_or_else(|| invalid("prepared enrichment already consumed"))
     }
 }
 
@@ -185,7 +208,16 @@ mod tests {
             value: Some(PartialEnrichment::default()),
         };
         assert!(enricher.enrich_speculative_partial("exact bytes").is_err());
-        assert_eq!(enricher.enrich_speculative_partial(" exact bytes ").unwrap(), PartialEnrichment::default());
-        assert!(enricher.enrich_speculative_partial(" exact bytes ").is_err());
+        assert_eq!(
+            enricher
+                .enrich_speculative_partial(" exact bytes ")
+                .unwrap(),
+            PartialEnrichment::default()
+        );
+        assert!(
+            enricher
+                .enrich_speculative_partial(" exact bytes ")
+                .is_err()
+        );
     }
 }

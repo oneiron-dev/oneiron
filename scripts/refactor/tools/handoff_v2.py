@@ -5,15 +5,20 @@ import os
 import subprocess
 import sys
 import collections
-sys.path.insert(0, "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustlex as R
 import driver as D
 
-ROOT = "/Volumes/Cinema/pink-worktrees/t1443"
+# Repo root by default (this file lives at scripts/refactor/tools/); override with
+# REFACTOR_ROOT (GEN_ROOT is honoured as the older name) to point at a cut worktree.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+ROOT = os.environ.get("REFACTOR_ROOT") or os.environ.get("GEN_ROOT") or _REPO_ROOT
 BASE = "b2437d700"
 MOVES = os.path.join(ROOT, "scripts/refactor/moves")
-OUT = "/Users/olety/Desktop/code/fable-queue/oneiron/handoffs"
-SESSION = "https://claude.ai/code/session_01Ahja3evrLPJVmg8ErBsg6R"
+# Handoff packages land under the (gitignored) target dir unless redirected.
+OUT = os.environ.get("REFACTOR_HANDOFF_OUT") or os.path.join(ROOT, "target", "refactor-handoffs")
+# Provenance link stamped into handoff packages; set REFACTOR_HANDOFF_SESSION to record one.
+SESSION = os.environ.get("REFACTOR_HANDOFF_SESSION", "")
 GUARD = "crates/oneiron/src/agent_def[.rs/] · crates/oneiron/src/edit_settle[.rs/]"
 
 FABLE_REVIEW = {"T1", "T2", "T4"}

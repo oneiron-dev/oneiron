@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [lib]
+path = "src/lib/mod.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]

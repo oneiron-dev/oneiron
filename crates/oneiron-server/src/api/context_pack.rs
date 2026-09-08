@@ -813,9 +813,11 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
     quality: Option<RetrievalQuality>,
+    /// Observed reasons for degraded execution; absent when none were recorded.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<String>>)]
     degradation: Option<Vec<RetrievalDegradation>>,
+    /// Pinned presentation confidence adjustment for the execution tier: 0, -0.15, or -0.35.
     #[serde(
         rename = "confidenceAdjustment",
         skip_serializing_if = "Option::is_none"
