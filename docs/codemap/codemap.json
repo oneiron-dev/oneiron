@@ -2857,33 +2857,111 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignEnrollmentEvent",
+      "DetectEnrollment",
+      "EnrollmentDetection"
+     ],
+     "path": "src/campaign/enrollment/detection.rs",
+     "purpose": "Persisted membership-transition events, detection pass, cause routing, and per-query baseline",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignHomeNodeAdmission",
+      "CampaignHomeNodeCandidate",
+      "CampaignHomeNodeClass",
+      "CampaignHomeNodeDesignation"
+     ],
+     "path": "src/campaign/enrollment/home_node.rs",
+     "purpose": "Campaign-local MACRO home-node election, designation persistence, and admission checks",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/mod.rs",
+     "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
+     "surface": {
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/outbound_leg.rs",
+     "purpose": "Outward leg bridging persisted refs to the outbound chokepoint and the ledger",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignProgram",
+      "CampaignProgramOutbound",
+      "CampaignProgramStep"
+     ],
+     "path": "src/campaign/enrollment/program.rs",
+     "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
+     "surface": {
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CampaignEnrollmentAttemptPayload",
       "CampaignEnrollmentClaim",
-      "CampaignEnrollmentEvent",
       "CampaignEnrollmentRunner",
-      "CampaignHomeNodeAdmission",
-      "CampaignHomeNodeCandidate",
-      "CampaignHomeNodeClass",
-      "CampaignHomeNodeDesignation",
-      "CampaignProgram",
-      "CampaignProgramOutbound",
-      "CampaignProgramStep",
-      "DetectEnrollment",
-      "EnrollmentDetection",
       "EnrollmentExecution"
      ],
-     "path": "src/campaign/enrollment.rs",
-     "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
+     "path": "src/campaign/enrollment/runner.rs",
+     "purpose": "Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/storage.rs",
+     "purpose": "Shared campaign-enrollment storage primitives: schema version, key prefixes, JSON-row codecs, and vault_meta…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
-      "enum": 5,
-      "fn": 26,
-      "struct": 9
+      "crate-vis": 15
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/campaign/enrollment/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -4225,7 +4303,84 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/codec.rs",
+     "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
+     "surface": {
+      "const": 4,
+      "crate-vis": 29,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/keys.rs",
+     "purpose": "Manifest and revision-index key families and the deterministic symbol entity id",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/rust_source.rs",
+     "purpose": "tree-sitter Rust parsing: definition extraction, identifier references and the derived symbol graph",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/storage.rs",
+     "purpose": "Vault CRUD for symbol manifests and the blame / definition / reference / PPR reads over them",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_symbol/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/text_diff.rs",
+     "purpose": "Language-agnostic chunking of a text diff into code chunks and embedding inputs",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CodeChunk",
@@ -4239,23 +4394,22 @@
       "CodeSymbolRevision",
       "CodeSymbolSource"
      ],
-     "path": "src/code_symbol.rs",
-     "purpose": "—",
+     "path": "src/code_symbol/types.rs",
+     "purpose": "Chunk, symbol, manifest, graph and embedding value types with their limits",
      "surface": {
-      "const": 11,
-      "crate-vis": 1,
-      "fn": 28,
+      "const": 7,
+      "fn": 9,
       "struct": 10
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
-     "path": "src/code_symbol/tests.rs",
-     "purpose": "—",
+     "path": "src/code_symbol/validate.rs",
+     "purpose": "Manifest, chunk, symbol and commit-hash validation plus the secret scan",
      "surface": {
-      "fn": 9
+      "crate-vis": 14
      }
     },
     {
@@ -4673,26 +4827,69 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/companion/codec.rs",
+     "purpose": "Canonical MessagePack codec for companion records, scope, subject, and provenance",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/companion/keys.rs",
+     "purpose": "Pinned on-disk constants for companion records and task payloads",
+     "surface": {
+      "const": 8,
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/companion/mod.rs",
+     "purpose": "Companion relationship/persona record substrate",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CompanionExportClassification",
+      "CompanionExpression",
+      "CompanionLifecycleEvent",
+      "CompanionLifecycleEventKind",
+      "CompanionProvenance",
+      "CompanionRecord",
+      "CompanionRecordKey",
+      "CompanionRecordKind",
+      "CompanionScope",
+      "CompanionSubject"
+     ],
+     "path": "src/companion/model.rs",
+     "purpose": "Typed companion record domain: kinds, scopes, subjects, provenance, and records",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 6,
+      "fn": 37,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ClaimCompanionTask",
       "ClaimCompanionTaskOutcome",
-      "CompanionExportClassification",
-      "CompanionExpression",
-      "CompanionExpressionRegister",
-      "CompanionLifecycleEvent",
-      "CompanionLifecycleEventKind",
-      "CompanionProvenance",
       "CompanionQueue",
-      "CompanionRecord",
-      "CompanionRecordKey",
-      "CompanionRecordKind",
-      "CompanionRegister",
-      "CompanionScope",
-      "CompanionScopeResolution",
-      "CompanionScopeResolutionSource",
-      "CompanionSubject",
       "CompanionTask",
       "CompanionTaskKind",
       "CompanionTaskStatus",
@@ -4707,14 +4904,39 @@
       "RetryCompanionTask",
       "RetryCompanionTaskOutcome"
      ],
-     "path": "src/companion.rs",
-     "purpose": "Companion relationship/persona record substrate",
+     "path": "src/companion/queue.rs",
+     "purpose": "Durable companion task queue over AttemptQueue with payload codec and dedupe keys",
      "surface": {
-      "const": 8,
-      "crate-vis": 8,
-      "enum": 13,
-      "fn": 83,
-      "struct": 17
+      "enum": 6,
+      "fn": 13,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionExpressionRegister",
+      "CompanionRegister",
+      "CompanionScopeResolution",
+      "CompanionScopeResolutionSource"
+     ],
+     "path": "src/companion/register.rs",
+     "purpose": "In-memory companion registers with scope and expression resolution",
+     "surface": {
+      "enum": 1,
+      "fn": 20,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/companion/store.rs",
+     "purpose": "Transaction key-lookup scans over the companion-register type index",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -4724,6 +4946,17 @@
      "path": "src/companion/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/companion/vault.rs",
+     "purpose": "Vault record APIs for companion profiles, relationships, and register snapshots",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 9
+     }
     },
     {
      "bucket": "m",
@@ -7277,36 +7510,139 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/codec.rs",
+     "purpose": "Shared MessagePack and entity-ref decoding helpers for the federation module",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "CoreferenceStatus",
-      "FederationDirectionScope",
+      "CoreferenceStatus"
+     ],
+     "path": "src/federation/coreference.rs",
+     "purpose": "Cross-vault same_as links and per-pact share consent (FED-07)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "FederationGrant",
       "FederationGrantPreset",
       "FederationGrantRole",
-      "FederationGrantScope",
+      "FederationGrantScope"
+     ],
+     "path": "src/federation/grant.rs",
+     "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
+     "surface": {
+      "const": 3,
+      "crate-vis": 16,
+      "enum": 3,
+      "fn": 14,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GuestShareEnvelope",
+      "GuestShareEnvelopeBody"
+     ],
+     "path": "src/federation/guest.rs",
+     "purpose": "Guest-share envelope body and signed envelope codec",
+     "surface": {
+      "const": 3,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/mod.rs",
+     "purpose": "Federation grant record substrate",
+     "surface": {
+      "crate-vis": 5,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FederationDirectionScope",
       "FederationPactScope",
       "FederationScopeBands",
       "FederationScopeFacets",
       "FederationScopeWorlds",
-      "FederationStaleReason",
-      "GuestShareEnvelope",
-      "GuestShareEnvelopeBody",
+      "SelectorRange"
+     ],
+     "path": "src/federation/pact_scope.rs",
+     "purpose": "Pact direction-scope lattice (worlds/facets/bands axes) and canonical codec",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/peer_authority.rs",
+     "purpose": "Peer authority-log admission (FED-03) and roster refolding",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "MemberRelationship",
       "MemberRelationshipContext",
-      "RelationshipTrustClass",
-      "SelectorRange",
+      "RelationshipTrustClass"
+     ],
+     "path": "src/federation/relationships.rs",
+     "purpose": "Member-to-person binding, label trust classes, and relationship claim doors",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FederationStaleReason",
       "WorldStaleStamp"
      ],
-     "path": "src/federation.rs",
-     "purpose": "Federation grant record substrate",
+     "path": "src/federation/stale.rs",
+     "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
-      "const": 16,
-      "crate-vis": 12,
-      "enum": 11,
-      "fn": 46,
-      "struct": 7
+      "const": 3,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -8862,7 +9198,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
@@ -15865,7 +16201,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 11,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -15970,10 +16306,10 @@
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
     "code_symbol": {
-     "files": 2,
+     "files": 9,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "—"
     },
     "codebase": {
@@ -16033,10 +16369,10 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
     "companion": {
-     "files": 2,
+     "files": 9,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Companion relationship/persona record substrate"
     },
     "config": {
@@ -16292,10 +16628,10 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 2,
+     "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
@@ -16971,10 +17307,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 147,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 794,
-   "test_files": 372
+   "source_files": 822,
+   "test_files": 373
   },
   "oneiron-bench": {
    "files": [
@@ -17209,7 +17545,7 @@
      "path": "src/beam/tests_ppr_vad.rs",
      "purpose": "PPR-VAD tests",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -17261,13 +17597,91 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/interface_bench.rs",
+     "path": "src/interface_bench/cli_and_pinned_config.rs",
+     "purpose": "Subcommand dispatch and pinned-model config parsing",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/config_types.rs",
+     "purpose": "Campaign, task, and report DTOs plus RunSettings",
+     "surface": {
+      "crate-vis": 71
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/eval_run.rs",
+     "purpose": "Smoke, probe, and full execution plus resume validation",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/mod.rs",
      "purpose": "Campaign #5 interface bench task generation and smoke harness",
      "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/reports_and_fixture_helpers.rs",
+     "purpose": "Row aggregation and report tables",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/taskgen.rs",
+     "purpose": "Fixture and task generation plus atomic JSON writers",
+     "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/tests_a.rs",
+     "purpose": "Taskgen, config, and memo tests",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/tests_b.rs",
+     "purpose": "Pinned-model tests",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/interface_bench/wire_and_scoring.rs",
+     "purpose": "Request hashing, memo keys, and provider wire calls",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -17667,10 +18081,10 @@
      "purpose": "ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop"
     },
     "interface_bench": {
-     "files": 1,
+     "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
     "perf": {
@@ -17695,9 +18109,9 @@
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)"
     }
    },
-   "over_bar": 2,
+   "over_bar": 1,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 59,
+   "source_files": 67,
    "test_files": 11
   },
   "oneiron-driver": {
@@ -17741,25 +18155,128 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/budget_ids.rs",
+     "purpose": "Durable per-pass budget-id derivation and occupied-row index scan",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/supervisor/budget_tests.rs",
+     "purpose": "Durable budget-id, index-scan, and config-validation tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RestartBackoffConfig",
+      "WakeSupervisorConfig"
+     ],
+     "path": "src/supervisor/config.rs",
+     "purpose": "Static config, restart backoff, and budget-id length ceilings",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8,
+      "fn": 2,
+      "struct": 2,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ConsolidationExecutorFactory",
-      "PassExecutorFactory",
-      "RestartBackoffConfig",
-      "ShutdownHandle",
+      "PassExecutorFactory"
+     ],
+     "path": "src/supervisor/factory.rs",
+     "purpose": "Per-pass attempt-executor factory trait and default implementation",
+     "surface": {
+      "fn": 4,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/supervisor/factory_tests.rs",
+     "purpose": "Factory, planner-routing, and attempt-fixture tests",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "WakeSupervisor",
-      "WakeSupervisorConfig",
       "WakeSupervisorReport"
      ],
-     "path": "src/supervisor.rs",
+     "path": "src/supervisor/loop.rs",
+     "purpose": "Biased-select supervisor loop with panic containment and backoff",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/supervisor/loop_tests.rs",
+     "purpose": "Loop, panic-containment, shutdown, and redrive acceptance tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
      "surface": {
-      "const": 1,
-      "fn": 12,
-      "struct": 6,
-      "trait": 1,
-      "type": 1
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/pass.rs",
+     "purpose": "Single wake-pass assembly and engine delegation",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShutdownHandle"
+     ],
+     "path": "src/supervisor/shutdown.rs",
+     "purpose": "Cooperative shutdown handle and listener channels",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/supervisor/tests/mod.rs",
+     "purpose": "Shared fixtures for the supervisor test suites",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -17811,10 +18328,10 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 2,
+     "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…"
     },
     "tick": {
@@ -17825,10 +18342,10 @@
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)"
     }
    },
-   "over_bar": 2,
+   "over_bar": 1,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 4,
-   "test_files": 2
+   "source_files": 10,
+   "test_files": 6
   },
   "oneiron-ffi": {
    "files": [
@@ -18521,13 +19038,101 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/native/verify.rs",
+     "path": "src/native/verify/mod.rs",
      "purpose": "Native verifier and profile classifier (§7.7)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_chain_gates.rs",
+     "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_dss_core.rs",
+     "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_revocation.rs",
+     "purpose": "CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_sig_pipeline.rs",
+     "purpose": "Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_dss_b.rs",
+     "purpose": "Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_fixtures_dss_a.rs",
+     "purpose": "Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_lta_probes.rs",
+     "purpose": "Verifier tests D: span-craft and probe archival tests, flate CRL, object limit, typeless and orphan…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_sig_shapes.rs",
+     "purpose": "Verifier tests E: ByteRange and Contents shapes, field-tree reachability and cycles, SubFilter dispatch…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_time_lta_a.rs",
+     "purpose": "Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -18597,16 +19202,16 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 8,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Native implementation modules (feature `native`)"
     }
    },
-   "over_bar": 4,
+   "over_bar": 3,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 11,
+   "source_files": 20,
    "test_files": 6
   },
   "oneiron-server": {
@@ -18934,13 +19539,83 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/api/mcp_gateway.rs",
+     "path": "src/api/mcp_gateway/actor_dispatch.rs",
+     "purpose": "Tool execution dispatch across actors",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/admission.rs",
+     "purpose": "Scoped-call admission and actor resolution",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/board_setup.rs",
+     "purpose": "Board state, setup grammar, and page preflight",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/envelope.rs",
+     "purpose": "JSON-RPC envelope types and request dispatch",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/exec_board_verbs.rs",
+     "purpose": "Execute-code and board-verb executors",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/facade_verbs.rs",
+     "purpose": "Facade-backed MCP verb executors",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/tasks_response.rs",
+     "purpose": "Tasks verb and response shaping",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -19548,7 +20223,29 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "McpBoardSnapshot",
+      "McpConnectorActorRecord",
+      "McpConnectorActorRegistrationError",
+      "McpConnectorActorResolutionError",
+      "McpConnectorActorRevokeStatus",
+      "McpConnectorScope",
+      "McpCredentialHashKey",
+      "McpResolvedActor"
+     ],
+     "path": "src/mcp/actors.rs",
+     "purpose": "MCP connector actor types: credentials, scopes, records, and resolution",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 3,
+      "fn": 16,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "McpActorClass",
@@ -19556,79 +20253,204 @@
       "McpAskEffort",
       "McpAskRoute",
       "McpAskToolArgs",
-      "McpBoardKeyframe",
-      "McpBoardSnapshot",
       "McpBookOperation",
       "McpBookToolArgs",
-      "McpCacheHint",
       "McpCalendarOperation",
       "McpCalendarRange",
       "McpCalendarSelector",
       "McpCalendarToolArgs",
       "McpCitationMode",
-      "McpCodeExecutionError",
-      "McpCodeExecutionHost",
-      "McpCodeExecutionRequest",
-      "McpCodeModeProvider",
-      "McpConnectorActorRecord",
-      "McpConnectorActorRegistrationError",
-      "McpConnectorActorRegistry",
-      "McpConnectorActorResolutionError",
-      "McpConnectorActorRevokeStatus",
-      "McpConnectorScope",
       "McpConsentMetadata",
-      "McpCredentialHashKey",
       "McpEditEdgeSubject",
       "McpEditSubject",
       "McpEditToolArgs",
       "McpEditVerb",
-      "McpEndpointTool",
-      "McpEndpointToolSchema",
-      "McpEngineNativeCodeHost",
-      "McpExecuteCodeToolArgs",
-      "McpGeneratedVerbTool",
       "McpNavMode",
       "McpNavToolArgs",
       "McpOccurredRange",
-      "McpPageBudget",
-      "McpPageCursorError",
-      "McpPageRequest",
-      "McpPageSource",
       "McpReadTarget",
       "McpReadToolArgs",
-      "McpRegisteredSurface",
-      "McpResolvedActor",
-      "McpResultEnd",
-      "McpResultMetadata",
-      "McpRetrievalHealth",
       "McpRoutedAskToolArgs",
-      "McpSetupPayload",
-      "McpSetupPayloadError",
+      "McpToolScope"
+     ],
+     "path": "src/mcp/args.rs",
+     "purpose": "MCP tool argument envelopes: the request shapes for every tool verb",
+     "surface": {
+      "enum": 7,
+      "fn": 7,
+      "struct": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "McpToolArguments"
+     ],
+     "path": "src/mcp/codec.rs",
+     "purpose": "MCP argument codecs: parsed-value and raw-JSON integer normalization",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "McpCacheHint",
+      "McpExecuteCodeToolArgs",
+      "McpPageRequest",
       "McpSetupToolArgs",
       "McpSubscriptionScope",
-      "McpSurfaceConstructionError",
-      "McpSurfaceMode",
-      "McpToolArguments",
-      "McpToolName",
-      "McpToolSchema",
-      "McpToolScope",
-      "McpToolValidationError",
-      "McpValidatedToolArgs",
       "McpVerbArguments",
-      "McpVerbBinding",
-      "McpVerbFamily",
       "McpVerbToolArgs",
       "McpVerbToolPayload"
      ],
-     "path": "src/mcp.rs",
+     "path": "src/mcp/endpoint_args.rs",
+     "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/endpoint_schema.rs",
+     "purpose": "JSON schemas for endpoint tools: setup, execute-code, paging, and verbs",
+     "surface": {
+      "const": 5,
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "McpCodeExecutionError",
+      "McpCodeExecutionHost",
+      "McpCodeExecutionRequest",
+      "McpCodeModeProvider",
+      "McpEngineNativeCodeHost"
+     ],
+     "path": "src/mcp/exec_host.rs",
+     "purpose": "MCP code-execution host seam and the engine-native host binding",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 2,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/mod.rs",
      "purpose": "MCP connector actor registry",
      "surface": {
-      "const": 26,
-      "crate-vis": 11,
-      "enum": 24,
-      "fn": 103,
-      "struct": 42,
-      "trait": 2
+      "crate-vis": 3,
+      "re-export": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "McpPageBudget",
+      "McpPageCursorError",
+      "McpPageSource",
+      "McpResultEnd",
+      "McpRetrievalHealth"
+     ],
+     "path": "src/mcp/paging.rs",
+     "purpose": "MCP page budgets, cursors, snapshots, and canonical-JSON digests",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 3,
+      "fn": 19,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "McpConnectorActorRegistry"
+     ],
+     "path": "src/mcp/registry.rs",
+     "purpose": "MCP connector actor registry: cursors, board epochs, and stream proxy",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 19,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "McpBoardKeyframe",
+      "McpResultMetadata",
+      "McpSetupPayload",
+      "McpSetupPayloadError"
+     ],
+     "path": "src/mcp/results.rs",
+     "purpose": "MCP result envelopes: metadata, board keyframes, and setup payloads",
+     "surface": {
+      "enum": 1,
+      "fn": 9,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/schema_parts.rs",
+     "purpose": "Shared JSON-schema fragments: actors, scopes, subjects, and envelope pieces",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/schema_tools.rs",
+     "purpose": "JSON schemas for each MCP tool, including booking and calendar operations",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "McpEndpointTool",
+      "McpEndpointToolSchema",
+      "McpGeneratedVerbTool",
+      "McpRegisteredSurface",
+      "McpSurfaceConstructionError",
+      "McpSurfaceMode",
+      "McpVerbBinding",
+      "McpVerbFamily"
+     ],
+     "path": "src/mcp/surface.rs",
+     "purpose": "MCP endpoint surface: modes, verb bindings, and the registered tool listing",
+     "surface": {
+      "const": 14,
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 14,
+      "struct": 3
      }
     },
     {
@@ -19638,6 +20460,46 @@
      "path": "src/mcp/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "McpToolName",
+      "McpToolSchema",
+      "McpToolValidationError",
+      "McpValidatedToolArgs"
+     ],
+     "path": "src/mcp/tool_catalog.rs",
+     "purpose": "Retired MCP tool catalog: legacy names, schemas, and validation dispatch",
+     "surface": {
+      "const": 4,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/validate.rs",
+     "purpose": "Validation of MCP tool arguments, per-verb allow-lists, and metadata checks",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/validators.rs",
+     "purpose": "Small field validators shared by every MCP argument type",
+     "surface": {
+      "crate-vis": 12
+     }
     },
     {
      "bucket": "m",
@@ -19959,7 +20821,7 @@
    ],
    "modules": {
     "api": {
-     "files": 55,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -20036,10 +20898,10 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
     "mcp": {
-     "files": 2,
+     "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "MCP connector actor registry"
     },
     "oauth_relay": {
@@ -20099,9 +20961,9 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 16,
+   "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 78,
+   "source_files": 100,
    "test_files": 46
   },
   "oneiron-uniffi": {
