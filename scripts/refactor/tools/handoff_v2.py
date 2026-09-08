@@ -17,7 +17,8 @@ BASE = "b2437d700"
 MOVES = os.path.join(ROOT, "scripts/refactor/moves")
 # Handoff packages land under the (gitignored) target dir unless redirected.
 OUT = os.environ.get("REFACTOR_HANDOFF_OUT") or os.path.join(ROOT, "target", "refactor-handoffs")
-SESSION = "https://claude.ai/code/session_01Ahja3evrLPJVmg8ErBsg6R"
+# Provenance link stamped into handoff packages; set REFACTOR_HANDOFF_SESSION to record one.
+SESSION = os.environ.get("REFACTOR_HANDOFF_SESSION", "")
 GUARD = "crates/oneiron/src/agent_def[.rs/] · crates/oneiron/src/edit_settle[.rs/]"
 
 FABLE_REVIEW = {"T1", "T2", "T4"}
