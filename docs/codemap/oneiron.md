@@ -17,12 +17,29 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/access_grant/tests.rs` | test | m | — | — | — |
 | `src/actor_claims.rs` | src | XL | 5 struct · 2 enum · 1 trait · 13 fn · 12 const · 6 crate-vis | ActorClaimEvidence, ActorClaimRow, ActorNote, ActorNoteKind, SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
 | `src/actor_claims/tests.rs` | test | L | — | — | — |
-| `src/affect.rs` | src | XL | 7 struct · 2 enum · 28 fn · 3 const · 1 mod · 15 crate-vis | AffectTriggerValue, ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence, Vad, VadAnnotation, VadAnnotationSource, VadComponent +1 | — |
-| `src/affect/coping.rs` | src | m | 3 struct · 1 enum · 16 fn · 1 const · 2 crate-vis | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | — |
-| `src/agent_def.rs` | src | XL | 4 struct · 3 enum · 20 fn · 13 const · 10 crate-vis | AgentCeiling, AgentDefinition, AgentScope, CompactionOwnership, ContextBudgetSplit, McpRef, MemoryProfile | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `src/affect/annotation.rs` | src | s | 11 crate-vis | — | Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers |
+| `src/affect/claim_vad.rs` | src | s | 3 struct · 1 const · 4 crate-vis | ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence | Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types |
+| `src/affect/consolidation.rs` | src | m | 6 fn · 2 crate-vis | — | Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans |
+| `src/affect/coping.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const · 2 crate-vis | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | — |
+| `src/affect/mod.rs` | src | s | 1 mod · 3 re-export · 4 crate-vis | — | — |
+| `src/affect/trigger.rs` | src | m | 2 struct · 15 fn · 1 const · 7 crate-vis | AffectTriggerValue, VadDelta | Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators |
+| `src/affect/vad.rs` | src | s | 2 struct · 2 enum · 5 fn · 1 const · 1 crate-vis | Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
+| `src/agent_def/codec.rs` | src | m | 2 fn · 3 crate-vis | — | Pinned-key MessagePack encode and top-level body decode |
+| `src/agent_def/decode.rs` | src | m | 8 crate-vis | — | Per-field MessagePack decoders, the validate_* ladder, and text helpers |
+| `src/agent_def/doors.rs` | src | s | 5 fn | — | Vault CRUD doors over the generic entity/batch machinery |
+| `src/agent_def/manifest.rs` | src | m | 8 crate-vis | — | Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation |
+| `src/agent_def/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
 | `src/agent_def/tests.rs` | test | XL | — | — | AGENT_DEF (ONE-1443) tests |
-| `src/agent_dispatch.rs` | src | XL | 8 struct · 5 enum · 16 fn · 7 const · 1 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, AttenuatedDispatchTarget, DispatchAgent +5 | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
+| `src/agent_def/types.rs` | src | m | 4 struct · 3 enum · 13 fn · 13 const · 44 crate-vis | AgentCeiling, AgentDefinition, AgentScope, CompactionOwnership, ContextBudgetSplit, McpRef, MemoryProfile | AgentDefinition domain types, key/limit consts, and constructors |
+| `src/agent_dispatch/attenuation.rs` | src | s | 4 crate-vis | — | Live-ceiling attenuation and deterministic attenuated-fork registration |
+| `src/agent_dispatch/codec.rs` | src | m | 4 fn · 2 crate-vis | — | Pinned-key MessagePack codec plus payload/status decode helpers |
+| `src/agent_dispatch/context.rs` | src | s | 1 crate-vis | — | Spawn-context resolution, sibling-lineage admission, ancestor projection fold |
+| `src/agent_dispatch/dispatch.rs` | src | m | 1 struct · 5 fn · 5 crate-vis | AgentDispatcher | Core dispatch admission: dispatchability, depth bound, enqueue, dedupe |
+| `src/agent_dispatch/kill.rs` | src | s | 2 fn | — | Spawner-only killSpawn intervention and healer-slot dispatch arm |
+| `src/agent_dispatch/kill_spawn_tests.rs` | test | L | — | — | Kill-spawn authority and state contract tests |
+| `src/agent_dispatch/mod.rs` | src | s | 3 re-export | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `src/agent_dispatch/tests.rs` | test | XL | — | — | AGENT-3 (ONE-1445) tests, mapped 1:1 to the brief's acceptance criteria: snapshot round-trip, system-preset… |
+| `src/agent_dispatch/types.rs` | src | s | 7 struct · 5 enum · 5 fn · 7 const · 12 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget, DispatchAgent, DispatchHealer +4 | Dispatch domain types, outcome enums, and pinned key/sentinel constants |
 | `src/agent_inbox_lens.rs` | src | s | 3 struct · 1 enum · 2 fn · 1 const | AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, InboxImpact | Renderer-neutral inbox query |
 | `src/agent_inbox_lens/tests.rs` | test | m | — | — | — |
 | `src/agent_run_status.rs` | src | s | 1 struct · 2 enum · 8 fn · 3 const | AgentRunStatus, ExecutorTerminalCause, InvalidAgentRunStatusTransition | AgentRunStatus contract shared by Context Board and run-tree viewers |
@@ -42,8 +59,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/analyzer/script/tests.rs` | test | s | — | — | — |
 | `src/analyzer/tests.rs` | test | m | — | — | — |
 | `src/analyzer/token.rs` | src | m | 2 struct · 3 enum · 11 fn · 2 const | AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind | Token primitives emitted by analyzers |
-| `src/anchored_annotation.rs` | src | XL | 7 struct · 4 enum · 19 fn · 6 const · 3 crate-vis | A1Range, Anchor, AnnotationComment, AnnotationThread, DriftMarker, Locator, ReanchorOp, ReanchorOutcome +3 | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
+| `src/anchored_annotation/codec.rs` | src | m | 14 crate-vis | — | MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine |
+| `src/anchored_annotation/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
+| `src/anchored_annotation/model.rs` | src | m | 7 struct · 4 enum · 9 fn · 6 const · 8 crate-vis | A1Range, Anchor, AnnotationComment, AnnotationThread, DriftMarker, Locator, ReanchorOp, ReanchorOutcome +3 | Domain types: A1 ranges, format-typed locators, anchors, thread/comment/brief structs, and the re-anchor op… |
+| `src/anchored_annotation/reanchor.rs` | src | m | 2 fn · 3 crate-vis | — | Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn) |
 | `src/anchored_annotation/tests.rs` | test | L | — | — | — |
+| `src/anchored_annotation/threads.rs` | src | m | 8 fn · 6 crate-vis | — | Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort |
 | `src/artifact_hosting.rs` | src | m | 5 struct · 3 enum · 12 fn · 2 const | ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef, ArtifactSnapshotSelector | Local artifact hosting over pinned CODE_ARTIFACT snapshots |
 | `src/artifact_hosting/tests.rs` | test | s | — | — | — |
 | `src/attempt_queue/cancel/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | ONE-1896 two-rung graceful-cancel and LANDING protocol |
@@ -58,8 +79,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/result.rs` | src | s | 2 fn · 3 crate-vis | — | Transaction-composable result attachment and abandonment |
 | `src/attempt_queue/settlement.rs` | src | s | 2 fn · 1 crate-vis | — | Transaction-composable completion and failure with terminal pack receipts |
 | `src/attempt_queue/telemetry.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | AttemptQueueCleanupMetricsSnapshot | Process-local cleanup counters, cleanup span emission, and the shared invalid-transition error constructor |
-| `src/attempt_queue/tests.rs` | test | XL | — | — | — |
+| `src/attempt_queue/tests/abandon_result.rs` | test | m | — | — | Abandon gates and terminal idempotence, write-once set_result, and result refs |
+| `src/attempt_queue/tests/actor_task_run.rs` | test | m | — | — | Actor-scoped dedupe, task_ref compatibility, and the run-id bound |
+| `src/attempt_queue/tests/claim_transitions.rs` | test | m | — | — | Claim semantics and index hygiene, plus complete/fail transition guards |
+| `src/attempt_queue/tests/cleanup_decode.rs` | test | m | — | — | Stale-lease cleanup and recovery, decode-fails-closed guards, and the ready-key codec |
+| `src/attempt_queue/tests/enqueue_pause_cancel.rs` | test | m | — | — | Enqueue persistence, run index, dedupe keys, and pause/resume/cancel/interrupt lifecycle |
+| `src/attempt_queue/tests/landing_core.rs` | test | L | — | — | Landing codec and projection, soft-request handoff, hard force, and the reserve |
+| `src/attempt_queue/tests/landing_reserve_settle.rs` | test | m | — | — | Per-sequence answers, receipt-cap settlement, reserve dial math, and projections |
+| `src/attempt_queue/tests/manifest_pack_compat.rs` | test | m | — | — | Manifest lane appends, pack terminal receipts, and legacy backoff rows |
+| `src/attempt_queue/tests/mod.rs` | test | s | — | — | — |
+| `src/attempt_queue/tests/retry_chains.rs` | test | m | — | — | Retry minting, retry_of lineage queryability, and bounded depth counting |
 | `src/attempt_queue/tests/scoped_settlement.rs` | test | s | — | — | ONE-1904 × ONE-1876: caller-owned settlement keeps actor-scoped index ownership |
+| `src/attempt_queue/tests/support.rs` | test | m | 20 crate-vis | — | Shared fixtures, helpers, and telemetry captures for the attempt-queue tests |
 | `src/attempt_queue/types.rs` | src | m | 17 struct · 11 enum · 25 fn · 1 const · 11 crate-vis | AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport, AttemptQueueRetryReason +20 | Durable wire, verb-input, and outcome types for the attempt queue |
 | `src/attempt_queue/validate.rs` | src | L | 85 crate-vis | — | Input validators and in-place record mutators guarding the attempt-queue doors |
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 2 const · 6 crate-vis | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
@@ -75,7 +106,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 8 fn · 5 crate-vis | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/mod.rs` | src | s | 8 re-export · 1 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/op_apply.rs` | src | m | 6 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
-| `src/authority/tests.rs` | test | XL | — | — | — |
+| `src/authority/tests/actor_binding.rs` | test | L | — | — | Actor bind, rebind and revoke fold, qualification and DAG merge |
+| `src/authority/tests/basic_fold.rs` | test | m | — | — | Fold validation for enroll, rotate, recovery, revoke and equivocation |
+| `src/authority/tests/critical_confirm.rs` | test | m | — | — | Critical-write confirm fold, wire strictness and poisoning |
+| `src/authority/tests/federation_lifecycle.rs` | test | m | — | — | Federation pact lifecycle transitions and totality table |
+| `src/authority/tests/federation_merge.rs` | test | L | — | — | Federation DAG merges, grant divergence healing and tiebreaks |
+| `src/authority/tests/fork_ancestry.rs` | test | L | — | — | Restore markers and fork-candidate ancestry exemption rules |
+| `src/authority/tests/fork_quarantine.rs` | test | m | — | — | Fork quarantine limits, quorum-revoke resolution and vault attribution |
+| `src/authority/tests/fork_resolution.rs` | test | L | — | — | Late fork rechecks, waiting, rank tiebreaks and seq-zero roots |
+| `src/authority/tests/fork_scoping.rs` | test | L | — | — | Fork scoping across vaults, recovery winners and missing parents |
+| `src/authority/tests/foundations.rs` | test | m | — | — | Genesis vectors, wall-clock clock, signature suites, roles and quorum |
+| `src/authority/tests/mod.rs` | test | s | — | — | — |
+| `src/authority/tests/peer_roster.rs` | test | m | — | — | Peer roster derivation from relayed entries |
+| `src/authority/tests/readonly_fold.rs` | test | m | — | — | Readonly fold against full fold under clock skew and sidecars |
+| `src/authority/tests/revoke_freeze_bypass.rs` | test | m | — | — | Pending-widen freeze with RevokeActor emergency bypass |
+| `src/authority/tests/support.rs` | test | L | 61 crate-vis | — | Shared fixtures and fold helpers for the authority tests |
+| `src/authority/tests/widen_veto.rs` | test | m | — | — | Tier-widen delay, owner veto, seen-time convergence and permutation |
 | `src/authority/vault_api.rs` | src | m | 4 fn · 2 crate-vis | — | `impl Vault` — the AUTHORITY_LOG read/write door |
 | `src/authority/wire_decode.rs` | src | m | 4 crate-vis | — | `rmpv::Value` decoding for every authority type |
 | `src/authority/wire_encode.rs` | src | m | 9 crate-vis | — | `rmpv::Value` encoding for every authority type |
@@ -99,7 +145,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions/timestamp_guards.rs` | test | s | — | — | Closing timestamps cannot precede the authored claim's occurred start |
 | `src/batch/deindex.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/edge_apply.rs` | src | s | 8 crate-vis | — | — |
-| `src/batch/export.rs` | src | XL | 13 struct · 5 enum · 70 fn · 10 const · 1 re-export · 3 crate-vis | CompanionExportLayer, CompanionExportRecord, ExportAuthorityManifest, ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest +10 | — |
+| `src/batch/export/export_authority.rs` | src | m | 2 struct · 2 enum · 3 fn · 3 const · 6 crate-vis | ExportAuthorityManifest, VaultImportClassification, VaultImportMismatch, VaultImportReceipt | Export authority digests, import classification, and label validation |
+| `src/batch/export/export_companion.rs` | src | s | 2 struct · 9 fn · 1 const | CompanionExportLayer, CompanionExportRecord | Companion-layer export filtering |
+| `src/batch/export/export_egress.rs` | src | s | 13 fn | — | Whole-vault manifest egress doors and the Vault export surface |
+| `src/batch/export/export_manifest.rs` | src | m | 6 struct · 35 fn · 2 const · 1 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest, ExportSerializerManifest | Whole-vault export manifest artifact types and stanza impls |
+| `src/batch/export/foreign_stage/export_foreign_receipt.rs` | src | m | 3 struct · 3 enum · 3 fn · 4 const · 7 crate-vis | ForeignVaultImportSource, StagedVaultImport, VaultImportConfirmation, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus | Sync-gated import receipt codec, key consts, and status types |
+| `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 7 fn · 1 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
+| `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export | — | Sync-gated foreign-import staging submodule |
+| `src/batch/export/mod.rs` | src | s | 5 re-export | — | — |
 | `src/batch/export/tests.rs` | test | XL | — | — | — |
 | `src/batch/facet_validation.rs` | src | s | 6 crate-vis | — | — |
 | `src/batch/gate_mode.rs` | src | s | 7 crate-vis | — | — |
@@ -112,7 +165,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply.rs` | src | L | 8 crate-vis | — | — |
 | `src/batch/secret_scan.rs` | src | m | 3 crate-vis | — | — |
 | `src/batch/short_id.rs` | src | s | 9 crate-vis | — | — |
-| `src/batch/tests.rs` | test | XL | — | — | — |
+| `src/batch/tests/authority_log.rs` | test | L | — | — | Authority log, first-seen fold, eviction and identity topology |
+| `src/batch/tests/facet_taint_session.rs` | test | m | — | — | Facet-of validation, taint guard, session apply and live-overlay exclusion |
+| `src/batch/tests/habit_streak.rs` | test | m | — | — | Habit check-in rules and derived streak counters |
+| `src/batch/tests/lexical_hints_lifecycle.rs` | test | m | — | — | Lexical-hint side-record write/read/replace/delete lifecycle |
+| `src/batch/tests/lexical_hints_policy.rs` | test | m | — | — | Lexical-hint policy gates, replication deferral and BM25 indexing |
+| `src/batch/tests/mod.rs` | test | s | — | — | White-box tests for the batch apply pipeline, split by topic across child files |
+| `src/batch/tests/provenance_edges.rs` | test | m | — | — | Provenanced and timestamped edge builders, replay and delete-edge guards |
+| `src/batch/tests/secret_policy_claim.rs` | test | m | — | — | Secret scan, policy consent and claim write-envelope gates |
+| `src/batch/tests/seeded_actors.rs` | test | s | — | — | Seeded and pinned actors, agent ceilings and fork gating |
+| `src/batch/tests/support.rs` | test | s | 13 crate-vis | — | Shared helpers for the batch white-box tests |
+| `src/batch/tests/tree_child_of.rs` | test | m | — | — | Child-of tree shape and task-role pair validation |
+| `src/batch/tests/vectors_embeddings.rs` | test | m | — | — | Pending-embedding markers, vector fill and vector row codec |
 | `src/batch/thread_claim_index.rs` | src | s | 1 crate-vis | — | Thread claims reuse the existing ClaimOf index at every storage door |
 | `src/batch/txn_builder.rs` | src | m | 1 struct · 13 fn · 9 crate-vis | TxnBatchBuilder | — |
 | `src/batch/types.rs` | src | s | 19 crate-vis | — | — |
@@ -156,8 +220,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/emergency_reschedule/tests/mod.rs` | test | m | — | — | — |
 | `src/booking/emergency_reschedule/tests/owner_revocation.rs` | test | s | — | — | — |
 | `src/booking/emergency_reschedule/tests/pending_lookup.rs` | test | m | — | — | — |
-| `src/booking/invite_grant.rs` | src | XL | 3 struct · 4 fn · 4 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | ONE-1814 [BK-A-3] the booking page's standing invite grant |
+| `src/booking/invite_grant/authorization.rs` | src | s | 2 fn · 3 crate-vis | — | Whether a page's standing grant covers a recipient, read from persisted claims only |
+| `src/booking/invite_grant/codec.rs` | src | s | 4 crate-vis | — | Claim-value decode and the booking error constructors this lane uses |
+| `src/booking/invite_grant/dispatch.rs` | src | m | 1 fn · 5 crate-vis | — | Builds the outbound dispatch for the first confirm's invite and commits its passport |
+| `src/booking/invite_grant/mint.rs` | src | s | 1 fn · 3 crate-vis | — | Mints the one standing page invite grant and finds the live one for a page |
+| `src/booking/invite_grant/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | ONE-1814 [BK-A-3] the booking page's standing invite grant |
 | `src/booking/invite_grant/tests/faceted_sender.rs` | test | s | — | — | — |
+| `src/booking/invite_grant/tests/mod.rs` | test | L | — | — | Lane tests for the booking page's standing invite grant |
+| `src/booking/invite_grant/types.rs` | src | s | 3 struct · 2 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | Caller-facing shapes for the booking page's standing invite grant |
 | `src/booking/lifecycle/claim.rs` | src | m | 1 struct · 6 fn · 7 crate-vis | BookingConfirmationContext | Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and… |
 | `src/booking/lifecycle/confirmation_state.rs` | src | s | 3 crate-vis | — | The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's… |
 | `src/booking/lifecycle/door.rs` | src | m | 2 struct · 1 enum · 4 fn | BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest | The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run… |
@@ -195,7 +265,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/build_cache/tests/hit_metadata.rs` | test | m | — | — | — |
 | `src/calendar/caldav.rs` | src | s | 2 struct · 1 trait · 4 fn · 1 const | CalDavConnector, CalDavDiscovery, CalDavWire | CalDAV provider adapter (CAL-05, ONE-1787) |
 | `src/calendar/claims.rs` | src | XL | 9 struct · 7 enum · 19 fn · 15 const · 11 crate-vis | CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue +8 | The `calendar.*` claim family (CAL-00) |
-| `src/calendar/connectors.rs` | src | XL | 10 struct · 6 enum · 1 trait · 18 fn · 4 const | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload, CalendarRemoteObjectRow, CalendarRemoteTransport, CalendarSyncOutcome +9 | Shared calendar connector kernel (CAL-05, ONE-1787) |
+| `src/calendar/connectors/inbound.rs` | src | m | 1 fn · 3 crate-vis | — | Pull orchestration: apply, admit, enqueue, and reconcile |
+| `src/calendar/connectors/mod.rs` | src | s | 4 re-export | — | Shared calendar connector kernel (CAL-05, ONE-1787) |
+| `src/calendar/connectors/outbound.rs` | src | m | 2 struct · 2 enum · 3 fn · 11 crate-vis | CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState | Conditional writes plus durable outbox and remote-object cursor store |
+| `src/calendar/connectors/remote.rs` | src | m | 4 struct · 3 enum · 1 trait · 6 fn · 5 crate-vis | CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt, RemoteWriteRequest | Provider-neutral transport seam, change classification, and ICS render |
+| `src/calendar/connectors/seat.rs` | src | m | 4 struct · 1 enum · 8 fn · 4 const · 1 crate-vis | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload | Seat configs, cursors, kill switch, error type, and sync verbs |
 | `src/calendar/freebusy.rs` | src | m | 1 struct · 2 fn · 1 type | BusyInterval | Busy-only freebusy projection (CAL-09, C5) |
 | `src/calendar/google_internal.rs` | src | s | 1 struct · 1 trait · 3 fn · 2 const | GoogleInternalConnector, GoogleInternalWire | Workspace-Internal Google calendar adapter (CAL-05, ONE-1787) |
 | `src/calendar/ics.rs` | src | L | 3 struct · 3 fn · 2 const · 1 crate-vis | ImipEmitRequest, ParsedIcsFeed, ParsedVEvent | ICS (RFC 5545) parse half of the CAL-02 ingest adapter (ONE-1784) |
@@ -215,13 +289,33 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign.rs` | src | s | 1 struct · 2 fn · 2 const · 7 mod | CrmPackRegistration | CRM pack engine-side registration home |
 | `src/campaign/claims.rs` | src | L | 10 struct · 5 enum · 19 fn · 9 const · 11 crate-vis | BounceKind, CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, ClaimClassDescriptorRow, CommBounceValue, CommDoNotContactValue +7 | The CRM pack's claim families (CA-01) |
 | `src/campaign/claims/tests.rs` | test | L | — | — | — |
-| `src/campaign/compliance.rs` | src | XL | 7 struct · 8 enum · 11 fn · 7 const · 3 crate-vis | B2bExemption, ComplianceAmendmentClass, ComplianceAmendmentOutcome, ComplianceBlockReason, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow +7 | CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them |
-| `src/campaign/enrollment.rs` | src | XL | 9 struct · 5 enum · 26 fn · 2 const · 2 crate-vis | CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentEvent, CampaignEnrollmentRunner, CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation +6 | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
+| `src/campaign/compliance/amend.rs` | src | m | 2 enum · 6 fn | ComplianceAmendmentClass, ComplianceAmendmentOutcome | Propose/stamp amendment transaction: classification, activation, notices, proposal hash |
+| `src/campaign/compliance/codec.rs` | src | s | 9 crate-vis | — | Claim-store readers, comm-party mirror, and the msgpack value toolkit |
+| `src/campaign/compliance/evaluate.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 crate-vis | ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts, HydratedListProvenance | Pure dispatch evaluator: jurisdiction selection, row matching, verdict |
+| `src/campaign/compliance/hydrate.rs` | src | s | 2 crate-vis | — | External-effect gate leg and vault-to-facts hydration (evidence, jurisdiction, message elements) |
+| `src/campaign/compliance/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them |
+| `src/campaign/compliance/pack_store.rs` | src | s | 3 fn · 5 crate-vis | — | Seed loading, pack validation/coverage, and vault persistence plus msgpack encode/decode |
+| `src/campaign/compliance/rules.rs` | src | s | 4 struct · 4 enum · 7 const · 11 crate-vis | B2bExemption, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow, ComplianceSource, ConditionalExemptionEvidence, UnknownJurisdictionDefault | Pack identity consts, predicates, rule-row types, and the CompliancePack container |
+| `src/campaign/compliance/tests.rs` | test | L | — | — | Compliance behaviour: seed shape, evaluator verdicts, hydration, and amendment |
+| `src/campaign/enrollment/detection.rs` | src | m | 2 struct · 1 enum · 4 fn · 1 crate-vis | CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection | Persisted membership-transition events, detection pass, cause routing, and per-query baseline |
+| `src/campaign/enrollment/home_node.rs` | src | m | 2 struct · 2 enum · 9 fn · 2 crate-vis | CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation | Campaign-local MACRO home-node election, designation persistence, and admission checks |
+| `src/campaign/enrollment/mod.rs` | src | s | 5 re-export | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
+| `src/campaign/enrollment/outbound_leg.rs` | src | s | 2 crate-vis | — | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
+| `src/campaign/enrollment/program.rs` | src | s | 3 struct · 5 fn | CampaignProgram, CampaignProgramOutbound, CampaignProgramStep | Persisted campaign program and step state authorizing both halves of the consequence |
+| `src/campaign/enrollment/runner.rs` | src | m | 2 struct · 2 enum · 8 fn · 3 crate-vis | CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution | Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution |
+| `src/campaign/enrollment/storage.rs` | src | s | 2 const · 15 crate-vis | — | Shared campaign-enrollment storage primitives: schema version, key prefixes, JSON-row codecs, and vault_meta… |
+| `src/campaign/enrollment/tests.rs` | test | L | — | — | — |
 | `src/campaign/presets.rs` | src | L | 10 struct · 2 enum · 1 fn · 2 const | BriefSectionData, BriefTemplateData, BriefTemplateKind, BriefTemplateSet, CampaignPresetData, CampaignTemplateData, CommitmentRhythmData, LanePolicyData +4 | CA-08 consultancy preset: the CONTRACT, never the copy |
 | `src/campaign/presets/tests.rs` | test | L | — | — | CA-08 preset-content tests |
 | `src/campaign/send_hygiene.rs` | src | m | 3 struct · 2 enum · 3 fn · 5 const · 4 crate-vis | ListUnsubscribeTarget, StickySenderOutcome, SuppressionCause, SuppressionInput, SuppressionReceipt | CA-05 send hygiene: suppression, unsubscribe headers, and sticky senders |
 | `src/campaign/stage.rs` | src | L | 13 struct · 8 enum · 6 fn · 1 const · 1 re-export · 1 crate-vis | CodedCommReply, ExternalStageEvidenceHook, LaneClockPolicy, MembershipProvenance, NoShowRecoveryPlan, NoShowRecoveryRule, NoShowRecoveryStep, OutreachLane +13 | CA-04 stage-ladder machinery: the mechanism, never the content |
-| `src/campaign/surface.rs` | src | XL | 9 struct · 2 enum · 14 fn · 16 const | CampaignDefinition, CampaignLifecycle, CampaignRecord, CampaignSurfaceVerb, CreateCampaignRequest, MembershipPage, MembershipReadRequest, MembershipRow +3 | CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack |
+| `src/campaign/surface/campaign.rs` | src | m | 4 struct · 1 enum · 6 fn · 2 const | CampaignDefinition, CampaignLifecycle, CampaignRecord, CreateCampaignRequest, UpdateCampaignRequest | Campaign record types, lifecycle operations, and vault storage |
+| `src/campaign/surface/codec_json.rs` | src | s | 2 fn · 1 crate-vis | — | Wire encoders (domain types with EntityIds hand-rendered to hex JSON) |
+| `src/campaign/surface/membership.rs` | src | s | 3 struct · 2 fn · 2 const | MembershipPage, MembershipReadRequest, MembershipRow | Read-only membership projection over CA-01 heads and CA-02 event history |
+| `src/campaign/surface/mod.rs` | src | s | 4 re-export | — | CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack |
+| `src/campaign/surface/parse.rs` | src | s | 9 crate-vis | — | Request-body decoders and field-error helpers for the dispatch door |
+| `src/campaign/surface/tests.rs` | test | m | — | — | Oracle-style membership and scoping tests |
+| `src/campaign/surface/verbs.rs` | src | s | 2 struct · 1 enum · 4 fn · 12 const | CampaignSurfaceVerb, SurfaceCall, SurfaceReply | Closed verb vocabulary and the single shared dispatch door |
 | `src/campaign/tests.rs` | test | s | — | — | — |
 | `src/channel_identity.rs` | src | XL | 2 struct · 5 enum · 38 fn · 19 const · 2 re-export · 7 crate-vis | ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape, ChannelIdentityState, DelegatedProvisionRequest, SelfHeldShape | ChannelIdentity record substrate (OF-347 CID-1) |
 | `src/channel_identity/address.rs` | src | m | 4 struct · 16 fn | AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr | Identity-bearing address VALUES, and the canonical assignment key |
@@ -234,8 +328,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_lifecycle.rs` | src | m | 10 struct · 3 enum · 8 fn · 1 crate-vis | BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent, ChannelIdentityLifecyclePolicyRisk, ChannelIdentityLifecycleRequest, ChannelIdentityLifecycleResult +5 | ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2) |
 | `src/channel_identity_lifecycle/tests.rs` | test | m | — | — | — |
 | `src/channel_identity_manifest.rs` | src | m | 4 struct · 4 enum · 9 fn · 1 const | ChannelIdentityCapabilityMatrix, ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError, ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities, ChannelIdentityReputationSignal | Channel identity capability manifests (OF-347 CID-4) |
-| `src/channel_identity_provider.rs` | src | XL | 14 struct · 2 enum · 1 trait · 48 fn · 9 const · 1 mod | ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, ChannelIdentityProviderProvision, DevEmailIdentityAdapter, DevEmailIdentityAdapterConfig, EmailProviderInbound, LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig +9 | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
+| `src/channel_identity_provider/email_adapter.rs` | src | m | 3 struct · 9 fn | DevEmailIdentityAdapter, DevEmailIdentityAdapterConfig, MockChannelIdentityProviderAdapter | Dev-safe and mock email adapters: config, inherent constructors, and trait impls |
 | `src/channel_identity_provider/gmail.rs` | src | m | 6 struct · 1 trait · 18 fn · 5 const | GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailDelegatedProvision, GmailInboxPage, GmailInboxPollConfig, GmailMessageMetadata, GmailReadWire | Gmail/Workspace read-side adapter for `delegated_grant` rows |
+| `src/channel_identity_provider/inbound_types.rs` | src | s | 4 struct · 1 enum · 1 trait · 9 fn | ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, ChannelIdentityProviderProvision, EmailProviderInbound, LineOfficialAccountInbound, SlackProviderInbound | Shared provider envelope: inbound payload structs, provision result, and the adapter trait |
+| `src/channel_identity_provider/line_adapter.rs` | src | s | 2 struct · 1 enum · 10 fn | LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier | LINE Official Account adapter: plan tier, config, and trait impl |
+| `src/channel_identity_provider/mod.rs` | src | s | 1 mod · 5 re-export | — | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
+| `src/channel_identity_provider/shared_validate.rs` | src | m | 9 const · 37 crate-vis | — | Cross-channel provision guards, email/LINE normalizers, and blank/bytes primitives |
+| `src/channel_identity_provider/slack_adapter.rs` | src | m | 5 struct · 20 fn | SlackOutboundMessage, SlackPersonaAttribution, SlackPersonaOutbound, SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig | Slack shared-presence adapter: config, persona/outbound types, impls, and inbound normalizer |
+| `src/channel_identity_provider/slack_validate.rs` | src | s | 12 crate-vis | — | Slack key, workspace, and field normalizers shared by the Slack adapter paths |
 | `src/channel_identity_provider/tests.rs` | test | L | — | — | — |
 | `src/channel_identity_selection.rs` | src | L | 7 struct · 6 enum · 18 fn · 1 type · 3 const | ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision, ChannelIdentitySelectionError, ChannelIdentitySelectionPatch, ChannelIdentitySelectionQuery, ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet +5 | Relationship-context channel-identity selection law (ONE-1826) |
 | `src/channel_identity_selection/tests.rs` | test | XL | — | — | — |
@@ -271,8 +371,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory/parts/storage.rs` | src | m | 3 crate-vis | — | — |
 | `src/code_memory/parts/transfer-and-blocks.rs` | src | m | 4 struct · 1 enum · 1 fn · 4 crate-vis | AnchorTransfer, AnchorTransferKind, AnchorTransferReceipt, AnchorTransferRecord, BlocksWriteContext | — |
 | `src/code_memory/parts/types-and-slots.rs` | src | m | 7 struct · 3 enum · 8 fn · 7 const | AttachCodeMemory, CodeMemoryAnchor, CodeMemoryAttachment, CodeMemoryLocator, CodeMemoryPayloadRef, CodeMemoryRevision, CodeMemorySlot, CodeMemorySlotName +2 | — |
-| `src/code_revision.rs` | src | XL | 2 struct · 1 enum · 17 fn · 2 const · 3 crate-vis | CodeRevision, CodeRevisionFork, CodeRevisionKind | — |
+| `src/code_revision/codec.rs` | src | m | 4 fn · 2 const · 18 crate-vis | — | Pinned body keys, revision/fork encode-decode, shape validators and msgpack scalar accessors |
+| `src/code_revision/frontier.rs` | src | m | 8 crate-vis | — | Per-session frontier rows and session-trace verification over them |
+| `src/code_revision/graph.rs` | src | s | 8 crate-vis | — | child_of lifecycle edges and the entity guards a revision write must clear |
+| `src/code_revision/integrity.rs` | src | m | 11 crate-vis | — | Per-revision integrity records and the fold chain proving a revision's ancestry |
+| `src/code_revision/keys.rs` | src | s | 15 crate-vis | — | Vault-meta key builders for the code-revision row families |
+| `src/code_revision/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | — |
+| `src/code_revision/storage.rs` | src | m | 8 fn · 5 crate-vis | — | Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes |
 | `src/code_revision/tests.rs` | test | XL | — | — | — |
+| `src/code_revision/types.rs` | src | s | 2 struct · 1 enum · 5 fn · 4 crate-vis | CodeRevision, CodeRevisionFork, CodeRevisionKind | Code-revision domain values and their constructors |
 | `src/code_run/codec.rs` | src | m | 2 fn · 7 const · 2 crate-vis | — | — |
 | `src/code_run/consent.rs` | src | m | 5 struct · 2 enum · 7 fn · 3 const · 1 crate-vis | BlastRadiusWalk, CodeEmissionAdmission, CodeEmissionContext, CodeSourceTrust, ConsentLane, ReviewContext, ReviewContextInput | — |
 | `src/code_run/dispatcher.rs` | src | L | 1 struct · 7 fn · 1 type · 1 const · 10 crate-vis | HostSelfDispatcher | — |
@@ -297,10 +404,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/validate.rs` | src | s | 7 crate-vis | — | Request-shape validation and short-reference parsing, run before any dispatch |
 | `src/code_sandbox.rs` | src | L | 14 struct · 9 enum · 1 trait · 64 fn · 8 const · 2 mod | FakeSandboxAdapter, SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxClaimProposal, SandboxComponentBoundary, SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle +16 | Sandbox boundary contract for code-mode execution |
 | `src/code_sandbox/firecracker.rs` | src | s | 1 struct · 2 fn · 3 const | FirecrackerBackend | Firecracker microVM backend (Linux only, feature `microvm-firecracker`) |
-| `src/code_sandbox/microvm.rs` | src | XL | 10 struct · 2 trait · 42 fn · 4 const | CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection, CredentialResolver, DevProcessBackend, ExecutionBudget, GuestImage +4 | MicroVM execution lane for foreign and ingested guest code |
+| `src/code_sandbox/microvm/adapter.rs` | src | s | 1 struct · 8 fn | MicroVmSandboxAdapter | The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract |
+| `src/code_sandbox/microvm/backend.rs` | src | m | 1 struct · 1 trait · 5 fn · 1 const · 2 crate-vis | DevProcessBackend, MicroVmBackend | The backend trait, tier-based selection, and the cfg-gated dev and Firecracker implementations |
+| `src/code_sandbox/microvm/credential.rs` | src | m | 4 struct · 1 trait · 17 fn · 3 const | CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection, CredentialResolver | Destination allowlisting, resolution and the egress proxy that injects a credential outside the guest |
+| `src/code_sandbox/microvm/handle.rs` | src | s | 4 struct · 10 fn | ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle | The VM value objects: guest image, running handle, exit and execution budget |
+| `src/code_sandbox/microvm/mod.rs` | src | s | 6 re-export | — | MicroVM execution lane for foreign and ingested guest code |
+| `src/code_sandbox/microvm/overlay.rs` | src | m | 2 fn · 10 crate-vis | — | The host-side scratch root and the bounded overlay walk that turns guest writes into proposals |
+| `src/code_sandbox/microvm/tests.rs` | test | m | — | — | — |
 | `src/code_sandbox/tests.rs` | test | m | — | — | — |
-| `src/code_symbol.rs` | src | XL | 10 struct · 28 fn · 11 const · 1 crate-vis | CodeChunk, CodeEmbeddingInput, CodeEmbeddingVector, CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest +2 | — |
+| `src/code_symbol/codec.rs` | src | m | 2 fn · 4 const · 29 crate-vis | — | Pinned body keys and the manifest / chunk / revision / entity-body encode-decode |
+| `src/code_symbol/keys.rs` | src | s | 2 fn · 11 crate-vis | — | Manifest and revision-index key families and the deterministic symbol entity id |
+| `src/code_symbol/mod.rs` | src | s | 6 re-export · 1 crate-vis | — | — |
+| `src/code_symbol/rust_source.rs` | src | m | 1 fn · 4 crate-vis | — | tree-sitter Rust parsing: definition extraction, identifier references and the derived symbol graph |
+| `src/code_symbol/storage.rs` | src | m | 11 fn · 1 crate-vis | — | Vault CRUD for symbol manifests and the blame / definition / reference / PPR reads over them |
 | `src/code_symbol/tests.rs` | test | m | 9 fn | — | — |
+| `src/code_symbol/text_diff.rs` | src | s | 3 fn · 5 crate-vis | — | Language-agnostic chunking of a text diff into code chunks and embedding inputs |
+| `src/code_symbol/types.rs` | src | s | 10 struct · 9 fn · 7 const | CodeChunk, CodeEmbeddingInput, CodeEmbeddingVector, CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest +2 | Chunk, symbol, manifest, graph and embedding value types with their limits |
+| `src/code_symbol/validate.rs` | src | s | 14 crate-vis | — | Manifest, chunk, symbol and commit-hash validation plus the secret scan |
 | `src/codebase.rs` | src | XL | 7 struct · 2 enum · 1 trait · 23 fn · 2 type · 10 const · 5 crate-vis | CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount, HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestConfig +2 | — |
 | `src/codebase/tests.rs` | test | L | — | — | — |
 | `src/comm/claims.rs` | src | m | 2 struct · 5 enum · 8 fn · 1 type · 7 const · 8 crate-vis | ClaimClassDescriptorRow, CommClaim, CommClaimValue, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Claim family predicates, key vocabulary, typed values, body build/parse/validate |
@@ -313,7 +433,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/comm/tests.rs` | test | XL | — | — | — |
 | `src/comm/thread_alias_tests.rs` | test | s | — | — | — |
 | `src/comm/thread_membership.rs` | src | m | 5 crate-vis | — | Alias-aware communication membership |
-| `src/commitment.rs` | src | XL | 4 struct · 5 enum · 27 fn · 4 const · 4 crate-vis | CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor, CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength +1 | Commitment claim substrate (CMT-1) |
+| `src/commitment/codec.rs` | src | m | 5 fn · 3 crate-vis | — | Commitment claim codec: candidate builders and closed-schema helpers |
+| `src/commitment/codec_tests.rs` | test | m | 6 crate-vis | — | Commitment schema, codec and transition tests plus shared test helpers |
+| `src/commitment/lapse_batch.rs` | src | s | 3 crate-vis | — | Crate-private Open-to-Lapsed batch grounding and apply halves |
+| `src/commitment/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | Commitment claim substrate (CMT-1) |
+| `src/commitment/types.rs` | src | m | 4 struct · 5 enum · 16 fn · 4 const · 17 crate-vis | CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor, CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength +1 | Pinned commitment schema consts, key sets, bounds, and domain types |
+| `src/commitment/verbs_tests.rs` | test | m | — | — | Commitment vault-verb, stale-target, rejection and dispatch tests |
+| `src/commitment/write.rs` | src | s | 6 fn | — | Vault commitment write verbs over the gated claim path |
 | `src/commitment_ledger.rs` | src | s | 3 struct · 1 fn | CommitmentLedger, CommitmentLedgerCounterparty, CommitmentLedgerEntry | Counterparty commitment ledger projection (CMT-5) |
 | `src/commitment_ledger/tests.rs` | test | m | — | — | CMT-5 read-side tests |
 | `src/commitment_lifecycle.rs` | src | m | 3 struct · 7 fn · 2 const | BriefFulfillmentReport, CommitmentCloseResult, LapseSweepReport | Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541) |
@@ -331,8 +457,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction/tests.rs` | test | XL | — | — | DREAM-008 (ONE-1250) compaction handoff admission fixtures |
 | `src/compaction/tests/driver_regressions.rs` | test | m | 1 crate-vis | — | Active-request identity, budget floors, and complete turn spans |
 | `src/compaction/tests/epoch_regressions.rs` | test | m | — | — | Symmetric blank-text refusal and fail-closed durable epoch advancement |
-| `src/companion.rs` | src | XL | 17 struct · 13 enum · 83 fn · 8 const · 8 crate-vis | ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionExportClassification, CompanionExpression, CompanionExpressionRegister, CompanionLifecycleEvent, CompanionLifecycleEventKind, CompanionProvenance +22 | Companion relationship/persona record substrate |
+| `src/companion/codec.rs` | src | m | 4 fn · 8 crate-vis | — | Canonical MessagePack codec for companion records, scope, subject, and provenance |
+| `src/companion/keys.rs` | src | s | 8 const · 20 crate-vis | — | Pinned on-disk constants for companion records and task payloads |
+| `src/companion/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Companion relationship/persona record substrate |
+| `src/companion/model.rs` | src | m | 4 struct · 6 enum · 37 fn · 4 crate-vis | CompanionExportClassification, CompanionExpression, CompanionLifecycleEvent, CompanionLifecycleEventKind, CompanionProvenance, CompanionRecord, CompanionRecordKey, CompanionRecordKind +2 | Typed companion record domain: kinds, scopes, subjects, provenance, and records |
+| `src/companion/queue.rs` | src | m | 10 struct · 6 enum · 13 fn | ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionQueue, CompanionTask, CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask, CompleteCompanionTaskOutcome +8 | Durable companion task queue over AttemptQueue with payload codec and dedupe keys |
+| `src/companion/register.rs` | src | s | 3 struct · 1 enum · 20 fn | CompanionExpressionRegister, CompanionRegister, CompanionScopeResolution, CompanionScopeResolutionSource | In-memory companion registers with scope and expression resolution |
+| `src/companion/store.rs` | src | s | 4 crate-vis | — | Transaction key-lookup scans over the companion-register type index |
 | `src/companion/tests.rs` | test | XL | — | — | — |
+| `src/companion/vault.rs` | src | m | 9 fn · 3 crate-vis | — | Vault record APIs for companion profiles, relationships, and register snapshots |
 | `src/config.rs` | src | m | 6 struct · 2 enum · 11 fn · 4 const · 1 re-export · 1 crate-vis | Bm25RankProfile, HnswConfig, HostingPrivacyPosture, TextAnalyzerConfig, TextIndexOptions, VaultConfig, VaultDataKeyCustody, VaultPrivacyConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `src/config/tests.rs` | test | s | — | — | — |
 | `src/connector_key/accounting.rs` | src | m | 1 enum · 6 fn · 2 const · 3 crate-vis | ConnectorKeySendAdmission | — |
@@ -392,12 +525,29 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/types.rs` | src | m | 9 struct · 3 enum · 5 fn · 4 const · 2 crate-vis | ContextEntity, ContextPack, ContextPackRetrievalBudget, FieldProfile, PackFormat, PackItemAccounting, PackItemAccountingReason, PackItemTokenStats +4 | Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation… |
 | `src/context_pack/validation.rs` | src | m | 13 crate-vis | — | Post-assembly integrity checks over a context pack |
 | `src/context_pack/world_partition.rs` | src | s | 1 const · 4 crate-vis | — | Federated multi-world partitioning and staleness annotation (ARCH-0004 / ARCH-0022 / ONE-1411) |
-| `src/context_projection.rs` | src | XL | 9 struct · 3 enum · 15 fn · 13 const · 2 crate-vis | ChatProjection, ContextResolutionRequest, ContextSpec, LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec, MemoryProjection, PanelJudgeSpec +4 | Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead… |
+| `src/context_projection/mod.rs` | src | s | 4 re-export | — | Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead… |
+| `src/context_projection/narrowing.rs` | src | s | 2 fn | — | The narrowing law: declared bounds against declared bounds, and a request against the resolved parent |
+| `src/context_projection/panel_spec.rs` | src | m | 6 struct · 1 enum · 6 fn · 3 const · 2 crate-vis | LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec | The referenced lead-panel spec: typed shape, codec, durable persistence, and task-input planner |
+| `src/context_projection/resolution.rs` | src | m | 2 struct · 2 fn · 2 const · 1 crate-vis | ContextResolutionRequest, ResolvedContextProjection | Dispatch-time resolution of a `ContextSpec` against live vault state |
+| `src/context_projection/spec.rs` | src | s | 1 struct · 2 enum · 5 fn · 8 const · 2 crate-vis | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
+| `src/context_projection/tests.rs` | test | m | — | — | Descriptor, narrowing, resolution-order, and scan-behaviour contract tests |
+| `src/context_projection/tests/panel.rs` | test | m | — | — | Lead-panel codec, planner, blindness ordering, and `contextFrom` admission tests |
+| `src/context_projection/tests/resolution.rs` | test | s | — | — | Memory- and chat-projection scan behaviour against a live vault |
+| `src/context_projection/tests/test_support.rs` | test | s | 14 crate-vis | — | Shared test fixtures for the `context_projection` test suite |
 | `src/corpus.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | CorpusId, CorpusScope | Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry… |
 | `src/corpus/tests.rs` | test | m | — | — | — |
-| `src/counterparty_contact.rs` | src | XL | 2 struct · 3 enum · 35 fn · 14 const · 20 crate-vis | CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut, CounterpartyOptOutReason | Counterparty contact record substrate (OF-347 CID-7) |
+| `src/counterparty_contact/codec.rs` | src | m | 3 fn · 11 crate-vis | — | Counterparty contact MessagePack codecs, claim validators, and normalize helpers |
+| `src/counterparty_contact/doors.rs` | src | m | 6 fn · 2 crate-vis | — | Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply |
+| `src/counterparty_contact/lifecycle.rs` | src | m | 2 fn · 5 crate-vis | — | Counterparty contact cache rematerialization, claim supersession, and opt-out folding |
+| `src/counterparty_contact/mod.rs` | src | s | 4 re-export · 4 crate-vis | — | Counterparty contact record substrate (OF-347 CID-7) |
+| `src/counterparty_contact/storage.rs` | src | s | 2 fn · 1 const · 11 crate-vis | — | Counterparty contact lookup and party-channel index keys and helpers |
 | `src/counterparty_contact/tests.rs` | test | m | — | — | — |
-| `src/credential_door.rs` | src | XL | 74 crate-vis | — | ARCH-0068 RC4 — the credential door (CSTDY-02) |
+| `src/counterparty_contact/types.rs` | src | m | 2 struct · 3 enum · 22 fn · 13 const · 22 crate-vis | CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut, CounterpartyOptOutReason | Counterparty contact domain vocabulary: schema version, body and predicate keys, record types |
+| `src/credential_door/door_credential.rs` | src | s | 15 crate-vis | — | DoorCredential attenuation, lifetime math, and floor-naming evaluation |
+| `src/credential_door/door_policy.rs` | src | m | 23 crate-vis | — | Policy model: effectors, dials, floors, merge rules, and map helpers |
+| `src/credential_door/door_service.rs` | src | m | 26 crate-vis | — | CredentialDoorService: admission, lease tickets, one-shot redemption, witnesses |
+| `src/credential_door/door_types.rs` | src | m | 32 crate-vis | — | Door constants, floor names and prefixes, error type, and small naming helpers |
+| `src/credential_door/mod.rs` | src | s | 9 crate-vis | — | ARCH-0068 RC4 — the credential door (CSTDY-02) |
 | `src/credential_door/tests.rs` | test | XL | — | — | CSTDY-02 unit tests: the T0 door composition (the egress gets bytes, the caller gets a receipt)… |
 | `src/critic.rs` | src | m | 9 struct · 3 enum · 22 fn · 5 const | CriticLens, CriticReliability, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance, CritiqueSeverity, CritiqueTriage, CritiqueTriageScores +4 | Multi-critic review node primitives |
 | `src/critic/tests.rs` | test | m | — | — | — |
@@ -491,9 +641,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embed/tests.rs` | test | L | — | — | — |
 | `src/embed/tests/payload.rs` | test | m | — | — | Typed CLAIM/SUMMARY inputs at the embedding and egress boundaries |
 | `src/embed/warn_capture.rs` | src | s | 3 crate-vis | — | Thread-scoped warning capture for embedding tests |
-| `src/engine_executor.rs` | src | XL | 9 struct · 2 enum · 2 trait · 12 fn · 1 type · 5 const · 3 crate-vis | EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor, ExecutorLegibility, JsCodeModeHost +5 | Engine-native JS code-mode executor |
+| `src/engine_executor/driver.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
+| `src/engine_executor/host.rs` | src | s | 6 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
+| `src/engine_executor/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/record.rs` | src | m | 16 crate-vis | — | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/repl.rs` | src | m | 1 fn | — | Durable REPL loop: run(), persistence helpers, and LLM request building |
+| `src/engine_executor/store.rs` | src | s | 12 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
 | `src/engine_executor/tests.rs` | test | XL | — | — | — |
 | `src/engine_executor/tests/speech_identity_regressions.rs` | test | m | — | — | — |
+| `src/engine_executor/types.rs` | src | s | 8 struct · 2 enum · 2 trait · 6 fn · 1 type · 5 const · 1 crate-vis | EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, ExecutorLegibility, JsCodeModeHost, JsCodeModeOutput +4 | Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types |
+| `src/engine_executor/wire.rs` | src | m | 6 crate-vis | — | Reply normalization: fence/exec stripping, console-block scanning, and the structural gate |
 | `src/entity_id.rs` | src | m | 4 struct · 12 fn · 2 const · 4 crate-vis | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
 | `src/error.rs` | src | XL | 2 struct · 12 enum · 19 fn · 1 type · 2 crate-vis | CompactionPacketError, Error, ErrorKind, GateDenial, GateDenialOutcome, GateDenialReason, SyncConfigField, SyncEngineContext +6 | — |
 | `src/extraction_eval.rs` | src | m | 8 fn · 6 const · 1 re-export | — | — |
@@ -504,7 +661,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/tests/failure_integrity.rs` | test | m | — | — | — |
 | `src/fanout_auto.rs` | src | m | 5 struct · 5 enum · 1 trait · 6 fn · 3 crate-vis | AppliedFanoutEscalationRuling, FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `src/fanout_auto/tests.rs` | test | XL | — | — | ONE-1720 (ES-07) unit tests: the closed verdict vocabulary, the fixed evaluation order (blank-context floor… |
-| `src/federation.rs` | src | XL | 7 struct · 11 enum · 46 fn · 16 const · 12 crate-vis | CoreferenceStatus, FederationDirectionScope, FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, FederationPactScope, FederationScopeBands +10 | Federation grant record substrate |
+| `src/federation/codec.rs` | src | s | 5 crate-vis | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
+| `src/federation/coreference.rs` | src | m | 1 enum · 3 fn · 1 const | CoreferenceStatus | Cross-vault same_as links and per-pact share consent (FED-07) |
+| `src/federation/grant.rs` | src | m | 1 struct · 3 enum · 14 fn · 3 const · 16 crate-vis | FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope | Federation grant record, role/preset policy, and grant body MessagePack codec |
+| `src/federation/guest.rs` | src | s | 2 struct · 4 fn · 3 const | GuestShareEnvelope, GuestShareEnvelopeBody | Guest-share envelope body and signed envelope codec |
+| `src/federation/mod.rs` | src | s | 7 re-export · 5 crate-vis | — | Federation grant record substrate |
+| `src/federation/pact_scope.rs` | src | m | 2 struct · 4 enum · 7 fn · 1 const · 7 crate-vis | FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets, FederationScopeWorlds, SelectorRange | Pact direction-scope lattice (worlds/facets/bands axes) and canonical codec |
+| `src/federation/peer_authority.rs` | src | s | 4 fn · 2 const · 1 crate-vis | — | Peer authority-log admission (FED-03) and roster refolding |
+| `src/federation/relationships.rs` | src | m | 1 struct · 2 enum · 6 fn · 3 const | MemberRelationship, MemberRelationshipContext, RelationshipTrustClass | Member-to-person binding, label trust classes, and relationship claim doors |
+| `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 8 fn · 3 const · 3 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
 | `src/federation/tests.rs` | test | XL | — | — | — |
 | `src/feedback.rs` | src | L | 14 struct · 5 enum · 2 trait · 38 fn · 21 const | FeedbackApproval, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackError, FeedbackExportOutcome +13 | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/tests.rs` | test | XL | — | — | — |
@@ -534,13 +699,37 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/retrieval_filter.rs` | src | m | 1 struct · 5 crate-vis | RetrievalFilter | Retrieval authority projection and narrowing, independent of result filtering |
 | `src/gate/retrieval_filter/tests.rs` | test | m | — | — | — |
 | `src/gate/share.rs` | src | s | 2 crate-vis | — | Narrow adapter for the audience-crossing creation of a brief read grant |
-| `src/gate/tests.rs` | test | XL | — | — | — |
+| `src/gate/tests/actor_fork.rs` | test | L | — | — | Actor identity and fork clamp: resolver mapping, herald fork, and effect-actor binding |
+| `src/gate/tests/auto_checker.rs` | test | L | — | — | ONE-1296 auto_checker knob: decode and fold, checker routing, and lineage |
 | `src/gate/tests/breaker.rs` | test | m | — | — | — |
 | `src/gate/tests/breaker_policy.rs` | test | m | — | — | — |
 | `src/gate/tests/breaker_regressions.rs` | test | s | — | — | — |
 | `src/gate/tests/breaker_transactions.rs` | test | m | — | — | — |
+| `src/gate/tests/budget_policy.rs` | test | m | — | — | ONE-1348 budget_policy manifest parse, resolution, and factory tests |
+| `src/gate/tests/charter_ceiling.rs` | test | m | 1 crate-vis | — | Definition ceiling and charter never-key and never-channel enforcement |
 | `src/gate/tests/claim_candidate_lineage.rs` | test | s | — | — | — |
+| `src/gate/tests/connector_budget.rs` | test | m | 4 crate-vis | — | Connector-key lifecycle, rate limits, and the effector-budget ledger |
+| `src/gate/tests/consent_bundle.rs` | test | m | 3 crate-vis | — | Gate consent bundles: aggregate, review, approve and decline, and rollback |
+| `src/gate/tests/critical_confirm_index.rs` | test | L | — | — | Critical-write confirm index, cursor, fence, and settle and decline receipts |
+| `src/gate/tests/critical_confirm_lifecycle.rs` | test | m | 3 crate-vis | — | Critical-write confirm lifecycle: binding, expiry, sweep, and overwrite invalidation |
+| `src/gate/tests/delegation.rs` | test | m | — | — | Delegated grants: fold, revoke dominance, depth cap, and cross-manifest chains |
+| `src/gate/tests/dreamer_precommit.rs` | test | L | 5 crate-vis | — | Dreamer precommit: evidence floor, shell and live rows, degeneracy, and denial codes |
+| `src/gate/tests/effect_policy.rs` | test | m | 2 crate-vis | — | External-effect policy holds and pending-row coalescing |
+| `src/gate/tests/evaluator_core.rs` | test | m | — | — | Gate evaluator core: fail-closed default, criticality matrix, reason codes, and metrics |
+| `src/gate/tests/external_effect_grants.rs` | test | m | — | — | External-effect grants: scoped, standing, and outbound MCP grants plus counterparty contacts |
+| `src/gate/tests/gate_door.rs` | test | L | — | — | Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance |
+| `src/gate/tests/isolation_persona.rs` | test | m | — | — | Persona-core isolation: isolated classes, session floor, and replay and source rules |
+| `src/gate/tests/manifest_auto.rs` | test | m | — | — | Manifest-granted auto write: first-party, dreamer, and foreign tool output |
+| `src/gate/tests/mod.rs` | test | s | — | — | — |
 | `src/gate/tests/pending_lookup.rs` | test | s | — | — | — |
+| `src/gate/tests/policy_inputs.rs` | test | s | — | — | Policy-input primitives: companion access grants, budget-exhaustion parsing, and ceiling math |
+| `src/gate/tests/posture_override.rs` | test | m | — | — | Opt-out posture, override receipts, and the posture dial |
+| `src/gate/tests/scoped_read.rs` | test | L | — | — | Scoped read and retrieval filtering: core-read grants, context-pack scrubbing, and facet edges |
+| `src/gate/tests/special_doors.rs` | test | m | 1 crate-vis | — | Specialized doors: operation effect, fenced listing, and commitment projection |
+| `src/gate/tests/support.rs` | test | L | 57 crate-vis | — | Shared fixtures and assertion helpers for the gate test modules |
+| `src/gate/tests/trust_boundary.rs` | test | m | — | — | Trust boundary: manifest fail-closed behavior, federated admission, and replication quarantine |
+| `src/gate/tests/vad_vetting.rs` | test | m | — | — | Dreamer-approval VAD vetting and bundle hooks |
+| `src/gate/tests/witness_message.rs` | test | m | — | — | Witness messages: ceilings, envelope binding, and replicated refusal |
 | `src/gate/witness_message.rs` | src | m | 14 crate-vis | — | ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door |
 | `src/genui.rs` | src | XL | 14 struct · 14 enum · 45 fn · 9 const | BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity +20 | OF-336 generated-UI component contract |
 | `src/genui/failure_card_validation.rs` | src | s | 2 crate-vis | — | Read-only integrity checks for surfaced failure cards |
@@ -566,13 +755,34 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/wire_stage.rs` | src | s | 3 fn · 1 crate-vis | — | Two-phase staging: stage, commit-prepared, recovery, and keep-ref naming |
 | `src/git_wire/wire_store.rs` | src | s | 1 fn · 5 crate-vis | — | Vault record IO: load, scan, put, drop, and the terminal-state transition |
 | `src/git_wire/wire_worktree.rs` | src | s | 5 fn · 2 crate-vis | — | Journaled worktree effects: list, prune, add, remove, and crash-journal settlement |
-| `src/graph_fs.rs` | src | XL | 6 struct · 4 enum · 44 fn · 10 const | GraphFsCommandOutput, GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile, GraphFsMount, GraphFsOptions +2 | Graph-FS read projection over the vault graph |
+| `src/graph_fs/coreutils.rs` | src | m | 6 fn · 5 crate-vis | — | grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the… |
+| `src/graph_fs/mod.rs` | src | s | 1 re-export | — | Graph-FS read projection over the vault graph |
+| `src/graph_fs/model.rs` | src | m | 6 struct · 4 enum · 32 fn · 10 const · 5 crate-vis | GraphFsCommandOutput, GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile, GraphFsMount, GraphFsOptions +2 | Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils… |
+| `src/graph_fs/paging.rs` | src | m | 27 crate-vis | — | Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math |
+| `src/graph_fs/readdir.rs` | src | m | 6 fn · 7 crate-vis | — | Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir… |
 | `src/graph_fs/tests.rs` | test | m | — | — | — |
 | `src/habit.rs` | src | m | 1 enum · 3 fn · 1 const · 12 crate-vis | TaskRole | Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak… |
-| `src/hnsw.rs` | src | XL | 29 crate-vis | — | — |
 | `src/hnsw/archive_tests.rs` | test | s | — | — | Archive visibility must not turn the bounded beam into a full graph walk |
+| `src/hnsw/delete.rs` | src | s | 2 crate-vis | — | Node delete with symmetric/legacy backlink scrub |
+| `src/hnsw/discipline.rs` | src | s | 7 crate-vis | — | Symmetric vs legacy link discipline and rebuild counters |
+| `src/hnsw/entry_point.rs` | src | m | 3 crate-vis | — | Tarjan-SCC entry-point selection |
+| `src/hnsw/insert.rs` | src | m | 5 crate-vis | — | Insert, localized refresh, and backlink attachment |
+| `src/hnsw/keys.rs` | src | s | 31 crate-vis | — | HNSW metadata key/counter literals, error strings, and the one-way prefix |
+| `src/hnsw/mod.rs` | src | s | 13 crate-vis | — | HNSW graph index over the persisted neighbor graph |
+| `src/hnsw/one_way.rs` | src | s | 5 crate-vis | — | Orphan-protection one-way exception index |
+| `src/hnsw/rebuild.rs` | src | s | 6 crate-vis | — | Snapshot graph build, persist, and SLIM rehydrate |
+| `src/hnsw/search.rs` | src | m | 6 crate-vis | — | Search, MRL rescore, and beam traversal |
+| `src/hnsw/slim_drop.rs` | src | s | 2 crate-vis | — | SLIM derived-shape drop producer |
+| `src/hnsw/storage.rs` | src | m | 20 crate-vis | — | Metadata/counter reads and neighbor/vector codec |
 | `src/hnsw/tests.rs` | test | XL | — | — | — |
-| `src/human_task.rs` | src | XL | 6 struct · 2 enum · 11 fn · 1 type · 4 const · 2 crate-vis | HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupDriver, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708) |
+| `src/hnsw/types.rs` | src | s | 5 crate-vis | — | Shared graph, heap, and beam option types |
+| `src/human_task/followup.rs` | src | m | 1 struct · 6 fn · 2 crate-vis | HumanTaskFollowupDriver | Native-human routing, follow-up cursor lifecycle and the wake driver |
+| `src/human_task/followup_tests.rs` | test | m | 10 crate-vis | — | cfg(test) fixture and helpers plus native-route and follow-up cursor tests |
+| `src/human_task/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708) |
+| `src/human_task/model.rs` | src | s | 5 struct · 2 enum · 1 fn · 1 type · 4 const · 7 crate-vis | HumanFollowupDispatch, HumanFollowupStage, HumanResponseSignal, HumanTaskError, HumanTaskFollowupRecord, HumanTaskWaitBinding, NativeHumanRoute | Human TASK follow-up shared types, stage machine and timing bounds |
+| `src/human_task/signal_tests.rs` | test | m | — | — | cfg(test) C9 wait/signal, idempotency, interleave and reopen tests |
+| `src/human_task/storage.rs` | src | m | 12 crate-vis | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
+| `src/human_task/wait.rs` | src | s | 4 fn · 1 crate-vis | — | C9 wait binding, identity-checked response signalling and release |
 | `src/identity.rs` | src | m | 9 crate-vis | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) |
 | `src/identity_redirect.rs` | src | m | 4 fn · 1 const · 4 crate-vis | — | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
 | `src/identity_redirect/tests.rs` | test | m | — | — | ONE-1744 (MS-02) unit tests: redirect-row derivation, resolve semantics (0/1/N + transitive chains), the… |
@@ -615,15 +825,27 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/mediation.rs` | src | L | 12 struct · 8 enum · 49 fn | GeneratedUiAgentCallback, GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedAction, LensApprovedActionArg, LensAtomSelectionRequest +12 | Host mediation — the lens security chokepoint |
 | `src/lens/mod.rs` | src | s | 5 re-export | — | Closed generated-lens atom vocabulary |
 | `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 5 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
-| `src/lens/tests.rs` | test | XL | — | — | — |
+| `src/lens/tests/genui_render.rs` | test | m | — | — | Generated-UI render-protocol tests: cards, segments, prebuilt shorthand, and tree construction |
+| `src/lens/tests/genui_validation.rs` | test | L | — | — | Generated-lens validation tests: closed enums, URL bans, unsafe atoms, budgets, and size caps |
+| `src/lens/tests/mediation.rs` | test | m | — | — | Atom-kit catalog and mediation-auth tests: principal-held keys, backing-ref tokens, and host-bound action… |
+| `src/lens/tests/mod.rs` | test | s | — | — | — |
+| `src/lens/tests/result_set.rs` | test | L | — | — | Result-set atom tests: catalog negotiation, selection, render validation, and gated dispatch |
+| `src/lens/tests/selection_handles.rs` | test | L | — | — | Selection and handle-discipline tests: resolution paths, read handles, staleness, and callback context |
+| `src/lens/tests/selfui_actions.rs` | test | L | — | — | self.ui action-pipeline tests: typed events, forgery rejection, state binds, tiers, and card lifecycle |
+| `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
+| `src/lens/tests/versioning.rs` | test | m | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
 | `src/lens/validate.rs` | src | s | 14 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | L | 159 mod · 71 re-export · 26 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 159 mod · 71 re-export · 26 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limits.rs` | src | s | 3 crate-vis | — | — |
 | `src/linear_sync.rs` | src | L | 11 struct · 3 enum · 3 trait · 15 fn · 2 type · 12 const | LinearChangePage, LinearChangeSource, LinearEgress, LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus +9 | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `src/linear_sync/tests.rs` | test | L | — | — | Mirror-adapter tests (ONE-1905) |
-| `src/linkedin_connector.rs` | src | XL | 20 struct · 6 enum · 3 trait · 53 fn · 13 const | LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInConversationMessage, LinkedInConversationMessageEvent, LinkedInEscalationConfig, LinkedInInboxSyncConfig, LinkedInInboxSyncProvenanceRow, LinkedInInboxSyncReport +21 | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
+| `src/linkedin_connector/inbox_sync.rs` | src | m | 6 struct · 1 trait · 10 fn · 5 crate-vis | LinkedInConversationMessage, LinkedInConversationMessageEvent, LinkedInInboxSyncConfig, LinkedInInboxSyncProvenanceRow, LinkedInInboxSyncReport, LinkedInInboxSyncRunner, LinkedInMcpInboxSyncTransport | Inbox-sync config, runner, claim/provenance helpers, and message parsers |
+| `src/linkedin_connector/mod.rs` | src | m | 5 struct · 5 enum · 16 fn · 13 const · 3 re-export | LinkedInEscalationConfig, LinkedInLoginHandoff, LinkedInManagedTransport, LinkedInMcpConnectorAdapter, LinkedInMcpServerHarness, LinkedInNetworkRoute, LinkedInPasswordCustody, LinkedInSandboxHostConfig +2 | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
+| `src/linkedin_connector/normalize_keys.rs` | src | s | 18 crate-vis | — | Key builders, thread/message id normalization, and bounded validators |
+| `src/linkedin_connector/seat_policy.rs` | src | m | 6 struct · 1 enum · 1 trait · 19 fn | LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInKillSwitchState, LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy | Seat risk limits, sandbox policy evaluation, kill switch, and consent copy |
+| `src/linkedin_connector/verified_send.rs` | src | m | 3 struct · 1 trait · 8 fn · 2 crate-vis | LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan | Verify-after-send plan, sink, observation, and receipt helpers |
 | `src/linkedin_lead_preload.rs` | src | m | 4 struct · 3 enum · 5 fn · 1 const · 8 crate-vis | Disposition, LinkedInCompanySeed, LinkedInContactSeed, LinkedInLeadCorpus, LinkedInLeadPreloadError, LinkedInLeadPreloadReport, LinkedInResolutionError | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
 | `src/linkedin_lead_preload/source_binding.rs` | src | s | 1 crate-vis | — | Resolver-owned binding inside the entity body, not a separate source-id index |
 | `src/linkedin_lead_preload/tests.rs` | test | m | — | — | — |
@@ -635,8 +857,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/tests.rs` | test | XL | — | — | — |
 | `src/llm/budget/tests/per_call.rs` | test | m | — | — | — |
 | `src/llm/budget/tests/request_usage.rs` | test | s | — | — | — |
-| `src/llm/step.rs` | src | XL | 3 struct · 5 enum · 13 fn · 1 type · 8 const · 6 crate-vis | DreamerTrapKind, DreamerTrapState, DurableStepContext, DurableStepError, PeerResultWaitBinding, StepOutcome, StepProgression, TrapRef | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
+| `src/llm/step/codec.rs` | src | s | 10 crate-vis | — | Pinned-key MessagePack codec helpers shared by every step-layer decoder |
+| `src/llm/step/execute.rs` | src | m | 1 fn | — | Durable step execution: memo/admission/deadline orchestration plus deadline-race, retry, and lease-settle… |
+| `src/llm/step/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
+| `src/llm/step/peer_wait.rs` | src | m | 1 struct · 3 fn · 4 crate-vis | PeerResultWaitBinding | Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile |
+| `src/llm/step/step_claim.rs` | src | m | 12 crate-vis | — | Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance |
+| `src/llm/step/step_state.rs` | src | s | 5 crate-vis | — | Device-local step progression rows (Started/ResponseReceived/Logged) in vault_meta |
 | `src/llm/step/tests.rs` | test | XL | — | — | — |
+| `src/llm/step/trap.rs` | src | m | 6 fn · 7 crate-vis | — | Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions |
+| `src/llm/step/trap_binding.rs` | src | s | 4 crate-vis | — | Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume) |
+| `src/llm/step/types.rs` | src | m | 2 struct · 5 enum · 3 fn · 1 type · 8 const · 42 crate-vis | DreamerTrapKind, DreamerTrapState, DurableStepContext, DurableStepError, StepOutcome, StepProgression, TrapRef | Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome |
 | `src/llm/tests.rs` | test | L | — | — | — |
 | `src/m8_forward_oracle.rs` | src | L | — | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `src/maintain.rs` | src | L | 2 struct · 10 fn · 3 crate-vis | MaintenanceBuilder, MaintenanceReport | — |
@@ -659,12 +889,31 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/recall.rs` | src | m | 6 struct · 1 enum · 5 fn · 1 const · 4 crate-vis | Effort, MemoryItem, MemoryPack, MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
 | `src/memory/structural.rs` | src | L | 10 struct · 8 fn · 2 crate-vis | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CompanionRecordInput, EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec +2 | Structural puts (habit checkins, companion records, imported-claim admission, blob artifacts) and… |
 | `src/memory/support.rs` | src | m | 1 struct · 5 fn · 22 crate-vis | Memory | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
-| `src/memory/tests.rs` | test | XL | 10 crate-vis | — | BRIDGE-01 acceptance tests, engine side |
-| `src/memory/tests_regressions.rs` | src | XL | — | — | Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor… |
+| `src/memory/tests/authority_revocation.rs` | test | L | — | — | Owner bindings, rooting, revocation, revocation-vs-delete races, rotation, and sidecars |
+| `src/memory/tests/commit_claims.rs` | test | L | — | — | Commit gating and trust ceiling, claim upsert/supersede/retract, structural puts, blobs, and edge names |
+| `src/memory/tests/delete_tombstone.rs` | test | L | — | — | Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases |
+| `src/memory/tests/mod.rs` | test | m | 23 crate-vis | — | BRIDGE-01 acceptance tests, engine side |
+| `src/memory/tests/session_witness.rs` | test | L | — | — | Session overlay witness, room-shell claims, flip/replay races, and promoted turns |
+| `src/memory/tests/support.rs` | test | m | 19 crate-vis | — | Shared harnesses and fixtures for the memory acceptance tests |
+| `src/memory/tests/takes_notes.rs` | test | m | — | — | Note takes on claims, author binding, and stale upsert/retract conflicts |
+| `src/memory/tests/witness_policy.rs` | test | L | — | — | System-authorship ceiling rows, envelope/order validation, and the session-ownership door |
+| `src/memory/tests/witness_turns.rs` | test | L | — | — | Witness turn create/get/append/interleave, speaker atomicity, and meso enqueue on close |
+| `src/memory/tests_regressions/authority.rs` | src | m | — | — | Actor-authority and witness-pinning security regressions (review batch #471) |
+| `src/memory/tests_regressions/consolidation_outbound.rs` | src | m | — | — | BRIDGE-03 wiring regressions: Dreamer queue round-trip, seed-claim receipts, outbound schedule and dedupe |
+| `src/memory/tests_regressions/mod.rs` | src | s | — | — | Security-regression suite from a cross-cutting review batch: tests span witness, structural puts, actor… |
+| `src/memory/tests_regressions/outbound_actor_scope.rs` | src | s | — | — | ONE-1876 actor-scoped outbound dedupe index regressions |
+| `src/memory/tests_regressions/recall.rs` | src | m | — | — | BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits |
+| `src/memory/tests_regressions/retrieval_quality.rs` | src | s | — | — | Retrieval-quality facade metadata regressions |
 | `src/memory/witness.rs` | src | L | 3 struct · 1 enum · 4 fn · 8 crate-vis | WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn | Witness/turn-ingestion verbs: conversation/turn/message witnessing, off-record session routing, and the… |
 | `src/note.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 const | NoteBody, NoteKind, TakeTarget | ARCH-0032 NOTE primitive, cut to the single kind this ticket lands: `opinion/take` (registry record OF-330) |
 | `src/note/tests.rs` | test | s | — | — | NOTE body ABI: the pinned three keys, the closed kind, and the negative set the decoder must fail closed on |
-| `src/off_record/lifecycle.rs` | src | XL | 4 struct · 3 enum · 19 fn · 47 crate-vis | ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSession, OffRecordSessionRecord, OffRecordSessionVault | OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731) |
+| `src/off_record/lifecycle/executor.rs` | src | m | 8 crate-vis | — | Second OffRecordSession block: executor witness doors, routed shells and executor traps |
+| `src/off_record/lifecycle/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731) |
+| `src/off_record/lifecycle/registry.rs` | src | s | 14 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
+| `src/off_record/lifecycle/session.rs` | src | m | 2 struct · 11 fn · 18 crate-vis | OffRecordSession, OffRecordSessionVault | Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, promote_turn, close |
+| `src/off_record/lifecycle/telemetry.rs` | src | s | 5 crate-vis | — | Retrieval-run registration door (register/finalize/discard, staged/published arms) |
+| `src/off_record/lifecycle/types.rs` | src | s | 2 struct · 3 enum · 2 fn · 3 crate-vis | ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSessionRecord | Public records, enums, constants and the executor-utterance label shared by all off-record children |
+| `src/off_record/lifecycle/vault_api.rs` | src | s | 6 fn · 2 crate-vis | — | Vault verbs: session vault handle, enter, mode flip, receipt log and close |
 | `src/off_record/mod.rs` | src | s | 2 re-export · 5 crate-vis | — | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `src/off_record/promote.rs` | src | m | 2 struct · 1 fn · 12 crate-vis | OffRecordPromoteReceipt, PromoteOutcome | Explicit promotion from an off-record session into the durable vault |
 | `src/off_record/tests.rs` | test | L | — | — | — |
@@ -708,7 +957,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/mod.rs` | src | s | 7 re-export · 3 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
 | `src/outbound/receipt_fields.rs` | src | s | 6 crate-vis | — | — |
 | `src/outbound/retry_audit.rs` | src | s | 1 crate-vis | — | Atomic persistence of a failed send receipt and its retry |
-| `src/outbound/tests.rs` | test | XL | — | — | — |
+| `src/outbound/tests/connector_schedule.rs` | test | L | 1 crate-vis | — | Connector send-task scheduling, executor idempotency, idempotency keys and schedule gates |
+| `src/outbound/tests/dispatch_budget.rs` | test | m | — | — | Dispatch budget debit, exhaustion/suspend/resume, ladders, wrap window and charter drift |
+| `src/outbound/tests/gate_window.rs` | test | L | — | — | Gate-pending holds, delivery-window door evaluation, pending re-arm and retry-after authority |
+| `src/outbound/tests/linkedin_send.rs` | test | L | — | — | LinkedIn DM verified-send suite: content observation, caps, cadence and retry guard |
+| `src/outbound/tests/mod.rs` | test | L | — | — | — |
+| `src/outbound/tests/pipeline_contract.rs` | test | m | — | — | Intent shape, verb capability contract, manifests and pipeline execute-and-receipt core |
+| `src/outbound/tests/quiet_window.rs` | test | L | — | — | Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping |
 | `src/outbound/tests/retry_audit.rs` | test | m | — | — | Retry audit history and receipt/queue transaction regressions |
 | `src/outbound/tests/sender_selection.rs` | test | s | — | — | — |
 | `src/outbound/tests/sender_selection/admission_integrity.rs` | test | s | — | — | — |
@@ -723,8 +978,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_consent/tests.rs` | test | XL | — | — | — |
 | `src/outbound_grant.rs` | src | L | 3 struct · 2 enum · 20 fn · 3 const · 9 crate-vis | BookingPageInviteGrantMintIntent, ScopedMcpGrantMintIntent, StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
 | `src/outbound_grant/tests.rs` | test | m | — | — | — |
-| `src/outbound_intent_ledger.rs` | src | XL | 13 struct · 8 enum · 22 fn · 2 type · 3 const · 24 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Device-local durable intent ledger for effectful outbound calls |
+| `src/outbound_intent_ledger/codec.rs` | src | m | 1 const · 28 crate-vis | — | Pinned key sets, content digest, and MessagePack encode/decode |
+| `src/outbound_intent_ledger/dispatch.rs` | src | m | 2 fn · 5 crate-vis | — | Recovery walk, canonical-JSON intent identity, and test-only execute/recover/replay |
+| `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 5 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
+| `src/outbound_intent_ledger/store.rs` | src | m | 19 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
 | `src/outbound_intent_ledger/tests.rs` | test | XL | — | — | — |
+| `src/outbound_intent_ledger/types.rs` | src | m | 13 struct · 8 enum · 20 fn · 2 type · 2 const · 14 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Version consts, domain types, record impls, and listing/escalation/report types |
 | `src/overlay_db.rs` | src | L | 43 crate-vis | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
 | `src/persona_snapshot.rs` | src | L | 9 struct · 1 enum · 9 fn · 10 const · 5 crate-vis | PersonaSnapshotAgentTake, PersonaSnapshotArtifact, PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCompileStamp, PersonaSnapshotExportConsent, PersonaSnapshotExportRecord, PersonaSnapshotRow +2 | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
 | `src/persona_snapshot/tests.rs` | test | m | — | — | — |
@@ -740,13 +999,25 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/corpus_gate_tests.rs` | test | s | — | — | — |
 | `src/pipeline/corpus_tests.rs` | test | m | — | — | — |
 | `src/pipeline/decay_tests.rs` | test | L | — | — | ONE-1402 · read-side memory decay at the pipeline seam |
-| `src/pipeline/execution.rs` | src | XL | 1 crate-vis | — | — |
+| `src/pipeline/execution/channels.rs` | src | L | 1 crate-vis | — | Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE… |
+| `src/pipeline/execution/mod.rs` | src | s | — | — | Retrieval-transaction execution: channel fan-out, the outer context-pack driver, and attempt plumbing |
+| `src/pipeline/execution/pack.rs` | src | m | 4 crate-vis | — | Outer context-pack driver: the HyDE assess/retry loop, telemetry write, and validation helpers |
+| `src/pipeline/execution/types.rs` | src | s | 3 crate-vis | — | Attempt plumbing for the retrieval transaction: attempt overrides, the transaction output, and the… |
 | `src/pipeline/execution_binding.rs` | src | s | 1 crate-vis | — | Pipeline construction bound to a host execution capability |
 | `src/pipeline/filters.rs` | src | m | 8 crate-vis | — | — |
 | `src/pipeline/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | — |
 | `src/pipeline/scoped_channels.rs` | src | s | 4 crate-vis | — | — |
 | `src/pipeline/support.rs` | src | s | 12 crate-vis | — | — |
-| `src/pipeline/tests.rs` | test | XL | 7 crate-vis | — | — |
+| `src/pipeline/tests/community_quality.rs` | test | m | — | — | PPR VAD threading, community diversification, and retrieval-quality grading |
+| `src/pipeline/tests/facet_status_world.rs` | test | L | — | — | Facet filter, claim-status gate, and world-scope visibility pins |
+| `src/pipeline/tests/mod.rs` | test | m | 7 crate-vis | — | — |
+| `src/pipeline/tests/relationship_scope_filter.rs` | test | L | — | — | Relationship-scope filter, demotion, and facet/world conjunction |
+| `src/pipeline/tests/rerank_hyde_session_stale.rs` | test | L | 3 crate-vis | — | Rerank blocks, Hyde recall, session staging, and stale-world federation |
+| `src/pipeline/tests/retrieval_blend.rs` | test | L | — | — | Vector/PPR channels, recency boost, prefix gates, and temporal hints |
+| `src/pipeline/tests/scoring_basics.rs` | test | m | — | — | Scoring constants, blend weights, and dreamer working-set basics |
+| `src/pipeline/tests/telemetry_trace.rs` | test | L | — | — | Retrieval telemetry, outcome records, and trace capture/fork-hash pins |
+| `src/pipeline/tests/temporal.rs` | test | m | — | — | Temporal index scans, sigma scoring, widening, and contiguity pins |
+| `src/pipeline/tests/world_access.rs` | test | L | 11 crate-vis | — | World-access authority tiers, strict decoding, and bitemporal precedence |
 | `src/pipeline/trace.rs` | src | L | 12 crate-vis | — | — |
 | `src/pipeline/types.rs` | src | m | 10 struct · 5 enum · 12 fn · 5 const · 33 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +7 | — |
 | `src/pipeline/world_authority.rs` | src | s | 2 crate-vis | — | Per-turn world authority, bound to the host's executing principal |
@@ -762,22 +1033,48 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/planes.rs` | src | m | 3 struct · 2 enum · 3 fn · 3 const · 8 crate-vis | HostedLegalAction, HostedLegalPolicy, HostedLegalRow, PolicyPlane, PolicyRubricRow | The two policy planes, the documents they enforce, and the rows they contribute |
 | `src/policy_model/prompt.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | PolicyClassifyPrompt | The classify request, and how a safeguard model's answer is routed back to a plane's rows |
 | `src/policy_model/receipt.rs` | src | s | 3 crate-vis | — | Gate-ledger rows for policy verdicts |
-| `src/policy_model/relay.rs` | src | XL | 8 struct · 5 enum · 1 trait · 27 fn · 13 crate-vis | AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, DualPlanePass, EdgeServiceRegistry, HostedEdgeAttestation, InMemoryVaultSideVerdicts, RelayBoundaryDegrade +6 | The hosted relay boundary: where OUR infrastructure touches someone else's content, and the only place the… |
+| `src/policy_model/relay/boundary.rs` | src | m | 2 fn · 5 crate-vis | — | Relay entry points and ledger writes: trust-domain dispatch, dual-plane fan-out, binding-checked receipts |
+| `src/policy_model/relay/hosted.rs` | src | m | 4 crate-vis | — | Hosted classification engine: single hosted pass with mid-pass re-check and CloudVault receipt verification |
+| `src/policy_model/relay/mod.rs` | src | s | 3 re-export · 4 crate-vis | — | The hosted relay boundary: where OUR infrastructure touches someone else's content, and the only place the… |
+| `src/policy_model/relay/outcome.rs` | src | m | 4 struct · 3 enum · 1 trait · 11 fn · 6 crate-vis | DualPlanePass, InMemoryVaultSideVerdicts, RelayBoundaryDegrade, RelayBoundaryPass, RelayClassifiedPass, RelayResolution, RelaySafeguardTier, VaultSideVerdictSource | Pass outcome vocabulary and the single degrade mint: boundary pass types, resolutions, verdict source… |
+| `src/policy_model/relay/registry.rs` | src | m | 1 struct · 5 fn · 5 crate-vis | EdgeServiceRegistry | Registration data and fail-closed validation: hosted-legal bounds and row checks plus the… |
+| `src/policy_model/relay/trust.rs` | src | s | 3 struct · 2 enum · 9 fn · 5 crate-vis | AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, HostedEdgeAttestation, RelayTrustDomain | Sealed identity and witness chain: trust domains, connection class, edge-auth mint, attested domain, hosted… |
 | `src/policy_model/request.rs` | src | s | 3 struct · 4 enum · 9 fn | HostedOutagePolicy, PolicyClassifyRequest, PolicyClassifySubject, PolicyGenerationParams, PolicyModelConfig, PolicyReasoningEffort, RelayClassifierMode | What the caller asks about, and how the classifier is configured |
-| `src/policy_model/tests.rs` | test | XL | — | — | — |
+| `src/policy_model/tests/cloud_dual.rs` | test | L | — | — | Cloud-vault receipt trust/attestation, trust domains, degrade halts, dual-plane passes and enforce doors |
+| `src/policy_model/tests/dial_pattern_roles.rs` | test | m | — | — | Classifier dial and pattern roles: verdict reuse per dial/mode, model-call economy, strictest-role-wins |
+| `src/policy_model/tests/edge_identity.rs` | test | m | — | — | Sealed edge identity, service registry, attested relay witnesses and domains |
+| `src/policy_model/tests/foundations.rs` | test | m | — | — | Engine ships no policy: defaults, inactive planes, manifest compat, warn byte-identity |
+| `src/policy_model/tests/hosted_registration_relay.rs` | test | L | — | — | Hosted policy registration accountability, row-ref dedup, policy hashes, hosted relay plane |
+| `src/policy_model/tests/mod.rs` | test | s | 21 crate-vis | — | — |
+| `src/policy_model/tests/outage_contracts.rs` | test | m | — | — | Outage behaviour per mode and host posture, output-contract presets, rationale fields |
+| `src/policy_model/tests/owner_decisions_ledger.rs` | test | m | — | — | Owner-plane decisions: exactly-one-row ledger, category/row-ref rules, block/help, notices and receipts |
+| `src/policy_model/tests/owner_manifest_binding.rs` | test | L | — | — | Owner manifest trust: world scoping, forgery/misspelling fail-closed, bindings, generation params… |
+| `src/policy_model/tests/receipt_binding_citations.rs` | test | L | — | — | Receipt-time binding rechecks, manifest movement mid-call, citations/parse bounds, streaming rationale audit |
+| `src/policy_model/tests/support.rs` | test | L | 84 crate-vis | — | Shared fixtures, mock backends, and pass drivers for policy-model tests |
 | `src/policy_model/verdict.rs` | src | m | 4 struct · 3 enum · 7 fn · 7 crate-vis | HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory | What a classify pass concluded |
-| `src/ppr.rs` | src | XL | 1 fn · 31 crate-vis | — | — |
+| `src/ppr/cache_store.rs` | src | m | 29 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
+| `src/ppr/community.rs` | src | s | 7 crate-vis | — | Community-boost bridge adapter over ppr_community |
+| `src/ppr/mod.rs` | src | s | 9 crate-vis | — | — |
+| `src/ppr/policy.rs` | src | s | 10 crate-vis | — | PPR alphas, seed weighting, specificity counts, and recency policy |
+| `src/ppr/query.rs` | src | m | 1 fn · 12 crate-vis | — | PPR query dispatch: cache-read context, deferred writes, and VAD evidence scope |
 | `src/ppr/tests.rs` | test | XL | — | — | — |
 | `src/ppr/tests/quality_integration.rs` | test | s | — | — | — |
 | `src/ppr/tests/specificity_visibility.rs` | test | s | — | — | — |
+| `src/ppr/walk.rs` | src | m | 14 crate-vis | — | PPR walk math: frontier rounds, visibility gating, and edge gates |
 | `src/ppr_community.rs` | src | L | 12 struct · 1 enum · 21 fn · 11 const · 8 crate-vis | CommunityBoostContext, CommunityBoostReport, CommunityCacheMeta, CommunityEdge, CommunityError, CommunityGraphInput, CommunityId, CommunityMembership +5 | Deterministic community projection, cache, and bounded retrieval prior |
 | `src/ppr_community/tests.rs` | test | L | — | — | Focused pure-leaf tests |
 | `src/prompt.rs` | src | m | 5 struct · 6 fn · 4 const | PromptRecompileStamp, ResolvedPrompt, SessionPromptAssembly, SessionPromptParts, StampedLlmRequest | — |
-| `src/provenance.rs` | src | XL | 2 struct · 1 enum · 14 fn · 5 const · 38 crate-vis | EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus | `edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15) |
+| `src/provenance/actor_substrate.rs` | src | s | 1 fn · 1 const · 10 crate-vis | — | Actor-class validation, legacy evidence transition, and model substrate codec |
+| `src/provenance/codec.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |
+| `src/provenance/edge_ref.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const · 10 crate-vis | EdgeRef, SupersessionStatus | Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status |
 | `src/provenance/imported.rs` | src | s | 3 crate-vis | — | Internal imported-edge admission |
 | `src/provenance/imported/tests.rs` | test | s | — | — | — |
 | `src/provenance/imported/tests/lifecycle.rs` | test | s | — | — | Imported lifecycle regression through the private canonical writer |
+| `src/provenance/lifecycle.rs` | src | m | 17 crate-vis | — | Claim lifecycle primitives: precedence, close/retract, stamps, and loading shapes |
+| `src/provenance/mod.rs` | src | s | 3 re-export · 6 crate-vis | — | `edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15) |
+| `src/provenance/queries.rs` | src | s | 2 fn · 4 crate-vis | — | Vault read scans: named-target guards and live/retracted cohort queries |
 | `src/provenance/tests.rs` | test | L | — | — | — |
+| `src/provenance/writes.rs` | src | m | 4 fn · 1 crate-vis | — | Vault write doors: put, supersede, retract, model substrate, and the shared writer |
 | `src/provider_confidence.rs` | src | m | 9 fn · 2 const · 1 re-export · 4 crate-vis | — | Provider confidence priors and read-time confidence composition (ES-09) |
 | `src/provider_confidence/indexes.rs` | src | m | 3 fn · 5 crate-vis | — | Disposable provider actor and prior-head indexes over stored graph truth |
 | `src/provider_confidence/prior_projection_tests.rs` | test | m | 15 crate-vis | — | Read-side corruption and stranding regressions; no production fixture doors |
@@ -996,14 +1293,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/quota.rs` | src | m | 5 struct · 3 enum · 7 fn · 4 const · 9 crate-vis | AllowBlock, FederationBlockReason, FederationConnectionQuota, FederationPauseReason, FederationQuotaConfig, FederationQuotaSnapshot, MaintenanceIngestQuotaConfig, MaintenanceIngestQuotaSnapshot | Per-connection federation quota and maintenance ingest quota decisions |
 | `src/sync/quota/tests.rs` | test | s | — | — | — |
 | `src/sync/schema.rs` | src | m | 6 fn · 2 crate-vis | — | CRDT Doc schema creation for the sync layer |
-| `src/sync/selector.rs` | src | XL | 2 struct · 2 enum · 11 fn · 1 const · 2 crate-vis | FederationAdmissionRole, SelectorVvRequest, SyncSelector, SyncSelectorWorld | Grant-backed closed-subgraph sync selectors |
+| `src/sync/selector/admission.rs` | src | m | 1 enum · 2 fn · 1 crate-vis | FederationAdmissionRole | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
+| `src/sync/selector/authorize.rs` | src | m | 1 fn · 6 crate-vis | — | Grant and pact authorization with EmptyAxis coupling, guest-share stripping, and the closed-subgraph filter… |
+| `src/sync/selector/codec.rs` | src | m | 2 struct · 1 enum · 8 fn · 1 const · 15 crate-vis | SelectorVvRequest, SyncSelector, SyncSelectorWorld | Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope… |
+| `src/sync/selector/edge.rs` | src | s | 1 crate-vis | — | Admitted-edge copy with reserved-kind rejection and the FacetOf off-table verdict |
+| `src/sync/selector/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | Grant-backed closed-subgraph sync selectors |
+| `src/sync/selector/scope.rs` | src | m | 7 crate-vis | — | Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions |
 | `src/sync/selector/tests.rs` | test | XL | — | — | — |
 | `src/sync/server_state.rs` | src | m | 6 fn | — | Server-side `sync_state` persistence per the ARCH-0023b key layout |
 | `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 18 fn · 25 const · 1 mod | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
 | `src/sync/transport/tests.rs` | test | m | — | — | — |
 | `src/sync/types.rs` | src | m | 3 struct · 9 fn · 2 crate-vis | LocalUpdate, SyncConfig, WindowKey | Sync-specific types for the CRDT sync layer |
-| `src/sync/window.rs` | src | XL | 1 struct · 17 fn · 1 mod · 13 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
+| `src/sync/window/egress.rs` | src | m | 4 fn · 4 crate-vis | — | Window egress: packing policy, secret scrub, exports, and mirror replay |
+| `src/sync/window/forward.rs` | src | L | 1 fn | — | Forward rematerialization of window state into the CRDT doc |
+| `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 4 re-export · 8 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
+| `src/sync/window/reverse.rs` | src | m | 1 fn · 7 crate-vis | — | Reverse rematerialization plus skip/policy predicates and carrier removal |
+| `src/sync/window/test_hooks.rs` | src | s | 2 fn · 1 crate-vis | — | Test-only hook for the REDACTION_AUDIT rematerialization race pin |
 | `src/sync/window/tests.rs` | test | XL | — | — | — |
+| `src/sync/window/tombstones.rs` | src | s | 3 fn · 4 crate-vis | — | Tombstone apply/export/replay plus window rebuild from updates |
 | `src/task_authority.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 6 crate-vis | TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityState | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `src/task_verb/consts.rs` | src | s | 1 const · 14 crate-vis | — | Module-level constants shared across the task-verb files |
 | `src/task_verb/consult_fanout_facade.rs` | src | m | 2 fn | — | — |
@@ -1023,13 +1330,41 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/rate_limit.rs` | src | s | 6 crate-vis | — | — |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 4 enum · 3 fn · 2 const · 1 crate-vis | TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskResultInput, TaskRouteLane, TaskRouteOutcome +1 | — |
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |
-| `src/task_verb/tests.rs` | test | XL | — | — | — |
+| `src/task_verb/tests/board_ack.rs` | test | L | — | — | Task verb tests: Ack, cancel-vs-retry truth, owner proofs, board folding and poison-row isolation |
+| `src/task_verb/tests/cancel.rs` | test | L | — | — | Task verb tests: Cancel ladder, spawn and agent-dispatch cancel, sibling cancel, force hard-cancel and… |
+| `src/task_verb/tests/consult_ladder.rs` | test | L | — | — | Task verb tests: Consult payload, ladder states, durable CAS, escalation, cross-actor routing and human… |
+| `src/task_verb/tests/consult_lifecycle.rs` | test | m | — | — | Task verb tests: Consult create and schema, result contract, replica settle, answer-vs-expiry, fan-out… |
+| `src/task_verb/tests/create_admission.rs` | test | m | — | — | Task verb tests: Create validation and deadlines, rate limits, over-quota proposals and claim-scan caps |
+| `src/task_verb/tests/magistrate_route_result.rs` | test | L | — | — | Task verb tests: Magistrate verdicts and provenance, counter and terminal projection, assignee routing… |
+| `src/task_verb/tests/mod.rs` | test | s | — | — | — |
+| `src/task_verb/tests/presence_scan.rs` | test | m | — | — | Task verb tests: Presence paging, scan caps, board-scan resilience and dangling-job rendering |
+| `src/task_verb/tests/support.rs` | test | L | 58 crate-vis | — | Shared fixtures and helpers for the task_verb tests |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 3 enum · 7 fn · 2 const · 1 crate-vis | TaskAssignee, TaskKind, TaskTtl, TasksVerb | — |
 | `src/task_verb/wire_decode.rs` | src | m | 11 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/task_verb/wire_encode.rs` | src | m | 7 crate-vis | — | Write side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/temporal.rs` | src | m | 1 struct · 4 enum · 5 fn | TemporalAnchorMode, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TimeRange | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
 | `src/test_util/source_scan.rs` | src | m | 16 crate-vis | — | Test-only-file classification shared by every source-scanning fence |
-| `src/tests.rs` | test | XL | — | — | — |
+| `src/tests/batch_temporal.rs` | test | m | — | — | Batch write path, temporal/long-interval indexes and their open-time migration |
+| `src/tests/claim_lifecycle.rs` | test | L | — | — | Claim lifecycle: supersede/retract, temporal rehoming, origin-truth guards |
+| `src/tests/claim_vad.rs` | test | L | — | — | Claim-VAD consolidation/reappraisal, coping-outcome claims, claim_vad_now (flattens inline mod) |
+| `src/tests/claims.rs` | test | L | — | — | Claim bodies, roles, typed validation matrix, public vs replicated doors |
+| `src/tests/deletion.rs` | test | L | — | — | Entity deletion: soft/hard erase, redaction receipts, hard-erase sweep, raced deletes |
+| `src/tests/edge_prov_lifecycle.rs` | test | L | — | — | Edge-provenance lifecycle: winner election, surgical weight/VAD rewrites, write-once IDs |
+| `src/tests/embedding.rs` | test | L | — | — | Embedding-model identity gates, HNSW compat records, embedding-space migration |
+| `src/tests/entity_edge_kinds.rs` | test | L | — | — | Entity/edge identity contracts: edge kinds, value layouts, weights, type prefixes |
+| `src/tests/graph_topology.rs` | test | L | — | — | Graph reads: type index, peers, hierarchy, cycles, child-of, learned-range scans |
+| `src/tests/mod.rs` | test | s | 19 crate-vis | — | — |
+| `src/tests/open_gates.rs` | test | L | — | — | Vault open path: LMDB env exclusivity, manifest set, doctor, ABI gate matrix |
+| `src/tests/prov_deletes.rs` | test | L | — | — | Provenance-claim deletes (downgrade/restamp) plus model substrate and actor class |
+| `src/tests/reput_phonetic.rs` | test | L | — | — | Re-put reindexing, phonetic/forward-code index, delete deindexing |
+| `src/tests/session_misc.rs` | test | s | — | — | Session/context-board serialization, basic entity CRUD, short-ID alias and vault identity |
+| `src/tests/short_ids.rs` | test | m | — | — | Short-ID allocation/layout plus per-version storage-ABI rejection gates |
+| `src/tests/support.rs` | test | XL | 84 crate-vis | — | Shared fixtures, oracles and low-level read helpers for the vault tests |
+| `src/tests/text_search.rs` | test | m | — | — | Full-text index maintenance across local/replicated re-put and lifecycle transitions |
+| `src/tests/tombstones.rs` | test | m | — | — | CRDT tombstone replay and sync-pending tombstone markers (sync / not-sync gated) |
+| `src/tests/type_registry.rs` | test | L | — | — | Type-byte zones, structural-kind registry, entity-type validation on every write path |
+| `src/tests/vad_annotations.rs` | test | m | — | — | VAD edge values and turn/message VAD annotation claims incl. delete interplay |
+| `src/tests/vectors_hnsw.rs` | test | m | — | — | Vector writes, HNSW search/recall, validation and sync-protocol error taxonomy |
 | `src/tests_bug.rs` | src | m | — | — | — |
 | `src/thread_lens.rs` | src | m | 4 struct · 1 enum · 10 fn · 2 const | ThreadLensEntry, ThreadLensInstrument, ThreadLensSendBox, ThreadLensSendProgress, ThreadLensStepState | Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5) |
 | `src/thread_lens/tests.rs` | test | s | — | — | — |
@@ -1081,8 +1416,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/uds/tests.rs` | test | s | — | — | Source-authored socket tests |
 | `src/voice_cascade/uds/tests/bridge_tests.rs` | test | m | — | — | — |
 | `src/voice_cascade/uds/tests/socket_tests.rs` | test | s | — | — | — |
-| `src/voice_identity.rs` | src | XL | 12 struct · 7 enum · 24 fn · 3 const · 2 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | VOX-02 voice identity substrate: consent log, enrollment, local matching |
+| `src/voice_identity/codec_core.rs` | src | m | 29 crate-vis | — | Shared MessagePack plumbing plus origin/basis/space/consent/sample encode_/decode_ pairs kept together |
+| `src/voice_identity/codec_records.rs` | src | m | 10 crate-vis | — | Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape |
+| `src/voice_identity/math_keys.rs` | src | s | 15 crate-vis | — | Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix… |
+| `src/voice_identity/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | VOX-02 voice identity substrate: consent log, enrollment, local matching |
+| `src/voice_identity/storage_admission.rs` | src | m | 22 crate-vis | — | Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination… |
 | `src/voice_identity/tests.rs` | test | XL | — | — | — |
+| `src/voice_identity/types.rs` | src | m | 12 struct · 7 enum · 17 fn · 3 const · 7 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | Public domain types, request/receipt structs, thresholds, key prefixes, and validators |
+| `src/voice_identity/vault.rs` | src | m | 7 fn · 2 crate-vis | — | Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning |
 | `src/voice_segment.rs` | src | s | 1 fn · 7 const · 1 crate-vis | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
 | `src/wave_orchestration.rs` | src | m | 8 struct · 2 trait · 10 fn · 4 const | BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan, WavePlanReceipt, WavePlanRequest, WavePlanner +2 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `src/wave_orchestration/tests.rs` | test | m | — | — | Wave-orchestration tests (ONE-1905) |

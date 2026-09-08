@@ -52,6 +52,15 @@ Rules (see README.md for the full list):
     is FAIL extra; tests mounts and decls for child files are plumbing.
   - Bodies are compared with the leading visibility keyword stripped; a
     visibility change is reported as INFO, not a failure.
+  - String literals (normal, byte, C, raw with any number of `#`) are
+    compared byte-for-byte: every whitespace normalisation the checker runs
+    (the mod-body / impl-method dedent, the visibility strip, the standalone
+    rustfmt pass, the canon tokenisation of residue) sees each literal as a
+    one-line placeholder and the literal is put back byte-exact afterwards.
+    Whitespace inside a multi-line literal (YAML / JSON fixtures, expected
+    output) is semantic; re-indenting it along with the code is FAIL body.
+    The one run the compiler itself discards, the whitespace after a
+    `\\`-newline continuation in a non-raw string, is compared as skipped.
   - An impl block whose header lands in more than one child (or that the base
     file already carried more than once) is compared per associated item
     instead; the header/attribute residue of every part must match the base.
@@ -75,6 +84,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rustlex import Doc, canon, enumerate_items, item_text, normalized_fragment, rustfmt, strip_item_vis  # noqa: E402
+from rustlex import _CHAR, _RAW_OPEN, _STR_OPEN, _is_ident  # noqa: E402  (string-literal lexing rules, shared with mask())
 
 DIFF_CAP = 60
 PLUMBING_KINDS = ("use",)
@@ -220,13 +230,169 @@ class Side:
         return {m.name for m in self.mods if m.scope == scope and m.bodied}
 
 
+# ---------------------------------------------------------------------------
+# string literals: compared byte-for-byte
+# ---------------------------------------------------------------------------
+#
+# Whitespace inside a string literal is semantic (YAML / JSON fixtures,
+# expected output). Every normalisation the checker applies to compared text
+# -- textwrap.dedent of a mod body or impl method, the visibility strip, the
+# standalone rustfmt pass with its 4-space de-wrap, the canon tokenisation of
+# residue chunks -- would otherwise touch the leading whitespace of a
+# literal's continuation lines, and symmetric damage on both sides hides a
+# real difference (a raw YAML fixture re-indented by four spaces when its
+# test moved out of an inline `mod tests` parsed differently and failed while
+# the checker said OK). So each literal is swapped for a one-line placeholder
+# string before any such transform and spliced back byte-exact after it.
+
+_PLACEHOLDER = '"@@SPLIT-CHECK-LITERAL-%d@@"'
+_PLACEHOLDER_RE = re.compile(r'"@@SPLIT-CHECK-LITERAL-(\d+)@@"')
+_PLACEHOLDER_MARK = "@@SPLIT-CHECK-LITERAL-"
+
+
+def string_spans(text):
+    """[(start, end)] of every string literal in `text` (end exclusive,
+    prefix included): normal / byte / C strings with escapes, raw strings
+    with any number of `#`. Comments and char literals (`'"'`) are skipped
+    with the rules rustlex.mask() uses, so the two never disagree about
+    where a literal is. An unterminated literal runs to the end of text."""
+    spans = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if c == "/" and text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth += 1
+                    j += 2
+                elif text.startswith("*/", j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            i = j
+            continue
+        boundary = i == 0 or not _is_ident(text[i - 1])
+        m = None
+        if boundary:
+            m = _RAW_OPEN.match(text, i)
+            if m:
+                close = '"' + m.group(1)
+                end = text.find(close, m.end())
+                end = n if end < 0 else end + len(close)
+                spans.append((i, end))
+                i = end
+                continue
+            m = _STR_OPEN.match(text, i)
+        elif c == '"':
+            m = _STR_OPEN.match(text, i)
+        if m:
+            j = m.end()
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                j += 1
+                if text[j - 1] == '"':
+                    break
+            spans.append((i, min(j, n)))
+            i = j
+            continue
+        if c == "'":
+            m = _CHAR.match(text, i)
+            i = m.end() if m else i + 1
+            continue
+        i += 1
+    return spans
+
+
+def protect_literals(text):
+    """(text with every string literal replaced by a one-line placeholder
+    string, [the literals in order]). The placeholder is itself a string
+    literal, so every transform in the pipeline (dedent, vis strip, rustfmt,
+    canon) carries it through untouched; restore_literals() undoes it."""
+    if _PLACEHOLDER_MARK in text:
+        raise RuntimeError("source already contains the literal placeholder marker %r" % _PLACEHOLDER_MARK)
+    lits, out, pos = [], [], 0
+    for s, e in string_spans(text):
+        out.append(text[pos:s])
+        out.append(_PLACEHOLDER % len(lits))
+        lits.append(text[s:e])
+        pos = e
+    out.append(text[pos:])
+    return "".join(out), lits
+
+
+def restore_literals(text, lits):
+    """Splice the literals from protect_literals() back, byte-exact. Every
+    placeholder must come back exactly once; anything else means a transform
+    ate one, and the checker fails closed rather than compare a lie."""
+    seen = []
+
+    def sub(m):
+        k = int(m.group(1))
+        seen.append(k)
+        return lits[k]
+
+    out = _PLACEHOLDER_RE.sub(sub, text)
+    if sorted(seen) != list(range(len(lits))):
+        raise RuntimeError("string-literal placeholders lost in normalisation (%d of %d restored)" % (len(seen), len(lits)))
+    return out
+
+
+def literal_compare_form(lit):
+    """A literal as the compiler reads its whitespace. In a non-raw string
+    the newline after a trailing `\\` and every whitespace byte at the start
+    of the next line are skipped (string continuation escape), so that run
+    is compared as the bare `\\` + newline and a mover re-indenting the
+    continuation line with the code is not a change. Every other byte is
+    kept; raw strings are returned unchanged. Return `lit` here to compare
+    continuation whitespace strictly."""
+    if _RAW_OPEN.match(lit):
+        return lit
+    out, i, n = [], 0, len(lit)
+    while i < n:
+        c = lit[i]
+        if c == "\\" and i + 1 < n:
+            if lit[i + 1] == "\n" or lit.startswith("\r\n", i + 1):
+                out.append("\\\n")
+                i += 2 if lit[i + 1] == "\n" else 3
+                while i < n and lit[i] in " \t\r\n":
+                    i += 1
+                continue
+            out.append(lit[i:i + 2])
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _dedent(text):
-    return textwrap.dedent(text)
+    """textwrap.dedent over the code lines only: the margin is computed
+    from, and stripped from, lines outside string literals; a literal's
+    continuation lines (the ones whose start lies inside it, closing-quote
+    line included) come back byte-exact."""
+    protected, lits = protect_literals(text)
+    return restore_literals(textwrap.dedent(protected), lits)
+
+
+def _canon(text):
+    """rustlex.canon with string literals carried through byte-exact (canon
+    keeps a plain `"…"` as one token but re-lexes the interior of a raw
+    string holding quotes)."""
+    protected, lits = protect_literals(text)
+    return restore_literals(canon(protected), lits)
 
 
 def _mod_body(doc, it):
-    """Dedented body text of a bodied `mod x { .. }` item (lines strictly
-    between the opening and closing brace lines)."""
+    """Body text of a bodied `mod x { .. }` item (lines strictly between the
+    opening and closing brace lines), code lines dedented."""
     return _dedent("\n".join(doc.lines[it["body_open_line"] + 1:it["end_line"]]))
 
 
@@ -401,7 +567,7 @@ def _impl_parts(doc, it, scope, where):
                             _dedent(item_text(doc, m)), where))
         covered.update(range(m["lead_start"], m["end_line"] + 1))
     rest = [doc.lines[i] for i in range(it["lead_start"], it["end_line"] + 1) if i not in covered]
-    return methods, _elide_lifetimes(canon("\n".join(rest)))
+    return methods, _elide_lifetimes(_canon("\n".join(rest)))
 
 
 def collect(doc, where, scope, side):
@@ -452,16 +618,17 @@ def _chunk(doc, lines, where):
     if first.startswith("#![") or first.startswith("extern crate"):
         return None  # inner attribute / extern crate = plumbing
     text = "\n".join(doc.lines[i] for i in lines)
-    return (canon(text), doc.lines[lines[0]].strip(), where, lines[0] + 1)
+    return (_canon(text), doc.lines[lines[0]].strip(), where, lines[0] + 1)
 
 
 # ---------------------------------------------------------------------------
 # comparison
 # ---------------------------------------------------------------------------
 
-def _normalised(item, assoc):
-    """rustfmt-normalised, vis-stripped fragment (the slow path)."""
-    return normalized_fragment(item.text, assoc, True)
+def _normalised(text, assoc):
+    """rustfmt-normalised, vis-stripped fragment (the slow path); `text` is
+    the placeholder-protected item text."""
+    return normalized_fragment(text, assoc, True)
 
 
 _INNER_VIS = re.compile(r"^(\s*)pub(?:\((?:crate|super|self|in\s+[A-Za-z0-9_:]+)\))?\s+", re.M)
@@ -483,13 +650,23 @@ def bodies_equal(base, new, assoc=False):
     fragment on its own (absorbs the indentation-dependent reflow of an item
     that moved from an inline `mod tests` body to a file top level).
     Visibility tokens are stripped on every line on both sides (inner
-    promotions such as `pub(super) fn` / `pub(super) field:` are allowed)."""
-    b = strip_inner_vis(strip_item_vis(base.text))
-    n = strip_inner_vis(strip_item_vis(new.text))
+    promotions such as `pub(super) fn` / `pub(super) field:` are allowed).
+    String literals ride through both paths as placeholders and are put
+    back byte-exact (continuation whitespace as the compiler reads it, see
+    literal_compare_form) before the texts are compared and diffed."""
+    bt, blits = protect_literals(base.text)
+    nt, nlits = protect_literals(new.text)
+    blits = [literal_compare_form(lit) for lit in blits]
+    nlits = [literal_compare_form(lit) for lit in nlits]
+    b = restore_literals(strip_inner_vis(strip_item_vis(bt)), blits)
+    n = restore_literals(strip_inner_vis(strip_item_vis(nt)), nlits)
     if b == n:
         return True, b, n
-    b = strip_inner_vis(_normalised(base, assoc))
-    n = strip_inner_vis(_normalised(new, assoc))
+    # Strip the inner visibility BEFORE rustfmt, as the signature-level strip
+    # already is: a `pub(super)` added to a method can push its signature past
+    # the width limit and rustfmt would reflow only the new side.
+    b = restore_literals(_normalised(strip_inner_vis(bt), assoc), blits)
+    n = restore_literals(_normalised(strip_inner_vis(nt), assoc), nlits)
     return b == n, b, n
 
 
@@ -530,11 +707,11 @@ def compare_items(base_items, new_items, extras=None):
             infos.extend(i)
             matched += len(bgroup)
             continue
-        if len(bgroup) > 1:
-            problems.append("FAIL ambiguous %s appears %d times in base %s" % (label, len(bgroup), bgroup[0].where))
-            continue
-        if len(ngroup) > 1:
-            problems.append("FAIL duplicate %s lands in %s" % (label, ", ".join(n.where for n in ngroup)))
+        if len(bgroup) > 1 or len(ngroup) > 1:
+            p, i, m = _compare_same_key(label, bgroup, ngroup, assoc=False)
+            problems.extend(p)
+            infos.extend(i)
+            matched += m
             continue
         base, new = bgroup[0], ngroup[0]
         p, i = _compare_one(label, base, new, assoc=False)
@@ -547,6 +724,35 @@ def compare_items(base_items, new_items, extras=None):
                 extras.append(n)
             else:
                 problems.append("FAIL extra %s in %s" % (n.label(), n.where))
+    return problems, infos, matched
+
+
+def _compare_same_key(label, bgroup, ngroup, assoc):
+    """Items that share one key (anonymous `const _` compile-time asserts,
+    a name repeated behind different cfgs): pair each base item with a
+    new-side item whose body is identical, in any order. A base item with
+    no identical landing is missing; a new-side item left over is a
+    duplicate. Returns (problems, infos, matched)."""
+    problems, infos = [], []
+    remaining = list(ngroup)
+    matched = 0
+    for base in bgroup:
+        hit = None
+        for new in remaining:
+            if bodies_equal(base, new, assoc)[0]:
+                hit = new
+                break
+        if hit is None:
+            problems.append("FAIL missing %s (base %s, one of %d sharing the key) has no byte-identical landing in any child"
+                            % (label, base.where, len(bgroup)))
+            continue
+        remaining.remove(hit)
+        p, i = _compare_one(label, base, hit, assoc)
+        problems.extend(p)
+        infos.extend(i)
+        matched += 1
+    if remaining:
+        problems.append("FAIL duplicate %s lands in %s" % (label, ", ".join(n.where for n in ngroup)))
     return problems, infos, matched
 
 
@@ -578,14 +784,13 @@ def _compare_split_impl(label, bgroup, ngroup):
     for key, bm in bmethods.items():
         mlabel = "%s of %s" % (bm[0].label(), label)
         nm = nmethods.pop(key, [])
-        if len(bm) > 1:
-            problems.append("FAIL ambiguous %s appears %d times in base" % (mlabel, len(bm)))
-            continue
         if not nm:
             problems.append("FAIL missing %s (base %s) not found in any child" % (mlabel, bm[0].where))
             continue
-        if len(nm) > 1:
-            problems.append("FAIL duplicate %s lands in %s" % (mlabel, ", ".join(x.where for x in nm)))
+        if len(bm) > 1 or len(nm) > 1:
+            p, i, _ = _compare_same_key(mlabel, bm, nm, assoc=True)
+            problems.extend(p)
+            infos.extend(i)
             continue
         p, i = _compare_one(mlabel, bm[0], nm[0], assoc=True)
         problems.extend(p)
@@ -633,15 +838,25 @@ def compare_mods(base_mods, new_mods, extras=None):
 
 
 def compare_chunks(base_chunks, new_chunks, extras=None):
+    """Every unrecognised block of the base must land exactly once.
+
+    The base may itself hold byte-identical twins (two `proptest!` tails,
+    two closing `);` lines): a twin on the new side is only a duplicate when
+    the new side holds MORE copies than the base still has to place."""
     problems = []
     remaining = list(new_chunks)
+    base_left = {}
+    for canon_text, _first, _where, _line in base_chunks:
+        base_left[canon_text] = base_left.get(canon_text, 0) + 1
     for canon_text, first, where, line in base_chunks:
         hits = [c for c in remaining if c[0] == canon_text]
         if not hits:
             problems.append("FAIL missing unrecognised block from base %s:%d (%r) not found in any child" % (where, line, first))
+            base_left[canon_text] -= 1
             continue
-        if len(hits) > 1:
+        if len(hits) > base_left[canon_text]:
             problems.append("FAIL duplicate unrecognised block %r lands in %s" % (first, ", ".join("%s:%d" % (h[2], h[3]) for h in hits)))
+        base_left[canon_text] -= 1
         remaining.remove(hits[0])
     for canon_text, first, where, line in remaining:
         if extras is not None:

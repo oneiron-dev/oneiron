@@ -775,3 +775,280 @@ def test_impl_header_lifetime_elided(tmp_path):
     apply_split(path, {"a.rs": one.replace("\n    fn g(&self) {}\n", "")}, remove_old=False)
     r = run_check(path, sha)
     assert fails(r) == [f"FAIL missing method g of impl < ' a > S < ' a > (base {OLD}) not found in any child"]
+
+
+# --- string literals are compared byte-for-byte ------------------------------
+
+sys.path.insert(0, str(TOOL.parent))
+import split_check as sc  # noqa: E402
+
+
+def _literal_base(literal):
+    """One test in an inline `mod tests` holding `literal` (a multi-line
+    string; its continuation lines sit wherever the literal puts them, the
+    code around it at the usual 4 / 8)."""
+    return (
+        "pub fn lines(s: &str) -> usize {\n    s.lines().count()\n}\n\n"
+        "#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn fixture_lines() {\n"
+        "        let text = " + literal + ";\n        assert_eq!(lines(text), 3);\n    }\n}\n"
+    )
+
+
+def _literal_tests_rs(literal):
+    return ("use super::*;\n\n#[test]\nfn fixture_lines() {\n    let text = " + literal
+            + ";\n    assert_eq!(lines(text), 3);\n}\n")
+
+
+def _reindent_continuation(literal, by):
+    """The literal with every line after its first shifted by `by` spaces
+    (negative = stripped): what a mover's blanket re-indent does to it."""
+    first, *rest = literal.split("\n")
+    out = [first]
+    for ln in rest:
+        if by >= 0:
+            out.append(" " * by + ln)
+        else:
+            assert ln.startswith(" " * -by), ln
+            out.append(ln[-by:])
+    return "\n".join(out)
+
+
+RAW_YAML = 'r#"\nresults:\n  - id: a\n    nested:\n      - id: b\n"#'
+PLAIN_TEXT = '"alpha\n    beta\ngamma"'
+RAW_TWO_HASHES = 'r##"{"a": "#",\n"b": "x"#y"}"##'
+LITERAL_MOD_RS = "#[cfg(test)]\nmod tests;\n\npub fn lines(s: &str) -> usize {\n    s.lines().count()\n}\n"
+LITERAL_INLINE_MOD_RS = "#[cfg(test)]\nmod fixtures;\n\npub fn lines(s: &str) -> usize {\n    s.lines().count()\n}\n"
+LITERAL_FAIL = ["FAIL body fn fixture_lines (in tests) differs:"]
+
+
+@pytest.mark.parametrize("literal", [RAW_YAML, PLAIN_TEXT, RAW_TWO_HASHES], ids=["raw", "plain", "raw-two-hashes"])
+def test_string_literal_content_is_byte_exact(tmp_path, literal):
+    """(a) the literal's continuation lines gained 4 spaces on the move ->
+    FAIL body, in both landing shapes: a child that keeps an inline
+    `mod tests` (both sides go through the mod-body dedent, which used to
+    equalise them: the beam YAML case) and a top-level tests.rs; (b) the
+    same moves with the content byte-identical while the code around it
+    re-indents -> OK. (c) a plain "..\\n.." string and (d) an r##".."##
+    raw string holding `"#` run through the same four checks."""
+    base = _literal_base(literal)
+    path, sha = make_repo(tmp_path, base)
+    inline = base[base.index("#[cfg(test)]"):]  # the base mod verbatim, inside a child
+    shifted = _reindent_continuation(literal, 4)
+    # inline-mod child, content identical -> OK
+    apply_split(path, {"mod.rs": LITERAL_INLINE_MOD_RS, "fixtures.rs": inline})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 2 children (2 items)"
+    # inline-mod child, content re-indented -> FAIL
+    apply_split(path, {"fixtures.rs": inline.replace(literal, shifted)}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == LITERAL_FAIL
+    (path / NEW / "fixtures.rs").unlink()
+    # tests.rs, code re-indented by -4, content identical -> OK
+    apply_split(path, {"mod.rs": LITERAL_MOD_RS, "tests.rs": _literal_tests_rs(literal)}, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    # tests.rs, content re-indented too -> FAIL, and the diff shows the literal lines
+    apply_split(path, {"tests.rs": _literal_tests_rs(shifted)}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == LITERAL_FAIL
+    second = literal.split("\n")[1]  # may be the closing line, followed by `;`
+    lines = r.stdout.splitlines()
+    assert any(ln.startswith("  -" + second) for ln in lines)
+    assert any(ln.startswith("  +    " + second) for ln in lines)
+
+
+def test_indented_literal_moved_with_the_code_fails(tmp_path):
+    """A plain string whose continuation lines sit at the code's indentation
+    (8, inside `mod tests`) moved to tests.rs: re-indenting them to 4 along
+    with the code is FAIL body (the old dedent equalised both sides); keeping
+    them at 8 is OK although the code around them moved to 0."""
+    literal = '"alpha\n        beta\n        gamma"'
+    path, sha = make_repo(tmp_path, _literal_base(literal))
+    apply_split(path, {"mod.rs": LITERAL_MOD_RS, "tests.rs": _literal_tests_rs(literal)})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    apply_split(path, {"tests.rs": _literal_tests_rs(_reindent_continuation(literal, -4))}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == LITERAL_FAIL
+
+
+def test_string_continuation_whitespace_is_not_content(tmp_path):
+    """After a `\\`-newline in a non-raw string the compiler skips the next
+    line's leading whitespace, so a mover re-indenting that line is not a
+    change; a word added on it is."""
+    path, sha = make_repo(tmp_path, _literal_base('"alpha \\\n        beta"'))
+    apply_split(path, {"mod.rs": LITERAL_MOD_RS, "tests.rs": _literal_tests_rs('"alpha \\\n    beta"')})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    apply_split(path, {"tests.rs": _literal_tests_rs('"alpha \\\n    beta gamma"')}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == LITERAL_FAIL
+
+
+LITERAL_IMPL_BASE = (
+    "pub struct S;\n\nimpl S {\n    pub fn text(&self) -> &'static str {\n"
+    "        \"line one\n    line two\"\n    }\n\n    pub fn n(&self) -> u8 {\n        1\n    }\n}\n"
+)
+
+
+def test_split_impl_method_literal_is_byte_exact(tmp_path):
+    """The per-method compare of an impl split across children (rustfmt in
+    a dummy impl + 4-space de-wrap) keeps a method's multi-line literal
+    byte-exact: stripping the 4 spaces of its continuation line is FAIL."""
+    path, sha = make_repo(tmp_path, LITERAL_IMPL_BASE)
+    a = ("pub struct S;\n\nimpl S {\n    pub fn text(&self) -> &'static str {\n"
+         "        \"line one\n    line two\"\n    }\n}\n")
+    b = "use super::S;\n\nimpl S {\n    pub fn n(&self) -> u8 {\n        1\n    }\n}\n"
+    apply_split(path, {"mod.rs": "mod a;\nmod b;\n\npub use a::S;\n", "a.rs": a, "b.rs": b})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    apply_split(path, {"a.rs": a.replace("\n    line two\"", "\nline two\"")}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == ["FAIL body method text of impl S differs:"]
+
+
+def test_string_spans_and_placeholders():
+    """The scanner finds raw strings with any `#` count (an inner `"#` does
+    not close `r##`), byte strings with escapes and plain strings, and skips
+    comments and the `'"'` char literal; placeholders round-trip and a lost
+    one fails closed."""
+    src = ('let a = r##"x "# y\n"z"##; let c = \'"\'; // "comment\n'
+           'let b = b"q\\"w"; /* "no" */ let l: &\'a str = "ok\n  two";')
+    assert [src[s:e] for s, e in sc.string_spans(src)] == ['r##"x "# y\n"z"##', 'b"q\\"w"', '"ok\n  two"']
+    protected, lits = sc.protect_literals(src)
+    assert protected == ('let a = "@@SPLIT-CHECK-LITERAL-0@@"; let c = \'"\'; // "comment\n'
+                         'let b = "@@SPLIT-CHECK-LITERAL-1@@"; /* "no" */ let l: &\'a str = "@@SPLIT-CHECK-LITERAL-2@@";')
+    assert sc.restore_literals(protected, lits) == src
+    with pytest.raises(RuntimeError):
+        sc.restore_literals(protected.replace('"@@SPLIT-CHECK-LITERAL-1@@"', '""'), lits)
+
+
+def test_dedent_and_canon_keep_literals():
+    """_dedent strips the code margin only; _canon keeps a raw string's
+    interior (canon alone re-lexes it); literal_compare_form skips exactly
+    the whitespace the compiler skips after a `\\`-newline."""
+    body = '    fn f() {\n        let y = r#"\nresults:\n  - id: a\n"#;\n        let z = "a\n    b";\n    }\n'
+    assert sc._dedent(body) == 'fn f() {\n    let y = r#"\nresults:\n  - id: a\n"#;\n    let z = "a\n    b";\n}\n'
+    assert sc._canon('foo(r#"a  "b"\n c"#,\n)') == 'foo ( r#"a  "b"\n c"# )'
+    assert sc.literal_compare_form('"a \\\n     b"') == '"a \\\nb"'
+    assert sc.literal_compare_form('r"a \\\n     b"') == 'r"a \\\n     b"'
+    assert sc.literal_compare_form('"a \\\\\n  b"') == '"a \\\\\n  b"'
+
+
+# --- unrecognised blocks: byte-identical twins in the base --------------------
+
+def _chunk(canon, where, line):
+    return (canon, canon.splitlines()[0], where, line)
+
+
+def test_identical_base_twins_land_once_each():
+    """Two byte-identical unrecognised blocks in the base (the tails of two
+    `proptest!` invocations) may land one per child: not a duplicate."""
+    base = [_chunk(");", OLD, 10), _chunk(");", OLD, 40)]
+    new = [_chunk(");", f"{NEW}/a.rs", 5), _chunk(");", f"{NEW}/b.rs", 7)]
+    assert sc.compare_chunks(base, new) == []
+
+
+def test_base_twins_landing_three_times_is_a_duplicate():
+    base = [_chunk(");", OLD, 10), _chunk(");", OLD, 40)]
+    new = [_chunk(");", f"{NEW}/a.rs", 5), _chunk(");", f"{NEW}/b.rs", 7), _chunk(");", f"{NEW}/c.rs", 9)]
+    problems = sc.compare_chunks(base, new)
+    assert problems[0].startswith("FAIL duplicate unrecognised block ');' lands in")
+    assert problems[-1] == f"FAIL extra unrecognised block in {NEW}/c.rs:9 (');')"
+
+
+def test_single_base_block_landing_twice_is_still_a_duplicate():
+    base = [_chunk(");", OLD, 10)]
+    new = [_chunk(");", f"{NEW}/a.rs", 5), _chunk(");", f"{NEW}/b.rs", 7)]
+    problems = sc.compare_chunks(base, new)
+    assert problems == [
+        f"FAIL duplicate unrecognised block ');' lands in {NEW}/a.rs:5, {NEW}/b.rs:7",
+        f"FAIL extra unrecognised block in {NEW}/b.rs:7 (');')",
+    ]
+
+
+# --- items that share one key: anonymous `const _` asserts --------------------
+
+TWIN_ASSERT_BASE = textwrap.dedent('''\
+    pub struct A;
+    pub struct B;
+
+    const _: () = assert!(std::mem::size_of::<A>() == 0);
+    const _: () = assert!(std::mem::size_of::<B>() == 0);
+''')
+TWIN_ASSERT_MOD_RS = "mod a;\nmod b;\n\npub use a::A;\npub use b::B;\n"
+TWIN_ASSERT_A_RS = "pub struct A;\n\nconst _: () = assert!(std::mem::size_of::<A>() == 0);\n"
+TWIN_ASSERT_B_RS = "pub struct B;\n\nconst _: () = assert!(std::mem::size_of::<B>() == 0);\n"
+
+
+def test_same_key_items_pair_by_body(tmp_path):
+    """Two `const _` compile-time asserts share one item key; each lands in
+    the child of the type it guards. Paired by body, in any order."""
+    path, sha = make_repo(tmp_path, TWIN_ASSERT_BASE)
+    apply_split(path, {"mod.rs": TWIN_ASSERT_MOD_RS, "a.rs": TWIN_ASSERT_A_RS, "b.rs": TWIN_ASSERT_B_RS})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert fails(r) == []
+
+
+def test_same_key_item_landing_twice_is_a_duplicate(tmp_path):
+    path, sha = make_repo(tmp_path, TWIN_ASSERT_BASE)
+    twice = TWIN_ASSERT_B_RS + "\nconst _: () = assert!(std::mem::size_of::<A>() == 0);\n"
+    apply_split(path, {"mod.rs": TWIN_ASSERT_MOD_RS, "a.rs": TWIN_ASSERT_A_RS, "b.rs": twice})
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == [f"FAIL duplicate const _ lands in {NEW}/a.rs, {NEW}/b.rs, {NEW}/b.rs"]
+
+
+# --- a promoted method whose longer signature rustfmt reflows -----------------
+
+REFLOW_BASE = textwrap.dedent('''\
+    pub enum WindowSyncMode {
+        Unbound,
+        Bound,
+    }
+
+    pub struct ProtocolError;
+
+    pub struct ConnState {
+        mode: WindowSyncMode,
+    }
+
+    impl ConnState {
+        fn bind_window_sync_mode(&mut self, mode: WindowSyncMode) -> Result<(), ProtocolError> {
+            self.mode = mode;
+            Ok(())
+        }
+    }
+''')
+REFLOW_MOD_RS = "mod conn_state;\nmod types;\n\npub use conn_state::ConnState;\npub use types::{ProtocolError, WindowSyncMode};\n"
+REFLOW_TYPES_RS = "pub enum WindowSyncMode {\n    Unbound,\n    Bound,\n}\n\npub struct ProtocolError;\n"
+REFLOW_CONN_STATE_RS = textwrap.dedent('''\
+    use super::types::{ProtocolError, WindowSyncMode};
+
+    pub struct ConnState {
+        mode: WindowSyncMode,
+    }
+
+    impl ConnState {
+        pub(super) fn bind_window_sync_mode(
+            &mut self,
+            mode: WindowSyncMode,
+        ) -> Result<(), ProtocolError> {
+            self.mode = mode;
+            Ok(())
+        }
+    }
+''')
+
+
+def test_promoted_method_reflowed_by_rustfmt_is_a_vis_change_only(tmp_path):
+    """`pub(super)` pushes the method signature past the width limit, so the
+    new side is reflowed onto four lines. Visibility is stripped before the
+    fragment is formatted, so both sides format identically."""
+    path, sha = make_repo(tmp_path, REFLOW_BASE)
+    apply_split(path, {"mod.rs": REFLOW_MOD_RS, "types.rs": REFLOW_TYPES_RS, "conn_state.rs": REFLOW_CONN_STATE_RS})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert fails(r) == []

@@ -11,7 +11,7 @@ pub(crate) mod tests {
     use std::path::PathBuf;
     use std::process::ExitCode;
 
-    pub(crate) fn ppr_vad_test_documents() -> (serde_json::Value, serde_json::Value) {
+    fn ppr_vad_test_documents() -> (serde_json::Value, serde_json::Value) {
         let ids: Vec<_> = (1_u8..=20)
             .map(|byte| format!("{byte:02x}").repeat(16))
             .collect();
@@ -20,9 +20,9 @@ pub(crate) mod tests {
             .map(|id| eval004_record_json(id, 1, "sweep corpus"))
             .collect();
         let edges: Vec<_> = ids.iter().skip(1).enumerate().map(|(index, id)| serde_json::json!({
-                "source": ids[0], "target": id, "kind": 9, "weight": 1.0,
-                "vad": {"valence": 0.0, "arousal": if index == 18 { 1.0 } else { 0.0 }, "dominance": 0.0}
-            })).collect();
+            "source": ids[0], "target": id, "kind": 9, "weight": 1.0,
+            "vad": {"valence": 0.0, "arousal": if index == 18 { 1.0 } else { 0.0 }, "dominance": 0.0}
+        })).collect();
         let fixture_json = serde_json::json!({
             "schemaVersion": SCHEMA_VERSION,
             "fixtureId": "ppr-vad-test", "description": "Synthetic wiring test, not empirical evidence",
@@ -339,8 +339,8 @@ pub(crate) mod tests {
                 fixture.ppr_vad_edges[0].kind = kind as u8;
                 fixture.ppr_vad_edges[0].vad = Some(vad);
                 assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                        Err(BeamError::InvalidFixture { reason, .. })
-                            if reason == "structural sweep edges cannot carry VAD"));
+                    Err(BeamError::InvalidFixture { reason, .. })
+                        if reason == "structural sweep edges cannot carry VAD"));
             }
         }
     }
@@ -382,8 +382,8 @@ pub(crate) mod tests {
             }
             assert!(
                 matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                    Err(BeamError::InvalidFixture { reason, .. })
-                        if reason.contains("must reach a positive-weight traversed semantic edge")),
+                Err(BeamError::InvalidFixture { reason, .. })
+                    if reason.contains("must reach a positive-weight traversed semantic edge")),
                 "{mode}"
             );
         }
@@ -456,8 +456,8 @@ pub(crate) mod tests {
         // stops its eight neutral SetIn hops below SCORE_EPSILON before it
         // can multiply the only salient edge, at every sweep coefficient.
         assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                Err(BeamError::InvalidFixture { reason, .. })
-                    if reason.contains("must reach a positive-weight traversed semantic edge")));
+            Err(BeamError::InvalidFixture { reason, .. })
+                if reason.contains("must reach a positive-weight traversed semantic edge")));
         let query = fixture.cases[0]
             .ppr_vad_query
             .as_ref()
@@ -520,8 +520,8 @@ pub(crate) mod tests {
             dominance: 0.0,
         });
         assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                Err(BeamError::InvalidFixture { reason, .. })
-                    if reason.contains("must reach a positive-weight traversed semantic edge")));
+            Err(BeamError::InvalidFixture { reason, .. })
+                if reason.contains("must reach a positive-weight traversed semantic edge")));
     }
 
     #[test]
@@ -537,8 +537,8 @@ pub(crate) mod tests {
         manifest.case_ids.push(unreachable.case_id.clone());
         fixture.cases.push(unreachable);
         assert!(matches!(validate_ppr_vad_fixture(&manifest, &fixture),
-                Err(BeamError::InvalidFixture { reason, .. })
-                    if reason.contains("unreachable-salient")));
+            Err(BeamError::InvalidFixture { reason, .. })
+                if reason.contains("unreachable-salient")));
         manifest.case_ids.pop();
         assert!(
             validate_ppr_vad_fixture(&manifest, &fixture).is_ok(),

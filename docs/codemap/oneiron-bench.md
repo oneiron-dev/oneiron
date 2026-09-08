@@ -34,13 +34,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/tests_gates.rs` | src | m | 1 crate-vis | — | Gate tests |
 | `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
 | `src/beam/tests_judge_cost.rs` | src | m | 1 crate-vis | — | Judge and cost tests |
-| `src/beam/tests_ppr_vad.rs` | src | m | 5 crate-vis | — | PPR-VAD tests |
+| `src/beam/tests_ppr_vad.rs` | src | m | 4 crate-vis | — | PPR-VAD tests |
 | `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/tests.rs` | test | L | — | — | — |
-| `src/interface_bench.rs` | src | XL | 4 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
+| `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
+| `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
+| `src/interface_bench/eval_run.rs` | src | m | 12 crate-vis | — | Smoke, probe, and full execution plus resume validation |
+| `src/interface_bench/mod.rs` | src | s | 1 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
+| `src/interface_bench/reports_and_fixture_helpers.rs` | src | m | 19 crate-vis | — | Row aggregation and report tables |
+| `src/interface_bench/taskgen.rs` | src | m | 4 crate-vis | — | Fixture and task generation plus atomic JSON writers |
+| `src/interface_bench/tests_a.rs` | src | m | 3 crate-vis | — | Taskgen, config, and memo tests |
+| `src/interface_bench/tests_b.rs` | src | m | — | — | Pinned-model tests |
+| `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |
 | `src/perf/acceptance.rs` | src | m | 14 crate-vis | — | ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact… |
 | `src/perf/acceptance/tests.rs` | test | m | — | — | Regressions for the ONE-1579 acceptance evidence |

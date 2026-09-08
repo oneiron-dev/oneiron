@@ -21,7 +21,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/pdf.rs` | src | XL | 13 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/profile.rs` | src | L | 8 crate-vis | — | PAdES profile assembly: B-B / B-T / B-LT / B-LTA (§7.2, §7.4–§7.6) |
 | `src/native/tsp.rs` | src | m | 6 crate-vis | — | RFC 3161 timestamp requests and token validation (§7.4, §7.6) |
-| `src/native/verify.rs` | src | XL | 10 crate-vis | — | Native verifier and profile classifier (§7.7) |
+| `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
+| `src/native/verify/verify_chain_gates.rs` | src | s | 9 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
+| `src/native/verify/verify_dss_core.rs` | src | m | 8 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
+| `src/native/verify/verify_revocation.rs` | src | m | 7 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
+| `src/native/verify/verify_sig_pipeline.rs` | src | m | 11 crate-vis | — | Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and… |
+| `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |
+| `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 23 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |
+| `src/native/verify/verify_tests_lta_probes.rs` | src | m | 5 crate-vis | — | Verifier tests D: span-craft and probe archival tests, flate CRL, object limit, typeless and orphan… |
+| `src/native/verify/verify_tests_sig_shapes.rs` | src | m | — | — | Verifier tests E: ByteRange and Contents shapes, field-tree reachability and cycles, SubFilter dispatch… |
+| `src/native/verify/verify_tests_time_lta_a.rs` | src | m | 18 crate-vis | — | Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10): offline fetcher posture, policy defaults, and — with `network-fetch` — the… |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
