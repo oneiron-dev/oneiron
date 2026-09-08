@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Embedded retrieval engine for memory-first applications | 691 | 361 | 158 |
+| [oneiron](codemap/oneiron.md) | Embedded retrieval engine for memory-first applications | 754 | 368 | 152 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 41 | 11 | 3 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 4 | 2 | 2 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 2 | 0 | 1 |
@@ -48,8 +48,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `blob_artifact` | file+dir | 2 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | file+dir | 4 | XL | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | m | — | — |
-| `booking` | dir | 45 | XL | — | Engine-generic booking module |
-| `branch_store_oracle` | file | 1 | XL | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
+| `booking` | dir | 56 | XL | — | Engine-generic booking module |
+| `branch_store_oracle` | dir | 9 | m | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
 | `build_cache` | file+dir | 3 | m | — | Vault-scoped immutable build results |
 | `calendar` | dir | 19 | XL | — | Calendar module home (CAL-00) |
 | `campaign` | file+dir | 11 | XL | — | CRM pack engine-side registration home |
@@ -65,11 +65,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_artifact` | file | 1 | m | yes | — |
 | `code_memory` | file+dir | 7 | m | — | — |
 | `code_revision` | file+dir | 2 | XL | yes | — |
-| `code_run` | dir | 12 | XL | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_run` | dir | 22 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
 | `code_sandbox` | file+dir | 4 | XL | — | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | file+dir | 2 | XL | yes | — |
 | `codebase` | file+dir | 2 | XL | yes | — |
-| `comm` | file+dir | 4 | XL | — | Communication standing-state claims and the ARCH-0035 projector |
+| `comm` | dir | 10 | m | — | Communication standing-state claims and the ARCH-0035 projector |
 | `commitment` | file | 1 | XL | yes | Commitment claim substrate (CMT-1) |
 | `commitment_ledger` | file+dir | 2 | s | yes | Counterparty commitment ledger projection (CMT-5) |
 | `commitment_lifecycle` | file+dir | 2 | m | — | Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541) |
@@ -118,7 +118,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fusion` | file+dir | 2 | m | — | — |
 | `gate` | dir | 32 | L | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | file+dir | 4 | XL | — | OF-336 generated-UI component contract |
-| `git_wire` | file+dir | 2 | XL | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
+| `git_wire` | dir | 20 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `graph_fs` | file+dir | 2 | XL | — | Graph-FS read projection over the vault graph |
 | `habit` | file | 1 | m | yes | Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak… |
 | `hnsw` | file+dir | 3 | XL | — | — |
@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `memory` | dir | 20 | XL | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `note` | file+dir | 2 | s | — | ARCH-0032 NOTE primitive, cut to the single kind this ticket lands: `opinion/take` (registry record OF-330) |
 | `off_record` | dir | 4 | XL | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
-| `origin` | dir | 4 | XL | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
+| `origin` | dir | 21 | XL | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 19 | L | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | file+dir | 4 | L | — | Replay-first outbound effect execution |
 | `outbound_consent` | file+dir | 2 | L | — | Payload-aware consent and transport boundary for scoped outbound tools |
