@@ -1,27 +1,66 @@
 #!/usr/bin/env python3
 """Manifest-free move-only split checker.
 
-    split_check.py <base-rev> <old-file> <new-dir>
+    split_check.py <base-rev> <old-file>[,<old-file>...] <new-dir | new-file>
 
 Checks that `<old-file>` (as it was at `<base-rev>`) was split into the
 directory module `<new-dir>/` (`mod.rs` + children, read from the working tree)
 as a pure MOVE: every item of the old file lands in exactly one child,
 byte-equivalent after rustfmt, and the children add nothing but module
 plumbing. The manifest-driven sibling is `../conformance.sh`; this tool covers
-the common case with no manifest.
+the common case with no manifest. Several old files may be given (comma
+separated) when one directory absorbs more than one base file; a child module
+the old file mounted at `<base-rev>` (`mod x;` / `#[path = ".."] mod y;`)
+whose file is gone from the working tree is absorbed as a source
+automatically (INFO). When the last argument is a `.rs` FILE the old file is
+compared against that one file (single-file mode: no mod.rs / sibling checks).
 
 Rules (see README.md for the full list):
   - Items are matched by (scope, kind, name-or-impl-header canon, cfgs).
-    scope is `top` for the file body, `tests` for an inline `mod tests {..}`
-    body on the base side and for `tests.rs` / `*_tests.rs` children or an
-    inline `mod tests {..}` in any child on the new side.
+    scope is a `::`-joined module path: `top` for the file body, `tests` for
+    an inline `mod tests {..}` body, `seam` for a bodied `mod seam {..}`,
+    `seam::tests` / `seam::inner` for mods nested inside it, and so on.
+  - Base side: a bodied `mod X {..}` (X != tests) is not one opaque item; its
+    body is walked recursively with scope `X` and the mod itself becomes a
+    "mod record" (name, cfgs, vis, doc/attribute lead).
+  - New side: the directory is walked recursively. A subdirectory `D/` that
+    holds a `mod.rs` is the nested module `D` (it must be declared by the
+    parent level); `D/mod.rs` + `D/*.rs` are collected with scope
+    `<parent>::D`. A subdirectory without `mod.rs` but with a sibling `D.rs`
+    (Rust-2018 layout) holds children of `D.rs`'s module in `D.rs`'s scope,
+    declared from `D.rs`; one with neither is an orphan (FAIL). A flat child
+    `D.rs` whose stem matches a base mod record at that level is the module
+    `D` flattened into one file. A bodied `mod Y {..}` inside any new-side
+    file is collected with scope `<file scope>::Y`. `tests.rs` / `*_tests.rs`
+    at any level are `<level>::tests` and are skipped (INFO) when the base mod
+    at that level had no inline `mod tests`.
+  - Pre-existing children: a new-side file that already exists at
+    `<base-rev>` at the same path is skipped when byte-identical (INFO, and it
+    needs no declaration); when modified it is compared against its OWN base
+    version with the same machinery (INFO `re-plumbed` when only plumbing
+    changed, FAIL body/missing otherwise); new content it gained is matched
+    against the split's base like any other child.
+  - Declarations: a child is declared when any file of its directory level
+    (mod.rs or a child) carries a `mod x;` or `#[path = "x.rs"] mod y;` that
+    resolves to it.
+  - Mod records are compared 1:1: a base `mod X` at scope S needs a bodied
+    `mod X` at S or a `mod X;` decl in a file of scope S (FAIL missing /
+    duplicate); its cfg tuple must match (FAIL); a visibility change is INFO;
+    its `///` doc + non-cfg attributes must be on the decl verbatim or as
+    `//!` / `#![..]` at the top of `X/mod.rs` / `X.rs`, otherwise INFO. A
+    new-side bodied mod or a decl that mounts a directory the base never had
+    is FAIL extra; tests mounts and decls for child files are plumbing.
   - Bodies are compared with the leading visibility keyword stripped; a
     visibility change is reported as INFO, not a failure.
   - An impl block whose header lands in more than one child (or that the base
     file already carried more than once) is compared per associated item
     instead; the header/attribute residue of every part must match the base.
-  - Allowed new-side extras: `use` items (any vis, cfg'd or not), `mod` decls,
-    `#![..]` inner attributes, `//!` docs, `extern crate`, free comments.
+    Impl headers pair with lifetimes elided: `impl<'a> S<'a>` == `impl S<'_>`
+    (a part that uses `'a` nowhere else must be written elided under the
+    `single_use_lifetimes` lint); the respelled part is INFO, never FAIL.
+  - Allowed new-side extras: `use` items (any vis, cfg'd or not), `mod` decls
+    for children, `#![..]` inner attributes, `//!` docs, `extern crate`, free
+    comments.
   - Anything the item enumerator does not recognise (e.g. a top-level macro
     invocation) is compared as an opaque residue chunk, 1:1 as well.
 Fails CLOSED: any exception prints `SPLIT-CHECK-ERROR` and exits 1.
@@ -39,6 +78,7 @@ from rustlex import Doc, canon, enumerate_items, item_text, normalized_fragment,
 
 DIFF_CAP = 60
 PLUMBING_KINDS = ("use",)
+TOP = "top"
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +90,14 @@ def _git(root, *args):
     if p.returncode != 0:
         raise RuntimeError("git %s failed: %s" % (" ".join(args), p.stderr.strip()))
     return p.stdout
+
+
+def _git_show_or_none(root, rev, rel):
+    """Content of rev:rel, or None when the path does not exist at rev."""
+    p = subprocess.run(["git", "-C", root, "cat-file", "-e", "%s:%s" % (rev, rel)], capture_output=True)
+    if p.returncode != 0:
+        return None
+    return _git(root, "show", "%s:%s" % (rev, rel))
 
 
 def _repo_root(*candidates):
@@ -72,6 +120,22 @@ def _is_tests_file(name):
     return name == "tests.rs" or name.endswith("_tests.rs")
 
 
+def _is_tests_mod(name):
+    return name == "tests" or name.endswith("_tests")
+
+
+def _sub_scope(scope, name):
+    """Scope path of module `name` nested in `scope` (`top::D` is written `D`)."""
+    return name if scope == TOP else "%s::%s" % (scope, name)
+
+
+def _has_rs_files(dir_abs):
+    for _d, _sub, files in os.walk(dir_abs):
+        if any(f.endswith(".rs") for f in files):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # item collection
 # ---------------------------------------------------------------------------
@@ -80,30 +144,80 @@ class Item:
     """One comparable unit: a top-level item, an impl block, or (for the
     impl-split fallback) an associated item inside an impl block."""
 
-    __slots__ = ("scope", "kind", "name", "cfgs", "vis", "text", "where", "methods", "residue")
+    __slots__ = ("scope", "kind", "name", "cfgs", "vis", "text", "where", "methods", "residue", "header")
 
     def __init__(self, scope, kind, name, cfgs, vis, text, where):
         self.scope = scope
         self.kind = kind
-        self.name = name
+        self.name = name        # impl: lifetime-elided header canon (the matching key)
         self.cfgs = tuple(cfgs)
         self.vis = vis
         self.text = text
         self.where = where
         self.methods = None
         self.residue = None
+        self.header = None      # impl: header canon as written
 
     @property
     def key(self):
         return (self.scope, self.kind, self.name, self.cfgs)
 
     def label(self):
-        s = self.name if self.kind == "impl" else "%s %s" % (self.kind, self.name)
+        s = (self.header or self.name) if self.kind == "impl" else "%s %s" % (self.kind, self.name)
         if self.cfgs:
-            s += " " + " ".join("#[cfg(%s)]" % c for c in self.cfgs)
-        if self.scope != "top":
+            s += " " + _cfg_str(self.cfgs)
+        if self.scope != TOP:
             s += " (in %s)" % self.scope
         return s
+
+
+def _cfg_str(cfgs):
+    return " ".join("#[cfg(%s)]" % c for c in cfgs) if cfgs else "none"
+
+
+class ModRec:
+    """A module boundary: a bodied `mod X {..}` (base or new side) or a
+    `mod X;` declaration in a new-side file. `scope` is the scope the mod
+    sits in; the mod's own scope is `_sub_scope(scope, name)`. `target` on a
+    decl: "file" (a child `.rs`), "dir" (a `mod.rs`) or None (dangling).
+    `lead` = (doc lines, non-cfg attribute canons); `file_lead` = the same
+    read from the top of the target file (`//!` / `#![..]`)."""
+
+    __slots__ = ("scope", "name", "cfgs", "vis", "lead", "where", "bodied", "target", "file_lead")
+
+    def __init__(self, scope, name, cfgs, vis, lead, where, bodied, target=None, file_lead=None):
+        self.scope = scope
+        self.name = name
+        self.cfgs = tuple(cfgs)
+        self.vis = vis
+        self.lead = lead
+        self.where = where
+        self.bodied = bodied
+        self.target = target
+        self.file_lead = file_lead
+
+    @property
+    def key(self):
+        return (self.scope, self.name)
+
+    def label(self):
+        s = "mod %s" % self.name
+        if self.scope != TOP:
+            s += " (in %s)" % self.scope
+        return s
+
+
+class Side:
+    """Everything collected from one side of the comparison."""
+
+    def __init__(self):
+        self.items = []
+        self.chunks = []
+        self.mods = []          # ModRec: bodied mods (both sides) + decls (new side)
+        self.tests_scopes = set()  # scopes whose inline `mod tests` was seen, e.g. {"tests", "seam::tests"}
+
+    def mods_in(self, scope):
+        return {m.name for m in self.mods if m.scope == scope and m.bodied}
 
 
 def _dedent(text):
@@ -116,9 +230,170 @@ def _mod_body(doc, it):
     return _dedent("\n".join(doc.lines[it["body_open_line"] + 1:it["end_line"]]))
 
 
+_CFG_ATTR = re.compile(r"^#\s*\[\s*cfg\s*\(")
+_PATH_ATTR = re.compile(r'#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]')
+
+
+def _mod_lead(doc, it):
+    """(doc lines, attribute canons) of the `///` docs and attributes leading
+    a mod item, cfg and `#[path]` attributes excluded (compared / mounting
+    plumbing respectively). Doc lines are compared with the marker and
+    surrounding whitespace stripped."""
+    docs, attrs = [], []
+    i = it["lead_start"]
+    while i < it["sig_line"]:
+        s = doc.lines[i].strip()
+        ms = doc.mlines[i].strip()
+        if s.startswith("///"):
+            docs.append(s[3:].strip())
+            i += 1
+            continue
+        if ms.startswith("#["):
+            j, depth = i, 0
+            while j < it["sig_line"]:
+                depth += doc.mlines[j].count("[") - doc.mlines[j].count("]")
+                j += 1
+                if depth <= 0:
+                    break
+            text = "\n".join(doc.lines[i:j])
+            if not _CFG_ATTR.match(ms) and not _PATH_ATTR.match(text.strip()):
+                attrs.append(canon(text))
+            i = j
+            continue
+        i += 1
+    return (tuple(docs), tuple(attrs))
+
+
+def _file_lead(path):
+    """(doc lines, attribute canons) from the leading `//!` / `#![..]` lines
+    of a file, in the same shape as _mod_lead (inner attrs read as outer)."""
+    docs, attrs = [], []
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            s = ln.strip()
+            if not s:
+                continue
+            if s.startswith("//!"):
+                docs.append(s[3:].strip())
+                continue
+            if s.startswith("#!["):
+                attrs.append(canon("#[" + s[3:]))
+                continue
+            break
+    return (tuple(docs), tuple(attrs))
+
+
+def _resolve_decl(doc, it, dir_abs, fname):
+    """(kind, absolute path) of the file a `mod name;` in <dir_abs>/<fname>
+    mounts: an explicit `#[path = ".."]` (relative to the file's directory),
+    else `name.rs` / `name/mod.rs` under the file's own module directory
+    (<dir_abs> for mod.rs, <dir_abs>/<stem>/ for a child), else, leniently,
+    a sibling `name.rs` / `name/mod.rs` of the declaring child. kind is
+    "file" or "dir" (a mod.rs). (None, None) when nothing exists: rustc
+    rejects dangling declarations, the checker treats them as plumbing."""
+    lead = "\n".join(doc.lines[it["lead_start"]:it["sig_line"]])
+    m = _PATH_ATTR.search(lead)
+    if m:
+        cands = [os.path.normpath(os.path.join(dir_abs, m.group(1)))]
+    else:
+        own = dir_abs if fname == "mod.rs" else os.path.join(dir_abs, fname[:-3])
+        name = it["name"]
+        cands = [os.path.join(own, name + ".rs"), os.path.join(own, name, "mod.rs")]
+        if own != dir_abs:
+            cands += [os.path.join(dir_abs, name + ".rs"), os.path.join(dir_abs, name, "mod.rs")]
+    for c in cands:
+        if os.path.isfile(c):
+            return ("dir" if os.path.basename(c) == "mod.rs" else "file"), c
+    return None, None
+
+
+def _vanished_children(root, base_rev, old_rel, base_doc):
+    """Repo-relative paths of child modules the old file mounted at base_rev
+    (top-level `mod x;` / `#[path = ".."] mod y;`) whose file existed at
+    base_rev and is gone from the working tree: the split moved them into
+    the new directory, so they are part of its source (scope `top`)."""
+    out = []
+    old_dir = os.path.dirname(old_rel)
+    stem = os.path.basename(old_rel)[:-3]
+    for it in enumerate_items(base_doc):
+        if it["kind"] != "mod" or it["body_open_line"] is not None:
+            continue
+        lead = "\n".join(base_doc.lines[it["lead_start"]:it["sig_line"]])
+        m = _PATH_ATTR.search(lead)
+        if m:
+            cands = [os.path.normpath(os.path.join(old_dir, m.group(1)))]
+        else:
+            cands = [os.path.join(old_dir, stem, it["name"] + ".rs"), os.path.join(old_dir, stem, it["name"], "mod.rs")]
+        for c in cands:
+            c = c.replace(os.sep, "/")
+            if os.path.exists(os.path.join(root, c)) or _git_show_or_none(root, base_rev, c) is None:
+                continue
+            out.append(c)
+            break
+    return out
+
+
+def _elide_lifetimes(text):
+    """canon-form impl header (or impl residue) with every lifetime parameter
+    declared on the impl and used exactly once after the parameter list
+    replaced by `'_` and dropped from the list: `impl<'a> S<'a>` and
+    `impl S<'_>` are the same header. The workspace `single_use_lifetimes`
+    lint forces the elided spelling on a split part that uses the lifetime
+    nowhere else, so the two spellings must pair. Anything else (bounded
+    lifetimes, `'static`, a lifetime used twice) is left as written."""
+    toks = text.split(" ")
+    if "impl" not in toks:
+        return text
+    i = toks.index("impl")
+    if i + 1 >= len(toks) or toks[i + 1] != "<":
+        return text
+    depth, j = 0, i + 1
+    while j < len(toks):
+        if toks[j] == "<":
+            depth += 1
+        elif toks[j] == ">":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    else:
+        return text
+    groups, cur, d = [], [], 0
+    for t in toks[i + 2:j]:
+        if t == "<":
+            d += 1
+        elif t == ">":
+            d -= 1
+        if t == "," and d == 0:
+            groups.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        groups.append(cur)
+    rest = toks[j + 1:]
+    kept = []
+    for g in groups:
+        if len(g) == 2 and g[0] == "'" and g[1] not in ("_", "static"):
+            uses = [k for k in range(len(rest) - 1) if rest[k] == "'" and rest[k + 1] == g[1]]
+            if len(uses) == 1:
+                rest[uses[0] + 1] = "_"
+                continue
+        kept.append(g)
+    head = toks[:i + 1]
+    if kept:
+        head.append("<")
+        for k, g in enumerate(kept):
+            if k:
+                head.append(",")
+            head.extend(g)
+        head.append(">")
+    return " ".join(head + rest)
+
+
 def _impl_parts(doc, it, scope, where):
     """Associated items of an impl block + its residue (the block with every
-    associated item excised, canon form)."""
+    associated item excised, canon form, impl lifetimes elided)."""
     methods = []
     covered = set()
     for m in it["methods"]:
@@ -126,16 +401,16 @@ def _impl_parts(doc, it, scope, where):
                             _dedent(item_text(doc, m)), where))
         covered.update(range(m["lead_start"], m["end_line"] + 1))
     rest = [doc.lines[i] for i in range(it["lead_start"], it["end_line"] + 1) if i not in covered]
-    return methods, canon("\n".join(rest))
+    return methods, _elide_lifetimes(canon("\n".join(rest)))
 
 
-def collect(doc, where, scope):
-    """Walk a Doc. Returns (items, chunks, has_inline_tests).
-    items: list[Item]; chunks: list[(canon, first_line, where)] of unrecognised
-    non-blank, non-comment residue; has_inline_tests: a bodied `mod tests`
-    was found at top level (its body is walked with scope='tests')."""
-    items, chunks = [], []
-    has_inline_tests = False
+def collect(doc, where, scope, side):
+    """Walk a Doc into `side`. Items land in side.items, unrecognised
+    non-blank non-comment residue in side.chunks. A bodied `mod tests` marks
+    `<scope>::tests` in side.tests_scopes and its body is walked with that
+    scope; any other bodied `mod X` becomes a ModRec and its body is walked
+    with scope `<scope>::X`. `mod x;` declarations are plumbing here (the
+    directory walk records the new-side ones)."""
     covered = set()
     for it in enumerate_items(doc):
         covered.update(range(it["lead_start"], it["end_line"] + 1))
@@ -143,19 +418,21 @@ def collect(doc, where, scope):
             continue
         if it["kind"] == "mod":
             if it["body_open_line"] is None:
-                continue  # `mod x;` declaration = plumbing
-            if it["name"] == "tests" and scope == "top":
-                has_inline_tests = True
-                sub = Doc(_mod_body(doc, it))
-                sub_items, sub_chunks, _ = collect(sub, where, "tests")
-                items.extend(sub_items)
-                chunks.extend(sub_chunks)
                 continue
-        name = it["header"] if it["kind"] == "impl" else it["name"]
+            sub = _sub_scope(scope, it["name"])
+            if it["name"] == "tests":
+                side.tests_scopes.add(sub)
+            else:
+                side.mods.append(ModRec(scope, it["name"], it["cfgs"], it["vis"],
+                                        _mod_lead(doc, it), where, bodied=True))
+            collect(Doc(_mod_body(doc, it)), where, sub, side)
+            continue
+        name = _elide_lifetimes(it["header"]) if it["kind"] == "impl" else it["name"]
         item = Item(scope, it["kind"], name, it["cfgs"], it["vis"], item_text(doc, it), where)
         if it["kind"] == "impl":
+            item.header = it["header"]
             item.methods, item.residue = _impl_parts(doc, it, scope, where)
-        items.append(item)
+        side.items.append(item)
     # residue: lines not covered by any item whose masked form is non-blank
     run = []
     for i, ml in enumerate(doc.mlines):
@@ -163,12 +440,11 @@ def collect(doc, where, scope):
             run.append(i)
             continue
         if run:
-            chunks.append(_chunk(doc, run, where))
+            side.chunks.append(_chunk(doc, run, where))
             run = []
     if run:
-        chunks.append(_chunk(doc, run, where))
-    chunks = [c for c in chunks if c is not None]
-    return items, chunks, has_inline_tests
+        side.chunks.append(_chunk(doc, run, where))
+    side.chunks = [c for c in side.chunks if c is not None]
 
 
 def _chunk(doc, lines, where):
@@ -233,8 +509,10 @@ def _group(items):
     return groups
 
 
-def compare_items(base_items, new_items):
-    """Returns (problems, infos, matched_count)."""
+def compare_items(base_items, new_items, extras=None):
+    """Returns (problems, infos, matched_count). New-side items with no base
+    counterpart are FAIL extra, or, when `extras` is a list, appended to it
+    instead (the pre-existing-child self-compare hands them on)."""
     problems, infos = [], []
     base_groups = _group(base_items)
     new_groups = _group(new_items)
@@ -245,7 +523,8 @@ def compare_items(base_items, new_items):
         if not ngroup:
             problems.append("FAIL missing %s (base %s) not found in any child" % (label, bgroup[0].where))
             continue
-        if bgroup[0].kind == "impl" and (len(bgroup) > 1 or len(ngroup) > 1):
+        if bgroup[0].kind == "impl" and (len(bgroup) > 1 or len(ngroup) > 1
+                                         or ngroup[0].header != bgroup[0].header):
             p, i = _compare_split_impl(label, bgroup, ngroup)
             problems.extend(p)
             infos.extend(i)
@@ -264,7 +543,10 @@ def compare_items(base_items, new_items):
         matched += 1
     for key, ngroup in new_groups.items():
         for n in ngroup:
-            problems.append("FAIL extra %s in %s" % (n.label(), n.where))
+            if extras is not None:
+                extras.append(n)
+            else:
+                problems.append("FAIL extra %s in %s" % (n.label(), n.where))
     return problems, infos, matched
 
 
@@ -285,7 +567,10 @@ def _compare_split_impl(label, bgroup, ngroup):
     equal a base residue."""
     problems, infos = [], []
     base_residues = {b.residue for b in bgroup}
+    base_headers = {b.header for b in bgroup}
     for n in ngroup:
+        if n.header not in base_headers:
+            infos.append("INFO impl header lifetime elided: %s (%s)" % (n.header, n.where))
         if n.residue not in base_residues:
             problems.append("FAIL impl residue of split %s in %s differs from base (header/attrs/docs or non-item content)" % (label, n.where))
     bmethods = _group([m for b in bgroup for m in b.methods])
@@ -311,7 +596,43 @@ def _compare_split_impl(label, bgroup, ngroup):
     return problems, infos
 
 
-def compare_chunks(base_chunks, new_chunks):
+def compare_mods(base_mods, new_mods, extras=None):
+    """Mod records 1:1. Returns (problems, infos). A base record needs exactly
+    one new-side counterpart (bodied mod in the same scope, or a decl in a
+    file of that scope): cfg mismatch = FAIL, vis change = INFO, doc/attribute
+    lead neither on the decl nor at the top of the target file = INFO. A
+    new-side record without a base one is FAIL extra (or handed to `extras`)
+    unless it is a tests mount or a decl for a child file (plumbing)."""
+    problems, infos = [], []
+    new_groups = _group(new_mods)
+    for b in base_mods:
+        label = b.label()
+        cands = new_groups.pop(b.key, [])
+        if not cands:
+            problems.append("FAIL missing %s (base %s) not found in any child" % (label, b.where))
+            continue
+        if len(cands) > 1:
+            problems.append("FAIL duplicate %s lands in %s" % (label, ", ".join(n.where for n in cands)))
+            continue
+        n = cands[0]
+        if b.cfgs != n.cfgs:
+            problems.append("FAIL cfg on %s differs: %s -> %s (%s)" % (label, _cfg_str(b.cfgs), _cfg_str(n.cfgs), n.where))
+        if b.vis != n.vis:
+            infos.append("INFO vis %s: %s -> %s (%s)" % (label, b.vis or "private", n.vis or "private", n.where))
+        if b.lead != n.lead and not (n.file_lead is not None and b.lead == n.file_lead):
+            infos.append("INFO doc on %s moved/changed (%s)" % (label, n.where))
+    for key, cands in new_groups.items():
+        for n in cands:
+            if _is_tests_mod(n.name) or (not n.bodied and n.target != "dir"):
+                continue  # tests mount / decl for a child file / dangling decl = plumbing
+            if extras is not None:
+                extras.append(n)
+            else:
+                problems.append("FAIL extra %s in %s" % (n.label(), n.where))
+    return problems, infos
+
+
+def compare_chunks(base_chunks, new_chunks, extras=None):
     problems = []
     remaining = list(new_chunks)
     for canon_text, first, where, line in base_chunks:
@@ -323,8 +644,26 @@ def compare_chunks(base_chunks, new_chunks):
             problems.append("FAIL duplicate unrecognised block %r lands in %s" % (first, ", ".join("%s:%d" % (h[2], h[3]) for h in hits)))
         remaining.remove(hits[0])
     for canon_text, first, where, line in remaining:
-        problems.append("FAIL extra unrecognised block in %s:%d (%r)" % (where, line, first))
+        if extras is not None:
+            extras.append((canon_text, first, where, line))
+        else:
+            problems.append("FAIL extra unrecognised block in %s:%d (%r)" % (where, line, first))
     return problems
+
+
+def _self_compare(pb, pn, sink):
+    """A pre-existing child's new version against its own base version.
+    Content it gained (unmatched items / mods / residue) is not an extra
+    here: it goes to `sink` (the main new side) as a candidate landing spot
+    for the split's items. Returns (problems, infos, n_items_handed_on)."""
+    ei, em, ec = [], [], []
+    p1, i1, _ = compare_items(pb.items, pn.items, extras=ei)
+    p2, i2 = compare_mods(pb.mods, pn.mods, extras=em)
+    p3 = compare_chunks(pb.chunks, pn.chunks, extras=ec)
+    sink.items.extend(ei)
+    sink.mods.extend(em)
+    sink.chunks.extend(ec)
+    return p1 + p2 + p3, i1 + i2, len(ei)
 
 
 # ---------------------------------------------------------------------------
@@ -338,59 +677,170 @@ def _fmt_doc(src, what):
         raise RuntimeError("%s: %s" % (what, e))
 
 
-def check(base_rev, old_file, new_dir, out=print):
-    root = _repo_root(os.path.abspath(new_dir), os.path.abspath(old_file))
-    old_rel = _rel(root, old_file)
-    dir_rel = _rel(root, new_dir)
-    dir_abs = os.path.join(root, dir_rel)
+def _skip_tests_info(where, scope):
+    if scope == TOP:
+        return "INFO skipped %s (base file had no inline `mod tests`)" % where
+    return "INFO skipped %s (base mod %s had no inline `mod tests`)" % (where, scope)
+
+
+class Walker:
+    """New-side traversal: reads files, applies the pre-existing rule,
+    resolves `mod` declarations, collects into `new`."""
+
+    def __init__(self, root, base_rev, base, new, problems, infos):
+        self.root = root
+        self.base_rev = base_rev
+        self.base = base
+        self.new = new
+        self.problems = problems
+        self.infos = infos
+
+    def file(self, rel, scope, skip_info=None):
+        """Read + rustfmt one new-side file. Pre-existing at base_rev and
+        unchanged: skipped (INFO). Pre-existing and modified: compared against
+        its own base version, gained content handed to the main compare.
+        Otherwise collected with `scope`, unless `skip_info` says the file is
+        a tests file with no base counterpart. Returns (doc, pre_existing)."""
+        with open(os.path.join(self.root, rel), encoding="utf-8") as f:
+            src = f.read()
+        doc = _fmt_doc(src, "rustfmt on %s" % rel)
+        base_src = _git_show_or_none(self.root, self.base_rev, rel)
+        if base_src is None:
+            if skip_info:
+                self.infos.append(skip_info)
+            else:
+                collect(doc, rel, scope, self.new)
+            return doc, False
+        if base_src == src:
+            self.infos.append("INFO skipped %s (pre-existing, unchanged)" % rel)
+            return doc, True
+        pb = Side()
+        collect(_fmt_doc(base_src, "rustfmt on base %s" % rel), "%s@%s" % (rel, self.base_rev), scope, pb)
+        pn = Side()
+        collect(doc, rel, scope, pn)
+        p, i, moved = _self_compare(pb, pn, self.new)
+        self.problems.extend(p)
+        self.infos.extend(i)
+        if not p:
+            note = " (+%d items moved in)" % moved if moved else ""
+            self.infos.append("INFO pre-existing child re-plumbed: %s%s" % (rel, note))
+        return doc, True
+
+    def walk_dir(self, dir_rel, scope, inherited=(), owner=None):
+        """One directory level with the given scope, then every subdirectory
+        that holds Rust files. `owner` = repo-relative path of the sibling
+        `D.rs` owning a mod.rs-less (Rust-2018) directory; without it a
+        mod.rs is required. `inherited` = declaration targets resolved one
+        level up. Returns the number of *.rs files visited."""
+        dir_abs = os.path.join(self.root, dir_rel)
+        entries = sorted(os.listdir(dir_abs))
+        files = [f for f in entries if f.endswith(".rs") and os.path.isfile(os.path.join(dir_abs, f))]
+        subdirs = [d for d in entries if os.path.isdir(os.path.join(dir_abs, d)) and _has_rs_files(os.path.join(dir_abs, d))]
+        n_files = len(files)
+        if owner is None and "mod.rs" not in files:
+            self.problems.append("FAIL %s/mod.rs missing" % dir_rel)
+            return n_files
+        decl_owner = owner or "%s/mod.rs" % dir_rel
+        base_mods_here = self.base.mods_in(scope)
+        declared = set(inherited)
+        scope_of, pre = {}, {}
+        for fname in files:
+            rel = "%s/%s" % (dir_rel, fname)
+            stem = fname[:-3]
+            skip = None
+            if _is_tests_file(fname):
+                fscope = _sub_scope(scope, "tests")
+                if fscope not in self.base.tests_scopes:
+                    skip = _skip_tests_info(rel, scope)
+            elif stem in base_mods_here:
+                fscope = _sub_scope(scope, stem)  # module flattened into one file
+            else:
+                fscope = scope
+            doc, pre[fname] = self.file(rel, fscope, skip)
+            scope_of[fname] = None if (skip and not pre[fname]) else fscope
+            for it in enumerate_items(doc):
+                if it["kind"] != "mod" or it["body_open_line"] is not None:
+                    continue
+                kind, target = _resolve_decl(doc, it, dir_abs, fname)
+                if target:
+                    declared.add(target)
+                if not pre[fname]:
+                    self.new.mods.append(ModRec(fscope, it["name"], it["cfgs"], it["vis"], _mod_lead(doc, it), rel,
+                                                bodied=False, target=kind,
+                                                file_lead=_file_lead(target) if target else None))
+        for fname in files:
+            if fname != "mod.rs" and not pre[fname] and os.path.join(dir_abs, fname) not in declared:
+                self.problems.append("FAIL %s does not declare `mod %s;`" % (decl_owner, fname[:-3]))
+        for d in subdirs:
+            sub_rel = "%s/%s" % (dir_rel, d)
+            sub_abs = os.path.join(dir_abs, d)
+            if os.path.isfile(os.path.join(sub_abs, "mod.rs")):
+                if os.path.join(sub_abs, "mod.rs") not in declared:
+                    self.problems.append("FAIL %s does not declare `mod %s;`" % (decl_owner, d))
+                if _is_tests_mod(d):
+                    sub_scope = _sub_scope(scope, "tests")
+                    if sub_scope not in self.base.tests_scopes:
+                        self.infos.append(_skip_tests_info(sub_rel + "/", scope))
+                        continue
+                else:
+                    sub_scope = _sub_scope(scope, d)
+                n_files += self.walk_dir(sub_rel, sub_scope, declared)
+            elif d + ".rs" in files:
+                sub_scope = scope_of[d + ".rs"]
+                if sub_scope is None:
+                    self.infos.append(_skip_tests_info(sub_rel + "/", scope))
+                    continue
+                n_files += self.walk_dir(sub_rel, sub_scope, declared, owner="%s/%s.rs" % (dir_rel, d))
+            else:
+                self.problems.append("FAIL orphan directory %s (no mod.rs and no sibling %s.rs)" % (sub_rel, d))
+        return n_files
+
+
+def check(base_rev, old_files, new_path, out=print):
+    old_list = [f for f in old_files.split(",") if f]
+    root = _repo_root(os.path.abspath(new_path), os.path.abspath(old_list[0]))
+    old_rels = [_rel(root, f) for f in old_list]
+    old_label = ",".join(old_rels)
+    new_rel = _rel(root, new_path)
+    new_abs = os.path.join(root, new_rel)
     problems, infos = [], []
 
-    base_src = _git(root, "show", "%s:%s" % (base_rev, old_rel))
-    base_doc = _fmt_doc(base_src, "rustfmt on base %s" % old_rel)
-    base_items, base_chunks, base_has_tests = collect(base_doc, old_rel, "top")
+    base = Side()
+    sources = list(old_rels)
+    for old_rel in sources:
+        base_doc = _fmt_doc(_git(root, "show", "%s:%s" % (base_rev, old_rel)), "rustfmt on base %s" % old_rel)
+        collect(base_doc, old_rel, TOP, base)
+        if os.path.exists(os.path.join(root, old_rel)):
+            problems.append("FAIL old file still present: %s" % old_rel)
+        for child in _vanished_children(root, base_rev, old_rel, base_doc):
+            if child not in sources:
+                sources.append(child)
+                infos.append("INFO absorbed %s (child module of %s at base, gone from the tree)" % (child, old_rel))
 
-    if os.path.exists(os.path.join(root, old_rel)):
-        problems.append("FAIL old file still present: %s" % old_rel)
-    if not os.path.isdir(dir_abs):
-        problems.append("FAIL new dir missing: %s" % dir_rel)
-        return _finish(out, problems, infos, old_rel, 0, 0)
-    children = sorted(f for f in os.listdir(dir_abs)
-                      if f.endswith(".rs") and os.path.isfile(os.path.join(dir_abs, f)))
-    mod_rs = os.path.join(dir_abs, "mod.rs")
-    if not os.path.isfile(mod_rs):
-        problems.append("FAIL %s/mod.rs missing" % dir_rel)
-        return _finish(out, problems, infos, old_rel, len(children), 0)
+    new = Side()
+    walker = Walker(root, base_rev, base, new, problems, infos)
+    if new_rel.endswith(".rs"):
+        if not os.path.isfile(new_abs):
+            problems.append("FAIL new file missing: %s" % new_rel)
+            return _finish(out, problems, infos, old_label, 0, 0)
+        walker.file(new_rel, TOP)
+        n_children = 1
+    else:
+        if not os.path.isdir(new_abs):
+            problems.append("FAIL new dir missing: %s" % new_rel)
+            return _finish(out, problems, infos, old_label, 0, 0)
+        n_children = walker.walk_dir(new_rel, TOP)
+        if not os.path.isfile(os.path.join(new_abs, "mod.rs")):
+            return _finish(out, problems, infos, old_label, n_children, 0)
 
-    new_items, new_chunks = [], []
-    declared = set()
-    for fname in children:
-        where = "%s/%s" % (dir_rel, fname)
-        with open(os.path.join(dir_abs, fname), encoding="utf-8") as f:
-            src = f.read()
-        doc = _fmt_doc(src, "rustfmt on %s" % where)
-        if fname == "mod.rs":
-            for it in enumerate_items(doc):
-                if it["kind"] == "mod" and it["body_open_line"] is None:
-                    declared.add(it["name"])
-        if _is_tests_file(fname):
-            if not base_has_tests:
-                infos.append("INFO skipped %s (base file had no inline `mod tests`)" % where)
-                continue
-            scope = "tests"
-        else:
-            scope = "top"
-        items, chunks, _ = collect(doc, where, scope)
-        new_items.extend(items)
-        new_chunks.extend(chunks)
-    for fname in children:
-        if fname != "mod.rs" and fname[:-3] not in declared:
-            problems.append("FAIL %s/mod.rs does not declare `mod %s;`" % (dir_rel, fname[:-3]))
-
-    p, i, matched = compare_items(base_items, new_items)
+    p, i = compare_mods(base.mods, new.mods)
     problems.extend(p)
     infos.extend(i)
-    problems.extend(compare_chunks(base_chunks, new_chunks))
-    return _finish(out, problems, infos, old_rel, len(children), matched)
+    p, i, matched = compare_items(base.items, new.items)
+    problems.extend(p)
+    infos.extend(i)
+    problems.extend(compare_chunks(base.chunks, new.chunks))
+    return _finish(out, problems, infos, old_label, n_children, matched)
 
 
 def _finish(out, problems, infos, old_rel, n_children, n_items):
@@ -407,7 +857,7 @@ def _finish(out, problems, infos, old_rel, n_children, n_items):
 
 def main(argv):
     if len(argv) != 3 or argv[0] in ("-h", "--help"):
-        print("usage: split_check.py <base-rev> <old-file> <new-dir>", file=sys.stderr)
+        print("usage: split_check.py <base-rev> <old-file>[,<old-file>...] <new-dir | new-file>", file=sys.stderr)
         return 2
     try:
         return check(*argv)
