@@ -249,11 +249,15 @@ def _git(repo, *args):
     ).stdout
 
 
-def make_repo(tmp_path, base_text):
-    """Throwaway repo with base_text committed at src/big.rs; returns (path, base_sha)."""
+def make_repo(tmp_path, base_text, extra=None):
+    """Throwaway repo with base_text committed at src/big.rs (plus any `extra`
+    {relpath: text} files); returns (path, base_sha)."""
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     (repo / OLD).write_text(base_text)
+    for rel, text in (extra or {}).items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
     _git(repo, "init", "-q")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "base")
@@ -280,9 +284,9 @@ def apply_split(repo, files, remove_old=True):
         (repo / NEW / name).write_text(text)
 
 
-def run_check(repo, base_sha):
+def run_check(repo, base_sha, old=OLD, new=NEW):
     return subprocess.run(
-        [sys.executable, str(TOOL), base_sha, OLD, NEW],
+        [sys.executable, str(TOOL), base_sha, old, new],
         cwd=repo, capture_output=True, text=True,
     )
 
@@ -603,3 +607,171 @@ def test_nested_mod_extra_and_doc_drift(nested_repo):
         f"FAIL extra mod hidden (in seam) in {NEW}/seam/open.rs",
         f"FAIL extra fn h (in seam::hidden) in {NEW}/seam/open.rs",
     ]
+
+
+
+# --- pre-existing children, 2018-layout directories, decl placement, modes ----
+
+OLD_RS = "pub fn old_fn() -> u8 {\n    1\n}\n"
+
+
+def test_pre_existing_child(tmp_path):
+    """A child that already existed at base: unchanged -> skipped (INFO) and
+    exempt from the declaration check; re-plumbed -> INFO; an item moved into
+    it from the old file is matched by the main compare; a body edit is a
+    FAIL against its own base version."""
+    base = BASE.replace("use std::collections::HashMap;", "mod old;\n\nuse std::collections::HashMap;")
+    path, sha = make_repo(tmp_path, base, extra={f"{NEW}/old.rs": OLD_RS})
+    files = {**SPLIT, "mod.rs": MOD_RS.replace("mod alpha;", "mod alpha;\nmod old;")}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = r.stdout.splitlines()
+    assert f"INFO skipped {NEW}/old.rs (pre-existing, unchanged)" in lines
+    assert lines[-1] == f"SPLIT-CHECK OK {OLD} -> 5 children (7 items)"
+    # no declaration needed: it was declared before the split
+    apply_split(path, SPLIT, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    # imports re-plumbed only
+    (path / NEW / "old.rs").write_text("use super::Alpha;\n\n" + OLD_RS)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"INFO pre-existing child re-plumbed: {NEW}/old.rs" in r.stdout.splitlines()
+    # an item of the old file landing in the pre-existing child is still 1:1
+    kinds = KINDS_RS.replace("pub enum Kind {\n    A,\n    B,\n}\n\n", "")
+    assert kinds != KINDS_RS
+    apply_split(path, {**files, "kinds.rs": kinds, "old.rs": OLD_RS + "\npub enum Kind {\n    A,\n    B,\n}\n"},
+                remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"INFO pre-existing child re-plumbed: {NEW}/old.rs (+1 items moved in)" in r.stdout.splitlines()
+    # a body edit inside the pre-existing child
+    apply_split(path, {**files, "old.rs": OLD_RS.replace("1\n", "2\n")}, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 1
+    assert fails(r) == ["FAIL body fn old_fn differs:"]
+
+
+def test_subdir_owned_by_sibling_file(repo):
+    """Rust-2018 layout: `tests.rs` owns `tests/regressions.rs` (no mod.rs);
+    its files are children of that module in the owner's scope and must be
+    declared from the owner. A directory with neither a mod.rs nor a sibling
+    file is an orphan."""
+    path, sha = repo
+    files = {**SPLIT, "tests.rs": "use super::*;\n\nmod regressions;\n",
+             "tests/regressions.rs": TESTS_RS}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 5 children (7 items)"
+    apply_split(path, {**files, "tests.rs": "use super::*;\n"}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL {NEW}/tests.rs does not declare `mod regressions;`"]
+    apply_split(path, {**files, "orphan/x.rs": "fn x() {}\n"}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL orphan directory {NEW}/orphan (no mod.rs and no sibling orphan.rs)"]
+
+
+def test_decl_in_any_file_and_path_attr(repo):
+    """A sibling counts as declared by a `#[path = "x.rs"] mod y;` or a plain
+    `mod x;` in any file of the directory, not only mod.rs."""
+    path, sha = repo
+    files = {**SPLIT, "mod.rs": MOD_RS.replace("mod kinds;\n", ""),
+             "alpha.rs": '#[path = "kinds.rs"]\nmod kinds_mounted;\n\n' + ALPHA_RS}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    apply_split(path, {**files, "alpha.rs": "mod kinds;\n\n" + ALPHA_RS}, remove_old=False)
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_single_file_mode(repo):
+    """The last argument may be one `.rs` file: the old file is compared
+    against it 1:1 with no mod.rs / sibling checks."""
+    path, sha = repo
+    (path / OLD).unlink()
+    (path / "src/moved").mkdir()
+    new = "src/moved/big_moved.rs"
+    body = BASE.replace("//! Big module docs.\n#![allow(dead_code)]\n\n", "")
+    (path / new).write_text("//! moved\n#![allow(dead_code)]\n\nuse crate::Nothing;\n" + body)
+    r = run_check(path, sha, new=new)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD} -> 1 children (7 items)"
+    (path / new).write_text((path / new).read_text().replace("LIMIT + 1", "LIMIT + 2"))
+    r = run_check(path, sha, new=new)
+    assert fails(r) == ['FAIL body fn extra #[cfg(feature = "extra")] differs:']
+
+
+def test_two_old_files_into_one_dir(tmp_path):
+    """Comma-separated old files: one directory absorbs more than one base file."""
+    other = "pub fn other() -> u8 {\n    9\n}\n"
+    path, sha = make_repo(tmp_path, BASE, extra={"src/other.rs": other})
+    (path / "src/other.rs").unlink()
+    apply_split(path, {**SPLIT, "mod.rs": MOD_RS.replace("mod kinds;", "mod kinds;\nmod other;"), "other.rs": other})
+    r = run_check(path, sha, old=f"{OLD},src/other.rs")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[-1] == f"SPLIT-CHECK OK {OLD},src/other.rs -> 5 children (8 items)"
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL extra fn other in {NEW}/other.rs"]
+
+
+def test_base_child_module_absorbed(tmp_path):
+    """A child module the old file mounted at base (`#[path = ".."] mod y;`)
+    whose file is gone from the tree is part of the split's source; while the
+    file is still there, its copy in the new dir is an extra."""
+    public = "pub fn public_fn() -> u8 {\n    4\n}\n"
+    base = BASE.replace("use std::collections::HashMap;",
+                        '#[path = "big_public.rs"]\nmod public;\n\nuse std::collections::HashMap;')
+    path, sha = make_repo(tmp_path, base, extra={"src/big_public.rs": public})
+    files = {**SPLIT, "mod.rs": MOD_RS.replace("mod kinds;", "mod kinds;\nmod public;"), "public.rs": public}
+    apply_split(path, files)
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL extra fn public_fn in {NEW}/public.rs"]
+    (path / "src/big_public.rs").unlink()
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = r.stdout.splitlines()
+    assert f"INFO absorbed src/big_public.rs (child module of {OLD} at base, gone from the tree)" in lines
+    assert lines[-1] == f"SPLIT-CHECK OK {OLD} -> 5 children (8 items)"
+
+
+LIFETIME_BASE = textwrap.dedent('''\
+    pub struct S<'a> {
+        pub s: &'a str,
+    }
+
+    impl<'a> S<'a> {
+        fn f(&self) {}
+
+        fn g(&self) {}
+    }
+''')
+
+
+def test_impl_header_lifetime_elided(tmp_path):
+    """`impl<'a> S<'a>` and `impl S<'_>` are the same header: a split part
+    that uses the lifetime nowhere else must be written elided (the
+    single_use_lifetimes lint), so the parts pair and the respelling is INFO."""
+    path, sha = make_repo(tmp_path, LIFETIME_BASE)
+    a = "pub struct S<'a> {\n    pub s: &'a str,\n}\n\nimpl<'a> S<'a> {\n    fn f(&self) {}\n}\n"
+    b = "use super::S;\n\nimpl S<'_> {\n    fn g(&self) {}\n}\n"
+    apply_split(path, {"mod.rs": "mod a;\nmod b;\n\npub use a::S;\n", "a.rs": a, "b.rs": b})
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = r.stdout.splitlines()
+    assert f"INFO impl header lifetime elided: impl S < ' _ > ({NEW}/b.rs)" in lines
+    assert lines[-1] == f"SPLIT-CHECK OK {OLD} -> 3 children (2 items)"
+    # the whole impl respelled in one child pairs the same way
+    one = a.replace("impl<'a> S<'a> {\n    fn f(&self) {}\n}\n", "impl S<'_> {\n    fn f(&self) {}\n\n    fn g(&self) {}\n}\n")
+    assert one != a
+    apply_split(path, {"mod.rs": "mod a;\n\npub use a::S;\n", "a.rs": one}, remove_old=False)
+    (path / NEW / "b.rs").unlink()
+    r = run_check(path, sha)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"INFO impl header lifetime elided: impl S < ' _ > ({NEW}/a.rs)" in r.stdout.splitlines()
+    # a dropped method is still caught under the elided pairing
+    apply_split(path, {"a.rs": one.replace("\n    fn g(&self) {}\n", "")}, remove_old=False)
+    r = run_check(path, sha)
+    assert fails(r) == [f"FAIL missing method g of impl < ' a > S < ' a > (base {OLD}) not found in any child"]
