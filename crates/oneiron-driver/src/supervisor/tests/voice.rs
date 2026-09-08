@@ -1,13 +1,12 @@
 use super::*;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{
-    BudgetDenied, BudgetLease, ContentPart, FatalLlmError, FinishReason,
-    LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-    LlmResult, LlmStreamResult, LlmUsage,
+    BudgetDenied, BudgetLease, ContentPart, FatalLlmError, FinishReason, LlmGenerateFuture,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, LlmUsage,
 };
 use oneiron::voice_cascade::{
-    AsrUpdate, Brain, BrainRequest, CascadeControl, ControlEvent, GenerationEpoch,
-    TtsCommand, TtsSeamClient, VoiceSessionConfig,
+    AsrUpdate, Brain, BrainRequest, CascadeControl, ControlEvent, GenerationEpoch, TtsCommand,
+    TtsSeamClient, VoiceSessionConfig,
 };
 use oneiron_server::runtime::RuntimeConfig;
 use oneiron_server::voice_host::{HostError, VoiceOutputs, VoiceServeBindings};
@@ -30,16 +29,17 @@ impl LlmBackend for ControlledBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let (reply, receive) = oneshot::channel();
-            self.0.send(Call { lease: lease.clone(), reply }).unwrap();
+            self.0
+                .send(Call {
+                    lease: lease.clone(),
+                    reply,
+                })
+                .unwrap();
             receive.await.expect("test releases backend")
         })
     }
 
-    fn stream<'a>(
-        &'a self,
-        _request: LlmRequest,
-        _lease: &'a BudgetLease,
-    ) -> LlmStreamResult<'a> {
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         Err(FatalLlmError::InvalidRequest.into())
     }
 }
@@ -75,24 +75,29 @@ fn voice_config(vault: &Arc<Vault>) -> VoiceHostConfig {
         Arc::clone(vault),
         runtime,
         "Extract entity_labels and salient_terms as JSON.".to_owned(),
-        VoiceSessionConfig::new("driver-voice-test", InterlocutorResolutionInput {
-            owner_session: false,
-            parties: Vec::new(),
-            voice_session_ref: None,
-        }),
+        VoiceSessionConfig::new(
+            "driver-voice-test",
+            InterlocutorResolutionInput {
+                owner_session: false,
+                parties: Vec::new(),
+                voice_session_ref: None,
+            },
+        ),
         ManagedShutdown::new(),
     )
 }
 
 fn pass_guard(vault: &Vault, factory: &ConsolidationExecutorFactory) -> BudgetGuard {
     let config = test_config();
-    vault.policy_budget_guard(
-        "wake",
-        pass_ordinary_budget_units(config.budget_total_units),
-        config.reserve_units,
-        config.exhaustion_policy,
-        factory.actor,
-    ).unwrap()
+    vault
+        .policy_budget_guard(
+            "wake",
+            pass_ordinary_budget_units(config.budget_total_units),
+            config.reserve_units,
+            config.exhaustion_policy,
+            factory.actor,
+        )
+        .unwrap()
 }
 
 fn seven_units() -> LlmResponse {
@@ -198,7 +203,9 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
         host.budget()
             .abort(&call.lease)
             .expect("factory executor lease belongs to host meter");
-        call.reply.send(Err(FatalLlmError::InvalidRequest.into())).unwrap();
+        call.reply
+            .send(Err(FatalLlmError::InvalidRequest.into()))
+            .unwrap();
     });
     assert!(matches!(result, Ok(DreamerAttemptExecution::Park { .. })));
     assert_eq!(guard.read().used_units, 14);
@@ -239,9 +246,13 @@ fn foreign_same_attempt_id_guard_cannot_settle_or_abort_voice_lease() {
     let other = foreign.admit().unwrap();
     assert_eq!(owned.lease.id(), other.lease.id());
     let before = guard.read();
-    assert!(matches!(host.budget().abort(&other.lease), Err(BudgetDenied::LeaseInvalid)));
     assert!(matches!(
-        host.budget().settle_per_call(&other.lease, &seven_units().usage),
+        host.budget().abort(&other.lease),
+        Err(BudgetDenied::LeaseInvalid)
+    ));
+    assert!(matches!(
+        host.budget()
+            .settle_per_call(&other.lease, &seven_units().usage),
         Err(BudgetDenied::LeaseInvalid)
     ));
     assert_eq!(guard.read(), before);
@@ -325,12 +336,21 @@ async fn configured_voice_is_attached_after_guard_and_fails_closed() {
         &mut factory,
         &Tick::Hint(crate::tick::HintSignal::default()),
         &WakeCancellation::new(),
-    ).await;
+    )
+    .await;
     let Err(PassRunError::PreAdmission(oneiron::Error::InvalidConfig(message))) = result else {
         panic!("invalid attachment must fail before admission");
     };
-    assert_eq!(message, format!("voice attachment refused: {}", HostError::InvalidRequest));
-    assert!(DreamerRunnerStore::new(&vault).budget("voice-pass:p0").unwrap().is_none());
+    assert_eq!(
+        message,
+        format!("voice attachment refused: {}", HostError::InvalidRequest)
+    );
+    assert!(
+        DreamerRunnerStore::new(&vault)
+            .budget("voice-pass:p0")
+            .unwrap()
+            .is_none()
+    );
     assert!(calls.try_recv().is_err());
 }
 
@@ -345,7 +365,10 @@ fn refused_attachment_preserves_the_host_error() {
     let Err(oneiron::Error::InvalidConfig(message)) = factory.voice_host(&vault, &guard) else {
         panic!("stopped attachment must be refused");
     };
-    assert_eq!(message, format!("voice attachment refused: {}", HostError::Stopped));
+    assert_eq!(
+        message,
+        format!("voice attachment refused: {}", HostError::Stopped)
+    );
     assert_ne!(message, "voice attachment refused");
 }
 
@@ -365,7 +388,8 @@ async fn extraction_only_config_does_not_construct_a_host_during_the_pass() {
         &mut factory,
         &Tick::Hint(crate::tick::HintSignal::default()),
         &WakeCancellation::new(),
-    ).await;
+    )
+    .await;
     assert!(result.is_ok());
     assert!(calls.try_recv().is_err());
     // The explicit extraction door still validates the same configuration.
@@ -416,11 +440,14 @@ impl CascadeControl for TestOutputs {
 }
 
 fn test_bindings(stream: UnixStream, outputs: &TestOutputs) -> VoiceServeBindings {
-    VoiceServeBindings::new(stream, VoiceOutputs {
-        brain: outputs.clone(),
-        tts: outputs.clone(),
-        control: outputs.clone(),
-    })
+    VoiceServeBindings::new(
+        stream,
+        VoiceOutputs {
+            brain: outputs.clone(),
+            tts: outputs.clone(),
+            control: outputs.clone(),
+        },
+    )
 }
 
 #[tokio::test]
@@ -453,7 +480,10 @@ impl PassExecutorFactory for ObservedFactory {
 
     fn voice_host(&self, vault: &Vault, guard: &BudgetGuard) -> Result<Option<VoiceHost>> {
         let host = self.inner.voice_host(vault, guard)?;
-        assert!(Arc::ptr_eq(host.as_ref().unwrap().backend(), &self.inner.backend));
+        assert!(Arc::ptr_eq(
+            host.as_ref().unwrap().backend(),
+            &self.inner.backend
+        ));
         Ok(host)
     }
 
@@ -481,17 +511,30 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
             guard: Arc::clone(&observed),
         };
         let conversation = seed_actor(&vault, 0x72, oneiron::registry::ENTITY_TYPE_PERSON);
-        enqueue_input(&vault, rmpv::Value::Map(vec![
-            (rmpv::Value::from("conversation_ref"), rmpv::Value::Binary(conversation.as_bytes().to_vec())),
-            (rmpv::Value::from("watermark"), rmpv::Value::from(0)),
-            (rmpv::Value::from("turns"), rmpv::Value::Array(Vec::new())),
-        ]), "voice-serve-pass", 10);
+        enqueue_input(
+            &vault,
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("conversation_ref"),
+                    rmpv::Value::Binary(conversation.as_bytes().to_vec()),
+                ),
+                (rmpv::Value::from("watermark"), rmpv::Value::from(0)),
+                (rmpv::Value::from("turns"), rmpv::Value::Array(Vec::new())),
+            ]),
+            "voice-serve-pass",
+            10,
+        );
         let mut pass_config = test_config();
         pass_config.local_node_id = DreamerRunnerStore::new(&vault)
-            .local_home_node_candidate(false, false, false).unwrap().node_id;
+            .local_home_node_candidate(false, false, false)
+            .unwrap()
+            .node_id;
         let clock: NowSeconds = Arc::new(|| 11);
         let (_tx, rx) = watch::channel(false);
-        let mut listener = ShutdownListener { rx, voice: Some(shutdown.clone()) };
+        let mut listener = ShutdownListener {
+            rx,
+            voice: Some(shutdown.clone()),
+        };
         let (read, mut write) = client.into_split();
         let mut read = BufReader::new(read);
         let tick = Tick::Hint(crate::tick::HintSignal::default());
@@ -544,9 +587,16 @@ async fn owner_stream_serves_with_the_pass_meter_and_stops_on_pass_end_or_shutdo
         let guard = observed.lock().unwrap().as_ref().unwrap().clone();
         assert_eq!(guard.read().reserved_units, 0);
         assert_eq!(guard.read().used_units, 7);
-        assert_eq!(*outputs.0.lock().unwrap(), [
-            "brain.start", "control.flush", "brain.cancel", "tts.cancel", "control.end",
-        ]);
+        assert_eq!(
+            *outputs.0.lock().unwrap(),
+            [
+                "brain.start",
+                "control.flush",
+                "brain.cancel",
+                "tts.cancel",
+                "control.end",
+            ]
+        );
         assert!(factory.voice_serve_bindings().unwrap().is_none());
     }
 }

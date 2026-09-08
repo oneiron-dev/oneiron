@@ -38,7 +38,8 @@ impl TinyExtractor {
     ) -> Result<Self, HostError> {
         let route = runtime.route_for_role(RuntimeRole::Summarizer);
         if route.state != RuntimeRouteState::Available
-            || prompt.trim().is_empty() || prompt.len() > MAX_PROMPT_BYTES
+            || prompt.trim().is_empty()
+            || prompt.len() > MAX_PROMPT_BYTES
         {
             return Err(HostError::InvalidRequest);
         }
@@ -48,7 +49,13 @@ impl TinyExtractor {
             RuntimeProviderKind::ByoCloud => ModelLocality::ThirdParty,
             RuntimeProviderKind::OneironCloud => ModelLocality::OwnServer,
         };
-        Ok(Self { backend, budget, model, locality, prompt })
+        Ok(Self {
+            backend,
+            budget,
+            model,
+            locality,
+            prompt,
+        })
     }
 
     fn request(&self, text: &str) -> LlmRequest {
@@ -67,20 +74,28 @@ impl TinyExtractor {
                     purpose_default: None,
                     global_default: ModelTierRef("tiny".to_owned()),
                 },
-                response_format: ResponseFormat::Json { schema: json!({
-                    "type": "object", "additionalProperties": false,
-                    "required": ["entity_labels", "salient_terms"],
-                    "properties": {"entity_labels": list, "salient_terms": list}
-                }) },
+                response_format: ResponseFormat::Json {
+                    schema: json!({
+                        "type": "object", "additionalProperties": false,
+                        "required": ["entity_labels", "salient_terms"],
+                        "properties": {"entity_labels": list, "salient_terms": list}
+                    }),
+                },
                 locality: self.locality,
             },
             messages: vec![
-                LlmMessage { role: LlmMessageRole::System, content: vec![ContentPart::Text {
-                    text: self.prompt.clone(),
-                }] },
-                LlmMessage { role: LlmMessageRole::User, content: vec![ContentPart::Text {
-                    text: json!({"text": text}).to_string(),
-                }] },
+                LlmMessage {
+                    role: LlmMessageRole::System,
+                    content: vec![ContentPart::Text {
+                        text: self.prompt.clone(),
+                    }],
+                },
+                LlmMessage {
+                    role: LlmMessageRole::User,
+                    content: vec![ContentPart::Text {
+                        text: json!({"text": text}).to_string(),
+                    }],
+                },
             ],
             tools: Vec::new(),
             params: BTreeMap::from([("max_output_tokens".to_owned(), json!(MAX_OUTPUT_TOKENS))]),
@@ -90,18 +105,30 @@ impl TinyExtractor {
 
     pub(super) async fn extract(&self, text: &str) -> Result<PartialEnrichment, HostError> {
         let request = self.request(text);
-        let admission = self.budget.admit_for_request(&request).map_err(LlmError::from)?;
-        let mut lease = OpenLease { budget: &self.budget, lease: Some(admission.lease) };
+        let admission = self
+            .budget
+            .admit_for_request(&request)
+            .map_err(LlmError::from)?;
+        let mut lease = OpenLease {
+            budget: &self.budget,
+            lease: Some(admission.lease),
+        };
         let response = tokio::time::timeout(
             PROVIDER_TIMEOUT,
-            self.backend.generate(request, lease.lease.as_ref().ok_or(HostError::Stopped)?),
-        ).await.map_err(|_| LlmError::from(RetryableLlmError::Timeout))??;
+            self.backend
+                .generate(request, lease.lease.as_ref().ok_or(HostError::Stopped)?),
+        )
+        .await
+        .map_err(|_| LlmError::from(RetryableLlmError::Timeout))??;
         // Account for actual provider work even when its output is malformed or
         // the originating observation became stale. Never claim cancellation is
         // proof of zero upstream spend; no usage is invented for errors/drops.
-        self.budget.settle_per_call(
-            lease.lease.as_ref().ok_or(HostError::Stopped)?, &response.usage,
-        ).map_err(LlmError::from)?;
+        self.budget
+            .settle_per_call(
+                lease.lease.as_ref().ok_or(HostError::Stopped)?,
+                &response.usage,
+            )
+            .map_err(LlmError::from)?;
         lease.lease = None;
         validate_response(response)
     }
@@ -129,7 +156,9 @@ struct Extraction {
 }
 
 fn validate_response(response: LlmResponse) -> Result<PartialEnrichment, HostError> {
-    if response.finish_reason != FinishReason::Stop || response.message.role != LlmMessageRole::Assistant {
+    if response.finish_reason != FinishReason::Stop
+        || response.message.role != LlmMessageRole::Assistant
+    {
         return Err(HostError::InvalidResponse);
     }
     let [ContentPart::Text { text }] = response.message.content.as_slice() else {
@@ -138,11 +167,16 @@ fn validate_response(response: LlmResponse) -> Result<PartialEnrichment, HostErr
     if text.len() > MAX_RESPONSE_BYTES {
         return Err(HostError::InvalidResponse);
     }
-    let extraction: Extraction = serde_json::from_str(text).map_err(|_| HostError::InvalidResponse)?;
+    let extraction: Extraction =
+        serde_json::from_str(text).map_err(|_| HostError::InvalidResponse)?;
     for items in [&extraction.entity_labels, &extraction.salient_terms] {
-        if items.len() > MAX_ITEMS || items.iter().any(|item| {
-            item.trim().is_empty() || item.len() > MAX_ITEM_BYTES || item.chars().any(char::is_control)
-        }) {
+        if items.len() > MAX_ITEMS
+            || items.iter().any(|item| {
+                item.trim().is_empty()
+                    || item.len() > MAX_ITEM_BYTES
+                    || item.chars().any(char::is_control)
+            })
+        {
             return Err(HostError::InvalidResponse);
         }
     }

@@ -705,7 +705,10 @@ fn of060_f2_extra_booking_write_txn_is_not_pinned() {
     for (rel, extra_line) in [
         (booking_path, approved_line),
         (booking_path, "server.vault.with_write_txn(|extra_txn| {"),
-        ("crates/oneiron-server/src/api/booking/extra.rs", approved_line),
+        (
+            "crates/oneiron-server/src/api/booking/extra.rs",
+            approved_line,
+        ),
     ] {
         assert!(production_file(rel) && f2_surface_path(rel));
         let extra_hits = raw_escape_hits(rel, &production_source(extra_line));

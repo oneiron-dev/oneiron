@@ -303,7 +303,11 @@ struct ShutdownListener {
 impl ShutdownListener {
     fn requested(&self) -> bool {
         #[cfg(all(unix, feature = "voice"))]
-        if self.voice.as_ref().is_some_and(ManagedShutdown::is_triggered) {
+        if self
+            .voice
+            .as_ref()
+            .is_some_and(ManagedShutdown::is_triggered)
+        {
             return true;
         }
         *self.rx.borrow()

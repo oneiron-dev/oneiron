@@ -122,7 +122,9 @@ pub(super) fn dispatch_item_effect(
         intent,
         // The gate principal is the verified human owner, not the agent trigger.
         OutboundDispatchActor {
-            actor_class: crate::edge::EdgeActorClass::Human.gate_actor_class().to_owned(),
+            actor_class: crate::edge::EdgeActorClass::Human
+                .gate_actor_class()
+                .to_owned(),
             actor_ref: Some(owner.to_hex()),
             actor_entity_ref: Some(owner),
         },

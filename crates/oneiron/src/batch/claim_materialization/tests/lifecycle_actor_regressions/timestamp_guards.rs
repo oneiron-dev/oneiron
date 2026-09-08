@@ -190,7 +190,10 @@ fn lifecycle_at_or_after_start_preserves_actor_and_exact_timestamp() -> Result<(
             assert_eq!(binding_digest(&vault, id)?, Some(row_digest(&raw).to_vec()));
             assert_current_actor(&vault, id, actor)?;
         }
-        assert_eq!(vault.get_raw(&new)?.expect("unchanged replacement"), new_raw);
+        assert_eq!(
+            vault.get_raw(&new)?.expect("unchanged replacement"),
+            new_raw
+        );
         assert_eq!(binding_digest(&vault, new)?, new_digest);
         assert_current_actor(&vault, new, actor)?;
         assert_eq!(vault.targets(&new, EdgeKind::Supersedes, None)?, vec![old]);
