@@ -11,4 +11,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | L | 4 struct · 1 enum · 1 trait · 16 fn | LocalAbortHandle, LocalGeneration, LocalLlmBackend, LocalLlmRuntime, LocalModelMetadata, LocalOutputPart | Local in-process adapter for Oneiron's [`LlmBackend`] seam |
+| `src/lib/abort.rs` | src | s | 1 struct · 3 fn | LocalAbortHandle | Abort handle shared between a generation and its event stream |
+| `src/lib/backend.rs` | src | s | 1 struct · 1 trait · 3 fn | LocalLlmBackend, LocalLlmRuntime | LlmBackend adapter over a LocalLlmRuntime with abort-wired streaming |
+| `src/lib/capabilities.rs` | src | s | 6 crate-vis | — | Request validation and metadata capability probing with key normalization |
+| `src/lib/metadata.rs` | src | s | 1 struct · 6 fn | LocalModelMetadata | Loaded-model metadata, catalog descriptor, and capability detection |
+| `src/lib/mod.rs` | src | s | 4 re-export | — | Local in-process adapter for Oneiron's [`LlmBackend`] seam |
+| `src/lib/output.rs` | src | s | 1 struct · 1 enum · 4 fn | LocalGeneration, LocalOutputPart | Runtime output parts and the in-progress generation envelope |
+| `src/lib/stream.rs` | src | s | 2 crate-vis | — | Output-part fan-out into LlmStreamEvent sequences with abort and drop handling |
+| `src/lib/tests.rs` | test | s | — | — | Fixture runtime plus request-validation and event-stream behavior tests |
