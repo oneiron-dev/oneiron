@@ -34,7 +34,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/campaign.rs` | src | s | 12 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/companion.rs` | src | XL | 75 crate-vis | — | — |
 | `src/api/consumer_usage.rs` | src | m | 10 crate-vis | — | — |
-| `src/api/context_pack.rs` | src | XL | 88 crate-vis | — | — |
+| `src/api/context_board/cursor.rs` | src | s | 13 crate-vis | — | The per-process MEMORIES cursor store, keyed by vault, principal scope and session |
+| `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
+| `src/api/context_board/mod.rs` | src | s | 3 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
+| `src/api/context_board/prefix.rs` | src | s | 13 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
+| `src/api/context_pack.rs` | src | XL | 56 crate-vis | — | — |
 | `src/api/conversations.rs` | src | m | 8 crate-vis | — | — |
 | `src/api/core.rs` | src | L | 65 crate-vis | — | — |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
@@ -54,7 +58,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/render_tests.rs` | test | s | — | — | — |
 | `src/api/openapi.rs` | src | L | 18 crate-vis | — | — |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
-| `src/api/resume.rs` | src | s | 13 crate-vis | — | — |
 | `src/api/run_tree.rs` | src | m | 27 crate-vis | — | — |
 | `src/api/run_tree/breaker_tests.rs` | test | s | — | — | — |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |

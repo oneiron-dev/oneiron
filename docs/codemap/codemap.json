@@ -18841,13 +18841,53 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/cursor.rs",
+     "purpose": "The per-process MEMORIES cursor store, keyed by vault, principal scope and session",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/memories.rs",
+     "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/mod.rs",
+     "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/prefix.rs",
+     "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 88
+      "crate-vis": 56
      }
     },
     {
@@ -19030,16 +19070,6 @@
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
       "crate-vis": 11
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/resume.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 13
      }
     },
     {
@@ -19964,7 +19994,7 @@
    ],
    "modules": {
     "api": {
-     "files": 55,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -20106,7 +20136,7 @@
    },
    "over_bar": 16,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 78,
+   "source_files": 81,
    "test_files": 46
   },
   "oneiron-uniffi": {

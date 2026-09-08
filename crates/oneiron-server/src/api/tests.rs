@@ -73,10 +73,10 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "ContextPackPolicyControls",
     "ContextPackRetrievalBudgetControls",
     "ContextPackTimeControls",
-    "EiriCompanionControls",
-    "EiriMemoryBoardControls",
-    "EiriMemoryBoardSlotControls",
-    "EiriSessionRagControls",
+    "ContextBoardCompanionControls",
+    "ContextBoardMemoriesControls",
+    "ContextBoardMemoriesSlotControls",
+    "ContextBoardSessionControls",
     "CoreContextPackEvidence",
     "CoreContextPackRequest",
     "CoreContextPackResponse",
@@ -86,14 +86,14 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreContextPackStateKind",
     "CoreContextPackStateReason",
     "CoreContextPackStats",
-    "CoreEiriCompanionAssembly",
-    "CoreEiriMemoryBoard",
-    "CoreEiriMemoryBoardBudget",
-    "CoreEiriMemoryBoardRow",
-    "CoreEiriMemoryBoardSlot",
-    "CoreEiriMemoryBoardSource",
+    "ContextBoardCompanionAssembly",
+    "ContextBoardMemories",
+    "ContextBoardMemoriesBudget",
+    "ContextBoardMemoryRow",
+    "ContextBoardMemorySlot",
+    "ContextBoardMemorySource",
     "CoreDisclosureAssembly",
-    "CoreEiriSessionRagState",
+    "ContextBoardMemoriesCursor",
     "CoreInterlocutorControls",
     "CoreInterlocutorParty",
     "CoreInterlocutorStamp",
@@ -3745,12 +3745,12 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "CoreContextPackScoreComponent",
         "CoreContextPackScoreEvidence",
         "CoreContextPackEvidence",
-        "CoreEiriCompanionAssembly",
-        "CoreEiriMemoryBoard",
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardCompanionAssembly",
+        "ContextBoardMemories",
+        "ContextBoardMemoriesBudget",
         "CoreDisclosureAssembly",
-        "CoreEiriMemoryBoardRow",
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoryRow",
+        "ContextBoardMemoriesCursor",
         "CoreInterlocutorControls",
         "CoreInterlocutorParty",
         "CoreInterlocutorStamp",
@@ -9486,7 +9486,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
 }
 
 #[test]
-fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
+fn memories_budget_default_other_matches_retrieval_budget() {
     let limit = 24;
     let selected_edges = 8;
     let retrieval_defaults = oneiron::ContextPackRetrievalBudget::from_limit(
@@ -9495,7 +9495,7 @@ fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
         selected_edges,
     );
 
-    let defaults = eiri_memory_board_budget(None, limit, selected_edges);
+    let defaults = memories_budget(None, limit, selected_edges);
     assert_eq!(defaults.companions, 0);
     assert_eq!(defaults.other, retrieval_defaults.other);
     assert_eq!(
@@ -9503,10 +9503,10 @@ fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
         retrieval_defaults.other
     );
 
-    let split = eiri_memory_board_budget(
-        Some(&EiriMemoryBoardControls {
+    let split = memories_budget(
+        Some(&ContextBoardMemoriesControls {
             enabled: None,
-            slots: Some(EiriMemoryBoardSlotControls {
+            slots: Some(ContextBoardMemoriesSlotControls {
                 companions: Some(2),
                 ..Default::default()
             }),
@@ -9519,27 +9519,27 @@ fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
 }
 
 #[test]
-fn eiri_session_rag_store_evicts_oldest_entries_at_capacity() {
-    let mut store = EiriSessionRagStore::default();
-    for index in 0..=EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
+fn memories_cursor_store_evicts_oldest_entries_at_capacity() {
+    let mut store = MemoriesCursorStore::default();
+    for index in 0..=MEMORIES_CURSOR_MAX_ENTRIES {
         let key = format!("vault:{index}");
         let session_id = format!("session-{index}");
         store.current(key, &session_id);
     }
 
-    assert_eq!(store.entries.len(), EIRI_SESSION_RAG_STATE_MAX_ENTRIES);
+    assert_eq!(store.entries.len(), MEMORIES_CURSOR_MAX_ENTRIES);
     assert!(!store.entries.contains_key("vault:0"));
     assert!(
         store
             .entries
-            .contains_key(&format!("vault:{EIRI_SESSION_RAG_STATE_MAX_ENTRIES}"))
+            .contains_key(&format!("vault:{MEMORIES_CURSOR_MAX_ENTRIES}"))
     );
 }
 
 #[test]
-fn eiri_session_rag_store_caps_persisted_result_ids() {
-    let mut store = EiriSessionRagStore::default();
-    let pack = synthetic_context_pack(EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX + 5);
+fn memories_cursor_store_caps_persisted_result_ids() {
+    let mut store = MemoriesCursorStore::default();
+    let pack = synthetic_context_pack(MEMORIES_CURSOR_LAST_RESULT_IDS_MAX + 5);
     let evidence = CoreContextPackEvidence {
         telemetry_persisted: false,
         retrieval_run_id: Some("test-run".to_owned()),
@@ -9557,12 +9557,12 @@ fn eiri_session_rag_store_caps_persisted_result_ids() {
 
     assert_eq!(
         state.last_result_ids.len(),
-        EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX
+        MEMORIES_CURSOR_LAST_RESULT_IDS_MAX
     );
     assert_eq!(state.last_result_ids[0], pack.results[0].id.to_hex());
     assert_eq!(
-        state.last_result_ids[EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX - 1],
-        pack.results[EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX - 1]
+        state.last_result_ids[MEMORIES_CURSOR_LAST_RESULT_IDS_MAX - 1],
+        pack.results[MEMORIES_CURSOR_LAST_RESULT_IDS_MAX - 1]
             .id
             .to_hex()
     );
@@ -9579,7 +9579,7 @@ async fn context_pack_v4_rejects_oversized_session_id() {
         "query": "eiri v4 needle",
         "context_version": "v4",
         "session_rag": {
-            "session_id": "x".repeat(EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES + 1)
+            "session_id": "x".repeat(MEMORIES_CURSOR_SESSION_ID_MAX_BYTES + 1)
         }
     });
 

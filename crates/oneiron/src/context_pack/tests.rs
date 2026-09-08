@@ -150,7 +150,7 @@ fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> Contex
 }
 
 #[test]
-fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
+fn memories_section_serializes_rows_in_stable_slot_order() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![
@@ -247,7 +247,7 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
 }
 
 #[test]
-fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
+fn memories_section_routes_asset_rows_by_ref_without_local_downgrade() {
     let pack = ContextPack {
         retrieval_quality: Default::default(),
         results: vec![

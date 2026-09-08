@@ -123,9 +123,9 @@ mod openapi;
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the
 // `protocol::close_codes` posture.
+mod context_board;
 #[allow(dead_code)]
 mod reactive;
-mod resume;
 mod run_tree;
 mod saved_query;
 mod search;
@@ -136,6 +136,7 @@ pub(crate) use self::artifacts::*;
 pub(crate) use self::booking::*;
 pub(crate) use self::companion::*;
 pub(crate) use self::consumer_usage::*;
+pub(crate) use self::context_board::*;
 pub(crate) use self::context_pack::*;
 pub(crate) use self::conversations::*;
 pub(crate) use self::core::*;
@@ -147,7 +148,6 @@ pub(crate) use self::memory::*;
 pub(crate) use self::memory_reason::*;
 pub(crate) use self::openapi::*;
 pub(crate) use self::reactive::*;
-pub(crate) use self::resume::*;
 pub(crate) use self::run_tree::*;
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
@@ -302,19 +302,19 @@ pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
         ContextPackTimeControls,
         ContextPackRetrievalBudgetControls,
         ContextPackBudgetControls,
-        EiriMemoryBoardControls,
-        EiriMemoryBoardSlotControls,
-        EiriSessionRagControls,
-        EiriCompanionControls,
+        ContextBoardMemoriesControls,
+        ContextBoardMemoriesSlotControls,
+        ContextBoardSessionControls,
+        ContextBoardCompanionControls,
         CoreContextPackRequest,
         CoreContextPackResponse,
-        CoreEiriCompanionAssembly,
-        CoreEiriMemoryBoard,
-        CoreEiriMemoryBoardBudget,
-        CoreEiriMemoryBoardRow,
-        CoreEiriMemoryBoardSlot,
-        CoreEiriMemoryBoardSource,
-        CoreEiriSessionRagState,
+        ContextBoardCompanionAssembly,
+        ContextBoardMemories,
+        ContextBoardMemoriesBudget,
+        ContextBoardMemoryRow,
+        ContextBoardMemorySlot,
+        ContextBoardMemorySource,
+        ContextBoardMemoriesCursor,
         CoreContextEntity,
         CoreContextEdge,
         CoreContextPackStats,
