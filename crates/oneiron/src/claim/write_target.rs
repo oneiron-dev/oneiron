@@ -24,7 +24,10 @@ pub(crate) fn validate_claim_write_target_in_txn(
     };
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("claim write target header"))?;
-    if header.entity_type == ENTITY_TYPE_CLAIM {
+    // A parsed header-only row is an erased shell, not a MessagePack body.
+    // The caller checks durable publication slot ownership before this helper.
+    // Nonempty CLAIM bodies still decode and validate fail-closed.
+    if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() > ENTITY_METADATA_HEADER_LEN {
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         validate_predicate(&body.predicate, false)?;
     }
