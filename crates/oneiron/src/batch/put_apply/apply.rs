@@ -1,171 +1,41 @@
-use super::*;
-
-use super::agent_definition_create::validate_local_agent_definition_create;
+//! The `apply_put` entity-put chokepoint: validation, claim gate, type dispatch, and staging.
 
 use std::collections::BTreeSet;
 
 use heed::RwTxn;
 
+use super::{
+    AppliedPut, AuthorityLogKeyOccupant, BaseWriteOrigin, CompanionRetiredHistoryOverlay,
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
+    StagedClaimGateOutcome, apply_short_id_plan, authority_observation_secs_for_write,
+    check_authority_log_store_key, delete_short_id_rows_for_id,
+    evict_authority_log_store_key_squatter, index_thread_claim_subject,
+    lexical_query_hint_claim_id, parse_entity_metadata, plan_short_id_update,
+    reject_overlay_member_base_write, stage_entity_body_row, stage_entity_index_rows,
+    stage_optimizer_birth_marker_row, validate_companion_register_put,
+    validate_local_agent_definition_create, validate_local_skill_create,
+    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
+    validate_task_checkin_immutable,
+};
 use crate::claim::ClaimApprovalStatus;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
-use crate::habit::TaskRole;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMM_RECORD, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_DIAGNOSTIC,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
-use crate::store::{ManifestDbs, Store};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
-
-/// The final `BatchOp::Put` this batch stages for one entity: where it lands
-/// in op order, its type byte, and — for a TASK only — the body its role is
-/// decoded from. Non-TASK bodies are not retained: the type byte is all the
-/// tree validator ever asks of them, so a non-TASK domain is never forced
-/// through `TaskRole` decoding.
-#[derive(Debug, Clone)]
-pub(super) struct BatchEntityPut {
-    pub(super) seq: usize,
-    pub(super) entity_type: u8,
-    pub(super) task_body: Option<Vec<u8>>,
-}
-
-/// One entity as the batch LEAVES it — the state `ChildOf` validation answers
-/// "does this parent exist, and what role does it carry" against.
-///
-/// Final state, not pre-state: a parent created anywhere in the same batch
-/// exists, and a parent the batch deletes without re-putting does not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum EffectiveEntity {
-    Missing,
-    NonTask(u8),
-    Task(TaskRole),
-}
-
-pub(super) struct AppliedPut {
-    pub(super) pending_embedding_token: Option<Vec<u8>>,
-    pub(super) cleared_pending_embedding: bool,
-    pub(super) had_vector_mutation: bool,
-    pub(super) is_lexical_query_hint_claim: bool,
-    /// Shell-edge sources an ONE-1604-D1 dominance eviction orphaned, for the
-    /// caller's explicit-source reconciliation. Empty on every other path.
-    pub(super) evicted_shell_sources: BTreeSet<EntityId>,
-}
-
-/// Every gate a SKILL body OVERWRITE passes at this chokepoint.
-///
-/// Extracted from [`apply_put`] rather than inlined: this arm answers one
-/// question ("may this body replace that one?") and three doors ask it.
-///
-/// A legacy-opaque prior body is the one exemption, as it has always been —
-/// there is no decoded predecessor to judge an update against, so the upgrade
-/// is admitted and the record's shape is validated on its own terms.
-///
-/// # Errors
-///
-/// [`Error::InvalidSkillBody`] from the substrate update gate, the hub-sync
-/// door's variant of it, or ONE-1449's admission gate.
-fn validate_skill_body_overwrite(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
-    id: &EntityId,
-    prior_body: &[u8],
-    updated: &crate::skill::SkillRecord,
-    hub_sync_imported: bool,
-    replicated: bool,
-) -> Result<()> {
-    match crate::skill::decode_skill_record(prior_body) {
-        Ok(prior) if hub_sync_imported => {
-            crate::skill::validate_hub_sync_skill_update(&prior, updated)
-        }
-        Ok(prior) => {
-            crate::skill::validate_skill_update(&prior, updated)?;
-            // ONE-1449's admission gate, placed HERE for the reason ONE-1892's
-            // scan consult is: this is the arm every SKILL body update
-            // converges on, so `put_entity`, a raw `batch().put`, the typed
-            // update door and sync replay are bound by one rule rather than
-            // four. The substrate update gate above already judges a
-            // replicated row against its predecessor; exempting THIS gate
-            // alone (ONE-1449 K3 M-6) let a peer's row edit optimizer origin
-            // provenance and flip an optimizer-born candidate to `active` with
-            // no verdict anywhere — a fail-open the local doors are closed to.
-            // Which half of the rule a road can be held to is the gate's own
-            // question to answer, so the road travels with the call rather
-            // than deciding here whether to make it.
-            crate::skill_optimize::check_optimizer_admission_in_txn(
-                store, wtxn, id, &prior, updated, replicated,
-            )
-        }
-        Err(error)
-            if error.kind() == ErrorKind::InvalidSkillBody
-                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
-}
-
-/// The ONE-1735 birth law for a LOCAL SKILL create.
-///
-/// Extracted from [`apply_put`] for the reason [`validate_skill_body_overwrite`]
-/// is: this answers one question ("may this id be BORN with this body?"), and
-/// the create arm now asks two — the origin marker, which every road carries,
-/// and this, which only a local create is held to. Legacy-opaque upgrades take
-/// the update arm instead (a prior record exists), so this sees genuine creates
-/// only. New skills are born candidate, and fork lineage must name a real
-/// type-7 SKILL parent (the `DerivedFrom` edge is door-authored and cannot
-/// precede this create in the txn, so it is not required here).
-///
-/// # Errors
-///
-/// [`Error::InvalidSkillBody`] for a create that is not born candidate or whose
-/// `forkedFrom` names itself, a missing row, or a row of another kind.
-fn validate_local_skill_create(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
-    id: &EntityId,
-    created: &crate::skill::SkillRecord,
-) -> Result<()> {
-    if created.lifecycle_status != crate::skill::SkillLifecycle::Candidate {
-        return Err(Error::InvalidSkillBody(
-            "new skills are born candidate; the admission gate activates them",
-        ));
-    }
-    let Some(parent) = created.forked_from else {
-        return Ok(());
-    };
-    if parent == *id {
-        return Err(Error::InvalidSkillBody(
-            "forkedFrom cannot name the fork itself",
-        ));
-    }
-    let parent_raw =
-        store
-            .entities
-            .get(wtxn, parent.as_bytes())?
-            .ok_or(Error::InvalidSkillBody(
-                "forkedFrom parent must exist as a type-7 SKILL",
-            ))?;
-    let parent_header =
-        EntityMetadataHeader::parse(&parent_raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    if parent_header.entity_type != ENTITY_TYPE_SKILL {
-        return Err(Error::InvalidSkillBody(
-            "forkedFrom parent must exist as a type-7 SKILL",
-        ));
-    }
-    Ok(())
-}
 
 #[expect(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
 )]
-pub(super) fn apply_put(
+pub(in crate::batch) fn apply_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
@@ -879,157 +749,4 @@ pub(super) fn apply_put(
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
-}
-
-/// Stages the ONE-1449 MATERIAL-6 R1 optimizer-birth marker row, if this put
-/// produced one, in the caller's transaction and immediately before the body
-/// row it marks. `None` writes nothing.
-///
-/// # Errors
-///
-/// The `vault_meta` write's own error, propagated before the body write.
-fn stage_optimizer_birth_marker_row(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    optimizer_birth_marker: Option<(Vec<u8>, Vec<u8>)>,
-) -> Result<()> {
-    if let Some((key, value)) = optimizer_birth_marker {
-        store.vault_meta.put(wtxn, &key, &value)?;
-    }
-    Ok(())
-}
-
-/// Stages one entity's body row: the ARCH-0019 metadata header followed by the
-/// caller's body bytes (ONE-1728 K11).
-///
-/// Target-parameterized, so a session witness writes the SAME header layout
-/// into the overlay that base writes durably — promote replays the row without
-/// re-encoding it.
-pub(super) fn stage_entity_body_row(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-    data: &[u8],
-) -> Result<()> {
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(entity_type);
-    payload.extend_from_slice(&occurred.start.to_be_bytes());
-    payload.extend_from_slice(&occurred.end.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
-    store.entities().put(wtxn, id.as_bytes(), &payload)?;
-    Ok(())
-}
-
-/// Stages the type and temporal index rows every materialized entity carries
-/// (ONE-1728 K11). Target-parameterized alongside [`stage_entity_body_row`]:
-/// the session's type/temporal readers compose over these overlay rows, so an
-/// in-room enumeration or time-range walk sees the turn it just witnessed.
-///
-/// `occurred`/`learned_at` are the WITNESSING write's own stamps — never
-/// restamped here — so a promoted row lands in the month window it belongs to
-/// (ARCH-0052 D4).
-pub(super) fn stage_entity_index_rows(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    let type_key = Store::encode_type_key(entity_type, id);
-    store.type_index().put(wtxn, &type_key, &[])?;
-
-    let occurred_start_key = Store::encode_temporal_key(occurred.start, id);
-    store
-        .temporal_occurred_start()
-        .put(wtxn, &occurred_start_key, &[])?;
-
-    if occurred.start != occurred.end {
-        let occurred_end_key = Store::encode_temporal_key(occurred.end, id);
-        store
-            .temporal_occurred_end()
-            .put(wtxn, &occurred_end_key, &[])?;
-    }
-
-    let learned_key = Store::encode_temporal_key(learned_at, id);
-    store.temporal_learned().put(wtxn, &learned_key, &[])?;
-
-    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
-        let occurred_start_value = occurred.start.to_be_bytes();
-        store
-            .temporal_long_intervals()
-            .put(wtxn, &long_interval_key, &occurred_start_value)?;
-    }
-    Ok(())
-}
-
-/// Removes exactly the rows [`stage_entity_index_rows`] stages, for a caller
-/// holding that write's own `occurred`/`learned_at` stamps.
-///
-/// PAIRED with the staging writer and reading the same stamps back, so the two
-/// cannot drift: every conditional key a put can own — the occurred-end and
-/// long-interval siblings — is decided here by the same predicate over the same
-/// range. A caller that removed an entity row and left these behind would leave
-/// every time-range walk answering with a dead id, and a rebuild under a new
-/// stamp would ADD a key rather than move one, letting repeated drop/rebuild
-/// cycles crowd a candidate buffer with one id's stale timestamps.
-pub(crate) fn delete_entity_index_rows(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    let type_key = Store::encode_type_key(entity_type, id);
-    store.type_index().delete(wtxn, &type_key)?;
-
-    let occurred_start_key = Store::encode_temporal_key(occurred.start, id);
-    store
-        .temporal_occurred_start()
-        .delete(wtxn, &occurred_start_key)?;
-
-    if occurred.start != occurred.end {
-        let occurred_end_key = Store::encode_temporal_key(occurred.end, id);
-        store
-            .temporal_occurred_end()
-            .delete(wtxn, &occurred_end_key)?;
-    }
-
-    let learned_key = Store::encode_temporal_key(learned_at, id);
-    store.temporal_learned().delete(wtxn, &learned_key)?;
-
-    if occurred.end.saturating_sub(occurred.start) > LONG_INTERVAL_THRESHOLD_SECS {
-        let long_interval_key = Store::encode_temporal_key(occurred.end, id);
-        store
-            .temporal_long_intervals()
-            .delete(wtxn, &long_interval_key)?;
-    }
-    Ok(())
-}
-
-/// Stages one edge's paired `edges_out`/`edges_in` rows (ONE-1728 K11).
-///
-/// PAIRED-WRITE INVARIANT: both directions carry byte-identical value bytes.
-/// Extracted from [`apply_edge_with_created_at`] so the session path cannot
-/// drift from it — a caller that wrote only one direction would leave the
-/// overlay's edge readers asymmetric and promote a half-edge.
-pub(super) fn stage_edge_rows(
-    store: &impl ManifestDbs,
-    wtxn: &mut RwTxn<'_>,
-    src: &EntityId,
-    kind: EdgeKind,
-    tgt: &EntityId,
-    value: &[u8],
-) -> Result<()> {
-    let key_out = Store::encode_edge_key(src, kind, tgt);
-    let key_in = Store::encode_edge_key(tgt, kind, src);
-    store.edges_out().put(wtxn, &key_out, value)?;
-    store.edges_in().put(wtxn, &key_in, value)?;
-    Ok(())
 }
