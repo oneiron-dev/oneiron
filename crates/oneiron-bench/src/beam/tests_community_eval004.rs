@@ -2,11 +2,11 @@
 
 #[cfg(test)]
 pub(super) const CONTRACT_MANIFEST_JSON: &str =
-    include_str!("../fixtures/beam_128k_contract.run.json");
+    include_str!("../../fixtures/beam_128k_contract.run.json");
 
 #[cfg(test)]
 pub(super) const CONTRACT_RUN_JSONL: &str =
-    include_str!("../fixtures/beam_128k_contract.run.jsonl");
+    include_str!("../../fixtures/beam_128k_contract.run.jsonl");
 
 #[cfg(test)]
 pub(crate) mod tests {
