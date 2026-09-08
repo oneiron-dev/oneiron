@@ -102,7 +102,17 @@ jobs:
         with:
           node-version: "22.14.0"
 
+      # AGENTS/HYG 2026-09-09: on macOS, setup-python's installer script falls
+      # back to the hosted-runner path /Users/runner/hostedtoolcache unless
+      # AGENT_TOOLSDIRECTORY is set. Our runner runs as a normal user, so that
+      # mkdir fails with "Permission denied" and the job has died at this step
+      # on every run since the move to self-hosted. setup-node and setup-bun
+      # are unaffected because they honour the runner's own tool cache.
+      # runner.tool_cache is that cache (_work/_tool), which is what the job
+      # header already says these actions should populate.
       - uses: actions/setup-python@v5
+        env:
+          AGENT_TOOLSDIRECTORY: ${{ runner.tool_cache }}
         with:
           python-version: "3.10"
 
