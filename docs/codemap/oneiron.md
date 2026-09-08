@@ -195,7 +195,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/build_cache/tests/hit_metadata.rs` | test | m | — | — | — |
 | `src/calendar/caldav.rs` | src | s | 2 struct · 1 trait · 4 fn · 1 const | CalDavConnector, CalDavDiscovery, CalDavWire | CalDAV provider adapter (CAL-05, ONE-1787) |
 | `src/calendar/claims.rs` | src | XL | 9 struct · 7 enum · 19 fn · 15 const · 11 crate-vis | CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue +8 | The `calendar.*` claim family (CAL-00) |
-| `src/calendar/connectors.rs` | src | XL | 10 struct · 6 enum · 1 trait · 18 fn · 4 const | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload, CalendarRemoteObjectRow, CalendarRemoteTransport, CalendarSyncOutcome +9 | Shared calendar connector kernel (CAL-05, ONE-1787) |
+| `src/calendar/connectors/inbound.rs` | src | m | 1 fn · 3 crate-vis | — | Pull orchestration: apply, admit, enqueue, and reconcile |
+| `src/calendar/connectors/mod.rs` | src | s | 4 re-export | — | Shared calendar connector kernel (CAL-05, ONE-1787) |
+| `src/calendar/connectors/outbound.rs` | src | m | 2 struct · 2 enum · 3 fn · 11 crate-vis | CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState | Conditional writes plus durable outbox and remote-object cursor store |
+| `src/calendar/connectors/remote.rs` | src | m | 4 struct · 3 enum · 1 trait · 6 fn · 5 crate-vis | CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt, RemoteWriteRequest | Provider-neutral transport seam, change classification, and ICS render |
+| `src/calendar/connectors/seat.rs` | src | m | 4 struct · 1 enum · 8 fn · 4 const · 1 crate-vis | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload | Seat configs, cursors, kill switch, error type, and sync verbs |
 | `src/calendar/freebusy.rs` | src | m | 1 struct · 2 fn · 1 type | BusyInterval | Busy-only freebusy projection (CAL-09, C5) |
 | `src/calendar/google_internal.rs` | src | s | 1 struct · 1 trait · 3 fn · 2 const | GoogleInternalConnector, GoogleInternalWire | Workspace-Internal Google calendar adapter (CAL-05, ONE-1787) |
 | `src/calendar/ics.rs` | src | L | 3 struct · 3 fn · 2 const · 1 crate-vis | ImipEmitRequest, ParsedIcsFeed, ParsedVEvent | ICS (RFC 5545) parse half of the CAL-02 ingest adapter (ONE-1784) |
@@ -285,8 +289,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_memory/parts/storage.rs` | src | m | 3 crate-vis | — | — |
 | `src/code_memory/parts/transfer-and-blocks.rs` | src | m | 4 struct · 1 enum · 1 fn · 4 crate-vis | AnchorTransfer, AnchorTransferKind, AnchorTransferReceipt, AnchorTransferRecord, BlocksWriteContext | — |
 | `src/code_memory/parts/types-and-slots.rs` | src | m | 7 struct · 3 enum · 8 fn · 7 const | AttachCodeMemory, CodeMemoryAnchor, CodeMemoryAttachment, CodeMemoryLocator, CodeMemoryPayloadRef, CodeMemoryRevision, CodeMemorySlot, CodeMemorySlotName +2 | — |
-| `src/code_revision.rs` | src | XL | 2 struct · 1 enum · 17 fn · 2 const · 3 crate-vis | CodeRevision, CodeRevisionFork, CodeRevisionKind | — |
+| `src/code_revision/codec.rs` | src | m | 4 fn · 2 const · 18 crate-vis | — | Pinned body keys, revision/fork encode-decode, shape validators and msgpack scalar accessors |
+| `src/code_revision/frontier.rs` | src | m | 8 crate-vis | — | Per-session frontier rows and session-trace verification over them |
+| `src/code_revision/graph.rs` | src | s | 8 crate-vis | — | child_of lifecycle edges and the entity guards a revision write must clear |
+| `src/code_revision/integrity.rs` | src | m | 11 crate-vis | — | Per-revision integrity records and the fold chain proving a revision's ancestry |
+| `src/code_revision/keys.rs` | src | s | 15 crate-vis | — | Vault-meta key builders for the code-revision row families |
+| `src/code_revision/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | — |
+| `src/code_revision/storage.rs` | src | m | 8 fn · 5 crate-vis | — | Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes |
 | `src/code_revision/tests.rs` | test | XL | — | — | — |
+| `src/code_revision/types.rs` | src | s | 2 struct · 1 enum · 5 fn · 4 crate-vis | CodeRevision, CodeRevisionFork, CodeRevisionKind | Code-revision domain values and their constructors |
 | `src/code_run/codec.rs` | src | m | 2 fn · 7 const · 2 crate-vis | — | — |
 | `src/code_run/consent.rs` | src | m | 5 struct · 2 enum · 7 fn · 3 const · 1 crate-vis | BlastRadiusWalk, CodeEmissionAdmission, CodeEmissionContext, CodeSourceTrust, ConsentLane, ReviewContext, ReviewContextInput | — |
 | `src/code_run/dispatcher.rs` | src | L | 1 struct · 7 fn · 1 type · 1 const · 10 crate-vis | HostSelfDispatcher | — |
@@ -518,9 +529,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embed/tests.rs` | test | L | — | — | — |
 | `src/embed/tests/payload.rs` | test | m | — | — | Typed CLAIM/SUMMARY inputs at the embedding and egress boundaries |
 | `src/embed/warn_capture.rs` | src | s | 3 crate-vis | — | Thread-scoped warning capture for embedding tests |
-| `src/engine_executor.rs` | src | XL | 9 struct · 2 enum · 2 trait · 12 fn · 1 type · 5 const · 3 crate-vis | EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor, ExecutorLegibility, JsCodeModeHost +5 | Engine-native JS code-mode executor |
+| `src/engine_executor/driver.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
+| `src/engine_executor/host.rs` | src | s | 6 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
+| `src/engine_executor/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/record.rs` | src | m | 16 crate-vis | — | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/repl.rs` | src | m | 1 fn | — | Durable REPL loop: run(), persistence helpers, and LLM request building |
+| `src/engine_executor/store.rs` | src | s | 12 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
 | `src/engine_executor/tests.rs` | test | XL | — | — | — |
 | `src/engine_executor/tests/speech_identity_regressions.rs` | test | m | — | — | — |
+| `src/engine_executor/types.rs` | src | s | 8 struct · 2 enum · 2 trait · 6 fn · 1 type · 5 const · 1 crate-vis | EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, ExecutorLegibility, JsCodeModeHost, JsCodeModeOutput +4 | Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types |
+| `src/engine_executor/wire.rs` | src | m | 6 crate-vis | — | Reply normalization: fence/exec stripping, console-block scanning, and the structural gate |
 | `src/entity_id.rs` | src | m | 4 struct · 12 fn · 2 const · 4 crate-vis | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
 | `src/error.rs` | src | XL | 2 struct · 12 enum · 19 fn · 1 type · 2 crate-vis | CompactionPacketError, Error, ErrorKind, GateDenial, GateDenialOutcome, GateDenialReason, SyncConfigField, SyncEngineContext +6 | — |
 | `src/extraction_eval.rs` | src | m | 8 fn · 6 const · 1 re-export | — | — |
@@ -658,7 +676,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/limits.rs` | src | s | 3 crate-vis | — | — |
 | `src/linear_sync.rs` | src | L | 11 struct · 3 enum · 3 trait · 15 fn · 2 type · 12 const | LinearChangePage, LinearChangeSource, LinearEgress, LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus +9 | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `src/linear_sync/tests.rs` | test | L | — | — | Mirror-adapter tests (ONE-1905) |
-| `src/linkedin_connector.rs` | src | XL | 20 struct · 6 enum · 3 trait · 53 fn · 13 const | LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInConversationMessage, LinkedInConversationMessageEvent, LinkedInEscalationConfig, LinkedInInboxSyncConfig, LinkedInInboxSyncProvenanceRow, LinkedInInboxSyncReport +21 | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
+| `src/linkedin_connector/inbox_sync.rs` | src | m | 6 struct · 1 trait · 10 fn · 5 crate-vis | LinkedInConversationMessage, LinkedInConversationMessageEvent, LinkedInInboxSyncConfig, LinkedInInboxSyncProvenanceRow, LinkedInInboxSyncReport, LinkedInInboxSyncRunner, LinkedInMcpInboxSyncTransport | Inbox-sync config, runner, claim/provenance helpers, and message parsers |
+| `src/linkedin_connector/mod.rs` | src | m | 5 struct · 5 enum · 16 fn · 13 const · 3 re-export | LinkedInEscalationConfig, LinkedInLoginHandoff, LinkedInManagedTransport, LinkedInMcpConnectorAdapter, LinkedInMcpServerHarness, LinkedInNetworkRoute, LinkedInPasswordCustody, LinkedInSandboxHostConfig +2 | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
+| `src/linkedin_connector/normalize_keys.rs` | src | s | 18 crate-vis | — | Key builders, thread/message id normalization, and bounded validators |
+| `src/linkedin_connector/seat_policy.rs` | src | m | 6 struct · 1 enum · 1 trait · 19 fn | LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInKillSwitchState, LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy | Seat risk limits, sandbox policy evaluation, kill switch, and consent copy |
+| `src/linkedin_connector/verified_send.rs` | src | m | 3 struct · 1 trait · 8 fn · 2 crate-vis | LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan | Verify-after-send plan, sink, observation, and receipt helpers |
 | `src/linkedin_lead_preload.rs` | src | m | 4 struct · 3 enum · 5 fn · 1 const · 8 crate-vis | Disposition, LinkedInCompanySeed, LinkedInContactSeed, LinkedInLeadCorpus, LinkedInLeadPreloadError, LinkedInLeadPreloadReport, LinkedInResolutionError | Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload |
 | `src/linkedin_lead_preload/source_binding.rs` | src | s | 1 crate-vis | — | Resolver-owned binding inside the entity body, not a separate source-id index |
 | `src/linkedin_lead_preload/tests.rs` | test | m | — | — | — |
@@ -1045,8 +1067,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 18 fn · 25 const · 1 mod | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
 | `src/sync/transport/tests.rs` | test | m | — | — | — |
 | `src/sync/types.rs` | src | m | 3 struct · 9 fn · 2 crate-vis | LocalUpdate, SyncConfig, WindowKey | Sync-specific types for the CRDT sync layer |
-| `src/sync/window.rs` | src | XL | 1 struct · 17 fn · 1 mod · 13 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
+| `src/sync/window/egress.rs` | src | m | 4 fn · 4 crate-vis | — | Window egress: packing policy, secret scrub, exports, and mirror replay |
+| `src/sync/window/forward.rs` | src | L | 1 fn | — | Forward rematerialization of window state into the CRDT doc |
+| `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 4 re-export · 8 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
+| `src/sync/window/reverse.rs` | src | m | 1 fn · 7 crate-vis | — | Reverse rematerialization plus skip/policy predicates and carrier removal |
+| `src/sync/window/test_hooks.rs` | src | s | 2 fn · 1 crate-vis | — | Test-only hook for the REDACTION_AUDIT rematerialization race pin |
 | `src/sync/window/tests.rs` | test | XL | — | — | — |
+| `src/sync/window/tombstones.rs` | src | s | 3 fn · 4 crate-vis | — | Tombstone apply/export/replay plus window rebuild from updates |
 | `src/task_authority.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 6 crate-vis | TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityState | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `src/task_verb/consts.rs` | src | s | 1 const · 14 crate-vis | — | Module-level constants shared across the task-verb files |
 | `src/task_verb/consult_fanout_facade.rs` | src | m | 2 fn | — | — |
