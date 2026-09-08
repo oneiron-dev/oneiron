@@ -8672,7 +8672,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
-     "purpose": "—",
+     "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 25,
       "mod": 160,
@@ -16488,7 +16488,7 @@
     }
    },
    "over_bar": 152,
-   "purpose": "Embedded retrieval engine for memory-first applications",
+   "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 754,
    "test_files": 368
   },
