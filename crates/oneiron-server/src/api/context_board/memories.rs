@@ -219,59 +219,51 @@ pub(crate) struct ContextBoardMemoriesCursor {
     last_result_ids: Vec<String>,
 }
 
+/// Resolves the MEMORIES half of a context-board request: the slot budget,
+/// the caller's session scope and session id, and the companion assembly.
+///
+/// The session scope is the authenticated actor (`principal_ref`, else the
+/// principal); a shared credential has no isolated scope and is refused.
+#[expect(
+    dead_code,
+    reason = "called by the context-board handler, which lands in FOLD B4"
+)]
 pub(crate) fn resolve_memories_request(
     vault: &oneiron::Vault,
-    context_version: Option<&str>,
-    memory_board: Option<&ContextBoardMemoriesControls>,
-    session_rag: Option<&ContextBoardSessionControls>,
+    memories: Option<&ContextBoardMemoriesControls>,
+    session: Option<&ContextBoardSessionControls>,
     companion: Option<&ContextBoardCompanionControls>,
     budget_shape: (usize, usize),
     auth: &CoreAuth,
-) -> Result<Option<MemoriesRequest>, ApiError> {
-    let requested = context_version.is_some()
-        || memory_board.is_some()
-        || session_rag.is_some()
-        || companion.is_some();
-    if !requested {
-        return Ok(None);
-    }
-
-    let version = context_version.unwrap_or(oneiron::MEMORIES_SECTION_VERSION_V4);
-    if version != oneiron::MEMORIES_SECTION_VERSION_V4 {
-        return Err(ApiError::bad_request(
-            "context_version must be v4",
-            Some("context_version"),
-        ));
-    }
-
+) -> Result<MemoriesRequest, ApiError> {
     let session_scope_id = auth.principal_ref().unwrap_or(auth.principal()).trim();
-    validate_session_id(session_scope_id, "session_rag.scope")?;
+    validate_session_id(session_scope_id, "session.scope")?;
     if is_shared_session_scope_id(session_scope_id) {
         return Err(ApiError::bad_request(
-            "session_rag.session_id requires an isolated caller identity",
-            Some("session_rag.session_id"),
+            "session.session_id requires an isolated caller identity",
+            Some("session.session_id"),
         ));
     }
 
-    let session_id = session_rag
-        .and_then(|state| state.session_id.as_deref())
+    let session_id = session
+        .and_then(|controls| controls.session_id.as_deref())
         .unwrap_or(session_scope_id)
         .trim();
-    validate_session_id(session_id, "session_rag.session_id")?;
+    validate_session_id(session_id, "session.session_id")?;
 
-    let memory_board_budget = memory_board
+    let memory_board_budget = memories
         .and_then(|controls| controls.enabled)
         .unwrap_or(true)
-        .then(|| memories_budget(memory_board, budget_shape.0, budget_shape.1));
+        .then(|| memories_budget(memories, budget_shape.0, budget_shape.1));
 
     let companion = resolve_companion_assembly(vault, companion, session_id, auth)?;
 
-    Ok(Some(MemoriesRequest {
+    Ok(MemoriesRequest {
         memory_board_budget,
         session_scope_id: session_scope_id.to_owned(),
         session_id: session_id.to_owned(),
         companion: Some(companion),
-    }))
+    })
 }
 
 pub(crate) fn resolve_companion_assembly(

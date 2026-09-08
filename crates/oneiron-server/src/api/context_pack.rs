@@ -1,8 +1,3 @@
-use super::ContextBoardCompanionControls;
-use super::ContextBoardMemories;
-use super::ContextBoardMemoriesControls;
-use super::ContextBoardMemoriesCursor;
-use super::ContextBoardSessionControls;
 use super::MemoriesRequest;
 use super::VadPayload;
 use super::advance_memories_cursor;
@@ -13,7 +8,6 @@ use super::hex_bytes;
 use super::json_payload;
 use super::non_empty_query;
 use super::parse_entity_id_param;
-use super::resolve_memories_request;
 use super::scoped_read_for_core_auth;
 use super::validate_core_query_seeds;
 use crate::auth::CoreAuth;
@@ -313,19 +307,6 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional retrieval and serialization budget controls.
     #[serde(default)]
     budget: Option<ContextPackBudgetControls>,
-    /// Optional context format version. Use "v4" to request Eiri Context v4 fields.
-    #[serde(default, rename = "context_version", alias = "contextVersion")]
-    #[schema(example = "v4")]
-    context_version: Option<String>,
-    /// Optional Eiri Context v4 memory-board controls.
-    #[serde(default, rename = "memory_board", alias = "memoryBoard")]
-    memory_board: Option<ContextBoardMemoriesControls>,
-    /// Optional Eiri Context v4 session RAG controls.
-    #[serde(default, rename = "session_rag", alias = "sessionRag")]
-    session_rag: Option<ContextBoardSessionControls>,
-    /// Optional companion scope for Eiri Context v4 assembly.
-    #[serde(default)]
-    companion: Option<ContextBoardCompanionControls>,
     /// Optional interlocutor presence controls (OF-365 ILD-1).
     #[serde(default)]
     interlocutors: Option<CoreInterlocutorControls>,
@@ -521,10 +502,6 @@ pub(crate) struct CoreContextPackResponse {
     )]
     #[schema(value_type = Option<f32>, example = -0.15)]
     confidence_adjustment: Option<ConfidenceAdjustment>,
-    /// Optional context format version for v4 response extensions.
-    #[serde(rename = "context_version", skip_serializing_if = "Option::is_none")]
-    #[schema(example = "v4")]
-    context_version: Option<String>,
     /// Primary hydrated retrieval results.
     results: Vec<CoreContextEntity>,
     /// Neighbor entities hydrated through edge expansion.
@@ -535,14 +512,6 @@ pub(crate) struct CoreContextPackResponse {
     state: CoreContextPackState,
     /// Retrieval evidence and score breakdown.
     evidence: CoreContextPackEvidence,
-    /// Eiri Context v4 memory-board rows when requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<ContextBoardMemories>)]
-    memory_board: Option<oneiron::MemoriesSection>,
-    /// Eiri Context v4 session RAG state when requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<ContextBoardMemoriesCursor>)]
-    session_rag: Option<oneiron::MemoriesCursor>,
     /// Resolved per-speaker interlocutor stamps when an interlocutors block
     /// was supplied or the auth is principal_ref-scoped (OF-365 ILD-1).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -579,8 +548,31 @@ pub(crate) async fn core_context_pack(
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
+    let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
+    Ok(Json(response))
+}
+
+/// The shared context-pack pipeline behind `/v1/core/context-pack` and the
+/// context board: validation, scoped retrieval, projection, and evidence.
+///
+/// When a memories request rides along, the MEMORIES section is projected
+/// over the finished pack and the caller's cursor is advanced; both come back
+/// beside the response. The caller has already required `CoreScope::Read`.
+pub(crate) async fn run_context_pack(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    req: CoreContextPackRequest,
+    memories: Option<MemoriesRequest>,
+) -> Result<
+    (
+        CoreContextPackResponse,
+        Option<oneiron::MemoriesSection>,
+        Option<oneiron::MemoriesCursor>,
+    ),
+    ApiError,
+> {
     let interlocutors =
-        resolve_core_interlocutor_set(&server.vault, &auth, req.interlocutors.as_ref())?;
+        resolve_core_interlocutor_set(&server.vault, auth, req.interlocutors.as_ref())?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
@@ -608,22 +600,13 @@ pub(crate) async fn core_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)
         })?;
-    let eiri_context = resolve_memories_request(
-        &server.vault,
-        req.context_version.as_deref(),
-        req.memory_board.as_ref(),
-        req.session_rag.as_ref(),
-        req.companion.as_ref(),
-        (req.limit, max_neighbors),
-        &auth,
-    )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
     // the one applied (design §11 rule 6).
@@ -665,7 +648,7 @@ pub(crate) async fn core_context_pack(
         builder = builder.disclosure_context(ctx.clone());
     }
 
-    let mut response = run_context_pack_builder(
+    let (mut response, memories, cursor) = run_context_pack_builder(
         &server.vault,
         &scoped_read,
         builder,
@@ -675,12 +658,12 @@ pub(crate) async fn core_context_pack(
             neighbors: max_neighbors,
             retrieval: retrieval_budget,
         },
-        eiri_context,
+        memories,
         disclosure,
     )
     .await?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
-    Ok(Json(response))
+    Ok((response, memories, cursor))
 }
 
 /// Resolves the effective interlocutor set for a core context-pack request
@@ -1220,9 +1203,16 @@ pub(crate) async fn run_context_pack_builder(
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
     response_limits: ContextPackResponseLimits,
-    eiri_context: Option<MemoriesRequest>,
+    memories: Option<MemoriesRequest>,
     disclosure: Option<oneiron::DisclosureContext>,
-) -> Result<CoreContextPackResponse, ApiError> {
+) -> Result<
+    (
+        CoreContextPackResponse,
+        Option<oneiron::MemoriesSection>,
+        Option<oneiron::MemoriesCursor>,
+    ),
+    ApiError,
+> {
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
         tracing::error!(error = %error, "core context-pack failed");
         core_engine_error("core context-pack failed", error)
@@ -1242,43 +1232,32 @@ pub(crate) async fn run_context_pack_builder(
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
-    let memory_board = eiri_context
-        .as_ref()
-        .and_then(|context| context.memory_board_budget)
-        .map(|budget| {
-            oneiron::context_board::project_memories_section(
-                &pack,
-                budget,
-                eiri_context
-                    .as_ref()
-                    .and_then(|context| context.companion.clone()),
-                assembly.clone(),
-            )
-        });
-    let session_rag = if let Some(context) = eiri_context.as_ref() {
-        Some(
-            advance_memories_cursor(
+    let (section, cursor) = match memories.as_ref() {
+        Some(request) => {
+            let section = request.memory_board_budget.map(|budget| {
+                oneiron::context_board::project_memories_section(
+                    &pack,
+                    budget,
+                    request.companion.clone(),
+                    assembly.clone(),
+                )
+            });
+            let cursor = advance_memories_cursor(
                 vault,
-                &context.session_scope_id,
-                &context.session_id,
+                &request.session_scope_id,
+                &request.session_id,
                 &pack,
                 &evidence,
             )
-            .await,
-        )
-    } else {
-        None
+            .await;
+            (section, Some(cursor))
+        }
+        None => (None, None),
     };
-    let context_version = eiri_context
-        .as_ref()
-        .map(|_| oneiron::MEMORIES_SECTION_VERSION_V4.to_owned());
-    Ok(core_context_pack_response(
-        pack,
-        evidence,
-        context_version,
-        memory_board,
-        session_rag,
-        assembly,
+    Ok((
+        core_context_pack_response(pack, evidence, assembly),
+        section,
+        cursor,
     ))
 }
 
@@ -1327,9 +1306,6 @@ pub(crate) fn core_context_pack_evidence_for_results(
 pub(crate) fn core_context_pack_response(
     pack: oneiron::ContextPack,
     evidence: CoreContextPackEvidence,
-    context_version: Option<String>,
-    memory_board: Option<oneiron::MemoriesSection>,
-    session_rag: Option<oneiron::MemoriesCursor>,
     disclosure: Option<oneiron::DisclosureAssembly>,
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
@@ -1338,7 +1314,6 @@ pub(crate) fn core_context_pack_response(
         degradation: (!pack.retrieval_quality.degradation.is_empty())
             .then_some(pack.retrieval_quality.degradation),
         confidence_adjustment: Some(pack.retrieval_quality.confidence_adjustment),
-        context_version,
         results: pack.results.into_iter().map(core_context_entity).collect(),
         neighbors: pack
             .neighbors
@@ -1348,8 +1323,6 @@ pub(crate) fn core_context_pack_response(
         stats: core_context_pack_stats(pack.stats),
         state,
         evidence,
-        memory_board,
-        session_rag,
         interlocutors: None,
         disclosure,
         empty: pack
