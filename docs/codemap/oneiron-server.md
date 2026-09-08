@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/memory_reason/render_tests.rs` | test | s | — | — | — |
-| `src/api/openapi.rs` | src | L | 18 crate-vis | — | — |
+| `src/api/openapi.rs` | src | XL | 18 crate-vis | — | — |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
 | `src/api/run_tree.rs` | src | m | 27 crate-vis | — | — |
 | `src/api/run_tree/breaker_tests.rs` | test | s | — | — | — |
