@@ -318,6 +318,12 @@ pub struct VaultConfig {
     /// behavior, and the dict-bytes hash is then baked into the LMDB
     /// analyzer manifest, silently pinning the vault to that dict.
     pub dict_search_paths: Vec<PathBuf>,
+    /// Host display names that classify a stored TURN speaker as the
+    /// assistant during dreamer consolidation, beside the generic
+    /// `assistant | agent | ai | model` set. Each entry is matched after
+    /// trimming and ASCII lowercasing. Empty by default: the assistant's
+    /// voice name belongs to the host, never to the engine.
+    pub assistant_display_names: Vec<String>,
     /// Skip the text-index manifest handshake at [`crate::Vault::open`] so the
     /// caller can reach [`crate::maintain::MaintenanceBuilder::clear_text_index`]
     /// after a dict swap or BM25 field-schema change. Without this escape
@@ -536,6 +542,7 @@ impl VaultConfig {
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
+            assistant_display_names: Vec::new(),
             skip_text_index_manifest_check: false,
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
@@ -559,6 +566,7 @@ impl VaultConfig {
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
+            assistant_display_names: Vec::new(),
             skip_text_index_manifest_check: false,
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,

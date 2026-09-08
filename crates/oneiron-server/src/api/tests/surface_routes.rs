@@ -1,9 +1,9 @@
-//! Health/runtime/discover redaction, outbound capability contracts, local artifact serving, companion resume seed check.
+//! Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed check.
 
 use super::*;
 
 #[tokio::test]
-async fn companion_resume_hides_fresh_default_policy_manifest() {
+async fn context_board_hides_fresh_default_policy_manifest() {
     let dir = tempfile::tempdir().expect("temp vault dir");
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     assert_eq!(
@@ -24,13 +24,7 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
         .expect("sync server"),
     );
 
-    let request = Request::builder()
-        .method("POST")
-        .uri("/api/companion/resume")
-        .header(CONTENT_TYPE, "application/json")
-        .header("x-oneiron-caller", "fresh-session")
-        .body(Body::from("{}"))
-        .expect("resume request");
+    let request = json_request("POST", "/v1/core/context-board", json!({}));
     let (status, body) = route_json(server, request).await;
 
     assert_eq!(status, StatusCode::OK);
@@ -38,7 +32,7 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
     // agent-invisible type). The seeded AGENT_DEF rows (six from ONE-1890,
     // plus ONE-1709's sys.team_lead — seven) are ordinary
     // agent-visible entities and DO appear — they are real dispatchable agents
-    // a resuming companion must see — so `last_activity` carries their pinned
+    // a hydrating caller must see — so `last_activity` carries their pinned
     // seed timestamp rather than staying null.
     let counts = body["session"]["counts"]
         .as_object()
@@ -46,7 +40,7 @@ async fn companion_resume_hides_fresh_default_policy_manifest() {
     assert_eq!(
         counts.get(&ENTITY_TYPE_POLICY_MANIFEST.to_string()),
         None,
-        "the engine-seeded policy manifest must stay out of resume counts"
+        "the engine-seeded policy manifest must stay out of context-board counts"
     );
     assert_eq!(
         counts,

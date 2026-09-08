@@ -156,19 +156,34 @@ impl DreamerTurnRole {
 /// Classify a TURN's stored speaker string into a [`DreamerTurnRole`].
 ///
 /// Ingest already lowercase-normalizes `speaker|role|author`; this trims and
-/// lowercases again defensively. Absent, empty, or novel speaker strings map
-/// to [`DreamerTurnRole::Unknown`], which is never admissible.
+/// lowercases again defensively. The generic role vocabulary is fixed; a
+/// host's own assistant voice names arrive through
+/// `VaultConfig::assistant_display_names` and classify as
+/// [`DreamerTurnRole::Assistant`] after the same normalization. Absent,
+/// empty, or novel speaker strings map to [`DreamerTurnRole::Unknown`],
+/// which is never admissible.
 #[must_use]
-pub fn dreamer_turn_role(speaker: Option<&str>) -> DreamerTurnRole {
+pub fn dreamer_turn_role(
+    speaker: Option<&str>,
+    assistant_display_names: &[String],
+) -> DreamerTurnRole {
     let Some(speaker) = speaker else {
         return DreamerTurnRole::Unknown;
     };
-    match speaker.trim().to_ascii_lowercase().as_str() {
+    let speaker = speaker.trim().to_ascii_lowercase();
+    match speaker.as_str() {
         "user" | "human" | "owner" => DreamerTurnRole::User,
-        "assistant" | "agent" | "eiri" | "ai" | "model" => DreamerTurnRole::Assistant,
+        "assistant" | "agent" | "ai" | "model" => DreamerTurnRole::Assistant,
         "system" | "system_prompt" | "developer" => DreamerTurnRole::System,
         "tool" | "function" | "tool_result" | "tool_call" => DreamerTurnRole::Tool,
         "cron" | "metadata" | "injected" => DreamerTurnRole::Injected,
+        "" => DreamerTurnRole::Unknown,
+        _ if assistant_display_names
+            .iter()
+            .any(|name| name.trim().eq_ignore_ascii_case(&speaker)) =>
+        {
+            DreamerTurnRole::Assistant
+        }
         _ => DreamerTurnRole::Unknown,
     }
 }

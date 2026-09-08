@@ -17,7 +17,7 @@ fn isolation_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
     ]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     trust_human_candidate_actor(&mut data);
     put_policy_manifest_bytes(&vault, test_id(0x90), &data)?;
@@ -107,7 +107,7 @@ fn attempt_isolation_write(
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         vault,
         body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         ISOLATION_RUN_ID,
     )?;
     vault

@@ -167,7 +167,7 @@
     }
   },
   {
-    "name": "core_context_pack_v4",
+    "name": "core_context_board",
     "request": {
       "auth": {
         "principal_ref": "bound",
@@ -179,10 +179,7 @@
           "person_ref": "7e000000000000000000000012210005",
           "persona_ref": "7e000000000000000000000012210006"
         },
-        "context_version": "v4",
-        "include_edges": false,
-        "limit": 3,
-        "memory_board": {
+        "memories": {
           "slots": {
             "claims": 0,
             "companions": 0,
@@ -192,52 +189,32 @@
             "turns": 1
           }
         },
-        "query": "contractneedle",
-        "session_rag": {},
-        "view": "full"
+        "retrieval": {
+          "include_edges": false,
+          "limit": 3,
+          "query": "contractneedle",
+          "view": "full"
+        },
+        "session": {}
       },
       "method": "POST",
-      "path": "/v1/core/context-pack"
+      "path": "/v1/core/context-board"
     },
     "response": {
       "body": {
-        "confidenceAdjustment": -0.35,
-        "context_version": "v4",
-        "disclosure": {
-          "clamped_out": 1,
-          "interlocutors": [
-            {
-              "claims_not_instructions": true,
-              "class": "unknown",
-              "speaker": "7e000000000000000000000012210004"
-            }
-          ],
-          "mode": "absence_clamp",
-          "notice": null
+        "budget": {
+          "tokens_limit": 0,
+          "tokens_remaining": 0,
+          "tokens_used": 0
         },
-        "empty": {
-          "hint": "Try removing filters or widening the world, type, or time scope",
-          "reason": "filter_matched_none",
-          "retrievalQuality": {
-            "confidenceAdjustment": -0.35,
-            "quality": "passthrough"
-          },
-          "totalInScope": 0
+        "cursor": {
+          "last_result_ids": [],
+          "last_retrieval_run_id": "<retrieval-run-id>",
+          "query_count": 1,
+          "revision": 1,
+          "session_id": "7e000000000000000000000012210004"
         },
-        "evidence": {
-          "result_ids": [],
-          "retrieval_run_id": "<retrieval-run-id>",
-          "scores": [],
-          "telemetry_persisted": true
-        },
-        "interlocutors": [
-          {
-            "claims_not_instructions": true,
-            "class": "unknown",
-            "speaker": "7e000000000000000000000012210004"
-          }
-        ],
-        "memory_board": {
+        "memories": {
           "budget": {
             "claims": 0,
             "companions": 0,
@@ -269,41 +246,81 @@
           "rows": [],
           "version": "v4"
         },
-        "neighbors": [],
-        "quality": "passthrough",
-        "results": [],
-        "session_rag": {
-          "last_result_ids": [],
-          "last_retrieval_run_id": "<retrieval-run-id>",
-          "query_count": 1,
-          "revision": 1,
-          "session_id": "7e000000000000000000000012210004"
-        },
-        "state": {
-          "hint": "Try removing filters or widening the world, type, or time scope",
-          "kind": "missing_data",
-          "reason": "filter_matched_none",
-          "total_in_scope": 0
-        },
-        "stats": {
-          "candidates_considered": 0,
-          "claims_suppressed": 0,
-          "cosine_ghosts_dampened": 0,
-          "entities_hydrated": 0,
-          "items_dropped": {
-            "count": 0,
-            "reason": "token_budget"
+        "notifications": [],
+        "pack": {
+          "confidenceAdjustment": -0.35,
+          "disclosure": {
+            "clamped_out": 1,
+            "interlocutors": [
+              {
+                "claims_not_instructions": true,
+                "class": "unknown",
+                "speaker": "7e000000000000000000000012210004"
+              }
+            ],
+            "mode": "absence_clamp",
+            "notice": null
           },
-          "items_truncated": {
-            "count": 0,
-            "reason": "item_budget"
+          "empty": {
+            "hint": "Try removing filters or widening the world, type, or time scope",
+            "reason": "filter_matched_none",
+            "retrievalQuality": {
+              "confidenceAdjustment": -0.35,
+              "quality": "passthrough"
+            },
+            "totalInScope": 0
           },
-          "neighbors_hydrated": 0,
-          "query_time_us": "<duration-us>",
-          "signals_used": [
-            "text"
-          ]
-        }
+          "evidence": {
+            "result_ids": [],
+            "retrieval_run_id": "<retrieval-run-id>",
+            "scores": [],
+            "telemetry_persisted": true
+          },
+          "interlocutors": [
+            {
+              "claims_not_instructions": true,
+              "class": "unknown",
+              "speaker": "7e000000000000000000000012210004"
+            }
+          ],
+          "neighbors": [],
+          "quality": "passthrough",
+          "results": [],
+          "state": {
+            "hint": "Try removing filters or widening the world, type, or time scope",
+            "kind": "missing_data",
+            "reason": "filter_matched_none",
+            "total_in_scope": 0
+          },
+          "stats": {
+            "candidates_considered": 0,
+            "claims_suppressed": 0,
+            "cosine_ghosts_dampened": 0,
+            "entities_hydrated": 0,
+            "items_dropped": {
+              "count": 0,
+              "reason": "token_budget"
+            },
+            "items_truncated": {
+              "count": 0,
+              "reason": "item_budget"
+            },
+            "neighbors_hydrated": 0,
+            "query_time_us": "<duration-us>",
+            "signals_used": [
+              "text"
+            ]
+          }
+        },
+        "session": {
+          "api_version": "v1",
+          "counts": {
+            "1": 1,
+            "17": 7
+          },
+          "last_activity": 1782357635
+        },
+        "unprocessed": []
       },
       "status": 200
     }

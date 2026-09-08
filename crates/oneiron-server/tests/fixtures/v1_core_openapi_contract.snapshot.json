@@ -1449,6 +1449,497 @@
         ],
         "type": "object"
       },
+      "ContextBoardBudget": {
+        "properties": {
+          "tokens_limit": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tokens_remaining": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tokens_used": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tokens_used",
+          "tokens_limit",
+          "tokens_remaining"
+        ],
+        "type": "object"
+      },
+      "ContextBoardCompanionAssembly": {
+        "properties": {
+          "caller": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persona_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextBoardCompanionControls": {
+        "properties": {
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persona_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextBoardMemories": {
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/ContextBoardMemoriesBudget"
+          },
+          "companion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBoardCompanionAssembly"
+              }
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ContextBoardMemoryRow"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "budget",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "ContextBoardMemoriesBudget": {
+        "properties": {
+          "claims": {
+            "type": "integer"
+          },
+          "companions": {
+            "type": "integer"
+          },
+          "facets": {
+            "type": "integer"
+          },
+          "other": {
+            "type": "integer"
+          },
+          "summaries": {
+            "type": "integer"
+          },
+          "turns": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claims",
+          "turns",
+          "summaries",
+          "facets",
+          "companions",
+          "other"
+        ],
+        "type": "object"
+      },
+      "ContextBoardMemoriesControls": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "slots": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBoardMemoriesSlotControls"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextBoardMemoriesCursor": {
+        "properties": {
+          "last_result_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "last_retrieval_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "revision",
+          "query_count",
+          "last_result_ids"
+        ],
+        "type": "object"
+      },
+      "ContextBoardMemoriesSlotControls": {
+        "properties": {
+          "claims": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "companions": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "facets": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "other": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summaries": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "turns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextBoardMemoryRow": {
+        "properties": {
+          "asset_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_hash": {
+            "type": "string"
+          },
+          "entity_type": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "row_index": {
+            "type": "integer"
+          },
+          "score": {
+            "format": "float",
+            "type": "number"
+          },
+          "short_id": {
+            "type": "string"
+          },
+          "slot": {
+            "$ref": "#/components/schemas/ContextBoardMemorySlot"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ContextBoardMemorySource"
+          }
+        },
+        "required": [
+          "row_index",
+          "slot",
+          "source",
+          "id",
+          "short_id",
+          "content_hash",
+          "entity_type",
+          "score"
+        ],
+        "type": "object"
+      },
+      "ContextBoardMemorySlot": {
+        "enum": [
+          "claims",
+          "turns",
+          "summaries",
+          "facets",
+          "companions",
+          "other"
+        ],
+        "type": "string"
+      },
+      "ContextBoardMemorySource": {
+        "enum": [
+          "result",
+          "neighbor"
+        ],
+        "type": "string"
+      },
+      "ContextBoardNotification": {
+        "properties": {
+          "body": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "learned_at": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "learned_at",
+          "body"
+        ],
+        "type": "object"
+      },
+      "ContextBoardRequest": {
+        "properties": {
+          "companion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBoardCompanionControls"
+              }
+            ]
+          },
+          "memories": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBoardMemoriesControls"
+              }
+            ]
+          },
+          "retrieval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreContextPackRequest"
+              }
+            ]
+          },
+          "session": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBoardSessionControls"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextBoardResponse": {
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/ContextBoardBudget"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/ContextBoardMemoriesCursor"
+          },
+          "memories": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBoardMemories"
+              }
+            ]
+          },
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/ContextBoardNotification"
+            },
+            "type": "array"
+          },
+          "pack": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreContextPackResponse"
+              }
+            ]
+          },
+          "session": {
+            "$ref": "#/components/schemas/ContextBoardSession"
+          },
+          "unprocessed": {
+            "items": {
+              "$ref": "#/components/schemas/ContextBoardUnprocessedItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "session",
+          "notifications",
+          "unprocessed",
+          "budget",
+          "cursor"
+        ],
+        "type": "object"
+      },
+      "ContextBoardSession": {
+        "properties": {
+          "api_version": {
+            "type": "string"
+          },
+          "counts": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "last_activity": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "api_version",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "ContextBoardSessionControls": {
+        "properties": {
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ContextBoardUnprocessedItem": {
+        "properties": {
+          "body": {
+            "type": "object"
+          },
+          "entity_type": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "learned_at": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "entity_type",
+          "learned_at",
+          "body"
+        ],
+        "type": "object"
+      },
       "ContextPackBudgetControls": {
         "properties": {
           "max_field_chars": {
@@ -1963,22 +2454,6 @@
               }
             ]
           },
-          "companion": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/EiriCompanionControls"
-              }
-            ]
-          },
-          "context_version": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "depth": {
             "oneOf": [
               {
@@ -2021,16 +2496,6 @@
             "default": 50,
             "type": "integer"
           },
-          "memory_board": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/EiriMemoryBoardControls"
-              }
-            ]
-          },
           "policy": {
             "oneOf": [
               {
@@ -2055,16 +2520,6 @@
             "type": [
               "array",
               "null"
-            ]
-          },
-          "session_rag": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/EiriSessionRagControls"
-              }
             ]
           },
           "time": {
@@ -2096,12 +2551,6 @@
             "format": "float",
             "type": [
               "number",
-              "null"
-            ]
-          },
-          "context_version": {
-            "type": [
-              "string",
               "null"
             ]
           },
@@ -2142,16 +2591,6 @@
               "null"
             ]
           },
-          "memory_board": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/CoreEiriMemoryBoard"
-              }
-            ]
-          },
           "neighbors": {
             "items": {
               "$ref": "#/components/schemas/CoreContextEntity"
@@ -2169,16 +2608,6 @@
               "$ref": "#/components/schemas/CoreContextEntity"
             },
             "type": "array"
-          },
-          "session_rag": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/CoreEiriSessionRagState"
-              }
-            ]
           },
           "state": {
             "$ref": "#/components/schemas/CoreContextPackState"
@@ -2469,209 +2898,6 @@
           "mode",
           "interlocutors",
           "clamped_out"
-        ],
-        "type": "object"
-      },
-      "CoreEiriCompanionAssembly": {
-        "properties": {
-          "caller": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "expression": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "person_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "persona_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "scope": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "scope_source": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "CoreEiriMemoryBoard": {
-        "properties": {
-          "budget": {
-            "$ref": "#/components/schemas/CoreEiriMemoryBoardBudget"
-          },
-          "companion": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/CoreEiriCompanionAssembly"
-              }
-            ]
-          },
-          "rows": {
-            "items": {
-              "$ref": "#/components/schemas/CoreEiriMemoryBoardRow"
-            },
-            "type": "array"
-          },
-          "version": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "version",
-          "budget",
-          "rows"
-        ],
-        "type": "object"
-      },
-      "CoreEiriMemoryBoardBudget": {
-        "properties": {
-          "claims": {
-            "type": "integer"
-          },
-          "companions": {
-            "type": "integer"
-          },
-          "facets": {
-            "type": "integer"
-          },
-          "other": {
-            "type": "integer"
-          },
-          "summaries": {
-            "type": "integer"
-          },
-          "turns": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "claims",
-          "turns",
-          "summaries",
-          "facets",
-          "companions",
-          "other"
-        ],
-        "type": "object"
-      },
-      "CoreEiriMemoryBoardRow": {
-        "properties": {
-          "asset_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "content_hash": {
-            "type": "string"
-          },
-          "entity_type": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "id": {
-            "type": "string"
-          },
-          "row_index": {
-            "type": "integer"
-          },
-          "score": {
-            "format": "float",
-            "type": "number"
-          },
-          "short_id": {
-            "type": "string"
-          },
-          "slot": {
-            "$ref": "#/components/schemas/CoreEiriMemoryBoardSlot"
-          },
-          "source": {
-            "$ref": "#/components/schemas/CoreEiriMemoryBoardSource"
-          }
-        },
-        "required": [
-          "row_index",
-          "slot",
-          "source",
-          "id",
-          "short_id",
-          "content_hash",
-          "entity_type",
-          "score"
-        ],
-        "type": "object"
-      },
-      "CoreEiriMemoryBoardSlot": {
-        "enum": [
-          "claims",
-          "turns",
-          "summaries",
-          "facets",
-          "companions",
-          "other"
-        ],
-        "type": "string"
-      },
-      "CoreEiriMemoryBoardSource": {
-        "enum": [
-          "result",
-          "neighbor"
-        ],
-        "type": "string"
-      },
-      "CoreEiriSessionRagState": {
-        "properties": {
-          "last_result_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "last_retrieval_run_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "query_count": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "revision": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "session_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id",
-          "revision",
-          "query_count",
-          "last_result_ids"
         ],
         "type": "object"
       },
@@ -3624,102 +3850,6 @@
         ],
         "type": "string"
       },
-      "EiriCompanionControls": {
-        "properties": {
-          "expression": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "person_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "persona_ref": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "EiriMemoryBoardControls": {
-        "properties": {
-          "enabled": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "slots": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/EiriMemoryBoardSlotControls"
-              }
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "EiriMemoryBoardSlotControls": {
-        "properties": {
-          "claims": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "companions": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "facets": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "other": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "summaries": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "turns": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "EiriSessionRagControls": {
-        "properties": {
-          "session_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
       "ErrorCode": {
         "enum": [
           "BAD_REQUEST",
@@ -4362,6 +4492,48 @@
             "CoreBearer": []
           }
         ]
+      }
+    },
+    "/v1/core/context-board": {
+      "post": {
+        "operationId": "context_board_hydrate",
+        "parameters": [],
+        "requestSchema": {
+          "$ref": "#/components/schemas/ContextBoardRequest"
+        },
+        "responses": {
+          "200": {
+            "description": "Context board hydrated.",
+            "schema": {
+              "$ref": "#/components/schemas/ContextBoardResponse"
+            }
+          },
+          "400": {
+            "description": "Malformed context-board request.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Context-board hydration failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": null
       }
     },
     "/v1/core/context-pack": {

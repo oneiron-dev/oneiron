@@ -9,13 +9,13 @@
 
 use crate::common::entity;
 use oneiron::{
-    EiriMemoryBoard, EiriMemoryBoardBudget, HnswConfig, Result, TimeRange, Vault, VaultConfig,
-    context_pack::assemble_eiri_memory_board, genui::GrantMintIntent, genui::GrantMintIntentScope,
+    HnswConfig, MemoriesBudget, MemoriesSection, Result, TimeRange, Vault, VaultConfig,
+    context_board::project_memories_section, genui::GrantMintIntent, genui::GrantMintIntentScope,
     outbound::OutboundIntent, outbound::OutboundIntentDraft, outbound::OutboundIntentTrigger,
     prompt::PromptRecompileStamp, prompt::resolve_eiri_v3_prompt,
     prompt::workspace_prompt_package_root, receipt::ContextReceiptFields, receipt::ReceiptQuery,
     receipt::ReceiptRecord, receipt::SessionLocalReceiptLog,
-    receipt::append_context_receipt_fields, receipt::eiri_memory_board_state_ref,
+    receipt::append_context_receipt_fields, receipt::memories_state_ref,
     receipt::outbound_intent_receipt, registry::ENTITY_TYPE_TURN,
 };
 
@@ -49,11 +49,11 @@ fn put_memory(vault: &Vault, seed: u8, text: &str) -> Result<()> {
     Ok(())
 }
 
-fn assembled_board(vault: &Vault) -> Result<EiriMemoryBoard> {
+fn assembled_board(vault: &Vault) -> Result<MemoriesSection> {
     let pack = vault.context_pack().search_text("matcha", 8).run()?;
-    Ok(assemble_eiri_memory_board(
+    Ok(project_memories_section(
         &pack,
-        EiriMemoryBoardBudget::new(8, 2, 8, 8, 8, 8),
+        MemoriesBudget::new(8, 2, 8, 8, 8, 8),
         None,
         None,
     ))
@@ -121,10 +121,7 @@ fn emit_receipt_answers_what_did_she_know_from_the_receipt_alone() -> Result<()>
             .map(|row| row.id.clone())
             .collect::<Vec<_>>()
     );
-    assert_eq!(
-        recorded.board_state_ref,
-        eiri_memory_board_state_ref(&board)?
-    );
+    assert_eq!(recorded.board_state_ref, memories_state_ref(&board)?);
     assert_eq!(
         recorded.substrate_ref.as_deref(),
         Some(format!("model:{}", entity(0x77).to_hex()).as_str())

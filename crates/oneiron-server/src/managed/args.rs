@@ -201,6 +201,7 @@ impl ManagedArgs {
             // Argv only: the usual resolver probes HOME and the XDG roots,
             // which managed mode does not get to read.
             dict_search_paths: args.dict_search_paths.clone().unwrap_or_default(),
+            assistant_display_names: args.assistant_display_names.clone().unwrap_or_default(),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -391,6 +392,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "dict-search-paths",
         |args| args.dict_search_paths.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "assistant-display-names",
+        |args| args.assistant_display_names.is_some(),
         ArgvUse::Read,
     ),
     (

@@ -16,7 +16,7 @@ use super::constants::{
     SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
     SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
-use super::definition_ceiling::first_party_eiri_connector_actor_ref;
+use super::definition_ceiling::first_party_connector_actor_ref;
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -27,7 +27,7 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
 }
 
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
-    let first_party_eiri_actor_ref = first_party_eiri_connector_actor_ref();
+    let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
     // commitment projector's actor id is derived, not authored, so the row is
     // computed here rather than pinned as a hex literal. If the domain constant
@@ -237,7 +237,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
                     (
                         Value::from(ACTOR_REF_KEY),
-                        Value::from(first_party_eiri_actor_ref),
+                        Value::from(first_party_actor_ref),
                     ),
                     (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
                 ]),

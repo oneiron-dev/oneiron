@@ -44,11 +44,10 @@ pub(crate) use self::confirm::{
 };
 #[cfg(test)]
 pub(crate) use self::constants::{
-    FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY,
-    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY,
-    POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
+    FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY,
+    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
 };
 pub(crate) use self::constants::{POLICY_SCHEMA_VERSION, SCOPED_READ_EFFECTOR_CORE_READ};
 #[cfg(test)]
@@ -59,7 +58,7 @@ pub(crate) use self::default_manifest::{
 };
 pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
-pub(crate) use self::definition_ceiling::first_party_eiri_connector_actor_ref;
+pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{

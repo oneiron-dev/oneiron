@@ -163,9 +163,9 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
     let batch_id = seeded_test_entity_id(0x1221_0001).to_hex();
     let conversation_id = seeded_test_entity_id(0x1221_0002).to_hex();
     let turn_id = seeded_test_entity_id(0x1221_0003).to_hex();
-    let eiri_principal_ref = seeded_test_entity_id(0x1221_0004).to_hex();
-    let eiri_person_ref = seeded_test_entity_id(0x1221_0005).to_hex();
-    let eiri_persona_ref = seeded_test_entity_id(0x1221_0006).to_hex();
+    let board_principal_ref = seeded_test_entity_id(0x1221_0004).to_hex();
+    let board_person_ref = seeded_test_entity_id(0x1221_0005).to_hex();
+    let board_persona_ref = seeded_test_entity_id(0x1221_0006).to_hex();
     let mut exchanges = Vec::new();
 
     let batch_request = json!({
@@ -262,13 +262,14 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
         context_pack_body,
     ));
 
-    let context_pack_v4_request = json!({
-        "query": "contractneedle",
-        "limit": 3,
-        "view": "full",
-        "include_edges": false,
-        "context_version": "v4",
-        "memory_board": {
+    let context_board_request = json!({
+        "retrieval": {
+            "query": "contractneedle",
+            "limit": 3,
+            "view": "full",
+            "include_edges": false
+        },
+        "memories": {
             "slots": {
                 "claims": 0,
                 "turns": 1,
@@ -278,41 +279,45 @@ async fn v1_core_success_contract_snapshot_matches_fixture() {
                 "other": 0
             }
         },
-        "session_rag": {},
+        "session": {},
         "companion": {
-            "person_ref": eiri_person_ref,
-            "persona_ref": eiri_persona_ref
+            "person_ref": board_person_ref,
+            "persona_ref": board_persona_ref
         }
     });
-    let (status, context_pack_v4_body) = route_json(
+    let (status, context_board_body) = route_json(
         server.clone(),
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
-            &eiri_principal_ref,
-            Some(&context_pack_v4_request),
+            &board_principal_ref,
+            Some(&context_board_request),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(context_pack_v4_body["context_version"], Value::from("v4"));
     assert_eq!(
-        context_pack_v4_body["memory_board"]["budget"]["turns"],
-        Value::from(1)
+        context_board_body["session"]["api_version"],
+        Value::from("v1")
     );
     assert_eq!(
-        context_pack_v4_body["session_rag"]["query_count"],
+        context_board_body["memories"]["budget"]["turns"],
         Value::from(1)
+    );
+    assert_eq!(context_board_body["cursor"]["query_count"], Value::from(1));
+    assert!(
+        context_board_body["pack"]["results"].is_array(),
+        "the retrieval pack rides the board response"
     );
     exchanges.push(contract_exchange_with_auth(
-        "core_context_pack_v4",
+        "core_context_board",
         "POST",
-        "/v1/core/context-pack",
+        "/v1/core/context-board",
         json!({ "type": "bearer", "scope": "core:read", "principal_ref": "bound" }),
-        Some(context_pack_v4_request),
+        Some(context_board_request),
         status,
-        context_pack_v4_body,
+        context_board_body,
     ));
 
     let hydrate_request = json!({
@@ -665,6 +670,7 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "/v1/core/batch",
         "/v1/core/query",
         "/v1/core/context-pack",
+        "/v1/core/context-board",
         "/v1/core/hydrate",
         "/v1/core/conversations",
         "/v1/core/conversations/{conversation_id}/turns",
@@ -944,12 +950,22 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "CoreContextPackScoreComponent",
         "CoreContextPackScoreEvidence",
         "CoreContextPackEvidence",
-        "CoreEiriCompanionAssembly",
-        "CoreEiriMemoryBoard",
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardCompanionAssembly",
+        "ContextBoardMemories",
+        "ContextBoardMemoriesBudget",
         "CoreDisclosureAssembly",
-        "CoreEiriMemoryBoardRow",
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoryRow",
+        "ContextBoardMemoriesCursor",
+        "ContextBoardRequest",
+        "ContextBoardResponse",
+        "ContextBoardSession",
+        "ContextBoardNotification",
+        "ContextBoardUnprocessedItem",
+        "ContextBoardBudget",
+        "ContextBoardMemoriesControls",
+        "ContextBoardMemoriesSlotControls",
+        "ContextBoardSessionControls",
+        "ContextBoardCompanionControls",
         "CoreInterlocutorControls",
         "CoreInterlocutorParty",
         "CoreInterlocutorStamp",

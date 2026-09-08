@@ -278,18 +278,18 @@ fn retract_and_delete_enforce_actor_authority() {
     // parks a pending consent, and the engine refuses body rewrites while
     // consent is parked (GateConsentStale), which is consent-queue
     // machinery, not retraction authority.
-    let eiri_agent = EntityId::from_hex(&crate::gate::first_party_eiri_connector_actor_ref())
+    let first_party_agent = EntityId::from_hex(&crate::gate::first_party_connector_actor_ref())
         .expect("first-party agent id");
     vault
         .put_entity(
-            &eiri_agent,
+            &first_party_agent,
             ENTITY_TYPE_PERSON,
             test_time(1),
             1,
             b"eiri agent",
         )
         .expect("put eiri agent");
-    let eiri_facade = vault.memory(eiri_agent, EdgeActorClass::Agent);
+    let eiri_facade = vault.memory(first_party_agent, EdgeActorClass::Agent);
     let mut agent_input = claim_input(
         "profile.mood",
         &subject,

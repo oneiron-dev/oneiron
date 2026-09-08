@@ -11,7 +11,7 @@ fn operation_effect_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
     let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     put_policy_manifest_bytes(&vault, test_id(0x26), &data)?;
     Ok((tmp, vault))
@@ -22,7 +22,7 @@ fn operation_effect_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
 /// evidence with NO candidate evidence — because there is no candidate. The
 /// envelope is an ordinary Dreamer-admitted one, so the detector fires on it.
 fn operation_effect_parts(vault: &crate::Vault) -> Result<(ClaimBody, WriteEnvelope)> {
-    let actor = first_party_eiri_connector_actor_id();
+    let actor = first_party_connector_actor_id();
     vault.put_entity(
         &actor,
         ENTITY_TYPE_PERSON,

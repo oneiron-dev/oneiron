@@ -1,9 +1,9 @@
-//! Context-pack v4 memory-board/session-RAG/companion/assets, session scoping, evidence run-id omission.
+//! Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission.
 
 use super::*;
 
 #[tokio::test]
-async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
+async fn context_board_memories_enforces_slots_and_carries_cursor() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -81,10 +81,8 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
 
     let persona_ref = seeded_test_entity_id(0x1324_0001).to_hex();
     let request = json!({
-        "query": "eiri v4 needle",
-        "limit": 10,
-        "context_version": "v4",
-        "memory_board": {
+        "retrieval": { "query": "eiri v4 needle", "limit": 10 },
+        "memories": {
             "slots": {
                 "claims": 0,
                 "turns": 1,
@@ -94,33 +92,29 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
                 "other": 0
             }
         },
-        "session_rag": { "session_id": principal_ref.clone() },
+        "session": { "session_id": principal_ref.clone() },
         "companion": { "persona_ref": persona_ref.clone() }
     });
 
-    let eiri_request = || {
+    let board_request = || {
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref,
             Some(&request),
         )
     };
 
-    let (status, first_body) = route_json(server.clone(), eiri_request()).await;
+    let (status, first_body) = route_json(server.clone(), board_request()).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(first_body["context_version"], Value::from("v4"));
-    assert_eq!(first_body["memory_board"]["version"], Value::from("v4"));
+    assert_eq!(first_body["memories"]["version"], Value::from("v4"));
+    assert_eq!(first_body["memories"]["budget"]["turns"], Value::from(1));
     assert_eq!(
-        first_body["memory_board"]["budget"]["turns"],
+        first_body["memories"]["budget"]["summaries"],
         Value::from(1)
     );
-    assert_eq!(
-        first_body["memory_board"]["budget"]["summaries"],
-        Value::from(1)
-    );
-    let rows = first_body["memory_board"]["rows"]
+    let rows = first_body["memories"]["rows"]
         .as_array()
         .expect("memory board rows");
     assert_eq!(rows.len(), 2);
@@ -129,70 +123,66 @@ async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
     assert_eq!(rows[1]["row_index"], Value::from(1));
     assert_eq!(rows[1]["slot"], Value::from("summaries"));
     assert_eq!(
-        first_body["memory_board"]["companion"]["caller"],
+        first_body["memories"]["companion"]["caller"],
         Value::from(principal_ref.clone())
     );
     assert_eq!(
-        first_body["memory_board"]["companion"]["persona_ref"],
+        first_body["memories"]["companion"]["persona_ref"],
         Value::from(persona_ref)
     );
     assert_eq!(
-        first_body["memory_board"]["companion"]["scope"],
+        first_body["memories"]["companion"]["scope"],
         Value::from("neutral")
     );
     assert_eq!(
-        first_body["memory_board"]["companion"]["scope_source"],
+        first_body["memories"]["companion"]["scope_source"],
         Value::from("neutral_default")
     );
     assert_eq!(
-        first_body["memory_board"]["companion"]["expression"],
+        first_body["memories"]["companion"]["expression"],
         Value::from("professional")
     );
     assert_eq!(
-        first_body["session_rag"]["session_id"],
+        first_body["cursor"]["session_id"],
         Value::from(principal_ref.clone())
     );
-    assert_eq!(first_body["session_rag"]["revision"], Value::from(1));
-    assert_eq!(first_body["session_rag"]["query_count"], Value::from(1));
+    assert_eq!(first_body["cursor"]["revision"], Value::from(1));
+    assert_eq!(first_body["cursor"]["query_count"], Value::from(1));
     assert!(
-        first_body["session_rag"]["last_retrieval_run_id"]
+        first_body["cursor"]["last_retrieval_run_id"]
             .as_str()
             .is_some_and(|id| !id.is_empty())
     );
     assert_eq!(
-        first_body["session_rag"]["last_result_ids"]
+        first_body["cursor"]["last_result_ids"]
             .as_array()
             .map(Vec::len),
-        first_body["results"].as_array().map(Vec::len)
+        first_body["pack"]["results"].as_array().map(Vec::len)
     );
 
-    let (status, second_body) = route_json(server.clone(), eiri_request()).await;
+    let (status, second_body) = route_json(server.clone(), board_request()).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(second_body["session_rag"]["revision"], Value::from(2));
-    assert_eq!(second_body["session_rag"]["query_count"], Value::from(2));
+    assert_eq!(second_body["cursor"]["revision"], Value::from(2));
+    assert_eq!(second_body["cursor"]["query_count"], Value::from(2));
 
-    let resume_request = Request::builder()
-        .method("POST")
-        .uri("/api/companion/resume")
-        .header(CONTENT_TYPE, "application/json")
-        .header(AUTHORIZATION, owner_bearer())
-        .header("x-oneiron-caller", principal_ref.as_str())
-        .body(Body::from("{}"))
-        .expect("resume request");
-    let (status, resume_body) = route_json(server, resume_request).await;
+    let hydrate_request = core_request_with_principal_ref(
+        "POST",
+        "/v1/core/context-board",
+        "core:read",
+        &principal_ref,
+        Some(&json!({})),
+    );
+    let (status, hydrate_body) = route_json(server, hydrate_request).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        resume_body["session"]["rag_state"]["session_id"],
+        hydrate_body["cursor"]["session_id"],
         Value::from(principal_ref)
     );
-    assert_eq!(
-        resume_body["session"]["rag_state"]["query_count"],
-        Value::from(2)
-    );
+    assert_eq!(hydrate_body["cursor"]["query_count"], Value::from(2));
 }
 
 #[tokio::test]
-async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
+async fn context_board_asset_text_consumer_hydrates_asset_text_by_ref() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -234,11 +224,8 @@ async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
     seed_disclosure_scope(&server, principal_contact, vec![asset_text]);
 
     let request = json!({
-        "query": needle,
-        "limit": 3,
-        "view": "full",
-        "context_version": "v4",
-        "memory_board": {
+        "retrieval": { "query": needle, "limit": 3, "view": "full" },
+        "memories": {
             "slots": {
                 "claims": 0,
                 "turns": 0,
@@ -253,7 +240,7 @@ async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
         server.clone(),
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref,
             Some(&request),
@@ -261,7 +248,7 @@ async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let row = &body["memory_board"]["rows"][0];
+    let row = &body["memories"]["rows"][0];
     assert_eq!(
         row["entity_type"],
         Value::from(oneiron::registry::ENTITY_TYPE_ASSET_TEXT)
@@ -292,7 +279,7 @@ async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
 }
 
 #[tokio::test]
-async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_private_note() {
+async fn context_board_companion_resolves_warm_personal_relationship_without_private_note() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -343,9 +330,8 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         .expect("seed turn");
 
     let core_request_body = json!({
-        "query": "warm companion route needle",
-        "context_version": "v4",
-        "memory_board": { "slots": { "turns": 1, "companions": 0, "other": 0 } },
+        "retrieval": { "query": "warm companion route needle" },
+        "memories": { "slots": { "turns": 1, "companions": 0, "other": 0 } },
         "companion": {
             "person_ref": person_ref.to_hex(),
             "persona_ref": persona_ref.to_hex(),
@@ -356,7 +342,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         server.clone(),
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref.to_hex(),
             Some(&core_request_body),
@@ -364,7 +350,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let companion = &body["memory_board"]["companion"];
+    let companion = &body["memories"]["companion"];
     assert_eq!(companion["scope"], Value::from("neutral"));
     assert_eq!(companion["scope_source"], Value::from("neutral_default"));
     assert_eq!(companion["expression"], Value::from("warm"));
@@ -372,7 +358,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         !serde_json::to_string(&body)
             .expect("response serializes")
             .contains(private_note),
-        "unauthorized core context-pack must not leak companion relationship metadata"
+        "unauthorized context board must not leak companion relationship metadata"
     );
 
     let grant =
@@ -385,7 +371,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         server.clone(),
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref.to_hex(),
             Some(&core_request_body),
@@ -393,7 +379,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let companion = &body["memory_board"]["companion"];
+    let companion = &body["memories"]["companion"];
     assert_eq!(companion["scope"], Value::from("personal"));
     assert_eq!(
         companion["scope_source"],
@@ -406,12 +392,11 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         !serde_json::to_string(&body)
             .expect("response serializes")
             .contains(private_note),
-        "authorized core context-pack must not leak private register notes"
+        "authorized context board must not leak private register notes"
     );
 
     let invalid_request = json!({
-        "query": "warm companion route needle",
-        "context_version": "v4",
+        "retrieval": { "query": "warm companion route needle" },
         "companion": {
             "person_ref": person_ref.to_hex(),
             "persona_ref": persona_ref.to_hex(),
@@ -422,7 +407,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         server.clone(),
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref.to_hex(),
             Some(&invalid_request),
@@ -443,8 +428,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     );
 
     let opaque_request = json!({
-        "query": "warm companion route needle",
-        "context_version": "v4",
+        "retrieval": { "query": "warm companion route needle" },
         "companion": {
             "person_ref": "opaque-person-ref",
             "persona_ref": "persona-route-test",
@@ -455,7 +439,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
         server,
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref.to_hex(),
             Some(&opaque_request),
@@ -463,7 +447,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let companion = &body["memory_board"]["companion"];
+    let companion = &body["memories"]["companion"];
     assert_eq!(companion["scope"], Value::from("neutral"));
     assert_eq!(companion["scope_source"], Value::from("neutral_default"));
     assert_eq!(companion["expression"], Value::from("warm"));
@@ -478,7 +462,7 @@ async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_p
 }
 
 #[test]
-fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
+fn memories_budget_default_other_matches_retrieval_budget() {
     let limit = 24;
     let selected_edges = 8;
     let retrieval_defaults = oneiron::ContextPackRetrievalBudget::from_limit(
@@ -487,7 +471,7 @@ fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
         selected_edges,
     );
 
-    let defaults = eiri_memory_board_budget(None, limit, selected_edges);
+    let defaults = memories_budget(None, limit, selected_edges);
     assert_eq!(defaults.companions, 0);
     assert_eq!(defaults.other, retrieval_defaults.other);
     assert_eq!(
@@ -495,10 +479,10 @@ fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
         retrieval_defaults.other
     );
 
-    let split = eiri_memory_board_budget(
-        Some(&EiriMemoryBoardControls {
+    let split = memories_budget(
+        Some(&ContextBoardMemoriesControls {
             enabled: None,
-            slots: Some(EiriMemoryBoardSlotControls {
+            slots: Some(ContextBoardMemoriesSlotControls {
                 companions: Some(2),
                 ..Default::default()
             }),
@@ -511,27 +495,27 @@ fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
 }
 
 #[test]
-fn eiri_session_rag_store_evicts_oldest_entries_at_capacity() {
-    let mut store = EiriSessionRagStore::default();
-    for index in 0..=EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
+fn memories_cursor_store_evicts_oldest_entries_at_capacity() {
+    let mut store = MemoriesCursorStore::default();
+    for index in 0..=MEMORIES_CURSOR_MAX_ENTRIES {
         let key = format!("vault:{index}");
         let session_id = format!("session-{index}");
         store.current(key, &session_id);
     }
 
-    assert_eq!(store.entries.len(), EIRI_SESSION_RAG_STATE_MAX_ENTRIES);
+    assert_eq!(store.entries.len(), MEMORIES_CURSOR_MAX_ENTRIES);
     assert!(!store.entries.contains_key("vault:0"));
     assert!(
         store
             .entries
-            .contains_key(&format!("vault:{EIRI_SESSION_RAG_STATE_MAX_ENTRIES}"))
+            .contains_key(&format!("vault:{MEMORIES_CURSOR_MAX_ENTRIES}"))
     );
 }
 
 #[test]
-fn eiri_session_rag_store_caps_persisted_result_ids() {
-    let mut store = EiriSessionRagStore::default();
-    let pack = synthetic_context_pack(EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX + 5);
+fn memories_cursor_store_caps_persisted_result_ids() {
+    let mut store = MemoriesCursorStore::default();
+    let pack = synthetic_context_pack(MEMORIES_CURSOR_LAST_RESULT_IDS_MAX + 5);
     let evidence = CoreContextPackEvidence {
         telemetry_persisted: false,
         retrieval_run_id: Some("test-run".to_owned()),
@@ -549,29 +533,28 @@ fn eiri_session_rag_store_caps_persisted_result_ids() {
 
     assert_eq!(
         state.last_result_ids.len(),
-        EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX
+        MEMORIES_CURSOR_LAST_RESULT_IDS_MAX
     );
     assert_eq!(state.last_result_ids[0], pack.results[0].id.to_hex());
     assert_eq!(
-        state.last_result_ids[EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX - 1],
-        pack.results[EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX - 1]
+        state.last_result_ids[MEMORIES_CURSOR_LAST_RESULT_IDS_MAX - 1],
+        pack.results[MEMORIES_CURSOR_LAST_RESULT_IDS_MAX - 1]
             .id
             .to_hex()
     );
 }
 
 #[tokio::test]
-async fn context_pack_v4_rejects_oversized_session_id() {
+async fn context_board_rejects_oversized_session_id() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
     let principal_ref = seeded_test_entity_id(0x1741_0002).to_hex();
     let request = json!({
-        "query": "eiri v4 needle",
-        "context_version": "v4",
-        "session_rag": {
-            "session_id": "x".repeat(EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES + 1)
+        "retrieval": { "query": "eiri v4 needle" },
+        "session": {
+            "session_id": "x".repeat(MEMORIES_CURSOR_SESSION_ID_MAX_BYTES + 1)
         }
     });
 
@@ -579,7 +562,7 @@ async fn context_pack_v4_rejects_oversized_session_id() {
         server,
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             &principal_ref,
             Some(&request),
@@ -591,22 +574,21 @@ async fn context_pack_v4_rejects_oversized_session_id() {
     assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&body)["details"]["field"],
-        Value::from("session_rag.session_id")
+        Value::from("session.session_id")
     );
 }
 
 #[tokio::test]
-async fn context_pack_v4_rejects_shared_principal_session_scope() {
+async fn context_board_rejects_shared_principal_session_scope() {
     let (_dir, server) = test_server();
     let request = json!({
-        "query": "eiri v4 needle",
-        "context_version": "v4",
-        "session_rag": { "session_id": "explicit-session" }
+        "retrieval": { "query": "eiri v4 needle" },
+        "session": { "session_id": "explicit-session" }
     });
 
     let (status, body) = route_json(
         server,
-        json_request("POST", "/v1/core/context-pack", request),
+        json_request("POST", "/v1/core/context-board", request),
     )
     .await;
 
@@ -614,12 +596,12 @@ async fn context_pack_v4_rejects_shared_principal_session_scope() {
     assert_error_envelope(&body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&body)["details"]["field"],
-        Value::from("session_rag.session_id")
+        Value::from("session.session_id")
     );
 }
 
 #[tokio::test]
-async fn context_pack_v4_session_state_is_partitioned_by_caller() {
+async fn context_board_cursor_is_partitioned_by_caller() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -627,76 +609,66 @@ async fn context_pack_v4_session_state_is_partitioned_by_caller() {
     let caller_a = seeded_test_entity_id(0x1741_0003).to_hex();
     let caller_b = seeded_test_entity_id(0x1741_0004).to_hex();
     let request = json!({
-        "query": "eiri v4 partition needle",
-        "context_version": "v4",
-        "session_rag": { "session_id": "shared-session-name" }
+        "retrieval": { "query": "eiri v4 partition needle" },
+        "session": { "session_id": "shared-session-name" }
     });
 
-    let eiri_request = |caller: &str| {
+    let board_request = |caller: &str| {
         core_request_with_principal_ref(
             "POST",
-            "/v1/core/context-pack",
+            "/v1/core/context-board",
             "core:read",
             caller,
             Some(&request),
         )
     };
 
-    let (status, caller_a_first) = route_json(server.clone(), eiri_request(&caller_a)).await;
+    let (status, caller_a_first) = route_json(server.clone(), board_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        caller_a_first["memory_board"]["companion"]["caller"],
+        caller_a_first["memories"]["companion"]["caller"],
         Value::from("shared-session-name")
     );
     assert_eq!(
-        caller_a_first["session_rag"]["session_id"],
+        caller_a_first["cursor"]["session_id"],
         Value::from("shared-session-name")
     );
-    assert_eq!(caller_a_first["session_rag"]["query_count"], Value::from(1));
+    assert_eq!(caller_a_first["cursor"]["query_count"], Value::from(1));
 
-    let (status, caller_a_second) = route_json(server.clone(), eiri_request(&caller_a)).await;
+    let (status, caller_a_second) = route_json(server.clone(), board_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        caller_a_second["session_rag"]["query_count"],
-        Value::from(2)
-    );
+    assert_eq!(caller_a_second["cursor"]["query_count"], Value::from(2));
 
-    let (status, caller_b_first) = route_json(server.clone(), eiri_request(&caller_b)).await;
+    let (status, caller_b_first) = route_json(server.clone(), board_request(&caller_b)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(caller_b_first["session_rag"]["query_count"], Value::from(1));
+    assert_eq!(caller_b_first["cursor"]["query_count"], Value::from(1));
 
-    let resume_request = |caller: &str| {
-        Request::builder()
-            .method("POST")
-            .uri("/api/companion/resume")
-            .header(CONTENT_TYPE, "application/json")
-            .header(AUTHORIZATION, owner_bearer())
-            .header("x-oneiron-caller", caller)
-            .body(Body::from("{}"))
-            .expect("resume request")
+    let empty = json!({});
+    let hydrate_request = |caller: &str| {
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            caller,
+            Some(&empty),
+        )
     };
 
-    let (status, caller_a_resume) = route_json(server.clone(), resume_request(&caller_a)).await;
+    let (status, caller_a_board) = route_json(server.clone(), hydrate_request(&caller_a)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        caller_a_resume["session"]["rag_state"]["session_id"],
+        caller_a_board["cursor"]["session_id"],
         Value::from("shared-session-name")
     );
-    assert_eq!(
-        caller_a_resume["session"]["rag_state"]["query_count"],
-        Value::from(2)
-    );
+    assert_eq!(caller_a_board["cursor"]["query_count"], Value::from(2));
 
-    let (status, caller_b_resume) = route_json(server, resume_request(&caller_b)).await;
+    let (status, caller_b_board) = route_json(server, hydrate_request(&caller_b)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        caller_b_resume["session"]["rag_state"]["session_id"],
+        caller_b_board["cursor"]["session_id"],
         Value::from("shared-session-name")
     );
-    assert_eq!(
-        caller_b_resume["session"]["rag_state"]["query_count"],
-        Value::from(1)
-    );
+    assert_eq!(caller_b_board["cursor"]["query_count"], Value::from(1));
 }
 
 #[test]
