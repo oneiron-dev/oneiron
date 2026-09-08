@@ -576,6 +576,11 @@ pub(crate) mod test_util {
     //! when its values genuinely diverge (map size, dimensions, embedding
     //! model, HNSW params); a copy that is value-identical to the shared
     //! helper is a drift hazard and must route through it.
+
+    /// Test-only-file classification for the source-scanning fences. The
+    /// integration binaries mount the same file through `tests/common`.
+    pub(crate) mod source_scan;
+
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::config::VaultConfig;
     use crate::entity_id::EntityId;
