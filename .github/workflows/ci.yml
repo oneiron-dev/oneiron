@@ -60,9 +60,11 @@ concurrency:
 # Gate layout: `changes` detects rust-relevant diffs; `checks` (fmt, clippy
 # workspace + featureless, typos, cargo-deny policy) runs on every non-draft
 # PR — the cargo steps only when the diff is rust-relevant — and on dispatch
-# (deny is the dispatch-era gate, ONE-335); `test` runs on rust-diff PRs and
-# on main pushes (fail-open on push if the detector breaks; tag pushes
-# always run); `package` (publish-integrity) runs on release tags only.
+# (deny is the dispatch-era gate, ONE-335); `test` runs the macOS recipe on
+# rust-diff PRs and on main pushes (fail-open on push if the detector
+# breaks; tag pushes always run); `test-linux` runs the unfiltered suite on
+# the Linux reference host for main pushes and dispatch only; `package`
+# (publish-integrity) runs on release tags only.
 #
 # Every job's `if:` starts with the pause/draft guard from the header,
 #   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
@@ -190,12 +192,98 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      # nextest is part of the host contract; if a host lacks it, install the
+      # pinned copy under ~/ci/tools once (RUSTFLAGS cleared so -Dwarnings
+      # cannot fail somebody else's crate) and reuse it on every later run.
+      - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        env:
+          RUSTFLAGS: ""
+        run: |
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ci/tools/bin:$PATH"
+          if ! cargo nextest --version >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
+          fi
           cargo nextest --version
-      # Canonical runner (ONE-1144): process-per-test isolation, full tier
-      # (retries = 2, slow set included).
-      - run: cargo nextest run --workspace --all-features --profile full
-      # nextest does not run doctests; keep them covered separately.
-      - run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+      # The macOS recipe from AGENTS.md ("macOS test host"), full tier
+      # (ONE-1144: process-per-test isolation, retries = 2, slow set in):
+      #   * `--exclude oneiron-napi` — the napi cdylib cannot link its test
+      #     binary on macOS;
+      #   * the filterset drops the 7 oneiron-bench eval::tests that fail on
+      #     macOS with `VaultRootPreflight … UnsupportedPlatform` (ONE-1996)
+      #     and pass on Linux. Exact names, not a prefix: the 13 sibling
+      #     eval_outcome_ingest_* / eval_tune_* tests pass here and stay in.
+      # Both carve-outs run unfiltered on the Linux reference lane below.
+      - name: Workspace tests (nextest, full tier, macOS recipe)
+        run: |
+          MACOS_SKIP='not (package(oneiron-bench) & (
+              test(=eval::tests::eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault)
+            | test(=eval::tests::eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config)
+            | test(=eval::tests::eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index)
+            | test(=eval::tests::eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune)
+            | test(=eval::tests::eval_tune_honors_the_max_runs_bound)
+            | test(=eval::tests::eval_tune_opens_a_non_device_vault_through_the_explicit_config)
+            | test(=eval::tests::eval_tune_persists_and_prints_the_bounded_weight_table_entry)
+          ))'
+          cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full -E "$MACOS_SKIP"
+      # The two stages scripts/verify.sh runs after nextest: the featureless
+      # library build is a Wave-6 acceptance gate, and nextest does not run
+      # doctests.
+      - name: Featureless oneiron library tests
+        run: cargo test -p oneiron --lib --no-default-features
+      - name: Doctests
+        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+
+  test-linux:
+    name: Test (Linux reference)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 90
+    needs: changes
+    # Linux is the reference host (AGENTS.md): this lane runs the suite with
+    # no macOS carve-outs — the oneiron-napi test binary links here and the
+    # 7 ONE-1996 bench tests pass here — so it is the record of truth for
+    # exactly what the macOS job cannot run. Main pushes and dispatch only:
+    # the Arch box is the Wave host, and a per-PR lane there would queue
+    # every PR behind wave builds. Same push gate as `test` (rust diff,
+    # fail-open, tags), same pause guard inside always().
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true'
+      && (
+        github.event_name == 'workflow_dispatch'
+        || (github.event_name == 'push' && (
+          startsWith(github.ref, 'refs/tags/')
+          || needs.changes.outputs.rust == 'true'
+          || needs.changes.result != 'success'
+        ))
+      )
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # nextest is part of the host contract; if a host lacks it, install the
+      # pinned copy under ~/ci/tools once (RUSTFLAGS cleared so -Dwarnings
+      # cannot fail somebody else's crate) and reuse it on every later run.
+      - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        env:
+          RUSTFLAGS: ""
+        run: |
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ci/tools/bin:$PATH"
+          if ! cargo nextest --version >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
+          fi
+          cargo nextest --version
+      - name: Workspace tests (nextest, full tier, unfiltered)
+        run: cargo nextest run --workspace --all-features --profile full
+      - name: Featureless oneiron library tests
+        run: cargo test -p oneiron --lib --no-default-features
+      - name: Doctests
+        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   package:
     name: Package oneiron-server
