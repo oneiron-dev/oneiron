@@ -959,153 +959,153 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardMemoriesBudget",
         "claims",
         "Claim row cap.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardMemoriesBudget",
         "turns",
         "Turn/message row cap.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardMemoriesBudget",
         "summaries",
         "Summary row cap.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardMemoriesBudget",
         "facets",
         "Facet row cap.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardMemoriesBudget",
         "companions",
         "Companion-register row cap.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardBudget",
+        "ContextBoardMemoriesBudget",
         "other",
         "Row cap for all other entity types.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriCompanionAssembly",
+        "ContextBoardCompanionAssembly",
         "caller",
         "Effective caller/session identity used for the v4 board.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriCompanionAssembly",
+        "ContextBoardCompanionAssembly",
         "person_ref",
         "Optional person entity id for companion-aware assembly metadata.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriCompanionAssembly",
+        "ContextBoardCompanionAssembly",
         "persona_ref",
         "Optional persona entity id for companion-aware assembly metadata.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "row_index",
         "Zero-based index after stable sorting and slot-budget filtering.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "slot",
         "Budget slot that owns this row.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "source",
         "Whether the row came from primary results or neighbors.",
     );
-    set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "id", "Hex entity id.");
+    set_schema_property_description(spec, "ContextBoardMemoryRow", "id", "Hex entity id.");
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "short_id",
         "Short id used for compact display.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "content_hash",
         "One-byte content hash as two lowercase hex digits.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "entity_type",
         "Numeric entity type byte.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoardRow",
+        "ContextBoardMemoryRow",
         "asset_ref",
         "Short ref for ASSET and ASSET_TEXT rows. Consumers pass this to the core hydrate resolver.",
     );
-    set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "score", "Retrieval score.");
+    set_schema_property_description(spec, "ContextBoardMemoryRow", "score", "Retrieval score.");
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoard",
+        "ContextBoardMemories",
         "version",
         "Context version for this memory-board envelope.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoard",
+        "ContextBoardMemories",
         "budget",
         "Applied per-slot row budget.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoard",
+        "ContextBoardMemories",
         "rows",
         "Stable memory-board rows.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriMemoryBoard",
+        "ContextBoardMemories",
         "companion",
         "Companion assembly metadata when v4 companion controls are present.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoriesCursor",
         "session_id",
         "Effective v4 session id.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoriesCursor",
         "revision",
         "Monotonic cursor revision for this session.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoriesCursor",
         "query_count",
         "Number of context-pack queries observed for this session.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoriesCursor",
         "last_retrieval_run_id",
         "Last persisted retrieval telemetry run id, when available.",
     );
     set_schema_property_description(
         spec,
-        "CoreEiriSessionRagState",
+        "ContextBoardMemoriesCursor",
         "last_result_ids",
         "Bounded list of most recent context-pack result ids for this session.",
     );

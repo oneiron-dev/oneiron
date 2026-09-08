@@ -1,8 +1,10 @@
-use super::API_LEVEL;
-use super::check_api_auth;
-use super::current_eiri_session_rag_state;
-use super::is_agent_visible_entity_type;
-use super::validate_eiri_session_id;
+//! Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter.
+
+use super::super::API_LEVEL;
+use super::super::check_api_auth;
+use super::super::current_memories_cursor;
+use super::super::is_agent_visible_entity_type;
+use super::super::validate_session_id;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::extract::State;
@@ -19,9 +21,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub(crate) const RESUME_NOTIFICATION_LIMIT: usize = 128;
+pub(crate) const PREFIX_NOTIFICATION_LIMIT: usize = 128;
 
-pub(crate) const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
+pub(crate) const PREFIX_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 
 /// One-shot read-only companion hydration.
 /// POST /api/companion/resume
@@ -39,18 +41,18 @@ pub(crate) async fn resume_bundle(
     caller: &str,
 ) -> Result<AssembledContext, ApiError> {
     Ok(AssembledContext::new(
-        resume_session_context(server, caller).await?,
+        session_prefix(server, caller).await?,
         pending_notifications(server, caller)?,
         pending_unprocessed_items(server, caller),
-        current_resume_budget(server),
+        current_hydration_budget(server),
     ))
 }
 
-pub(crate) async fn resume_session_context(
+pub(crate) async fn session_prefix(
     server: &SyncServer,
     caller: &str,
 ) -> Result<SessionContext, ApiError> {
-    validate_eiri_session_id(caller, "x-oneiron-caller")?;
+    validate_session_id(caller, "x-oneiron-caller")?;
     let mut counts = BTreeMap::new();
 
     for entity_type in u8::MIN..=u8::MAX {
@@ -89,7 +91,7 @@ pub(crate) async fn resume_session_context(
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
-        rag_state: current_eiri_session_rag_state(&server.vault, caller).await,
+        rag_state: current_memories_cursor(&server.vault, caller).await,
     })
 }
 
@@ -103,8 +105,8 @@ pub(crate) fn pending_notifications(
         .vault
         .latest_entity_bodies_by_type(
             ENTITY_TYPE_NOTIFICATION,
-            RESUME_NOTIFICATION_LIMIT,
-            RESUME_NOTIFICATION_SCAN_LIMIT,
+            PREFIX_NOTIFICATION_LIMIT,
+            PREFIX_NOTIFICATION_SCAN_LIMIT,
         )
         .inspect_err(|e| {
             tracing::error!(error = %e, "resume notification latest scan failed");
@@ -138,7 +140,7 @@ pub(crate) fn pending_unprocessed_items(
     Vec::new()
 }
 
-pub(crate) fn current_resume_budget(_server: &SyncServer) -> HydrationBudget {
+pub(crate) fn current_hydration_budget(_server: &SyncServer) -> HydrationBudget {
     HydrationBudget::from_meter(0, 0)
 }
 
