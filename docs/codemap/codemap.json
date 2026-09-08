@@ -2827,34 +2827,109 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComplianceAmendmentClass",
+      "ComplianceAmendmentOutcome"
+     ],
+     "path": "src/campaign/compliance/amend.rs",
+     "purpose": "Propose/stamp amendment transaction: classification, activation, notices, proposal hash",
+     "surface": {
+      "enum": 2,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/codec.rs",
+     "purpose": "Claim-store readers, comm-party mirror, and the msgpack value toolkit",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComplianceBlockReason",
+      "ComplianceVerdict",
+      "DispatchComplianceFacts",
+      "HydratedJpPublicationFacts",
+      "HydratedListProvenance"
+     ],
+     "path": "src/campaign/compliance/evaluate.rs",
+     "purpose": "Pure dispatch evaluator: jurisdiction selection, row matching, verdict",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/hydrate.rs",
+     "purpose": "External-effect gate leg and vault-to-facts hydration (evidence, jurisdiction, message elements)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/mod.rs",
+     "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/pack_store.rs",
+     "purpose": "Seed loading, pack validation/coverage, and vault persistence plus msgpack encode/decode",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "B2bExemption",
-      "ComplianceAmendmentClass",
-      "ComplianceAmendmentOutcome",
-      "ComplianceBlockReason",
       "ComplianceExemptionEvidence",
       "CompliancePack",
       "ComplianceRuleKind",
       "ComplianceRuleRow",
       "ComplianceSource",
-      "ComplianceVerdict",
       "ConditionalExemptionEvidence",
-      "DispatchComplianceFacts",
-      "HydratedJpPublicationFacts",
-      "HydratedListProvenance",
       "UnknownJurisdictionDefault"
      ],
-     "path": "src/campaign/compliance.rs",
-     "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
+     "path": "src/campaign/compliance/rules.rs",
+     "purpose": "Pack identity consts, predicates, rule-row types, and the CompliancePack container",
      "surface": {
       "const": 7,
-      "crate-vis": 3,
-      "enum": 8,
-      "fn": 11,
-      "struct": 7
+      "crate-vis": 11,
+      "enum": 4,
+      "struct": 4
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/campaign/compliance/tests.rs",
+     "purpose": "Compliance behaviour: seed shape, evaluator verdicts, hydration, and amendment",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -15148,7 +15223,66 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/codec_core.rs",
+     "purpose": "Shared MessagePack plumbing plus origin/basis/space/consent/sample encode_/decode_ pairs kept together",
+     "surface": {
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/codec_records.rs",
+     "purpose": "Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/math_keys.rs",
+     "purpose": "Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/mod.rs",
+     "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/storage_admission.rs",
+     "purpose": "Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination…",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
      "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_identity/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoiceAttributionEvidence",
@@ -15171,23 +15305,26 @@
       "VoiceWithdrawalReceipt",
       "VoiceWithdrawalRequest"
      ],
-     "path": "src/voice_identity.rs",
-     "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching",
+     "path": "src/voice_identity/types.rs",
+     "purpose": "Public domain types, request/receipt structs, thresholds, key prefixes, and validators",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 7,
       "enum": 7,
-      "fn": 24,
+      "fn": 17,
       "struct": 12
      }
     },
     {
-     "bucket": "XL",
-     "kind": "test",
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
-     "path": "src/voice_identity/tests.rs",
-     "purpose": "—",
-     "surface": {}
+     "path": "src/voice_identity/vault.rs",
+     "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 7
+     }
     },
     {
      "bucket": "s",
@@ -16201,7 +16338,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 18,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -17265,10 +17402,10 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 2,
+     "files": 8,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "VOX-02 voice identity substrate: consent log, enrollment, local matching"
     },
     "voice_segment": {
@@ -17307,10 +17444,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 142,
+   "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 822,
-   "test_files": 373
+   "source_files": 834,
+   "test_files": 374
   },
   "oneiron-bench": {
    "files": [
