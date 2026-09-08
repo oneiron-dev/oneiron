@@ -866,7 +866,7 @@ fn persisted_turn_role(
     let facts = crate::dreamer_consolidation::decode_turn_body(
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     );
-    crate::dreamer_runner::dreamer_turn_role(facts.speaker.as_deref())
+    crate::dreamer_runner::dreamer_turn_role(facts.speaker.as_deref(), &[])
 }
 
 /// A NAMED-speaker file drop ("Ada:", "Bob:") must persist turns the production

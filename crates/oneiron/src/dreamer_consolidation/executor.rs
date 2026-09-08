@@ -628,7 +628,10 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             let mut working_set = Vec::new();
             for turn_id in &turn_ids {
                 let facts = read_turn_facts(ctx.vault, turn_id)?;
-                let role = dreamer_turn_role(facts.speaker.as_deref());
+                let role = dreamer_turn_role(
+                    facts.speaker.as_deref(),
+                    &ctx.vault.config.assistant_display_names,
+                );
                 working_set.push(WorkingSetTurn {
                     turn_id: *turn_id,
                     role,

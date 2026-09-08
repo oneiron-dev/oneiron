@@ -2475,7 +2475,6 @@ fn only_user_assistant_extracted() {
         ("owner", DreamerTurnRole::User, true),
         ("assistant", DreamerTurnRole::Assistant, true),
         ("agent", DreamerTurnRole::Assistant, true),
-        ("eiri", DreamerTurnRole::Assistant, true),
         ("ai", DreamerTurnRole::Assistant, true),
         ("model", DreamerTurnRole::Assistant, true),
         ("system", DreamerTurnRole::System, false),
@@ -2490,7 +2489,7 @@ fn only_user_assistant_extracted() {
         ("injected", DreamerTurnRole::Injected, false),
     ];
     for (speaker, expected_role, admissible) in table {
-        let role = dreamer_turn_role(Some(speaker));
+        let role = dreamer_turn_role(Some(speaker), &[]);
         assert_eq!(role, expected_role, "speaker {speaker:?}");
         assert_eq!(
             dreamer_extraction_role_admissible(role),
@@ -2498,6 +2497,14 @@ fn only_user_assistant_extracted() {
             "speaker {speaker:?}"
         );
     }
+    assert_eq!(
+        dreamer_turn_role(Some("Eiri"), &[]),
+        DreamerTurnRole::Unknown
+    );
+    assert_eq!(
+        dreamer_turn_role(Some("eiri"), &["Eiri".into()]),
+        DreamerTurnRole::Assistant
+    );
     assert_eq!(DreamerTurnRole::User.as_str(), "user");
     assert_eq!(DreamerTurnRole::Assistant.as_str(), "assistant");
     assert_eq!(DreamerTurnRole::System.as_str(), "system");
@@ -2516,34 +2523,46 @@ fn injected_turn_excluded() {
         Some(""),
         None,
     ] {
-        let role = dreamer_turn_role(speaker);
+        let role = dreamer_turn_role(speaker, &[]);
         assert!(
             !dreamer_extraction_role_admissible(role),
             "speaker {speaker:?} must not be admissible (got {role:?})"
         );
     }
     assert_eq!(
-        dreamer_turn_role(Some("novel_role_string")),
+        dreamer_turn_role(Some("novel_role_string"), &[]),
         DreamerTurnRole::Unknown
     );
-    assert_eq!(dreamer_turn_role(Some("")), DreamerTurnRole::Unknown);
-    assert_eq!(dreamer_turn_role(None), DreamerTurnRole::Unknown);
+    assert_eq!(dreamer_turn_role(Some(""), &[]), DreamerTurnRole::Unknown);
+    assert_eq!(dreamer_turn_role(None, &[]), DreamerTurnRole::Unknown);
 }
 
 #[test]
 fn role_mapping_case_and_whitespace_insensitive() {
-    assert_eq!(dreamer_turn_role(Some(" User ")), DreamerTurnRole::User);
     assert_eq!(
-        dreamer_turn_role(Some("ASSISTANT")),
+        dreamer_turn_role(Some(" User "), &[]),
+        DreamerTurnRole::User
+    );
+    assert_eq!(
+        dreamer_turn_role(Some("ASSISTANT"), &[]),
         DreamerTurnRole::Assistant
     );
     assert_eq!(
-        dreamer_turn_role(Some("\tTool_Call\n")),
+        dreamer_turn_role(Some("\tTool_Call\n"), &[]),
         DreamerTurnRole::Tool
     );
-    assert_eq!(dreamer_turn_role(Some("  CRON")), DreamerTurnRole::Injected);
-    assert_eq!(dreamer_turn_role(Some(" Owner")), DreamerTurnRole::User);
-    assert_eq!(dreamer_turn_role(Some("   ")), DreamerTurnRole::Unknown);
+    assert_eq!(
+        dreamer_turn_role(Some("  CRON"), &[]),
+        DreamerTurnRole::Injected
+    );
+    assert_eq!(
+        dreamer_turn_role(Some(" Owner"), &[]),
+        DreamerTurnRole::User
+    );
+    assert_eq!(
+        dreamer_turn_role(Some("   "), &[]),
+        DreamerTurnRole::Unknown
+    );
 }
 
 #[test]
@@ -2563,7 +2582,7 @@ fn injected_turn_never_reaches_extraction_input() {
     ];
     let extraction_input: Vec<&str> = turns
         .iter()
-        .filter(|(speaker, _)| dreamer_extraction_role_admissible(dreamer_turn_role(*speaker)))
+        .filter(|(speaker, _)| dreamer_extraction_role_admissible(dreamer_turn_role(*speaker, &[])))
         .map(|(_, text)| *text)
         .collect();
     assert_eq!(
