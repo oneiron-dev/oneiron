@@ -965,7 +965,14 @@ fn fixture_corpus_savings_and_recall_table() {
 fn the_screen_imports_no_model_surface() {
     // The whole premise is that this runs BEFORE tokens are spent. A single
     // model import here would make the cheap screen the expensive one.
-    let source = include_str!("../dreamer_prefilter.rs");
+    let source = concat!(
+        include_str!("mod.rs"),
+        include_str!("config.rs"),
+        include_str!("score.rs"),
+        include_str!("screen.rs"),
+        include_str!("receipts.rs"),
+        include_str!("supersession.rs"),
+    );
     for needle in ["crate::llm", "use crate::llm", "LlmBackend", "LlmRequest"] {
         assert!(
             !source.contains(needle),
