@@ -147,8 +147,11 @@ jobs:
       - name: Clippy (oneiron, featureless)
         if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
         run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+      # Host typos (host contract, AGENTS.md): the crate-ci action downloads
+      # its binary from github.com on every run, and the first proving run
+      # lost that download to a DNS blip. Config is typos.toml either way.
       - name: typos
-        uses: crate-ci/typos@v1.45.1
+        run: typos --version && typos
       # The policy wrapper (scripts/advisory-policy/check.py) requires the
       # exact cargo-deny version it was validated against, and the host's
       # own cargo-deny is whatever the developer keeps. So the pinned copy
@@ -209,12 +212,12 @@ jobs:
       # The macOS recipe from AGENTS.md ("macOS test host"), full tier
       # (ONE-1144: process-per-test isolation, retries = 2, slow set in):
       #   * `--exclude oneiron-napi` — the napi cdylib cannot link its test
-      #     binary on macOS;
+      #     binary anywhere (needs a Node host for the napi_* symbols);
       #   * the filterset drops the 7 oneiron-bench eval::tests that fail on
       #     macOS with `VaultRootPreflight … UnsupportedPlatform` (ONE-1996)
       #     and pass on Linux. Exact names, not a prefix: the 13 sibling
       #     eval_outcome_ingest_* / eval_tune_* tests pass here and stay in.
-      # Both carve-outs run unfiltered on the Linux reference lane below.
+      # The bench carve-out runs unfiltered on the Linux reference lane below.
       - name: Workspace tests (nextest, full tier, macOS recipe)
         run: |
           MACOS_SKIP='not (package(oneiron-bench) & (
@@ -241,9 +244,12 @@ jobs:
     timeout-minutes: 90
     needs: changes
     # Linux is the reference host (AGENTS.md): this lane runs the suite with
-    # no macOS carve-outs — the oneiron-napi test binary links here and the
-    # 7 ONE-1996 bench tests pass here — so it is the record of truth for
-    # exactly what the macOS job cannot run. Main pushes and dispatch only:
+    # no bench carve-out — the 7 ONE-1996 bench tests pass here — so it is
+    # the record of truth for what the macOS job cannot run. oneiron-napi is
+    # excluded on every host: its test binary needs the napi_* symbols a
+    # Node host provides at load time and links nowhere (proving run
+    # 2026-09-08 failed on Arch with the same undefined symbols as macOS).
+    # Main pushes and dispatch only:
     # the Arch box is the Wave host, and a per-PR lane there would queue
     # every PR behind wave builds. Same push gate as `test` (rust diff,
     # fail-open, tags), same pause guard inside always().
@@ -276,8 +282,8 @@ jobs:
             cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
           fi
           cargo nextest --version
-      - name: Workspace tests (nextest, full tier, unfiltered)
-        run: cargo nextest run --workspace --all-features --profile full
+      - name: Workspace tests (nextest, full tier, bench included)
+        run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
       - name: Featureless oneiron library tests
         run: cargo test -p oneiron --lib --no-default-features
       - name: Doctests
