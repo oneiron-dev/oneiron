@@ -43,7 +43,7 @@ concurrency:
   cancel-in-progress: true
 
 # Runners (2026-09-08, HYG-06b): every job runs on our own machines, not a
-# cloud pool. The MacBook and (later) the Mac mini carry the
+# cloud pool. The MacBook and the Mac mini carry the
 # `self-hosted,macos,arm64` labels; the Arch box carries
 # `self-hosted,linux,x64` and is the Wave host, so only the main-push and
 # dispatch lanes touch it. A runner runs ONE job at a time, so the cheap
@@ -61,7 +61,7 @@ concurrency:
 # workspace + featureless, typos, cargo-deny policy) runs on every non-draft
 # PR — the cargo steps only when the diff is rust-relevant — and on dispatch
 # (deny is the dispatch-era gate, ONE-335); `test` runs the macOS recipe on
-# rust-diff PRs and on main pushes (fail-open on push if the detector
+# rust-diff PRs, on main pushes and on dispatch (fail-open on push if the detector
 # breaks; tag pushes always run); `test-linux` runs the unfiltered suite on
 # the Linux reference host for main pushes and dispatch only; `package`
 # (publish-integrity) runs on release tags only.
@@ -115,7 +115,8 @@ jobs:
     # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
     # PR takes one runner slot and one checkout for all of them. Runs on every
     # non-draft PR and on dispatch; the cargo steps below gate themselves on a
-    # rust-relevant diff, typos on PRs, deny always (the dispatch-era gate).
+    # rust-relevant diff (always on dispatch: a manual run is the full gate),
+    # typos and deny always (deny is the dispatch-era gate).
     if: >-
       vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
@@ -131,18 +132,17 @@ jobs:
           cargo clippy --version
       # Honor the workspace's heed exclusion; --all also follows local path dependencies.
       - name: Format
-        if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
         run: cargo fmt --check
       - name: Clippy (workspace, all features)
-        if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # Wave-6 acceptance gate (AGENTS.md, featureless builds): the oneiron
       # crate and its test targets must compile and lint with no features.
       - name: Clippy (oneiron, featureless)
-        if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
+        if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
         run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
       - name: typos
-        if: github.event_name == 'pull_request'
         uses: crate-ci/typos@v1.45.1
       # The policy wrapper (scripts/advisory-policy/check.py) requires the
       # exact cargo-deny version it was validated against, and the host's
@@ -166,7 +166,8 @@ jobs:
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
     needs: changes
-    # PRs: rust diffs only. Main pushes: rust diffs too (the changes job
+    # Dispatch: always (a manual run is the full gate). PRs: rust diffs only.
+    # Main pushes: rust diffs too (the changes job
     # runs the same filter on push), but fail OPEN — if the detector job
     # didn't succeed, run anyway so a filter hiccup can't skip the record
     # of truth. Tag pushes always run (release validation — the filter has
@@ -177,7 +178,8 @@ jobs:
       always()
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
+        github.event_name == 'workflow_dispatch'
+        || (github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true')
         || (github.event_name == 'push' && (
           startsWith(github.ref, 'refs/tags/')
           || needs.changes.outputs.rust == 'true'
