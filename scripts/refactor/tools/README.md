@@ -114,6 +114,21 @@ directory modules followed):
   the two normalised fragments (capped at 60 lines); an item that only reflows because
   it moved between an inline `mod tests` body and a file top level is re-formatted
   standalone before it is called a mismatch.
+- String literals are compared byte-for-byte. Every whitespace normalisation the
+  checker applies to compared text — the dedent of an inline mod body or impl method,
+  the per-line visibility strip, the standalone rustfmt pass with its de-wrap, the
+  canon tokenisation of residue chunks — runs with each literal (normal, byte, C, raw
+  with any number of `#`) swapped for a one-line placeholder string and put back
+  byte-exact afterwards. So a multi-line raw string re-indented along with the code
+  (a YAML / JSON fixture whose test left an inline `mod tests`) is `FAIL body …
+  differs` with the literal lines in the diff, even though the dedent would have
+  equalised both sides. The one run the compiler itself discards — the leading
+  whitespace of the line after a `\`-newline continuation in a non-raw string — is
+  compared as skipped, so re-indenting that continuation line is not a change
+  (`literal_compare_form`; return the literal unchanged there for the strict form).
+  Indentation inside a macro invocation rustfmt cannot parse (`matches!` with a
+  guard, `json!`) is code, not literal: it is dedented with the mod body and must
+  otherwise move byte-exact.
 - Scope is a `::`-joined module path: `top` = the file body; `tests` = the base
   file's inline `mod tests { … }` body; `seam`, `seam::tests`, `seam::inner` for
   bodied mods and what nests inside them. On the new side `tests.rs` / `*_tests.rs`
