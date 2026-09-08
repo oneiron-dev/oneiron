@@ -22,7 +22,16 @@ mod failure_integrity;
 /// This module's own source, read for the mechanical negative-scope proofs.
 const FAILURE_LADDER_SOURCE: &str = include_str!("../failure_ladder.rs");
 /// The healer-slot wrapper's source, read for the same proofs.
-const AGENT_DISPATCH_SOURCE: &str = include_str!("../agent_dispatch.rs");
+const AGENT_DISPATCH_SOURCE: &str = concat!(
+    include_str!("../agent_dispatch/mod.rs"),
+    include_str!("../agent_dispatch/attenuation.rs"),
+    include_str!("../agent_dispatch/codec.rs"),
+    include_str!("../agent_dispatch/context.rs"),
+    include_str!("../agent_dispatch/dispatch.rs"),
+    include_str!("../agent_dispatch/kill.rs"),
+    include_str!("../agent_dispatch/kill_spawn_tests.rs"),
+    include_str!("../agent_dispatch/types.rs"),
+);
 
 const LEASE_OWNER: &str = "failure-ladder-worker";
 const RUN_ID: &str = "run-1887";

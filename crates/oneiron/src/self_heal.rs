@@ -1103,7 +1103,7 @@ fn is_forbidden_text_scalar(scalar: char) -> bool {
 /// backslash becomes `\\`, so the escaping is unambiguous to read. The mapping
 /// is TOTAL — it runs over every input, including one that already LOOKS
 /// escaped — which is what makes it injective: a raw tab and the literal
-/// eight-character text `\u{0009}` land on the two different leafs `\u{0009}`
+/// eight-character text `\u{0009}` land on the two different leaves `\u{0009}`
 /// and `\\u{0009}`, and therefore on two different event ids, instead of
 /// colliding on one.
 fn escape_untrusted_detail(raw: &str) -> String {

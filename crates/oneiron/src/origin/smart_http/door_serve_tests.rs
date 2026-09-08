@@ -223,7 +223,7 @@ fn smart_http_unreadable_blob_stream_is_an_error_never_an_empty_scan() {
 }
 
 #[test]
-fn smart_http_receive_pack_coordinator_is_the_repositorys_common_dir() {
+fn smart_http_receive_pack_coordinator_is_the_repositories_common_dir() {
     let (_vault_dir, vault) = temp_vault();
     let (_source_dir, source, oid) = seeded_repo();
     // A bare repository is the shape the origin serves: GIT_DIR is the

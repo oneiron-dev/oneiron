@@ -1,8 +1,8 @@
 error[E0603]: module `relay` is private
   --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:36
    |
-15 |     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
-   |                                    ^^^^^  ------------ enum `HostedDomain` is not publicly re-exported
+15 |     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
+   |                                    ^^^^^         ------------ enum `HostedDomain` is not publicly re-exported
    |                                    |
    |                                    private module
    |
@@ -12,14 +12,14 @@ note: the module `relay` is defined here
    | mod relay;
    | ^^^^^^^^^
 
-error[E0599]: no variant, associated function, or constant named `LocalViaByoConnector` found for enum `policy_model::relay::HostedDomain` in the current scope
-  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:57
+error[E0599]: no variant, associated function, or constant named `LocalViaByoConnector` found for enum `policy_model::relay::trust::HostedDomain` in the current scope
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:64
    |
-15 |     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
-   |                                                         ^^^^^^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `policy_model::relay::HostedDomain`
+15 |     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
+   |                                                                ^^^^^^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `policy_model::relay::trust::HostedDomain`
    |
 help: there is a variant with a similar name
    |
-15 -     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaByoConnector;
-15 +     let _ = oneiron::policy_model::relay::HostedDomain::LocalViaHostedConnector;
+15 -     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
+15 +     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaHostedConnector;
    |

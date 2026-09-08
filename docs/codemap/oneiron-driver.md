@@ -14,6 +14,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 3 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
 | `src/session.rs` | src | m | 3 struct · 2 enum · 10 fn · 2 const · 1 crate-vis | SessionHint, SessionHintEffect, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
 | `src/session/tests.rs` | test | XL | — | — | — |
-| `src/supervisor.rs` | src | XL | 6 struct · 1 trait · 12 fn · 1 type · 1 const | ConsolidationExecutorFactory, PassExecutorFactory, RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
+| `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
+| `src/supervisor/budget_tests.rs` | test | m | — | — | Durable budget-id, index-scan, and config-validation tests |
+| `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 1 const · 8 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
+| `src/supervisor/factory.rs` | src | s | 1 struct · 1 trait · 4 fn | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
+| `src/supervisor/factory_tests.rs` | test | m | — | — | Factory, planner-routing, and attempt-fixture tests |
+| `src/supervisor/loop.rs` | src | m | 2 struct · 5 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
+| `src/supervisor/loop_tests.rs` | test | m | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
+| `src/supervisor/mod.rs` | src | s | 4 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
+| `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
+| `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
+| `src/supervisor/tests/mod.rs` | test | s | 12 crate-vis | — | Shared fixtures for the supervisor test suites |
 | `src/supervisor/tests/voice.rs` | test | m | — | — | — |
-| `src/tick.rs` | src | XL | 11 struct · 2 enum · 2 trait · 13 fn · 1 type · 3 crate-vis | AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher, HintSignal, HybridTick, PushTick +7 | Tick sources: what wakes the supervisor (ONE-1684) |
+| `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn | HybridTick | Hybrid tick: biased deadline-versus-push select with deadline priority and session-hint sidecar delegation |
+| `src/tick/mod.rs` | src | s | 1 type · 4 re-export · 2 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
+| `src/tick/model.rs` | src | s | 4 struct · 1 enum · 2 trait · 3 crate-vis | CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
+| `src/tick/push.rs` | src | m | 3 struct · 1 enum · 6 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
+| `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
+| `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
+| `src/tick/tests/tests_push.rs` | test | m | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
+| `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 3 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
