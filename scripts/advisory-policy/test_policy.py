@@ -358,7 +358,24 @@ class EffectiveCommandTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(shutil.which("cargo"), "install cargo and cargo-deny 0.19.4")
         result = subprocess.run(["cargo", "deny", "--version"], capture_output=True, text=True, check=True)
-        self.assertEqual(result.stdout.strip(), "cargo-deny " + policy.CARGO_DENY_VERSION)
+        found, expected = result.stdout.strip(), "cargo-deny " + policy.CARGO_DENY_VERSION
+        if found != expected:
+            # These tests drive the real binary, because the exact version's
+            # ignore semantics are the thing under test. A mismatch used to
+            # fail here in setUp, which aborted the test body and made the
+            # failure look like a version complaint - it masked five genuine
+            # failures during the 2026-09-09 retirement, caught only by CI.
+            # Skip locally so nothing hides behind it; in CI the pinned
+            # version is installed on purpose, so its absence is a real fault.
+            message = (
+                f"{found} is on PATH; these tests exercise {expected}. Install the pin with:\n"
+                f"  cargo install --locked cargo-deny@{policy.CARGO_DENY_VERSION} --root ~/ci/tools\n"
+                "then put ~/ci/tools/bin first on PATH, which is what CI does. The rest of the "
+                "suite still runs and still reports real failures."
+            )
+            if os.environ.get("CI"):
+                self.fail(message)
+            raise unittest.SkipTest(message)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.work = Path(self.temp.name)
@@ -468,12 +485,13 @@ class EffectiveCommandTests(unittest.TestCase):
         self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
 
     def test_new_id_same_package_and_unlisted_package_stay_blocked(self):
-        for name in ("atk", "new-unlisted-package"):
+        accepted = self.data["entries"][0]
+        for name in (accepted["package"], "new-unlisted-package"):
             with self.subTest(package=name):
-                entry = {"id": "RUSTSEC-2026-9001", "package": name, "version": "0.18.2"}
+                entry = {"id": "RUSTSEC-2026-9001", "package": name, "version": accepted["version"]}
                 path = write_advisory(self.database, entry)
                 self.commit_database()
-                if name != "atk":
+                if name != accepted["package"]:
                     self.metadata = self.write_metadata(self.data["entries"] + [self.legacy, entry])
                 result = self.run_deny()
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -481,7 +499,7 @@ class EffectiveCommandTests(unittest.TestCase):
                 path.unlink()
 
     def test_new_vulnerability_on_accepted_package_stays_blocked(self):
-        entry = {"id": "RUSTSEC-2026-9002", "package": "atk"}
+        entry = {"id": "RUSTSEC-2026-9002", "package": self.data["entries"][0]["package"]}
         write_advisory(self.database, entry, None)
         self.commit_database()
         result = self.run_deny()
@@ -492,7 +510,7 @@ class EffectiveCommandTests(unittest.TestCase):
     def test_new_notice_and_unsound_on_accepted_package_stay_blocked(self):
         for classification in ("notice", "unsound"):
             with self.subTest(classification=classification):
-                entry = {"id": "RUSTSEC-2026-9003", "package": "atk"}
+                entry = {"id": "RUSTSEC-2026-9003", "package": self.data["entries"][0]["package"]}
                 write_advisory(self.database, entry, classification)
                 self.commit_database()
                 result = self.run_deny()
@@ -513,7 +531,7 @@ class EffectiveCommandTests(unittest.TestCase):
         entries = deepcopy(self.data["entries"])
         entries[0]["version"] = "99.0.0"
         self.metadata = self.write_metadata(entries + [self.legacy])
-        next(p for p in self.lock["package"] if p["name"] == "atk")["version"] = "99.0.0"
+        next(p for p in self.lock["package"] if p["name"] == entries[0]["package"])["version"] = "99.0.0"
         unsafe = self.run_deny(unsafe_id_only=True)
         self.assertEqual(unsafe.returncode, 0, unsafe.stdout + unsafe.stderr)
         with self.assertRaises(policy.PolicyError):
