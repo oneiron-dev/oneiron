@@ -1,16 +1,7 @@
 //! Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces.
-//! Families in file order, one banner each; only `sync` is feature-gated; map: `docs/CODEMAP.md`:
-//! - Vault core & maintenance: `vault`, `store`, `batch`, `registry`, `error`, `config`
-//! - Read path: `analyzer`, `bm25`, `hnsw`, `pipeline`, `context_pack`, `llm`
-//! - Knowledge model: `claim`, `provenance`, `corpus`, `affect`, `companion`
-//! - Gates, consent & authority: `gate`, `consent`, `policy_model`, `authority`, `share`
-//! - Identity & counterparties: `channel_identity`, `identity_topology`, `interlocutor`
-//! - Tasks, commitments & scheduling: `task_verb`, `commitment`, `calendar`, `booking`, `habit`
-//! - Outbound effects, connectors & sync: `outbound`, `comm`, `ingest`, `web_fetch`, `sync`
-//! - Agent runtime: `agent_def`, `agent_dispatch`, `attempt_queue`, `run_tree`, `code_run`
-//! - Dreamer & skills: `dreamer_wake`, `dreamer_consolidation`, `inbox`, `skill`, `skill_hub`
-//! - Code, artifacts & custody: `codebase`, `git_wire`, `blob_artifact`, `secret_custody`
-//! - Surfaces & hosts: `memory`, `eiri`, `context_board`, `genui`, `voice_cascade`
+//! Modules sit under family banners below: Vault core, Read path, Knowledge model, Gates & authority,
+//! Identity, Tasks & scheduling, Outbound & sync, Agent runtime, Dreamer & skills, Code & custody, Surfaces.
+//! Only `sync` is feature-gated. The generated map with sizes and one-line docs is `docs/CODEMAP.md`.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
