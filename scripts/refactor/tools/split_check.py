@@ -662,8 +662,11 @@ def bodies_equal(base, new, assoc=False):
     n = restore_literals(strip_inner_vis(strip_item_vis(nt)), nlits)
     if b == n:
         return True, b, n
-    b = restore_literals(strip_inner_vis(_normalised(bt, assoc)), blits)
-    n = restore_literals(strip_inner_vis(_normalised(nt, assoc)), nlits)
+    # Strip the inner visibility BEFORE rustfmt, as the signature-level strip
+    # already is: a `pub(super)` added to a method can push its signature past
+    # the width limit and rustfmt would reflow only the new side.
+    b = restore_literals(_normalised(strip_inner_vis(bt), assoc), blits)
+    n = restore_literals(_normalised(strip_inner_vis(nt), assoc), nlits)
     return b == n, b, n
 
 
@@ -704,11 +707,11 @@ def compare_items(base_items, new_items, extras=None):
             infos.extend(i)
             matched += len(bgroup)
             continue
-        if len(bgroup) > 1:
-            problems.append("FAIL ambiguous %s appears %d times in base %s" % (label, len(bgroup), bgroup[0].where))
-            continue
-        if len(ngroup) > 1:
-            problems.append("FAIL duplicate %s lands in %s" % (label, ", ".join(n.where for n in ngroup)))
+        if len(bgroup) > 1 or len(ngroup) > 1:
+            p, i, m = _compare_same_key(label, bgroup, ngroup, assoc=False)
+            problems.extend(p)
+            infos.extend(i)
+            matched += m
             continue
         base, new = bgroup[0], ngroup[0]
         p, i = _compare_one(label, base, new, assoc=False)
@@ -721,6 +724,35 @@ def compare_items(base_items, new_items, extras=None):
                 extras.append(n)
             else:
                 problems.append("FAIL extra %s in %s" % (n.label(), n.where))
+    return problems, infos, matched
+
+
+def _compare_same_key(label, bgroup, ngroup, assoc):
+    """Items that share one key (anonymous `const _` compile-time asserts,
+    a name repeated behind different cfgs): pair each base item with a
+    new-side item whose body is identical, in any order. A base item with
+    no identical landing is missing; a new-side item left over is a
+    duplicate. Returns (problems, infos, matched)."""
+    problems, infos = [], []
+    remaining = list(ngroup)
+    matched = 0
+    for base in bgroup:
+        hit = None
+        for new in remaining:
+            if bodies_equal(base, new, assoc)[0]:
+                hit = new
+                break
+        if hit is None:
+            problems.append("FAIL missing %s (base %s, one of %d sharing the key) has no byte-identical landing in any child"
+                            % (label, base.where, len(bgroup)))
+            continue
+        remaining.remove(hit)
+        p, i = _compare_one(label, base, hit, assoc)
+        problems.extend(p)
+        infos.extend(i)
+        matched += 1
+    if remaining:
+        problems.append("FAIL duplicate %s lands in %s" % (label, ", ".join(n.where for n in ngroup)))
     return problems, infos, matched
 
 
@@ -752,14 +784,13 @@ def _compare_split_impl(label, bgroup, ngroup):
     for key, bm in bmethods.items():
         mlabel = "%s of %s" % (bm[0].label(), label)
         nm = nmethods.pop(key, [])
-        if len(bm) > 1:
-            problems.append("FAIL ambiguous %s appears %d times in base" % (mlabel, len(bm)))
-            continue
         if not nm:
             problems.append("FAIL missing %s (base %s) not found in any child" % (mlabel, bm[0].where))
             continue
-        if len(nm) > 1:
-            problems.append("FAIL duplicate %s lands in %s" % (mlabel, ", ".join(x.where for x in nm)))
+        if len(bm) > 1 or len(nm) > 1:
+            p, i, _ = _compare_same_key(mlabel, bm, nm, assoc=True)
+            problems.extend(p)
+            infos.extend(i)
             continue
         p, i = _compare_one(mlabel, bm[0], nm[0], assoc=True)
         problems.extend(p)
