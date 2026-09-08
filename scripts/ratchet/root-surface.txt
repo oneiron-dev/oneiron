@@ -14,6 +14,7 @@ ArtifactPointerChannel
 ArtifactServedFile
 ArtifactSnapshotSelector
 ArtifactVersionRef
+AssembledContext
 AttemptId
 AttemptInterventionEffect
 AttemptInterventionKind
@@ -162,6 +163,7 @@ CompactionSnapshotRef
 CompactionTierClass
 CompactionWatermark
 CompactionWindowMessage
+CompanionAssembly
 CompanionBirthIntent
 CompanionExportClassification
 CompanionExpression
@@ -236,7 +238,6 @@ DreamerConsolidationScope
 DreamerHomeNodeCandidate
 DreamerRunnerStore
 DreamerWakeDriver
-EIRI_CONTEXT_VERSION_V4
 EPOCH_SUMMARY_BODY_KEYS
 EPOCH_SUMMARY_BODY_VERSION
 EPOCH_SUMMARY_LEVEL
@@ -247,10 +248,6 @@ EdgeActorClass
 EdgeInfo
 EdgeKind
 Effort
-EiriCompanionAssembly
-EiriMemoryBoard
-EiriMemoryBoardBudget
-EiriSessionRagState
 EmailProviderInbound
 EmptyContext
 EmptyReason
@@ -363,6 +360,7 @@ HydratedShortId
 HydratedShortIdDeletion
 HydratedShortIdDeletionReason
 HydratedShortIdDeletionSource
+HydrationBudget
 ImageContent
 ImipEmitRequest
 InboundResumeOutcome
@@ -410,6 +408,7 @@ LlmToolSpec
 LlmUsage
 MACHINE_MINTED_CLAIM_SOURCES
 MAX_WORLD_ACCESS_MEMBERS
+MEMORIES_SECTION_VERSION_V4
 MEMORY_CODE_BAD_REQUEST
 MEMORY_CODE_FORBIDDEN
 MEMORY_CODE_INTERNAL
@@ -422,6 +421,9 @@ MemberGrantBundle
 MemberOnboardingIntent
 MemberOnboardingOutcome
 MemberOnboardingStep
+MemoriesBudget
+MemoriesCursor
+MemoriesSection
 Memory
 MemoryError
 MemoryOperationKind
@@ -483,8 +485,6 @@ ResolvedShare
 ResolvedWorldAuthority
 ResponseFormat
 Result
-ResumeBudget
-ResumeBundle
 RetrievalFilter
 RetrievalRunId
 RetrievalScoreBreakdown

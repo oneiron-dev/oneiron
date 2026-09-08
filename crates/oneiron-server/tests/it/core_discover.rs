@@ -9,7 +9,7 @@ use oneiron::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, ResumeBundle,
+    AssembledContext, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId,
     TimeRange, VaultConfig,
 };
 use oneiron_server::build_app;
@@ -154,7 +154,7 @@ async fn companion_resume_requires_auth_and_deserializes() {
 
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
     assert_eq!(bundle.session.api_version, "v1");
     assert_eq!(bundle.notifications, Vec::new());
@@ -193,7 +193,7 @@ async fn companion_resume_counts_by_type_and_reports_latest_activity() {
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
 
     assert_eq!(
@@ -255,7 +255,7 @@ async fn companion_resume_filters_surfaced_notification_by_exact_id() {
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
@@ -311,7 +311,7 @@ async fn companion_resume_skips_malformed_and_non_object_notifications() {
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
@@ -362,7 +362,7 @@ async fn companion_resume_requires_all_present_scope_keys_to_match() {
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);
@@ -401,7 +401,7 @@ async fn companion_resume_bounds_pending_notification_response_to_latest_items()
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
 
     assert_eq!(bundle.notifications.len(), EXPECTED_LIMIT);
@@ -474,7 +474,7 @@ async fn companion_resume_returns_latest_pending_notification_over_type_cap() {
     let (addr, handle) = spawn_server(vault, config_with_secret("secret")).await;
     let response = http_post(addr, "/api/companion/resume", Some("secret"), "{}").await;
     assert_http_status(&response, 200);
-    let bundle: ResumeBundle =
+    let bundle: AssembledContext =
         serde_json::from_str(http_body(&response)).expect("resume body should deserialize");
 
     assert_eq!(bundle.notifications.len(), 1);

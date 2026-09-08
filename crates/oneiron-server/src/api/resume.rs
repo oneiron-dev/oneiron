@@ -8,9 +8,9 @@ use crate::server::SyncServer;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
+use oneiron::AssembledContext;
+use oneiron::HydrationBudget;
 use oneiron::NotificationItem;
-use oneiron::ResumeBudget;
-use oneiron::ResumeBundle;
 use oneiron::SessionContext;
 use oneiron::UnprocessedItem;
 use oneiron::registry::ENTITY_TYPE_NOTIFICATION;
@@ -28,7 +28,7 @@ pub(crate) const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 pub(crate) async fn resume(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-) -> Result<Json<ResumeBundle>, ApiError> {
+) -> Result<Json<AssembledContext>, ApiError> {
     check_api_auth(&headers, &server)?;
     let caller = resume_caller(&headers);
     resume_bundle(&server, &caller).await.map(Json)
@@ -37,8 +37,8 @@ pub(crate) async fn resume(
 pub(crate) async fn resume_bundle(
     server: &SyncServer,
     caller: &str,
-) -> Result<ResumeBundle, ApiError> {
-    Ok(ResumeBundle::new(
+) -> Result<AssembledContext, ApiError> {
+    Ok(AssembledContext::new(
         resume_session_context(server, caller).await?,
         pending_notifications(server, caller)?,
         pending_unprocessed_items(server, caller),
@@ -138,8 +138,8 @@ pub(crate) fn pending_unprocessed_items(
     Vec::new()
 }
 
-pub(crate) fn current_resume_budget(_server: &SyncServer) -> ResumeBudget {
-    ResumeBudget::from_meter(0, 0)
+pub(crate) fn current_resume_budget(_server: &SyncServer) -> HydrationBudget {
+    HydrationBudget::from_meter(0, 0)
 }
 
 pub(crate) fn resume_caller(headers: &HeaderMap) -> String {

@@ -6,8 +6,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::ClaimSubject;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::context_board::{
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoardBudget,
-    assemble_eiri_memory_board,
+    CompanionAssembly, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, project_memories_section,
 };
 use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
@@ -54,7 +53,7 @@ fn edge_scan_count() -> usize {
 fn mcp_context_pack_ref_requires_supported_version_and_handle() {
     let mut context_pack = McpContextPackRef {
         schema_version: MCP_CONTEXT_PACK_REF_SCHEMA_VERSION.to_owned(),
-        context_version: Some(EIRI_CONTEXT_VERSION_V4.to_owned()),
+        context_version: Some(MEMORIES_SECTION_VERSION_V4.to_owned()),
         pack_ref: Some("context-pack:test".to_owned()),
         retrieval_run_id: None,
         result_ids: Vec::new(),
@@ -91,7 +90,7 @@ fn mcp_context_pack_ref_rejects_blank_fields_and_noncanonical_results() {
         Err(McpContextPackRefError::BlankField("context_version"))
     );
 
-    context_pack.context_version = Some(EIRI_CONTEXT_VERSION_V4.to_owned());
+    context_pack.context_version = Some(MEMORIES_SECTION_VERSION_V4.to_owned());
     context_pack.result_ids = vec!["7777777777777777777777777777777X".to_owned()];
     assert_eq!(
         context_pack.validate(),
@@ -166,10 +165,10 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
         empty: None,
     };
 
-    let board = assemble_eiri_memory_board(
+    let board = project_memories_section(
         &pack,
-        EiriMemoryBoardBudget::new(2, 1, 0, 0, 1, 0),
-        Some(EiriCompanionAssembly {
+        MemoriesBudget::new(2, 1, 0, 0, 1, 0),
+        Some(CompanionAssembly {
             caller: Some("default".to_owned()),
             scope: Some("neutral".to_owned()),
             scope_source: Some("neutral_default".to_owned()),
@@ -260,12 +259,7 @@ fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
         empty: None,
     };
 
-    let board = assemble_eiri_memory_board(
-        &pack,
-        EiriMemoryBoardBudget::new(0, 0, 0, 0, 0, 2),
-        None,
-        None,
-    );
+    let board = project_memories_section(&pack, MemoriesBudget::new(0, 0, 0, 0, 0, 2), None, None);
     let asset_row = board
         .rows
         .iter()
@@ -3560,9 +3554,9 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     );
 
     // Board rows agree with the pack (AC 5) and carry the disclosure block.
-    let board = assemble_eiri_memory_board(
+    let board = project_memories_section(
         &pack,
-        EiriMemoryBoardBudget::new(8, 8, 8, 8, 8, 8),
+        MemoriesBudget::new(8, 8, 8, 8, 8, 8),
         None,
         Some(ctx.assembly(clamped_out)),
     );

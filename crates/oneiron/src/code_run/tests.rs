@@ -39,7 +39,7 @@ fn seed_machine(vault: &Vault, seed: u8) -> EntityId {
 }
 
 fn seed_first_party_actor(vault: &Vault) -> EntityId {
-    let id = EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+    let id = EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
         .expect("first-party actor id");
     vault
         .put_entity(&id, ENTITY_TYPE_PERSON, range(1), 1, b"first-party actor")

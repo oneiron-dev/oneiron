@@ -381,7 +381,7 @@ fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
     out
 }
 
-fn encode_first_party_eiri_default_policy_manifest() -> Vec<u8> {
+fn encode_first_party_default_policy_manifest() -> Vec<u8> {
     default_policy_manifest()
 }
 
@@ -647,13 +647,12 @@ fn conflicting_budget_exhaustion_policies_fail_closed() -> Result<()> {
     Ok(())
 }
 
-fn first_party_eiri_connector_actor_id() -> EntityId {
-    EntityId::from_bytes(FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
-        .expect("first-party Eiri actor fixture id")
+fn first_party_connector_actor_id() -> EntityId {
+    EntityId::from_bytes(FIRST_PARTY_CONNECTOR_ACTOR_ID).expect("first-party Eiri actor fixture id")
 }
 
-fn first_party_eiri_connector_actor_ref() -> String {
-    super::first_party_eiri_connector_actor_ref()
+fn first_party_connector_actor_ref() -> String {
+    super::first_party_connector_actor_ref()
 }
 
 fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {
@@ -4460,7 +4459,7 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
         vec![
             actor_ceiling_row("first_party", "auto"),
             actor_ceiling_row_for_ref("first_party", "probation", "proposed"),
-            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+            actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
             actor_ceiling_row("human", "auto"),
         ],
     );
@@ -4478,7 +4477,7 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
         PolicyApprovalCeiling::Proposed
     );
     assert_eq!(
-        policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+        policy.actor_ceiling("agent", Some(&first_party_connector_actor_ref())),
         PolicyApprovalCeiling::Auto
     );
     assert_eq!(
@@ -4510,9 +4509,9 @@ fn policy_manifest_valid_fixture_resolves_gate_inputs() -> Result<()> {
 }
 
 #[test]
-fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
+fn first_party_tool_output_auto_write_reaches_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&vault, test_id(0xB4), &data)?;
 
     let claim_id = test_id(0xB5);
@@ -4520,7 +4519,7 @@ fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
     let (candidate, envelope) = claim_candidate_write_parts_for_actor(
         &vault,
         &body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         EdgeActorClass::Agent,
     )?;
 
@@ -4543,7 +4542,7 @@ fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
     assert_eq!(decision.actor_class, "agent");
     assert_eq!(
         decision.actor_ref.as_deref(),
-        Some(first_party_eiri_connector_actor_ref().as_str())
+        Some(first_party_connector_actor_ref().as_str())
     );
     Ok(())
 }
@@ -4554,7 +4553,7 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
     let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     put_policy_manifest_bytes(&vault, test_id(0xC4), &data)?;
 
@@ -4563,13 +4562,11 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
     // The evidence floor applies to every Dreamer-authored write; the fixture
     // actor is a real seeded entity, so the signature denial (not the floor)
     // is what this test observes.
-    body.evidence = Some(precommit_evidence(vec![
-        first_party_eiri_connector_actor_id(),
-    ]));
+    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         "dreamer-run-auth",
     )?;
 
@@ -4593,19 +4590,17 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
     ]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     put_policy_manifest_bytes(&vault, test_id(0xC6), &data)?;
 
     let claim_id = test_id(0xC7);
     let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
-    body.evidence = Some(precommit_evidence(vec![
-        first_party_eiri_connector_actor_id(),
-    ]));
+    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         &vault,
         &body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         "dreamer-run-auth",
     )?;
 
@@ -4628,7 +4623,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
     assert_eq!(decision.actor_class, "agent");
     assert_eq!(
         decision.actor_ref.as_deref(),
-        Some(first_party_eiri_connector_actor_ref().as_str())
+        Some(first_party_connector_actor_ref().as_str())
     );
     Ok(())
 }
@@ -4636,7 +4631,7 @@ fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()
 #[test]
 fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&vault, test_id(0xB6), &data)?;
 
     let claim_id = test_id(0xB7);
@@ -4658,7 +4653,7 @@ fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
 #[test]
 fn default_policy_vad_rule_is_exact() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&vault, test_id(0xC0), &data)?;
     let policy = resolve(&vault)?;
 
@@ -4695,7 +4690,7 @@ fn default_policy_vad_rule_is_exact() -> Result<()> {
 #[test]
 fn default_policy_voice_segment_rule_is_exact() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&vault, test_id(0xC8), &data)?;
     let policy = resolve(&vault)?;
 
@@ -4733,7 +4728,7 @@ fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
         (0xD2, ENTITY_TYPE_MACHINE, EdgeActorClass::System),
     ] {
         let (_tmp, vault) = temp_vault();
-        let data = encode_first_party_eiri_default_policy_manifest();
+        let data = encode_first_party_default_policy_manifest();
         put_policy_manifest_bytes(&vault, test_id(seed), &data)?;
 
         let src = test_id(seed + 1);
@@ -4765,7 +4760,7 @@ fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
 #[test]
 fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
     let (_unknown_tmp, unknown_vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&unknown_vault, test_id(0xB9), &data)?;
 
     let unknown_claim = test_id(0xBA);
@@ -4785,10 +4780,10 @@ fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
     assert!(unknown_vault.get_raw(&unknown_claim)?.is_none());
 
     let (_revoked_tmp, revoked_vault) = temp_vault();
-    let mut revoked_policy = encode_first_party_eiri_default_policy_manifest();
+    let mut revoked_policy = encode_first_party_default_policy_manifest();
     append_actor_ceiling(
         &mut revoked_policy,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "proposed"),
     );
     put_policy_manifest_bytes(&revoked_vault, test_id(0xBC), &revoked_policy)?;
 
@@ -4796,7 +4791,7 @@ fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
     let (candidate, envelope) = claim_candidate_write_parts_for_actor(
         &revoked_vault,
         &body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         EdgeActorClass::Agent,
     )?;
     let err = revoked_vault
@@ -4812,29 +4807,29 @@ fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
 #[test]
 fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let data = encode_first_party_eiri_default_policy_manifest();
+    let data = encode_first_party_default_policy_manifest();
     put_policy_manifest_bytes(&vault, test_id(0xBE), &data)?;
     let policy = resolve(&vault)?;
     let signed_auto_frontier = policy.read_frontier_hash()?;
 
     assert_eq!(policy.signatures().len(), 1);
     assert_eq!(
-        policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+        policy.actor_ceiling("agent", Some(&first_party_connector_actor_ref())),
         PolicyApprovalCeiling::Auto
     );
 
     let (_revoked_tmp, revoked_vault) = temp_vault();
-    let mut revoked_data = encode_first_party_eiri_default_policy_manifest();
+    let mut revoked_data = encode_first_party_default_policy_manifest();
     append_actor_ceiling(
         &mut revoked_data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "proposed"),
     );
     put_policy_manifest_bytes(&revoked_vault, test_id(0xBF), &revoked_data)?;
     let revoked_policy = resolve(&revoked_vault)?;
 
     assert_eq!(revoked_policy.signatures().len(), 1);
     assert_eq!(
-        revoked_policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+        revoked_policy.actor_ceiling("agent", Some(&first_party_connector_actor_ref())),
         PolicyApprovalCeiling::Proposed
     );
     assert_ne!(signed_auto_frontier, revoked_policy.read_frontier_hash()?);
@@ -11493,7 +11488,7 @@ fn precommit_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
     ]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
     Ok((tmp, vault))
@@ -11538,7 +11533,7 @@ fn attempt_precommit_write(
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         vault,
         body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         PRECOMMIT_RUN_ID,
     )?;
     vault
@@ -12336,7 +12331,7 @@ fn dreamer_detector_envelope(
     provenance: Value,
 ) -> Result<WriteEnvelope> {
     Ok(WriteEnvelope::new(
-        WriteActor::new(first_party_eiri_connector_actor_id(), actor_class),
+        WriteActor::new(first_party_connector_actor_id(), actor_class),
         source,
         WriteProvenance::new(provenance)?,
         ClaimApprovalStatus::Proposed,
@@ -12446,7 +12441,7 @@ fn dreamer_write_parts_with_source(
     body: &ClaimBody,
     source: ClaimSource,
 ) -> Result<(ClaimCandidate, WriteEnvelope)> {
-    let actor = first_party_eiri_connector_actor_id();
+    let actor = first_party_connector_actor_id();
     let (candidate, _) = dreamer_claim_candidate_write_parts(vault, body, actor, PRECOMMIT_RUN_ID)?;
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Agent),
@@ -12602,7 +12597,7 @@ fn operation_effect_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
     let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     put_policy_manifest_bytes(&vault, test_id(0x26), &data)?;
     Ok((tmp, vault))
@@ -12613,7 +12608,7 @@ fn operation_effect_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
 /// evidence with NO candidate evidence — because there is no candidate. The
 /// envelope is an ordinary Dreamer-admitted one, so the detector fires on it.
 fn operation_effect_parts(vault: &crate::Vault) -> Result<(ClaimBody, WriteEnvelope)> {
-    let actor = first_party_eiri_connector_actor_id();
+    let actor = first_party_connector_actor_id();
     vault.put_entity(
         &actor,
         ENTITY_TYPE_PERSON,
@@ -13841,7 +13836,7 @@ fn isolation_vault() -> Result<(tempfile::TempDir, crate::Vault)> {
     ]);
     append_actor_ceiling(
         &mut data,
-        actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
     );
     trust_human_candidate_actor(&mut data);
     put_policy_manifest_bytes(&vault, test_id(0x90), &data)?;
@@ -13931,7 +13926,7 @@ fn attempt_isolation_write(
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(
         vault,
         body,
-        first_party_eiri_connector_actor_id(),
+        first_party_connector_actor_id(),
         ISOLATION_RUN_ID,
     )?;
     vault
@@ -14929,7 +14924,7 @@ mod auto_checker {
         let mut data = encode_policy_manifest(entries);
         append_actor_ceiling(
             &mut data,
-            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+            actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
         );
         data
     }
@@ -14961,7 +14956,7 @@ mod auto_checker {
         dreamer_claim_candidate_write_parts(
             vault,
             body,
-            first_party_eiri_connector_actor_id(),
+            first_party_connector_actor_id(),
             CHECKER_RUN_ID,
         )
     }
@@ -15723,10 +15718,7 @@ mod auto_checker {
             put_policy_manifest_bytes(
                 &vault,
                 test_id(0x22),
-                &lineage_manifest(
-                    Some(CHECKER_REF),
-                    Some(first_party_eiri_connector_actor_id()),
-                ),
+                &lineage_manifest(Some(CHECKER_REF), Some(first_party_connector_actor_id())),
             )?;
             let claim_id = test_id(0x33);
             let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
@@ -15837,10 +15829,7 @@ mod auto_checker {
         put_policy_manifest_bytes(
             &vault,
             test_id(0x22),
-            &lineage_manifest(
-                Some(CHECKER_REF),
-                Some(first_party_eiri_connector_actor_id()),
-            ),
+            &lineage_manifest(Some(CHECKER_REF), Some(first_party_connector_actor_id())),
         )?;
         let claim_id = test_id(0x33);
         let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
@@ -15943,7 +15932,7 @@ mod auto_checker {
             let actor = if human {
                 test_id(0x20)
             } else {
-                first_party_eiri_connector_actor_id()
+                first_party_connector_actor_id()
             };
             put_policy_manifest_bytes(&vault, test_id(0x22), &lineage_manifest(knob, Some(actor)))?;
             let claim_id = test_id(0x33);

@@ -1698,7 +1698,7 @@
       "CompanionProposal",
       "CompanionProposalCreation",
       "CompanionSoftConfirmation",
-      "EiriHangoutProposalAssembly",
+      "HangoutProposalAssembly",
       "OneTimeParticipantToken",
       "ProposalCarrier",
       "ProposalChoice",
@@ -5198,9 +5198,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AssembledContext",
+      "HydrationBudget",
       "NotificationItem",
-      "ResumeBudget",
-      "ResumeBundle",
       "SessionContext",
       "UnprocessedItem"
      ],
@@ -5215,13 +5215,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "EiriCompanionAssembly",
-      "EiriMemoryBoard",
-      "EiriMemoryBoardBudget",
-      "EiriMemoryBoardRow",
-      "EiriMemoryBoardSlot",
-      "EiriMemoryBoardSource",
-      "EiriSessionRagState"
+      "CompanionAssembly",
+      "MemoriesBudget",
+      "MemoriesCursor",
+      "MemoriesSection",
+      "MemoryRow",
+      "MemorySlot",
+      "MemorySource"
      ],
      "path": "src/context_board/memories.rs",
      "purpose": "MEMORIES section — what retrieval pulled: typed rows, the slot budget, the companion echo, and the…",

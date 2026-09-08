@@ -325,12 +325,12 @@ fn fresh_vault_resolves_default_policy_manifest() -> Result<()> {
     let vault = Vault::open(tmp.path(), test_config())?;
 
     let policy = resolve_policy_manifest(&vault)?;
-    let first_party_eiri_actor_ref = crate::gate::first_party_eiri_connector_actor_ref();
+    let first_party_actor_ref = crate::gate::first_party_connector_actor_ref();
 
     assert_eq!(policy.diagnostics().manifest_count, 1);
     assert!(policy.enforces_write_gate());
     assert_eq!(
-        policy.actor_ceiling("agent", Some(&first_party_eiri_actor_ref)),
+        policy.actor_ceiling("agent", Some(&first_party_actor_ref)),
         crate::gate::PolicyApprovalCeiling::Auto
     );
     assert_eq!(policy.signatures().len(), 1);

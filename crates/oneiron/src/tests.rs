@@ -245,13 +245,13 @@ fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
-    ResumeBundle::new(
+fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> AssembledContext {
+    AssembledContext::new(
         SessionContext {
             api_version: "v1".to_owned(),
             counts: BTreeMap::from([("16".to_owned(), 1)]),
             last_activity: Some(42),
-            rag_state: EiriSessionRagState::new("default"),
+            rag_state: MemoriesCursor::new("default"),
         },
         vec![NotificationItem {
             id: seeded_entity_id(0x2141).to_hex(),
@@ -259,7 +259,7 @@ fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
             body: serde_json::json!({"message": "fresh"}),
         }],
         Vec::new(),
-        ResumeBudget::from_meter(tokens_used, tokens_limit),
+        HydrationBudget::from_meter(tokens_used, tokens_limit),
     )
 }
 
@@ -273,7 +273,7 @@ fn resume_budget_invariant_uses_meter_delta() {
 
 #[test]
 fn resume_budget_saturates_when_used_exceeds_limit() {
-    let budget = ResumeBudget::from_meter(1_200, 1_000);
+    let budget = HydrationBudget::from_meter(1_200, 1_000);
     assert_eq!(budget.tokens_used, 1_200);
     assert_eq!(budget.tokens_limit, 1_000);
     assert_eq!(budget.tokens_remaining, 0);
@@ -294,22 +294,22 @@ fn resume_bundle_serde_top_level_keys_are_exact() {
 
 #[test]
 fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
-    let bundle = ResumeBundle::new(
+    let bundle = AssembledContext::new(
         SessionContext {
             api_version: "v1".to_owned(),
             counts: BTreeMap::new(),
             last_activity: None,
-            rag_state: EiriSessionRagState::new("default"),
+            rag_state: MemoriesCursor::new("default"),
         },
         Vec::new(),
         Vec::new(),
-        ResumeBudget::from_meter(0, 0),
+        HydrationBudget::from_meter(0, 0),
     );
 
     assert_eq!(bundle.notifications, Vec::<NotificationItem>::new());
     assert_eq!(bundle.unprocessed, Vec::<UnprocessedItem>::new());
 
-    let json = String::from_utf8(crate::serialize::serialize_resume_bundle(&bundle)).unwrap();
+    let json = String::from_utf8(crate::serialize::serialize_assembled_context(&bundle)).unwrap();
     assert!(
         json.contains("\"notifications\":[]"),
         "notifications must serialize as an empty array: {json}"
@@ -329,7 +329,7 @@ fn session_context_deserializes_legacy_without_rag_state() {
     }))
     .expect("legacy session context should deserialize");
 
-    assert_eq!(session.rag_state, EiriSessionRagState::default());
+    assert_eq!(session.rag_state, MemoriesCursor::default());
 }
 
 fn seeded_entity_id(counter: u128) -> EntityId {

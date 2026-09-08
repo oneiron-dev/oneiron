@@ -59,23 +59,19 @@ pub(crate) static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> =
 
 #[derive(Default)]
 pub(crate) struct EiriSessionRagStore {
-    pub(crate) entries: BTreeMap<String, oneiron::EiriSessionRagState>,
+    pub(crate) entries: BTreeMap<String, oneiron::MemoriesCursor>,
     active_sessions: BTreeMap<String, String>,
     insertion_order: VecDeque<String>,
 }
 
 impl EiriSessionRagStore {
-    pub(crate) fn current(
-        &mut self,
-        key: String,
-        session_id: &str,
-    ) -> oneiron::EiriSessionRagState {
+    pub(crate) fn current(&mut self, key: String, session_id: &str) -> oneiron::MemoriesCursor {
         if let Some(state) = self.entries.get(&key) {
             return state.clone();
         }
 
         self.evict_if_full();
-        let state = oneiron::EiriSessionRagState::new(session_id);
+        let state = oneiron::MemoriesCursor::new(session_id);
         self.entries.insert(key.clone(), state.clone());
         self.insertion_order.push_back(key);
         state
@@ -86,7 +82,7 @@ impl EiriSessionRagStore {
         scope_key: String,
         default_key: String,
         default_session_id: &str,
-    ) -> oneiron::EiriSessionRagState {
+    ) -> oneiron::MemoriesCursor {
         if let Some(active_key) = self.active_sessions.get(&scope_key).cloned() {
             if let Some(state) = self.entries.get(&active_key) {
                 return state.clone();
@@ -104,11 +100,11 @@ impl EiriSessionRagStore {
         session_id: &str,
         pack: &oneiron::ContextPack,
         evidence: &CoreContextPackEvidence,
-    ) -> oneiron::EiriSessionRagState {
+    ) -> oneiron::MemoriesCursor {
         if !self.entries.contains_key(&key) {
             self.evict_if_full();
             self.entries
-                .insert(key.clone(), oneiron::EiriSessionRagState::new(session_id));
+                .insert(key.clone(), oneiron::MemoriesCursor::new(session_id));
             self.insertion_order.push_back(key.clone());
         }
 
@@ -405,10 +401,10 @@ pub(crate) struct CoreInterlocutorStamp {
 }
 
 pub(crate) struct EiriContextV4Request {
-    memory_board_budget: Option<oneiron::EiriMemoryBoardBudget>,
+    memory_board_budget: Option<oneiron::MemoriesBudget>,
     session_scope_id: String,
     session_id: String,
-    companion: Option<oneiron::EiriCompanionAssembly>,
+    companion: Option<oneiron::CompanionAssembly>,
 }
 
 /// Context-pack request on the canonical core route.
@@ -841,11 +837,11 @@ pub(crate) struct CoreContextPackResponse {
     /// Eiri Context v4 memory-board rows when requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<CoreEiriMemoryBoard>)]
-    memory_board: Option<oneiron::EiriMemoryBoard>,
+    memory_board: Option<oneiron::MemoriesSection>,
     /// Eiri Context v4 session RAG state when requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<CoreEiriSessionRagState>)]
-    session_rag: Option<oneiron::EiriSessionRagState>,
+    session_rag: Option<oneiron::MemoriesCursor>,
     /// Resolved per-speaker interlocutor stamps when an interlocutors block
     /// was supplied or the auth is principal_ref-scoped (OF-365 ILD-1).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1441,8 +1437,8 @@ pub(crate) fn resolve_eiri_context_v4_request(
         return Ok(None);
     }
 
-    let version = context_version.unwrap_or(oneiron::EIRI_CONTEXT_VERSION_V4);
-    if version != oneiron::EIRI_CONTEXT_VERSION_V4 {
+    let version = context_version.unwrap_or(oneiron::MEMORIES_SECTION_VERSION_V4);
+    if version != oneiron::MEMORIES_SECTION_VERSION_V4 {
         return Err(ApiError::bad_request(
             "context_version must be v4",
             Some("context_version"),
@@ -1484,7 +1480,7 @@ pub(crate) fn resolve_eiri_companion_assembly(
     companion: Option<&EiriCompanionControls>,
     session_id: &str,
     companion_auth: &CoreAuth,
-) -> Result<oneiron::EiriCompanionAssembly, ApiError> {
+) -> Result<oneiron::CompanionAssembly, ApiError> {
     let (person_ref_wire, person_ref) = parse_companion_ref(
         companion.and_then(|controls| controls.person_ref.as_deref()),
         "companion.person_ref",
@@ -1507,7 +1503,7 @@ pub(crate) fn resolve_eiri_companion_assembly(
     let fallback_expression =
         requested_expression.unwrap_or(oneiron::CompanionExpression::Professional);
     if !companion_scope_resolution_authorized(vault, companion_auth, person_ref, persona_ref)? {
-        return Ok(oneiron::EiriCompanionAssembly {
+        return Ok(oneiron::CompanionAssembly {
             caller: Some(session_id.to_owned()),
             scope: Some(companion_scope_wire(&oneiron::CompanionScope::neutral()).to_owned()),
             scope_source: Some(
@@ -1558,7 +1554,7 @@ pub(crate) fn resolve_eiri_companion_assembly(
     };
     let expression = requested_expression.unwrap_or(resolution.expression);
 
-    Ok(oneiron::EiriCompanionAssembly {
+    Ok(oneiron::CompanionAssembly {
         caller: Some(session_id.to_owned()),
         scope: Some(companion_scope_wire(&resolution.scope).to_owned()),
         scope_source: Some(resolution.source.as_str().to_owned()),
@@ -1652,13 +1648,13 @@ pub(crate) fn eiri_memory_board_budget(
     controls: Option<&EiriMemoryBoardControls>,
     limit: usize,
     default_selected_edges: usize,
-) -> oneiron::EiriMemoryBoardBudget {
+) -> oneiron::MemoriesBudget {
     let retrieval_defaults = oneiron::ContextPackRetrievalBudget::from_limit(
         limit,
         oneiron::TokenAllocation::default(),
         default_selected_edges,
     );
-    let defaults = oneiron::EiriMemoryBoardBudget::new(
+    let defaults = oneiron::MemoriesBudget::new(
         retrieval_defaults.claims,
         retrieval_defaults.turns,
         retrieval_defaults.summaries,
@@ -1674,7 +1670,7 @@ pub(crate) fn eiri_memory_board_budget(
     let other = slots
         .other
         .unwrap_or_else(|| retrieval_defaults.other.saturating_sub(companions));
-    oneiron::EiriMemoryBoardBudget::new(
+    oneiron::MemoriesBudget::new(
         slots.claims.unwrap_or(defaults.claims),
         slots.turns.unwrap_or(defaults.turns),
         slots.summaries.unwrap_or(defaults.summaries),
@@ -1703,7 +1699,7 @@ pub(crate) fn eiri_session_rag_scope_key(vault: &oneiron::Vault, scope_id: &str)
 pub(crate) async fn current_eiri_session_rag_state(
     vault: &oneiron::Vault,
     scope_id: &str,
-) -> oneiron::EiriSessionRagState {
+) -> oneiron::MemoriesCursor {
     let scope_key = eiri_session_rag_scope_key(vault, scope_id);
     let default_key = eiri_session_rag_key(vault, scope_id, scope_id);
     eiri_session_rag_store()
@@ -1718,7 +1714,7 @@ pub(crate) async fn advance_eiri_session_rag_state(
     session_id: &str,
     pack: &oneiron::ContextPack,
     evidence: &CoreContextPackEvidence,
-) -> oneiron::EiriSessionRagState {
+) -> oneiron::MemoriesCursor {
     let scope_key = eiri_session_rag_scope_key(vault, scope_id);
     let key = eiri_session_rag_key(vault, scope_id, session_id);
     eiri_session_rag_store()
@@ -1822,7 +1818,7 @@ pub(crate) async fn run_context_pack_builder(
         .as_ref()
         .and_then(|context| context.memory_board_budget)
         .map(|budget| {
-            oneiron::context_board::assemble_eiri_memory_board(
+            oneiron::context_board::project_memories_section(
                 &pack,
                 budget,
                 eiri_context
@@ -1847,7 +1843,7 @@ pub(crate) async fn run_context_pack_builder(
     };
     let context_version = eiri_context
         .as_ref()
-        .map(|_| oneiron::EIRI_CONTEXT_VERSION_V4.to_owned());
+        .map(|_| oneiron::MEMORIES_SECTION_VERSION_V4.to_owned());
     Ok(core_context_pack_response(
         pack,
         evidence,
@@ -1904,8 +1900,8 @@ pub(crate) fn core_context_pack_response(
     pack: oneiron::ContextPack,
     evidence: CoreContextPackEvidence,
     context_version: Option<String>,
-    memory_board: Option<oneiron::EiriMemoryBoard>,
-    session_rag: Option<oneiron::EiriSessionRagState>,
+    memory_board: Option<oneiron::MemoriesSection>,
+    session_rag: Option<oneiron::MemoriesCursor>,
     disclosure: Option<oneiron::DisclosureAssembly>,
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());

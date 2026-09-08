@@ -845,36 +845,35 @@ mod entity_ref_serde {
 // -------------------------------------------------------------------------
 // Friend-hangout booking preset (ONE-1821)
 //
-// The whole Eiri-named half of the companion booking path is here: an id, a
+// The whole friend-hangout half of the companion booking path is here: an id, a
 // loader call, and a message assembly. The machinery it drives is generic and
 // product-free above, and the behaviour is pack data, not code.
 // -------------------------------------------------------------------------
 
 /// The friend-hangout preset's stable id, matching the pack-data row.
-pub const EIRI_FRIEND_HANGOUT_PRESET_ID: &str = "booking.eiri.friend_hangout.v1";
+pub const FRIEND_HANGOUT_PRESET_ID: &str = "booking.eiri.friend_hangout.v1";
 
 /// The pack-data row. Behaviour lives in this JSON, not in a Rust branch.
-const EIRI_FRIEND_HANGOUT_PRESET_V1_JSON: &str =
-    include_str!("presets/eiri_friend_hangout_v1.json");
+const FRIEND_HANGOUT_PRESET_V1_JSON: &str = include_str!("presets/eiri_friend_hangout_v1.json");
 
 /// Binds the friend-hangout pack row to the caller's synthetic configuration.
 ///
 /// The configuration is supplied rather than looked up: a friend hangout has no
 /// booking page, and the personal-hours profile and flex pool are the caller's
 /// to build.
-pub fn eiri_friend_hangout_preset(
+pub fn friend_hangout_preset(
     synthetic_event_type_config: EventTypeConfig,
 ) -> Result<CompanionPresetRow, BookingError> {
     load_companion_preset(
-        EIRI_FRIEND_HANGOUT_PRESET_V1_JSON.as_bytes(),
+        FRIEND_HANGOUT_PRESET_V1_JSON.as_bytes(),
         synthetic_event_type_config,
     )
 }
 
-/// What Eiri needs to write the message: the proposal's opaque id, the carrier
+/// What the hangout message needs: the proposal's opaque id, the carrier
 /// reference the generic module produced, and the choice labels to read out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EiriHangoutProposalAssembly {
+pub struct HangoutProposalAssembly {
     pub proposal_id: ProposalId,
     pub message_link: String,
     pub choice_labels: Vec<String>,
@@ -889,8 +888,8 @@ pub struct EiriHangoutProposalAssembly {
 pub fn assemble_hangout_proposal_message(
     proposal: &CompanionProposal,
     message_link: String,
-) -> EiriHangoutProposalAssembly {
-    EiriHangoutProposalAssembly {
+) -> HangoutProposalAssembly {
+    HangoutProposalAssembly {
         proposal_id: proposal.id,
         message_link,
         choice_labels: proposal
@@ -984,7 +983,7 @@ mod tests {
     /// The preset, loaded through the product binding — so every oracle below
     /// runs against the pack-data path a caller actually uses.
     fn preset() -> CompanionPresetRow {
-        eiri_friend_hangout_preset(synthetic_config()).expect("friend hangout preset loads")
+        friend_hangout_preset(synthetic_config()).expect("friend hangout preset loads")
     }
 
     fn monday() -> TimeRange {
@@ -1115,7 +1114,7 @@ mod tests {
     #[test]
     fn preset_is_pack_data_not_an_entity_kind() {
         let preset = preset();
-        assert_eq!(preset.id, EIRI_FRIEND_HANGOUT_PRESET_ID);
+        assert_eq!(preset.id, FRIEND_HANGOUT_PRESET_ID);
 
         // The pack row declares behaviour and nothing else: no id, no type
         // byte, no claim subject, no page.
