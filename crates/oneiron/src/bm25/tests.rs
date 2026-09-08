@@ -53,7 +53,7 @@ static BM25_DIAGNOSTICS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 fn reset_bm25_diagnostics() -> std::sync::MutexGuard<'static, ()> {
     let guard = BM25_DIAGNOSTICS_TEST_LOCK
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for counter in &BM25_DIAGNOSTIC_COUNTERS {
         counter.store(0, AtomicOrdering::Relaxed);
     }
