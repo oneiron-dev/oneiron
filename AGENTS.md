@@ -197,11 +197,12 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 ## Where new code goes
 
 The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
-wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 91 more over-bar
+wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 103 more over-bar
 modules the same way, so a directory module is now the normal shape for anything substantial.
-Twenty files still sit over the bar and every one is deliberate — see the `_attribution` block
-in `scripts/ratchet/baseline.json`, which names the twelve deferred behind the context-board
-fold and the eight ruled indivisible. Do not use those twenty as precedent.
+Nine files still sit over the bar and nothing is deferred any more — the `_attribution` block in
+`scripts/ratchet/baseline.json` gives the structural reason for each one, and is honest that four
+of the nine are ordinary splittable modules that simply lack a plan. Do not use those nine as
+precedent, and do not repeat a blanket "indivisible" claim about them.
 
 Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
 regenerated deterministically and are the only current answer to "where does X live now".

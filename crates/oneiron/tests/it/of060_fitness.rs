@@ -347,7 +347,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         ),
         (
             RawHit {
-                path: "crates/oneiron-server/src/server.rs".to_owned(),
+                path: "crates/oneiron-server/src/server/leases.rs".to_owned(),
                 ident: "with_write_txn".to_owned(),
                 line: "if let Err(err) = self.vault.with_write_txn(|wtxn| {".to_owned(),
             },

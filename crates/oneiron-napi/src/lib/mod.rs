@@ -3,7 +3,7 @@ mod codebase;
 mod email;
 #[path = "../expression_preference.rs"]
 mod expression_preference;
-#[path = "../facade.rs"]
+#[path = "../facade/mod.rs"]
 mod facade;
 #[path = "../types.rs"]
 mod types;

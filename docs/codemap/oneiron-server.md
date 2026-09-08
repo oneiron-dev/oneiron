@@ -11,7 +11,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/api.rs` | src | L | 25 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/artifacts.rs` | src | s | 14 crate-vis | — | — |
 | `src/api/booking.rs` | src | m | 13 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
@@ -38,17 +37,33 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking_anti_abuse/tests_quarantine.rs` | src | s | 1 crate-vis | — | Quarantine-behavior tests for booking anti-abuse enforcement |
 | `src/api/booking_anti_abuse/tests_support.rs` | src | s | 15 crate-vis | — | Shared test fixtures for booking anti-abuse guard tests |
 | `src/api/campaign.rs` | src | s | 12 crate-vis | — | CA-07 campaign HTTP routes |
-| `src/api/companion.rs` | src | XL | 75 crate-vis | — | — |
+| `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
+| `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
+| `src/api/companion/errors.rs` | src | s | 4 crate-vis | — | Companion error constructors |
+| `src/api/companion/mod.rs` | src | s | 8 crate-vis | — | Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record… |
+| `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
+| `src/api/companion/register.rs` | src | m | 19 crate-vis | — | Companion register record routes and DTOs |
+| `src/api/companion/register_wire.rs` | src | s | 14 crate-vis | — | Register wire-format converters and validators |
 | `src/api/consumer_usage.rs` | src | m | 10 crate-vis | — | — |
 | `src/api/context_board/cursor.rs` | src | s | 13 crate-vis | — | The per-process MEMORIES cursor store, keyed by vault, principal scope and session |
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
 | `src/api/context_board/mod.rs` | src | s | 10 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 10 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
-| `src/api/context_pack.rs` | src | XL | 58 crate-vis | — | — |
+| `src/api/context_pack/controls.rs` | src | m | 14 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
+| `src/api/context_pack/eiri_assembly.rs` | src | s | 1 crate-vis | — | Companion scope-resolution authorization for context-pack assembly |
+| `src/api/context_pack/interlocutor.rs` | src | s | 2 crate-vis | — | Interlocutor-set resolution and third-party party inputs for context-pack requests |
+| `src/api/context_pack/mod.rs` | src | s | 5 crate-vis | — | Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through… |
+| `src/api/context_pack/resolve.rs` | src | m | 15 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
+| `src/api/context_pack/response.rs` | src | m | 26 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
 | `src/api/conversations.rs` | src | m | 8 crate-vis | — | — |
-| `src/api/core.rs` | src | L | 65 crate-vis | — | — |
+| `src/api/core/batch.rs` | src | s | 11 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
+| `src/api/core/hydrate.rs` | src | m | 19 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
+| `src/api/core/mod.rs` | src | s | 4 crate-vis | — | — |
+| `src/api/core/query.rs` | src | m | 16 crate-vis | — | Query/list/capability routes and their paging helpers |
+| `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | s | 3 crate-vis | — | — |
+| `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
 | `src/api/facade.rs` | src | m | 1 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/tests.rs` | test | s | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
@@ -80,11 +95,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/memory_reason/render_tests.rs` | test | s | — | — | — |
-| `src/api/openapi.rs` | src | XL | 18 crate-vis | — | — |
+| `src/api/mod.rs` | src | m | 25 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
+| `src/api/openapi/descriptions.rs` | src | L | 1 crate-vis | — | Schema description-gap filler |
+| `src/api/openapi/endpoints_merge.rs` | src | s | 13 crate-vis | — | OpenAPI endpoint wiring and component merges |
+| `src/api/openapi/mod.rs` | src | s | 2 crate-vis | — | OpenAPI document assembly for the HTTP API |
+| `src/api/openapi/security.rs` | src | s | 2 crate-vis | — | Security-scheme wiring and schema property-description helper |
+| `src/api/openapi_registry.rs` | src | m | 1 crate-vis | — | OpenAPI ApiDoc registration for the HTTP API |
+| `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
 | `src/api/run_tree.rs` | src | m | 27 crate-vis | — | — |
 | `src/api/run_tree/breaker_tests.rs` | test | s | — | — | — |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
+| `src/api/scoped_auth.rs` | src | s | 4 crate-vis | — | Legacy owner-auth gate and scoped-read constructors for both auth flavors |
 | `src/api/search.rs` | src | m | 10 crate-vis | — | — |
 | `src/api/surface_events.rs` | src | m | 14 crate-vis | — | Inbound SurfaceEvent handoff over `/v1/core` (OF-247 CID-6) |
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
@@ -123,9 +146,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/api.rs` | src | m | 1 fn · 10 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
-| `src/config.rs` | src | XL | 4 struct · 9 fn | EnvConfig, ServeArgs, ServeConfig, SyncServerConfig | — |
+| `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
+| `src/config/merge.rs` | src | m | 1 struct · 5 fn | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
+| `src/config/mod.rs` | src | s | 3 mod · 3 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/privacy_tests.rs` | test | m | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
+| `src/config/serve_args.rs` | src | m | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
+| `src/config/server_config.rs` | src | m | 2 struct · 4 fn | ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
 | `src/config/tests.rs` | test | L | — | — | — |
 | `src/error.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/tests.rs` | test | s | — | — | — |
@@ -186,10 +213,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 1 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 27 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
-| `src/runtime.rs` | src | L | 10 struct · 6 enum · 25 fn · 1 const · 1 crate-vis | RuntimeConfig, RuntimeConfigOverride, RuntimeHealthStatus, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults +8 | — |
+| `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
+| `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
+| `src/runtime/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | — |
+| `src/runtime/mode.rs` | src | s | 3 enum · 5 fn · 1 const · 2 crate-vis | RuntimeMode, RuntimeProviderKind, RuntimeRole | Runtime mode, provider-kind, and role taxonomies with string conversions |
+| `src/runtime/routes.rs` | src | s | 4 struct · 3 enum · 2 fn · 1 crate-vis | RuntimeHealthStatus, RuntimeRoute, RuntimeRouteProvenance, RuntimeRouteReason, RuntimeRouteSource, RuntimeRouteState, RuntimeStatus | Resolved route decisions and redacted/full status views for health and discovery |
 | `src/runtime/tests.rs` | test | m | — | — | — |
-| `src/server.rs` | src | L | 1 struct · 2 fn · 17 crate-vis | SyncServer | — |
+| `src/server/core.rs` | src | s | 1 struct · 2 fn · 5 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/leases.rs` | src | m | 9 crate-vis | — | Device-lease registry: reads, registration, revocation, and commit/mirror |
+| `src/server/lifecycle.rs` | src | s | 12 crate-vis | — | Periodic lifecycle jobs: lease expiry and reassert-drain with debounce |
+| `src/server/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/tests.rs` | test | L | — | — | — |
+| `src/server/windows.rs` | src | s | 7 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
 | `src/usage/allowance.rs` | src | s | 7 struct · 1 enum · 7 crate-vis | ConsumerAllowanceState, ConsumerAllowanceWarning, ConsumerAllowanceWarningLevel, ConsumerTopUp, ConsumerTopUpRequest, ConsumerTopUpState, ConsumerUsageDetails, ConsumerUsageState | Consumer allowance states, warning levels, and top-up request types |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 8 crate-vis | UsageError | Msgpack codec for ledger records and usage error mapping |
