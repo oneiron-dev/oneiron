@@ -26,16 +26,23 @@ concurrency:
 jobs:
   ratchet:
     name: Baseline ratchet
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Self-hosted macOS runner (HYG-06b, see ci.yml's runner header);
+    # CI_PAUSED is the wave switch shared with ci.yml. ripgrep is part of
+    # the runner host contract (AGENTS.md "Self-hosted runners"), so the old
+    # apt-get install step is gone.
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 15
+    if: vars.CI_PAUSED != 'true'
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # check.sh counts with ripgrep and treats a missing `rg` as
-      # RATCHET-ERROR, so install it rather than discovering the gap as a
-      # hard failure with nothing measured.
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+          clean: true
+      # check.sh treats a missing `rg` as RATCHET-ERROR; name the host gap
+      # before the scan runs rather than discovering it as a hard failure
+      # with nothing measured.
+      - name: Host tools
+        run: rg --version
       - name: Check ratchet baselines
         run: scripts/ratchet/check.sh
       # Same main-only rationale as the counts: a stacked wave reshapes
