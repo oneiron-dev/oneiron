@@ -147,11 +147,16 @@ jobs:
       - name: Clippy (oneiron, featureless)
         if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true'
         run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
-      # Host typos (host contract, AGENTS.md): the crate-ci action downloads
-      # its binary from github.com on every run, and the first proving run
-      # lost that download to a DNS blip. Config is typos.toml either way.
-      - name: typos
-        run: typos --version && typos
+      # typos, pinned like cargo-deny: the exact version matters (its
+      # dictionary changes between releases, and a host's own typos is
+      # whatever brew last installed), and the crate-ci action re-downloads
+      # its binary from github.com on every run (the first proving run lost
+      # that download to a DNS blip). Config is typos.toml.
+      - name: typos 1.45.1 (host-local pin under ~/ci/tools)
+        run: |
+          cargo install --locked typos-cli@1.45.1 --root "$HOME/ci/tools"
+          "$HOME/ci/tools/bin/typos" --version
+          "$HOME/ci/tools/bin/typos"
       # The policy wrapper (scripts/advisory-policy/check.py) requires the
       # exact cargo-deny version it was validated against, and the host's
       # own cargo-deny is whatever the developer keeps. So the pinned copy
