@@ -87,13 +87,24 @@ def write_advisory(database, entry, informational="unmaintained", extra=""):
 class WorkflowTests(unittest.TestCase):
     def test_manual_dispatch_reaches_deny_job(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        # Pin the current simple YAML shape without adding a YAML dependency.
-        self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:\n\n(?=\S)")
-        job = re.search(r"(?m)^  deny:\n((?:    .*\n|\n)*)", workflow)
+        # Pin the current YAML shape without adding a YAML dependency: the deny
+        # policy runs inside the `checks` job (HYG-06b folded fmt/clippy/typos/
+        # deny into one runner slot), and a manual dispatch must always reach
+        # it — the job condition starts with always() so a broken path detector
+        # cannot skip it, and the two policy steps carry no per-step gate.
+        self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:\n")
+        job = re.search(r"(?m)^  checks:\n((?:    .*\n|\n)*)", workflow)
         self.assertIsNotNone(job)
-        conditions = [line for line in job[1].splitlines() if line.startswith("    if:")]
-        self.assertEqual(conditions, ["    if: github.event_name == 'workflow_dispatch'"])
-        self.assertNotRegex(job[1], r"(?m)^    needs:")
+        condition = re.search(r"(?m)^    if: >-\n((?:      .*\n)+)", job[1])
+        self.assertIsNotNone(condition)
+        clauses = " ".join(line.strip() for line in condition[1].splitlines())
+        self.assertTrue(clauses.startswith("always()"), clauses)
+        self.assertIn("github.event_name == 'workflow_dispatch'", clauses)
+        for command in ("python3 -m unittest discover -s scripts/advisory-policy",
+                        "python3 scripts/advisory-policy/check.py"):
+            step = re.search(r"(?m)^      - name: [^\n]*\n((?:        .*\n)*?)        run: " + re.escape(command), job[1])
+            self.assertIsNotNone(step, command)
+            self.assertNotIn("if:", step[1], command)
 
 
 class PolicyTests(unittest.TestCase):
