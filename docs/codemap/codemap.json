@@ -2646,32 +2646,95 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/companion_preset/mod.rs",
+     "purpose": "ONE-1821 [BK-10] companion booking presets",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionConfirmationMode",
+      "CompanionPresetRow",
+      "HangoutProposalAssembly",
+      "ProposalCarrier"
+     ],
+     "path": "src/booking/companion_preset/preset.rs",
+     "purpose": "Companion preset manifest parsing and the friend-hangout pack-data binding",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ChoiceId",
-      "CompanionConfirmationMode",
-      "CompanionPresetRow",
       "CompanionProposal",
       "CompanionProposalCreation",
       "CompanionSoftConfirmation",
-      "HangoutProposalAssembly",
       "OneTimeParticipantToken",
-      "ProposalCarrier",
       "ProposalChoice",
       "ProposalId",
       "ProposalTap",
       "TapAggregate"
      ],
-     "path": "src/booking/companion_preset.rs",
-     "purpose": "ONE-1821 [BK-10] companion booking presets",
+     "path": "src/booking/companion_preset/proposal.rs",
+     "purpose": "Companion proposal state, creation, and the curated shortlist",
      "surface": {
-      "const": 4,
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 10,
-      "struct": 11
+      "const": 1,
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 9
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/companion_preset/render.rs",
+     "purpose": "Lens rendering for companion proposals and opaque message links",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/companion_preset/storage.rs",
+     "purpose": "Companion proposal row storage, token hashing, and error constructors",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/companion_preset/tap.rs",
+     "purpose": "Proposal taps, the authorized common intersection, and soft confirmation",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/companion_preset/tests.rs",
+     "purpose": "Companion preset and proposal test suite",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -8081,24 +8144,88 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AdmittedPluginSection",
-      "AuthorityLaneRef",
-      "PluginInstallClaimPayload",
-      "PluginInstallExecutor",
-      "PluginInstallOrigin",
-      "PluginInstallSource",
-      "PluginInstallTarget",
-      "PluginProposalRow",
       "PluginSectionAdmission",
-      "PluginSectionError",
-      "PluginSectionInstallProposal",
-      "PluginSectionRegistry",
-      "PluginSectionRow",
-      "PluginSectionSnapshot",
-      "PluginSuggestionKey",
+      "PluginSectionRegistry"
+     ],
+     "path": "src/context_board/plugin/admission.rs",
+     "purpose": "Post-consent execution and the live registry projection",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PluginInstallClaimPayload",
+      "PluginSectionInstallProposal"
+     ],
+     "path": "src/context_board/plugin/claim.rs",
+     "purpose": "Install claim payload and the pre-consent proposal path",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PluginSuggestionKey"
+     ],
+     "path": "src/context_board/plugin/codec.rs",
+     "purpose": "Canonical manifest codec, digest, and suggestion key",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PluginSectionError"
+     ],
+     "path": "src/context_board/plugin/errors.rs",
+     "purpose": "Plugin-seam error type and result alias",
+     "surface": {
+      "enum": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PluginInstallOrigin",
+      "PluginInstallTarget",
+      "ValidatedSectionManifest"
+     ],
+     "path": "src/context_board/plugin/install.rs",
+     "purpose": "Install origin, target, and the validated manifest",
+     "surface": {
+      "enum": 2,
+      "fn": 12,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityLaneRef",
+      "PluginInstallExecutor",
+      "PluginInstallSource",
       "SectionBindingResolver",
       "SectionId",
       "SectionManifest",
@@ -8107,18 +8234,61 @@
       "SectionVerbAllowlist",
       "SectionVerbRef",
       "SkillLifecycleSource",
-      "StateFamilyRef",
-      "ValidatedSectionManifest"
+      "StateFamilyRef"
      ],
-     "path": "src/context_board/plugin.rs",
+     "path": "src/context_board/plugin/manifest.rs",
+     "purpose": "Versioned section-manifest schema, verb allowlist, and install traits",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 8,
+      "trait": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/plugin/mod.rs",
      "purpose": "Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the…",
      "surface": {
-      "const": 5,
-      "enum": 4,
-      "fn": 45,
-      "struct": 17,
-      "trait": 4,
-      "type": 1
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PluginProposalRow",
+      "PluginSectionRow",
+      "PluginSectionSnapshot"
+     ],
+     "path": "src/context_board/plugin/render.rs",
+     "purpose": "Pure plugin renderers and the pending-proposal section",
+     "surface": {
+      "const": 1,
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/plugin/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/plugin/validate.rs",
+     "purpose": "Bounded-shape checks and the two-phase validation gate",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -8273,7 +8443,28 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/tasks/authority_state.rs",
+     "purpose": "The ack/cancel render-state door: reads the TASK authority facts and appends them inside a caller transaction",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/tasks/mod.rs",
+     "purpose": "TASKS section projections — intent rows, realizing jobs, and the render-tier ack/cancel state helpers behind…",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CancelRejectionPathology",
@@ -8284,15 +8475,34 @@
       "TasksOverflow",
       "TasksSection"
      ],
-     "path": "src/context_board/tasks.rs",
-     "purpose": "TASKS section projections — intent rows, realizing jobs, and the render-tier ack/cancel state helpers behind…",
+     "path": "src/context_board/tasks/projection.rs",
+     "purpose": "Typed TASKS state: board status, intent and job presence, the ladder projection, and the overflow footer",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 14,
+      "fn": 11,
       "struct": 6
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/tasks/render.rs",
+     "purpose": "Pure TASKS row rendering: intent rows, folded jobs, cause tokens, expansion detail",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/tasks/tests.rs",
+     "purpose": "TASKS board tests: projection, row rendering, the overflow grammar, and render-state agreement",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -24233,9 +24443,9 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 69,
+     "files": 75,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Engine-generic booking module"
     },
@@ -24471,9 +24681,9 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 19,
+     "files": 32,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Typed Context Board render projections"
     },
@@ -25360,10 +25570,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 11,
+   "over_bar": 8,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1437,
-   "test_files": 523
+   "source_files": 1453,
+   "test_files": 526
   },
   "oneiron-bench": {
    "files": [
@@ -26984,10 +27194,58 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade/boundary.rs",
+     "purpose": "JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ActorScopedVault",
+      "VaultBridge"
+     ],
+     "path": "src/facade/bridge.rs",
+     "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NapiWitnessTurnInput",
+      "NativeClient"
+     ],
+     "path": "src/facade/client.rs",
+     "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
+     "surface": {
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade/convert.rs",
+     "purpose": "DTO to/from engine converters plus the forget paging helper",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "NapiAdmitImportedClaimInput",
       "NapiBlobArtifactInput",
       "NapiBlobVersionView",
@@ -27028,17 +27286,12 @@
       "NapiTextIndexField",
       "NapiWitnessMessage",
       "NapiWitnessReceipt",
-      "NapiWitnessTurn",
-      "NapiWitnessTurnInput",
-      "NativeClient",
-      "VaultBridge"
+      "NapiWitnessTurn"
      ],
-     "path": "src/facade.rs",
-     "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade",
+     "path": "src/facade/dtos.rs",
+     "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "crate-vis": 5,
-      "fn": 40,
-      "struct": 45
+      "struct": 41
      }
     },
     {
@@ -27055,10 +27308,49 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/facade/mod.rs",
+     "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/facade/numeric.rs",
      "purpose": "JavaScript numbers must be validated before N-API can narrow them",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/facade/tests.rs",
+     "purpose": "Boundary regression tests for the napi facade surface",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade/verbs_claims.rs",
+     "purpose": "Core claim/witness/read verbs of the actor-scoped surface",
+     "surface": {
+      "fn": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade/verbs_services.rs",
+     "purpose": "Structural/blob/retrieval/outbound/calendar verbs of the actor surface",
+     "surface": {
+      "fn": 18
      }
     },
     {
@@ -27145,10 +27437,10 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 3,
+     "files": 11,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
     "lib": {
@@ -27166,10 +27458,10 @@
      "purpose": "—"
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "—",
-   "source_files": 11,
-   "test_files": 0
+   "source_files": 18,
+   "test_files": 1
   },
   "oneiron-py": {
    "files": [
@@ -28099,13 +28391,73 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/companion.rs",
-     "purpose": "—",
+     "path": "src/api/companion/access_grants.rs",
+     "purpose": "Companion access-grant routes and DTOs",
      "surface": {
-      "crate-vis": 75
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/auth.rs",
+     "purpose": "Companion authorization helpers",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/errors.rs",
+     "purpose": "Companion error constructors",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/mod.rs",
+     "purpose": "Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/profiles.rs",
+     "purpose": "Companion profile routes, DTOs, and state builders",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/register.rs",
+     "purpose": "Companion register record routes and DTOs",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/register_wire.rs",
+     "purpose": "Register wire-format converters and validators",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -28159,13 +28511,63 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/api/context_pack.rs",
-     "purpose": "—",
+     "path": "src/api/context_pack/controls.rs",
+     "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 58
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/eiri_assembly.rs",
+     "purpose": "Companion scope-resolution authorization for context-pack assembly",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/interlocutor.rs",
+     "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/mod.rs",
+     "purpose": "Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/resolve.rs",
+     "purpose": "Route handler plus depth/policy/time/budget resolution for context-pack assembly",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/response.rs",
+     "purpose": "Response DTOs and engine-to-wire mapping functions for context-pack assembly",
+     "surface": {
+      "crate-vis": 26
      }
     },
     {
@@ -28179,13 +28581,53 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/core.rs",
+     "path": "src/api/core/batch.rs",
+     "purpose": "Batch-write DTOs, route handler, and entity-put staging",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/core/hydrate.rs",
+     "purpose": "Hydrate and short-id hydrate DTOs, routes, and mappers",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/core/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 65
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/core/query.rs",
+     "purpose": "Query/list/capability routes and their paging helpers",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/core/write_shape.rs",
+     "purpose": "Create-entity DTOs, announcement normalization, and body field helpers",
+     "surface": {
+      "crate-vis": 19
      }
     },
     {
@@ -28505,13 +28947,53 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/openapi.rs",
-     "purpose": "—",
+     "path": "src/api/openapi/booking_schemas.rs",
+     "purpose": "Booking schema blocks for the OpenAPI doc",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/descriptions.rs",
+     "purpose": "Schema description-gap filler",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/endpoints_merge.rs",
+     "purpose": "OpenAPI endpoint wiring and component merges",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/mod.rs",
+     "purpose": "OpenAPI document assembly for the HTTP API",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/security.rs",
+     "purpose": "Security-scheme wiring and schema property-description helper",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -28901,19 +29383,37 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/lookup.rs",
+     "purpose": "Leaf config helpers: env lookups, value parsing, and secret redaction",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "EnvConfig",
-      "ServeArgs",
-      "ServeConfig",
-      "SyncServerConfig"
+      "EnvConfig"
      ],
-     "path": "src/config.rs",
-     "purpose": "—",
+     "path": "src/config/merge.rs",
+     "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "fn": 9,
-      "struct": 4
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/mod.rs",
+     "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
+     "surface": {
+      "mod": 3,
+      "re-export": 3
      }
     },
     {
@@ -28931,6 +29431,33 @@
      "path": "src/config/process_env_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ServeArgs"
+     ],
+     "path": "src/config/serve_args.rs",
+     "purpose": "CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ServeConfig",
+      "SyncServerConfig"
+     ],
+     "path": "src/config/server_config.rs",
+     "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
     },
     {
      "bucket": "L",
@@ -29664,19 +30191,70 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "RuntimeConfig",
+      "RuntimeConfig"
+     ],
+     "path": "src/runtime/config.rs",
+     "purpose": "Resolved runtime config including the 163-line resolution impl",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "RuntimeConfigOverride",
-      "RuntimeHealthStatus",
-      "RuntimeMode",
-      "RuntimeProviderKind",
-      "RuntimeRole",
       "RuntimeRoleDefaultOverrides",
       "RuntimeRoleDefaults",
       "RuntimeRoleTarget",
-      "RuntimeRoleTargetOverride",
+      "RuntimeRoleTargetOverride"
+     ],
+     "path": "src/runtime/defaults.rs",
+     "purpose": "Per-role default targets, explicitness tracking, and the full override-merge cluster",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 11,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/mod.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RuntimeMode",
+      "RuntimeProviderKind",
+      "RuntimeRole"
+     ],
+     "path": "src/runtime/mode.rs",
+     "purpose": "Runtime mode, provider-kind, and role taxonomies with string conversions",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RuntimeHealthStatus",
       "RuntimeRoute",
       "RuntimeRouteProvenance",
       "RuntimeRouteReason",
@@ -29684,14 +30262,13 @@
       "RuntimeRouteState",
       "RuntimeStatus"
      ],
-     "path": "src/runtime.rs",
-     "purpose": "—",
+     "path": "src/runtime/routes.rs",
+     "purpose": "Resolved route decisions and redacted/full status views for health and discovery",
      "surface": {
-      "const": 1,
       "crate-vis": 1,
-      "enum": 6,
-      "fn": 25,
-      "struct": 10
+      "enum": 3,
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -29703,17 +30280,48 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "SyncServer"
      ],
-     "path": "src/server.rs",
-     "purpose": "—",
+     "path": "src/server/core.rs",
+     "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/leases.rs",
+     "purpose": "Device-lease registry: reads, registration, revocation, and commit/mirror",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/lifecycle.rs",
+     "purpose": "Periodic lifecycle jobs: lease expiry and reassert-drain with debounce",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/mod.rs",
+     "purpose": "Sync server state and maintenance jobs, split by concern",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
      }
     },
     {
@@ -29723,6 +30331,16 @@
      "path": "src/server/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/windows.rs",
+     "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "s",
@@ -30009,9 +30627,9 @@
    ],
    "modules": {
     "api": {
-     "files": 103,
+     "files": 122,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "HTTP query routes for web dashboard access"
     },
@@ -30044,11 +30662,11 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 4,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file+dir",
-     "purpose": "—"
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
     "error": {
      "files": 2,
@@ -30114,18 +30732,18 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 2,
+     "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "—"
     },
     "server": {
-     "files": 2,
+     "files": 6,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
-     "purpose": "—"
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Sync server state and maintenance jobs, split by concern"
     },
     "skills_pack": {
      "files": 1,
@@ -30149,9 +30767,9 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 8,
+   "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 137,
+   "source_files": 168,
    "test_files": 68
   },
   "oneiron-uniffi": {
