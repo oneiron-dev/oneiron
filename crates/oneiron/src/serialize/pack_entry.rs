@@ -10,13 +10,13 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value};
 
+use crate::context_board::ResumeBundle;
 use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
 use crate::context_pack::FieldProfile;
 use crate::context_pack::PackFormat;
 use crate::context_pack::PackStats;
 use crate::context_pack::TokenAllocation;
-use crate::eiri::ResumeBundle;
 
 use super::group_labels::group_key;
 use super::json_format::{json_rows, section_object};

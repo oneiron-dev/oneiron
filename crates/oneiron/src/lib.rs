@@ -10,7 +10,7 @@
 //! - Agent runtime: `agent_def`, `agent_dispatch`, `attempt_queue`, `run_tree`, `code_run`
 //! - Dreamer & skills: `dreamer_wake`, `dreamer_consolidation`, `inbox`, `skill`, `skill_hub`
 //! - Code, artifacts & custody: `codebase`, `git_wire`, `blob_artifact`, `secret_custody`
-//! - Surfaces & hosts: `memory`, `eiri`, `context_board`, `genui`, `voice_cascade`
+//! - Surfaces & hosts: `memory`, `context_board`, `genui`, `voice_cascade`
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -199,7 +199,6 @@ pub mod secret_snapshot;
 pub mod agent_inbox_lens;
 pub mod board_verb;
 pub mod context_board;
-pub mod eiri;
 pub mod genui;
 pub mod lens;
 pub mod memory;
@@ -320,6 +319,11 @@ pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
 };
+pub use crate::context_board::{
+    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
+    EiriSessionRagState, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
+    UnprocessedItem,
+};
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
     EmptyReason, FieldProfile, PackFormat, PackStats, PackTokenStats, TokenAllocation,
@@ -359,11 +363,6 @@ pub use crate::dreamer_wake::{
     WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger,
 };
 pub use crate::edge::{EdgeActorClass, EdgeInfo, EdgeKind};
-pub use crate::eiri::{
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriSessionRagState, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
-    UnprocessedItem,
-};
 pub use crate::entity_id::{EntityId, parse_presentation_id};
 pub use crate::error::{CompactionPacketError, Error, ErrorKind, Result};
 #[cfg(feature = "sync")]

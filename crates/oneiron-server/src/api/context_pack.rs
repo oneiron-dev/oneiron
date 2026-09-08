@@ -1822,7 +1822,7 @@ pub(crate) async fn run_context_pack_builder(
         .as_ref()
         .and_then(|context| context.memory_board_budget)
         .map(|budget| {
-            oneiron::context_pack::assemble_eiri_memory_board(
+            oneiron::context_board::assemble_eiri_memory_board(
                 &pack,
                 budget,
                 eiri_context

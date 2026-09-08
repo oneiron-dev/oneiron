@@ -1,20 +1,16 @@
-//! Memory-board view assembled from a finished context pack.
-//!
-//! Designed in canon (eiri/context, ARCH-0004, eiri-arch-0016); unwired as of
-//! 2026-08-19 — needs wiring/design completion.
+//! MEMORIES projection over a finished context pack — "what retrieval PULLED" (ARCH-0067 §1). Unwired since 2026-08-19. Step two: per-world PINNED / snippet / index-only tiers under the one shared memories budget (§1 MEMORIES row l.42, §3 shape rules l.170).
 
-use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
-use crate::disclosure::DisclosureAssembly;
-use crate::eiri::{
+use super::memories::{
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
     EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
 };
+use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::context_pack::{ContextEntity, ContextPack};
+use crate::disclosure::DisclosureAssembly;
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
-
-use super::types::{ContextEntity, ContextPack};
 
 /// Builds the Eiri Context v4 memory board from an already assembled pack.
 ///

@@ -96,7 +96,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::attempt_queue::{AttemptId, ManifestEntry, ManifestKind};
 #[cfg(test)]
-use crate::eiri::EiriMemoryBoard;
+use crate::context_board::EiriMemoryBoard;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

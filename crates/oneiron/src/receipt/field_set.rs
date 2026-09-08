@@ -12,7 +12,7 @@ use super::kernel::{
 #[cfg(doc)]
 use super::kernel::ReceiptKind;
 use crate::attempt_queue::{ManifestEntry, ManifestKind};
-use crate::eiri::EiriMemoryBoard;
+use crate::context_board::EiriMemoryBoard;
 use crate::error::{Error, Result};
 use crate::prompt::PromptRecompileStamp;
 
