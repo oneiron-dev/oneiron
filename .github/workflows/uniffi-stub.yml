@@ -20,9 +20,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same flags as ci.yml: the runners share one persistent target dir and
-  # cargo fingerprints RUSTFLAGS, so a different value would rebuild cold.
-  RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
+  # No RUSTFLAGS, as in ci.yml: the vendored heed path dependency is not
+  # lint-capped, and unset flags share the runner cache with dev builds.
 
 concurrency:
   group: uniffi-stub-${{ github.event.pull_request.number || github.sha }}
