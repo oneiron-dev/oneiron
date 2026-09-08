@@ -740,14 +740,17 @@ pub fn screen_turn_inputs(
 /// form: the screen reads TURN bodies and nothing else, so a row of any other
 /// type — a SECRET_CUSTODY carrier most of all — yields no text and the turn
 /// passes unscored.
-fn screen_text_from_raw(raw: &[u8]) -> Option<(DreamerTurnRole, u64, Option<String>)> {
+fn screen_text_from_raw(
+    raw: &[u8],
+    assistant_display_names: &[String],
+) -> Option<(DreamerTurnRole, u64, Option<String>)> {
     let header = EntityMetadataHeader::parse(raw)?;
     if header.entity_type != ENTITY_TYPE_TURN {
         return None;
     }
     let facts = decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN.min(raw.len())..]);
     Some((
-        dreamer_turn_role(facts.speaker.as_deref()),
+        dreamer_turn_role(facts.speaker.as_deref(), assistant_display_names),
         header.learned_at,
         facts.text,
     ))
@@ -775,7 +778,8 @@ pub(crate) fn prefilter_partition_input(
     let mut inputs = Vec::with_capacity(turns.len());
     for turn in turns {
         let text = match vault.get_raw(&turn.turn_id)? {
-            Some(raw) => screen_text_from_raw(&raw).and_then(|(_, _, text)| text),
+            Some(raw) => screen_text_from_raw(&raw, &vault.config.assistant_display_names)
+                .and_then(|(_, _, text)| text),
             None => None,
         };
         inputs.push((*turn, text));
@@ -805,7 +809,8 @@ pub(crate) fn prefilter_partition_input_in_txn(
     let mut inputs = Vec::with_capacity(turns.len());
     for turn in turns {
         let text = match vault.get_raw_in(txn, &turn.turn_id)? {
-            Some(raw) => screen_text_from_raw(&raw).and_then(|(_, _, text)| text),
+            Some(raw) => screen_text_from_raw(&raw, &vault.config.assistant_display_names)
+                .and_then(|(_, _, text)| text),
             None => None,
         };
         inputs.push((*turn, text));

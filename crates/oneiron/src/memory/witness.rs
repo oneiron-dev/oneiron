@@ -994,7 +994,8 @@ const WITNESS_TURN_SPEAKER_KEY: &str = "speaker";
 ///
 /// These are the ROLE strings the consolidation scanner reads
 /// (`dreamer_turn_role`), not the MESSAGE-body `author` vocabulary: a turn
-/// stamped `companion` would score `Unknown` and never reach extraction.
+/// stamped `companion` would score `Unknown` and never reach extraction
+/// unless the host lists that name in `VaultConfig::assistant_display_names`.
 const fn canonical_turn_speaker(author: WitnessAuthor) -> Option<&'static str> {
     match author {
         WitnessAuthor::User => Some("user"),
