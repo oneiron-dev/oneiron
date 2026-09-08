@@ -9560,27 +9560,68 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "DreamerTrapKind",
-      "DreamerTrapState",
-      "DurableStepContext",
-      "DurableStepError",
-      "PeerResultWaitBinding",
-      "StepOutcome",
-      "StepProgression",
-      "TrapRef"
-     ],
-     "path": "src/llm/step.rs",
+     "notable": [],
+     "path": "src/llm/step/codec.rs",
+     "purpose": "Pinned-key MessagePack codec helpers shared by every step-layer decoder",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/execute.rs",
+     "purpose": "Durable step execution: memo/admission/deadline orchestration plus deadline-race, retry, and lease-settle…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "const": 8,
-      "crate-vis": 6,
-      "enum": 5,
-      "fn": 13,
-      "struct": 3,
-      "type": 1
+      "crate-vis": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PeerResultWaitBinding"
+     ],
+     "path": "src/llm/step/peer_wait.rs",
+     "purpose": "Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/step_claim.rs",
+     "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/step_state.rs",
+     "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in vault_meta",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -9590,6 +9631,50 @@
      "path": "src/llm/step/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/trap.rs",
+     "purpose": "Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/trap_binding.rs",
+     "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DreamerTrapKind",
+      "DreamerTrapState",
+      "DurableStepContext",
+      "DurableStepError",
+      "StepOutcome",
+      "StepProgression",
+      "TrapRef"
+     ],
+     "path": "src/llm/step/types.rs",
+     "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
+     "surface": {
+      "const": 8,
+      "crate-vis": 42,
+      "enum": 5,
+      "fn": 3,
+      "struct": 2,
+      "type": 1
+     }
     },
     {
      "bucket": "L",
@@ -16919,7 +17004,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 9,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -17444,9 +17529,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 140,
+   "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 834,
+   "source_files": 842,
    "test_files": 374
   },
   "oneiron-bench": {
