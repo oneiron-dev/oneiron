@@ -124,7 +124,7 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   (persistent, outside the checkout, so `clean: true` checkouts never wipe it),
   `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
   `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
-  toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and every
+  toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and no
   workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
