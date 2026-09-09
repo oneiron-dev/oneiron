@@ -29,6 +29,20 @@ use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, require_key_len};
 use heed::RwTxn;
 use rmpv::Value;
 
+/// One `edge.provenance` Claim as the canonical writer receives it: the
+/// wrapper's id, the semantic edge it attaches to, the record body, the
+/// validated actor class, and the two optional halves an import or an
+/// explicit supersession adds.
+pub(super) struct EdgeProvenanceWrite<'a> {
+    pub(super) claim_id: &'a EntityId,
+    pub(super) subject: &'a EdgeRef,
+    pub(super) body: &'a EdgeProvenanceClaimBody,
+    pub(super) actor_class: EdgeActorClass,
+    pub(super) learned_at: u64,
+    pub(super) explicit_prior: Option<&'a EntityId>,
+    pub(super) imported_evidence: Option<Value>,
+}
+
 impl Vault {
     /// Writes an `edge.provenance` Claim for an EXISTING semantic edge,
     /// applies the contract's SUPERSEDE lifecycle to prior live Claims, and
@@ -347,29 +361,33 @@ impl Vault {
         self.with_write_txn(|wtxn| {
             self.write_edge_provenance_in_txn(
                 wtxn,
-                claim_id,
-                subject,
-                body,
-                actor_class,
-                learned_at,
-                explicit_prior,
-                None,
+                EdgeProvenanceWrite {
+                    claim_id,
+                    subject,
+                    body,
+                    actor_class,
+                    learned_at,
+                    explicit_prior,
+                    imported_evidence: None,
+                },
             )
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn write_edge_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
-        claim_id: &EntityId,
-        subject: &EdgeRef,
-        body: &EdgeProvenanceClaimBody,
-        actor_class: EdgeActorClass,
-        learned_at: u64,
-        explicit_prior: Option<&EntityId>,
-        imported_evidence: Option<Value>,
+        write: EdgeProvenanceWrite<'_>,
     ) -> Result<()> {
+        let EdgeProvenanceWrite {
+            claim_id,
+            subject,
+            body,
+            actor_class,
+            learned_at,
+            explicit_prior,
+            imported_evidence,
+        } = write;
         if explicit_prior == Some(claim_id) {
             return Err(Error::ProvenanceSelfSupersession);
         }
