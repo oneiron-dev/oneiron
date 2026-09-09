@@ -23,9 +23,9 @@ pub(crate) use self::store::{
 // Test-only seam: the sibling test module names these bare through
 // `use super::*`, as it did when they were private items of the flat file.
 #[cfg(test)]
-pub(crate) use self::ingest::hosted_media_type_for_blob;
+use self::ingest::hosted_media_type_for_blob;
 #[cfg(test)]
-pub(crate) use self::store::{codebase_asset_entity_id, codebase_snapshot_entity_id};
+use self::store::{codebase_asset_entity_id, codebase_snapshot_entity_id};
 
 #[cfg(test)]
 mod tests;

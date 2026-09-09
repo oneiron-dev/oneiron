@@ -452,13 +452,13 @@ impl Vault {
     }
 }
 
-pub(crate) fn codebase_asset_entity_id(
+pub(super) fn codebase_asset_entity_id(
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<EntityId> {
     entity_id_from_hash_material(CODEBASE_ASSET_ID_DOMAIN, &[content_hash])
 }
 
-pub(crate) fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> {
+pub(super) fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> {
     entity_id_from_hash_material(
         CODEBASE_SNAPSHOT_ID_DOMAIN,
         &[&snapshot.scope_key, &snapshot.fork_hash],

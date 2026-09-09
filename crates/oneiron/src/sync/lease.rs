@@ -61,7 +61,7 @@ pub const LEASE_RECORD_VERSION: u8 = 0x02;
 /// 90-day lease: `expires_at = renewed_at + LEASE_DURATION_SECS` (OD-4).
 pub const LEASE_DURATION_SECS: u64 = 7_776_000;
 /// Current single-vault lease scope used by the existing server path.
-pub(crate) const DEFAULT_LEASE_VAULT_ID: u64 = 0;
+pub(super) const DEFAULT_LEASE_VAULT_ID: u64 = 0;
 /// Proof-of-possession transcript domain separator (OD-6 literal):
 /// `msg = LEASE_POP_DOMAIN || client_id:8 BE || pubkey:32`.
 pub const LEASE_POP_DOMAIN: &[u8] = b"oneiron/lease-pop/v1";
@@ -313,7 +313,7 @@ fn parse_hex_component(component: &str) -> Result<u64> {
 /// `blob` is the full stored envelope (25 B header + body): the transcript
 /// binds the entity id and the EXACT header bytes, so a valid receipt
 /// transplanted under another id or a shifted envelope fails step 3.
-pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
+pub(super) fn verify_new_receipt_origin_for_vault_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_id: u64,
@@ -567,7 +567,7 @@ pub mod test_hooks {
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(crate) fn take_mirror_failure() -> bool {
+    pub(super) fn take_mirror_failure() -> bool {
         MIRROR_FAILURE.with(|c| c.replace(false))
     }
 }

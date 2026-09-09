@@ -60,7 +60,7 @@ impl<'de> Deserialize<'de> for LensNode {
     }
 }
 
-pub(crate) struct LensNodeSeed {
+pub(in crate::lens) struct LensNodeSeed {
     pub(crate) depth: usize,
 }
 

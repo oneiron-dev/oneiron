@@ -64,7 +64,7 @@ impl WindowKey {
     }
 
     #[cfg(test)]
-    pub(crate) fn new_unchecked_for_test(key: impl Into<String>) -> Self {
+    pub(super) fn new_unchecked_for_test(key: impl Into<String>) -> Self {
         Self(key.into())
     }
 

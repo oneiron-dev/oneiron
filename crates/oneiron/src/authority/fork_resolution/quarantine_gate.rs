@@ -189,7 +189,7 @@ fn participants_without_key(
 /// The exemption covers the entry SIGNER only: a cosign carries no chain
 /// position, so cosigned entries need an ancestry proof or fail closed.
 /// Scans without a concrete entry context pass `None` and stay fail-closed.
-pub(crate) fn key_is_quarantined_for_entry(
+pub(in crate::authority) fn key_is_quarantined_for_entry(
     state: &FoldState,
     context: FoldContext<'_>,
     key: &AuthorityKey,
@@ -263,7 +263,7 @@ fn entry_is_fork_candidate(
         .is_some_and(|group| group.contains(&entry_hash))
 }
 
-pub(crate) fn resolve_global_forks_for_revoke(
+pub(in crate::authority) fn resolve_global_forks_for_revoke(
     state: &mut FoldState,
     context: FoldContext<'_>,
     revoked_key: &AuthorityKey,
@@ -289,7 +289,7 @@ pub(crate) fn resolve_global_forks_for_revoke(
     }
 }
 
-pub(crate) fn resolve_global_forks_for_recovery_reboot(
+pub(in crate::authority) fn resolve_global_forks_for_recovery_reboot(
     state: &mut FoldState,
     context: FoldContext<'_>,
 ) {

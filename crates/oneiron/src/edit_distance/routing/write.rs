@@ -82,7 +82,7 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
 /// # Errors
 ///
 /// [`Error::CorruptedIndex`] on an undecodable row; storage errors.
-pub(crate) fn folded_model_version_in_txn(
+pub(in crate::edit_distance) fn folded_model_version_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     delta_receipt: &str,
