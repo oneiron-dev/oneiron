@@ -25916,7 +25916,7 @@
      "path": "src/interface_bench/eval_run.rs",
      "purpose": "Smoke, probe, and full execution plus resume validation",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
