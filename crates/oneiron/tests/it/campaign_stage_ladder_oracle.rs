@@ -32,8 +32,8 @@ use oneiron::calendar::outcome::{
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CrmStageValue, EvidenceBasis, PREDICATE_CAMPAIGN_MEMBER, PREDICATE_CRM_STAGE,
-    StageEvidenceClass, StageKey, claim_class_descriptors, encode_campaign_member_value,
-    encode_crm_stage_value,
+    StageEvidenceClass, StageKey, claim_class_descriptors, decode_crm_stage_value,
+    encode_campaign_member_value, encode_crm_stage_value,
 };
 use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CampaignEnrollmentAttemptPayload,
@@ -1037,18 +1037,20 @@ fn an_owner_attested_outcome_is_never_relabelled_machine() {
     );
     let (id, body) = only_live_claim(&attesting_vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, advanced_ref);
+    let stage = decode_crm_stage_value(&body.value).unwrap();
+    assert_eq!(stage.stage, key(CALL_HELD));
     assert_eq!(
-        body.value,
-        encode_crm_stage_value(&CrmStageValue {
-            campaign_ref: test_id(CAMPAIGN_SEED),
-            stage: key(CALL_HELD),
-            evidence_class: StageEvidenceClass::CalendarEventOutcome,
-            evidence_refs: vec![outcome_claim],
-            basis: EvidenceBasis::OwnerAttested,
-            recorded_at: OUTCOME_AT,
-        }),
+        stage.basis,
+        EvidenceBasis::OwnerAttested,
         "CAL-07's basis rides onto the stage head",
     );
+    assert_eq!(stage.evidence_refs, vec![outcome_claim]);
+    assert_eq!(
+        stage.evidence_class,
+        StageEvidenceClass::CalendarEventOutcome
+    );
+    assert_eq!(stage.campaign_ref, test_id(CAMPAIGN_SEED));
+    assert_eq!(stage.recorded_at, OUTCOME_AT);
     assert_eq!(
         body.source,
         Some(ClaimSource::UserStated),
