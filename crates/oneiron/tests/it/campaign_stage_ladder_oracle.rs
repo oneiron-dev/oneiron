@@ -1089,15 +1089,17 @@ fn positive_later_snoozes_and_reenters_at_touch_one() {
 
     // The membership is paused with a wake condition; channels and derivation
     // ride across the transition untouched.
-    let paused = CampaignMemberValue {
-        state: CampaignMemberState::Paused {
+    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
+    let paused = decode_campaign_member_value(&body.value).unwrap();
+    assert_eq!(
+        paused.state,
+        CampaignMemberState::Paused {
             until: None,
             new_trigger: Some(true),
         },
-        ..enrolled_member()
-    };
-    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
-    assert_eq!(body.value, encode_campaign_member_value(&paused));
+    );
+    assert_eq!(paused.channels, enrolled_member().channels);
+    assert_eq!(paused.derivation, enrolled_member().derivation);
 
     // `AtOrNewTrigger` persists BOTH fields.
     let both = ReentryPlan {
@@ -1109,18 +1111,21 @@ fn positive_later_snoozes_and_reenters_at_touch_one() {
         reentry_attempt: None,
     };
     let next = snooze_with_wake(&vault, &member_id, &both, BOOKING_AT).unwrap();
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
+    let at_or_new_trigger = decode_campaign_member_value(
+        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
             .1
             .value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Paused {
-                until: Some(BOOKING_AT),
-                new_trigger: Some(true),
-            },
-            ..enrolled_member()
-        }),
+    )
+    .unwrap();
+    assert_eq!(
+        at_or_new_trigger.state,
+        CampaignMemberState::Paused {
+            until: Some(BOOKING_AT),
+            new_trigger: Some(true),
+        },
     );
+    assert_eq!(at_or_new_trigger.channels, enrolled_member().channels);
+    assert_eq!(at_or_new_trigger.derivation, enrolled_member().derivation);
 
     // A deadline alone sets only `until`.
     let dated = ReentryPlan {
@@ -1128,18 +1133,21 @@ fn positive_later_snoozes_and_reenters_at_touch_one() {
         ..both
     };
     snooze_with_wake(&vault, &next, &dated, BOOKING_AT + 60).unwrap();
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
+    let deadline_only = decode_campaign_member_value(
+        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
             .1
             .value,
-        encode_campaign_member_value(&CampaignMemberValue {
-            state: CampaignMemberState::Paused {
-                until: Some(BOOKING_AT + 60),
-                new_trigger: None,
-            },
-            ..enrolled_member()
-        }),
+    )
+    .unwrap();
+    assert_eq!(
+        deadline_only.state,
+        CampaignMemberState::Paused {
+            until: Some(BOOKING_AT + 60),
+            new_trigger: None,
+        },
     );
+    assert_eq!(deadline_only.channels, enrolled_member().channels);
+    assert_eq!(deadline_only.derivation, enrolled_member().derivation);
 }
 
 #[test]
