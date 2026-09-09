@@ -324,6 +324,38 @@ pub(super) fn hosted_serious_crime_block() -> HostedLegalPolicy {
 
 pub(super) const HOSTED_SERIOUS_CRIME_LABEL: &str = "hosted_legal/serious_crime";
 
+/// A SECOND legal concern the fixture policy publishes, equally severe and
+/// under its own category.
+pub(super) const HOSTED_SELF_HARM_LABEL: &str = "hosted_legal/self_harm";
+
+/// The fixture policy with two rows: two distinct concerns, both
+/// [`HostedLegalAction::Block`], each the only row of its category.
+///
+/// [`hosted_serious_crime_block`] carries one row, so every rule written
+/// against [`HOSTED_SERIOUS_CRIME_LABEL`] resolves through
+/// [`HostedLegalPolicy::row_for_category`] to that same row and WHICH rule
+/// acted cannot be read off the verdict. Two rows of equal severity make the
+/// acting rule visible in `row_ref` without changing what the verdict decides.
+pub(super) fn hosted_two_row_policy(rules: Vec<PolicyPatternRule>) -> HostedLegalPolicy {
+    HostedLegalPolicy {
+        pattern_rules: rules,
+        ..hosted_policy(vec![
+            hosted_row(
+                "hosted:serious-crime",
+                "serious_crime",
+                HostedLegalAction::Block,
+                "Withhold credible facilitation of serious violence or mass harm.",
+            ),
+            hosted_row(
+                "hosted:self-harm",
+                "self_harm",
+                HostedLegalAction::Block,
+                "Withhold instructions that would help a reader hurt themselves.",
+            ),
+        ])
+    }
+}
+
 /// The same policy with the substrate owner's own rules attached.
 pub(super) fn hosted_policy_with_rules(rules: Vec<PolicyPatternRule>) -> HostedLegalPolicy {
     HostedLegalPolicy {
@@ -335,6 +367,12 @@ pub(super) fn hosted_policy_with_rules(rules: Vec<PolicyPatternRule>) -> HostedL
 pub(super) fn decide_rule(id: &str, pattern: &str) -> PolicyPatternRule {
     PolicyPatternRule::new(id, pattern, HOSTED_SERIOUS_CRIME_LABEL)
         .with_role(PolicyPatternRole::Decide)
+}
+
+/// [`decide_rule`] under a caller-chosen category, for a fixture whose hard
+/// rules must resolve to DIFFERENT rows.
+pub(super) fn decide_rule_for(id: &str, pattern: &str, category: &str) -> PolicyPatternRule {
+    PolicyPatternRule::new(id, pattern, category).with_role(PolicyPatternRole::Decide)
 }
 
 pub(super) fn escalate_rule(id: &str, pattern: &str) -> PolicyPatternRule {
