@@ -811,7 +811,7 @@ fn held_outcome_is_required_for_call_held() {
 fn silent_outcome_is_none_and_projects_unknown() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
-    walk_to_call_booked(&vault);
+    let booked_ref = walk_to_call_booked(&vault);
 
     // CAL-07's reader, on an EVENT nobody recorded anything about.
     let read = read_event_outcome(&vault, test_id(EVENT_SEED)).unwrap();
@@ -819,15 +819,14 @@ fn silent_outcome_is_none_and_projects_unknown() {
     assert_eq!(project_event_outcome(read), EventOutcome::Unknown);
 
     assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
+    let (head_id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
+        head_id, booked_ref,
         "silence leaves the pipeline exactly where it was",
+    );
+    assert_eq!(
+        decode_crm_stage_value(&body.value).unwrap().stage,
+        key(CALL_BOOKED),
     );
 }
 
