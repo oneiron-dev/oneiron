@@ -1005,7 +1005,13 @@ fn relay_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
     )
     .expect_err("a malformed manifest must fail the relay pass closed");
     assert!(
-        format!("{err}").contains("malformed"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "policy_manifest",
+                ..
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())
