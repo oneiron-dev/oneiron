@@ -24,7 +24,7 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 /// Returns true when the OF-365 disclosure clamp bars this claim from ever
 /// entering a persona snapshot compile: restricted-band (Tier A) claims and
 /// claims whose sensitivity band is ambiguous (fail closed).
-pub(crate) fn persona_snapshot_tier_a_clamped(body: &ClaimBody) -> bool {
+pub(super) fn persona_snapshot_tier_a_clamped(body: &ClaimBody) -> bool {
     match claim_sensitivity_band(body) {
         None => true,
         Some(band) => band >= TIER_A_MIN_SENSITIVITY_BAND,

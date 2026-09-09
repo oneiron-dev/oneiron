@@ -93,12 +93,14 @@ pub use self::types::{
 pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity,
 };
-pub(crate) use self::emergency::{
+pub(super) use self::emergency::{
     admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
     pick_emergency_item, read_emergency_pick,
 };
-pub(crate) use self::storage::{booking_writer, put_meta, read_meta_bytes};
-pub(crate) use self::token::{digest_with, hex_lower, mint_raw_token};
+pub(crate) use self::storage::put_meta;
+pub(super) use self::storage::{booking_writer, read_meta_bytes};
+pub(crate) use self::token::hex_lower;
+pub(super) use self::token::{digest_with, mint_raw_token};
 // The three ordinary transitions are reached from outside this module only by
 // sibling test suites; the non-test doors stay behind the consumer turn.
 #[cfg(test)]

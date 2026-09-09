@@ -44,7 +44,7 @@ pub const DEFAULT_MESO_ROUND_TURN_CAP: usize = 500;
 /// Domain for the advisory partition-round hash — the exact-batch component of
 /// a consolidation attempt's dedupe key (pinned; distinct from the phase-1/2
 /// bucket domain so a round hash can never collide with a partition hash).
-pub(crate) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-partition-round:v1";
+pub(super) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-partition-round:v1";
 
 pub(super) const DREAMER_PRIVATE_WATERMARK_PREFIX: &[u8] = b"dreamer:watermark:v1:"; // + scope byte
 pub(super) const DREAMER_PRIVATE_CURSOR_PREFIX: &[u8] = b"dreamer:cursor:v1:"; // + scope byte + partition_hash(32)

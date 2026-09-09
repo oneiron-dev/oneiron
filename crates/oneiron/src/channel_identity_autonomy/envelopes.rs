@@ -153,7 +153,7 @@ impl Vault {
         self.autonomy_action_envelope(&txn, reference)
     }
 
-    pub(crate) fn autonomy_action_envelope(
+    pub(super) fn autonomy_action_envelope(
         &self,
         txn: &heed::RoTxn<'_>,
         reference: &EntityId,
@@ -167,7 +167,7 @@ impl Vault {
         action_from(&value)
     }
 
-    pub(crate) fn autonomy_identity_actor(
+    pub(super) fn autonomy_identity_actor(
         &self,
         txn: &heed::RoTxn<'_>,
         identity: EntityId,

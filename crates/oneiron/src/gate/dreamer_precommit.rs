@@ -22,7 +22,7 @@ use super::decision::GateReasonCode;
 
 /// Lowercase prefixes of narration a Dreamer sometimes emits in place of a
 /// claim value. Matched case-insensitively against the trimmed value.
-pub(crate) const DREAMER_DEGENERATE_VALUE_PREFIXES: [&str; 8] = [
+pub(super) const DREAMER_DEGENERATE_VALUE_PREFIXES: [&str; 8] = [
     "i will",
     "i'll",
     "working on",
@@ -37,7 +37,7 @@ pub(crate) const DREAMER_DEGENERATE_VALUE_PREFIXES: [&str; 8] = [
 /// cannot be asked to cite evidence for themselves. Composed from the
 /// existing predicate constants rather than re-literalized, so a rename
 /// cannot silently desync this exemption table from the writers.
-pub(crate) const DREAMER_RUNTIME_RECORD_PREDICATES: [&str; 3] = [
+pub(super) const DREAMER_RUNTIME_RECORD_PREDICATES: [&str; 3] = [
     crate::dreamer_runner::DREAMER_MILESTONE_PREDICATE,
     crate::llm::DREAMER_STEP_PREDICATE,
     crate::llm::DREAMER_TRAP_PREDICATE,
@@ -45,7 +45,7 @@ pub(crate) const DREAMER_RUNTIME_RECORD_PREDICATES: [&str; 3] = [
 
 /// The claim-shaped axes the pre-commit checks read. Borrowed from the
 /// candidate body at the door; nothing here is owned or mutated.
-pub(crate) struct DreamerPrecommitInput<'a> {
+pub(super) struct DreamerPrecommitInput<'a> {
     pub(crate) predicate: &'a str,
     pub(crate) value: &'a Value,
     pub(crate) confidence: f32,
@@ -61,7 +61,7 @@ pub(crate) struct DreamerPrecommitInput<'a> {
 /// entity exist and read back" for one evidence ref; it is injected so the
 /// validator stays deterministic and unit-testable while the door supplies
 /// its own transaction.
-pub(crate) fn validate_dreamer_precommit(
+pub(super) fn validate_dreamer_precommit(
     input: &DreamerPrecommitInput<'_>,
     resolves: &dyn Fn(&EntityId) -> Result<bool>,
 ) -> std::result::Result<(), GateReasonCode> {

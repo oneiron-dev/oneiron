@@ -42,7 +42,7 @@ pub(crate) fn authority_first_seen_clock_sync_key() -> &'static str {
 /// widen skips its veto window; assume pending and a rotation's RETIRED key
 /// stays live). The only sound answer is to refuse the fold and let the caller
 /// suspend whatever it was about to authorize.
-pub(crate) const AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT: &str =
+pub(super) const AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT: &str =
     "authority first-seen sidecar missing or unreadable after backfill";
 
 /// Whether `err` is the corrupt-sidecar verdict above.

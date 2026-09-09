@@ -84,12 +84,12 @@ pub(crate) struct RedactionReceiptInput {
 
 /// Attestation transcript domain separator (OD-6 literal).
 pub(crate) const RECEIPT_ATT_DOMAIN: &[u8] = b"oneiron/receipt-att/v1";
-pub(crate) const ATT_KEY_CLIENT: &str = "att_client";
-pub(crate) const ATT_KEY_PK: &str = "att_pk";
-pub(crate) const ATT_KEY_SIG: &str = "att_sig";
-pub(crate) const ATT_KEY_V: &str = "att_v";
+const ATT_KEY_CLIENT: &str = "att_client";
+const ATT_KEY_PK: &str = "att_pk";
+const ATT_KEY_SIG: &str = "att_sig";
+const ATT_KEY_V: &str = "att_v";
 /// Attestation schema version literal carried in `att_v`.
-pub(crate) const ATT_VERSION: &str = "1";
+const ATT_VERSION: &str = "1";
 /// MessagePack fixmap(0) — the empty `verification` the transcript tail
 /// carries in place of the four att_ entries.
 #[cfg(feature = "sync")]

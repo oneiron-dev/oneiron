@@ -12,7 +12,7 @@ use super::binding::{map_session_error, scoped_read_actor_key, scoped_read_visib
 
 /// A typed journal entry for the substrate-level oracles, which assert
 /// journal ATOMICITY and byte accounting rather than role semantics.
-pub(crate) fn seam_journal_entry(scope: JournalScope, op: BatchOp) -> JournalEntry {
+pub(super) fn seam_journal_entry(scope: JournalScope, op: BatchOp) -> JournalEntry {
     JournalEntry {
         scope,
         role: JournalRole::TurnOwnedArtifact,
@@ -24,7 +24,7 @@ pub(crate) fn seam_journal_entry(scope: JournalScope, op: BatchOp) -> JournalEnt
 
 /// Session write-overlay handle (ONE-1726 owns the real substrate type;
 /// ONE-1727 owns the vault-level session handle that wraps it).
-pub(crate) struct SessionVault<'vault> {
+pub(in crate::branch_store_oracle) struct SessionVault<'vault> {
     pub(super) session: crate::off_record::OffRecordSession<'vault>,
     pub(super) vault: &'vault Vault,
     /// The base PERSON this room witnesses as, once one has been bound.
@@ -37,10 +37,10 @@ pub(crate) struct SessionVault<'vault> {
 }
 
 /// One (key, value) row as the model oracle sees it.
-pub(crate) type ModelRow = (Vec<u8>, Vec<u8>);
+pub(in crate::branch_store_oracle) type ModelRow = (Vec<u8>, Vec<u8>);
 
 /// The room clock every witness fixture uses unless it pins its own.
-pub(crate) const WITNESS_OCCURRED_AT: u64 = 1;
+const WITNESS_OCCURRED_AT: u64 = 1;
 
 /// Placeholder TYPED refusals for every contract that pins a typed
 /// error / fail-closed behavior (ONE-1726 budget+lease, ONE-1727
@@ -117,7 +117,7 @@ impl<'vault> SessionVault<'vault> {
     }
 
     /// ONE-1727: enter with the kill-switch config disabled.
-    pub(crate) fn enter_with_kill_switch_off(
+    pub(in crate::branch_store_oracle) fn enter_with_kill_switch_off(
         _vault: &Vault,
         _session_ref: &str,
     ) -> SeamResult<Self> {
@@ -179,7 +179,7 @@ impl<'vault> SessionVault<'vault> {
     /// a search-hit COUNT therefore has to control whether the summary
     /// repeats the query term, or its count measures how many documents a
     /// turn happens to produce rather than which turn was promoted.
-    pub(crate) fn witness_turn_with_summary(
+    pub(in crate::branch_store_oracle) fn witness_turn_with_summary(
         &self,
         text: &str,
         summary: &str,
@@ -213,7 +213,10 @@ impl<'vault> SessionVault<'vault> {
     /// the SMALLEST program that still exercises the session write path,
     /// and a summary is one more `Text` op whose absence sharpens rather
     /// than weakens the claim. Returns `(turn, message)`.
-    pub(crate) fn witness_turn_without_summary(&self, text: &str) -> Result<(EntityId, EntityId)> {
+    pub(in crate::branch_store_oracle) fn witness_turn_without_summary(
+        &self,
+        text: &str,
+    ) -> Result<(EntityId, EntityId)> {
         let (turn, message, summary) = self.witness_turn_shape(text, None, WITNESS_OCCURRED_AT)?;
         assert!(
             summary.is_none(),
@@ -309,7 +312,10 @@ impl<'vault> SessionVault<'vault> {
     /// Staged through the same `apply_ops_session` entry the witness
     /// uses, with a `TurnOwnedArtifact` role — the claim is turn-scoped
     /// content, not one of the five closed transcript roles.
-    pub(crate) fn stage_session_claim(&self, subject: &EntityId) -> Result<EntityId> {
+    pub(in crate::branch_store_oracle) fn stage_session_claim(
+        &self,
+        subject: &EntityId,
+    ) -> Result<EntityId> {
         use crate::claim::{
             ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
         };
@@ -364,7 +370,10 @@ impl<'vault> SessionVault<'vault> {
     /// ONE-1728: does the room's composed view (overlay ∪ base) hold an
     /// entity body for `id`? The landing probe every staging helper needs
     /// — a stage that silently wrote nothing must not read as success.
-    pub(crate) fn session_sees_entity(&self, id: &EntityId) -> Result<bool> {
+    pub(in crate::branch_store_oracle) fn session_sees_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<bool> {
         let view = self.session.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         let seen = view.entities.get(&rtxn, id.as_bytes())?.is_some();
@@ -388,7 +397,7 @@ impl<'vault> SessionVault<'vault> {
 
     /// ONE-1728: the room's own retrieval-run rows, read through the
     /// composed view (overlay ∪ base).
-    pub(crate) fn retrieval_run_count(&self) -> Result<usize> {
+    pub(in crate::branch_store_oracle) fn retrieval_run_count(&self) -> Result<usize> {
         let view = self.session.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         let count = view.retrieval_runs_in_txn(&rtxn, 1_000)?.len();
@@ -435,7 +444,7 @@ impl<'vault> SessionVault<'vault> {
     /// the FLOOR path, and a probe that wrote the same row through the
     /// store would prove a row survives close without proving the sealed
     /// crossing is what put it there.
-    pub(crate) fn append_floor_egress_decision(&self) -> Result<()> {
+    pub(in crate::branch_store_oracle) fn append_floor_egress_decision(&self) -> Result<()> {
         let record = crate::store::GateDecisionRecord {
             version: 0,
             decision_id: crate::store::GateDecisionId::now(),
@@ -478,7 +487,10 @@ impl<'vault> SessionVault<'vault> {
     /// selecting between shells. It is kept because the promotion CONTRACT
     /// is per turn: a future room with per-turn shells must answer this
     /// question without a signature change.
-    pub(crate) fn session_shell_for_turn(&self, _turn: &EntityId) -> Result<EntityId> {
+    pub(in crate::branch_store_oracle) fn session_shell_for_turn(
+        &self,
+        _turn: &EntityId,
+    ) -> Result<EntityId> {
         self.session.overlay_conversation_shell()
     }
 
@@ -489,7 +501,10 @@ impl<'vault> SessionVault<'vault> {
     /// Witness already allocated the alias, so this reads the existing
     /// one back rather than minting a second: `alloc_session_short_id` is
     /// idempotent per id within a room.
-    pub(crate) fn session_short_ref(&self, id: &EntityId) -> Result<(String, u8)> {
+    pub(in crate::branch_store_oracle) fn session_short_ref(
+        &self,
+        id: &EntityId,
+    ) -> Result<(String, u8)> {
         let overlay = self.session.overlay();
         let _segment = overlay.install_txn_segment()?;
         overlay.alloc_session_short_id(id, id.as_bytes())
@@ -497,7 +512,7 @@ impl<'vault> SessionVault<'vault> {
 
     /// ONE-1728: the number of claims a SESSION-side ScopedRead surfaces
     /// for `subject` — the union half of the R10 reader family.
-    pub(crate) fn session_scoped_read_visible_claim_count(
+    pub(in crate::branch_store_oracle) fn session_scoped_read_visible_claim_count(
         &self,
         subject: &EntityId,
     ) -> Result<usize> {
@@ -531,7 +546,9 @@ impl<'vault> SessionVault<'vault> {
     /// the acceptance pin is that the code-run key FORMATS did not change
     /// under the session route, and a census that reused the producer's
     /// own constants would agree with a rename.
-    pub(crate) fn session_artifact_census(&self) -> Result<(usize, usize, usize)> {
+    pub(in crate::branch_store_oracle) fn session_artifact_census(
+        &self,
+    ) -> Result<(usize, usize, usize)> {
         let view = self.session.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         let mut turns = 0_usize;

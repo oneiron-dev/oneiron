@@ -350,11 +350,7 @@ pub fn coping_outcome_claim_candidate(
 }
 
 #[must_use]
-pub(crate) fn coping_outcome_evidence_value(
-    turn_id: EntityId,
-    vad_delta: VadDelta,
-    confidence: f32,
-) -> Value {
+fn coping_outcome_evidence_value(turn_id: EntityId, vad_delta: VadDelta, confidence: f32) -> Value {
     Value::Map(vec![
         (Value::from(EVIDENCE_KEY_KIND), Value::from(EVIDENCE_KIND)),
         (

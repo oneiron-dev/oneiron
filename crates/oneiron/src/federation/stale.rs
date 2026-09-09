@@ -168,7 +168,7 @@ pub fn world_stale_marker(stamp: WorldStaleStamp) -> String {
 /// Idempotent: the value is presence-only, so re-registering rewrites the same
 /// byte.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn register_foreign_world_for_pact(
+pub(super) fn register_foreign_world_for_pact(
     vault: &Vault,
     pact_id: &[u8; 32],
     world: ForeignWorldId,

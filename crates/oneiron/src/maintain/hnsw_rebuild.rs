@@ -185,7 +185,7 @@ fn commit_rebuilt_hnsw_with_discipline(
 /// if the lazy write route already rebuilt and cleared the marker the
 /// rehydrate is satisfied, otherwise the existing [`Error::ConcurrentWrite`]
 /// surfaces to the caller.
-pub(crate) fn rebuild_hnsw_if_dropped(vault: &Vault, heal_invalid_vectors: bool) -> Result<bool> {
+pub(super) fn rebuild_hnsw_if_dropped(vault: &Vault, heal_invalid_vectors: bool) -> Result<bool> {
     if !hnsw_marker_is_dropped(vault)? {
         return Ok(false);
     }

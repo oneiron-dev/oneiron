@@ -35,7 +35,7 @@ const _: () = assert!(SHORT_ID_COUNTER_KEY_PREFIX.len() + 1 == SHORT_ID_COUNTER_
 /// the manifest set is ABI-pinned and adding to it is a storage-ABI change,
 /// while an older reader simply ignores an unknown `vault_meta` prefix. Aliases
 /// are additive — every pre-existing forward row keeps working without them.
-pub(crate) const SHORT_ID_ALIAS_KEY_PREFIX: &[u8] = b"short_id_alias:v1\0";
+pub(super) const SHORT_ID_ALIAS_KEY_PREFIX: &[u8] = b"short_id_alias:v1\0";
 
 /// Record version leading every alias VALUE.
 const SHORT_ID_ALIAS_RECORD_VERSION: u8 = 1;
@@ -55,12 +55,12 @@ const SHORT_ID_ALIAS_TAG_VAULT: u8 = 1;
 /// only after the pass's own collision and count assertions pass, in the same
 /// transaction as the rows it describes, so a stamped vault is a migrated
 /// vault. Its presence is also what makes reopening idempotent.
-pub(crate) const SHORT_ID_GRAMMAR_VERSION_KEY: &[u8] = b"short_id_grammar_version";
+pub(super) const SHORT_ID_GRAMMAR_VERSION_KEY: &[u8] = b"short_id_grammar_version";
 
 /// Grammar generation this engine writes. NOT a storage-ABI version: the row
 /// families are unchanged and a predecessor engine still reads every one of
 /// them, which is exactly why this ticket needs no [`STORAGE_ABI_VERSION`] bump.
-pub(crate) const SHORT_ID_GRAMMAR_VERSION: u16 = 1;
+pub(super) const SHORT_ID_GRAMMAR_VERSION: u16 = 1;
 
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
 /// See [`SHORT_ID_COUNTER_KEY_PREFIX`] for the documented key scheme.
@@ -151,7 +151,7 @@ pub enum ShortIdAliasTarget {
 /// exists — and at runtime against a live one. One parameter shape means one
 /// implementation and, per the blueprint, exactly one alias WRITE door.
 #[derive(Clone, Copy)]
-pub(crate) struct ShortIdDbs<'a> {
+pub(super) struct ShortIdDbs<'a> {
     pub(super) entities: &'a OverlayDb,
     pub(super) short_ids: &'a OverlayDb,
     pub(super) short_ids_reverse: &'a OverlayDb,
@@ -224,7 +224,7 @@ fn decode_short_id_alias_target(raw: &[u8]) -> Result<ShortIdAliasTarget> {
 /// Callers reach this only AFTER a canonical `short_ids` lookup misses, so a
 /// live forward row always wins over an alias and an alias can never shadow a
 /// real entity.
-pub(crate) fn resolve_short_id_alias_in_txn(
+fn resolve_short_id_alias_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &RoTxn<'_>,
     legacy_id: &str,
@@ -289,7 +289,7 @@ fn vet_short_id_alias_target_in_txn(
 /// * No overwrite: an existing row for `legacy_id` pointing somewhere ELSE is
 ///   an error. Re-inserting the identical row is a no-op, which is what makes
 ///   the re-key idempotent across a retry.
-pub(crate) fn insert_short_id_alias_in_txn(
+fn insert_short_id_alias_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &mut RwTxn<'_>,
     legacy_id: &str,
@@ -320,7 +320,7 @@ pub(crate) fn insert_short_id_alias_in_txn(
 ///
 /// Maintenance needs the whole set, and the key format stays owned here rather
 /// than being re-derived by every caller that wants to walk it.
-pub(crate) fn short_id_aliases_in_txn(
+fn short_id_aliases_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<(String, ShortIdAliasTarget)>> {
@@ -345,7 +345,7 @@ pub(crate) fn short_id_aliases_in_txn(
 /// ([`vet_short_id_alias_target_in_txn`]) — moving a row is still writing one.
 /// They run after the `from` match so a stale no-op stays a no-op rather than
 /// becoming an error.
-pub(crate) fn retarget_short_id_alias_in_txn(
+fn retarget_short_id_alias_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &mut RwTxn<'_>,
     legacy_id: &str,
@@ -384,7 +384,7 @@ pub(crate) struct ShortIdPrefixRekey {
 /// lead it. When those four rows move in canon, they are added here and gain
 /// their old spelling in `EntityTypeRegistryEntry::legacy_short_id_prefixes` —
 /// no other code changes.
-pub(crate) const SHORT_ID_PREFIX_REKEY_V1: &[ShortIdPrefixRekey] = &[];
+pub(super) const SHORT_ID_PREFIX_REKEY_V1: &[ShortIdPrefixRekey] = &[];
 
 /// Re-keys every short id whose kind's declared presentation prefix moved, in
 /// the caller's write transaction.
@@ -403,7 +403,7 @@ pub(crate) const SHORT_ID_PREFIX_REKEY_V1: &[ShortIdPrefixRekey] = &[];
 /// The caller runs this inside the open transaction and stamps
 /// [`SHORT_ID_GRAMMAR_VERSION_KEY`] only on `Ok`, so any abort rolls the rows
 /// and the marker back together.
-pub(crate) fn rekey_short_ids_v1_in_txn(
+pub(super) fn rekey_short_ids_v1_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &mut RwTxn<'_>,
     map: &[ShortIdPrefixRekey],

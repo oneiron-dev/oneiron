@@ -31,18 +31,19 @@ pub(crate) use self::types::RebuiltHnswGraph;
 // re-export keeps `crate::hnsw::X` resolving for the test targets without
 // leaving an unused import in the library build.
 #[cfg(test)]
-pub(crate) use self::delete::hnsw_deindex_probed;
+use self::delete::hnsw_deindex_probed;
 #[cfg(test)]
-pub(crate) use self::discipline::{
+use self::discipline::{
     mark_symmetric_links, read_legacy_snapshot_rebuilds, read_refresh_fallback_rebuilds,
 };
 #[cfg(test)]
-pub(crate) use self::insert::{hnsw_insert, hnsw_insert_probed};
+pub(crate) use self::insert::hnsw_insert;
 #[cfg(test)]
-pub(crate) use self::keys::{
-    DROPPED_REBUILDABLE_KEY, LEGACY_REBUILDS_KEY, REFRESH_FALLBACK_REBUILDS_KEY,
-    SYMMETRIC_LINKS_KEY,
-};
+use self::insert::hnsw_insert_probed;
+#[cfg(test)]
+pub(crate) use self::keys::DROPPED_REBUILDABLE_KEY;
+#[cfg(test)]
+use self::keys::{LEGACY_REBUILDS_KEY, REFRESH_FALLBACK_REBUILDS_KEY, SYMMETRIC_LINKS_KEY};
 
 #[cfg(test)]
 mod archive_tests;

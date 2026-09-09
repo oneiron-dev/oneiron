@@ -128,7 +128,7 @@ fn amendment_delta_in_txn(
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn amendment_recorded_in_txn(
+pub(in crate::edit_distance) fn amendment_recorded_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     receipt_id: &str,

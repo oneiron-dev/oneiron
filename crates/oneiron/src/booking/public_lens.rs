@@ -120,7 +120,7 @@ fn validate_model_field(value: &impl Serialize) -> core::result::Result<(), Book
     Ok(())
 }
 
-pub(crate) fn validate_presentation_fields(
+pub(super) fn validate_presentation_fields(
     owner: &str,
     events: &[EventTypeCard],
     constraint: &ConstraintFieldConfig,

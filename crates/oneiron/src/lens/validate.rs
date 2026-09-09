@@ -112,7 +112,7 @@ fn validate_declared_backing_handle(node: &LensNode, handle: &str) -> Result<()>
 }
 
 #[derive(Default)]
-pub(crate) struct LensBudget {
+pub(super) struct LensBudget {
     collection_items: usize,
 }
 

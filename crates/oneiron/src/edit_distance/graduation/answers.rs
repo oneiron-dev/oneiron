@@ -152,7 +152,7 @@ pub fn snooze_state(vault: &Vault, scope: &RampScope) -> Result<SnoozeState> {
     snooze_state_in_txn(&vault.store, &rtxn, scope)
 }
 
-pub(crate) fn snooze_state_in_txn(
+pub(super) fn snooze_state_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     scope: &RampScope,
@@ -231,7 +231,7 @@ pub fn answer_graduation_offer(
 }
 
 /// [`answer_graduation_offer`] against a caller-supplied clock.
-pub(crate) fn answer_graduation_offer_at(
+pub(super) fn answer_graduation_offer_at(
     vault: &Vault,
     scope: &RampScope,
     answer: OfferAnswer<'_>,
@@ -283,7 +283,7 @@ pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
 }
 
 /// [`unpin_scope`] against a caller-supplied clock.
-pub(crate) fn unpin_scope_at(vault: &Vault, scope: &RampScope, at: u64) -> Result<()> {
+fn unpin_scope_at(vault: &Vault, scope: &RampScope, at: u64) -> Result<()> {
     scope.validate()?;
     vault.with_write_txn(|wtxn| append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at))
 }

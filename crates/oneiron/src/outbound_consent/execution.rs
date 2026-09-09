@@ -54,7 +54,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
 /// sender. Scope-exceeds return without constructing a ledger request.
 #[expect(clippy::too_many_arguments)]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
+pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     grant_id: EntityId,

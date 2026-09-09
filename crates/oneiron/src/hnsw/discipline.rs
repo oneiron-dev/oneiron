@@ -37,14 +37,14 @@ pub(crate) fn read_link_discipline(
 /// Stamps the vault as maintaining the symmetric-link invariant. Called when
 /// a graph is created from empty (fresh vaults) and when a full rebuild
 /// rewrites every row symmetrically (the one-time migration path).
-pub(crate) fn mark_symmetric_links(store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
+pub(super) fn mark_symmetric_links(store: &impl ManifestDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
     store
         .hnsw_meta()
         .put(wtxn, SYMMETRIC_LINKS_KEY, &[SYMMETRIC_LINKS_ENABLED])?;
     Ok(())
 }
 
-pub(crate) fn read_refresh_fallback_rebuilds(
+pub(super) fn read_refresh_fallback_rebuilds(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
 ) -> Result<u64> {
@@ -71,7 +71,7 @@ pub(super) fn increment_refresh_fallback_rebuilds(
     Ok(())
 }
 
-pub(crate) fn read_legacy_snapshot_rebuilds(
+pub(super) fn read_legacy_snapshot_rebuilds(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
 ) -> Result<u64> {

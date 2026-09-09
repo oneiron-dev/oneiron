@@ -268,12 +268,12 @@ pub(crate) mod test_support {
     use crate::vault::Vault;
 
     /// Opens a temporary vault for calendar fixtures.
-    pub(crate) fn open_calendar_vault() -> (tempfile::TempDir, Vault) {
+    pub(super) fn open_calendar_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::default())
     }
 
     /// Encodes an EVENT body carrying the `name` field the EVENT profile pins.
-    pub(crate) fn event_name_body(name: &str) -> Vec<u8> {
+    pub(super) fn event_name_body(name: &str) -> Vec<u8> {
         let mut out = Vec::new();
         rmpv::encode::write_value(
             &mut out,
@@ -284,7 +284,7 @@ pub(crate) mod test_support {
     }
 
     /// One calendar EVENT fixture: an EVENT entity plus its `calendar.*` claims.
-    pub(crate) struct CalendarEventFixture {
+    pub(super) struct CalendarEventFixture {
         seed: u8,
         name: String,
         occurred: TimeRange,

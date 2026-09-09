@@ -25,7 +25,7 @@ use super::wake_event::{CommitmentWakeDue, encode_commitment_wake_event};
 /// ONE-1539 owns the rows and their keys; this trait is the narrow adapter
 /// over its two crate-private transaction twins. Nothing here imports a key
 /// prefix or writes a row directly.
-pub(crate) trait CommitmentWakeIndexTxn {
+trait CommitmentWakeIndexTxn {
     /// The earliest actionable `Lead`/`Due` phase, as a typed wake due.
     fn next_wake_due_in_txn(&self, txn: &RoTxn<'_>) -> Result<Option<CommitmentWakeDue>>;
 

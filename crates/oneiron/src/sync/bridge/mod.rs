@@ -29,13 +29,13 @@ mod tombstones;
 use super::diagnostic_ingest;
 
 #[cfg(test)]
-pub(crate) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
+pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
 pub(crate) use self::companion_identity::ingest_replicated_identity_topology_event_in_txn;
 pub use self::companion_identity::{
     encode_edge_value_for_crdt, format_edge_key, parse_edge_key, parse_edge_value,
 };
 #[cfg(test)]
-pub(crate) use self::entities::INJECT_BATCH_COMMIT_FAILURES;
+pub(in crate::sync) use self::entities::INJECT_BATCH_COMMIT_FAILURES;
 pub use self::observers::{
     BRIDGE_ORIGIN, LiveQueryTee, MaterializedDiffSummary, Materializer, ObserverAState, OriginMark,
     OutboundSink, local_deletion_is_materialized, register_observer_a, register_observer_b,
@@ -45,7 +45,7 @@ pub(crate) use self::observers::{
     DELETION_TOMBSTONE_ORIGIN, persist_window_update, persist_window_update_in_txn,
     with_deletion_tombstone_observer_a_suppressed,
 };
-pub(crate) use self::tombstones::admitted_concurrent_delete_protected_header;
+pub(in crate::sync) use self::tombstones::admitted_concurrent_delete_protected_header;
 
 #[cfg(test)]
 mod diagnostic_tests;

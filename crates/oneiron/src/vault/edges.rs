@@ -564,7 +564,7 @@ impl Vault {
     /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
     /// The `visited` set prevents infinite loops on corrupted cyclic data, and
     /// `MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS` bounds pathological acyclic chains.
-    pub(crate) fn would_create_cycle_in_txn(
+    fn would_create_cycle_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         node: &EntityId,

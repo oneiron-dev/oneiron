@@ -117,7 +117,7 @@ impl OverlaySnapshot {
     }
 
     #[cfg(test)]
-    pub(crate) fn merge_rows(
+    pub(super) fn merge_rows(
         &self,
         keyspace: OverlayKeyspace,
         base: Vec<(Vec<u8>, Vec<u8>)>,

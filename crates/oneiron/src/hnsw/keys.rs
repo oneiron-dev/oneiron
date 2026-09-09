@@ -13,7 +13,7 @@ pub(crate) const COUNT_KEY: &[u8] = b"count";
 /// `hnsw_neighbors` DB (ONE-325). Vaults without the marker keep the legacy
 /// asymmetric behavior (full-scan delete, full-rebuild refresh) until the
 /// one-time migration runs via `maintain().rebuild_hnsw()`.
-pub(crate) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
+pub(super) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
 
 pub(super) const SYMMETRIC_LINKS_ENABLED: u8 = 1;
 
@@ -37,13 +37,13 @@ pub(super) const DROPPED_REBUILDABLE_ENABLED: u8 = 1;
 /// had to fall back to a full symmetric snapshot rebuild. The fallback is an
 /// explicit, measured, rare path (ONE-324 AC10) — this counter is how it is
 /// measured.
-pub(crate) const REFRESH_FALLBACK_REBUILDS_KEY: &[u8] = b"refresh_fallback_rebuilds";
+pub(super) const REFRESH_FALLBACK_REBUILDS_KEY: &[u8] = b"refresh_fallback_rebuilds";
 
 /// `hnsw_meta` counter (u64 LE): number of legacy full-snapshot rebuilds
 /// this vault has run (pre-migration refresh contract). Observability for
 /// the batched-rebuild coalescing guarantee (ONE-324 AC11): one transaction
 /// bumps this at most once no matter how many vector refreshes it carries.
-pub(crate) const LEGACY_REBUILDS_KEY: &[u8] = b"legacy_snapshot_rebuilds";
+pub(super) const LEGACY_REBUILDS_KEY: &[u8] = b"legacy_snapshot_rebuilds";
 
 pub(super) const ERR_ENTRY_POINT_MISSING: &str = "hnsw count > 0 but entry point is missing";
 

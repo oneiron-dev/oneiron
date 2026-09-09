@@ -310,7 +310,7 @@ pub(super) fn set_remat_marker_logged(vault: &Vault, window_key: &str, id: &Enti
 
 #[cfg(test)]
 thread_local! {
-    pub(crate) static INJECT_BATCH_COMMIT_FAILURES: std::cell::Cell<u32> =
+    pub(in crate::sync) static INJECT_BATCH_COMMIT_FAILURES: std::cell::Cell<u32> =
         const { std::cell::Cell::new(0) };
 }
 

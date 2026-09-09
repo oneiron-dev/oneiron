@@ -531,7 +531,7 @@ pub(crate) fn env_blueprint_repo_identity(repo_ref: &RepoRef) -> String {
 /// Domain-separated BLAKE3 of exactly the commit-stripped canonical identity's
 /// UTF-8 bytes — never the commit-bearing canonical value, `Debug`/`Display`
 /// text, or a materialized checkout path.
-pub(crate) fn env_blueprint_repo_hash(repo_ref: &RepoRef) -> [u8; 32] {
+pub(super) fn env_blueprint_repo_hash(repo_ref: &RepoRef) -> [u8; 32] {
     let identity = env_blueprint_repo_identity(repo_ref);
     let mut hasher = blake3::Hasher::new();
     hasher.update(ENV_BLUEPRINT_REPO_KEY_DOMAIN);
@@ -539,7 +539,7 @@ pub(crate) fn env_blueprint_repo_hash(repo_ref: &RepoRef) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-pub(crate) fn env_blueprint_key(repo_ref: &RepoRef) -> Vec<u8> {
+pub(super) fn env_blueprint_key(repo_ref: &RepoRef) -> Vec<u8> {
     let hash = env_blueprint_repo_hash(repo_ref);
     let mut key = Vec::with_capacity(ENV_BLUEPRINT_KEY_PREFIX.len() + hash.len());
     key.extend_from_slice(ENV_BLUEPRINT_KEY_PREFIX);
@@ -556,7 +556,7 @@ fn encode_error(error: impl std::fmt::Display) -> EnvBlueprintError {
 /// Row byte 0 is always [`ENV_BLUEPRINT_SCHEMA_VERSION`]; the remainder is
 /// rmp-serde MessagePack of the private row, whose repeated schema version must
 /// agree with that leading byte.
-pub(crate) fn encode_env_blueprint(blueprint: &EnvBlueprint) -> EnvBlueprintResult<Vec<u8>> {
+fn encode_env_blueprint(blueprint: &EnvBlueprint) -> EnvBlueprintResult<Vec<u8>> {
     let row = EnvBlueprintRowV1 {
         schema_version: blueprint.schema_version,
         repo_ref: blueprint.repo_ref.canonical(),
@@ -570,7 +570,7 @@ pub(crate) fn encode_env_blueprint(blueprint: &EnvBlueprint) -> EnvBlueprintResu
     Ok(raw)
 }
 
-pub(crate) fn decode_env_blueprint(raw: &[u8]) -> EnvBlueprintResult<EnvBlueprint> {
+pub(super) fn decode_env_blueprint(raw: &[u8]) -> EnvBlueprintResult<EnvBlueprint> {
     let Some((&header, body)) = raw.split_first() else {
         return Err(EnvBlueprintError::EmptyRow);
     };

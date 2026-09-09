@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 /// against the max persisted `x:` seq, the SyncQueue metadata pattern),
 /// writes the row, then enforces retention (row cap + age bound,
 /// oldest-evicted-first, eviction counter incremented).
-pub(crate) fn record_in_txn(
+pub(in crate::sync) fn record_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: &QuarantineRecord,
@@ -53,7 +53,7 @@ pub(crate) fn record_in_txn(
 /// source entity. Tombstone replay already has stricter purge-specific rm:
 /// handling; lease rows are root-scoped and have no entity marker.
 #[must_use]
-pub(crate) fn remat_marker_entity_for_quarantine(
+pub(in crate::sync) fn remat_marker_entity_for_quarantine(
     container: QuarantineContainer,
     crdt_key: &str,
 ) -> Option<crate::entity_id::EntityId> {
@@ -83,7 +83,7 @@ fn set_remat_marker_for_quarantine_in_txn(
 /// an existing write transaction. `payload` is hashed, never stored. When
 /// the rejected op has an entity/source scope, the same transaction also
 /// writes the entity-scoped `rm:w:{window}:{entity_hex}` retry marker.
-pub(crate) fn quarantine_rejected_op_in_txn(
+pub(in crate::sync) fn quarantine_rejected_op_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
@@ -111,7 +111,7 @@ pub(crate) fn quarantine_rejected_op_in_txn(
 }
 
 /// Builds and persists a quarantine record in its own write transaction.
-pub(crate) fn quarantine_rejected_op(
+pub(in crate::sync) fn quarantine_rejected_op(
     vault: &Vault,
     window_key: &str,
     container: QuarantineContainer,
@@ -159,7 +159,7 @@ struct TerminalRejection {
 ///
 /// Evidence is bounded at [`MAX_QUARANTINE_ROWS_PER_PASS`]; the remainder is
 /// accounted by count. Nothing is silently dropped in either arm.
-pub(crate) struct TerminalRejectionBatch {
+pub(in crate::sync) struct TerminalRejectionBatch {
     window_key: String,
     rows: Vec<TerminalRejection>,
     over_cap: u64,
