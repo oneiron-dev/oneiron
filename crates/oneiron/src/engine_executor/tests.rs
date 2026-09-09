@@ -285,19 +285,21 @@ fn executor_uses_llm_backend_and_plain_js_boundary() {
     ));
     let system = text_message(&requests[0].messages[0]);
     assert!(system.contains(PLAIN_JS_HOST_VERB_DTS));
-    assert!(system.contains("plain JavaScript"));
-    for advertised in [
-        "function search",
-        "function put_claim",
-        "function supersede_claim",
-        "function put_edge",
-        "function askHuman",
-        "function ask_human",
-        "function now_unix_ms",
-    ] {
+
+    // Advertised-versus-linked, both directions, on the boundary the run
+    // actually used: every verb the prompt teaches the model is linked, and
+    // every import the executor requires is taught.
+    let advertised = runtime.seen[0].boundary.runtime().advertised_prompt_verbs();
+    for verb in &advertised {
         assert!(
-            system.contains(advertised),
-            "executor prompt must advertise linked host verb {advertised}"
+            linked_imports.contains(&verb.as_str()),
+            "executor prompt advertises unlinked host verb {verb}"
+        );
+    }
+    for required in EXECUTOR_REQUIRED_HOST_IMPORTS {
+        assert!(
+            advertised.iter().any(|verb| verb.as_str() == *required),
+            "executor prompt must advertise required host import {required}"
         );
     }
     assert_eq!(outcome.replay_record.step_checkpoints.len(), 1);

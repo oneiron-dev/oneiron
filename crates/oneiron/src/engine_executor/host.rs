@@ -209,6 +209,22 @@ pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBounda
             .into());
         }
     }
+    // The other, more dangerous direction: every verb the prompt-side d.ts
+    // TEACHES must be a verb the boundary actually LINKS. An advertised verb
+    // with no import behind it is a call the model is instructed to make and
+    // the host cannot answer.
+    for advertised in boundary.runtime().advertised_prompt_verbs() {
+        if !boundary
+            .linked_imports()
+            .iter()
+            .any(|import| import.name() == advertised.as_str())
+        {
+            return Err(Error::InvariantViolation(
+                "executor prompt advertises an unlinked host verb",
+            )
+            .into());
+        }
+    }
     Ok(boundary)
 }
 
