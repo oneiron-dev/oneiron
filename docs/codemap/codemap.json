@@ -28967,7 +28967,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/descriptions.rs",
@@ -30669,7 +30669,7 @@
     "api": {
      "files": 126,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "HTTP query routes for web dashboard access"
     },
@@ -30807,7 +30807,7 @@
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 172,
    "test_files": 68
