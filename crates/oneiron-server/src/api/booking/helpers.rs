@@ -65,9 +65,12 @@ pub(super) fn booking_error(error: BookingError) -> ApiError {
         BookingError::Boundary(error) => {
             use crate::error::ApiErrorDetails;
             let details = match error.code.as_str() {
-                oneiron::MEMORY_CODE_FORBIDDEN => ApiErrorDetails::Forbidden {
-                    required_scope: None,
-                },
+                oneiron::MEMORY_CODE_FORBIDDEN
+                | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+                    ApiErrorDetails::Forbidden {
+                        required_scope: None,
+                    }
+                }
                 oneiron::MEMORY_CODE_INVALID_STATE => ApiErrorDetails::InvalidState {
                     state: Some("booking_state".to_owned()),
                 },

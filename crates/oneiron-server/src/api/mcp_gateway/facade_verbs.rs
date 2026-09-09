@@ -125,7 +125,9 @@ fn calendar_selectors(
 pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
     let code = match error.code.as_str() {
         oneiron::MEMORY_CODE_NOT_FOUND => -32004,
-        oneiron::MEMORY_CODE_FORBIDDEN | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
+        oneiron::MEMORY_CODE_FORBIDDEN
+        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+        | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL => -32603,
         _ => -32602,
     };
