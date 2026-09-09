@@ -221,7 +221,8 @@ impl Vault {
         )?;
         let run_id = surface_event_run_id(correlation_id);
         let queue = AttemptQueue::new(self);
-        let Some(attempt) = sole_surface_event_attempt(queue.list_run(&run_id)?)? else {
+        let Some(attempt) = sole_surface_event_attempt(queue.list_run(&run_id)?, correlation_id)?
+        else {
             return Ok(None);
         };
         Ok(Some(handoff_status(correlation_id, &attempt)))
@@ -334,9 +335,10 @@ fn admit_surface_event_once(
 
     let queue = AttemptQueue::new(vault);
     let mut wtxn = vault.store.env.write_txn()?;
-    if let Some(existing) = sole_surface_event_attempt(attempts_for_run_in_write_txn(
-        vault, &queue, &wtxn, &run_id,
-    )?)? {
+    if let Some(existing) = sole_surface_event_attempt(
+        attempts_for_run_in_write_txn(vault, &queue, &wtxn, &run_id)?,
+        &event.correlation_id,
+    )? {
         // A row already owns this correlation id — including after it reached a
         // terminal state. Replay derives that attempt instead of dispatching a
         // second one; the write txn is dropped without a commit.
@@ -407,7 +409,10 @@ fn attempts_for_run_in_write_txn(
 /// A row of another kind under the same public correlation id is a typed
 /// collision, and more than one row for a once-only run is corruption — never
 /// "pick the latest".
-fn sole_surface_event_attempt(mut records: Vec<AttemptRecord>) -> Result<Option<AttemptRecord>> {
+fn sole_surface_event_attempt(
+    mut records: Vec<AttemptRecord>,
+    correlation_id: &str,
+) -> Result<Option<AttemptRecord>> {
     if records.len() > 1 {
         return Err(Error::CorruptedIndex("surface event correlation run"));
     }
@@ -415,9 +420,10 @@ fn sole_surface_event_attempt(mut records: Vec<AttemptRecord>) -> Result<Option<
         return Ok(None);
     };
     if record.kind != SURFACE_EVENT_ATTEMPT_KIND {
-        return Err(Error::InvalidConfig(
-            "surface event correlation id is already held by another attempt kind".to_owned(),
-        ));
+        return Err(Error::SurfaceEventCorrelationKindCollision {
+            correlation_id: correlation_id.to_owned(),
+            holding_kind: record.kind,
+        });
     }
     Ok(Some(record))
 }

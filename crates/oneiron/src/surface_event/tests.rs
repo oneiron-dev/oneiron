@@ -1077,17 +1077,31 @@ fn foreign_correlation_kind_collision_is_typed_not_silent() -> Result<()> {
         )
         .expect_err("a foreign kind on the same correlation id is a typed collision");
     assert!(
-        error.to_string().contains("another attempt kind"),
+        matches!(
+            error,
+            Error::SurfaceEventCorrelationKindCollision {
+                ref correlation_id,
+                ref holding_kind
+            } if correlation_id == "evt-collide@example.com" && holding_kind == "some.other.kind.v1"
+        ),
         "collision must name the cause: {error}"
     );
     assert_eq!(surface_event_attempt_rows(&vault), 0);
 
     // The status read fails closed the same way rather than reporting the
     // foreign row as this event's handoff.
+    let status_error = vault
+        .surface_event_handoff_status("evt-collide@example.com")
+        .expect_err("the status read must fail closed on the same collision");
     assert!(
-        vault
-            .surface_event_handoff_status("evt-collide@example.com")
-            .is_err()
+        matches!(
+            status_error,
+            Error::SurfaceEventCorrelationKindCollision {
+                ref correlation_id,
+                ref holding_kind
+            } if correlation_id == "evt-collide@example.com" && holding_kind == "some.other.kind.v1"
+        ),
+        "status read must name the same collision: {status_error}"
     );
     Ok(())
 }

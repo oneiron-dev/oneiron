@@ -29,6 +29,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::InvalidCodeSymbolManifestBody
         | ErrorKind::InvalidAttemptQueueRecord
         | ErrorKind::InvalidAttemptQueueTransition
+        | ErrorKind::SurfaceEventCorrelationKindCollision
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::StructuralKindZoneViolation
