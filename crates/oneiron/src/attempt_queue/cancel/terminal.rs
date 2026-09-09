@@ -246,7 +246,7 @@ impl AttemptQueue<'_> {
     }
 
     /// Transaction-composable [`Self::warn_budget_pressure`].
-    pub(crate) fn warn_budget_pressure_in_txn(
+    fn warn_budget_pressure_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: WarnAttemptBudgetPressure,

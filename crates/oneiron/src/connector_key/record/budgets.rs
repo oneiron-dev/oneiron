@@ -206,7 +206,7 @@ impl EffectorBudget {
     }
 }
 
-pub(crate) fn validate_budget_row(budget: &EffectorBudget) -> Result<()> {
+pub(in crate::connector_key) fn validate_budget_row(budget: &EffectorBudget) -> Result<()> {
     if budget.limit == 0 {
         return Err(invalid_body("budget limit must be at least 1"));
     }
@@ -249,7 +249,9 @@ pub(crate) fn validate_budget_row(budget: &EffectorBudget) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_suggested_budget_row(budget: &EffectorBudget) -> Result<()> {
+pub(in crate::connector_key) fn validate_suggested_budget_row(
+    budget: &EffectorBudget,
+) -> Result<()> {
     validate_budget_row(budget)?;
     if budget.dimension == EffectorBudgetDimension::Spend {
         return Err(invalid_body("suggested budget rows must be sends or rate"));
@@ -264,7 +266,7 @@ pub(crate) fn validate_suggested_budget_row(budget: &EffectorBudget) -> Result<(
 /// 3-ASCII-uppercase ISO-4217 code, or a provider-unit token
 /// (`[a-z0-9_]{1,32}`). A 3-letter alphabetic unit is the ISO namespace and
 /// must be uppercase — `"usd"` is a malformed currency, not a provider token.
-pub(crate) fn validate_spend_unit(unit: &str) -> Result<()> {
+pub(in crate::connector_key) fn validate_spend_unit(unit: &str) -> Result<()> {
     let bytes = unit.as_bytes();
     if bytes.len() == 3 && bytes.iter().all(u8::is_ascii_alphabetic) {
         if bytes.iter().all(u8::is_ascii_uppercase) {

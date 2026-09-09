@@ -18,11 +18,11 @@ use super::HostSelfDispatcher;
 
 const SELF_SURFACE_NAME: &str = "self.*";
 
-pub(crate) const SELF_PROVENANCE_SURFACE_KEY: &str = "surface";
+pub(in crate::code_run) const SELF_PROVENANCE_SURFACE_KEY: &str = "surface";
 
 const SELF_PROVENANCE_RUN_KEY: &str = "run";
 
-pub(crate) const SELF_PROVENANCE_CALL_KEY: &str = "call";
+pub(in crate::code_run) const SELF_PROVENANCE_CALL_KEY: &str = "call";
 
 const SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN: &[u8] = b"oneiron:self-memory-edge-operation:v1";
 
@@ -191,7 +191,7 @@ fn validate_write_actor_binding(vault: &Vault, envelope: &WriteEnvelope) -> Resu
     crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
 }
 
-pub(crate) fn edge_operation_gate_id(
+pub(in crate::code_run) fn edge_operation_gate_id(
     effect: SelfEffect,
     src: EntityId,
     kind: EdgeKind,
@@ -259,7 +259,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
 /// `ToolOutput`, because everything the run produced after that hop may carry
 /// what the outside world said. Reads and searches add nothing: memory access
 /// is not a tool effect.
-pub(crate) fn lineage_for_run(bridge_calls: &[CodeRunBridgeCall]) -> SourceLineage {
+pub(in crate::code_run) fn lineage_for_run(bridge_calls: &[CodeRunBridgeCall]) -> SourceLineage {
     let lineage = SourceLineage::of(ClaimSource::Generated);
     if bridge_calls
         .iter()

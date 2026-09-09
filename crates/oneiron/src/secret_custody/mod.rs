@@ -60,14 +60,14 @@ mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
-    pub(crate) const PORTABLE_MIN: &str = "secret.custody.floor.portable.min";
-    pub(crate) const PORTABLE_MAX: &str = "secret.custody.floor.portable.max";
-    pub(crate) const DEVICE_BOUND_MIN: &str = "secret.custody.floor.device_bound.min";
-    pub(crate) const DEVICE_BOUND_MAX: &str = "secret.custody.floor.device_bound.max";
-    pub(crate) const CROSS_VAULT_MIN: &str = "secret.custody.floor.cross_vault.min";
-    pub(crate) const CROSS_VAULT_MAX: &str = "secret.custody.floor.cross_vault.max";
-    pub(crate) const ROTATION_MAX_AGE_SECS: &str = "secret.custody.rotation_max_age_secs";
-    pub(crate) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
+    pub(super) const PORTABLE_MIN: &str = "secret.custody.floor.portable.min";
+    pub(super) const PORTABLE_MAX: &str = "secret.custody.floor.portable.max";
+    pub(super) const DEVICE_BOUND_MIN: &str = "secret.custody.floor.device_bound.min";
+    pub(super) const DEVICE_BOUND_MAX: &str = "secret.custody.floor.device_bound.max";
+    pub(super) const CROSS_VAULT_MIN: &str = "secret.custody.floor.cross_vault.min";
+    pub(super) const CROSS_VAULT_MAX: &str = "secret.custody.floor.cross_vault.max";
+    pub(super) const ROTATION_MAX_AGE_SECS: &str = "secret.custody.rotation_max_age_secs";
+    pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
 
 pub(crate) use self::codec::reject_secret_custody_byte;

@@ -25,7 +25,7 @@ pub use self::execution::ScopedMcpDispatchResult;
 // Test-only execution entry point: the durable lane is driven by recovery in
 // production builds, so the re-export lives under the same cfg as its callers.
 #[cfg(test)]
-pub(crate) use self::execution::execute_scoped_mcp_outbound_call;
+use self::execution::execute_scoped_mcp_outbound_call;
 pub use self::recovery::{
     AuthorizedRecoveryError, AuthorizedRecoveryReport, recover_authorized_outbound_intents,
 };
