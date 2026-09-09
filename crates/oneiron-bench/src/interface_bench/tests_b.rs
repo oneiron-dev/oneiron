@@ -94,9 +94,19 @@ mod tests {
             .expect("retrieval task");
         let row = test_row(&task.task_id, TaskClass::MultiHop, ArmId::Sdk, 0, 10, 1.0);
 
-        let error =
-            validate_loaded_row(&row, task, ArmId::Sdk, 0, "memo", "request", "nonce", None)
-                .expect_err("class mismatch should reject cached row");
+        let error = validate_loaded_row(
+            &row,
+            task,
+            &ExpectedRowIdentity {
+                arm: ArmId::Sdk,
+                rep_index: 0,
+                memo_key: "memo",
+                request_hash: "request",
+                request_nonce: "nonce",
+                pinned: None,
+            },
+        )
+        .expect_err("class mismatch should reject cached row");
         assert!(error.contains("memo row mismatch"));
     }
 
@@ -448,47 +458,43 @@ mod tests {
         row.request_hash = hash_r1.clone();
         row.request_nonce = nonce.clone();
 
-        let error = validate_loaded_row(
-            &row,
-            task,
+        let expected_r1 = ExpectedRowIdentity {
             arm,
-            0,
-            &key_r1,
-            &hash_r1,
-            &nonce,
-            pin_r1.as_ref(),
-        )
-        .expect_err("an unpinned row must not be reused by a pinned run");
+            rep_index: 0,
+            memo_key: &key_r1,
+            request_hash: &hash_r1,
+            request_nonce: &nonce,
+            pinned: pin_r1.as_ref(),
+        };
+
+        let error = validate_loaded_row(&row, task, &expected_r1)
+            .expect_err("an unpinned row must not be reused by a pinned run");
         assert!(error.contains("pinned identity mismatch"));
 
         row.pinned = pin_r1.clone();
-        validate_loaded_row(
-            &row,
-            task,
-            arm,
-            0,
-            &key_r1,
-            &hash_r1,
-            &nonce,
-            pin_r1.as_ref(),
-        )
-        .expect("the run's own pinned row is reusable");
+        validate_loaded_row(&row, task, &expected_r1)
+            .expect("the run's own pinned row is reusable");
 
         let error = validate_loaded_row(
             &row,
             task,
-            arm,
-            0,
-            &key_r1,
-            &hash_r1,
-            &nonce,
-            pin_r2.as_ref(),
+            &ExpectedRowIdentity {
+                pinned: pin_r2.as_ref(),
+                ..expected_r1
+            },
         )
         .expect_err("another pinned revision's row must not be reused");
         assert!(error.contains("pinned identity mismatch"));
 
-        let error = validate_loaded_row(&row, task, arm, 0, &key_r1, &hash_r1, &nonce, None)
-            .expect_err("a pinned row must not be reused by an unpinned run");
+        let error = validate_loaded_row(
+            &row,
+            task,
+            &ExpectedRowIdentity {
+                pinned: None,
+                ..expected_r1
+            },
+        )
+        .expect_err("a pinned row must not be reused by an unpinned run");
         assert!(error.contains("pinned identity mismatch"));
         assert_ne!(hash_r2, hash_r1);
         assert_ne!(key_r2, key_r1);
