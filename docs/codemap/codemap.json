@@ -22134,13 +22134,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/forward/edge_pass.rs",
+     "purpose": "Edge pass of forward rematerialization: materialize window edge rows into LMDB",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/forward/entity_pass.rs",
+     "purpose": "Entity pass of forward rematerialization: materialize window entity blobs into LMDB",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/forward/tombstone_pass.rs",
+     "purpose": "Tombstone pass of forward rematerialization: reason-aware replay of window tombstones",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -25555,9 +25585,9 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 65,
+     "files": 68,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
@@ -25688,9 +25718,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 5,
+   "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1464,
+   "source_files": 1467,
    "test_files": 526
   },
   "oneiron-bench": {
