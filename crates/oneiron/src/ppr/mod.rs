@@ -12,7 +12,7 @@ pub(crate) use self::cache_store::{
 #[cfg(test)]
 pub(crate) use self::community::ppr_expand_in_txn_with_community_deferred_cache;
 pub(crate) use self::community::{
-    CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
+    CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
 };
 #[cfg(test)]
