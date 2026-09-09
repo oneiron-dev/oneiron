@@ -183,8 +183,9 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   `scripts/ci/cap-target-cache.sh 20`: past 20 GB the dir is removed and the next job on that
   runner builds cold; it never touches a path that is not `…/ci/target`.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
-  `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
-  (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
+  `python3` ≥ 3.11; macOS runners also poppler's `pdfsig` (seal-oracle). `uniffi-stub` needs a
+  full Xcode, not Command Line Tools alone, so it targets the capability label `xcode`; add that
+  label to a runner only after Xcode is installed there (today: both Macs). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
   lacks it) go under `~/ci/tools`, installed by the job on first use and reused after.
 - One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
   macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
