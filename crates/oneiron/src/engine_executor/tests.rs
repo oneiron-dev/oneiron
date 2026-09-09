@@ -2918,29 +2918,51 @@ fn speech_after_a_hard_failure_is_refused_fail_closed() {
 
 /// The speech family reaches the guest as advertised host verbs on the same
 /// first-party boundary every other `self.*` effect is linked on.
+///
+/// Read off the boundary a REAL run carried, and as capability rather than
+/// prose: `SandboxImportClass::Speech` is deliberately kept apart from
+/// `WriteTrap`, so a d.ts that advertised `self.speak` without the matching
+/// linked import would teach the model a verb with no gated witness path
+/// behind it.
 #[test]
 fn executor_boundary_and_prompt_advertise_the_speech_family() {
-    let boundary = executor_boundary_contract().expect("boundary");
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["const answer = 42;"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("done")]);
+    let gated_write = gated_actor_write(&vault, "run-speech-boundary");
+    let config = executor_config(entity(0x8E), EngineExecutorLimits::default());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+
+    let boundary = runtime.seen[0].boundary;
     let names = boundary
         .linked_imports()
         .iter()
         .map(|import| import.name())
         .collect::<Vec<_>>();
+    let advertised = boundary.runtime().advertised_prompt_verbs();
     for verb in ["self.speak", "self.think", "self.express"] {
+        assert!(
+            advertised.iter().any(|declared| declared.as_str() == verb),
+            "prompt must advertise {verb}"
+        );
         assert!(names.contains(&verb), "boundary must link {verb}");
         assert!(
             EXECUTOR_REQUIRED_HOST_IMPORTS.contains(&verb),
             "the executor must require {verb}"
         );
     }
-    let package_root = crate::prompt::workspace_prompt_package_root().expect("prompt package");
-    let wire = crate::prompt::resolve_engine_executor_wire_prompt(package_root)
-        .expect("wire prompt")
-        .text;
-    let prompt = executor_system_prompt(&wire);
-    for advertised in ["function speak", "function think", "function express"] {
-        assert!(prompt.contains(advertised));
-    }
+
+    let requests = backend.requests.lock().expect("requests lock");
+    let system = text_message(&requests[0].messages[0]);
+    assert!(
+        system.contains(boundary.prompt_side_dts()),
+        "the system prompt teaches this run's own advertised host verbs"
+    );
 }
 
 /// The session-bound half, where a bubble is actually materialized.
