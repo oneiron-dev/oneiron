@@ -50,7 +50,7 @@ const MAX_ENTRY_UNCOMPRESSED: u64 = 256 * 1024 * 1024;
 const MAX_PACKAGE_UNCOMPRESSED: u64 = 1024 * 1024 * 1024;
 
 /// The OPC content-type manifest present in every well-formed package.
-pub(crate) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
+pub(super) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
 
 /// Coarse classification of an OPC part for the fidelity law.
 ///
@@ -59,14 +59,14 @@ pub(crate) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
 /// XML, anything unrecognized — must survive an edit byte-for-byte
 /// ([passthrough law](super)); a change to one of them is corruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PartClass {
+pub(super) enum PartClass {
     Supported,
     Unknown,
 }
 
 /// One part of an OPC package: its archive path and decompressed bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct OpcPart {
+pub(super) struct OpcPart {
     pub(crate) name: String,
     pub(crate) data: Vec<u8>,
 }
@@ -74,7 +74,7 @@ pub(crate) struct OpcPart {
 /// A decomposed OPC package. Part order mirrors the source central directory
 /// so a read/write round-trip is stable.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct OpcPackage {
+pub(super) struct OpcPackage {
     parts: Vec<OpcPart>,
 }
 
@@ -322,7 +322,7 @@ pub(crate) fn classify(name: &str) -> PartClass {
 
 /// True for part families the edit tool never rewrites and must pass through
 /// byte-for-byte: VBA macros, pivot caches/tables, charts, and custom XML.
-pub(crate) fn is_unknown_forced(name: &str) -> bool {
+fn is_unknown_forced(name: &str) -> bool {
     name == "xl/vbaProject.bin"
         || name.starts_with("customXml/")
         || name.starts_with("xl/pivotCache/")

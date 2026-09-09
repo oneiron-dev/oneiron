@@ -233,7 +233,7 @@ impl<'a> ExecutorStorage<'a> {
     /// mode-scoped, so a room that has gone on record runs the ordinary verb
     /// path again. The captured route is what refuses the write afterwards if
     /// the flip happened mid-run.
-    pub(crate) fn off_record_policy_active(&self) -> Result<bool> {
+    pub(in crate::code_run) fn off_record_policy_active(&self) -> Result<bool> {
         match self {
             Self::Canonical(_) => Ok(false),
             Self::Session(binding) => Ok(binding.session.mode()? == OffRecordMode::OffRecord),

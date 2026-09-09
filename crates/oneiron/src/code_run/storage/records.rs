@@ -240,7 +240,7 @@ impl Vault {
     /// Test-only direct tally increment. Production executor commits use the
     /// replay-and-heal transaction above so telemetry cannot lag persistence.
     #[cfg(test)]
-    pub(crate) fn increment_code_run_model_heal_count(
+    pub(in crate::code_run) fn increment_code_run_model_heal_count(
         &self,
         model: &ModelId,
     ) -> Result<CodeRunModelHealCount> {

@@ -4,14 +4,14 @@ use crate::codebase::RepoRef;
 
 /// The pre-receive scan is unconditional. Not a dial, not a policy row, not a
 /// slip caveat: a catastrophe-class guard has no "off".
-pub(crate) const DOOR_SCAN_ALWAYS_ON: bool = true;
+pub(super) const DOOR_SCAN_ALWAYS_ON: bool = true;
 
 /// The hard ceiling on any lease this door issues, in seconds. A dial may
 /// narrow it; nothing may raise it.
-pub(crate) const DOOR_MAX_LEASE_TTL_SECS: u64 = 3600;
+pub(super) const DOOR_MAX_LEASE_TTL_SECS: u64 = 3600;
 
 /// The hard ceiling on a one-shot credential's lifetime, in seconds.
-pub(crate) const DOOR_ONE_SHOT_MAX_LIFETIME_SECS: u64 = 300;
+pub(super) const DOOR_ONE_SHOT_MAX_LIFETIME_SECS: u64 = 300;
 
 /// The receive-pack door's effector — the scope every door-issued lease and
 /// door injection is bound to by default.
@@ -19,19 +19,19 @@ pub(crate) const DOOR_RECEIVE_PACK_EFFECTOR: &str = "door:receive-pack";
 
 /// Every effector this door knows how to be. The dial may narrow this set to
 /// a subset; a row naming anything outside it is a widen and fails closed.
-pub(crate) const DOOR_EFFECTORS: [&str; 1] = [DOOR_RECEIVE_PACK_EFFECTOR];
+pub(super) const DOOR_EFFECTORS: [&str; 1] = [DOOR_RECEIVE_PACK_EFFECTOR];
 
 /// Verb: push objects through the door.
-pub(crate) const DOOR_VERB_RECEIVE_PACK: &str = "receive-pack";
+pub(super) const DOOR_VERB_RECEIVE_PACK: &str = "receive-pack";
 
 /// Verb: use a secret at the door without ever holding it.
-pub(crate) const DOOR_VERB_INJECT: &str = "inject";
+pub(super) const DOOR_VERB_INJECT: &str = "inject";
 
 /// Verb: mint a T1 lease ticket over a named secret.
-pub(crate) const DOOR_VERB_LEASE: &str = "lease";
+pub(super) const DOOR_VERB_LEASE: &str = "lease";
 
 /// Verb: redeem a one-shot credential into its named lease scope.
-pub(crate) const DOOR_VERB_REDEEM: &str = "redeem";
+pub(super) const DOOR_VERB_REDEEM: &str = "redeem";
 
 const _: () = assert!(DOOR_SCAN_ALWAYS_ON);
 
@@ -215,7 +215,7 @@ pub(crate) enum DoorDenyReason {
 /// and the one assignment a revocation model must never admit,
 /// `Revoked -> Active`, is precisely the one a setter cannot refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DoorCredentialStatus {
+pub(super) enum DoorCredentialStatus {
     /// Live within its lifetime.
     Active,
     /// Revoked directly.
@@ -372,7 +372,7 @@ fn path_slug(input: &str) -> String {
 /// copying a bound cannot duplicate authority. [`DoorCredential`] itself stays
 /// non-`Clone`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TtlCeiling(u64);
+pub(super) struct TtlCeiling(u64);
 
 impl Default for TtlCeiling {
     /// The safe default IS the floor: a slip nobody narrowed sits at the

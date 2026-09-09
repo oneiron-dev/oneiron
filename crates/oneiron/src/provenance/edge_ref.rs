@@ -42,23 +42,23 @@ pub const EDGE_PROVENANCE_BODY_KEYS: [&str; 10] = [
 
 pub(crate) const KEY_ACTOR_ENTITY_REF: &str = EDGE_PROVENANCE_BODY_KEYS[0];
 
-pub(crate) const KEY_SOURCE_REVISION_REF: &str = EDGE_PROVENANCE_BODY_KEYS[1];
+pub(super) const KEY_SOURCE_REVISION_REF: &str = EDGE_PROVENANCE_BODY_KEYS[1];
 
-pub(crate) const KEY_BODY_SNAPSHOT_REF: &str = EDGE_PROVENANCE_BODY_KEYS[2];
+pub(super) const KEY_BODY_SNAPSHOT_REF: &str = EDGE_PROVENANCE_BODY_KEYS[2];
 
 pub(crate) const KEY_CONFIDENCE: &str = EDGE_PROVENANCE_BODY_KEYS[3];
 
-pub(crate) const KEY_SUPERSESSION_STATUS: &str = EDGE_PROVENANCE_BODY_KEYS[4];
+pub(super) const KEY_SUPERSESSION_STATUS: &str = EDGE_PROVENANCE_BODY_KEYS[4];
 
-pub(crate) const KEY_VALID_FROM: &str = EDGE_PROVENANCE_BODY_KEYS[5];
+pub(super) const KEY_VALID_FROM: &str = EDGE_PROVENANCE_BODY_KEYS[5];
 
 pub(crate) const KEY_VALID_TO: &str = EDGE_PROVENANCE_BODY_KEYS[6];
 
-pub(crate) const KEY_SUBSTRATE_REF: &str = EDGE_PROVENANCE_BODY_KEYS[7];
+pub(super) const KEY_SUBSTRATE_REF: &str = EDGE_PROVENANCE_BODY_KEYS[7];
 
-pub(crate) const KEY_REASONING_EFFORT: &str = EDGE_PROVENANCE_BODY_KEYS[8];
+pub(super) const KEY_REASONING_EFFORT: &str = EDGE_PROVENANCE_BODY_KEYS[8];
 
-pub(crate) const KEY_ACTOR_CLASS: &str = EDGE_PROVENANCE_BODY_KEYS[9];
+pub(super) const KEY_ACTOR_CLASS: &str = EDGE_PROVENANCE_BODY_KEYS[9];
 
 /// Maximum byte length of an inline `reasoning_effort` scalar. contracts.ts
 /// pins the field as a small inline "scalar"; the engine encodes it as a

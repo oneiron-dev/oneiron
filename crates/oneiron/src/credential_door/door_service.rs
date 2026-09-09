@@ -28,7 +28,7 @@ use super::scan_fault_hook;
 /// A named constant because the two refusals are otherwise spelled the same:
 /// the regression that proves this check runs in the write transaction, and not
 /// merely at the door, has to be able to tell which one answered.
-pub(crate) const STAMP_SCOPE_REFUSAL: &str =
+pub(super) const STAMP_SCOPE_REFUSAL: &str =
     "the stamping transaction's dial no longer admits this scope";
 
 /// PROOF that one door effector was admitted, and the authority it was admitted
@@ -45,7 +45,7 @@ pub(crate) const STAMP_SCOPE_REFUSAL: &str =
 /// and an instant that never met — which is precisely what the three loose
 /// arguments this replaces allowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AdmittedScope {
+pub(super) struct AdmittedScope {
     effector: DoorEffector,
     policy: DoorPolicy,
     at: VaultInstant,
@@ -217,7 +217,7 @@ pub(crate) struct CredentialDoorService {
 
 /// Compatibility alias for the door's shorter name. One principal noun, two
 /// spellings — never two organs.
-pub(crate) type CredentialDoor = CredentialDoorService;
+pub(super) type CredentialDoor = CredentialDoorService;
 
 impl CredentialDoorService {
     /// Binds the door to a vault.
@@ -389,7 +389,7 @@ impl CredentialDoorService {
     /// admission AGAIN under itself before writing a row. A dial narrowed
     /// between the read above and that write denies rather than minting under
     /// this now-stale reading.
-    pub(crate) fn issue_lease_ticket(
+    pub(super) fn issue_lease_ticket(
         &self,
         presented: &DoorCredential,
         secret_ref: &str,
@@ -428,7 +428,7 @@ impl CredentialDoorService {
     /// What the door CAN do it does: it refuses a single-use caveat it cannot
     /// witness against the authority log, and it never hands back a ticket
     /// that outlives the one-shot it was redeemed from.
-    pub(crate) fn redeem_one_shot(
+    pub(super) fn redeem_one_shot(
         &self,
         one_shot: DoorCredential,
     ) -> DoorResult<SecretLeaseMaterialization> {
@@ -505,7 +505,7 @@ impl CredentialDoorService {
     /// authorizes nothing and reads nothing, so it has no clock seam to move
     /// onto. When the mint surface lands it will read its instant the same way
     /// every other door operation does.
-    pub(crate) fn mint_one_shot(
+    pub(super) fn mint_one_shot(
         &self,
         _secret_ref: &str,
         _effector: &str,

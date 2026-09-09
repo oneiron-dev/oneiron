@@ -29,7 +29,7 @@ pub(crate) fn normalize_connector_key(value: &str) -> String {
 /// prefix's `'-'` to `'_'`. No ordinary entry can therefore begin with this
 /// tag. The two rule modes stay STRUCTURALLY disjoint: nothing has to guess a
 /// rule's mode from its shape.
-pub(crate) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
+pub(in crate::connector_key) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
 
 /// The reserved compiled-entry tag for the exact ordinary channel of a typed
 /// scoped-MCP call (ONE-1885). The ordinary normalized entry is retained
@@ -41,7 +41,7 @@ pub(crate) const CAPABILITY_NEVER_ENTRY_TAG: &str = "capability-key:";
 /// connector — which begins with `"mcp:"`, not with this tag. The three rule
 /// modes therefore stay STRUCTURALLY disjoint and nothing has to guess a rule's
 /// mode from its shape.
-pub(crate) const SCOPED_CHANNEL_NEVER_ENTRY_TAG: &str = "scoped-channel:";
+pub(in crate::connector_key) const SCOPED_CHANNEL_NEVER_ENTRY_TAG: &str = "scoped-channel:";
 
 /// The ONE safe canonical scoped-server segment rule (ONE-1885).
 ///
@@ -141,7 +141,7 @@ impl ScopedCapabilityProvenance {
     /// result is only ever compared against a minted identity. It is never
     /// applied to a connector string to manufacture a capability.
     #[must_use]
-    pub(crate) fn parse_owner_capability_key(text: &str) -> Option<Self> {
+    pub(in crate::connector_key) fn parse_owner_capability_key(text: &str) -> Option<Self> {
         let (server, grant_id) = canonical_scoped_capability_connector_parts(text)?;
         let minted = Self::mint(server, &grant_id)?;
         (minted.connector == text).then_some(minted)
@@ -196,7 +196,7 @@ impl ScopedCapabilityProvenance {
 /// an exact whole `mcp:{server}` comparison so `-` and `_` remain distinct.
 /// Only blank or partial-wildcard channels are rejected so a corrupted charter
 /// cannot silently fail open.
-pub(crate) fn validate_never_list_entry(entry: &str) -> Result<()> {
+pub(in crate::connector_key) fn validate_never_list_entry(entry: &str) -> Result<()> {
     if let Some(capability_key) = entry.strip_prefix(CAPABILITY_NEVER_ENTRY_TAG) {
         if ScopedCapabilityProvenance::parse_owner_capability_key(capability_key)
             .is_none_or(|capability| capability.connector() != capability_key)
@@ -259,7 +259,7 @@ fn validate_never_list_verb(verb: &str) -> Result<()> {
 /// drift apart. Everything else — a mixed-case or wildcard server, an extra
 /// colon, a non-ASCII or unsafe byte, an ordinary lookalike — has no typed
 /// scoped channel and therefore never becomes a tagged entry.
-pub(crate) fn is_canonical_scoped_channel(channel: &str) -> bool {
+pub(in crate::connector_key) fn is_canonical_scoped_channel(channel: &str) -> bool {
     channel
         .strip_prefix("mcp:")
         .is_some_and(|server| canonical_scoped_server_segment(server).is_some())

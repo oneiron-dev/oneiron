@@ -16,7 +16,7 @@ use super::record::{
 /// Domain tag for the compiled-policy hash.
 const CONNECTOR_CHARTER_COMPILED_DOMAIN: &[u8] = b"oneiron.connector_charter.compiled.v1";
 /// Domain tag for the human-stamped aggregate binding text + compiled policy.
-pub(crate) const CONNECTOR_CHARTER_STAMP_DOMAIN: &[u8] = b"oneiron.connector_charter.stamp.v1";
+const CONNECTOR_CHARTER_STAMP_DOMAIN: &[u8] = b"oneiron.connector_charter.stamp.v1";
 
 /// ISO-4217 currencies with exponent 0 (major unit == minor unit); every
 /// other currency compiles major → minor with the default exponent 2.
@@ -66,7 +66,7 @@ fn encode_compiled_policy_bytes(compiled: &CompiledConnectorPolicy) -> Result<Ve
     Ok(out)
 }
 
-pub(crate) fn compiled_policy_hash(compiled: &CompiledConnectorPolicy) -> Result<[u8; 32]> {
+fn compiled_policy_hash(compiled: &CompiledConnectorPolicy) -> Result<[u8; 32]> {
     Ok(sha256_bytes(&[
         CONNECTOR_CHARTER_COMPILED_DOMAIN,
         &encode_compiled_policy_bytes(compiled)?,
@@ -74,7 +74,7 @@ pub(crate) fn compiled_policy_hash(compiled: &CompiledConnectorPolicy) -> Result
 }
 
 /// The human stamp binds text and compiled policy as ONE aggregate.
-pub(crate) fn charter_stamped_aggregate(
+pub(super) fn charter_stamped_aggregate(
     text_hash: &[u8; 32],
     compiled_hash: &[u8; 32],
 ) -> [u8; 32] {

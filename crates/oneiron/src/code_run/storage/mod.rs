@@ -7,7 +7,8 @@ mod speech_identity;
 pub use self::records::CodeRunModelHealCount;
 pub(crate) use self::routing::ExecutorStorage;
 #[cfg(test)]
+pub(super) use self::speech_identity::canonical_speech_conversation_id;
+#[cfg(test)]
 pub(crate) use self::speech_identity::{
-    canonical_speech_conversation_id, canonical_speech_conversation_id_for_run,
-    executor_speech_message_id,
+    canonical_speech_conversation_id_for_run, executor_speech_message_id,
 };
