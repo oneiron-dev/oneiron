@@ -53,7 +53,7 @@ impl Vault {
         })
     }
 
-    pub(crate) fn origin_publication_rows(
+    pub(in crate::origin) fn origin_publication_rows(
         &self,
         repo_id: Option<EntityId>,
     ) -> Result<Vec<OriginPublicationRecord>> {
@@ -102,7 +102,7 @@ impl Vault {
     /// An O(1) ownership read, not an alternative advertisement authority.
     /// A missing row does not permit serving a raw ref. Even an owned ref must
     /// also survive [`Vault::published_origin_refs`] before it is advertised.
-    pub(crate) fn origin_publication_manages_ref(
+    pub(in crate::origin) fn origin_publication_manages_ref(
         &self,
         repo_id: EntityId,
         ref_name: &GitRefName,

@@ -98,7 +98,7 @@ pub enum StageRoute {
 /// [`Error::InvalidClaimBody`] when the value carries no evidence references, or
 /// when the head the transition was planned against is no longer the current
 /// one. Claim-validation, supersession, and storage errors propagate.
-pub(crate) fn project_stage_transition(
+pub(super) fn project_stage_transition(
     vault: &Vault,
     input: &StageProjectorInput,
     mode: PromotionMode,

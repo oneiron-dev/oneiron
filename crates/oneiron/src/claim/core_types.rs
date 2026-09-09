@@ -54,21 +54,21 @@ pub const CLAIM_BODY_KEYS: [&str; 16] = [
     "appr", "life", "stale", "sess",
 ];
 
-pub(crate) const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
-pub(crate) const KEY_VAL: &str = CLAIM_BODY_KEYS[1];
+const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
+const KEY_VAL: &str = CLAIM_BODY_KEYS[1];
 pub(crate) const KEY_CONF: &str = CLAIM_BODY_KEYS[2];
 pub(crate) const KEY_SAL: &str = CLAIM_BODY_KEYS[3];
-pub(crate) const KEY_EVID: &str = CLAIM_BODY_KEYS[4];
-pub(crate) const KEY_FROM: &str = CLAIM_BODY_KEYS[5];
-pub(crate) const KEY_TO: &str = CLAIM_BODY_KEYS[6];
-pub(crate) const KEY_SRC: &str = CLAIM_BODY_KEYS[7];
+const KEY_EVID: &str = CLAIM_BODY_KEYS[4];
+const KEY_FROM: &str = CLAIM_BODY_KEYS[5];
+const KEY_TO: &str = CLAIM_BODY_KEYS[6];
+const KEY_SRC: &str = CLAIM_BODY_KEYS[7];
 pub(crate) const KEY_WORLD: &str = CLAIM_BODY_KEYS[8];
-pub(crate) const KEY_REL: &str = CLAIM_BODY_KEYS[9];
-pub(crate) const KEY_SUBJ: &str = CLAIM_BODY_KEYS[10];
+const KEY_REL: &str = CLAIM_BODY_KEYS[9];
+const KEY_SUBJ: &str = CLAIM_BODY_KEYS[10];
 pub(crate) const KEY_SCOPE: &str = CLAIM_BODY_KEYS[11];
-pub(crate) const KEY_APPR: &str = CLAIM_BODY_KEYS[12];
-pub(crate) const KEY_LIFE: &str = CLAIM_BODY_KEYS[13];
-pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[14];
+const KEY_APPR: &str = CLAIM_BODY_KEYS[12];
+const KEY_LIFE: &str = CLAIM_BODY_KEYS[13];
+const KEY_STALE: &str = CLAIM_BODY_KEYS[14];
 pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
 
 /// Context-pack CLAIM field profiles, derived from [`CLAIM_BODY_KEYS`] so the

@@ -17,7 +17,7 @@ use super::types::{
     MailboxReadEnvelope, PREDICATE_AUTONOMY_MODE,
 };
 
-pub(crate) fn invalid_autonomy() -> Error {
+pub(super) fn invalid_autonomy() -> Error {
     Error::InvalidConsentBound("channel identity autonomy is absent, mismatched, or unauthorized")
 }
 
