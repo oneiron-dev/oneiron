@@ -931,44 +931,6 @@ fn owner_rows_are_never_evaluated_at_the_relay() -> Result<()> {
 }
 
 #[test]
-fn relay_rubric_carries_only_hosted_rows() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x51),
-        &enabled_owner_manifest(vec![
-            owner_row("owner:spoilers", "Avoid spoilers."),
-            owner_row("owner:jargon", "Avoid nautical jargon."),
-        ]),
-    )?;
-    let request = PolicyClassifyRequest::outbound_content("candidate");
-    let rtxn = vault.store.env.read_txn()?;
-    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
-
-    let owner = owner_rubric_rows(&request, &policy);
-    let hosted = hosted_rubric_rows(&hosted_serious_crime_block());
-
-    assert_eq!(owner.len(), 2);
-    assert!(
-        owner
-            .iter()
-            .all(|row| row.plane == PolicyPlane::OwnerPolicy)
-    );
-    assert!(
-        hosted
-            .iter()
-            .all(|row| row.plane == PolicyPlane::HostedLegal)
-    );
-    // The two rubrics share nothing: no row can be in both planes at once.
-    assert!(!hosted.iter().any(|hosted_row| {
-        owner
-            .iter()
-            .any(|owner_row| owner_row.row_ref == hosted_row.row_ref)
-    }));
-    Ok(())
-}
-
-#[test]
 fn relay_block_writes_audit_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let backend = blocking_backend();

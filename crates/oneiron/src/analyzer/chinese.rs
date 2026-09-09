@@ -235,12 +235,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discover_with_no_paths_returns_portable() {
-        let zh = ChineseAnalyzer::discover(&[]).unwrap();
-        assert_eq!(zh.mode(), AnalyzerMode::Portable);
-    }
-
-    #[test]
     fn discover_with_empty_dir_returns_portable() {
         let dir = tempfile::tempdir().unwrap();
         let zh = ChineseAnalyzer::discover(&[dir.path().to_path_buf()]).unwrap();

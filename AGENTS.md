@@ -178,7 +178,10 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
-  flags let the runner caches share fingerprints with developer builds.
+  flags let the runner caches share fingerprints with developer builds. The cache only grows
+  (cargo never evicts stale artifacts), so every cargo job ends with
+  `scripts/ci/cap-target-cache.sh 20`: past 20 GB the dir is removed and the next job on that
+  runner builds cold; it never touches a path that is not `…/ci/target`.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
   `python3` ≥ 3.11; macOS runners also Xcode/Swift 6 (uniffi-stub) and poppler's `pdfsig`
   (seal-oracle). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
@@ -199,11 +202,10 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
 wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 106 more over-bar
 modules the same way, so a directory module is now the normal shape for anything substantial.
-Four files still sit over the bar and nothing is deferred any more — the `_attribution` block in
+Three files still sit over the bar and nothing is deferred any more — the `_attribution` block in
 `scripts/ratchet/baseline.json` gives the structural reason for each one. `error.rs` is capped by
-its 1436-line `Error` enum; `pipeline/execution/channels.rs` is a single function
-(`run_retrieval_txn_attempt`); `voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned
-indivisible. Do not use those four as precedent for a new large file.
+its 1436-line `Error` enum; `voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned
+indivisible. Do not use those three as precedent for a new large file.
 
 Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
 regenerated deterministically and are the only current answer to "where does X live now".

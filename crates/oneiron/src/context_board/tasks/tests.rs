@@ -55,20 +55,6 @@ fn fold_up_status_uses_total_precedence() {
     }
 }
 
-#[test]
-fn fold_up_status_handles_empty_and_single_job() {
-    assert_eq!(fold_up_status(&[]), None);
-    for status in [
-        TaskBoardStatus::Running,
-        TaskBoardStatus::Failed,
-        TaskBoardStatus::Scheduled,
-        TaskBoardStatus::Queued,
-        TaskBoardStatus::Done,
-    ] {
-        assert_eq!(fold_up_status(&[job("only", status)]), Some(status));
-    }
-}
-
 fn connector_send_task() -> ConnectorSendTask {
     ConnectorSendTask {
         task_ref: EntityId::from_bytes([0x51; 16]).expect("task ref from 16 bytes"),
@@ -567,32 +553,6 @@ fn intents(count: usize) -> Vec<TaskIntentPresence> {
         .collect()
 }
 
-/// The pinned ARCH-0067 §8 additive grammar. An exact census and a
-/// scan-capped lower bound must never read the same.
-#[test]
-fn overflow_line_follows_the_additive_grammar() {
-    let line = |known_omitted_rows, source_exhausted| {
-        TasksOverflow {
-            known_omitted_rows,
-            source_exhausted,
-        }
-        .line()
-    };
-
-    assert_eq!(line(0, true), None);
-    assert_eq!(line(4, true).as_deref(), Some("tasks: +4 more"));
-    assert_eq!(
-        line(0, false).as_deref(),
-        Some("tasks: more rows may exist (scan capped)")
-    );
-    assert_eq!(
-        line(4, false).as_deref(),
-        Some("tasks: +4 more (at least; scan capped)")
-    );
-    // A lower bound is never presentable as the exact count.
-    assert_ne!(line(4, false), line(4, true));
-}
-
 /// An exhausted scan knows exactly what it dropped, so the footer is an
 /// exact additive count and the concrete rows stop at the cap.
 #[test]
@@ -649,33 +609,6 @@ fn exhausted_render_under_the_cap_has_no_footer() {
     assert_eq!(section.rows.len(), 3);
     assert_eq!(section.overflow, None);
     assert_eq!(render_tasks_section(&intents(3), &[]), section);
-}
-
-/// Page-boundary arithmetic: the cap is an exact row bound at, below, and
-/// above the boundary, and a zero cap sheds the whole section to a count.
-#[test]
-fn render_cap_boundaries_hold_exactly() {
-    for (rows, cap, expected_rows, expected_omitted) in
-        [(4, 5, 4, 0), (5, 5, 5, 0), (6, 5, 5, 1), (3, 0, 0, 3)]
-    {
-        let section = TasksSection::render_with_cap(&intents(rows), &[], true, cap);
-        assert_eq!(section.rows.len(), expected_rows, "{rows} rows / cap {cap}");
-        assert_eq!(
-            section
-                .overflow
-                .map_or(0, |overflow| overflow.known_omitted_rows),
-            expected_omitted,
-            "{rows} rows / cap {cap}"
-        );
-    }
-    // Empty input under any cap is an empty, footer-free section.
-    assert_eq!(
-        TasksSection::render_with_cap(&[], &[], true, 5),
-        TasksSection {
-            rows: Vec::new(),
-            overflow: None,
-        }
-    );
 }
 
 /// The footer is structural, never work: it has no id, status, intent

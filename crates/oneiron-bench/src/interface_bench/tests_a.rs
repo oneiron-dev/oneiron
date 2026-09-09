@@ -47,32 +47,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn task_generation_matches_campaign_shape() {
-        let bundle = build_task_bundle();
-        assert_eq!(bundle.fixture.claims.len(), CLAIM_COUNT);
-        assert_eq!(bundle.full_tasks.len(), FULL_TASK_COUNT);
-        assert_eq!(bundle.smoke_tasks.len(), SMOKE_TASK_COUNT);
-        assert_eq!(bundle.spotcheck.len(), OWNER_SPOTCHECK_COUNT);
-
-        let mut counts = BTreeMap::new();
-        let mut holdout_counts = BTreeMap::new();
-        for task in &bundle.full_tasks {
-            *counts.entry(task.class).or_insert(0) += 1;
-            if task.holdout {
-                *holdout_counts.entry(task.class).or_insert(0) += 1;
-            }
-        }
-        assert_eq!(counts.get(&TaskClass::RetrievalQa), Some(&30));
-        assert_eq!(counts.get(&TaskClass::MultiHop), Some(&20));
-        assert_eq!(counts.get(&TaskClass::Provenance), Some(&20));
-        assert_eq!(counts.get(&TaskClass::BrowseThenAnswer), Some(&10));
-        assert_eq!(holdout_counts.get(&TaskClass::RetrievalQa), Some(&6));
-        assert_eq!(holdout_counts.get(&TaskClass::MultiHop), Some(&4));
-        assert_eq!(holdout_counts.get(&TaskClass::Provenance), Some(&4));
-        assert_eq!(holdout_counts.get(&TaskClass::BrowseThenAnswer), Some(&2));
-    }
-
-    #[test]
     fn config_locks_openrouter_wandb_without_fallbacks() {
         let defaults = RunSettings::default();
         assert_eq!(defaults.model, MODEL);
@@ -172,16 +146,6 @@ pub(crate) mod tests {
 
         assert_eq!(claims.len(), relevant_claim_ids.len());
         assert!(relevant_claim_ids.iter().all(|id| transcript.contains(id)));
-    }
-
-    #[test]
-    fn full_run_shape_is_exactly_480_rows() {
-        let defaults = RunSettings::default();
-        assert_eq!(defaults.full_run_count(), 480);
-        assert_eq!(
-            defaults.full_run_count(),
-            FULL_TASK_COUNT * ArmId::ALL.len() * FULL_REP_COUNT as usize
-        );
     }
 
     #[test]

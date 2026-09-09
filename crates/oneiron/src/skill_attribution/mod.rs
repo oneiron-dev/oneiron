@@ -65,6 +65,4 @@ use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
-use crate::llm::CallPurpose;
-#[cfg(test)]
 use rmpv::Value;

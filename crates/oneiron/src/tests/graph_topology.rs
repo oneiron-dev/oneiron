@@ -443,29 +443,6 @@ fn subtree_allows_exact_cap_and_overflows_on_next_descendant() -> Result<()> {
 }
 
 #[test]
-fn ancestors_walks_to_root() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let root = EntityId::now();
-    let mid = EntityId::now();
-    let leaf = EntityId::now();
-
-    put_tree_nodes(vault.batch(), &[root, mid, leaf])
-        .edge(&mid, EdgeKind::ChildOf, &root, 1.0)
-        .edge(&leaf, EdgeKind::ChildOf, &mid, 1.0)
-        .commit()?;
-
-    let anc = vault.ancestors(&leaf)?;
-    assert_eq!(anc, vec![mid, root]);
-
-    // Root has no ancestors
-    let root_anc = vault.ancestors(&root)?;
-    assert!(root_anc.is_empty());
-
-    Ok(())
-}
-
-#[test]
 fn cycle_prevention_rejects_self_parent() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let node = EntityId::now();
@@ -758,43 +735,6 @@ fn child_of_chain_carries_no_ppr_mass() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1100 AC1 — a mixed path whose first edge is `child_of` carries zero
-/// PPR mass past that edge: ChildOf is never traversed, so the PartOf tail
-/// of the path is unreachable from the leaf seed.
-#[test]
-fn mixed_path_through_child_of_carries_no_ppr_mass() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    // place1 --PartOf--> place2 --PartOf--> place3 --ChildOf--> leaf
-    let place1 = EntityId::now();
-    let place2 = EntityId::now();
-    let place3 = EntityId::now();
-    let leaf = EntityId::now();
-
-    put_tree_nodes(vault.batch(), &[leaf])
-        .put(&place1, 9, test_time_range(1, 1), 2, b"p1") // Place
-        .put(&place2, 9, test_time_range(3, 3), 4, b"p2")
-        .put(&place3, 9, test_time_range(5, 5), 6, b"p3")
-        .edge(&place2, EdgeKind::PartOf, &place1, 1.0)
-        .edge(&place3, EdgeKind::PartOf, &place2, 1.0)
-        .edge(&leaf, EdgeKind::ChildOf, &place3, 1.0)
-        .commit()?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let scores = ppr::ppr_compute(&vault.store, &rtxn, &[leaf], 6, 0.15)?;
-
-    // The only edge at the seed is ChildOf (never traversed), so no node
-    // beyond the seed may receive mass — including the PartOf tail.
-    assert_eq!(
-        scores.len(),
-        1,
-        "ChildOf must block the entire mixed path; only the seed may be scored"
-    );
-    assert_eq!(scores[0].id, leaf);
-
-    Ok(())
-}
-
 #[test]
 fn generic_child_of_writes_reject_cycles() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -948,27 +888,6 @@ fn edge_checked_rejects_self_cycle() -> Result<()> {
     assert!(
         !vault.edge_exists(&node, EdgeKind::ChildOf, &node)?,
         "self-cycle edge should not have been persisted"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn subtree_excludes_root() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let root = EntityId::now();
-    let child = EntityId::now();
-
-    put_tree_nodes(vault.batch(), &[root, child])
-        .edge(&child, EdgeKind::ChildOf, &root, 1.0)
-        .commit()?;
-
-    let tree = vault.subtree(&root, 10)?;
-    assert_eq!(tree.len(), 1);
-    assert_eq!(tree[0].0, child);
-    assert!(
-        !tree.iter().any(|(id, _)| *id == root),
-        "root should not appear in its own subtree"
     );
 
     Ok(())

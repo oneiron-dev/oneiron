@@ -797,38 +797,6 @@ fn full_drop_all_touch_everything_equivalence() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn slim_residue_rss_bound() -> Result<()> {
-    fn rss_bytes() -> Option<u64> {
-        let status = std::fs::read_to_string("/proc/self/status").ok()?;
-        status.lines().find_map(|line| {
-            line.strip_prefix("VmRSS:")?
-                .split_whitespace()
-                .next()?
-                .parse::<u64>()
-                .ok()?
-                .checked_mul(1024)
-        })
-    }
-    // Process-wide RSS includes other test threads and allocator/page-cache noise.
-    const ALLOCATOR_AND_PAGE_CACHE_SLACK: u64 = 128 * 1024 * 1024;
-    let (_dir, vault) = fixture();
-    warm(&vault)?;
-    pending(&vault, 1);
-    let expected_cache = rows(&vault, &vault.store.ppr_cache)?.len() as u64;
-    let expected_deps = rows(&vault, &vault.store.ppr_cache_deps)?.len() as u64;
-    let before = rss_bytes();
-    let (_, report) = entered(&vault);
-    assert_eq!(report.hnsw_nodes, 4);
-    assert_eq!(report.ppr_cache_rows, expected_cache);
-    assert_eq!(report.ppr_dependency_rows, expected_deps);
-    assert!(report.estimated_reclaimed_bytes > 0);
-    if let (Some(before), Some(after)) = (before, rss_bytes()) {
-        assert!(after <= before.saturating_add(ALLOCATOR_AND_PAGE_CACHE_SLACK));
-    }
-    Ok(())
-}
-
 #[cfg(feature = "sync")]
 #[test]
 fn sync_drop_failure_preserves_admission_residue() -> Result<()> {

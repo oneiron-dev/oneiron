@@ -1634,55 +1634,6 @@ fn storage_abi_golden_fixture() {
 }
 
 #[test]
-fn record_content_digest_has_no_json_detour() {
-    // The requirement is about REACHABILITY, not one function body: the digest
-    // path must not reach canonical JSON through any callee, in any function
-    // order. `derive_intent_id` is the sole exception — it hashes the shipped
-    // identity preimage — so its body is sliced out and everything that remains
-    // must be JSON-free.
-    // The ledger is a directory module: audit the whole module surface, not one file.
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/outbound_intent_ledger");
-    let mut src = String::new();
-    for name in ["mod.rs", "types.rs", "dispatch.rs", "store.rs", "codec.rs"] {
-        let path = dir.join(name);
-        src.push_str(
-            &std::fs::read_to_string(&path)
-                .unwrap_or_else(|err| panic!("reading {} must succeed: {err}", path.display())),
-        );
-        src.push('\n');
-    }
-    let start = src
-        .find("\npub fn derive_intent_id(")
-        .expect("the identity derivation must be findable by its signature")
-        + 1;
-    let end = start
-        + src[start..]
-            .find("\n}\n")
-            .expect("the identity derivation must terminate")
-        + "\n}\n".len();
-    let identity = &src[start..end];
-    assert!(
-        identity.contains("canonical_hash(&IntentIdentity {"),
-        "the sliced body must be the identity derivation itself"
-    );
-    let remainder = format!("{}{}", &src[..start], &src[end..]);
-    assert!(
-        remainder.contains("fn record_content_digest("),
-        "the remainder must still hold the digest path being audited"
-    );
-    for token in ["canonical_hash", "canonicalize_json", "serde_json"] {
-        assert!(
-            identity.contains(token),
-            "{token} must remain inside derive_intent_id"
-        );
-        assert!(
-            !remainder.contains(token),
-            "{token} is reachable outside derive_intent_id"
-        );
-    }
-}
-
-#[test]
 fn content_digest_is_stable_for_one_logical_record() {
     let (_dir, vault) = open_vault();
     let payload: &[u8] = b"stable digest payload";

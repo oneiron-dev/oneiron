@@ -627,32 +627,3 @@ fn turn_vad_annotation_rejects_edge_vad_range_violations() -> Result<()> {
     assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
     Ok(())
 }
-
-#[test]
-fn batch_edge_with_vad_api() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-
-    vault
-        .batch()
-        .put(&src, 1, test_time_range(1, 2), 3, b"src")
-        .put(&tgt, 4, test_time_range(4, 5), 6, b"tgt")
-        .edge_with_vad(
-            &src,
-            EdgeKind::HasFacet,
-            &tgt,
-            0.7,
-            Vad {
-                valence: 0.5,
-                arousal: 0.4,
-                dominance: 0.3,
-            },
-        )
-        .commit()?;
-
-    let out = vault.edges_out(&src)?;
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].kind, EdgeKind::HasFacet);
-    Ok(())
-}

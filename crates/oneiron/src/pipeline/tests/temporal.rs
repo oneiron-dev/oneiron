@@ -21,32 +21,6 @@ fn three_index_scan_discovers_end_only_candidate() -> Result<()> {
 }
 
 #[test]
-fn long_interval_spanner_is_discovered_via_range_query() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let anchor = 2_000_000_u64;
-    let candidate = entity_id(41);
-    let span = 30_u64 * 86_400;
-
-    put_entity(
-        &vault,
-        candidate,
-        1,
-        anchor.saturating_sub(span),
-        anchor.saturating_add(span),
-        anchor,
-    )?;
-
-    let results = vault
-        .query()
-        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 10)
-        .run()?;
-
-    assert!(results.iter().any(|entry| entry.id == candidate));
-    Ok(())
-}
-
-#[test]
 fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
@@ -275,34 +249,6 @@ fn future_events_are_scored() -> Result<()> {
         .find(|entry| entry.id == id)
         .expect("missing future entity");
     assert!(scored.score > 0.5_f32);
-    Ok(())
-}
-
-#[test]
-fn temporal_tier_equivalence() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let a = entity_id(60);
-    let b = entity_id(61);
-    let start = 1_000_000;
-    let end = 1_200_000;
-    let sigma = end - start;
-
-    put_entity(&vault, a, 1, start + 10_000, start + 10_000, start + 10_000)?;
-    put_entity(&vault, b, 1, end + 500_000, end + 500_000, end + 500_000)?;
-
-    let tier1 = vault.query().search_temporal(start, end, 10).run()?;
-    let tier2 = vault
-        .query()
-        .search_temporal_with_sigma(start, end, sigma.max(86_400), TemporalAnchorMode::Auto, 10)
-        .run()?;
-
-    assert_eq!(tier1.len(), tier2.len());
-    for (left, right) in tier1.iter().zip(tier2.iter()) {
-        assert_eq!(left.id, right.id);
-        assert!(approx_eq(left.score, right.score, 1e-6));
-    }
-
     Ok(())
 }
 

@@ -68,7 +68,7 @@ pub use self::store::{amendment_delta, project_identity_amendment_deltas};
 mod tests;
 
 #[cfg(test)]
-use self::{lanes::*, store::*};
+use self::store::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

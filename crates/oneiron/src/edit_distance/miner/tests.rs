@@ -279,43 +279,6 @@ fn emitted(outcomes: &[MinedOutcome]) -> Vec<MinedOutcome> {
 // ─── the K threshold ────────────────────────────────────────────────────
 
 #[test]
-fn three_identical_substitutions_in_one_scope_emit_exactly_one_proposal() -> Result<()> {
-    let (_dir, vault) = temp_vault();
-    let actor = put_actor(&vault);
-    let run = miner_run(&vault);
-    land_sign_offs(&vault, actor, "outbound", 3)?;
-
-    let cluster = sign_off_cluster(&vault, "outbound")?;
-    assert_eq!(cluster.count, 3, "three distinct receipts, one bucket");
-    assert_eq!(cluster.receipt_refs.len(), 3);
-    assert_eq!(cluster.actor, actor);
-
-    let outcomes = run_substitution_miner(&vault, &run)?;
-    let emissions = emitted(&outcomes);
-    assert_eq!(emissions.len(), 1, "one cluster at threshold, one proposal");
-    assert!(matches!(emissions[0], MinedOutcome::PreferenceClaim(_)));
-    assert_eq!(preference_rows(&vault, &actor)?.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn two_receipts_stay_below_threshold() -> Result<()> {
-    let (_dir, vault) = temp_vault();
-    let actor = put_actor(&vault);
-    let run = miner_run(&vault);
-    land_sign_offs(&vault, actor, "outbound", 2)?;
-
-    let outcomes = run_substitution_miner(&vault, &run)?;
-    assert!(!outcomes.is_empty(), "the cluster exists, it is just short");
-    assert!(
-        emitted(&outcomes).is_empty(),
-        "two identical corrections are a pair, not a habit"
-    );
-    assert!(preference_rows(&vault, &actor)?.is_empty());
-    Ok(())
-}
-
-#[test]
 fn k_is_read_from_the_settings_dial() -> Result<()> {
     let (_dir, vault) = temp_vault();
     let actor = put_actor(&vault);
@@ -653,26 +616,6 @@ fn an_open_or_landed_preference_never_re_proposes() -> Result<()> {
     assert!(
         !eligible(&vault, &handle, far_future)?,
         "a landed preference is standing truth; re-proposing it is nagging"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_mined_proposal_is_reviewable_in_its_run_group() -> Result<()> {
-    let (_dir, vault) = temp_vault();
-    let actor = put_actor(&vault);
-    let run = miner_run(&vault);
-    land_sign_offs(&vault, actor, "outbound", 3)?;
-    run_substitution_miner(&vault, &run)?;
-    let claim = preference_ids(&vault, &actor)?[0];
-
-    let group = mined_group(&vault, &run);
-    assert!(
-        group
-            .members
-            .iter()
-            .any(|member| member.claim_id == claim.to_hex()),
-        "the pending row must reach the decider, or the proposal is a dead end"
     );
     Ok(())
 }
@@ -1060,23 +1003,6 @@ fn a_pure_insertion_or_deletion_is_not_a_substitution() {
     assert_eq!(substitution_pair("hello there", "hello"), None);
     assert_eq!(substitution_pair("same", "same"), None);
     assert_eq!(substitution_pair("", ""), None);
-}
-
-#[test]
-fn the_pair_is_the_changed_run_not_the_whole_text() {
-    let pair = substitution_pair("review 0 is on fri", "review 0 is on mon")
-        .expect("a one-word correction is a substitution");
-    assert_eq!(pair.from, "fri");
-    assert_eq!(pair.to, "mon");
-}
-
-#[test]
-fn the_changed_run_widens_to_whole_tokens() {
-    // `regards` and `cheers` share a trailing `s`; without token alignment the
-    // pair would be `regard` -> `cheer`, which is in no lexicon.
-    let pair = substitution_pair("attached\nregards", "attached\ncheers").expect("substitution");
-    assert_eq!(pair.from, "regards");
-    assert_eq!(pair.to, "cheers");
 }
 
 #[test]

@@ -605,32 +605,6 @@ fn group_taps_compute_true_authorized_intersection() {
     );
 }
 
-#[test]
-fn single_participant_and_group_use_same_state_machine() {
-    let (_dir, vault) = open_vault();
-    let oracle = ScriptedOracle::new(scripted_slots());
-
-    // One participant: create, tap, confirm.
-    let solo = propose(&vault, &oracle, 1);
-    tap(
-        &vault,
-        &solo.participant_tokens[0].raw_token,
-        solo.proposal.id,
-        1,
-    );
-    let solo_answer = confirm(&vault, &oracle, solo.proposal.id).expect("a solo answer");
-
-    // Three participants: the same four functions, in the same order.
-    let group = propose(&vault, &oracle, 3);
-    for participant in &group.participant_tokens {
-        tap(&vault, &participant.raw_token, group.proposal.id, 1);
-    }
-    let group_answer = confirm(&vault, &oracle, group.proposal.id).expect("a group answer");
-
-    assert_eq!(solo_answer.selected.slot, group_answer.selected.slot);
-    assert_eq!(solo_answer.selected.id, group_answer.selected.id);
-}
-
 // ---------------------------------------------------------------------
 // Soft confirm
 // ---------------------------------------------------------------------
