@@ -225,6 +225,14 @@ gets its own file under the owning module directory:
 
 Never create `utils.rs` or `helpers.rs` — name a file for what it does.
 
+`scripts/ratchet/check.sh` ratchets three counters over non-test code — files at or over 800
+lines, `#[allow(` attributes, and `println!`/`eprintln!`/`dbg!` calls (baseline 3 / 98 / 91,
+`scripts/ratchet/baseline.json`) — and `scripts/ratchet/root-surface-check.sh` pins the crate
+root at exactly the 702 names in `scripts/ratchet/root-surface.txt`. A change may lower a
+counter; raising one, or moving the pin, is a reviewed decision stated in the PR, never a
+silent bump. Reason-carrying `#[allow(…)]` is the only legal form and it never hides a warning
+that a private item became dead — delete the item instead.
+
 ## Module style
 
 Two file shapes are legal; never convert one to the other for style alone.
@@ -240,6 +248,27 @@ Two file shapes are legal; never convert one to the other for style alone.
   `scripts/refactor/tools/split_check.py <base-rev> <old-file> <new-dir>` (fails closed with
   `SPLIT-CHECK-ERROR`). The manifest-driven `scripts/refactor/conformance.sh` is not needed for
   the common case.
+
+- Reach: an item is declared at the narrowest visibility its callers need — private when
+  only its own file names it, `pub(super)` when only its parent directory does, `pub(in
+  crate::x)` when an ancestor directory does, `pub(crate)` only when another top-level directory
+  names it, and `pub` only through the `lib.rs` root surface. The 2026-09-10 census (#919)
+  narrowed 749 engine items this way. The compiler is the arbiter: when it names a caller outside
+  the boundary, widen to exactly that caller's scope and no further. Re-export seams follow the
+  same rule — a `pub(crate) use` that nothing outside the directory names is a plain `use`.
+
+## Test style
+
+A test asserts what a caller can observe: the returned value, the stored row, the typed error
+variant, the wire body. It does not assert a log line, an internal counter, a private field, the
+wording of a message, or a source scan of the file under test. When the outcome has no observable
+door, add the door in the same change — a typed `Error` variant, a reason code, or an accessor on
+the type that owns the fact (the 2026-09-10 pass rewrote 940 assertions to this shape and added 59
+such doors) — never widen a private item so a test can reach it. Shared fixtures live in the
+owning module's `tests/support.rs`; a helper one file uses stays in that file, and a helper with
+no remaining caller is deleted, not kept. Test files (`tests/**`, `tests.rs`, `*_tests.rs`) sit
+outside the giant-file ratchet and the visibility census, so length is not the concern there;
+duplication is — a test that only re-proves what a sibling proves is deleted.
 
 ## Closest wins
 
