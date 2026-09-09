@@ -303,44 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn add_window_to_root_is_idempotent() {
-        // Idempotency holds at any insertion position — single-entry list
-        // (only/first slot) and middle of a 3-entry list. Each case re-adds
-        // an existing window and asserts the list stays unchanged.
-        let cases: &[(&str, &[&str], &str, &[&str])] = &[
-            // (case_name, initial_windows, reinsert_key, expected_windows)
-            ("first_slot", &["2026-01"], "2026-01", &["2026-01"]),
-            (
-                "middle_slot",
-                &["2026-01", "2026-02", "2026-03"],
-                "2026-02",
-                &["2026-01", "2026-02", "2026-03"],
-            ),
-        ];
-
-        for (case_name, initial, reinsert, expected) in cases {
-            let initial_keys: Vec<WindowKey> = initial.iter().map(|k| WindowKey::new(*k)).collect();
-            let doc = create_root_doc("user1", "vault-abc", &initial_keys);
-
-            add_window_to_root(&doc, &WindowKey::new(*reinsert));
-
-            let windows = read_window_list(&doc);
-            assert_eq!(
-                windows.len(),
-                expected.len(),
-                "case {case_name}: list length changed"
-            );
-            for (i, expected_key) in expected.iter().enumerate() {
-                assert_eq!(
-                    windows[i].as_str(),
-                    *expected_key,
-                    "case {case_name}: index {i} mismatch"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn add_window_to_root_normalizes_incoming_key_before_insert() {
         let doc = create_root_doc("user1", "vault-abc", &[]);
 

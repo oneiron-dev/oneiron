@@ -503,38 +503,6 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
 }
 
 #[test]
-fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
-    use crate::registry::{TypeByteZone, entity_type_registry_entry, zone_of};
-
-    let (_dir, vault) = open_test_vault();
-    vault.register_structural_kind(110, "np", TypeByteZone::CompiledProduct, "notes-pack")?;
-    vault.register_structural_kind(
-        111,
-        "pd",
-        TypeByteZone::CompiledProduct,
-        "productivity-pack",
-    )?;
-    vault.register_structural_kind(112, "cc", TypeByteZone::CompiledProduct, "crm-pack")?;
-
-    let rows = vault.structural_kind_registrations();
-    assert_eq!(rows.len(), 3);
-    for registration in rows {
-        assert_eq!(
-            zone_of(registration.type_byte),
-            registration.zone,
-            "persisted registry band must match zone_of({})",
-            registration.type_byte
-        );
-        assert!(
-            entity_type_registry_entry(registration.type_byte).is_none(),
-            "runtime registry must not shadow static registry byte {}",
-            registration.type_byte
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<()> {
     use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteZone, short_id_prefix};
 

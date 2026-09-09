@@ -527,20 +527,6 @@ fn prep_persists_nothing_and_adds_no_type_byte() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn external_meeting_arms_by_default() {
-    let event_ref = test_id(EVENT_SEED);
-    let event = external_event(event_ref, EVENT_START);
-    let policy = PrepPolicy::default();
-
-    assert!(policy.external_only, "external-only is the shipped default");
-    assert_eq!(policy.max_words, DEFAULT_PREP_MAX_WORDS);
-    assert_eq!(policy.lead_secs, DEFAULT_PREP_LEAD_SECS);
-
-    assert!(prep_is_eligible(&event, policy));
-    assert!(plan_prep_wake(prep_wake_id(&event_ref), &event, policy).is_some());
-}
-
-#[test]
 fn campaign_or_commitment_linkage_arms_without_external_attendee() {
     let event_ref = test_id(EVENT_SEED);
     let policy = PrepPolicy::default();

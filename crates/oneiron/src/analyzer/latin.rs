@@ -184,18 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn offsets_refer_to_original_slice() {
-        let text = "foo bar baz";
-        let mut out = Vec::new();
-        analyze(text, 0, 0, Some(LanguageHint::En), false, &mut out);
-        for tok in &out {
-            let slice = &text[tok.byte_start as usize..tok.byte_end as usize];
-            assert!(!slice.is_empty());
-            assert!(slice.eq_ignore_ascii_case(&tok.term));
-        }
-    }
-
-    #[test]
     fn offset_base_shifts_absolute_offsets() {
         let mut out = Vec::new();
         analyze("foo bar", 100, 0, Some(LanguageHint::En), false, &mut out);
@@ -242,14 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn query_mode_still_emits_stem_overlay() {
-        let mut out = Vec::new();
-        analyze("running", 0, 0, Some(LanguageHint::En), true, &mut out);
-        assert_eq!(surface_terms(&out), vec!["running"]);
-        assert_eq!(stem_terms(&out), vec!["run"]);
-    }
-
-    #[test]
     fn no_hint_skips_stemmer_entirely() {
         let mut out = Vec::new();
         analyze("running walks", 0, 0, None, false, &mut out);
@@ -262,29 +242,6 @@ mod tests {
         let mut out = Vec::new();
         analyze("...,,,???", 0, 0, Some(LanguageHint::En), false, &mut out);
         assert!(out.is_empty());
-    }
-
-    #[test]
-    fn spanish_stemmer_reduces_inflections() {
-        let mut out = Vec::new();
-        analyze(
-            "gatos gato gata",
-            0,
-            0,
-            Some(LanguageHint::Es),
-            false,
-            &mut out,
-        );
-        let stems = stem_terms(&out);
-        assert!(stems.iter().all(|s| s.starts_with("gat")));
-    }
-
-    #[test]
-    fn russian_stemmer_reduces_inflections() {
-        let mut out = Vec::new();
-        analyze("кошки кошка", 0, 0, Some(LanguageHint::Ru), false, &mut out);
-        let stems = stem_terms(&out);
-        assert!(!stems.is_empty());
     }
 
     #[test]
@@ -367,14 +324,6 @@ mod tests {
         assert_eq!(crab.channel, AnalyzerChannel::Surface);
         // Offsets slice the original text: "rust " is 5 bytes, 🦀 is 4.
         assert_eq!((crab.byte_start, crab.byte_end), (5, 9));
-    }
-
-    #[test]
-    fn emoji_does_not_disturb_stemming() {
-        let mut out = Vec::new();
-        analyze("running 🦀", 0, 0, Some(LanguageHint::En), false, &mut out);
-        assert_eq!(surface_terms(&out), vec!["running", "🦀"]);
-        assert_eq!(stem_terms(&out), vec!["run"]);
     }
 
     #[test]

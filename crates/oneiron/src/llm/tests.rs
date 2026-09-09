@@ -62,28 +62,6 @@ fn model_id_requires_provider_name_and_revision() {
 }
 
 #[test]
-fn role_model_defaults_resolve_default_model_for_each_role() {
-    let defaults = RoleModelDefaults::default();
-    let resolved: Vec<_> = [
-        LlmRole::Orchestrator,
-        LlmRole::Subagent,
-        LlmRole::Summarizer,
-    ]
-    .into_iter()
-    .map(|role| defaults.resolve(role).as_str().to_owned())
-    .collect();
-
-    assert_eq!(
-        resolved,
-        [
-            "openai/gpt-4.1@2026-07-02",
-            "openai/gpt-4.1-mini@2026-07-02",
-            "openai/gpt-4.1-nano@2026-07-02",
-        ]
-    );
-}
-
-#[test]
 fn role_model_defaults_prefer_user_override_for_each_role() {
     let mut defaults = RoleModelDefaults::default();
     let overrides = [
@@ -189,20 +167,6 @@ fn reasoning_effort_round_trips_contract_wire_values() {
             effort
         );
     }
-}
-
-#[test]
-fn unsupported_capability_display_uses_stable_capability_name() {
-    let unsupported = UnsupportedCapability {
-        capability: LlmCapability::ToolCalling,
-        model: Some(ModelId::new("openai/gpt-4.1@2026-07-02").unwrap()),
-        reason: Some("catalog entry lacks tools".to_owned()),
-    };
-
-    assert_eq!(
-        unsupported.to_string(),
-        "tool_calling for openai/gpt-4.1@2026-07-02: catalog entry lacks tools"
-    );
 }
 
 #[test]

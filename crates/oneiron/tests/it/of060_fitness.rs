@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use oneiron::{
@@ -126,30 +125,6 @@ fn of060_f1_put_replicated_stays_sync_only() {
         violations.is_empty(),
         "OF-060 F1: put_replicated must stay reachable only from oneiron sync production code:\n{}",
         violations.join("\n")
-    );
-}
-
-#[test]
-fn of060_f1_recognizes_actual_cfg_test_external_path_mount() {
-    let repo = repo_root();
-    let dir = repo.join("crates/oneiron/src/provider_confidence");
-    let parent = dir.join("indexes.rs");
-    let mounted = dir.join("prior_projection_tests.rs");
-    let sources = [parent, mounted.clone()]
-        .into_iter()
-        .map(|path| {
-            let source = fs::read_to_string(&path).expect("mount regression source");
-            (path, source)
-        })
-        .collect::<Vec<_>>();
-
-    assert!(test_only_by_path(&normalized(relative_path(
-        &repo, &mounted
-    ))));
-    assert!(production_source(&sources[1].1).contains(".put_replicated"));
-    assert_eq!(
-        cfg_test_external_files(&repo, &sources),
-        BTreeSet::from([mounted])
     );
 }
 

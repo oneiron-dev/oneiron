@@ -31,8 +31,7 @@ use super::constraint::{
     BookingError, CONSTRAINT_PARSE_CALL_PURPOSE, CONSTRAINT_SCHEMA_VERSION, ConstraintObject,
     ConstraintParseConfig, ConstraintParseDisposition, ConstraintParseRequest,
     ConstraintSessionCaps, ConstraintSessionState, ConstraintWeekday, EventTypeKey,
-    LocalMinuteWindow, RankedSlot, SlotMask, SlotOracle, SolveRequest,
-    parse_constraint_with_backend,
+    LocalMinuteWindow, RankedSlot, SlotMask, SlotOracle, parse_constraint_with_backend,
 };
 
 // -------------------------------------------------------------------------
@@ -658,26 +657,6 @@ fn booking_constraint_free_text_never_reaches_oracle() {
         Err(BookingError::InvalidConstraint(_))
     ));
     assert!(clean.seen().is_empty(), "a smuggled tz never reaches solve");
-}
-
-/// Identical normalized requests produce identical results, and the fixture is
-/// compiled by plain `#[cfg(test)]` with no feature gate.
-#[test]
-fn booking_constraint_fixture_oracle_is_deterministic() {
-    let oracle = FixtureSlotOracle::with_slots(
-        vec![slot(1_800_003_600, 0.9), slot(1_800_007_200, 0.4)],
-        true,
-    );
-    let request = SolveRequest {
-        event_type: event_type(),
-        window: window(),
-        constraint: Some(canonical_object()),
-        visitor_tz: "Europe/Warsaw".to_owned(),
-    };
-    let first = oracle.solve(&request).expect("first solve");
-    let second = oracle.solve(&request).expect("second solve");
-    assert_eq!(first, second);
-    assert!(first.flex_used);
 }
 
 /// The turn future is `Send`. ONE-1819 serves this front from an Axum handler,

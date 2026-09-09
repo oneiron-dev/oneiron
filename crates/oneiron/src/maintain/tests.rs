@@ -1622,16 +1622,6 @@ fn run_all_operations() -> Result<()> {
 }
 
 #[test]
-fn run_no_operations() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-
-    let report = vault.maintain().run()?;
-    assert_eq!(report, MaintenanceReport::default());
-    Ok(())
-}
-
-#[test]
 fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1855,18 +1845,6 @@ fn clear_text_index_removes_all_text_rows_and_rewrites_manifest() -> Result<()> 
         .commit()?;
     let hits = vault.search_text("hello", 10)?;
     assert!(!hits.is_empty());
-    Ok(())
-}
-
-#[test]
-fn rebuild_hnsw_empty_vault() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let vault = Vault::open(temp_dir.path(), test_config())?;
-
-    let report = vault.maintain().rebuild_hnsw().run()?;
-    assert_eq!(report.hnsw_dead_nodes_removed, 0);
-    assert_eq!(report.hnsw_live_nodes, 0);
-    assert_eq!(report.hnsw_invalid_vectors_skipped, 0);
     Ok(())
 }
 

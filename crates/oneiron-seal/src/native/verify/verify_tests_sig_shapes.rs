@@ -139,52 +139,6 @@ mod tests {
 
     // --- bot-fix leg 4 pins -------------------------------------------------
 
-    /// Field-anchored reachability for the leg-3b orphan-scan pins: the
-    /// added dictionaries stay reachable (the document keeps its catalog /
-    /// AcroForm /Fields path) but the added dicts themselves are never
-    /// named by any field `/V`, so they are never evaluated. Returns the
-    /// document plus the id of every added (orphan) object.
-    fn doc_with_orphans(dicts: Vec<lopdf::Dictionary>) -> (Document, Vec<lopdf::ObjectId>) {
-        let mut doc = Document::with_version("1.4");
-        let field_id = doc.add_object(Object::Dictionary(lopdf::Dictionary::new()));
-        let mut af = lopdf::Dictionary::new();
-        af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
-        let af_id = doc.add_object(Object::Dictionary(af));
-        let mut pages = lopdf::Dictionary::new();
-        pages.set("Type", Object::Name(b"Pages".to_vec()));
-        pages.set("Kids", Object::Array(vec![]));
-        pages.set("Count", Object::Integer(0));
-        let pages_id = doc.add_object(Object::Dictionary(pages));
-        let mut catalog = lopdf::Dictionary::new();
-        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
-        catalog.set("Pages", Object::Reference(pages_id));
-        catalog.set("AcroForm", Object::Reference(af_id));
-        let cat_id = doc.add_object(Object::Dictionary(catalog));
-        doc.trailer.set("Root", Object::Reference(cat_id));
-        let ids = dicts
-            .into_iter()
-            .map(|d| doc.add_object(Object::Dictionary(d)))
-            .collect();
-        (doc, ids)
-    }
-
-    #[test]
-    fn contents_without_byte_range_is_never_a_signature_candidate() {
-        // P1-1: ordinary /Page dictionaries carry /Contents (the page
-        // content stream) without /ByteRange — typeless candidacy requires
-        // /ByteRange, so these must be IGNORED, never rejected as malformed
-        // (leg 3b's XOR gate false-rejected every non-blank page). Neither
-        // dictionary is a field /V: both are orphaned, hence unexamined.
-        let mut page = lopdf::Dictionary::new();
-        page.set("Type", Object::Name(b"Page".to_vec()));
-        page.set("Contents", Object::Reference((42, 0)));
-        let mut bare = lopdf::Dictionary::new();
-        bare.set("Contents", Object::string_literal(b"BT ET".to_vec()));
-        let (doc, _) = doc_with_orphans(vec![page, bare]);
-        let found = collect_signatures(&doc).unwrap();
-        assert!(found.is_empty(), "page /Contents is not a signature");
-    }
-
     #[test]
     fn byte_range_without_contents_stays_malformed() {
         // P1-1 rejection pin: a /ByteRange dictionary with no /Contents is

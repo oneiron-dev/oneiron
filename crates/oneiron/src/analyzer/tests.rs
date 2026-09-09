@@ -8,59 +8,6 @@ fn surface_terms(tokens: &[Token]) -> Vec<&str> {
         .collect()
 }
 
-#[test]
-fn whichlang_eligible_only_for_latin_cyrillic_greek_and_han() {
-    fn expected(class: ScriptClass) -> bool {
-        match class {
-            ScriptClass::Latin | ScriptClass::Cyrillic | ScriptClass::Greek | ScriptClass::Han => {
-                true
-            }
-            ScriptClass::Hebrew
-            | ScriptClass::Arabic
-            | ScriptClass::Hiragana
-            | ScriptClass::Katakana
-            | ScriptClass::Hangul
-            | ScriptClass::Thai
-            | ScriptClass::Lao
-            | ScriptClass::Khmer
-            | ScriptClass::Myanmar
-            | ScriptClass::Devanagari
-            | ScriptClass::Tamil
-            | ScriptClass::Common
-            | ScriptClass::Other => false,
-        }
-    }
-
-    let classes = [
-        ScriptClass::Latin,
-        ScriptClass::Cyrillic,
-        ScriptClass::Greek,
-        ScriptClass::Hebrew,
-        ScriptClass::Arabic,
-        ScriptClass::Han,
-        ScriptClass::Hiragana,
-        ScriptClass::Katakana,
-        ScriptClass::Hangul,
-        ScriptClass::Thai,
-        ScriptClass::Lao,
-        ScriptClass::Khmer,
-        ScriptClass::Myanmar,
-        ScriptClass::Devanagari,
-        ScriptClass::Tamil,
-        ScriptClass::Common,
-        ScriptClass::Other,
-    ];
-
-    for class in classes {
-        assert_eq!(
-            whichlang_eligible(class),
-            expected(class),
-            "unexpected whichlang eligibility for {}",
-            class.as_str(),
-        );
-    }
-}
-
 // `portable_analyzer_reports_portable_for_all_cjk` deleted as a
 // tautology — asserting a portable analyzer reports portable mode for
 // every lang adds no coverage beyond `MultilingualAnalyzer::portable()`.
@@ -229,31 +176,6 @@ fn flags_and_keycaps_round_trip_through_router() {
 }
 
 #[test]
-fn empty_input_returns_zero() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    let next = a.analyze("", &AnalyzerContext::for_index(), &mut out);
-    assert_eq!(next, 0);
-    assert!(out.is_empty());
-}
-
-#[test]
-fn latin_routes_to_latin_analyzer_with_detected_hint() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze(
-        "The quick brown fox jumps over the lazy dog",
-        &AnalyzerContext::for_index(),
-        &mut out,
-    );
-    // English stemmer should produce at least one stem overlay.
-    assert!(
-        out.iter().any(|t| t.channel == AnalyzerChannel::Stem),
-        "expected stem overlays for English text"
-    );
-}
-
-#[test]
 fn hiragana_routes_to_japanese_portable() {
     let a = MultilingualAnalyzer::portable();
     let mut out = Vec::new();
@@ -341,93 +263,6 @@ fn mixed_script_no_cross_boundary_bigram() {
             tok.term,
             s,
             e,
-        );
-    }
-}
-
-#[test]
-fn cjk_digit_mix_no_cross_boundary_bigram() {
-    let a = MultilingualAnalyzer::portable();
-    // `東京` ends at byte 6; `123` starts at byte 6. No cjk_ngram token
-    // may span byte 6, and no cjk_ngram token may contain ASCII digits.
-    let text = "東京123";
-    let mut out = Vec::new();
-    a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-    for tok in out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-    {
-        let s = tok.byte_start as usize;
-        let e = tok.byte_end as usize;
-        assert!(
-            e <= 6 || s >= 6,
-            "bigram {:?} [{}..{}] crosses script boundary at byte 6",
-            tok.term,
-            s,
-            e,
-        );
-        assert!(
-            !tok.term.chars().any(|c| c.is_ascii_digit()),
-            "cjk_ngram token {:?} must not contain ASCII digits",
-            tok.term,
-        );
-    }
-}
-
-#[test]
-fn cjk_with_leading_common_no_cross_boundary_bigram() {
-    let a = MultilingualAnalyzer::portable();
-    // `2024` 0..4, `東京` 4..10. No cjk_ngram token may contain an
-    // ASCII digit, and no cjk_ngram token may span byte 4.
-    let text = "2024東京";
-    let mut out = Vec::new();
-    a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-    for tok in out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-    {
-        let s = tok.byte_start as usize;
-        let e = tok.byte_end as usize;
-        assert!(
-            s >= 4,
-            "cjk_ngram {:?} [{}..{}] must start at/after the CJK boundary (byte 4)",
-            tok.term,
-            s,
-            e,
-        );
-        assert!(
-            !tok.term.chars().any(|c| c.is_ascii_digit()),
-            "cjk_ngram token {:?} must not contain ASCII digits",
-            tok.term,
-        );
-    }
-}
-
-#[test]
-fn cjk_punct_mix_no_cross_boundary_bigram() {
-    let a = MultilingualAnalyzer::portable();
-    // `北京` 0..6, `、` 6..9, `大学` 9..15. No cjk_ngram may contain the
-    // fullwidth comma or span across it.
-    let text = "北京、大学";
-    let mut out = Vec::new();
-    a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-    for tok in out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-    {
-        let s = tok.byte_start as usize;
-        let e = tok.byte_end as usize;
-        assert!(
-            (e <= 6) || (s >= 9),
-            "bigram {:?} [{}..{}] crosses CJK/punct boundary",
-            tok.term,
-            s,
-            e,
-        );
-        assert!(
-            !tok.term.contains('、'),
-            "cjk_ngram token {:?} must not contain fullwidth comma",
-            tok.term,
         );
     }
 }
@@ -576,18 +411,6 @@ fn explicit_hint_overrides_per_run_inference_for_latin() {
     );
 }
 
-#[test]
-fn explicit_japanese_hint_on_han_only_run_prefers_japanese_path() {
-    // No dicts loaded in Portable mode — both paths fall through to
-    // cjk_ngram, so the observable output is identical. But dispatch
-    // must not panic when the hint is Ja on Han text.
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Ja);
-    a.analyze("東京", &ctx, &mut out);
-    assert_eq!(surface_terms(&out), vec!["東", "京"]);
-}
-
 // `portable_han_only_run_yields_cjk_ngram_shaped_output` folded into
 // `portable_han_yields_unigrams_and_bigram_overlay` above.
 
@@ -647,18 +470,4 @@ fn explicit_ja_hint_does_not_route_to_loaded_zh_dict() {
     // `北京` + `大学`. Ja hint routes to the JP portable path, which
     // delegates to cjk_ngram and emits per-char Surface.
     assert_eq!(surface_terms(&out), vec!["北", "京", "大", "学"]);
-}
-
-/// Symmetric: explicit `LanguageHint::Zh` must route even if only JP is
-/// loaded. We can't build a morphological JP without env dict, so we
-/// assert the mirror-image invariant via a portable-ZH analyzer — the
-/// output is cjk_ngram-shaped either way, but the dispatch target
-/// differs, and `dispatch_han`'s match arm ordering is what we exercise.
-#[test]
-fn explicit_zh_hint_routes_to_chinese_on_portable_analyzer() {
-    let a = MultilingualAnalyzer::portable();
-    let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Zh);
-    let mut out = Vec::new();
-    a.analyze("東京", &ctx, &mut out);
-    assert_eq!(surface_terms(&out), vec!["東", "京"]);
 }

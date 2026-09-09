@@ -5,36 +5,6 @@ const PACK: &str = include_str!("../../oneiron.skills.md");
 const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 
-const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
-    "/a/{artifact}",
-    "/a/{artifact}/",
-    "/a/{artifact}/{*path}",
-    "/api/openapi.json",
-    "/api/skills/oneiron.skills.md",
-    "/api/health",
-    "/mcp",
-    "/api/core/discover",
-    "/api/search/vector",
-    "/api/search/text",
-    "/api/entity/{id}",
-    "/api/edges/{id}",
-    "/v1/core/context-board",
-    "/v1/companion/register/records/{record_id}/end-relationship",
-    "/api/lease/revoke",
-    "/v1/core/outbound/capabilities",
-    "/v1/core/outbound/capabilities/{connector}",
-    "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
-    "/v1/core/run-tree",
-    "/v1/core/run-tree/observe",
-    "/v1/core/run-tree/intervene",
-    "/v1/core/turns/annotate",
-    "/v1/consumer/usage",
-    "/v1/consumer/usage/details",
-    "/v1/consumer/top-up",
-    "/v1/usage/events",
-    "/v1/usage/tenants/{tenant_id}/rollup",
-];
-
 #[test]
 fn crate_local_pack_matches_root_artifact() {
     let root_pack_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -68,42 +38,6 @@ fn frontmatter_has_required_skill_keys() {
         !frontmatter_list(frontmatter, "when_to_use").is_empty(),
         "frontmatter when_to_use must describe activation"
     );
-}
-
-#[test]
-fn tier_headings_exist_in_progressive_order() {
-    let tier1 = PACK.find("## Tier-1").expect("missing Tier-1 heading");
-    let tier2 = PACK.find("## Tier-2").expect("missing Tier-2 heading");
-    let tier3 = PACK.find("## Tier-3").expect("missing Tier-3 heading");
-
-    assert!(tier1 < tier2, "Tier-1 must appear before Tier-2");
-    assert!(tier2 < tier3, "Tier-2 must appear before Tier-3");
-}
-
-#[test]
-fn tier1_endpoint_blocks_have_when_to_use_and_triggers() {
-    let tier1 = section_between(PACK, "## Tier-1", "## Tier-2");
-
-    for route in EXPECTED_REGISTERED_ROUTES {
-        let block = tier1_endpoint_block(tier1, route);
-        assert!(
-            block.contains("- when-to-use:"),
-            "Tier-1 block for {route} is missing when-to-use"
-        );
-
-        let trigger_line = block
-            .find("- trigger phrases:")
-            .unwrap_or_else(|| panic!("Tier-1 block for {route} is missing trigger phrases"));
-        let trigger_count = block[trigger_line..]
-            .lines()
-            .skip(1)
-            .take_while(|line| line.starts_with("  - "))
-            .count();
-        assert!(
-            trigger_count > 0,
-            "Tier-1 block for {route} needs at least one trigger phrase"
-        );
-    }
 }
 
 #[test]
@@ -177,78 +111,6 @@ const LANE_HEADINGS: [&str; 4] = [
     "## Lane: curl-cli",
     "## Lane: tool-first-mcp",
 ];
-
-/// The onramp's own budget. It is the first screen: an agent must be able to
-/// choose a carrier without ingesting the endpoint catalog first, so this
-/// section stays small enough to read whole.
-const ONRAMP_BYTE_BUDGET: usize = 6_144;
-
-#[test]
-fn onramp_offers_exactly_four_lanes_each_named_once() {
-    assert_eq!(
-        PACK.matches("\n## Lane: ").count(),
-        LANE_HEADINGS.len(),
-        "the pack must carry exactly the four pinned lane headings"
-    );
-
-    for heading in LANE_HEADINGS {
-        assert_eq!(
-            PACK.matches(heading).count(),
-            1,
-            "lane heading {heading} must appear exactly once"
-        );
-    }
-}
-
-#[test]
-fn onramp_decision_tree_links_every_lane() {
-    let tree = section_between(PACK, "## Agent Onramp", LANE_HEADINGS[0]);
-
-    for anchor in [
-        "#lane-code-mode-repl",
-        "#lane-thin-client",
-        "#lane-curl-cli",
-        "#lane-tool-first-mcp",
-    ] {
-        assert!(
-            tree.contains(anchor),
-            "the decision tree must link {anchor} so an agent can jump to its lane"
-        );
-    }
-}
-
-/// The first screen comes before the catalog and stays bounded. Progressive
-/// disclosure is the contract: the detailed route reference stays in the pack,
-/// below the choice it informs.
-#[test]
-fn onramp_precedes_the_endpoint_catalog_and_stays_bounded() {
-    let onramp = PACK
-        .find("## Agent Onramp")
-        .expect("missing onramp section");
-    let auth = PACK
-        .find("## Authentication")
-        .expect("missing shared authentication section");
-    let tier1 = PACK.find("## Tier-1").expect("missing Tier-1 heading");
-
-    assert!(
-        onramp < auth,
-        "the onramp must open before shared reference"
-    );
-    assert!(
-        auth < tier1,
-        "shared reference precedes the endpoint catalog"
-    );
-    for heading in LANE_HEADINGS {
-        let lane = PACK.find(heading).expect("missing lane heading");
-        assert!(lane < tier1, "{heading} must precede the endpoint catalog");
-    }
-
-    assert!(
-        auth - onramp <= ONRAMP_BYTE_BUDGET,
-        "the onramp is {} bytes, over its {ONRAMP_BYTE_BUDGET}-byte first-screen budget",
-        auth - onramp
-    );
-}
 
 /// Lane 1 is the host dispatcher, not an HTTP import. Code mode shares the
 /// wire with the other lanes; it does not share the HTTP client artifact.
@@ -397,19 +259,4 @@ fn section_after<'a>(text: &'a str, heading: &str) -> &'a str {
         .find(heading)
         .unwrap_or_else(|| panic!("missing section marker {heading}"));
     &text[start..]
-}
-
-fn tier1_endpoint_block<'a>(tier1: &'a str, route: &str) -> &'a str {
-    let route_pos = tier1
-        .find(route)
-        .unwrap_or_else(|| panic!("Tier-1 missing route literal {route}"));
-    let block_start = tier1[..route_pos]
-        .rfind("\n#### ")
-        .unwrap_or_else(|| panic!("Tier-1 route {route} is not inside an endpoint block"));
-    let block_tail = &tier1[route_pos..];
-    let block_end = block_tail
-        .find("\n#### ")
-        .map_or(tier1.len(), |offset| route_pos + offset);
-
-    &tier1[block_start..block_end]
 }

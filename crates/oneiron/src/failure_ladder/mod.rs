@@ -47,7 +47,7 @@ use self::{blocked_reports::*, lineage::*};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, HealerSlot, HealerSlotOutcome};
+use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, HealerSlotOutcome};
 #[cfg(test)]
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt, RetryOutcome,

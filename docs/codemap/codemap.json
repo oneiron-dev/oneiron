@@ -410,7 +410,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/agent_dispatch/kill_spawn_tests.rs",
@@ -523,7 +523,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/analyzer/cjk_ngram.rs",
@@ -6418,7 +6418,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/code_run/vault_read/tests.rs",
@@ -8582,7 +8582,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/tasks/tests.rs",
@@ -11930,13 +11930,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/fusion.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -17185,13 +17185,73 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/pipeline/execution/channels.rs",
+     "path": "src/pipeline/execution/channels/admit.rs",
+     "purpose": "The admit step every channel shares: signal components, the optional trace record, and the ranked-list push",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/mod.rs",
      "purpose": "Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/post_blend.rs",
+     "purpose": "Post-blend filters: scope and authority, the rerank shadow ladder, contiguity, facet, world, corpus, and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/ppr_expand.rs",
+     "purpose": "The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/rerank.rs",
+     "purpose": "RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/text.rs",
+     "purpose": "The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/trace_assembly.rs",
+     "purpose": "Retrieval-trace assembly: the fork hash and the per-channel, fused, blended, reranked, and final stage records",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -23995,7 +24055,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/campaign_stage_ladder_oracle.rs",
@@ -25056,7 +25116,7 @@
     "fusion": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "—"
     },
@@ -25292,9 +25352,9 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 37,
+     "files": 43,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -25719,9 +25779,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 4,
+   "over_bar": 3,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1467,
+   "source_files": 1473,
    "test_files": 526
   },
   "oneiron-bench": {
@@ -29422,7 +29482,7 @@
      "path": "src/api/tests/support_contract.rs",
      "purpose": "Shared contract/OpenAPI projection helpers for the API tests",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -30726,7 +30786,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/booking_agent_api.rs",
@@ -30774,7 +30834,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/skills_pack.rs",

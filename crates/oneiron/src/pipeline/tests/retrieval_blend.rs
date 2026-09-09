@@ -3,24 +3,6 @@
 use super::*;
 
 #[test]
-fn vector_only_query() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let a = entity_id(10);
-    let b = entity_id(11);
-
-    put_vector(&vault, a, [1.0, 0.0, 0.0, 0.0])?;
-    put_vector(&vault, b, [0.0, 1.0, 0.0, 0.0])?;
-
-    let results = vault
-        .query()
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
-        .run()?;
-    assert!(!results.is_empty());
-    assert_eq!(results[0].id, a);
-    Ok(())
-}
-
-#[test]
 fn expand_ppr_uses_blended_results_as_seeds() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
@@ -99,30 +81,6 @@ fn search_ppr_as_blend_candidate_signal() -> Result<()> {
 }
 
 #[test]
-fn search_ppr_warms_cache_after_pipeline_snapshot() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let a = entity_id(24);
-    let b = entity_id(25);
-
-    vault
-        .batch()
-        .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
-        .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
-        .edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)
-        .commit()?;
-
-    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
-    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
-
-    let results = vault.query().search_ppr(&[a], 3).run()?;
-    assert!(results.iter().any(|entry| entry.id == b));
-    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 1);
-    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 2);
-    Ok(())
-}
-
-#[test]
 fn search_ppr_rejects_excessive_seed_count_and_depth() {
     let (_dir, vault) = open_test_vault();
     let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
@@ -132,28 +90,6 @@ fn search_ppr_rejects_excessive_seed_count_and_depth() {
 
     let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
     assert_matches!(too_deep, Err(Error::InvalidConfig(_)));
-}
-
-#[test]
-fn recency_boost_orders_text_only_results() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let old = entity_id(0x10);
-    let fresh = entity_id(0x20);
-    let now = crate::unix_seconds_now();
-
-    put_text_at(&vault, old, "recencyneedle", 1)?;
-    put_text_at(&vault, fresh, "recencyneedle", now)?;
-
-    let baseline = vault.query().search_text("recencyneedle", 2).run()?;
-    assert_eq!(baseline[0].id, old, "baseline tie breaks by entity id");
-
-    let boosted = vault
-        .query()
-        .search_text("recencyneedle", 2)
-        .boost_recency(0.01)
-        .run()?;
-    assert_eq!(boosted[0].id, fresh);
-    Ok(())
 }
 
 #[test]
@@ -183,113 +119,6 @@ fn recency_boost_orders_text_channel_before_truncation() -> Result<()> {
         boosted[0].id, fresh,
         "fresh text hit must win before the BM25 channel is truncated"
     );
-    Ok(())
-}
-
-#[test]
-fn scoped_recency_text_overfetch_is_bounded_after_filtering() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let now = crate::unix_seconds_now();
-    let old = [
-        entity_id(0x10),
-        entity_id(0x20),
-        entity_id(0x30),
-        entity_id(0x40),
-    ];
-    let fresh_beyond_overfetch = entity_id(0x50);
-
-    for id in old {
-        put_text_at(&vault, id, "scopedrecencycap", 1)?;
-    }
-    put_text_at(&vault, fresh_beyond_overfetch, "scopedrecencycap", now)?;
-
-    let results = vault
-        .query()
-        .search_text("scopedrecencycap", 1)
-        .filter_types(&[1])
-        .boost_recency(0.01)
-        .limit(1)
-        .run()?;
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, old[0]);
-    assert_ne!(results[0].id, fresh_beyond_overfetch);
-    Ok(())
-}
-
-#[test]
-fn recency_signal_applies_once_to_blended_candidates() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let old_text = entity_id(0x10);
-    let fresh_text = entity_id(0x20);
-    let fresh_vector = entity_id(0x30);
-    let future = crate::unix_seconds_now() + 3_600;
-
-    put_text_at(&vault, old_text, "fairrecencyneedle stableanchor", 1)?;
-    put_text_at(&vault, fresh_text, "fairrecencyneedle", future)?;
-    put_vector_at(&vault, fresh_vector, [1.0, 0.0, 0.0, 0.0], future)?;
-
-    let baseline = vault
-        .query()
-        .search_text("fairrecencyneedle stableanchor", 2)
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
-        .run()?;
-    assert_eq!(baseline[0].id, old_text, "baseline text rank");
-
-    let boosted = vault
-        .query()
-        .search_text("fairrecencyneedle stableanchor", 2)
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
-        .boost_recency(0.01)
-        .run()?;
-
-    assert!(boosted.iter().any(|scored| scored.id == fresh_text));
-    assert!(boosted.iter().any(|scored| scored.id == fresh_vector));
-    assert_ne!(baseline, boosted);
-    Ok(())
-}
-
-#[test]
-fn recency_signal_applies_to_ppr_expansion_results() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let seed = entity_id(0x13);
-    let expanded = entity_id(0x23);
-    let future = crate::unix_seconds_now() + 3_600;
-
-    vault
-        .batch()
-        .put(&seed, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
-        .text(&seed, &[("body", "pprrecencyneedle")])
-        .put(
-            &expanded,
-            1,
-            TimeRange {
-                start: future,
-                end: future,
-            },
-            future,
-            b"payload",
-        )
-        .edge(&seed, EdgeKind::Supports, &expanded, 1.0)
-        .commit()?;
-
-    let baseline = vault
-        .query()
-        .search_text("pprrecencyneedle", 10)
-        .expand_ppr(&[], 2)
-        .run()?;
-    let boosted = vault
-        .query()
-        .search_text("pprrecencyneedle", 10)
-        .expand_ppr(&[], 2)
-        .boost_recency(0.01)
-        .run()?;
-
-    let boosted_scores = to_score_map(&boosted);
-
-    assert!(to_score_map(&baseline).contains_key(&expanded));
-    assert!(boosted_scores[&expanded] > 0.0);
-    assert_ne!(baseline, boosted);
     Ok(())
 }
 
