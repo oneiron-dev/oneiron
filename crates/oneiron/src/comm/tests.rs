@@ -35,6 +35,68 @@ fn validate_through_chokepoint(body: &ClaimBody) -> Result<ClaimBody> {
     validate_claim_body_and_decode(&encoded, false)
 }
 
+/// The contact record DECODED, so a row can name the entry that moved.
+///
+/// `materialize_contact_record` hands back msgpack bytes, and comparing two
+/// blobs can only say they differ — a rebuild that dropped an entry outright
+/// reads the same as one that refreshed it.
+fn contact_view(bytes: &[u8]) -> Value {
+    rmpv::decode::read_value(&mut &bytes[..]).expect("contact view is msgpack")
+}
+
+/// One field of a contact-view map node.
+fn view_field<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
+    node.as_map()
+        .expect("contact view node is a map")
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value)
+}
+
+/// The `(channel class, occurred_at)` pairs of one contact-view array, in the
+/// order the lens emitted them. A `None` channel is a party-wide entry, which
+/// is what an elided `channel_class` head projects to.
+fn contact_view_entries(view: &Value, field: &str) -> Vec<(Option<String>, u64)> {
+    view_field(view, field)
+        .unwrap_or_else(|| panic!("contact view carries no {field}"))
+        .as_array()
+        .unwrap_or_else(|| panic!("contact view {field} is an array"))
+        .iter()
+        .map(|entry| {
+            let channel = view_field(entry, KEY_CHANNEL_CLASS).map(|value| {
+                value
+                    .as_str()
+                    .expect("channel class is a string")
+                    .to_owned()
+            });
+            let occurred_at = view_field(entry, KEY_OCCURRED_AT)
+                .and_then(Value::as_u64)
+                .expect("entry carries occurred_at");
+            (channel, occurred_at)
+        })
+        .collect()
+}
+
+/// The opt-out entries, each checked to still SAY it is an opt-out.
+fn opt_out_entries(view: &Value) -> Vec<(Option<String>, u64)> {
+    for entry in view_field(view, "opt_out")
+        .unwrap_or_else(|| panic!("contact view carries no opt_out"))
+        .as_array()
+        .expect("contact view opt_out is an array")
+    {
+        assert_eq!(
+            view_field(entry, KEY_OPTED_OUT).and_then(Value::as_bool),
+            Some(true),
+            "an opt_out entry must carry the flag that makes it one"
+        );
+    }
+    contact_view_entries(view, "opt_out")
+}
+
+fn last_touch_entries(view: &Value) -> Vec<(Option<String>, u64)> {
+    contact_view_entries(view, "last_touch")
+}
+
 fn standing_channel_claim_id(
     vault: &Vault,
     party_ref: EntityId,
@@ -502,6 +564,10 @@ fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
     assert_eq!(first, rebuilt);
     assert!(!rebuilt.is_empty());
     assert_eq!(count_contact_record_claim_entries(&vault, "party-f2")?, 2);
+    assert_eq!(
+        opt_out_entries(&contact_view(&first)),
+        vec![(Some("email".to_owned()), 11)]
+    );
 
     let party_ref = resolve_or_create_comm_party(&vault, "party-f2")?;
     let old_id = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_OPT_OUT, "email")?;
@@ -518,8 +584,17 @@ fn finding_2_contact_view_is_purely_claim_derived() -> CommResult<()> {
         Ok(())
     })?;
 
-    let refreshed = materialize_contact_record(&vault, "party-f2")?;
-    assert_ne!(refreshed, first);
+    // The lens follows the head: the opt-out entry is the REPLACEMENT, and the
+    // untouched last-touch entry is still exactly where it was.
+    let refreshed = contact_view(&materialize_contact_record(&vault, "party-f2")?);
+    assert_eq!(
+        opt_out_entries(&refreshed),
+        vec![(Some("email".to_owned()), 12)]
+    );
+    assert_eq!(
+        last_touch_entries(&refreshed),
+        vec![(Some("email".to_owned()), 10)]
+    );
     assert_eq!(count_contact_record_claim_entries(&vault, "party-f2")?, 2);
     assert_eq!(
         count_active_comm_claims(&vault, PREDICATE_COMM_OPT_OUT, "party-f2", "email")?,
