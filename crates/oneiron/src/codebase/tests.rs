@@ -60,6 +60,48 @@ fn snapshot(project_id: &str, repo_ref: RepoRef) -> Result<CodebaseSnapshot> {
     )
 }
 
+/// The exact bytes today's encoder produces for
+/// `snapshot("project.alpha", repo_ref())`, frozen once in lowercase hex.
+///
+/// `codebase_snapshot_codec_round_trips_manifest` asserts BOTH directions
+/// against this literal rather than against a freshly encoded value. An
+/// encode/decode round trip is self-consistent: renaming a body key or
+/// swapping two field mappings in lockstep keeps it green while orphaning
+/// every `CodebaseSnapshot` row already on disk. A frozen fixture is the only
+/// thing that sees such a migration. Shaped like `storage_abi_golden_fixture`
+/// in `outbound_intent_ledger::tests`.
+const GOLDEN_CODEBASE_SNAPSHOT_HEX: &str = concat!(
+    "86aa70726f6a6563745f6964ad70726f6a6563742e616c706861a87265706f5f7265",
+    "66d9436769746875623a6f6e6569726f6e2d6465762f6f6e6569726f6e2339643536",
+    "31343035613831666662663239643133363963643834386530656639666361346632",
+    "3737ab636f6d6d69745f68617368d928396435363134303561383166666266323964",
+    "31333639636438343865306566396663613466323737a9666f726b5f68617368c420",
+    "0ee9ce7978b004cf7af0fc8b0e7440afca521d9a1291428170bf3a47de99bd3aa973",
+    "636f70655f6b6579c420c91adecfd839833ac637fc079f490fa9525838157421c864",
+    "eb245b5fe7f6697ca566696c65739283a470617468aa436172676f2e746f6d6cac63",
+    "6f6e74656e745f68617368c420af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9ad",
+    "c112b7cc9a93cae41f3262aa73697a655f62797465730083a470617468aa7372632f",
+    "6c69622e7273ac636f6e74656e745f68617368c420af1349b9f5f9a1a6a0404dea36",
+    "dcc9499bcb25c9adc112b7cc9a93cae41f3262aa73697a655f627974657300"
+);
+
+/// Decodes a lowercase-hex fixture string into the bytes it stands for.
+fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    assert!(
+        hex.len().is_multiple_of(2),
+        "hex fixture must be even-length"
+    );
+    let (chunks, rest) = hex.as_bytes().as_chunks::<2>();
+    assert!(rest.is_empty());
+    chunks
+        .iter()
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("hex fixture is ascii");
+            u8::from_str_radix(text, 16).expect("hex fixture is valid hex")
+        })
+        .collect()
+}
+
 fn code_body(repo_ref: &RepoRef) -> CodeArtifactBody {
     CodeArtifactBody::new(
         "Summarize the codebase snapshot.",
@@ -310,8 +352,30 @@ fn codebase_snapshot_codec_round_trips_manifest() -> Result<()> {
 
     let encoded = encode_codebase_snapshot(&snapshot)?;
     let decoded = decode_codebase_snapshot(&encoded)?;
-
     assert_eq!(decoded, snapshot);
+
+    // Both directions against the FROZEN bytes, not against each other: what
+    // is on disk today must still decode, and what the encoder writes for the
+    // same snapshot must still be those bytes.
+    assert_eq!(
+        crate::entity_id::bytes_to_hex_lower(&encoded),
+        GOLDEN_CODEBASE_SNAPSHOT_HEX
+    );
+    let from_disk = decode_codebase_snapshot(&hex_to_bytes(GOLDEN_CODEBASE_SNAPSHOT_HEX))?;
+    assert_eq!(from_disk, snapshot);
+
+    // The persisted field values, read off the value decoded from the frozen
+    // bytes — a field remapped in lockstep with the encoder shows up here.
+    assert_eq!(from_disk.project_id, "project.alpha");
+    assert_eq!(from_disk.repo_ref.canonical(), repo_ref().canonical());
+    assert_eq!(
+        from_disk.commit_hash.as_deref(),
+        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277")
+    );
+    assert_eq!(from_disk.fork_hash, snapshot.fork_hash);
+    assert_eq!(from_disk.scope_key, snapshot.scope_key);
+    let paths: Vec<&str> = from_disk.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["Cargo.toml", "src/lib.rs"]);
     Ok(())
 }
 
