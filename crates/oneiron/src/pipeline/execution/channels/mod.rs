@@ -1,17 +1,19 @@
 //! Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE, text, phonetic, temporal, and PPR channels.
 
 mod admit;
+mod post_blend;
 mod ppr_expand;
 mod rerank;
 mod trace_assembly;
 
 use self::admit::{AdmitSignal, ChannelAccumulator};
+use self::post_blend::{PostBlend, PostBlendInputs};
 use self::ppr_expand::{PprExpandInputs, PprExpandState};
 use self::rerank::{RerankApplied, RerankLadderInputs};
 use self::trace_assembly::TraceInputs;
 use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
-    blended_retrieval_scores, boost_contiguity, retrieval_blend_weights_for_scoring, score_id_set,
+    blended_retrieval_scores, retrieval_blend_weights_for_scoring, score_id_set,
 };
 use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::super::builder::PipelineBuilder;
@@ -20,23 +22,19 @@ use super::super::channels::{
 };
 use super::super::corpus_filter::CorpusFilter;
 use super::super::filters::{
-    apply_claim_status_gate, apply_facet_filter, apply_filters, apply_relationship_filter,
-    apply_world_filter, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
-    pipeline_candidate_matches_filters_and_gate,
+    apply_claim_status_gate, apply_relationship_filter, claim_status_gate_allows,
+    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
 };
-use super::super::trace::{
-    record_ppr_cache_outcome, retrieval_trace_fused_scores, retrieval_trace_top_scores,
-};
+use super::super::trace::{record_ppr_cache_outcome, retrieval_trace_fused_scores};
 use super::super::types::{
     ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PPR_DAMPING, RelMode,
-    ScoredEntity,
 };
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
 use crate::context_pack::EmptyReason;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::store::RetrievalSignal;
@@ -86,7 +84,6 @@ impl PipelineBuilder<'_> {
                 authority_filter.include_stale,
             );
             let mut fused_trace_scores = None;
-            let mut blended_trace_scores = None;
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
@@ -614,143 +611,25 @@ impl PipelineBuilder<'_> {
                 ppr_expand_executed = outcome.ppr_expand_executed;
             }
 
-            let before_filters = scores.len();
-            apply_filters(
-                &mut scores,
-                &self.vault.store,
+            let PostBlend {
+                rerank_ladder_scores,
+                blended_trace_scores,
+                mut empty_reason,
+            } = self.apply_post_blend_filters(
                 &rtxn,
-                filter_config,
-                &mut metadata_cache,
-            )?;
-            super::authority::apply(
                 &mut scores,
-                authority_filter,
-                &self.vault.store,
-                &rtxn,
-                &mut metadata_cache,
-                &mut claim_gate,
-            )?;
-            if before_filters > 0 && scores.is_empty() {
-                empty_reason = Some(EmptyReason::FilterMatchedNone);
-            }
-
-            // Reranking needs the score ladder after post-blend boosts but
-            // before access-factor application. Replay those multiplicative
-            // boosts over the blend's base-score face so a reassigned rung
-            // never carries its previous occupant's factor.
-            let mut rerank_ladder_scores = if self.rerank.is_some() {
-                let mut ladder_scores = Vec::with_capacity(scores.len());
-                for scored in &scores {
-                    let Some(base_score) = blend_base_scores.get(&scored.id).copied() else {
-                        return Err(Error::InvariantViolation(
-                            "rerank candidate missing its blended base score",
-                        ));
-                    };
-                    ladder_scores.push(ScoredEntity {
-                        id: scored.id,
-                        score: base_score,
-                    });
-                }
-                Some(ladder_scores)
-            } else {
-                None
-            };
-
-            if self.apply_contiguity {
-                boost_contiguity(
-                    &mut scores,
-                    self.temporal_search.as_ref(),
-                    &self.vault.store,
-                    &rtxn,
-                    &mut metadata_cache,
-                )?;
-                if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
-                    boost_contiguity(
-                        ladder_scores,
-                        self.temporal_search.as_ref(),
-                        &self.vault.store,
-                        &rtxn,
-                        &mut metadata_cache,
-                    )?;
-                }
-            }
-
-            // ARCH-0039 facet filter (ONE-1117): post-fusion / post-boosts,
-            // before truncate, same read txn — strict-excluded claims never
-            // consume `result_limit` slots.
-            if let Some((facet_id, mode)) = self.facet_filter {
-                let before_facet = scores.len();
-                apply_facet_filter(
-                    &mut scores,
-                    &self.vault.store,
-                    &rtxn,
-                    &mut metadata_cache,
-                    &facet_id,
-                    mode,
-                )?;
-                if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
-                    apply_facet_filter(
-                        ladder_scores,
-                        &self.vault.store,
-                        &rtxn,
-                        &mut metadata_cache,
-                        &facet_id,
-                        mode,
-                    )?;
-                }
-                if before_facet > 0 && scores.is_empty() {
-                    empty_reason = Some(EmptyReason::FilterMatchedNone);
-                }
-            }
-
-            // ARCH-0004 world filter (ONE-1117): same post-fusion stage as the
-            // facet filter, before truncate, same read txn. A no-op under the
-            // default `WorldScope::All`. ActiveSet reuses the authority already
-            // resolved for the per-candidate filters in this transaction.
-            let before_world = scores.len();
-            apply_world_filter(
-                &mut scores,
-                &self.vault.store,
-                &rtxn,
-                self.world_scope,
-                filter_config.world_active_set,
-            )?;
-            if before_world > 0 && scores.is_empty() {
-                empty_reason = Some(EmptyReason::FilterMatchedNone);
-            }
-
-            empty_reason = corpus_filter.apply(
-                &mut scores,
-                &self.vault.store,
-                &rtxn,
-                &mut metadata_cache,
-                &mut claim_gate,
                 empty_reason,
+                PostBlendInputs {
+                    filter_config,
+                    corpus_filter: &corpus_filter,
+                    authority_filter,
+                    blend_base_scores: &blend_base_scores,
+                    capture_retrieval_trace,
+                    trace_candidate_limit,
+                },
+                &mut metadata_cache,
+                &mut claim_gate,
             )?;
-            if let Some((relationship, RelMode::Filter)) = self.relationship_filter {
-                let before_relationship = scores.len();
-                apply_relationship_filter(
-                    &mut scores,
-                    &self.vault.store,
-                    &rtxn,
-                    &mut metadata_cache,
-                    &relationship,
-                    RelMode::Filter,
-                )?;
-                if before_relationship > 0 && scores.is_empty() {
-                    empty_reason = Some(EmptyReason::FilterMatchedNone);
-                }
-            }
-            if capture_retrieval_trace {
-                blended_trace_scores =
-                    Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
-            }
-            let rerank_ladder_scores = rerank_ladder_scores.map(|ladder_scores| {
-                ladder_scores
-                    .into_iter()
-                    .map(|scored| (scored.id, scored.score))
-                    .collect::<HashMap<_, _>>()
-            });
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
