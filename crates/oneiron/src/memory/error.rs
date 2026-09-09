@@ -31,6 +31,23 @@ pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 /// reachable through the session handle.
 pub const MEMORY_CODE_OFF_RECORD_SESSION_DOOR: &str = "OFF_RECORD_SESSION_DOOR";
 
+/// An owner verb was attempted by an actor holding no ACTIVE human-class owner
+/// binding in the vault's authority log (S-AUTH3 T9/T11).
+///
+/// Distinct from `FORBIDDEN` because the remedy differs: the generic arm's
+/// advice is about a gate that parked a write (review pending consents,
+/// resubmit as proposed) and the actor-class arms are about writing as a
+/// different actor. Neither applies here. Nothing was parked and no scope
+/// change helps — the authority log has to gain a `BindActor` entry signed by
+/// an owner device before ANY owner verb (`put_structural` mints,
+/// cross-actor `claim_retract`, `safe_delete`) authorizes.
+///
+/// It is also the only refusal that separates "the authority log denied this
+/// actor" from a Gate denial on the same verb: `safe_delete` can refuse with
+/// `FORBIDDEN` from either door, and only this code tells a caller which one
+/// it hit.
+pub const MEMORY_CODE_OWNER_BINDING_REQUIRED: &str = "OWNER_BINDING_REQUIRED";
+
 /// An embedded vault directory is already owned by another process holding the
 /// single-writer lease (ONE-1441 WIRE-P1).
 ///
@@ -258,6 +275,27 @@ impl From<Error> for MemoryError {
                 &[
                     "This conversation belongs to a live off-record session; witness it through the session handle.",
                     "Close the session first if the turn belongs on the record.",
+                ],
+            ),
+            // Both are off-record ROOM STATE, not request shape: the caller's
+            // turn is well formed and the generic `_` arm's "fix the request
+            // shape and retry" is advice it cannot act on. They are the
+            // refresh-and-retry family (`INVALID_STATE`, already a 409
+            // server-side) with the remedy each one actually has.
+            ErrorKind::OffRecordOverlayLeaseClosed => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "The room flipped mode after this write route was minted; mint a fresh route and retry.",
+                    "A route is generation-stamped on purpose: a stale one refuses before staging anything.",
+                ],
+            ),
+            ErrorKind::OffRecordOverlayFull => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "This private room is full; witness a smaller turn, or enter the session with a larger byte budget.",
+                    "Promote the room's turns to the durable vault, or close it, to stop holding the bytes.",
                 ],
             ),
             ErrorKind::ClaimAlreadyClosed

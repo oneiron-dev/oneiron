@@ -1,0 +1,7 @@
+error[E0277]: the trait bound `ConsentGrant: From<ConsentProposal>` is not satisfied
+ --> tests/consent_guard_compilefail/c_no_proposal_to_grant_conversion.rs:6:14
+  |
+6 |     proposal.into()
+  |              ^^^^ the trait `From<ConsentProposal>` is not implemented for `ConsentGrant`
+  |
+  = note: required for `ConsentProposal` to implement `Into<ConsentGrant>`

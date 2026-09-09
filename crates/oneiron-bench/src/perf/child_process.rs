@@ -293,6 +293,48 @@ pub(crate) fn refuse_full_run_child_override(
     }
 }
 
+/// The ready-child program choice, as a decision over its two inputs so every
+/// branch is reachable from a test without mutating this process's
+/// environment.
+///
+/// An operator override wins outright and is never harness-owned; otherwise
+/// only this harness's own binary can be the ready child, and `None` is the
+/// case where the running executable could not be resolved at all.
+pub(crate) fn child_program_for(
+    pinned: Option<&str>,
+    executable: Option<&Path>,
+) -> Result<ChildProgram, String> {
+    if let Some(pinned) = pinned.map(str::trim).filter(|pinned| !pinned.is_empty()) {
+        // An overridden program is opaque even when it happens to point back at
+        // an oneiron-bench build: the harness did not choose its arguments and
+        // cannot know it opens a vault.
+        return Ok(ChildProgram {
+            path: PathBuf::from(pinned),
+            harness_owned: false,
+        });
+    }
+    let executable = executable.ok_or_else(|| {
+        format!(
+            "the running executable is not resolvable, so the harness has no ready-child program \
+             to spawn; set {CHILD_PROGRAM_ENV}"
+        )
+    })?;
+    let stem = executable
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default();
+    if stem == "oneiron-bench" {
+        return Ok(ChildProgram {
+            path: executable.to_path_buf(),
+            harness_owned: true,
+        });
+    }
+    Err(format!(
+        "the running executable `{stem}` is not the oneiron-bench binary, so the harness has no \
+         ready-child program to spawn; run the built binary or set {CHILD_PROGRAM_ENV}"
+    ))
+}
+
 /// Resolves the ready-child program for this run and hashes it, refusing an
 /// operator-chosen child outright for a FULL run.
 ///
@@ -347,36 +389,13 @@ pub(crate) fn resolve_and_hash_child_program(
     })
 }
 
-/// Resolves the program the harness will spawn as its ready child.
+/// Resolves the program the harness will spawn as its ready child, from this
+/// process's ambient environment and executable path.
 pub(crate) fn resolve_child_program() -> Result<ChildProgram, String> {
-    if let Ok(pinned) = std::env::var(CHILD_PROGRAM_ENV)
-        && !pinned.trim().is_empty()
-    {
-        // An overridden program is opaque even when it happens to point back at
-        // an oneiron-bench build: the harness did not choose its arguments and
-        // cannot know it opens a vault.
-        return Ok(ChildProgram {
-            path: PathBuf::from(pinned.trim()),
-            harness_owned: false,
-        });
-    }
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("the running executable is not resolvable: {error}"))?;
-    let stem = executable
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or_default()
-        .to_owned();
-    if stem == "oneiron-bench" {
-        return Ok(ChildProgram {
-            path: executable,
-            harness_owned: true,
-        });
-    }
-    Err(format!(
-        "the running executable `{stem}` is not the oneiron-bench binary, so the harness has no \
-         ready-child program to spawn; run the built binary or set {CHILD_PROGRAM_ENV}"
-    ))
+    child_program_for(
+        environment_child_override().as_deref(),
+        std::env::current_exe().ok().as_deref(),
+    )
 }
 
 pub(crate) fn child_command(

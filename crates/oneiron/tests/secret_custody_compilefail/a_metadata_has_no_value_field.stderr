@@ -1,0 +1,7 @@
+error[E0609]: no field `value_bytes` on type `&SecretCustodyMetadata`
+ --> tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs:7:11
+  |
+7 |     &meta.value_bytes
+  |           ^^^^^^^^^^^ unknown field
+  |
+  = note: available fields are: `name`, `class`, `status`, `registered_at`, `rotated_at` ... and 2 others

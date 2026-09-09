@@ -5,6 +5,22 @@
 
 use super::*;
 
+/// One allowlist an artifact could have been compiled with: two well-formed
+/// entries, plus the comment, blank and half-written lines a real file carries.
+const ALLOWLIST: &str = "# the first Tokyo node\n\
+     tokyo-1.oneiron.internal / 8f14e45fceea167a5a36dedd4bea2543\n\
+     tokyo-1b.oneiron.internal/0cc175b9c0f1b6a831c399e269772661,\n\
+     , malformed-without-machine-id, /only-a-machine-id, host-only/";
+
+/// The hostname and machine id [`ALLOWLIST`] carries as its first entry.
+fn allowlisted_host() -> String {
+    "tokyo-1.oneiron.internal".to_owned()
+}
+
+fn allowlisted_machine() -> String {
+    "8f14e45fceea167a5a36dedd4bea2543".to_owned()
+}
+
 fn query_evidence() -> CorpusQueryEvidence {
     CorpusQueryEvidence {
         indexed_docs: 1,
@@ -74,19 +90,43 @@ fn node_identity_is_captured_and_designation_is_declared_not_assumed() {
         identity.observed_identity_allowlist_source,
         TOKYO_NODE_ALLOWLIST_ENV
     );
-    if identity.declared_node.value().map(String::as_str) != Some(DESIGNATED_FIRST_TOKYO_NODE) {
-        assert!(
-            !identity.is_designated_first_tokyo_node,
-            "a host that did not declare the designated node cannot be it"
-        );
-        let detail = identity.publication_detail();
-        assert!(detail.contains(NODE_ENV), "{detail}");
-        assert!(detail.contains(DESIGNATED_FIRST_TOKYO_NODE), "{detail}");
-    }
-    let rendered = serde_json::to_string(&identity).expect("identity renders");
+
+    // An allowlisted host that declared nothing is NOT the designated node,
+    // and the report it renders says so in that field rather than merely
+    // carrying it.
+    let undeclared = NodeIdentity::resolve(
+        Some(allowlisted_host()),
+        Some(allowlisted_machine()),
+        None,
+        None,
+        Some(ALLOWLIST),
+    );
+    assert!(undeclared.observed_identity_allowlisted);
     assert!(
-        rendered.contains("is_designated_first_tokyo_node"),
-        "{rendered}"
+        !undeclared.is_designated_first_tokyo_node,
+        "a host that did not declare the designated node cannot be it"
+    );
+    let detail = undeclared.publication_detail();
+    assert!(detail.contains(NODE_ENV), "{detail}");
+    assert!(detail.contains(DESIGNATED_FIRST_TOKYO_NODE), "{detail}");
+    assert_eq!(
+        serde_json::to_value(&undeclared).expect("identity renders")["is_designated_first_tokyo_node"],
+        serde_json::json!(false)
+    );
+
+    // The mirror: the same observed identity, having declared the designated
+    // node and its location, IS the designated node.
+    let declared_designated = NodeIdentity::resolve(
+        Some(allowlisted_host()),
+        Some(allowlisted_machine()),
+        Some(DESIGNATED_FIRST_TOKYO_NODE.to_owned()),
+        Some(DESIGNATED_NODE_LOCATION.to_owned()),
+        Some(ALLOWLIST),
+    );
+    assert!(declared_designated.is_designated_first_tokyo_node);
+    assert_eq!(
+        serde_json::to_value(&declared_designated).expect("identity renders")["is_designated_first_tokyo_node"],
+        serde_json::json!(true)
     );
 }
 
@@ -97,10 +137,6 @@ fn node_identity_is_captured_and_designation_is_declared_not_assumed() {
 /// undesignated — and therefore unpublishable — however it labels itself.
 #[test]
 fn tokyo_designation_binds_to_an_allowlisted_observed_host_identity() {
-    const ALLOWLIST: &str = "# the first Tokyo node\n\
-         tokyo-1.oneiron.internal / 8f14e45fceea167a5a36dedd4bea2543\n\
-         tokyo-1b.oneiron.internal/0cc175b9c0f1b6a831c399e269772661,\n\
-         , malformed-without-machine-id, /only-a-machine-id, host-only/";
     let entries = allowlist_entries(Some(ALLOWLIST));
     assert_eq!(
         entries.len(),
@@ -113,10 +149,10 @@ fn tokyo_designation_binds_to_an_allowlisted_observed_host_identity() {
     )));
     assert!(allowlist_entries(None).is_empty());
 
-    let host = || Some("tokyo-1.oneiron.internal".to_owned());
-    let machine = || Some("8f14e45fceea167a5a36dedd4bea2543".to_owned());
+    let host = || Some(allowlisted_host());
+    let machine = || Some(allowlisted_machine());
 
-    let listed = NodeIdentity::resolve(host(), machine(), Some(ALLOWLIST));
+    let listed = NodeIdentity::resolve(host(), machine(), None, None, Some(ALLOWLIST));
     assert!(
         listed.observed_identity_allowlisted,
         "the observed pair is on the artifact's allowlist"
@@ -147,7 +183,13 @@ fn tokyo_designation_binds_to_an_allowlisted_observed_host_identity() {
             Some("  \n# nothing\n"),
         ),
     ] {
-        let identity = NodeIdentity::resolve(hostname, machine_id, list);
+        let identity = NodeIdentity::resolve(
+            hostname,
+            machine_id,
+            Some(DESIGNATED_FIRST_TOKYO_NODE.to_owned()),
+            Some(DESIGNATED_NODE_LOCATION.to_owned()),
+            list,
+        );
         assert!(
             !identity.observed_identity_allowlisted,
             "{label} must not match the allowlist"
@@ -165,18 +207,25 @@ fn tokyo_designation_binds_to_an_allowlisted_observed_host_identity() {
     }
 
     // The allowlist is necessary but not sufficient on its own: the
-    // operator's declaration is still required, and the environment of
-    // this test process decides which side of that we can observe.
-    let declares_designated = declared(NODE_ENV).as_deref() == Some(DESIGNATED_FIRST_TOKYO_NODE)
-        && declared(NODE_LOCATION_ENV).as_deref() == Some(DESIGNATED_NODE_LOCATION);
-    assert_eq!(
-        listed.is_designated_first_tokyo_node, declares_designated,
+    // operator's declaration is still required, so the same allowlisted
+    // identity is undesignated until it declares and designated once it does.
+    assert!(
+        !listed.is_designated_first_tokyo_node,
+        "an allowlisted host that declared nothing is not the designated node"
+    );
+    let detail = listed.publication_detail();
+    assert!(detail.contains(NODE_ENV), "{detail}");
+    let declaring = NodeIdentity::resolve(
+        host(),
+        machine(),
+        Some(DESIGNATED_FIRST_TOKYO_NODE.to_owned()),
+        Some(DESIGNATED_NODE_LOCATION.to_owned()),
+        Some(ALLOWLIST),
+    );
+    assert!(
+        declaring.is_designated_first_tokyo_node,
         "designation is allowlisted identity AND the declared node/location"
     );
-    if !declares_designated {
-        let detail = listed.publication_detail();
-        assert!(detail.contains(NODE_ENV), "{detail}");
-    }
 }
 
 /// Every report carries an immutable build revision even when no build-time

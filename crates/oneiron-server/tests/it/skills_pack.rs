@@ -1,5 +1,9 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+
+use oneiron_server::error::{ApiErrorDetails, ErrorCode};
+use serde_json::Value;
 
 const PACK: &str = include_str!("../../oneiron.skills.md");
 const SKILL_PACK_LAYER_BOUNDARY: &str =
@@ -51,16 +55,74 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
         );
     }
 
-    let unauthorized = section_after(tier3, "\"error_code\": \"UNAUTHORIZED\"");
+    // The catalog is checked against the codes the wire actually emits, not
+    // against its own prose: pinning a message or a suggestion sentence only
+    // pins the copy, and an entry naming a code no server emits would still
+    // read as a contract to the agent following it.
+    let emitted: BTreeSet<&str> = ErrorCode::ALL.iter().map(|code| code.as_str()).collect();
+    let entries = error_catalog_entries(tier3);
     assert!(
-        unauthorized.contains("\"human_message\": \"request is not authorized\""),
-        "UNAUTHORIZED catalog entry must include a human_message"
+        !entries.is_empty(),
+        "the error catalog must publish entries"
     );
+
+    let mut catalogued = BTreeSet::new();
+    for entry in &entries {
+        let error_code = entry["error_code"]
+            .as_str()
+            .expect("every catalog entry must name an error_code");
+        assert!(
+            emitted.contains(error_code),
+            "catalog entry {error_code} is not an ErrorCode this server emits"
+        );
+        assert_eq!(
+            entry["wire_fields"]["code"].as_str(),
+            Some(error_code),
+            "{error_code}: wire_fields.code must be the entry's own code"
+        );
+        assert!(
+            entry["human_message"]
+                .as_str()
+                .is_some_and(|message| !message.trim().is_empty()),
+            "{error_code} catalog entry must carry a human_message"
+        );
+        let suggestions = entry["recovery_suggestions"].as_array().unwrap_or_else(|| {
+            panic!("{error_code} catalog entry must carry recovery_suggestions")
+        });
+        assert!(
+            !suggestions.is_empty()
+                && suggestions
+                    .iter()
+                    .all(|line| line.as_str().is_some_and(|line| !line.trim().is_empty())),
+            "{error_code} catalog entry must carry a non-empty recovery_suggestions array"
+        );
+        let details: ApiErrorDetails =
+            serde_json::from_value(entry["wire_fields"]["details"].clone()).unwrap_or_else(|err| {
+                panic!("{error_code} wire_fields.details must be an ApiErrorDetails: {err}")
+            });
+        assert_eq!(
+            details.code().as_str(),
+            error_code,
+            "{error_code}: the details payload belongs to another code"
+        );
+        catalogued.insert(error_code);
+    }
     assert!(
-        unauthorized.contains("\"recovery_suggestions\": [")
-            && unauthorized.contains("Send Authorization: Bearer credentials and retry."),
-        "UNAUTHORIZED catalog entry must include a non-empty recovery_suggestions array"
+        catalogued.contains(ErrorCode::Unauthorized.as_str()),
+        "the catalog must keep specifying UNAUTHORIZED in full"
     );
+
+    let documented = documented_error_codes(PACK);
+    assert!(
+        !documented.is_empty(),
+        "the pack must publish a closed code catalog"
+    );
+    for code in documented {
+        assert!(
+            emitted.contains(code.as_str()),
+            "the pack's closed code catalog lists {code}, which no ErrorCode emits"
+        );
+    }
 }
 
 #[test]
@@ -252,6 +314,35 @@ fn section_between<'a>(text: &'a str, start_heading: &str, end_heading: &str) ->
         |offset| start + offset,
     );
     &text[start..end]
+}
+
+/// The fully specified entries of the `### Error Catalog`, parsed.
+fn error_catalog_entries(pack: &str) -> Vec<Value> {
+    let catalog = section_after(pack, "### Error Catalog");
+    let fence = fenced_json(section_after(catalog, "Fully specified entries:"));
+    serde_json::from_str(fence).expect("the error catalog must be a JSON array")
+}
+
+/// The body of the first ```` ```json ```` fence in `text`.
+fn fenced_json(text: &str) -> &str {
+    let open = text.find("```json").expect("missing json fence");
+    let body = &text[open + "```json".len()..];
+    let close = body.find("```").expect("unclosed json fence");
+    &body[..close]
+}
+
+/// The codes the pack tells an agent the catalog is closed at.
+fn documented_error_codes(pack: &str) -> Vec<String> {
+    section_after(
+        pack,
+        "Closed code catalog currently emitted by server API code:",
+    )
+    .lines()
+    .skip(1)
+    .skip_while(|line| line.trim().is_empty())
+    .take_while(|line| line.starts_with("- "))
+    .map(|line| line[2..].trim().trim_matches('`').to_owned())
+    .collect()
 }
 
 fn section_after<'a>(text: &'a str, heading: &str) -> &'a str {

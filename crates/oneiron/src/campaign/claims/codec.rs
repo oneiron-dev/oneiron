@@ -171,8 +171,23 @@ fn encode_member_derivation(derivation: &CampaignMemberDerivation) -> Value {
     ])
 }
 
-/// Decodes a `campaign.member` value.
-pub(crate) fn decode_campaign_member_value(value: &Value) -> Result<CampaignMemberValue> {
+/// Decodes a `campaign.member` value into [`CampaignMemberValue`], the exact
+/// inverse of [`encode_campaign_member_value`].
+///
+/// The CA-owned read half of the codec, public for the same reason its encoder
+/// is: `CampaignMemberValue` is not serde-derived ([`EntityId`] has no serde
+/// impl), so a caller holding a `campaign.member` body from `Vault::get_claim`
+/// would otherwise re-spell this module's private key literals and the
+/// canonical-hex entity-reference rule to read the state, the channels, or the
+/// derivation watermark.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a value that is not a map, an unknown,
+/// missing or duplicated key, an unknown state kind or a state whose fields
+/// disagree with it, a channel or derivation of the wrong shape, and any
+/// entity reference that is not canonical hex.
+pub fn decode_campaign_member_value(value: &Value) -> Result<CampaignMemberValue> {
     let entries = value_map(value)?;
     validate_keys(
         entries,
@@ -325,8 +340,24 @@ pub fn encode_crm_stage_value(value: &CrmStageValue) -> Value {
     ])
 }
 
-/// Decodes a `crm.stage` value.
-pub(in crate::campaign) fn decode_crm_stage_value(value: &Value) -> Result<CrmStageValue> {
+/// Decodes a `crm.stage` value into [`CrmStageValue`], the exact inverse of
+/// [`encode_crm_stage_value`].
+///
+/// The CA-owned read half of the codec, public for the same reason its encoder
+/// is: `CrmStageValue` is not serde-derived ([`EntityId`] has no serde impl),
+/// so a caller holding a `crm.stage` body from `Vault::get_claim` would
+/// otherwise have to re-spell this module's private key literals and the
+/// canonical-hex entity-reference rule to read the stage, its basis, or the
+/// claims it cites.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a value that is not a map, an unknown,
+/// missing or duplicated key, a stage token past the bounded-text limit, an
+/// `evidence_refs` that is not a non-empty array of canonical-hex entity
+/// references, an unparsable `evidence_class` or `basis`, or a
+/// `recorded_at` that is not an unsigned integer.
+pub fn decode_crm_stage_value(value: &Value) -> Result<CrmStageValue> {
     let entries = value_map(value)?;
     let keys = [
         KEY_CAMPAIGN_REF,

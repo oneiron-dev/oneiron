@@ -1,0 +1,11 @@
+error: cannot construct `SecretCustodyRecord` with struct literal syntax due to private fields
+  --> tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs:8:5
+   |
+ 8 |     oneiron::secret_custody::SecretCustodyRecord {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+12 |         value_bytes: value,
+   |         ------------------ private field
+...
+18 |         manifest_ref: String::new(),
+   |         --------------------------- private field

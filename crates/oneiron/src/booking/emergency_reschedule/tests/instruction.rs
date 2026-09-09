@@ -409,6 +409,9 @@ fn a_named_person_without_an_existing_owner_binding_cannot_log_an_instruction() 
             recorded_at: NOW,
         })
         .unwrap_err();
-    assert_eq!(error.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    assert_eq!(
+        error.code,
+        crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
     assert_eq!((meta(&vault), entities(&vault)), before);
 }
