@@ -19,9 +19,9 @@ use super::merge::{
     key_in_range,
 };
 
-pub(crate) type KvPair<'txn> = (Cow<'txn, [u8]>, Cow<'txn, [u8]>);
+pub(super) type KvPair<'txn> = (Cow<'txn, [u8]>, Cow<'txn, [u8]>);
 
-pub(crate) type StrKvPair<'txn> = (Cow<'txn, str>, Cow<'txn, [u8]>);
+pub(super) type StrKvPair<'txn> = (Cow<'txn, str>, Cow<'txn, [u8]>);
 
 struct ComposedOverlay {
     live: Arc<SessionOverlay>,

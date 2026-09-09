@@ -38,7 +38,7 @@ pub(super) const CONFIRM_INVITE_BLOB_DOMAIN: &[u8] = b"oneiron.booking.confirm_i
 /// The sink the lifecycle names when a turn carries no invite dispatch
 /// context. It is never executed — the confirm hook only fires when a real
 /// sink was threaded — and fails closed if a future path ever reaches it.
-pub(crate) struct NoConfirmInviteSink;
+pub(in crate::booking) struct NoConfirmInviteSink;
 
 impl OutboundExecutionSink for NoConfirmInviteSink {
     fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
@@ -170,7 +170,7 @@ pub fn enqueue_confirm_invite(
 /// Every missing fact refuses, which the caller swallows: a booking with no
 /// live grant, no sending identity, or no readable binding simply sends no
 /// invite.
-pub(crate) fn dispatch_confirm_booking_invite(
+pub(in crate::booking) fn dispatch_confirm_booking_invite(
     vault: &Vault,
     actor: EntityId,
     receipt: &ConfirmReceipt,
@@ -336,7 +336,7 @@ fn booking_occurrence(vault: &Vault, booking_ref: &EntityId) -> Result<TimeRange
 /// own identity when one exists, otherwise the ordinary email identity — the
 /// same order CAL-04's hygiene hydration resolves the sender in. An ambiguous
 /// pair on one channel refuses rather than guessing.
-pub(crate) fn sending_address(
+pub(in crate::booking) fn sending_address(
     vault: &Vault,
     actor: EntityId,
 ) -> Result<Option<String>, BookingError> {

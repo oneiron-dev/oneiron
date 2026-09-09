@@ -55,11 +55,11 @@ impl SeedWeighting {
     }
 }
 #[inline]
-pub(crate) fn vad_salience(vad: Vad) -> f32 {
+pub(super) fn vad_salience(vad: Vad) -> f32 {
     vad.valence.abs().max(vad.arousal)
 }
 #[inline]
-pub(crate) fn vad_multiplier(vad: Option<Vad>, alpha: f32) -> f32 {
+pub(super) fn vad_multiplier(vad: Option<Vad>, alpha: f32) -> f32 {
     if alpha == 0.0 {
         1.0
     } else {

@@ -42,7 +42,8 @@ use self::codec::{
     corrupted, corrupted_with_diagnostic, decode_field_lengths, decode_posting_entry,
 };
 pub use self::config::Bm25Formula;
-pub(crate) use self::config::{Bm25Config, Bm25RecencyConfig, FieldLengthPolicy};
+use self::config::Bm25RecencyConfig;
+pub(crate) use self::config::{Bm25Config, FieldLengthPolicy};
 pub use self::diagnostics::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, bm25_diagnostics_snapshot,
 };
@@ -75,11 +76,13 @@ use self::codec::{
     find_posting_dup, read_field_stats, write_field_stats, write_total_docs,
 };
 #[cfg(test)]
-pub(crate) use self::config::{BM25_FIELD_COUNT, FieldConfig};
+use self::config::BM25_FIELD_COUNT;
+#[cfg(test)]
+pub(crate) use self::config::FieldConfig;
 #[cfg(test)]
 use self::diagnostics::BM25_DIAGNOSTIC_COUNTERS;
 #[cfg(test)]
-pub(crate) use self::query::search_text_with_recency;
+use self::query::search_text_with_recency;
 #[cfg(test)]
 use self::query::{
     MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS, MAX_FINAL_TOKEN_PREFIX_TERMS,

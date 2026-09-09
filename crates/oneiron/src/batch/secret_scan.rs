@@ -12,7 +12,7 @@ const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
 const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
 
-pub(crate) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
+pub(super) fn scan_batch_ops(ops: &[BatchOp]) -> Result<()> {
     for op in ops {
         match op {
             BatchOp::Put {

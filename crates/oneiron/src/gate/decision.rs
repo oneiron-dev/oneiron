@@ -48,7 +48,7 @@ impl GateOutcome {
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GateMetricReasonClass {
+pub(super) enum GateMetricReasonClass {
     Allow,
     MissingActorClass,
     MissingActorProvenance,
@@ -442,7 +442,7 @@ pub(super) fn external_effect_receipt_reasons(
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateMetricCounter {
+pub(super) struct GateMetricCounter {
     outcome: GateOutcome,
     reason_class: GateMetricReasonClass,
     count: u64,
@@ -456,7 +456,7 @@ impl GateMetricCounter {
     }
 
     #[must_use]
-    pub(crate) fn reason_class(&self) -> GateMetricReasonClass {
+    pub(super) fn reason_class(&self) -> GateMetricReasonClass {
         self.reason_class
     }
 
@@ -468,7 +468,7 @@ impl GateMetricCounter {
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GateMetricsSnapshot {
+pub(super) struct GateMetricsSnapshot {
     counters: Vec<GateMetricCounter>,
 }
 
@@ -490,7 +490,7 @@ impl GateMetricsSnapshot {
 
 #[must_use]
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn gate_metrics_snapshot() -> GateMetricsSnapshot {
+pub(super) fn gate_metrics_snapshot() -> GateMetricsSnapshot {
     let mut counters =
         Vec::with_capacity(GATE_METRIC_OUTCOME_COUNT * GATE_METRIC_REASON_CLASS_COUNT);
     for outcome in GateOutcome::metric_values() {

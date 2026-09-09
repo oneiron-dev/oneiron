@@ -56,7 +56,7 @@ pub struct BookingCounts {
               fires only while the body is storage-free, and unfulfilling it is \
               how ONE-1813 is told to delete this attribute"
 )]
-pub(crate) fn load_booking_counts(
+pub(super) fn load_booking_counts(
     _vault: &Vault,
     _page_ref: EntityId,
     _event_type: &EventTypeKey,

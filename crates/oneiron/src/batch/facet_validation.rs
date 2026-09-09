@@ -151,7 +151,7 @@ pub(crate) const fn facet_of_endpoint_types_on_table(src_type: u8, tgt_type: u8)
 
 /// Source half of the table: the types that may STAMP a facet.
 #[must_use]
-pub(crate) const fn facet_of_source_type_admitted(src_type: u8) -> bool {
+const fn facet_of_source_type_admitted(src_type: u8) -> bool {
     matches!(
         src_type,
         ENTITY_TYPE_CLAIM | ENTITY_TYPE_TURN | ENTITY_TYPE_EVENT

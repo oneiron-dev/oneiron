@@ -24,7 +24,7 @@ pub(crate) fn lease_key(id: CheckoutId) -> Vec<u8> {
     )
     .into_bytes()
 }
-pub(crate) fn tombstone_key(id: CheckoutId) -> Vec<u8> {
+pub(in crate::checkout) fn tombstone_key(id: CheckoutId) -> Vec<u8> {
     format!(
         "{}{}",
         std::str::from_utf8(CHECKOUT_TOMBSTONE_KEY_PREFIX).expect("ASCII"),
@@ -168,7 +168,7 @@ fn text(v: &Value) -> CheckoutResult<String> {
 fn u(v: &Value) -> CheckoutResult<u64> {
     v.as_u64().ok_or_else(corrupt)
 }
-pub(crate) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
+pub(in crate::checkout) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![
         (
             CHECKOUT_LEASE_BODY_KEYS[0],
@@ -212,7 +212,7 @@ pub(crate) fn encode_act(a: &CheckoutLeaseAct) -> CheckoutResult<Vec<u8>> {
         (CHECKOUT_LEASE_BODY_KEYS[10], Value::from(a.updated_at)),
     ])
 }
-pub(crate) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
+pub(in crate::checkout) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
     let x = fields(b, &CHECKOUT_LEASE_BODY_KEYS)?;
     if u(&x[0])? != 1 {
         return Err(corrupt());
@@ -260,13 +260,13 @@ pub(crate) fn decode_act(b: &[u8]) -> CheckoutResult<CheckoutLeaseAct> {
         updated_at: u(&x[10])?,
     })
 }
-pub(crate) fn encode_tombstone(max_epoch: u64) -> CheckoutResult<Vec<u8>> {
+pub(in crate::checkout) fn encode_tombstone(max_epoch: u64) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![
         (CHECKOUT_TOMBSTONE_BODY_KEYS[0], Value::from(1)),
         (CHECKOUT_TOMBSTONE_BODY_KEYS[1], Value::from(max_epoch)),
     ])
 }
-pub(crate) fn decode_tombstone(b: &[u8]) -> CheckoutResult<u64> {
+pub(in crate::checkout) fn decode_tombstone(b: &[u8]) -> CheckoutResult<u64> {
     let x = fields(b, &CHECKOUT_TOMBSTONE_BODY_KEYS)?;
     if u(&x[0])? != 1 {
         return Err(corrupt());
@@ -279,7 +279,9 @@ pub(crate) fn decode_tombstone(b: &[u8]) -> CheckoutResult<u64> {
     }
     Ok(max_epoch)
 }
-pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Vec<u8>> {
+pub(in crate::checkout) fn encode_receipt(
+    r: &CheckoutSettlementReceipt,
+) -> CheckoutResult<Vec<u8>> {
     map_bytes(vec![
         (CHECKOUT_SETTLEMENT_BODY_KEYS[0], Value::from(1)),
         (
@@ -315,7 +317,7 @@ pub(crate) fn encode_receipt(r: &CheckoutSettlementReceipt) -> CheckoutResult<Ve
         ),
     ])
 }
-pub(crate) fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementReceipt> {
+pub(in crate::checkout) fn decode_receipt(b: &[u8]) -> CheckoutResult<CheckoutSettlementReceipt> {
     let x = fields(b, &CHECKOUT_SETTLEMENT_BODY_KEYS)?;
     if u(&x[0])? != 1 {
         return Err(corrupt());

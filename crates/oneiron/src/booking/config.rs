@@ -62,7 +62,7 @@ pub const MAX_BOOKING_WINDOW_SECS: u64 = 366 * 24 * 3_600;
 pub(crate) const MINUTES_PER_DAY: u16 = 1_440;
 
 /// Weekday axis width. Rows are `0 = Monday ..= 6 = Sunday`.
-pub(crate) const DAYS_PER_WEEK: u8 = 7;
+pub(super) const DAYS_PER_WEEK: u8 = 7;
 
 /// Bound on an [`EventTypeKey`], matching the seam's timezone-identifier bound.
 const MAX_EVENT_TYPE_KEY_BYTES: usize = 64;
@@ -415,7 +415,7 @@ pub fn event_type_index_key(page_ref: EntityId, key: &EventTypeKey) -> Vec<u8> {
 ///
 /// [`BookingError::InvalidConfig`] when no live configuration exists or the
 /// stored one is malformed; [`BookingError::SlotOracle`] on a storage failure.
-pub(crate) fn load_event_type_config(
+pub(super) fn load_event_type_config(
     vault: &Vault,
     page_ref: EntityId,
     key: &EventTypeKey,

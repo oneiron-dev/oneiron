@@ -18,7 +18,7 @@ use super::segment::NEXT_OVERLAY_GENERATION;
 /// and the direct `env.write_txn()` clusters in `dreamer_runner`,
 /// `attempt_queue`, `claim`, `deletion`, `connector_key`, `companion`,
 /// `code_run`, and the remaining store/vault feature modules.
-pub(crate) const SESSION_WRITE_TXN_ENTRY_POINTS: &[&str] = &[
+const SESSION_WRITE_TXN_ENTRY_POINTS: &[&str] = &[
     "Vault::try_with_write_txn / Vault::with_write_txn",
     "BatchBuilder::commit",
     "Memory::with_verified_actor_write_txn / Memory::witness",
@@ -100,7 +100,7 @@ impl SessionOverlay {
 
     /// The currently published mode generation, read under the state lock.
     /// [`SessionWriteRoute`] is the only consumer.
-    pub(crate) fn mode_generation(&self) -> Result<u64> {
+    pub(in crate::session_overlay) fn mode_generation(&self) -> Result<u64> {
         Ok(self
             .lifecycle
             .lock()

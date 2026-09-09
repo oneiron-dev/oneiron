@@ -10,7 +10,7 @@ pub(crate) use self::cache_store::{
     read_graph_version,
 };
 #[cfg(test)]
-pub(crate) use self::community::ppr_expand_in_txn_with_community_deferred_cache;
+use self::community::ppr_expand_in_txn_with_community_deferred_cache;
 pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
@@ -24,7 +24,7 @@ pub(crate) use self::query::{
     ppr_query_scoped_in_txn_with_diagnostics,
 };
 #[cfg(test)]
-pub(crate) use self::query::{ppr_query, ppr_query_in_txn};
+use self::query::{ppr_query, ppr_query_in_txn};
 pub(crate) use self::walk::PprNodeVisibility;
 #[cfg(test)]
 pub(crate) use self::walk::{ppr_compute, ppr_compute_weighted};

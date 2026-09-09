@@ -542,7 +542,7 @@ pub async fn parse_constraint_with_backend(
 
 /// An IANA-shaped identifier: bounded, and restricted to the characters zone
 /// names use. Anything else fails closed.
-pub(crate) fn validate_visitor_tz(value: &str) -> Result<(), BookingError> {
+pub(super) fn validate_visitor_tz(value: &str) -> Result<(), BookingError> {
     if value.is_empty() || value.len() > MAX_VISITOR_TZ_BYTES {
         return Err(BookingError::InvalidConstraint(format!(
             "visitor timezone must be 1..={MAX_VISITOR_TZ_BYTES} bytes"
@@ -713,13 +713,13 @@ pub(crate) mod fixture {
     /// Returns configured slots and records every request it was asked. It
     /// cannot accept or retain free text: [`SolveRequest`] has no such field.
     /// The recorder is a `Mutex` because [`SlotOracle`] is shareable.
-    pub(crate) struct FixtureSlotOracle {
+    pub(in crate::booking) struct FixtureSlotOracle {
         result: SolveResult,
         seen: Mutex<Vec<SolveRequest>>,
     }
 
     impl FixtureSlotOracle {
-        pub(crate) fn with_slots(slots: Vec<RankedSlot>, flex_used: bool) -> Self {
+        pub(in crate::booking) fn with_slots(slots: Vec<RankedSlot>, flex_used: bool) -> Self {
             Self {
                 result: SolveResult {
                     slots,

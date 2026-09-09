@@ -81,7 +81,7 @@ pub fn analyze(text: &str, offset_base: u32, position_base: u32, out: &mut Vec<T
 /// Emit char-adjacent bigrams on `CjkNgram` without surface unigrams.
 /// Called by the ZH / JP / KO morph paths after their tokenizers run; the
 /// bigrams provide recall across morpheme boundaries.
-pub(crate) fn emit_bigram_overlay(
+pub(super) fn emit_bigram_overlay(
     text: &str,
     offset_base: u32,
     position_base: u32,

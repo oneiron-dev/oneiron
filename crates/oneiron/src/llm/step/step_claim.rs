@@ -286,7 +286,7 @@ pub(super) fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
 /// use: the memo-index key pair, the response location, and the WITH-WHAT
 /// provenance triple the memo-hit check and the index admission gate compare
 /// against the live request (ONE-1344).
-pub(crate) struct DecodedStepClaim {
+pub(super) struct DecodedStepClaim {
     pub(crate) attempt_id: AttemptId,
     pub(crate) step_hash: [u8; 32],
     pub(crate) model_id: String,
@@ -305,7 +305,7 @@ pub(crate) struct DecodedStepClaim {
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
 /// duplicates, schema-version checked, and EXACTLY ONE of
 /// `response`/`response_ref` present (both or neither is a typed error).
-pub(crate) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
+pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim> {
     let entries = expect_map(value, "dreamer step value must be a MessagePack map")?;
     let mut schema_version = None;
     let mut attempt_id = None;
