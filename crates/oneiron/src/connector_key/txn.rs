@@ -17,7 +17,7 @@ use super::record::{
 
 /// vault_meta connector lookup index: prefix ++ normalized connector bytes ++
 /// `\0` ++ key id (16 bytes) -> `[]`.
-pub(crate) const CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX: &[u8] = b"connector_key/connector/v1\0";
+const CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX: &[u8] = b"connector_key/connector/v1\0";
 
 /// vault_meta engine-catalog name index: prefix ++ normalized catalog name ->
 /// key id (16 bytes).
@@ -55,7 +55,7 @@ pub struct ConnectorKeyGeneration {
 
 // --- vault_meta keys ---------------------------------------------------------
 
-pub(crate) fn connector_key_index_prefix(connector: &str) -> Result<Vec<u8>> {
+pub(super) fn connector_key_index_prefix(connector: &str) -> Result<Vec<u8>> {
     validate_connector_token(connector)?;
     let mut key = Vec::with_capacity(
         CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX.len() + connector.len() + 1 + ENTITY_ID_LEN,
@@ -66,13 +66,13 @@ pub(crate) fn connector_key_index_prefix(connector: &str) -> Result<Vec<u8>> {
     Ok(key)
 }
 
-pub(crate) fn connector_key_index_key(connector: &str, id: &EntityId) -> Result<Vec<u8>> {
+pub(super) fn connector_key_index_key(connector: &str, id: &EntityId) -> Result<Vec<u8>> {
     let mut key = connector_key_index_prefix(connector)?;
     key.extend_from_slice(id.as_bytes());
     Ok(key)
 }
 
-pub(crate) fn connector_key_index_entity_id(key: &[u8], connector: &str) -> Result<EntityId> {
+pub(super) fn connector_key_index_entity_id(key: &[u8], connector: &str) -> Result<EntityId> {
     let prefix = connector_key_index_prefix(connector)?;
     if key.len() != prefix.len() + ENTITY_ID_LEN || !key.starts_with(&prefix) {
         return Err(Error::CorruptedIndex("connector key connector index key"));

@@ -348,7 +348,7 @@ pub(super) const CONNECTOR_KEY_NAME_MAX_LEN: usize = 128;
 /// keep the encoded body bounded.
 pub(super) const CONNECTOR_CATALOG_MAX_VERBS: usize = 64;
 
-pub(crate) fn validate_connector_token(connector: &str) -> Result<()> {
+pub(in crate::connector_key) fn validate_connector_token(connector: &str) -> Result<()> {
     if normalize_connector_key(connector).is_empty() {
         return Err(invalid_body("connector must not be blank"));
     }
@@ -371,7 +371,7 @@ pub(crate) fn validate_connector_token(connector: &str) -> Result<()> {
 /// keeps names verbatim — so this deliberately does NOT normalize. It only
 /// bounds the string and keeps it index-safe; whether the name RESOLVES is a
 /// live-vault question the write doors answer inside their transaction.
-pub(crate) fn validate_secret_ref(secret_ref: &str) -> Result<()> {
+pub(in crate::connector_key) fn validate_secret_ref(secret_ref: &str) -> Result<()> {
     if secret_ref.trim().is_empty() {
         return Err(invalid_body("secret_ref must not be blank"));
     }
@@ -404,7 +404,9 @@ pub(super) fn validate_catalog_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_compiled_policy(compiled: &CompiledConnectorPolicy) -> Result<()> {
+pub(in crate::connector_key) fn validate_compiled_policy(
+    compiled: &CompiledConnectorPolicy,
+) -> Result<()> {
     if compiled.channel_caps.len() > CONNECTOR_KEY_MAX_BUDGET_ROWS {
         return Err(invalid_body("too many charter channel caps"));
     }

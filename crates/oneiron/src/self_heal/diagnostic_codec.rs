@@ -197,7 +197,7 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
 /// address: no writer, local or replicated, can store two byte strings that
 /// carry one event, and no stored byte string can be one an honest re-encode
 /// would not have produced.
-pub(crate) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
+pub(super) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
     let event = decode_diagnostic_event_body(bytes)?;
     if encode_stored_diagnostic_event_body(&event)?.as_slice() != bytes {
         return Err(invalid_diagnostic("body is not canonically encoded"));

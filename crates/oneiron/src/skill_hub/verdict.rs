@@ -304,7 +304,7 @@ impl Vault {
     /// churn with no new evidence in it. That also means a second hub alias
     /// over known bytes adds no verdict, while bytes first seen through a
     /// non-hub birth path get scanned the moment they arrive at this door.
-    pub(crate) fn scan_and_ingest_on_import_in_txn(
+    pub(super) fn scan_and_ingest_on_import_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         entity: &EntityId,
@@ -381,7 +381,7 @@ impl Vault {
     /// transaction — the activation consult reads from inside the write
     /// transaction that performs the activation, so no verdict can land in
     /// between the consult and the write it governs.
-    pub(crate) fn skill_scan_verdicts_for_content_hash_in_txn(
+    fn skill_scan_verdicts_for_content_hash_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         content_hash: SkillContentHash,
