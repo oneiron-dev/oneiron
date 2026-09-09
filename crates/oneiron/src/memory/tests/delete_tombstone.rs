@@ -547,7 +547,6 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
             // then finds nothing. Identical construction to the ONE-1149
             // raced-to-nothing legs.
             let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-            crate::deletion::install_after_header_read_signal(tx);
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
             let outcome = std::thread::scope(|scope| {
                 let mut wtxn = vault.store.env.write_txn().expect("write txn");
@@ -555,6 +554,8 @@ fn a_soft_erase_that_erased_nothing_writes_no_pending_tombstone() {
                 let deleter_barrier = std::sync::Arc::clone(&barrier);
                 let vault_ref = &vault;
                 let deleter = scope.spawn(move || {
+                    // Thread-local seam: armed on the thread that will fire it.
+                    crate::deletion::install_after_header_read_signal(tx);
                     deleter_barrier.wait();
                     vault_ref.delete_entity_with_reason(&id, reason)
                 });
