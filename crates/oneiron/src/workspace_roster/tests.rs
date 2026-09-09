@@ -283,7 +283,14 @@ fn venture_name_is_runtime_data() -> Result<()> {
 
     // The `@Oneiron` reading is a coincidence of the second deployment's
     // venture name, so it must not be findable in this module's source.
-    let source = include_str!("../workspace_roster.rs");
+    let source = concat!(
+        include_str!("mod.rs"),
+        include_str!("intent.rs"),
+        include_str!("records.rs"),
+        include_str!("runner.rs"),
+        include_str!("codec.rs"),
+        include_str!("steps.rs"),
+    );
     assert!(!source.contains("Antevon"));
     assert!(!source.contains("Oneiron\""));
     Ok(())

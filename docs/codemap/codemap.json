@@ -19,7 +19,30 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/codec.rs",
+     "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
+     "surface": {
+      "const": 2,
+      "crate-vis": 21,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/mod.rs",
+     "purpose": "AccessGrant control-plane record substrate",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AccessGrant",
@@ -28,13 +51,11 @@
       "AccessGrantStatus",
       "CalendarAccessGrantRow"
      ],
-     "path": "src/access_grant.rs",
-     "purpose": "AccessGrant control-plane record substrate",
+     "path": "src/access_grant/record.rs",
+     "purpose": "AccessGrant record and scope, capability, and status enums",
      "surface": {
-      "const": 2,
-      "crate-vis": 9,
       "enum": 3,
-      "fn": 24,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -45,6 +66,17 @@
      "path": "src/access_grant/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/access_grant/vault_doors.rs",
+     "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
     },
     {
      "bucket": "m",
@@ -5023,7 +5055,68 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/autonomy.rs",
+     "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/codec.rs",
+     "purpose": "The typed error, MessagePack value helpers, vault-meta key/address derivation, envelope/mode value codecs…",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/envelopes.rs",
+     "purpose": "Vault row primitives (owner check, row read/write, content-addressed envelope put) and the owner-only…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/graduation.rs",
+     "purpose": "Offer-only graduation: scope value, attributed review evidence (agent and owner doors), receipt-backed…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/mod.rs",
+     "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/channel_identity_autonomy/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ChannelIdentityActionEnvelope",
@@ -5040,23 +5133,15 @@
       "MailboxReadCandidate",
       "MailboxReadEnvelope"
      ],
-     "path": "src/channel_identity_autonomy.rs",
-     "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation",
+     "path": "src/channel_identity_autonomy/types.rs",
+     "purpose": "Schema version, vault-meta predicates, the autonomy rung, envelope/candidate/mode/request/state shapes and…",
      "surface": {
       "const": 6,
-      "crate-vis": 6,
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 16,
+      "fn": 3,
       "struct": 11
      }
-    },
-    {
-     "bucket": "XL",
-     "kind": "test",
-     "notable": [],
-     "path": "src/channel_identity_autonomy/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -23601,30 +23686,6 @@
      "surface": {}
     },
     {
-     "bucket": "L",
-     "kind": "src",
-     "notable": [
-      "CompanionBirthIntent",
-      "DelegatedMailboxOnboarding",
-      "MemberGrantBundle",
-      "MemberOnboardingIntent",
-      "MemberOnboardingOutcome",
-      "MemberOnboardingStep",
-      "WorkspaceRosterEntry",
-      "WorkspaceRosterPreset",
-      "WorkspaceRosterRole"
-     ],
-     "path": "src/workspace_roster.rs",
-     "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
-     "surface": {
-      "const": 4,
-      "crate-vis": 1,
-      "enum": 2,
-      "fn": 7,
-      "struct": 7
-     }
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -23632,6 +23693,63 @@
      "purpose": "Roster reads, journal records, and canonical onboarding encodings",
      "surface": {
       "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionBirthIntent",
+      "DelegatedMailboxOnboarding",
+      "MemberGrantBundle",
+      "MemberOnboardingIntent",
+      "WorkspaceRosterPreset"
+     ],
+     "path": "src/workspace_roster/intent.rs",
+     "purpose": "Onboarding request shapes and their structural validation",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/mod.rs",
+     "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemberOnboardingOutcome",
+      "MemberOnboardingStep",
+      "WorkspaceRosterEntry",
+      "WorkspaceRosterRole"
+     ],
+     "path": "src/workspace_roster/records.rs",
+     "purpose": "Pinned vault-meta prefixes, the step ladder, and stored roster/journal records",
+     "surface": {
+      "const": 4,
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/runner.rs",
+     "purpose": "Resumable onboarding runner, house-name rename, and roster read",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -24355,10 +24473,10 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 2,
+     "files": 5,
      "impl_vault": true,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
@@ -24516,10 +24634,10 @@
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)"
     },
     "channel_identity_autonomy": {
-     "files": 2,
+     "files": 7,
      "impl_vault": true,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation"
     },
     "channel_identity_lifecycle": {
@@ -25587,10 +25705,10 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 8,
+     "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "write_envelope": {
@@ -25601,9 +25719,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 7,
+   "over_bar": 4,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 1456,
+   "source_files": 1467,
    "test_files": 526
   },
   "oneiron-bench": {
