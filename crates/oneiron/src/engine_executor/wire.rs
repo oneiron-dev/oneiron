@@ -13,7 +13,7 @@ const CODE_FENCE: &str = "```";
 
 /// What ONE-1929 had to remove from one model reply to reach a bare program.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct ExecutorWireRepairs {
+pub(super) struct ExecutorWireRepairs {
     pub trimmed_transport_whitespace: bool,
     pub stripped_code_fence: bool,
     pub stripped_exec_wrapper: bool,
@@ -34,7 +34,7 @@ impl ExecutorWireRepairs {
 
 /// One model reply, normalized onto the strict bare wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HealedExecutorReply {
+pub(super) struct HealedExecutorReply {
     /// The sole source passed to [`JsCodeModeRuntime::run_step`].
     pub code: String,
     /// ONE-1686-owned implicit-speak payload; never part of `code` or console.
@@ -67,7 +67,7 @@ pub(crate) struct HealedExecutorReply {
 ///    drop console blocks exposed directly inside that supported wrapper;
 /// 8. trim the interior once more (no repair flag) and run the mandatory
 ///    source-aware structural gate.
-pub(crate) fn heal_executor_reply(
+pub(super) fn heal_executor_reply(
     response: &LlmResponse,
 ) -> EngineExecutorResult<HealedExecutorReply> {
     if response.finish_reason != FinishReason::Stop {
@@ -350,7 +350,7 @@ fn reply_lines(input: &str) -> Vec<ReplyLine<'_>> {
 
 /// Which half of a partitioned reply a console scan is walking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConsoleRegion {
+pub(super) enum ConsoleRegion {
     /// The program candidate: JavaScript, so the scan tracks source state and
     /// `<exec>` wrapper depth and recognizes console blocks only at depth 0.
     Candidate,
@@ -384,7 +384,7 @@ enum SourceState {
 ///
 /// An opener with no matching `</console>` in its region is an invalid body,
 /// never speak bytes.
-pub(crate) fn partition_top_level_console_blocks(
+pub(super) fn partition_top_level_console_blocks(
     input: &str,
     region: ConsoleRegion,
 ) -> EngineExecutorResult<(String, u32)> {

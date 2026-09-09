@@ -39,7 +39,7 @@ pub struct ClaimVadConsolidation {
     pub structural_edges_skipped: usize,
     pub reappraisal: ClaimVadReappraisal,
 }
-pub(crate) fn collect_claim_turn_evidence_refs(body: &ClaimBody) -> Vec<EntityId> {
+pub(super) fn collect_claim_turn_evidence_refs(body: &ClaimBody) -> Vec<EntityId> {
     let mut ids = BTreeSet::new();
     if let ClaimSubject::Entity(subject) = body.subject {
         ids.insert(subject);
@@ -49,7 +49,7 @@ pub(crate) fn collect_claim_turn_evidence_refs(body: &ClaimBody) -> Vec<EntityId
     }
     ids.into_iter().collect()
 }
-pub(crate) fn mean_vad(evidence: &[ClaimVadTurnEvidence]) -> Option<Vad> {
+pub(super) fn mean_vad(evidence: &[ClaimVadTurnEvidence]) -> Option<Vad> {
     if evidence.is_empty() {
         return None;
     }
@@ -72,7 +72,7 @@ pub(crate) fn mean_vad(evidence: &[ClaimVadTurnEvidence]) -> Option<Vad> {
 fn clamp_mean(value: f32, min: f32, max: f32) -> f32 {
     value.clamp(min, max)
 }
-pub(crate) fn claim_vad_value(vad: Vad, turn_count: usize) -> Value {
+pub(super) fn claim_vad_value(vad: Vad, turn_count: usize) -> Value {
     Value::Map(vec![
         (Value::from(CLAIM_VAD_KEY_VALENCE), Value::F32(vad.valence)),
         (Value::from(CLAIM_VAD_KEY_AROUSAL), Value::F32(vad.arousal)),
@@ -86,7 +86,7 @@ pub(crate) fn claim_vad_value(vad: Vad, turn_count: usize) -> Value {
         ),
     ])
 }
-pub(crate) fn claim_vad_evidence_value(evidence: &[ClaimVadTurnEvidence]) -> Value {
+pub(super) fn claim_vad_evidence_value(evidence: &[ClaimVadTurnEvidence]) -> Value {
     let turns = evidence
         .iter()
         .map(|item| {

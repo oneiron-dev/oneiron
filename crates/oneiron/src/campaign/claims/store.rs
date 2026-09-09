@@ -186,7 +186,7 @@ pub fn do_not_contact_applies(
 /// law, and a suppression that expires on its own is a suppression that leaks.
 /// Only superseding or retracting the head (an authorized clear stamp) removes
 /// it from the fold.
-pub(crate) fn matching_do_not_contact_in_txn(
+pub(super) fn matching_do_not_contact_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
@@ -225,7 +225,7 @@ pub(crate) fn matching_do_not_contact_in_txn(
 ///
 /// [`Error::InvalidClaimBody`] when more than one live head exists; storage and
 /// decode errors propagate.
-pub(crate) fn live_campaign_member_head_in_txn(
+pub(in crate::campaign) fn live_campaign_member_head_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
@@ -261,7 +261,7 @@ pub(crate) fn live_campaign_member_head_in_txn(
 /// the same fact. Equality is on the ENCODED value, so it is the same identity
 /// test the decoder enforces, not a hand-written field comparison that can drift
 /// from the schema.
-pub(crate) fn identical_live_head_in_txn(
+pub(in crate::campaign) fn identical_live_head_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: EntityId,

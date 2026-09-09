@@ -125,7 +125,7 @@ pub fn load_active_compliance_pack(vault: &Vault) -> Result<CompliancePack> {
     active_compliance_pack_in_txn(&vault.store, &rtxn)
 }
 
-pub(crate) fn active_compliance_pack_in_txn(
+pub(super) fn active_compliance_pack_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<CompliancePack> {

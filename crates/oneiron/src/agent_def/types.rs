@@ -165,7 +165,7 @@ pub(super) const SCOPE_WORLD: &str = "world";
 /// Reserved logical-id prefix for seeded system rows. Enforced at the
 /// AGENT_DEF put-decode chokepoint (`batch.rs::apply_put`), which is the only
 /// place that holds both the body and the row id it is being stored at.
-pub(crate) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
+pub(super) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
 
 /// Maximum byte length of a `logical_id`.
 pub(super) const AGENT_LOGICAL_ID_MAX_BYTES: usize = 256;

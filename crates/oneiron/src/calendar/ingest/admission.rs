@@ -34,7 +34,7 @@ use super::poll::run_ics_feed_poll;
 const ICS_IMPORT_ACTOR_ID_DOMAIN: &[u8] = b"oneiron:calendar-ics-import-actor:v1";
 
 /// Per-poll admission context: everything the claim-writing steps share.
-pub(crate) struct PollAdmission<'a> {
+pub(super) struct PollAdmission<'a> {
     pub(crate) vault: &'a Vault,
     pub(crate) screener: Option<&'a dyn CalendarBodyScreener>,
     pub(crate) safeguard_enabled: bool,
@@ -46,7 +46,7 @@ pub(crate) struct PollAdmission<'a> {
 
 impl PollAdmission<'_> {
     /// Applies one completely parsed feed: per-VEVENT diff + admission.
-    pub(crate) fn apply_feed(
+    pub(super) fn apply_feed(
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
     ) -> Result<(), CalendarError> {
@@ -101,7 +101,7 @@ impl PollAdmission<'_> {
     /// reported before, whose UID a COMPLETE feed just omitted, flips to
     /// absent — only that passport, never the EVENT. Cancellation derives
     /// afterwards, and only when every live inbound passport reports absence.
-    pub(crate) fn sweep_absent_sources(
+    pub(super) fn sweep_absent_sources(
         &mut self,
         feed: &super::ics::ParsedIcsFeed,
     ) -> Result<(), CalendarError> {
@@ -479,7 +479,7 @@ fn encode_event_body(name: &str) -> Result<Vec<u8>, CalendarError> {
 /// Admits one typed-value claim through the Gate-backed imported-evidence
 /// door and returns the new claim id. The write actor is the adapter's own
 /// MACHINE entity, ensured on first use.
-pub(crate) fn admit_calendar_import_claim(
+pub(in crate::calendar) fn admit_calendar_import_claim(
     vault: &Vault,
     event_ref: &EntityId,
     predicate: &str,
@@ -516,7 +516,7 @@ pub fn ics_import_actor_id() -> crate::Result<EntityId> {
     derive_entity_id(ICS_IMPORT_ACTOR_ID_DOMAIN, &[])
 }
 
-pub(crate) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
+pub(super) fn ensure_ics_import_actor(vault: &Vault, now: u64) -> crate::Result<EntityId> {
     let id = ics_import_actor_id()?;
     if vault.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
         let mut body = Vec::new();
@@ -559,7 +559,7 @@ fn list_event_ids(vault: &Vault) -> Result<Vec<EntityId>, CalendarError> {
 /// Compact fold of the run's screen verdicts, persisted on the cursor as the
 /// admission-metadata witness: the worst verdict class seen this run.
 #[derive(Default)]
-pub(crate) struct VerdictFold {
+pub(super) struct VerdictFold {
     token: Option<&'static str>,
 }
 

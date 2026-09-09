@@ -278,6 +278,6 @@ pub(crate) fn refused(reason: impl Into<String>) -> CalendarError {
     }
 }
 
-pub(crate) fn ingest_reason(reason: String) -> CalendarError {
+pub(in crate::calendar) fn ingest_reason(reason: String) -> CalendarError {
     CalendarError::IcsIngest { reason }
 }

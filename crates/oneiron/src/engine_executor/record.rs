@@ -341,7 +341,7 @@ pub(super) fn durable_wait_reason_from_str(
     }
 }
 
-pub(crate) fn step_state_hash(
+pub(super) fn step_state_hash(
     previous: [u8; 32],
     seq: u64,
     request_hash: &[u8; 32],
