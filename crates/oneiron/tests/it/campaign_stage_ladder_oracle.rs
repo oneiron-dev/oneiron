@@ -714,15 +714,18 @@ fn coded_and_external_ingress_use_projector_only_path() {
         )
         .unwrap(),
     );
+    let stage =
+        decode_crm_stage_value(&only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value)
+            .unwrap();
+    assert_eq!(stage.stage, key(CALL_BOOKED));
     assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
+        stage.evidence_refs,
+        vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
     );
+    assert_eq!(stage.evidence_class, StageEvidenceClass::CalendarEvent);
+    assert_eq!(stage.basis, EvidenceBasis::Machine);
+    assert_eq!(stage.recorded_at, BOOKING_AT);
+    assert_eq!(stage.campaign_ref, test_id(CAMPAIGN_SEED));
 
     // Neither ingress can put or supersede a `crm.stage` claim directly: the
     // projector is crate-visible, so an external caller cannot name it, and the
