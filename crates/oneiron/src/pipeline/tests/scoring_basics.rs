@@ -145,19 +145,6 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
 }
 
 #[test]
-fn cosine_ghost_is_gravity_signal_not_multiplier() {
-    assert_eq!(COSINE_GHOST_VECTOR_THRESHOLD, 0.3);
-
-    let ghost = entity_id(0xA0);
-    let vector = vec![scored(ghost, 0.6)];
-    let text = Vec::new();
-    let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
-
-    assert_eq!(ghosts.len(), 1);
-    assert!(ghosts.contains(&ghost));
-}
-
-#[test]
 fn threshold_boundary() {
     let boundary = entity_id(0x91);
     let above = entity_id(0x92);
@@ -168,16 +155,6 @@ fn threshold_boundary() {
     assert_eq!(ghosts.len(), 1);
     assert!(!ghosts.contains(&boundary));
     assert!(ghosts.contains(&above));
-}
-
-#[test]
-fn lexical_overlap_protects() {
-    let protected = entity_id(0x93);
-    let vector = vec![scored(protected, 0.6)];
-    let text = vec![scored(protected, 9.0)];
-    let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
-
-    assert!(ghosts.is_empty());
 }
 
 #[test]

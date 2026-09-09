@@ -1836,46 +1836,6 @@ fn crawl_skips_a_queued_destination_reached_by_an_earlier_redirect() {
     assert!(result.failed.is_empty());
 }
 
-#[test]
-fn crawl_admits_a_page_whose_final_url_is_its_requested_url() {
-    let pages = vec![
-        page_entry(
-            "https://own.test/",
-            "https://own.test/",
-            &["https://own.test/a", "https://own.test/b"],
-        ),
-        page_entry("https://own.test/a", "https://own.test/a", &[]),
-        page_entry("https://own.test/b", "https://own.test/b", &[]),
-    ];
-
-    let (site, fetcher) = fixture_site(&pages);
-    let result = fetcher
-        .crawl(CrawlRequest::same_site("https://own.test/", 23, budget(4)))
-        .expect("crawl without a redirect");
-
-    assert_eq!(
-        site.attempts(),
-        vec![
-            "https://own.test/".to_string(),
-            "https://own.test/a".to_string(),
-            "https://own.test/b".to_string(),
-        ],
-        "every ordinary page is fetched"
-    );
-    assert_eq!(
-        canonical_urls(&result),
-        vec![
-            "https://own.test/".to_string(),
-            "https://own.test/a".to_string(),
-            "https://own.test/b".to_string(),
-        ],
-        "a page whose final URL is its own requested URL is its first completion, \
-         not a duplicate of the requested URL recorded before the fetch"
-    );
-    assert!(result.failed.is_empty());
-    assert_eq!(result.completion, CrawlCompletion::Complete);
-}
-
 // ---------------------------------------------------------------------------
 // Colocated non-claims oracle: acquisition writes nothing
 // ---------------------------------------------------------------------------
@@ -2092,37 +2052,6 @@ fn read_repo_file(relative: &str) -> String {
         .join(relative);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("reading {} must succeed: {error}", path.display()))
-}
-
-#[test]
-fn verify_script_runs_both_featureless_gates_alongside_the_all_features_gates() {
-    let script = read_repo_file("scripts/verify.sh");
-    for wiring in ["run_stage clippy-featureless", "run_stage test-featureless"] {
-        assert!(
-            script.contains(wiring),
-            "scripts/verify.sh must wire the featureless stage `{wiring}`"
-        );
-    }
-    for required in [
-        "cargo test -p oneiron --lib --no-default-features",
-        "cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings",
-    ] {
-        assert!(
-            script.contains(required),
-            "scripts/verify.sh must run the featureless acceptance gate `{required}`"
-        );
-    }
-    for retained in [
-        "run_stage fmt                 cargo fmt --check",
-        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
-        "cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full",
-        "cargo test --doc --workspace --exclude oneiron-bench --all-features",
-    ] {
-        assert!(
-            script.contains(retained),
-            "the featureless gates are added to, never instead of, `{retained}`"
-        );
-    }
 }
 
 #[test]

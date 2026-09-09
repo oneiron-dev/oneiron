@@ -1,6 +1,5 @@
 //! Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping.
 
-use super::connector_schedule::delivered_send_idempotency_survives_attempt_completion;
 use super::*;
 
 /// ONE-1768 done-means `ambient_email_and_plain_chat_deliver_inside_window`.
@@ -952,12 +951,6 @@ fn human_explicit_instant_beats_standing_window_and_receipts_both() -> crate::Re
         DeliveryWindowDecision::Hold { .. }
     ));
     Ok(())
-}
-
-#[test]
-fn durable_receipt_lineage_survives_terminal_projection() -> crate::Result<()> {
-    // Re-run the durable receipt fixture as an isolated lineage gate.
-    delivered_send_idempotency_survives_attempt_completion()
 }
 
 #[test]

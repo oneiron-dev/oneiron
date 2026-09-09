@@ -410,7 +410,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/agent_dispatch/kill_spawn_tests.rs",
@@ -523,7 +523,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/analyzer/cjk_ngram.rs",
@@ -6418,7 +6418,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/code_run/vault_read/tests.rs",
@@ -8582,7 +8582,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/tasks/tests.rs",
@@ -11929,13 +11929,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/fusion.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -23994,7 +23994,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/campaign_stage_ladder_oracle.rs",
@@ -25055,7 +25055,7 @@
     "fusion": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file+dir",
      "purpose": "—"
     },
@@ -29421,7 +29421,7 @@
      "path": "src/api/tests/support_contract.rs",
      "purpose": "Shared contract/OpenAPI projection helpers for the API tests",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -30725,7 +30725,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/booking_agent_api.rs",
@@ -30773,7 +30773,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/skills_pack.rs",

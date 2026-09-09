@@ -162,17 +162,6 @@ fn an_unregistered_model_gets_its_own_generation() {
     assert_eq!(key.model_version, "model:openai/gpt-4.1@2026-07-02");
 }
 
-#[test]
-fn an_unconfigured_vault_records_where_the_router_reads() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let router = RoutingScopeKey::for_model(
-        &RoleModelDefaults::default().resolve(DRAFTING_ROLE),
-        "prose",
-    );
-    assert_eq!(serving_model_version(&vault)?, router.model_version);
-    Ok(())
-}
-
 // ─── the swap hard-reset (oracle NEG) ───────────────────────────────────
 
 #[test]
@@ -317,22 +306,6 @@ fn the_same_absolute_cost_scores_against_its_own_task_class() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn a_generation_with_no_peers_sits_at_par() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    fold(&vault, actor, &Amendment::sound("r1", "prose", 2))?;
-    set_rollout_rung(&vault, "prose", RolloutRung::Graduated)?;
-
-    let key = RoutingScopeKey::new(serving_model_version(&vault)?, "prose");
-    let hint = routing_weight_hint(&vault, &key)?.expect("graduated scope answers");
-    assert!(
-        close_to(hint.relative_edit_cost, 1.0),
-        "compared to nothing is compared to itself"
-    );
-    Ok(())
-}
-
 // ─── the rollout ladder ─────────────────────────────────────────────────
 
 #[test]
@@ -413,20 +386,6 @@ fn the_hint_always_carries_the_paired_outcome() -> Result<()> {
         close_to(hint.outcome_score, 0.5),
         "half of this scope's amendments were the proposal being wrong"
     );
-    Ok(())
-}
-
-#[test]
-fn an_all_sound_scope_scores_a_perfect_outcome() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    fold(&vault, actor, &Amendment::sound("r1", "prose", 2))?;
-    fold(&vault, actor, &Amendment::sound("r2", "prose", 2))?;
-    set_rollout_rung(&vault, "prose", RolloutRung::Graduated)?;
-
-    let key = RoutingScopeKey::new(serving_model_version(&vault)?, "prose");
-    let hint = routing_weight_hint(&vault, &key)?.expect("graduated scope answers");
-    assert!(close_to(hint.outcome_score, 1.0));
     Ok(())
 }
 

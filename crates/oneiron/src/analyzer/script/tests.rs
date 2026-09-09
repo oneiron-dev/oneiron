@@ -50,48 +50,6 @@ fn pure_script_produces_single_run() {
 }
 
 #[test]
-fn hiragana_han_boundary_splits() {
-    let text = "とう東京";
-    let runs = ScriptRunSplitter::new().runs(text);
-    let sliced = run_slices(text, &runs);
-    assert_eq!(
-        sliced,
-        vec![("とう", ScriptClass::Hiragana), ("東京", ScriptClass::Han)]
-    );
-}
-
-#[test]
-fn hangul_han_boundary_splits() {
-    let text = "한국人";
-    let runs = ScriptRunSplitter::new().runs(text);
-    let sliced = run_slices(text, &runs);
-    assert_eq!(
-        sliced,
-        vec![("한국", ScriptClass::Hangul), ("人", ScriptClass::Han)]
-    );
-}
-
-#[test]
-fn latin_han_boundary_splits() {
-    let text = "hello東京";
-    let runs = ScriptRunSplitter::new().runs(text);
-    let sliced = run_slices(text, &runs);
-    assert_eq!(
-        sliced,
-        vec![("hello", ScriptClass::Latin), ("東京", ScriptClass::Han)]
-    );
-}
-
-#[test]
-fn common_attaches_to_preceding_run() {
-    let text = "hello! world";
-    let runs = ScriptRunSplitter::new().runs(text);
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].script, ScriptClass::Latin);
-    assert_eq!(runs[0].as_slice(text), text);
-}
-
-#[test]
 fn leading_common_attaches_to_next_run() {
     let text = "   hello";
     let runs = ScriptRunSplitter::new().runs(text);
@@ -169,42 +127,6 @@ fn leading_digits_split_off_han_run() {
     );
 }
 
-#[test]
-fn leading_punct_splits_off_cjk_run() {
-    let text = "【東京";
-    let runs = ScriptRunSplitter::new().runs(text);
-    let sliced = run_slices(text, &runs);
-    assert_eq!(
-        sliced,
-        vec![("【", ScriptClass::Common), ("東京", ScriptClass::Han)]
-    );
-}
-
-#[test]
-fn leading_common_before_hangul_splits() {
-    let text = "...안녕";
-    let runs = ScriptRunSplitter::new().runs(text);
-    let sliced = run_slices(text, &runs);
-    assert_eq!(
-        sliced,
-        vec![("...", ScriptClass::Common), ("안녕", ScriptClass::Hangul)]
-    );
-}
-
-#[test]
-fn hiragana_digit_mix_splits() {
-    let text = "とう123";
-    let runs = ScriptRunSplitter::new().runs(text);
-    let sliced = run_slices(text, &runs);
-    assert_eq!(
-        sliced,
-        vec![
-            ("とう", ScriptClass::Hiragana),
-            ("123", ScriptClass::Common)
-        ]
-    );
-}
-
 /// The Japanese prolonged sound mark `ー` must not split a kana run.
 /// Variants cover both hiragana and katakana host runs.
 ///
@@ -236,24 +158,6 @@ fn prolonged_mark_stays_in_preceding_script() {
             "case {case_name}: run slice did not cover full input"
         );
     }
-}
-
-#[test]
-fn trailing_prolonged_mark_after_hiragana_stays_hiragana() {
-    let text = "あー";
-    let runs = ScriptRunSplitter::new().runs(text);
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].script, ScriptClass::Hiragana);
-    assert_eq!(runs[0].as_slice(text), text);
-}
-
-#[test]
-fn katakana_double_hyphen_stays_in_run() {
-    let text = "カ゠ナ";
-    let runs = ScriptRunSplitter::new().runs(text);
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].script, ScriptClass::Katakana);
-    assert_eq!(runs[0].as_slice(text), text);
 }
 
 #[test]

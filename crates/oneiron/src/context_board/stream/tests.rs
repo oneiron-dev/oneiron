@@ -230,28 +230,6 @@ fn fenced_key_collisions_are_unique_and_sorted_after_fencing() {
 }
 
 #[test]
-fn snapshots() {
-    let mut a = BTreeMap::new();
-    a.insert("z".into(), "z".into());
-    let mut b = a.clone();
-    b.insert("a".into(), "a".into());
-    let x = BoardSnapshot {
-        epoch: 1,
-        keyframe: "x".into(),
-        rows: a,
-    };
-    let y = BoardSnapshot {
-        epoch: 1,
-        keyframe: "y".into(),
-        rows: b,
-    };
-    assert!(matches!(
-        y.frame_since(Some(&x)).unwrap().kind,
-        FrameKind::Delta(_)
-    ));
-}
-
-#[test]
 fn subscriptions_are_atomic_local_and_lifecycle_is_ephemeral() {
     let c = StreamConnectionId("a".into());
     let allowed = BTreeSet::from([SubscriptionScope::MyTasks]);

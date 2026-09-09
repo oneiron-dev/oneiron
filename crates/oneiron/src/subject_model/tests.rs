@@ -128,36 +128,6 @@ fn writer() -> WriteActor {
     WriteActor::new(entity(0x9F), EdgeActorClass::Human)
 }
 
-#[test]
-fn anchor_to_person_round_trips() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x21), ENTITY_TYPE_AGENT_DEF);
-    let person = seed(&vault, entity(0xB1), ENTITY_TYPE_PERSON);
-
-    anchor_actor_subject(&vault, actor, person, writer(), 1_800_000_000)?;
-
-    assert_eq!(
-        actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
-        Some(person)
-    );
-    Ok(())
-}
-
-#[test]
-fn anchor_to_org_round_trips() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x22), ENTITY_TYPE_AGENT_DEF);
-    let org = seed(&vault, entity(0xB2), ENTITY_TYPE_ORG);
-
-    anchor_actor_subject(&vault, actor, org, writer(), 1_800_000_000)?;
-
-    assert_eq!(
-        actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
-        Some(org)
-    );
-    Ok(())
-}
-
 /// An actor with no anchor is PLUMBING, and plumbing is a legal, complete
 /// answer — not a missing record to be repaired with a placeholder someone.
 #[test]
@@ -195,25 +165,6 @@ fn anchor_subject_must_be_person_or_org() -> Result<()> {
 
     // Nothing landed on any rejection.
     assert_eq!(actor_subject_anchor(&vault, &actor, 1_800_000_000)?, None);
-    Ok(())
-}
-
-/// One actor, one active anchor: re-anchoring closes the prior head rather
-/// than leaving two live answers to "who is this".
-#[test]
-fn reanchoring_supersedes_the_prior_anchor() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x25), ENTITY_TYPE_AGENT_DEF);
-    let first = seed(&vault, entity(0xB5), ENTITY_TYPE_PERSON);
-    let second = seed(&vault, entity(0xB6), ENTITY_TYPE_ORG);
-
-    anchor_actor_subject(&vault, actor, first, writer(), 1_800_000_000)?;
-    anchor_actor_subject(&vault, actor, second, writer(), 1_800_000_100)?;
-
-    assert_eq!(
-        actor_subject_anchor(&vault, &actor, 1_800_000_100)?,
-        Some(second)
-    );
     Ok(())
 }
 

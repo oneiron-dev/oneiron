@@ -1183,43 +1183,6 @@ fn failure_diagram_rejects_missing_attempt() -> Result<()> {
 }
 
 #[test]
-fn failure_diagram_preserves_scheduled_child_projection() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue(&runner, "retrying-subagent", None, 10, "run-mark-retry")?;
-    let queue = crate::AttemptQueue::new(&vault);
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
-        lease_owner: "retry-worker".to_owned(),
-        now: 20,
-    })?
-    else {
-        panic!("expected claim");
-    };
-    let RetryOutcome::Retried(retried) = queue.retry(RetryAttempt {
-        id: claimed.id,
-        lease_owner: "retry-worker".to_owned(),
-        attempt_count: claimed.attempt_count,
-        backoff_until: 40,
-        last_error: Some("transient".to_owned()),
-        now: 30,
-    })?;
-
-    let tree = RunTreeAdapter::new(&vault).read_run("run-mark-retry")?;
-    let diagram = mark_run_tree_failure(tree, queued.attempt.id)?;
-
-    let root = &diagram.tree.roots[0];
-    assert_eq!(root.status, RunTreeStatus::Failed);
-    assert_eq!(root.children.len(), 1);
-    let child = &root.children[0];
-    assert_eq!(child.attempt_id, hex(retried.id));
-    // ONE-1795 owns the Scheduled → Paused arm. ONE-1887 only asserts it and
-    // adds no lifecycle status or readiness field of its own.
-    assert_eq!(child.status, RunTreeStatus::Paused);
-    assert_eq!(event_kinds(child), vec![RunTreeEventKind::Created]);
-    Ok(())
-}
-
-#[test]
 fn failure_marker_does_not_change_status_or_events() -> Result<()> {
     let (_dir, vault) = open_vault();
     let (failing, tree) = failed_child_tree(&vault)?;

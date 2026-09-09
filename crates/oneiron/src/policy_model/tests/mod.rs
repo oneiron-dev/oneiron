@@ -5,7 +5,7 @@ pub(super) use super::notice::{
     SYSTEM_NOTICE_TYPE_BLOCK, SYSTEM_NOTICE_TYPE_HELP_CARD, SYSTEM_NOTICE_TYPE_MODEL_RATIONALE,
     SYSTEM_NOTICE_TYPE_WARN, SYSTEM_NOTICE_VOICE_SYSTEM,
 };
-pub(super) use super::planes::{hosted_rubric_rows, owner_rubric_rows};
+pub(super) use super::planes::hosted_rubric_rows;
 pub(super) use super::relay::{HOSTED_LEGAL_JURISDICTION_MAX_LEN, HostedDomain};
 pub(super) use super::*;
 pub(super) use crate::Vault;

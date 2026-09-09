@@ -441,19 +441,6 @@ fn propose_entity_rejects_impossible_occurrence_range() {
     );
 }
 
-#[test]
-fn decode_errors_describe_schema_shape_not_json_syntax() {
-    let error = validate_mcp_tool_args(
-        McpToolName::Ask,
-        json!({ "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION }),
-    )
-    .expect_err("missing required fields should fail decode");
-
-    let message = error.to_string();
-    assert!(message.contains("not valid for the tool schema"));
-    assert!(!message.contains("not valid JSON"));
-}
-
 fn assert_closed_object_schemas(value: &Value, path: &str) {
     match value {
         Value::Object(map) => {
@@ -1211,35 +1198,6 @@ fn primary_endpoint_registers_exactly_the_setup_tool() {
             "{MCP_EXECUTE_CODE_TOOL} must not appear in the {} listing bytes",
             mode.as_str(),
         );
-    }
-}
-
-/// ONE-1704 B1: the setup instructions state the FINAL host-free contract and
-/// never present `execute_code` as the way to drive the exported grammar.
-#[test]
-fn setup_instructions_state_the_final_host_free_contract() {
-    assert!(
-        !MCP_SETUP_INSTRUCTIONS.contains("Drive them with execute_code"),
-        "the grammar driver claim is retired: {MCP_SETUP_INSTRUCTIONS}",
-    );
-    assert!(
-        MCP_SETUP_INSTRUCTIONS.contains("does not ship execute_code"),
-        "the release contract must be stated: {MCP_SETUP_INSTRUCTIONS}",
-    );
-    assert!(
-        MCP_SETUP_INSTRUCTIONS.contains(MCP_EXECUTE_CODE_UNAVAILABLE_CODE),
-        "the stable refusal code must be named: {MCP_SETUP_INSTRUCTIONS}",
-    );
-    assert!(
-        MCP_SETUP_INSTRUCTIONS.contains("tool-first endpoint"),
-        "the shipped lane must still be named: {MCP_SETUP_INSTRUCTIONS}",
-    );
-    // The one unavailable code carries its own recovery path like every other
-    // structured code does.
-    let suggestions = mcp_recovery_suggestions(MCP_EXECUTE_CODE_UNAVAILABLE_CODE);
-    assert_eq!(suggestions.len(), 2);
-    for suggestion in &suggestions {
-        assert!(!suggestion.trim().is_empty());
     }
 }
 

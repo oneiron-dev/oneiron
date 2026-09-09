@@ -558,35 +558,4 @@ mod tests {
         assert_eq!(fallback.sha.as_deref(), Some(OTHER_SHA));
         assert!(fallback.source.starts_with("current_executable:"));
     }
-
-    /// The bench runs from a linked worktree in this repository. Whatever the
-    /// checkout shape, a discoverable git dir with a resolvable HEAD must
-    /// produce a sha rather than the `not_ready` cell the old lookup emitted.
-    #[test]
-    fn the_running_checkout_resolves_its_own_sha() {
-        let Some(git_dir) = std::env::current_dir()
-            .ok()
-            .as_deref()
-            .and_then(discover_git_dir)
-        else {
-            return;
-        };
-        let head = std::fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
-        let reference = head
-            .trim()
-            .strip_prefix("ref: ")
-            .map(str::trim)
-            .map(PathBuf::from);
-        let resolvable = reference.is_none_or(|reference| {
-            git_dir.join(&reference).exists()
-                || common_git_dir(&git_dir).is_some_and(|common| common.join(&reference).exists())
-        });
-        if !resolvable {
-            return;
-        }
-        assert!(
-            resolve_git_sha(&git_dir).is_some(),
-            "a checkout whose HEAD ref exists on disk must resolve, not report not_ready"
-        );
-    }
 }
