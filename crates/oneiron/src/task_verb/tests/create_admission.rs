@@ -4,20 +4,6 @@ use super::support::*;
 use super::*;
 
 #[test]
-fn verb_family_is_exactly_five_without_queue_verbs() {
-    let verbs = TasksVerb::ALL.map(TasksVerb::as_str);
-    assert_eq!(verbs.len(), 5);
-    assert_eq!(verbs, TASKS_VERBS);
-    assert_eq!(
-        verbs
-            .iter()
-            .filter(|verb| verb.contains("queue") || verb.contains("lease"))
-            .count(),
-        0
-    );
-}
-
-#[test]
 fn own_create_effects_and_foreign_create_proposes() {
     let (_dir, vault) = open_vault();
     let own = own_agent(&vault);

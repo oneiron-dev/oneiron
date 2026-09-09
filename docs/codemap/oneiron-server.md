@@ -131,7 +131,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/retrieval_depth_quality.rs` | test | m | — | — | Memory-reason route depths/spend/validation, raw-search depth tiers, retrieval-quality markers + snapshots |
 | `src/api/tests/retrieval_shaping.rs` | test | m | — | — | Search count-modes, context-pack budgets/response controls, text-search shape, snapshot/sort unit tests |
 | `src/api/tests/run_tree.rs` | test | s | — | — | Run-tree attempt-queue reads, agent_id projection, intervene effects, unbounded-read rejection |
-| `src/api/tests/support_contract.rs` | test | s | 12 crate-vis | — | Shared contract/OpenAPI projection helpers for the API tests |
+| `src/api/tests/support_contract.rs` | test | s | 11 crate-vis | — | Shared contract/OpenAPI projection helpers for the API tests |
 | `src/api/tests/support_mcp.rs` | test | m | 32 crate-vis | — | Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures |
 | `src/api/tests/surface_events.rs` | test | m | — | — | Surface-event submit/replay/receipts, scope enforcement, idempotency + durability, malformed-input mapping |
 | `src/api/tests/surface_routes.rs` | test | m | — | — | Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed… |
@@ -240,13 +240,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 3 fn | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
-| `tests/it/booking_agent_api.rs` | test | XL | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
+| `tests/it/booking_agent_api.rs` | test | L | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
 | `tests/it/core_discover.rs` | test | L | — | — | — |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
-| `tests/it/skills_pack.rs` | test | m | — | — | — |
+| `tests/it/skills_pack.rs` | test | s | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |

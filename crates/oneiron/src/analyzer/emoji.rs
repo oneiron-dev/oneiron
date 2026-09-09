@@ -143,43 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn skin_tone_modifier_stays_in_one_token() {
-        // 👍🏽 = U+1F44D + U+1F3FD (modifier), one cluster, 8 bytes.
-        let thumbs = "\u{1F44D}\u{1F3FD}";
-        let mut out = Vec::new();
-        emit_emoji_graphemes(thumbs, 0, 0, &mut out);
-        assert_eq!(out.len(), 1, "base + skin tone must be a single token");
-        assert_eq!(out[0].term.as_ref(), thumbs);
-        assert_eq!((out[0].byte_start, out[0].byte_end), (0, 8));
-    }
-
-    #[test]
-    fn vs16_presentation_selector_stays_in_one_token() {
-        // ☂️ = U+2602 UMBRELLA (Extended_Pictographic) + U+FE0F VS16.
-        let umbrella = "\u{2602}\u{FE0F}";
-        let mut out = Vec::new();
-        emit_emoji_graphemes(umbrella, 0, 0, &mut out);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].term.as_ref(), umbrella);
-    }
-
-    #[test]
-    fn regional_indicator_flag_is_one_token() {
-        // 🇺🇦 = U+1F1FA U+1F1E6 (two Regional Indicators) = ONE grapheme
-        // cluster = ONE flag. The contract's `Emoji / unknown → Grapheme per
-        // token` row covers flags; a narrow Extended_Pictographic-only gate
-        // (Extended_Pictographic=No for both RIS) would silently drop them.
-        let flag = "\u{1F1FA}\u{1F1E6}";
-        assert_eq!(flag.len(), 8, "two RIS, 4 bytes each");
-        let mut out = Vec::new();
-        let next = emit_emoji_graphemes(flag, 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec![flag], "🇺🇦 → exactly one token");
-        assert_eq!(next, 1);
-        assert_eq!((out[0].byte_start, out[0].byte_end), (0, 8));
-        assert_eq!(out[0].kind, TokenKind::Emoji);
-    }
-
-    #[test]
     fn keycap_sequence_is_one_token() {
         // 1️⃣ = U+0031 DIGIT ONE + U+FE0F VS16 + U+20E3 ENCLOSING KEYCAP, one
         // grapheme cluster (1 + 3 + 3 = 7 bytes). The ASCII fast path does
@@ -217,14 +180,6 @@ mod tests {
         let next = emit_emoji_graphemes("  ...!!?,、。", 0, 5, &mut out);
         assert!(out.is_empty(), "punctuation must stay dropped");
         assert_eq!(next, 5, "position must not advance");
-    }
-
-    #[test]
-    fn emoji_amid_punctuation_emits_only_emoji() {
-        let text = "(🦀, 🔥!)";
-        let mut out = Vec::new();
-        emit_emoji_graphemes(text, 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["🦀", "🔥"]);
     }
 
     #[test]

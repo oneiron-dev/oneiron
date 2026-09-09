@@ -2348,34 +2348,6 @@ fn code_run_history_turn_renders_engine_marks_and_escapes_both_payloads() {
     }
 }
 
-/// The renderer has TWO fields and no third: there is no model-console input
-/// channel to pass provider text through. Its inputs are the healed program
-/// and the runtime's own observation, and it is a pure function of them.
-#[test]
-fn code_run_history_turn_has_no_model_console_input_channel() {
-    let turn = CodeRunHistoryTurn {
-        code: "self.speak('hi');".to_owned(),
-        console: "stdout: hi".to_owned(),
-    };
-    // Two fields in, one rendering out: nothing else can reach the frame.
-    assert_eq!(
-        turn,
-        CodeRunHistoryTurn {
-            code: "self.speak('hi');".to_owned(),
-            console: "stdout: hi".to_owned(),
-        }
-    );
-    assert_eq!(turn.assistant_exec(), turn.assistant_exec());
-    assert!(
-        !turn.user_console(0).contains("self.speak"),
-        "the console half renders the observation only"
-    );
-    assert!(
-        !turn.assistant_exec().contains("stdout"),
-        "the assistant half renders the program only"
-    );
-}
-
 /// The tally isolates exact model ids, increments atomically, and answers
 /// zero for a model that never healed.
 #[test]

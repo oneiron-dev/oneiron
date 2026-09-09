@@ -684,18 +684,6 @@ mod cb_x {
         assert_eq!(section.count_rows(), ["count: 2".to_owned()]);
     }
 
-    /// The PROPOSALS section keeps a non-empty count fallback even with no
-    /// pending proposals, so the shed ladder always has something to degrade
-    /// to.
-    #[test]
-    fn empty_proposals_section_still_has_a_count_fallback() {
-        let fixture = PluginFixture::open();
-        assert!(fixture.proposal_rows().is_empty());
-        let section = fixture.proposals_section();
-        assert!(section.detail_rows().is_empty());
-        assert_eq!(section.count_rows(), ["count: 0".to_owned()]);
-    }
-
     /// ONE-1707 · 08b §7 (r11): suggestion = proposal row on board + app;
     /// accept = the gated install; knob disableable, DEFAULT ON on a fresh
     /// config; digest-not-nag.

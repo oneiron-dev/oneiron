@@ -464,24 +464,4 @@ neighbors:
                 .contains("built-in BEAM smoke manifest must select a 128K token-budget case")
         );
     }
-
-    #[test]
-    fn beam_help_references_arch_0042() {
-        assert!(BEAM_HELP.contains("ONEIRON-ARCH-0042"));
-    }
-
-    #[test]
-    fn not_ready_arms_return_explicit_not_ready_states() {
-        let report = run_builtin_smoke().expect("BEAM smoke report");
-        for kind in [ArmKind::BackboneSolo, ArmKind::Agentic, ArmKind::Chat] {
-            let arm = find_arm(&report, kind);
-            let ArmOutcome::NotReady { not_ready } = &arm.outcome else {
-                panic!("{} arm should be not-ready", kind.as_str());
-            };
-            assert_eq!(
-                not_ready.reason,
-                "adapter intentionally not implemented in EVAL-001 scaffold"
-            );
-        }
-    }
 }

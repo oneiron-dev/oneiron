@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/context.rs` | src | s | 1 crate-vis | — | Spawn-context resolution, sibling-lineage admission, ancestor projection fold |
 | `src/agent_dispatch/dispatch.rs` | src | m | 1 struct · 5 fn · 5 crate-vis | AgentDispatcher | Core dispatch admission: dispatchability, depth bound, enqueue, dedupe |
 | `src/agent_dispatch/kill.rs` | src | s | 2 fn | — | Spawner-only killSpawn intervention and healer-slot dispatch arm |
-| `src/agent_dispatch/kill_spawn_tests.rs` | test | L | — | — | Kill-spawn authority and state contract tests |
+| `src/agent_dispatch/kill_spawn_tests.rs` | test | m | — | — | Kill-spawn authority and state contract tests |
 | `src/agent_dispatch/mod.rs` | src | s | 3 re-export | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `src/agent_dispatch/tests.rs` | test | XL | — | — | AGENT-3 (ONE-1445) tests, mapped 1:1 to the brief's acceptance criteria: snapshot round-trip, system-preset… |
 | `src/agent_dispatch/types.rs` | src | s | 7 struct · 5 enum · 5 fn · 7 const · 12 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget, DispatchAgent, DispatchHealer +4 | Dispatch domain types, outcome enums, and pinned key/sentinel constants |
@@ -52,7 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_inbox_lens/tests.rs` | test | m | — | — | — |
 | `src/agent_run_status.rs` | src | s | 1 struct · 2 enum · 8 fn · 3 const | AgentRunStatus, ExecutorTerminalCause, InvalidAgentRunStatusTransition | AgentRunStatus contract shared by Context Board and run-tree viewers |
 | `src/analyzer/chinese.rs` | src | m | 2 struct · 1 enum · 10 fn · 2 const | CharByteTable, ChineseAnalyzer, DictLoadError | Chinese analyzer |
-| `src/analyzer/cjk_ngram.rs` | src | m | 1 fn · 1 crate-vis | — | Script-safe CJK n-gram generator |
+| `src/analyzer/cjk_ngram.rs` | src | s | 1 fn · 1 crate-vis | — | Script-safe CJK n-gram generator |
 | `src/analyzer/detect.rs` | src | s | 3 fn · 1 const | — | Language detection + `LanguageHint` resolution |
 | `src/analyzer/emoji.rs` | src | s | 1 crate-vis | — | Portable-lane emoji handling: grapheme per token |
 | `src/analyzer/icu.rs` | src | s | 1 fn | — | ICU4X-backed word segmentation for scripts without a dedicated morph analyzer in v1 |
@@ -515,7 +515,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/vault_read/mod.rs` | src | s | 6 re-export · 4 crate-vis | — | One Rust vault-read contract whose behavior does not change with deployment topology (ONE-1433) |
 | `src/code_run/vault_read/projection.rs` | src | s | 5 crate-vis | — | Turning vault-side records into the contract's response shapes |
 | `src/code_run/vault_read/remote.rs` | src | s | 2 struct · 1 trait · 1 fn · 1 crate-vis | CloudVaultReadAdapter, WireTransport, WireTransportVaultReadAdapter | Transport-injected and cloud adapters over the same validated dispatch |
-| `src/code_run/vault_read/tests.rs` | test | XL | — | — | Contract, validation, projection and adapter tests for the vault-read module |
+| `src/code_run/vault_read/tests.rs` | test | L | — | — | Contract, validation, projection and adapter tests for the vault-read module |
 | `src/code_run/vault_read/tests/regressions.rs` | test | m | — | — | Regressions for request policy freshness, wire identity, opaque bodies and post-filter durable trace… |
 | `src/code_run/vault_read/types.rs` | src | m | 18 struct · 4 enum · 1 fn · 1 const · 4 crate-vis | AskRequest, AskResponse, CodeExecuteRequest, CodeExecuteResponse, CodeSearchRequest, CodeSearchResponse, CoreBatchShortIdHydrateItem, CoreBatchShortIdHydrateRequest +14 | Query, hydrate, timeline and runtime-deferred request/response shapes |
 | `src/code_run/vault_read/validate.rs` | src | s | 7 crate-vis | — | Request-shape validation and short-reference parsing, run before any dispatch |
@@ -670,7 +670,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/tasks/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | TASKS section projections — intent rows, realizing jobs, and the render-tier ack/cancel state helpers behind… |
 | `src/context_board/tasks/projection.rs` | src | m | 6 struct · 1 enum · 11 fn · 1 const · 9 crate-vis | CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksOverflow, TasksSection | Typed TASKS state: board status, intent and job presence, the ladder projection, and the overflow footer |
 | `src/context_board/tasks/render.rs` | src | s | 3 fn · 3 crate-vis | — | Pure TASKS row rendering: intent rows, folded jobs, cause tokens, expansion detail |
-| `src/context_board/tasks/tests.rs` | test | L | — | — | TASKS board tests: projection, row rendering, the overflow grammar, and render-state agreement |
+| `src/context_board/tasks/tests.rs` | test | m | — | — | TASKS board tests: projection, row rendering, the overflow grammar, and render-state agreement |
 | `src/context_pack/builder/assembly.rs` | src | m | 8 fn · 1 crate-vis | — | Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal |
 | `src/context_pack/builder/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | The fluent [`ContextPackBuilder`] query API and its assembly pipeline |
 | `src/context_pack/builder/pack_run.rs` | src | s | 2 struct · 4 fn · 6 crate-vis | SerializedContextPack, UnfinalizedContextPack | What a pack run produces and how its telemetry row is finalized or discarded |
@@ -927,7 +927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/error.rs` | src | s | 1 enum · 10 crate-vis | FeedbackError | Feedback error type plus shared validation and framing helpers |
 | `src/feedback/mod.rs` | src | s | 4 re-export | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/tests.rs` | test | XL | — | — | — |
-| `src/fusion.rs` | src | m | 10 crate-vis | — | — |
+| `src/fusion.rs` | src | s | 9 crate-vis | — | — |
 | `src/fusion/tests.rs` | test | m | — | — | — |
 | `src/gate/breaker.rs` | src | m | 1 struct · 1 fn · 36 crate-vis | GateBreakerRunProjection | ONE-1453 per-actor burst breaker |
 | `src/gate/bundle.rs` | src | m | 4 fn · 5 const | — | — |
@@ -1365,7 +1365,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/corpus_gate_tests.rs` | test | s | — | — | — |
 | `src/pipeline/corpus_tests.rs` | test | m | — | — | — |
 | `src/pipeline/decay_tests.rs` | test | L | — | — | ONE-1402 · read-side memory decay at the pipeline seam |
-| `src/pipeline/execution/channels.rs` | src | L | 1 crate-vis | — | Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE… |
+| `src/pipeline/execution/channels/admit.rs` | src | s | 4 crate-vis | — | The admit step every channel shares: signal components, the optional trace record, and the ranked-list push |
+| `src/pipeline/execution/channels/mod.rs` | src | m | 1 crate-vis | — | Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE… |
+| `src/pipeline/execution/channels/post_blend.rs` | src | s | 3 crate-vis | — | Post-blend filters: scope and authority, the rerank shadow ladder, contiguity, facet, world, corpus, and… |
+| `src/pipeline/execution/channels/ppr_expand.rs` | src | s | 4 crate-vis | — | The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying… |
+| `src/pipeline/execution/channels/rerank.rs` | src | s | 3 crate-vis | — | RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block |
+| `src/pipeline/execution/channels/text.rs` | src | s | 3 crate-vis | — | The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries |
+| `src/pipeline/execution/channels/trace_assembly.rs` | src | s | 2 crate-vis | — | Retrieval-trace assembly: the fork hash and the per-channel, fused, blended, reranked, and final stage records |
 | `src/pipeline/execution/mod.rs` | src | s | — | — | Retrieval-transaction execution: channel fan-out, the outer context-pack driver, and attempt plumbing |
 | `src/pipeline/execution/pack.rs` | src | m | 4 crate-vis | — | Outer context-pack driver: the HyDE assess/retry loop, telemetry write, and validation helpers |
 | `src/pipeline/execution/types.rs` | src | s | 3 crate-vis | — | Attempt plumbing for the retrieval transaction: attempt overrides, the transaction output, and the… |
@@ -1946,7 +1952,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/campaign_compliance_oracle.rs` | test | m | — | — | ONE-1777 (CA-06) shipping oracle for the campaign-compliance dispatch gate |
 | `tests/it/campaign_enrollment_oracle.rs` | test | L | — | — | ONE-1774 (CA-03) cross-module oracle for the enrollment consequence writer |
 | `tests/it/campaign_send_hygiene_oracle.rs` | test | L | — | — | ONE-1776 (CA-05) cross-module oracle for send hygiene |
-| `tests/it/campaign_stage_ladder_oracle.rs` | test | XL | — | — | ONE-1775 (CA-04) cross-module oracle for the stage ladder |
+| `tests/it/campaign_stage_ladder_oracle.rs` | test | L | — | — | ONE-1775 (CA-04) cross-module oracle for the stage ladder |
 | `tests/it/cb_oracle_agents.rs` | test | XL | 38 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
 | `tests/it/cb_oracle_frame.rs` | test | m | — | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
 | `tests/it/cb_oracle_plugin.rs` | test | XL | 53 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |

@@ -99,3 +99,7 @@ jobs:
             git status --porcelain
             exit 1
           fi
+      # Bound the host's persistent build cache (see ci.yml `checks`).
+      - name: Cap the build cache
+        if: always()
+        run: scripts/ci/cap-target-cache.sh 20

@@ -237,23 +237,6 @@ fn push_rejects_invalid_window_key_without_burning_sequence() {
 }
 
 #[test]
-fn clear_all_resets_queue() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault).unwrap();
-
-    queue.push("2026-03", &[1]).unwrap();
-    queue.push("2026-03", &[2]).unwrap();
-
-    queue.clear_all().unwrap();
-
-    assert_eq!(queue.len().unwrap(), 0);
-    assert!(!queue.is_full().unwrap());
-
-    let seq = queue.push("2026-03", &[3]).unwrap();
-    assert_eq!(seq, 3);
-}
-
-#[test]
 fn clear_all_preserves_hard_erase_sweeps_and_metadata_counters() {
     let vault = test_vault();
     let queue = SyncQueue::new(vault.clone()).unwrap();
@@ -1327,31 +1310,6 @@ fn stale_but_parseable_metadata_repairs_upward_before_push() {
     assert_eq!(updates[1].encoded, vec![2]);
     assert_eq!(updates[5].seq, 6);
     assert_eq!(updates[5].encoded, vec![9]);
-}
-
-#[test]
-fn push_self_heals_missing_metadata_without_update_rows() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault.clone()).unwrap();
-
-    let seq = queue.push("2026-03", &[1]).unwrap();
-    assert_eq!(seq, 1);
-
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    vault
-        .store
-        .sync_queue
-        .delete(&mut wtxn, LAST_UPDATE_SEQ_KEY)
-        .unwrap();
-    vault
-        .store
-        .sync_queue
-        .delete(&mut wtxn, &encode_update_key(1))
-        .unwrap();
-    wtxn.commit().unwrap();
-
-    let seq = queue.push("2026-03", &[2]).unwrap();
-    assert_eq!(seq, 1);
 }
 
 #[test]

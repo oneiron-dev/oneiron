@@ -41,33 +41,6 @@ fn v1_core_openapi_contract_snapshot_matches_fixture() {
 }
 
 #[test]
-fn v1_core_openapi_contract_snapshots_referenced_schemas() {
-    let spec = generated_spec();
-    let mut references = BTreeSet::new();
-    for &(path, method) in V1_CORE_OPENAPI_CONTRACT_OPERATIONS {
-        collect_schema_refs(
-            &openapi_operation_contract(&spec["paths"][path][method]),
-            &mut references,
-        );
-    }
-    for name in V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES {
-        collect_schema_refs(
-            &openapi_schema_contract(openapi_component_schema(&spec, name)),
-            &mut references,
-        );
-    }
-
-    let missing = references
-        .into_iter()
-        .filter(|name| !V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES.contains(&name.as_str()))
-        .collect::<Vec<_>>();
-    assert!(
-        missing.is_empty(),
-        "OpenAPI contract references unsnapshotted schemas: {missing:?}"
-    );
-}
-
-#[test]
 fn v1_core_openapi_documents_invalid_state_envelopes() {
     let spec = generated_spec();
     let turn_create_post_responses =

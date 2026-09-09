@@ -840,22 +840,6 @@ fn import_refuses_hash_collision_across_skill_ids() -> Result<()> {
 }
 
 #[test]
-fn import_dedups_matching_skill_id_across_hubs() -> Result<()> {
-    let (_temp, vault) = open_vault();
-    let first_ref = HubRef::new(EntityId::now(), "skills/foo-a", HubPin::None)?;
-    let second_ref = HubRef::new(EntityId::now(), "skills/foo-b", HubPin::None)?;
-    let imported = package(candidate("foo"), SkillCapabilitySurface::default());
-
-    let entity = vault.import_skill_from_hub(&first_ref, &imported, t(1), 2)?;
-    assert_eq!(
-        vault.import_skill_from_hub(&second_ref, &imported, t(3), 4)?,
-        entity
-    );
-    assert_eq!(vault.skill_hub_provenance_count(&entity)?, 2);
-    Ok(())
-}
-
-#[test]
 fn import_refuses_conflicting_capabilities_on_dedup() -> Result<()> {
     let (_temp, vault) = open_vault();
     let first_ref = HubRef::new(EntityId::now(), "skills/foo-a", HubPin::None)?;

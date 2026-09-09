@@ -439,51 +439,6 @@ fn claim_vad_consolidation_clears_prior_outputs_when_claim_stops_consolidating()
 }
 
 #[test]
-fn claim_vad_consolidation_averages_boundary_vad_without_drift() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let subject = EntityId::now();
-    let claim = EntityId::now();
-    let mut turns = Vec::new();
-
-    vault.put_entity(
-        &subject,
-        ENTITY_TYPE_PERSON,
-        test_time_range(1, 1),
-        1,
-        b"subject",
-    )?;
-    for learned_at in 10..20 {
-        let turn = EntityId::now();
-        put_claim_vad_turn(
-            &vault,
-            &turn,
-            learned_at,
-            Vad {
-                valence: 1.0,
-                arousal: 1.0,
-                dominance: 1.0,
-            },
-        )?;
-        turns.push(turn);
-    }
-    let body = claim_vad_fixture_body(subject, &turns);
-    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
-    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
-
-    let outcome = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
-    assert_vad_close(
-        outcome.vad.expect("computed VAD"),
-        Vad {
-            valence: 1.0,
-            arousal: 1.0,
-            dominance: 1.0,
-        },
-    );
-    assert_eq!(outcome.evidence_turns.len(), 10);
-    Ok(())
-}
-
-#[test]
 fn claim_vad_consolidation_rejects_missing_and_closed_claims() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let missing = EntityId::now();

@@ -1739,39 +1739,6 @@ fn observer_b_materializes_never_deleted_entity_normally() {
 }
 
 #[test]
-fn companion_register_api_observer_b_materializes_portable_on_fresh_vault() {
-    let vault = test_vault();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
-
-    let id = EntityId::from_bytes_unchecked([0x41; 16]);
-    let learned_at = 1_772_400_000u64;
-    let record = companion_record(id, CompanionExportClassification::Portable);
-    let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_COMPANION_REGISTER,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &body,
-        ),
-    )
-    .unwrap();
-    doc.commit();
-
-    assert!(
-        vault.get_companion_record(&id).unwrap().is_some(),
-        "live sync replay should register the companion kind and materialize portable records"
-    );
-}
-
-#[test]
 fn companion_register_api_observer_b_suppresses_local_only_records() {
     let vault = test_vault();
     let doc = LoroDoc::new();

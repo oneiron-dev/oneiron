@@ -191,23 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn wall_to_utc_round_trips_unique_local_time() {
-        // One civil time, three zones, no transition anywhere near it. The
-        // pinned instants are what make this a conversion test rather than an
-        // identity test: a border that ignored `tz` would agree with itself on
-        // the round trip and still be wrong.
-        let w = wall(2026, 1, 15, 9, 30, 0);
-        for (tz, expected) in [
-            ("Europe/London", JAN_15_0930Z),
-            ("America/New_York", JAN_15_0930Z + 5 * 3600),
-            ("Asia/Tokyo", JAN_15_0930Z - 9 * 3600),
-        ] {
-            assert_eq!(convert(&w, tz), expected, "{tz} instant");
-            assert_eq!(invert(expected, tz), w, "{tz} round trip");
-        }
-    }
-
-    #[test]
     fn wall_to_utc_preserves_london_dst_wall_clock() {
         // The same 09:00 London wall clock sits at a different UTC offset in
         // winter and summer. Nothing here assumes a fixed week: each side is

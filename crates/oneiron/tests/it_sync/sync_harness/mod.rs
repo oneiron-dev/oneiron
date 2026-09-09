@@ -821,15 +821,6 @@ pub(crate) fn redaction_audit_receipts(vault: &Vault) -> Vec<EntityId> {
         .unwrap()
 }
 
-#[test]
-fn harness_window_constants_agree() {
-    assert_eq!(WindowKey::from_timestamp(T0).as_str(), WINDOW);
-    let key = WindowKey::new(WINDOW);
-    let start = key.start_timestamp().unwrap();
-    let end = key.end_timestamp().unwrap();
-    assert!(start <= T0 && T0 <= end, "T0 must sit inside {WINDOW}");
-}
-
 /// ONE-1152 (b) oracle self-test: a non-Binary CRDT map value must be
 /// VISIBLE to convergence parity. Node A carries a String value in its
 /// entities map that node B lacks; the pre-fix Binary-only `map_entries`

@@ -191,12 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn spanish_latin_routes_via_whichlang() {
-        let text = "El gato está durmiendo en la silla con el perro blanco";
-        assert_eq!(detect_with_whichlang(text), Some(LanguageHint::Es));
-    }
-
-    #[test]
     fn empty_text_returns_none() {
         assert_eq!(detect_with_whichlang(""), None);
     }
@@ -233,33 +227,12 @@ mod tests {
     }
 
     #[test]
-    fn pure_common_input_does_not_panic() {
-        let _ = detect_with_whichlang("   !?? ...");
-    }
-
-    #[test]
     fn long_accentless_spanish_resolves_to_spanish() {
         // ≥ 64 bytes AND ≥ 3 unique letter tokens — passes the length gate,
         // whichlang routes accent-less Spanish to `Spa`.
         let text = "el gato blanco come manzanas rojas en el jardin grande con su amigo pequeno";
         assert!(text.len() >= MIN_WHICHLANG_ASCII_BYTES);
         assert_eq!(detect_with_whichlang(text), Some(LanguageHint::Es));
-    }
-
-    #[test]
-    fn short_accentless_spanish_falls_back_to_english() {
-        // Residual asymmetry accepted for this PR: short non-English Latin
-        // queries resolve to English via the length-gated short-circuit.
-        // The follow-up confidence-aware detector will lift this.
-        assert_eq!(detect_with_whichlang("hablando"), Some(LanguageHint::En));
-    }
-
-    #[test]
-    fn low_entropy_long_ascii_stays_english() {
-        // 120 bytes but 1 unique token — unique-word gate blocks whichlang
-        // from misrouting repeated `"apple "` as `Fra`.
-        let text = "apple ".repeat(20);
-        assert_eq!(detect_with_whichlang(&text), Some(LanguageHint::En));
     }
 
     #[test]

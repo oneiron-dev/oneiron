@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1467 | 526 | 4 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 1473 | 526 | 3 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 70 | 12 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
@@ -114,7 +114,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fanout_auto` | file+dir | 2 | m | — | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `federation` | dir | 10 | m | — | Federation grant record substrate |
 | `feedback` | dir | 6 | m | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
-| `fusion` | file+dir | 2 | m | — | — |
+| `fusion` | file+dir | 2 | s | — | — |
 | `gate` | dir | 71 | m | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | dir | 9 | m | — | OF-336 generated-UI component contract |
 | `git_wire` | dir | 20 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
@@ -148,7 +148,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `outbound_intent_ledger` | dir | 6 | m | — | Device-local durable intent ledger for effectful outbound calls |
 | `overlay_db` | dir | 5 | m | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
 | `persona_snapshot` | dir | 6 | m | — | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
-| `pipeline` | dir | 37 | L | — | — |
+| `pipeline` | dir | 43 | m | — | — |
 | `policy_model` | dir | 30 | m | yes | Policy classification over two planes |
 | `ppr` | dir | 9 | m | — | — |
 | `ppr_community` | dir | 8 | m | — | Deterministic community projection, cache, and bounded retrieval prior |

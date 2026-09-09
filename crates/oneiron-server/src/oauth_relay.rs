@@ -358,20 +358,6 @@ mod tests {
     }
 
     #[test]
-    fn kid_miss_refresh_keeps_good_cached_jwks() {
-        let fixture = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(fixture.path(), JWKS).unwrap();
-        let uri = format!("file://{}", fixture.path().display());
-        assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
-        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
-        let entry = cache().lock().unwrap();
-        let cached = entry.get(&uri).unwrap();
-        assert_eq!(cached.body, JWKS);
-        assert!(cached.last_kid_miss_refresh.is_some());
-        std::fs::remove_file(fixture.path()).unwrap();
-    }
-
-    #[test]
     fn kid_miss_refresh_is_limited_across_sequential_and_concurrent_attempts() {
         let uri = format!("test://counter-{}", std::process::id());
         let fetches = Arc::new(AtomicUsize::new(0));

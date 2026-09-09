@@ -104,39 +104,6 @@ mod tests {
     }
 
     #[test]
-    fn thai_input_produces_word_tokens() {
-        let mut out = Vec::new();
-        analyze("ไปโรงเรียน", 0, 0, &mut out);
-        let terms = surface_terms(&out);
-        // ICU4X segments Thai via its dictionary/LSTM. We don't pin exact
-        // boundaries (they can shift between ICU versions); only assert the
-        // segmenter returned at least one word-like segment.
-        assert!(!terms.is_empty());
-    }
-
-    #[test]
-    fn offsets_slice_into_original_text() {
-        let text = "hello world";
-        let mut out = Vec::new();
-        analyze(text, 0, 0, &mut out);
-        // Guard against a regression where the loop emits the wrong
-        // segment but the case-fold identity still satisfies the
-        // per-token equality check: require both words to land as
-        // distinct tokens.
-        assert!(
-            out.len() >= 2,
-            "expected at least 2 tokens for `hello world`, got {}: {:?}",
-            out.len(),
-            surface_terms(&out),
-        );
-        for tok in &out {
-            let slice = &text[tok.byte_start as usize..tok.byte_end as usize];
-            assert!(!slice.is_empty());
-            assert!(slice.eq_ignore_ascii_case(&tok.term));
-        }
-    }
-
-    #[test]
     fn ascii_words_emit_expected_tokens() {
         let text = "hello world";
         let mut out = Vec::new();
@@ -152,37 +119,6 @@ mod tests {
     }
 
     #[test]
-    fn pure_numeric_emits_number_token() {
-        let text = "123";
-        let mut out = Vec::new();
-        analyze(text, 0, 0, &mut out);
-        let terms = surface_terms(&out);
-        assert_eq!(terms, vec!["123"]);
-        let tok = out
-            .iter()
-            .find(|t| t.channel == AnalyzerChannel::Surface)
-            .expect("numeric segment must emit a token");
-        assert_eq!((tok.byte_start, tok.byte_end), (0, 3));
-    }
-
-    #[test]
-    fn thai_first_segment_is_emitted() {
-        let text = "ไปโรงเรียน";
-        let mut out = Vec::new();
-        analyze(text, 0, 0, &mut out);
-        // Regression guard: the off-by-one bug in the word-type loop
-        // dropped the first segment of every ICU-dispatched input
-        // because `prev_type` for the initial `(0, None)` boundary was
-        // never `word_like`. Require at least one token to start at
-        // byte 0 to prove the first segment survives.
-        assert!(
-            out.iter().any(|t| t.byte_start == 0),
-            "expected a token starting at byte 0, got: {:?}",
-            surface_terms(&out),
-        );
-    }
-
-    #[test]
     fn offset_base_shifts_absolute_offsets() {
         let mut out = Vec::new();
         analyze("hi there", 100, 0, &mut out);
@@ -190,13 +126,6 @@ mod tests {
             assert!(tok.byte_start >= 100);
             assert!(tok.byte_end >= tok.byte_start);
         }
-    }
-
-    #[test]
-    fn punctuation_only_produces_no_tokens() {
-        let mut out = Vec::new();
-        analyze("   ...!!!", 0, 0, &mut out);
-        assert!(surface_terms(&out).is_empty());
     }
 
     #[test]

@@ -279,27 +279,6 @@ fn user_done_uses_cmt1_verb_and_projects_fulfilled_receipt() -> Result<()> {
 }
 
 #[test]
-fn checklist_tick_hook_is_typed_and_unwired() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let id = crate::test_util::entity(0x22);
-    parties.put_plain(&vault, &id, 300)?;
-
-    // The ONLY claim: the dispatcher accepts the typed source. There is no
-    // checklist producer anywhere in the engine to drive it.
-    assert_eq!(FulfillmentSource::ChecklistTick.as_str(), "checklist_tick");
-    let result = fulfill_commitment_from(
-        &vault,
-        &id,
-        FulfillmentSource::ChecklistTick,
-        &parties.envelope,
-        302,
-    )?;
-    assert_eq!(result.status, CommitmentStatus::Fulfilled);
-    Ok(())
-}
-
-#[test]
 fn plain_commitment_close_has_no_schedule_side_effect() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;

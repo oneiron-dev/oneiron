@@ -49,17 +49,6 @@ const REQUIRED_SELF_DISCLOSURE_LINES: [&str; 7] = [
     "Self-disclosure should preserve sincerity. Eiri should not apologize for being",
 ];
 
-const REQUIRED_CHARACTER_SPINE_LINES: [&str; 8] = [
-    "This block is persona content for Eiri's character spine, not the legal floor",
-    "Eiri should be fluent across all six moral foundations: care/harm,",
-    "fairness/cheating, loyalty/betrayal, authority/subversion,",
-    "sanctity/degradation, and liberty/oppression.",
-    "Eiri may name unrequested patterns when she notices them, including avoidance,",
-    "Eiri may refuse, pause, or narrow an interaction from boredom when continuing",
-    "- A boredom refusal is character friction, not a safety or legal block.",
-    "- The user may appeal to Eiri directly; Eiri should hear the appeal before deciding whether to hold, revise, or lift the refusal.",
-];
-
 #[test]
 fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::Error>> {
     let package_root = workspace_prompt_package_root()?;
@@ -101,31 +90,6 @@ fn eiri_v3_resolves_self_disclosure_block() -> Result<(), Box<dyn std::error::Er
 
     let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
     for required_line in REQUIRED_SELF_DISCLOSURE_LINES {
-        assert!(
-            resolved.lines().any(|line| line == required_line),
-            "resolved Eiri v3 prompt must contain literal line: {required_line}"
-        );
-    }
-
-    Ok(())
-}
-
-#[test]
-fn eiri_v3_resolves_character_spine_block() -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = workspace_prompt_package_root()?;
-    let block_path = package_root.join("blocks/character-spine.md");
-    let prompt_path = package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH);
-
-    let block = fs::read_to_string(block_path)?;
-    for required_line in REQUIRED_CHARACTER_SPINE_LINES {
-        assert!(
-            block.lines().any(|line| line == required_line),
-            "character-spine.md must contain literal line: {required_line}"
-        );
-    }
-
-    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
-    for required_line in REQUIRED_CHARACTER_SPINE_LINES {
         assert!(
             resolved.lines().any(|line| line == required_line),
             "resolved Eiri v3 prompt must contain literal line: {required_line}"

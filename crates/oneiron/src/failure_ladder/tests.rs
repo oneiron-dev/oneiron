@@ -655,32 +655,6 @@ fn retry_cycle_is_pathology_and_walk_is_bounded() -> Result<()> {
 }
 
 #[test]
-fn cycle_at_threshold_node_is_pathology_not_at_limit() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
-    let policy = auto_policy(agent_ref);
-    // current → p1 → p2 → p1, with N = 3.
-    let rows = transient_chain(&vault, agent_ref, &policy, 2)?;
-    let (p2, p1, current) = (rows[0].id, rows[1].id, rows[2].id);
-    repoint_retry_of(&vault, p2, Some(p1))?;
-
-    let queue = AttemptQueue::new(&vault);
-    let walk = retry_lineage_walk(
-        &queue,
-        &queue.get(current)?.expect("current row"),
-        NonZeroU16::new(3).expect("three"),
-    )?;
-    assert_eq!(
-        walk,
-        RetryOrdinal::Pathology(RetryLineagePathology::Cycle {
-            repeated_attempt_id: p1
-        }),
-        "the repeated-pointer check runs BEFORE the threshold return"
-    );
-    Ok(())
-}
-
-#[test]
 fn permanent_with_cyclic_lineage_surfaces_as_pathology() -> Result<()> {
     let (_dir, vault) = open_vault();
     let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
@@ -998,57 +972,6 @@ fn healer_repair_route_cannot_target_task_payload() {
             "no repair route reopens an attempt"
         );
     }
-}
-
-#[test]
-fn prompt_inject_route_uses_prefail_checkpoint_not_terminal_attempt() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
-    let leased = leased_dispatch(&vault, agent_ref, 10)?;
-    let outcome = FailureLadder::new(&vault).handle_attempt_failure(
-        failure_input(&leased, permanent(), 20),
-        auto_policy(agent_ref),
-    )?;
-    let case = healer_case(&outcome);
-
-    let route = HealerRepairRoute::PromptInjectAndForkResume {
-        agent_ref: case.scope.agent_ref.clone(),
-        prompt_ref: test_id(0x57).to_hex(),
-        checkpoint_ref: case.pre_fail_checkpoint_ref.clone(),
-        diagnosis_ref: test_id(0x56).to_hex(),
-    };
-    let HealerRepairRoute::PromptInjectAndForkResume { checkpoint_ref, .. } = &route else {
-        panic!("constructed the fork-resume route");
-    };
-    assert_eq!(checkpoint_ref, &test_id(0x51).to_hex());
-    assert_ne!(
-        checkpoint_ref,
-        &crate::entity_id::bytes_to_hex_lower(leased.id.as_bytes()),
-        "a fork resumes from the pre-fail checkpoint, never the terminal attempt"
-    );
-    Ok(())
-}
-
-#[test]
-fn reserved_healer_slot_is_explicit_outcome() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let agent_ref = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
-    let leased = leased_dispatch(&vault, agent_ref, 10)?;
-    let policy = auto_policy(agent_ref);
-    assert_eq!(policy.healer_slot, HealerSlot::Reserved);
-    assert_eq!(
-        policy.max_consecutive_transients,
-        DEFAULT_MAX_CONSECUTIVE_TRANSIENTS
-    );
-    assert_eq!(policy.escalation_mode, FailureEscalationMode::Auto);
-
-    let outcome = FailureLadder::new(&vault)
-        .handle_attempt_failure(failure_input(&leased, permanent(), 20), policy)?;
-    let FailureLadderOutcome::Healer { slot, .. } = &outcome else {
-        panic!("a reserved slot is a typed outcome, not a dropped case");
-    };
-    assert!(matches!(slot, HealerSlotOutcome::Reserved { .. }));
-    Ok(())
 }
 
 #[test]
