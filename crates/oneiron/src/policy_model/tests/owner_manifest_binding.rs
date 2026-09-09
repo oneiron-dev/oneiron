@@ -87,7 +87,13 @@ fn unknown_owner_manifest_action_drops_the_rows() -> Result<()> {
         .classify_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))
         .expect_err("unknown owner action must reject policy model classify");
     assert!(
-        format!("{classify_err}").contains("owner_policy_rows were dropped"),
+        matches!(
+            classify_err,
+            Error::PolicyManifestInvalid {
+                field: "owner_policy_rows",
+                ..
+            }
+        ),
         "unexpected error: {classify_err}"
     );
     Ok(())
@@ -114,7 +120,13 @@ fn forged_owner_rows_reject_classify_on_an_enabled_plane() -> Result<()> {
         ))
         .expect_err("dropped owner-policy rows must reject classify");
     assert!(
-        format!("{err}").contains("owner_policy_rows were dropped"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "owner_policy_rows",
+                ..
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())
@@ -142,7 +154,13 @@ fn a_misspelled_owner_row_key_fails_the_plane_closed() -> Result<()> {
         ))
         .expect_err("an unknown owner-row key must never be ignored");
     assert!(
-        format!("{err}").contains("owner_policy_rows were dropped"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "owner_policy_rows",
+                ..
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())
@@ -172,7 +190,13 @@ fn a_misspelled_owner_pattern_key_fails_the_plane_closed() -> Result<()> {
         .classify_policy_model(PolicyClassifyRequest::outbound_content("a spoiler"))
         .expect_err("an unknown pattern key must never be ignored");
     assert!(
-        format!("{err}").contains("owner_policy_patterns were dropped"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "owner_policy_patterns",
+                ..
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())
@@ -198,7 +222,13 @@ fn an_owner_pattern_naming_no_row_is_a_configuration_error() -> Result<()> {
         .classify_policy_model(PolicyClassifyRequest::outbound_content("a spoiler"))
         .expect_err("a rule naming no row must be refused");
     assert!(
-        format!("{err}").contains("pattern_rule_category"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "pattern_rule_category",
+                reason: "names a category this plane does not publish"
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())
@@ -224,7 +254,13 @@ fn an_owner_pattern_that_does_not_compile_is_a_configuration_error() -> Result<(
         .classify_policy_model(PolicyClassifyRequest::outbound_content("a spoiler"))
         .expect_err("an uncompilable rule must be refused");
     assert!(
-        format!("{err}").contains("valid regular expression"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "pattern_rule_pattern",
+                reason: "is not a valid regular expression"
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())

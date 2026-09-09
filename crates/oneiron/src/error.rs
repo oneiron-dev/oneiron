@@ -482,6 +482,7 @@ pub enum ErrorKind {
     RelayAttestationClassMismatch,
     RelayAttestationEdgeServiceConflict,
     RelayHostedLegalPolicyInvalid,
+    PolicyManifestInvalid,
     CodeEmissionMissingDreamerRunId,
     CodeReviewContextRequired,
     CodeReviewUnsupportedOperation,
@@ -2192,6 +2193,17 @@ pub enum Error {
         field: &'static str,
         reason: &'static str,
     },
+    /// The vault's own policy manifest cannot be read as written, named by
+    /// the manifest key at fault. The owner plane's twin of
+    /// [`Self::RelayHostedLegalPolicyInvalid`]: a defect the substrate owner
+    /// fixes in the manifest, not a fault of the request that tripped it, so
+    /// the key and the reason stay `'static` and machine-readable rather than
+    /// formatted into prose.
+    #[error("policy manifest: {field} {reason}")]
+    PolicyManifestInvalid {
+        field: &'static str,
+        reason: &'static str,
+    },
     /// A code-memory anchor, locator, slot name, or pull argument failed its
     /// own bounded structural validation (ONE-1608). The anchor rule this
     /// most often reports is the load-bearing one: a durable note is keyed by
@@ -2675,6 +2687,7 @@ impl Error {
                 ErrorKind::RelayAttestationEdgeServiceConflict
             }
             Self::RelayHostedLegalPolicyInvalid { .. } => ErrorKind::RelayHostedLegalPolicyInvalid,
+            Self::PolicyManifestInvalid { .. } => ErrorKind::PolicyManifestInvalid,
             Self::CodeMemoryInvalidAnchor { .. } => ErrorKind::CodeMemoryInvalidAnchor,
             Self::CodeMemoryInvalidAnchorTransfer { .. } => {
                 ErrorKind::CodeMemoryInvalidAnchorTransfer

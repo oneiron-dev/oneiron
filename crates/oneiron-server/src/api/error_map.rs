@@ -34,6 +34,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::StructuralKindZoneViolation
         | ErrorKind::StructuralKindCollision
         | ErrorKind::InvalidStructuralKindRegistration
+        | ErrorKind::PolicyManifestInvalid
         | ErrorKind::ClaimSelfSupersession
         | ErrorKind::ProvenanceClaimLifecycle
         | ErrorKind::AgentNotDispatchable

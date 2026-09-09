@@ -167,7 +167,13 @@ fn an_owner_document_without_its_output_contract_is_a_configuration_error() -> R
         .classify_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))
         .expect_err("a document with no declared contract must be refused");
     assert!(
-        format!("{err}").contains("output contract"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "owner_policy_output_contract",
+                reason
+            } if reason.contains("document")
+        ),
         "unexpected error: {err}"
     );
     Ok(())
@@ -190,7 +196,13 @@ fn an_unknown_owner_output_contract_fails_closed() -> Result<()> {
         .classify_policy_model(PolicyClassifyRequest::outbound_content("ordinary reply"))
         .expect_err("an unknown output contract must be refused");
     assert!(
-        format!("{err}").contains("output_contract"),
+        matches!(
+            err,
+            Error::PolicyManifestInvalid {
+                field: "owner_policy_output_contract",
+                reason: "names a contract the engine does not have"
+            }
+        ),
         "unexpected error: {err}"
     );
     Ok(())
