@@ -202,11 +202,10 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
 wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 106 more over-bar
 modules the same way, so a directory module is now the normal shape for anything substantial.
-Four files still sit over the bar and nothing is deferred any more — the `_attribution` block in
+Three files still sit over the bar and nothing is deferred any more — the `_attribution` block in
 `scripts/ratchet/baseline.json` gives the structural reason for each one. `error.rs` is capped by
-its 1436-line `Error` enum; `pipeline/execution/channels.rs` is a single function
-(`run_retrieval_txn_attempt`); `voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned
-indivisible. Do not use those four as precedent for a new large file.
+its 1436-line `Error` enum; `voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned
+indivisible. Do not use those three as precedent for a new large file.
 
 Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
 regenerated deterministically and are the only current answer to "where does X live now".
