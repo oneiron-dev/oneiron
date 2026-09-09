@@ -34,7 +34,10 @@ jobs:
     # comes from the host Xcode toolchain, Rust from the host rustup with
     # rust-toolchain.toml pinning the channel. Same pause/draft guard as
     # ci.yml.
-    runs-on: [self-hosted, macos, arm64]
+    # Needs a full Xcode (Swift Package Manager's manifest link step fails on
+    # Command Line Tools alone), so it asks for the `xcode` capability label
+    # rather than any macOS runner; both Macs carry it today.
+    runs-on: [self-hosted, macos, arm64, xcode]
     timeout-minutes: 30
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     steps:
