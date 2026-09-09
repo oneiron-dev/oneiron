@@ -1,5 +1,8 @@
 //! Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE, text, phonetic, temporal, and PPR channels.
 
+mod admit;
+
+use self::admit::{AdmitSignal, ChannelAccumulator};
 use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
     blended_retrieval_scores, boost_contiguity, filter_blended_scores_to_allowed_ids,
@@ -17,8 +20,7 @@ use super::super::filters::{
     pipeline_candidate_matches_filters_and_gate,
 };
 use super::super::trace::{
-    RetrievalTraceForkEvidence, add_signal_score_components, filter_retrieval_trace_scores,
-    record_ppr_cache_outcome, retrieval_trace_candidate_set, retrieval_trace_channel_record,
+    RetrievalTraceForkEvidence, record_ppr_cache_outcome, retrieval_trace_candidate_set,
     retrieval_trace_fork_hash, retrieval_trace_fused_scores, retrieval_trace_stage_record,
     retrieval_trace_top_scores,
 };
@@ -36,10 +38,7 @@ use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::rerank::RerankCandidate;
 use crate::retrieval_quality::PprCacheOutcome;
-use crate::store::{
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord,
-    RetrievalTraceStage,
-};
+use crate::store::{RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceStage};
 use std::collections::{HashMap, HashSet};
 
 impl PipelineBuilder<'_> {
@@ -80,14 +79,11 @@ impl PipelineBuilder<'_> {
             telemetry_signals.push(RetrievalSignal::Temporal);
         }
         {
-            let mut ranked_lists = Vec::new();
-            let mut signal_components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
-            let mut trace_channels = Vec::<RetrievalTraceChannelRecord>::new();
-            let mut trace_ranked_lists = Vec::<Vec<ScoredEntity>>::new();
-            let mut trace_claim_gate = ClaimStatusGateCache {
-                include_stale: authority_filter.include_stale,
-                ..ClaimStatusGateCache::default()
-            };
+            let mut acc = ChannelAccumulator::new(
+                capture_retrieval_trace,
+                trace_candidate_limit,
+                authority_filter.include_stale,
+            );
             let mut fused_trace_scores = None;
             let mut blended_trace_scores = None;
             let mut vector_channel_index = None;
@@ -211,30 +207,14 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?;
                 diagnostics.succeeded.push(RetrievalSignal::Vector);
-                add_signal_score_components(
-                    &mut signal_components,
+                vector_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Vector,
-                    &vector_results,
-                );
-                if capture_retrieval_trace {
-                    let trace_results = filter_retrieval_trace_scores(
-                        &vector_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut trace_claim_gate,
-                        trace_candidate_limit,
-                    )?;
-                    trace_channels.push(retrieval_trace_channel_record(
-                        RetrievalSignal::Vector,
-                        &trace_results,
-                        trace_candidate_limit,
-                    ));
-                    trace_ranked_lists.push(trace_results);
-                }
-                vector_channel_index = Some(ranked_lists.len());
-                ranked_lists.push(vector_results);
+                    vector_results,
+                    &self.vault.store,
+                    &rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?);
             }
 
             if let Some(expansion) = hyde_expansion.as_ref() {
@@ -256,29 +236,14 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                     &mut claim_gate,
                 )?;
-                add_signal_score_components(
-                    &mut signal_components,
+                acc.admit_channel(
                     RetrievalSignal::Hyde,
-                    &hyde_results,
-                );
-                if capture_retrieval_trace {
-                    let trace_results = filter_retrieval_trace_scores(
-                        &hyde_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut trace_claim_gate,
-                        trace_candidate_limit,
-                    )?;
-                    trace_channels.push(retrieval_trace_channel_record(
-                        RetrievalSignal::Hyde,
-                        &trace_results,
-                        trace_candidate_limit,
-                    ));
-                    trace_ranked_lists.push(trace_results);
-                }
-                ranked_lists.push(hyde_results);
+                    hyde_results,
+                    &self.vault.store,
+                    &rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
             }
 
             if let Some((query, limit)) = &self.text_search {
@@ -357,30 +322,14 @@ impl PipelineBuilder<'_> {
                     &mut prefix_probe_claim_gate,
                     &text_results,
                 );
-                add_signal_score_components(
-                    &mut signal_components,
+                text_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Text,
-                    &text_results,
-                );
-                if capture_retrieval_trace {
-                    let trace_results = filter_retrieval_trace_scores(
-                        &text_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut trace_claim_gate,
-                        trace_candidate_limit,
-                    )?;
-                    trace_channels.push(retrieval_trace_channel_record(
-                        RetrievalSignal::Text,
-                        &trace_results,
-                        trace_candidate_limit,
-                    ));
-                    trace_ranked_lists.push(trace_results);
-                }
-                text_channel_index = Some(ranked_lists.len());
-                ranked_lists.push(text_results);
+                    text_results,
+                    &self.vault.store,
+                    &rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?);
                 for query in overrides.extra_text_queries {
                     let retry_scoped_text_limit = scoped_text_channel_limit(
                         &self.vault.store,
@@ -440,58 +389,31 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                         &results,
                     );
-                    add_signal_score_components(
-                        &mut signal_components,
-                        RetrievalSignal::Text,
-                        &results,
-                    );
-                    if capture_retrieval_trace {
-                        let trace_results = filter_retrieval_trace_scores(
-                            &results,
-                            &self.vault.store,
-                            &rtxn,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut trace_claim_gate,
-                            trace_candidate_limit,
-                        )?;
-                        trace_channels.push(retrieval_trace_channel_record(
-                            RetrievalSignal::HydeRetry,
-                            &trace_results,
-                            trace_candidate_limit,
-                        ));
-                        trace_ranked_lists.push(trace_results);
-                    }
-                    ranked_lists.push(results);
+                    acc.admit_channel(
+                        AdmitSignal {
+                            components: RetrievalSignal::Text,
+                            trace: RetrievalSignal::HydeRetry,
+                        },
+                        results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                    )?;
                 }
             }
 
             if let Some(codes) = &self.phonetic_search {
                 let phonetic_results = execute_phonetic(&self.vault.store, &rtxn, codes)?;
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
-                add_signal_score_components(
-                    &mut signal_components,
+                acc.admit_channel(
                     RetrievalSignal::Phonetic,
-                    &phonetic_results,
-                );
-                if capture_retrieval_trace {
-                    let trace_results = filter_retrieval_trace_scores(
-                        &phonetic_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut trace_claim_gate,
-                        trace_candidate_limit,
-                    )?;
-                    trace_channels.push(retrieval_trace_channel_record(
-                        RetrievalSignal::Phonetic,
-                        &trace_results,
-                        trace_candidate_limit,
-                    ));
-                    trace_ranked_lists.push(trace_results);
-                }
-                ranked_lists.push(phonetic_results);
+                    phonetic_results,
+                    &self.vault.store,
+                    &rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
             }
 
             if let Some(config) = &self.temporal_search {
@@ -508,29 +430,14 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?;
                 diagnostics.succeeded.push(RetrievalSignal::Temporal);
-                add_signal_score_components(
-                    &mut signal_components,
+                acc.admit_channel(
                     RetrievalSignal::Temporal,
-                    &temporal_results,
-                );
-                if capture_retrieval_trace {
-                    let trace_results = filter_retrieval_trace_scores(
-                        &temporal_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut trace_claim_gate,
-                        trace_candidate_limit,
-                    )?;
-                    trace_channels.push(retrieval_trace_channel_record(
-                        RetrievalSignal::Temporal,
-                        &trace_results,
-                        trace_candidate_limit,
-                    ));
-                    trace_ranked_lists.push(trace_results);
-                }
-                ranked_lists.push(temporal_results);
+                    temporal_results,
+                    &self.vault.store,
+                    &rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
             }
 
             if let Some((seeds, depth)) = &self.ppr_search {
@@ -550,37 +457,22 @@ impl PipelineBuilder<'_> {
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
                 let deferred_cache_write = ppr.deferred_cache_write;
-                add_signal_score_components(
-                    &mut signal_components,
+                acc.admit_channel(
                     RetrievalSignal::Ppr,
-                    &ppr_results,
-                );
-                if capture_retrieval_trace {
-                    let trace_results = filter_retrieval_trace_scores(
-                        &ppr_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                        &mut trace_claim_gate,
-                        trace_candidate_limit,
-                    )?;
-                    trace_channels.push(retrieval_trace_channel_record(
-                        RetrievalSignal::Ppr,
-                        &trace_results,
-                        trace_candidate_limit,
-                    ));
-                    trace_ranked_lists.push(trace_results);
-                }
+                    ppr_results,
+                    &self.vault.store,
+                    &rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                )?;
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
-                ranked_lists.push(ppr_results);
             }
 
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
-            for scores in &mut ranked_lists {
+            for scores in &mut acc.ranked_lists {
                 super::authority::apply_types(
                     scores,
                     authority_filter,
@@ -589,7 +481,7 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                 )?;
             }
-            if ranked_lists.is_empty() {
+            if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     diagnostics,
                     scores: Vec::new(),
@@ -621,7 +513,7 @@ impl PipelineBuilder<'_> {
             };
             if capture_retrieval_trace {
                 fused_trace_scores = Some(retrieval_trace_fused_scores(
-                    &trace_ranked_lists,
+                    &acc.trace_ranked_lists,
                     trace_candidate_limit,
                 ));
             }
@@ -639,7 +531,7 @@ impl PipelineBuilder<'_> {
             // the run actually returns. So the factor is deferred to that
             // single blend.
             let first_blend = blended_retrieval_scores(
-                &ranked_lists,
+                &acc.ranked_lists,
                 RetrievalChannelIndexes {
                     vector: vector_channel_index,
                     text: text_channel_index,
@@ -788,33 +680,18 @@ impl PipelineBuilder<'_> {
                         &mut metadata_cache,
                         &mut claim_gate,
                     )?;
-                    add_signal_score_components(
-                        &mut signal_components,
-                        RetrievalSignal::Ppr,
-                        &ppr_results,
-                    );
-                    if capture_retrieval_trace {
-                        let trace_results = filter_retrieval_trace_scores(
-                            &ppr_results,
-                            &self.vault.store,
-                            &rtxn,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut trace_claim_gate,
-                            trace_candidate_limit,
-                        )?;
-                        trace_channels.push(retrieval_trace_channel_record(
-                            RetrievalSignal::Ppr,
-                            &trace_results,
-                            trace_candidate_limit,
-                        ));
-                        trace_ranked_lists.push(trace_results);
-                    }
                     blend_allowed_ids.extend(ppr_results.iter().map(|scored| scored.id));
-                    ranked_lists.push(ppr_results);
+                    acc.admit_channel(
+                        RetrievalSignal::Ppr,
+                        ppr_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                    )?;
                     if capture_retrieval_trace {
                         fused_trace_scores = Some(retrieval_trace_fused_scores(
-                            &trace_ranked_lists,
+                            &acc.trace_ranked_lists,
                             trace_candidate_limit,
                         ));
                     }
@@ -822,7 +699,7 @@ impl PipelineBuilder<'_> {
                     // application: the seeds above were picked from the
                     // neutral preliminary order.
                     let expanded_blend = blended_retrieval_scores(
-                        &ranked_lists,
+                        &acc.ranked_lists,
                         RetrievalChannelIndexes {
                             vector: vector_channel_index,
                             text: text_channel_index,
@@ -856,7 +733,7 @@ impl PipelineBuilder<'_> {
                     // allowed-id filter keeps a gate-dropped claim from
                     // resurfacing through the re-fuse.
                     let applied_blend = blended_retrieval_scores(
-                        &ranked_lists,
+                        &acc.ranked_lists,
                         RetrievalChannelIndexes {
                             vector: vector_channel_index,
                             text: text_channel_index,
@@ -1161,7 +1038,7 @@ impl PipelineBuilder<'_> {
                 && self.context_pack_budget.is_some()
                 && context_pack_evidence_abstains(
                     &scores,
-                    &signal_components,
+                    &acc.signal_components,
                     self.text_search.as_ref().map(|(query, _)| query.as_str()),
                     self.vector_search.is_some(),
                 )
@@ -1204,7 +1081,7 @@ impl PipelineBuilder<'_> {
                 let final_scores = retrieval_trace_top_scores(&scores, trace_candidate_limit);
                 let blended_scores = blended_trace_scores.unwrap_or_default();
                 let candidate_set = retrieval_trace_candidate_set(
-                    &trace_ranked_lists,
+                    &acc.trace_ranked_lists,
                     fused_trace_scores.as_deref().unwrap_or(&[]),
                     &blended_scores,
                     &final_scores,
@@ -1233,14 +1110,14 @@ impl PipelineBuilder<'_> {
                 };
                 Some(RetrievalTrace {
                     fork_hash,
-                    per_channel: trace_channels,
+                    per_channel: acc.trace_channels,
                     // The fused stage is the pre-blend RRF order, so it
                     // carries no applied multiplier to attribute: an empty
                     // map makes every one of its rows record `None`.
                     fused: retrieval_trace_stage_record(
                         RetrievalTraceStage::Fused,
                         &fused_trace_scores.unwrap_or_default(),
-                        &signal_components,
+                        &acc.signal_components,
                         &HashMap::new(),
                         &HashMap::new(),
                         trace_candidate_limit,
@@ -1248,7 +1125,7 @@ impl PipelineBuilder<'_> {
                     blended: retrieval_trace_stage_record(
                         RetrievalTraceStage::Blended,
                         &blended_scores,
-                        &signal_components,
+                        &acc.signal_components,
                         &blend_components,
                         &blend_access_factors,
                         trace_candidate_limit,
@@ -1260,7 +1137,7 @@ impl PipelineBuilder<'_> {
                     reranked: retrieval_trace_stage_record(
                         RetrievalTraceStage::Reranked,
                         reranked_trace_scores.as_deref().unwrap_or(&final_scores),
-                        &signal_components,
+                        &acc.signal_components,
                         rerank_merged_components
                             .as_ref()
                             .unwrap_or(&blend_components),
@@ -1270,7 +1147,7 @@ impl PipelineBuilder<'_> {
                     final_stage: retrieval_trace_stage_record(
                         RetrievalTraceStage::Final,
                         &final_scores,
-                        &signal_components,
+                        &acc.signal_components,
                         &blend_components,
                         &blend_access_factors,
                         trace_candidate_limit,
@@ -1288,7 +1165,7 @@ impl PipelineBuilder<'_> {
                 cosine_ghosts_dampened,
                 total_in_scope,
                 empty_reason,
-                signal_components,
+                signal_components: acc.signal_components,
                 blend_components,
                 access_factors: blend_access_factors,
                 rerank_merged_components,
