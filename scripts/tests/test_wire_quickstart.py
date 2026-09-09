@@ -29,6 +29,15 @@ def normalize(value):
     return value
 
 
+def ranked(pack):
+    """A recall pack minus its cache-state quality report (see the parity test)."""
+    pack = normalize(pack)
+    meta = dict(pack.get("retrieval_meta") or {})
+    for transient in ("degradation", "quality", "confidence_adjustment"):
+        meta.pop(transient, None)
+    return {**pack, "retrieval_meta": meta}
+
+
 def assert_quickstart(result):
     result = normalize(result)
     assert result["witnessed"]["receipt_ref"].startswith("witness:")
@@ -138,9 +147,15 @@ def test_remote_sdk_parity():
     # Both SDKs read the same committed content, but at different server times.
     # A second Python read must retain the ranked snapshot too: parity must not
     # hide an unstable fixture, missing items, or a changed binding field.
+    # The first read after a write misses the PPR cache, and the server reports
+    # that honestly: `degradation: ["ppr_cache_miss"]`, `quality: "degraded"`
+    # and a confidence adjustment. Later reads are served warm and carry none
+    # of the three. They describe the server's cache state, not the committed
+    # content, so the parity comparison drops exactly those fields; the
+    # items, their order and the retrieval counts stay exact.
     node = node_result("read")
-    assert normalize(memory.recall("window seat")) == normalize(recalled)
-    assert normalize(node["recalled"]) == normalize(recalled)
+    assert ranked(memory.recall("window seat")) == ranked(recalled)
+    assert ranked(node["recalled"]) == ranked(recalled)
     assert normalize(node["receipts"]) == normalize(receipts)
     assert normalize(memory.receipts()) == normalize(receipts)
     assert node["errors"] == errors
