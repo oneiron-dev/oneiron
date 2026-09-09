@@ -127,7 +127,7 @@ pub(crate) struct CoreRunTreeNode {
     /// The dispatched agent's label for `agent.dispatch` attempts, when the
     /// payload snapshot decodes. Elided when absent.
     #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
-    #[schema(example = "eiri.agent.summarizer")]
+    #[schema(example = "companion.agent.summarizer")]
     agent_id: Option<String>,
     /// Surface lifecycle state.
     status: CoreRunTreeStatus,

@@ -218,7 +218,7 @@ pub(crate) struct CompanionRegisterRetireRecordRequest {
 #[schema(example = json!({
     "ended_at": 1700000600,
     "ended_badly": false,
-    "run_id": "eiri-goodbye-artifact-1700000600"
+    "run_id": "companion-goodbye-artifact-1700000600"
 }))]
 pub(crate) struct CompanionEndRelationshipRequest {
     /// Ending timestamp in Unix seconds. Defaults to server time.
@@ -229,7 +229,7 @@ pub(crate) struct CompanionEndRelationshipRequest {
     #[schema(example = false)]
     ended_badly: bool,
     /// Optional run id stamped onto the goodbye-artifact task.
-    #[schema(example = "eiri-goodbye-artifact-1700000600")]
+    #[schema(example = "companion-goodbye-artifact-1700000600")]
     run_id: Option<String>,
 }
 

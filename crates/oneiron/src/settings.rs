@@ -1,4 +1,4 @@
-//! Persisted customization settings and Eiri-visible change events.
+//! Persisted customization settings and client-visible change events.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
 /// The four SET-03 customization layers persisted by this module.
 pub const CUSTOMIZATION_SETTINGS_LAYER_COUNT: usize = 4;
 
-/// Stable event kind for Eiri-readable customization change notifications.
+/// Stable event kind for client-readable customization change notifications.
 pub const CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND: &str = "settings.customization.changed";
 
 /// ONE-1707: the one additive knob over Dreamer plugin suggestions.
@@ -304,7 +304,7 @@ pub struct CustomizationSettingsUpdate {
     pub event: Option<CustomizationSettingsChangeEvent>,
 }
 
-/// Eiri-readable event emitted when a customization layer changes.
+/// Client-readable event emitted when a customization layer changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomizationSettingsChangeEvent {
     pub sequence: u64,
@@ -313,7 +313,7 @@ pub struct CustomizationSettingsChangeEvent {
     pub layer: CustomizationLayer,
     pub previous: CustomizationLayerValue,
     pub current: CustomizationLayerValue,
-    // Intentionally camelCase in this otherwise snake_case Eiri-readable event: it matches the
+    // Intentionally camelCase in this otherwise snake_case client-readable event: it matches the
     // Eiri client contract (`aiCanChange` in UIModeContextType). Do not snake_case.
     #[serde(rename = "aiCanChange")]
     pub ai_can_change: bool,
@@ -415,7 +415,7 @@ impl Vault {
         customization_settings_in_read_txn(&self.store.vault_meta, &rtxn)
     }
 
-    /// Persists one customization layer and emits an Eiri-readable event when it changed.
+    /// Persists one customization layer and emits a client-readable event when it changed.
     pub fn set_customization_layer(
         &self,
         value: CustomizationLayerValue,
