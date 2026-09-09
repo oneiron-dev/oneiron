@@ -2020,7 +2020,7 @@
      "path": "src/batch/facet_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -2446,7 +2446,7 @@
      "path": "src/bm25/mod.rs",
      "purpose": "Analyzer-driven fielded inverted index + BM25F scorer",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "re-export": 2
      }
     },
@@ -2855,7 +2855,7 @@
      "purpose": "BK-09: logged owner instructions, real solver proposals, and resumable emergency revisions",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 2,
       "re-export": 4,
@@ -3167,7 +3167,7 @@
      "path": "src/booking/lifecycle/mod.rs",
      "purpose": "ONE-1813 [BK-02] booking lifecycle verbs",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "re-export": 5
      }
     },
@@ -3188,7 +3188,7 @@
      "path": "src/booking/lifecycle/passport.rs",
      "purpose": "The outbound calendar passport written at sequence 0 and superseded by reschedule and cancel",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -3244,7 +3244,7 @@
      "path": "src/booking/lifecycle/transition.rs",
      "purpose": "The four ordinary transitions inside the writer lease: hold, confirm, reschedule, cancel",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -3326,7 +3326,7 @@
      "purpose": "Owner-controlled public booking publication on the ordinary claim store",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 2,
       "fn": 4,
       "re-export": 2,
       "struct": 2
@@ -3429,7 +3429,6 @@
      "path": "src/booking/solver/mod.rs",
      "purpose": "ONE-1823 [BK-00] availability solver and slot-mask projection",
      "surface": {
-      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -5454,7 +5453,7 @@
      "purpose": "Blueprint model, deterministic validation pass (incl. shell-string lint), materialization policy, vault…",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 10,
       "struct": 6,
@@ -5530,7 +5529,7 @@
      "path": "src/checkout/lease/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
      }
     },
@@ -8133,7 +8132,6 @@
      "path": "src/context_board/agents.rs",
      "purpose": "AGENTS section projections — child agents and peer connections",
      "surface": {
-      "crate-vis": 3,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -10036,7 +10034,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 13,
       "struct": 1
      }
@@ -11956,7 +11954,7 @@
      "path": "src/gate/breaker.rs",
      "purpose": "ONE-1453 per-actor burst breaker",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 34,
       "fn": 1,
       "struct": 1
      }
@@ -12226,7 +12224,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 22,
       "re-export": 3
      }
     },
@@ -12275,7 +12273,7 @@
      "path": "src/gate/resolution/evaluation.rs",
      "purpose": "Decision core: ceilings, source-trust, and gate evaluation",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -12316,7 +12314,7 @@
      "path": "src/gate/resolution/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -16607,7 +16605,7 @@
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 11
      }
     },
     {
@@ -17896,7 +17894,7 @@
      "path": "src/ppr/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -19820,7 +19818,7 @@
      "path": "src/session_overlay/overlay/lifecycle.rs",
      "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
