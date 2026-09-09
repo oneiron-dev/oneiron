@@ -1,16 +1,17 @@
 //! Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE, text, phonetic, temporal, and PPR channels.
 
 mod admit;
+mod ppr_expand;
 mod rerank;
 mod trace_assembly;
 
 use self::admit::{AdmitSignal, ChannelAccumulator};
+use self::ppr_expand::{PprExpandInputs, PprExpandState};
 use self::rerank::{RerankApplied, RerankLadderInputs};
 use self::trace_assembly::TraceInputs;
 use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
-    blended_retrieval_scores, boost_contiguity, filter_blended_scores_to_allowed_ids,
-    retrieval_blend_weights_for_scoring, score_id_set,
+    blended_retrieval_scores, boost_contiguity, retrieval_blend_weights_for_scoring, score_id_set,
 };
 use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::super::builder::PipelineBuilder;
@@ -38,9 +39,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
-use crate::retrieval_quality::PprCacheOutcome;
 use crate::store::RetrievalSignal;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 impl PipelineBuilder<'_> {
     // Requested operations, not the legacy signal list: time filters and
@@ -580,182 +580,38 @@ impl PipelineBuilder<'_> {
             }
             let mut blend_allowed_ids = score_id_set(&scores);
 
-            // Implicit seed selection reads the PRELIMINARY blend above,
-            // whose scores are decay-free, so seed choice depends only on
-            // relevance. The D19 gate has already run, so a dead claim
-            // still never seeds; decay simply does not participate.
-            if let Some((explicit_seeds, depth)) = &self.ppr_expand {
-                let mut seen = HashSet::<EntityId>::new();
-                let mut seeds = Vec::<EntityId>::new();
-                for seed in explicit_seeds {
-                    if seen.insert(*seed) {
-                        seeds.push(*seed);
-                    }
-                }
-                if seeds.len() < crate::ppr::MAX_PPR_SEEDS {
-                    let implicit_seed_limit = if codebase_scope_active {
-                        scores.len()
-                    } else {
-                        self.result_limit
-                    };
-                    for scored in scores.iter().take(implicit_seed_limit) {
-                        if seen.insert(scored.id) {
-                            seeds.push(scored.id);
-                            if seeds.len() == crate::ppr::MAX_PPR_SEEDS {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if !seeds.is_empty() {
-                    ppr_expand_executed = true;
-                    seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-
-                    // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
-                    // specificity weighting is search_ppr-only.
-                    let ppr = if self.vault.config.ppr_community.beta == 0.0 {
-                        // Exact legacy path: no evidence/cache reads or new key namespace.
-                        crate::ppr::ppr_query_in_txn_with_diagnostics(
-                            &self.vault.store,
-                            &rtxn,
-                            &seeds,
-                            *depth,
-                            PPR_DAMPING,
-                            self.vault.config.ppr_vad_alpha,
-                            crate::ppr::SeedWeighting::Uniform,
-                        )?
-                    } else {
-                        // ID sorting for the base cache must not replace the fused
-                        // evidence order. Explicit-only seeds get zero evidence.
-                        let ordered_seeds =
-                            crate::ppr_community::ordered_seed_evidence(&seeds, &scores)
-                                .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-                        let empty_usage = HashMap::new();
-                        let context = crate::ppr_community::CommunityBoostContext {
-                            ordered_seeds: &ordered_seeds,
-                            result_limit: self.result_limit,
-                            session_usage: self.community_session_usage.unwrap_or(&empty_usage),
-                        };
-                        let (result, diversity) =
-                            crate::ppr::ppr_expand_in_txn_with_community_diagnostics(
-                                &self.vault.store,
-                                &rtxn,
-                                crate::ppr::CommunityPprRequest {
-                                    seeds: &seeds,
-                                    depth: *depth,
-                                    teleport_alpha: PPR_DAMPING,
-                                    weighting: crate::ppr::SeedWeighting::Uniform,
-                                    config: &self.vault.config,
-                                    context: &context,
-                                },
-                            )?;
-                        community_diversity = diversity;
-                        if capture_retrieval_trace {
-                            community_trace_identity = Some(self.community_trace_identity(
-                                &ordered_seeds,
-                                crate::ppr::read_graph_version(&self.vault.store, &rtxn)?,
-                            ));
-                        }
-                        result
-                    };
-                    if !diagnostics.succeeded.contains(&RetrievalSignal::Ppr) {
-                        diagnostics.succeeded.push(RetrievalSignal::Ppr);
-                    }
-                    record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
-                    let mut ppr_results = ppr.scores;
-                    if let Some(deferred_cache_write) = ppr.deferred_cache_write {
-                        deferred_ppr_cache_writes.push(deferred_cache_write);
-                    }
-                    // D19 claim status gate, second application: PPR
-                    // expansion walks the graph and can pull dead claims
-                    // back into the candidate set — gate the expansion
-                    // list before fusing it (memoized; claims already
-                    // checked above cost nothing). Traversal THROUGH a
-                    // dead claim node stays untouched in v1: only the
-                    // result surface is gated.
-                    apply_claim_status_gate(
-                        &mut ppr_results,
-                        &self.vault.store,
-                        &rtxn,
-                        &mut metadata_cache,
-                        &mut claim_gate,
-                    )?;
-                    blend_allowed_ids.extend(ppr_results.iter().map(|scored| scored.id));
-                    acc.admit_channel(
-                        RetrievalSignal::Ppr,
-                        ppr_results,
-                        &self.vault.store,
-                        &rtxn,
-                        filter_config,
-                        &mut metadata_cache,
-                    )?;
-                    if capture_retrieval_trace {
-                        fused_trace_scores = Some(retrieval_trace_fused_scores(
-                            &acc.trace_ranked_lists,
-                            trace_candidate_limit,
-                        ));
-                    }
-                    // The expanded blend is this run's ONE decay
-                    // application: the seeds above were picked from the
-                    // neutral preliminary order.
-                    let expanded_blend = blended_retrieval_scores(
-                        &acc.ranked_lists,
-                        RetrievalChannelIndexes {
-                            vector: vector_channel_index,
-                            text: text_channel_index,
-                        },
-                        &self.vault.store,
-                        &rtxn,
-                        &mut metadata_cache,
-                        &mut claim_gate,
-                        blend_config,
-                        temporal_now,
-                        blend_weights,
-                    )?;
-                    scores = filter_blended_scores_to_allowed_ids(
-                        expanded_blend.scores,
-                        &blend_allowed_ids,
-                    );
-                    cosine_ghosts_dampened = expanded_blend.cosine_ghosts_dampened;
-                    blend_components = expanded_blend.components;
-                    blend_base_scores = expanded_blend.base_scores;
-                    blend_access_factors = expanded_blend.access_factors;
-                } else {
-                    record_ppr_cache_outcome(&mut diagnostics, PprCacheOutcome::Disabled);
-                    // Configured but unseeded: the preliminary blend
-                    // deferred the factor, so the run still owes exactly
-                    // one Apply blend. Re-blend the UNCHANGED ranked lists
-                    // and take every output the expanded branch takes, so
-                    // the single-application invariant is structural
-                    // rather than an accident of which branch ran. The
-                    // ranked lists did not move, so this reproduces the
-                    // plain (no `expand_ppr`) run bit for bit, and the
-                    // allowed-id filter keeps a gate-dropped claim from
-                    // resurfacing through the re-fuse.
-                    let applied_blend = blended_retrieval_scores(
-                        &acc.ranked_lists,
-                        RetrievalChannelIndexes {
-                            vector: vector_channel_index,
-                            text: text_channel_index,
-                        },
-                        &self.vault.store,
-                        &rtxn,
-                        &mut metadata_cache,
-                        &mut claim_gate,
-                        blend_config,
-                        temporal_now,
-                        blend_weights,
-                    )?;
-                    scores = filter_blended_scores_to_allowed_ids(
-                        applied_blend.scores,
-                        &blend_allowed_ids,
-                    );
-                    cosine_ghosts_dampened = applied_blend.cosine_ghosts_dampened;
-                    blend_components = applied_blend.components;
-                    blend_base_scores = applied_blend.base_scores;
-                    blend_access_factors = applied_blend.access_factors;
-                }
+            if let Some(outcome) = self.expand_ppr_stage(
+                &rtxn,
+                &scores,
+                PprExpandInputs {
+                    filter_config,
+                    blend_config,
+                    blend_weights,
+                    channel_indexes: RetrievalChannelIndexes {
+                        vector: vector_channel_index,
+                        text: text_channel_index,
+                    },
+                    temporal_now,
+                    codebase_scope_active,
+                },
+                PprExpandState {
+                    acc: &mut acc,
+                    blend_allowed_ids: &mut blend_allowed_ids,
+                    fused_trace_scores: &mut fused_trace_scores,
+                    diagnostics: &mut diagnostics,
+                    deferred_ppr_cache_writes: &mut deferred_ppr_cache_writes,
+                },
+                &mut metadata_cache,
+                &mut claim_gate,
+            )? {
+                scores = outcome.blend.scores;
+                cosine_ghosts_dampened = outcome.blend.cosine_ghosts_dampened;
+                blend_components = outcome.blend.components;
+                blend_base_scores = outcome.blend.base_scores;
+                blend_access_factors = outcome.blend.access_factors;
+                community_diversity = outcome.community_diversity;
+                community_trace_identity = outcome.community_trace_identity;
+                ppr_expand_executed = outcome.ppr_expand_executed;
             }
 
             let before_filters = scores.len();
