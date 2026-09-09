@@ -147,7 +147,7 @@ fn validate_preset_id(value: &str) -> Result<(), BookingError> {
 /// The friend-hangout preset's stable id, matching the pack-data row.
 pub const FRIEND_HANGOUT_PRESET_ID: &str = "booking.eiri.friend_hangout.v1";
 /// The pack-data row. Behaviour lives in this JSON, not in a Rust branch.
-const FRIEND_HANGOUT_PRESET_V1_JSON: &str = include_str!("presets/eiri_friend_hangout_v1.json");
+const FRIEND_HANGOUT_PRESET_V1_JSON: &str = include_str!("presets/friend_hangout_v1.json");
 /// Binds the friend-hangout pack row to the caller's synthetic configuration.
 ///
 /// The configuration is supplied rather than looked up: a friend hangout has no
