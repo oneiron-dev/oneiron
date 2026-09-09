@@ -60,7 +60,7 @@ pub use repair::{
 pub(crate) use repair::{RegisteredHealer, run_healer_proposals};
 
 pub use self::detector_runner::{diagnostic_event_id, run_deterministic_detectors};
-pub(crate) use self::diagnostic_codec::validate_diagnostic_event_body_bytes;
+use self::diagnostic_codec::validate_diagnostic_event_body_bytes;
 pub use self::diagnostic_codec::{decode_diagnostic_event_body, encode_diagnostic_event_body};
 pub use self::event::{
     DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector, DiagnosticCriticality,

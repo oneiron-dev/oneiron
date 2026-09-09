@@ -12,7 +12,7 @@ pub(super) const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 /// The base and room-overlay halves of one additive VaultMeta counter
 /// (ONE-1929).
 #[cfg(test)]
-pub(crate) type VaultMetaCounterComponents = (Option<Vec<u8>>, Option<Vec<u8>>);
+pub(super) type VaultMetaCounterComponents = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 /// Current write-routing mode of an off-record session.
 ///

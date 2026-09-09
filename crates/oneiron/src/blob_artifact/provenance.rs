@@ -10,7 +10,7 @@ use super::body::validate_text_field;
 use super::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 use super::versions::{KEY_CONTENT_HASH, KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION};
 
-pub(crate) const BLOB_VERSION_CLAIM_PREDICATE: &str = "blob.version";
+pub(super) const BLOB_VERSION_CLAIM_PREDICATE: &str = "blob.version";
 
 const PROVENANCE_USER_UPLOAD: &str = "user_upload";
 

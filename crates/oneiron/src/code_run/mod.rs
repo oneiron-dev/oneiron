@@ -40,9 +40,10 @@ pub(crate) use self::storage::ExecutorStorage;
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
 #[cfg(test)]
+use self::storage::canonical_speech_conversation_id;
+#[cfg(test)]
 pub(crate) use self::storage::{
-    canonical_speech_conversation_id, canonical_speech_conversation_id_for_run,
-    executor_speech_message_id,
+    canonical_speech_conversation_id_for_run, executor_speech_message_id,
 };
 pub use self::types::{
     SelfAskHumanCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult,

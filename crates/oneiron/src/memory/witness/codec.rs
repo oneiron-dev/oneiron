@@ -71,7 +71,7 @@ pub(super) fn incoming_turn_speaker(
 /// cannot read the grouping fact must refuse, not invent one — a synthesized
 /// speaker would let a second speaker's messages join a turn that already
 /// belongs to someone else.
-pub(crate) fn decode_witness_turn_speaker(body: &[u8]) -> MemoryResult<&str> {
+pub(in crate::memory) fn decode_witness_turn_speaker(body: &[u8]) -> MemoryResult<&str> {
     let unstamped = || {
         MemoryError::bad_request_with(
             "the witnessed turn carries no speaker",
@@ -119,7 +119,7 @@ pub(super) fn encode_witness_turn_body(speaker: &str) -> MemoryResult<Vec<u8>> {
 /// This is the ONE construction site that pairs a `WitnessMessage` with the
 /// envelope the ceiling door authorizes, so the axes the door reads and the
 /// bytes [`encode_witness_message_body`] produces cannot diverge.
-pub(crate) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessageEnvelope<'_> {
+pub(super) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessageEnvelope<'_> {
     WitnessMessageEnvelope {
         author: message.author.as_str(),
         message_type: message.message_type.as_str(),
@@ -139,6 +139,8 @@ pub(crate) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessa
 /// [`witness_message_envelope`] so the envelope they authorize and the bytes
 /// they stage come from ONE value; this wrapper is the shape tests pin.
 #[cfg(test)]
-pub(crate) fn encode_witness_message_body(message: &WitnessMessage) -> MemoryResult<Vec<u8>> {
+pub(in crate::memory) fn encode_witness_message_body(
+    message: &WitnessMessage,
+) -> MemoryResult<Vec<u8>> {
     Ok(witness_message_envelope(message).encode_body()?)
 }

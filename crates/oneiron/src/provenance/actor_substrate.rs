@@ -129,17 +129,17 @@ pub(crate) fn resolve_persisted_actor_class(
 }
 
 /// MessagePack body key for a MODEL entity's model name (ONE-1138).
-pub(crate) const MODEL_BODY_KEY_NAME: &str = "name";
+const MODEL_BODY_KEY_NAME: &str = "name";
 
 /// MessagePack body key for a MODEL entity's model version (ONE-1138).
-pub(crate) const MODEL_BODY_KEY_VERSION: &str = "version";
+const MODEL_BODY_KEY_VERSION: &str = "version";
 
 /// Maximum byte length of a MODEL entity's `name` / `version` string.
 pub const MODEL_SUBSTRATE_FIELD_MAX_BYTES: usize = 256;
 
 /// Validates one MODEL substrate descriptor string (`name` / `version`):
 /// non-empty UTF-8, at most [`MODEL_SUBSTRATE_FIELD_MAX_BYTES`] bytes.
-pub(crate) fn validate_model_substrate_field(value: &str, context: &'static str) -> Result<()> {
+pub(super) fn validate_model_substrate_field(value: &str, context: &'static str) -> Result<()> {
     if value.is_empty() || value.len() > MODEL_SUBSTRATE_FIELD_MAX_BYTES {
         return Err(Error::InvalidModelSubstrate(context));
     }
@@ -150,7 +150,7 @@ pub(crate) fn validate_model_substrate_field(value: &str, context: &'static str)
 /// MessagePack map `{"name": str, "version": str}`. Model name + version
 /// live ON the MODEL entity so provenance records dedup to a 16-byte
 /// `substrate_ref` instead of inlining them per write (ONE-1138).
-pub(crate) fn encode_model_entity_body(name: &str, version: &str) -> Result<Vec<u8>> {
+pub(super) fn encode_model_entity_body(name: &str, version: &str) -> Result<Vec<u8>> {
     validate_model_substrate_field(name, "model name must be non-empty and at most 256 bytes")?;
     validate_model_substrate_field(
         version,

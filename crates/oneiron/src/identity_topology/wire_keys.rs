@@ -43,14 +43,14 @@ pub(super) const IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT: u64 =
 /// Hard per-record limits for the append-only replicated family. The body
 /// limit bounds decode/allocation work before MessagePack parsing; the
 /// participant limit bounds per-event fold and reconciliation fan-out.
-pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS: usize = 256;
+pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES: usize = 64 * 1024;
+pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS: usize = 256;
 
 /// Masks one facet op may mint (ONE-1745). A facet op names exactly ONE
 /// pre-existing entity, so the participant bound above does not reach its
 /// fan-out — minting is the op's own effect. Bounded by the same number for
 /// the same reason: one op's write batch stays fixed-size.
-pub(crate) const MAX_IDENTITY_TOPOLOGY_EVENT_FACETS: usize =
+pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_FACETS: usize =
     MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS;
 
 pub(super) const BODY_KEY_KIND: &str = "kind";

@@ -209,7 +209,7 @@ impl SyncClient {
         }
     }
 
-    pub(crate) fn import_accepted_window_update(
+    pub(super) fn import_accepted_window_update(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,

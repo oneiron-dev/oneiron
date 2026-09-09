@@ -44,7 +44,7 @@ impl PolicyManifestDiagnostics {
 /// and any single matching pack that names it, resolve here. It is the posture
 /// that asks the owner rather than deciding for them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum CommOptOutPosture {
+pub(in crate::gate) enum CommOptOutPosture {
     /// Hold the send as a pending owner decision.
     #[default]
     Escalate,

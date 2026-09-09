@@ -134,7 +134,7 @@ fn optional_digest(v: Option<[u8; 32]>) -> rmpv::Value {
     v.map_or(rmpv::Value::Nil, |x| rmpv::Value::Binary(x.to_vec()))
 }
 
-pub(crate) fn encode_vault_import_receipt(r: &VaultImportStageReceipt) -> Result<Vec<u8>> {
+pub(super) fn encode_vault_import_receipt(r: &VaultImportStageReceipt) -> Result<Vec<u8>> {
     // Receipt state is part of the durable protocol, not merely display metadata.
     if WindowKey::try_new(r.window_key.clone()).is_none()
         || r.role != FederationAdmissionRole::Guest

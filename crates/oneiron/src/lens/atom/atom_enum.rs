@@ -343,7 +343,7 @@ impl LensAtom {
         }
     }
 
-    pub(crate) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
+    pub(in crate::lens) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
         match self {
             Self::TextBlock(atom) => budget.add_collection("text block spans", atom.spans.len()),
             Self::LedgerRow(atom) => budget.add_collection("ledger row cells", atom.cells.len()),

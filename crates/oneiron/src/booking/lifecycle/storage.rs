@@ -29,7 +29,7 @@ use crate::{EntityId, Vault};
 /// availability read and the write share a single writer lease. Handing out the
 /// lease is that property; a companion-local writer would be a second set of
 /// rules over the same rows.
-pub(crate) fn booking_writer<T, F>(vault: &Vault, apply: F) -> Result<T, BookingError>
+pub(in crate::booking) fn booking_writer<T, F>(vault: &Vault, apply: F) -> Result<T, BookingError>
 where
     F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T, BookingError>,
 {
@@ -156,7 +156,7 @@ pub(super) fn read_meta<T: DeserializeOwned>(
     decode_row(&raw).map(Some)
 }
 
-pub(crate) fn read_meta_bytes(
+pub(in crate::booking) fn read_meta_bytes(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     key: &[u8],

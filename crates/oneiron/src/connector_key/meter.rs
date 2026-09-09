@@ -20,7 +20,7 @@ pub const CONNECTOR_KEY_CHARTER_ROW_BASE: u16 = 0x8000;
 
 /// vault_meta usage rows: prefix ++ key id (16 bytes) ++ row_index u16 BE ->
 /// canonical msgpack `{window_start, entries, fired}`.
-pub(crate) const CONNECTOR_KEY_USAGE_PREFIX: &[u8] = b"connector_key/usage/v1\0";
+const CONNECTOR_KEY_USAGE_PREFIX: &[u8] = b"connector_key/usage/v1\0";
 
 pub(super) const SECONDS_PER_DAY: u64 = 86_400;
 
@@ -94,7 +94,7 @@ pub(crate) fn budget_exhausted_reason(row_index: u16) -> String {
 /// epoch instead of underflowing u64). Month: first-of-month 00:00:00 UTC via
 /// the Hinnant civil-date algorithm.
 #[must_use]
-pub(crate) fn calendar_window_start(period: CalendarPeriod, now: u64) -> u64 {
+pub(super) fn calendar_window_start(period: CalendarPeriod, now: u64) -> u64 {
     match period {
         CalendarPeriod::Day => now - now % SECONDS_PER_DAY,
         CalendarPeriod::Week => {
@@ -139,7 +139,7 @@ const fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 
 /// Live usage state for one (key, budget row) pair, stored in `vault_meta`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ConnectorKeyUsage {
+pub(super) struct ConnectorKeyUsage {
     /// Current calendar bucket start; 0 for rolling windows.
     pub(crate) window_start: u64,
     /// `(ts, amount)` debit log, pruned on every touch.

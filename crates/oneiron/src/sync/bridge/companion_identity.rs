@@ -275,7 +275,7 @@ pub(super) enum EndpointHydration {
 
 #[cfg(test)]
 thread_local! {
-    pub(crate) static INJECT_LOCAL_ENDPOINT_FAILURE: std::cell::Cell<Option<EntityId>> =
+    pub(in crate::sync) static INJECT_LOCAL_ENDPOINT_FAILURE: std::cell::Cell<Option<EntityId>> =
         const { std::cell::Cell::new(None) };
 }
 

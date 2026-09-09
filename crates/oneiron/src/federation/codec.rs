@@ -34,7 +34,7 @@ pub(crate) fn decode_entity_ref(value: &Value) -> Result<EntityId> {
 /// re-encode to different bytes than it arrived as. `delegated_by` is a fresh
 /// key with no shipped bodies behind it, so it is pinned canonical from the
 /// start and the grant body stays byte-stable across a decode/encode round.
-pub(crate) fn decode_canonical_entity_ref(value: &Value) -> Result<EntityId> {
+pub(super) fn decode_canonical_entity_ref(value: &Value) -> Result<EntityId> {
     let hex = value.as_str().ok_or_else(invalid_grant)?;
     let id = EntityId::from_hex(hex).map_err(|_| invalid_grant())?;
     if id.to_hex() == hex {

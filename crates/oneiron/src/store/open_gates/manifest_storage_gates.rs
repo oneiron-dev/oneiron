@@ -580,7 +580,7 @@ pub(super) fn gate_storage_versions(
 
 /// What the storage-ABI handshake decided for this open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StorageAbiGate {
+pub(in crate::store) enum StorageAbiGate {
     /// The stamp already equals the current version; nothing to do.
     Current,
     /// A genuinely new vault: stamp the current version.

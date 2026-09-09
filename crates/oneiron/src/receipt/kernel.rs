@@ -549,7 +549,7 @@ pub(super) fn lineage_scan_query() -> ReceiptQuery {
     ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN)
 }
 
-pub(crate) fn receipt_newest_first_order(
+pub(super) fn receipt_newest_first_order(
     left: &ReceiptRecord,
     right: &ReceiptRecord,
 ) -> std::cmp::Ordering {

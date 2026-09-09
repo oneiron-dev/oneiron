@@ -148,7 +148,7 @@ pub(crate) fn validate_calendar_claim_structure(body: &ClaimBody) -> Result<()> 
 ///
 /// A missing `busy_transparency` key decodes as [`CalendarBusyTransparency::Busy`]
 /// for back-compat; new writes include it.
-pub(crate) fn decode_time_kind_value(value: &Value) -> Result<CalendarTimeKindValue> {
+pub(in crate::calendar) fn decode_time_kind_value(value: &Value) -> Result<CalendarTimeKindValue> {
     let entries = value_map(value)?;
     validate_keys(entries, &[KEY_KIND, KEY_BUSY_TRANSPARENCY], &[KEY_KIND])?;
     let kind = CalendarTimeKind::parse(required_string(entries, KEY_KIND)?)
@@ -168,7 +168,7 @@ pub(crate) fn decode_time_kind_value(value: &Value) -> Result<CalendarTimeKindVa
 ///
 /// Field ranges are checked structurally; this is storage, not a calendar
 /// computation, so day-of-month is not validated against the month.
-pub(crate) fn decode_wall_time_value(value: &Value) -> Result<CalendarWallTimeValue> {
+pub(in crate::calendar) fn decode_wall_time_value(value: &Value) -> Result<CalendarWallTimeValue> {
     let entries = value_map(value)?;
     let keys = [
         KEY_YEAR, KEY_MONTH, KEY_DAY, KEY_HOUR, KEY_MINUTE, KEY_SECOND,
@@ -185,7 +185,9 @@ pub(crate) fn decode_wall_time_value(value: &Value) -> Result<CalendarWallTimeVa
 }
 
 /// Decodes a `calendar.series_master` value.
-pub(crate) fn decode_series_master_value(value: &Value) -> Result<CalendarSeriesMasterValue> {
+pub(in crate::calendar) fn decode_series_master_value(
+    value: &Value,
+) -> Result<CalendarSeriesMasterValue> {
     let entries = value_map(value)?;
     let keys = [KEY_RRULE, KEY_DTSTART_UTC, KEY_TZ];
     validate_keys(entries, &keys, &keys)?;
@@ -201,7 +203,9 @@ pub(crate) fn decode_series_master_value(value: &Value) -> Result<CalendarSeries
 }
 
 /// Decodes a `calendar.series_exception` value.
-pub(crate) fn decode_series_exception_value(value: &Value) -> Result<CalendarSeriesExceptionValue> {
+pub(in crate::calendar) fn decode_series_exception_value(
+    value: &Value,
+) -> Result<CalendarSeriesExceptionValue> {
     let entries = value_map(value)?;
     let keys = [KEY_MASTER_REF, KEY_UID, KEY_ORIGINAL_START_UTC];
     validate_keys(entries, &keys, &keys)?;
@@ -215,7 +219,7 @@ pub(crate) fn decode_series_exception_value(value: &Value) -> Result<CalendarSer
 }
 
 /// Decodes a `calendar.successor` value.
-pub(crate) fn decode_successor_value(value: &Value) -> Result<CalendarSuccessorValue> {
+pub(in crate::calendar) fn decode_successor_value(value: &Value) -> Result<CalendarSuccessorValue> {
     let entries = value_map(value)?;
     validate_keys(entries, &[KEY_PREDECESSOR_REF], &[KEY_PREDECESSOR_REF])?;
     Ok(CalendarSuccessorValue {
@@ -224,7 +228,7 @@ pub(crate) fn decode_successor_value(value: &Value) -> Result<CalendarSuccessorV
 }
 
 /// Decodes a `calendar.attendee` value, preserving vendor role/partstat text.
-pub(crate) fn decode_attendee_value(value: &Value) -> Result<CalendarAttendeeValue> {
+pub(in crate::calendar) fn decode_attendee_value(value: &Value) -> Result<CalendarAttendeeValue> {
     let entries = value_map(value)?;
     let keys = [KEY_WHO, KEY_ROLE, KEY_PARTSTAT];
     validate_keys(entries, &keys, &keys)?;
@@ -282,7 +286,7 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
 }
 
 /// Decodes a `calendar.status` value.
-pub(crate) fn decode_status_value(value: &Value) -> Result<CalendarStatusValue> {
+pub(in crate::calendar) fn decode_status_value(value: &Value) -> Result<CalendarStatusValue> {
     let entries = value_map(value)?;
     let keys = [KEY_STATUS, KEY_BASIS, KEY_RECORDED_AT];
     validate_keys(entries, &keys, &keys)?;
@@ -304,7 +308,7 @@ pub(crate) fn decode_status_value(value: &Value) -> Result<CalendarStatusValue> 
 /// the value: without it, every writer would re-spell this module's key literals
 /// and the closed token sets, which is exactly how a family's wire shape drifts.
 #[must_use]
-pub(crate) fn encode_event_outcome_value(value: &EventOutcomeClaimValue) -> Value {
+pub(in crate::calendar) fn encode_event_outcome_value(value: &EventOutcomeClaimValue) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_OUTCOME),

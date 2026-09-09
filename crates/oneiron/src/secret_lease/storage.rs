@@ -73,7 +73,7 @@ pub(super) fn write_materialization_receipt_in_txn(
 }
 
 #[cfg(test)]
-pub(crate) mod receipt_fault_hook {
+pub(super) mod receipt_fault_hook {
     //! One-shot test-only fault injection on the materialization-receipt
     //! write, proving the S3 ordering: a failed receipt write leaves no
     //! lease row and returns no value.
@@ -88,12 +88,12 @@ pub(crate) mod receipt_fault_hook {
     }
 
     /// Arms a one-shot receipt-write failure on the current thread.
-    pub(crate) fn arm_receipt_write_failure() {
+    pub(in crate::secret_lease) fn arm_receipt_write_failure() {
         RECEIPT_WRITE_FAILURE.with(|c| c.set(true));
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(crate) fn take_receipt_write_failure() -> bool {
+    pub(super) fn take_receipt_write_failure() -> bool {
         RECEIPT_WRITE_FAILURE.with(|c| c.replace(false))
     }
 }
@@ -131,7 +131,7 @@ pub(super) fn write_local_registration_in_txn(
 }
 
 #[cfg(test)]
-pub(crate) mod registration_fault_hook {
+pub(super) mod registration_fault_hook {
     //! One-shot test-only fault injection on the local-registration write,
     //! proving the SOL-1920-03 file guard: a failed row write after the
     //! file lands removes the file the attempt created fresh.
@@ -144,12 +144,12 @@ pub(crate) mod registration_fault_hook {
     }
 
     /// Arms a one-shot registration-write failure on the current thread.
-    pub(crate) fn arm_registration_write_failure() {
+    pub(in crate::secret_lease) fn arm_registration_write_failure() {
         REGISTRATION_WRITE_FAILURE.with(|c| c.set(true));
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(crate) fn take_registration_write_failure() -> bool {
+    pub(super) fn take_registration_write_failure() -> bool {
         REGISTRATION_WRITE_FAILURE.with(|c| c.replace(false))
     }
 }

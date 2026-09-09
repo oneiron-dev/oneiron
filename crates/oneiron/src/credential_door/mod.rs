@@ -150,7 +150,7 @@ use rmpv::Value;
 use std::sync::Arc;
 
 #[cfg(test)]
-pub(crate) mod scan_fault_hook {
+mod scan_fault_hook {
     //! One-shot test-only fault injection on the scan, proving the
     //! fail-closed arm: a scan that could not run is a rejection, never a
     //! pass.
@@ -162,18 +162,18 @@ pub(crate) mod scan_fault_hook {
     }
 
     /// Arms a one-shot scanner failure on the current thread.
-    pub(crate) fn arm_scanner_failure() {
+    pub(super) fn arm_scanner_failure() {
         SCANNER_FAILURE.with(|cell| cell.set(true));
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(crate) fn take_scanner_failure() -> bool {
+    pub(super) fn take_scanner_failure() -> bool {
         SCANNER_FAILURE.with(|cell| cell.replace(false))
     }
 }
 
 #[cfg(test)]
-pub(crate) mod authority_log_fault_hook {
+mod authority_log_fault_hook {
     //! One-shot test-only fault injection on the single-use witness, proving
     //! that a verifier which cannot reach the authority log refuses the
     //! caveat instead of assuming it holds.
@@ -185,12 +185,12 @@ pub(crate) mod authority_log_fault_hook {
     }
 
     /// Arms a one-shot unreachable authority log on the current thread.
-    pub(crate) fn arm_log_unreachable() {
+    pub(super) fn arm_log_unreachable() {
         LOG_UNREACHABLE.with(|cell| cell.set(true));
     }
 
     /// Returns and clears the armed flag (one-shot).
-    pub(crate) fn take_log_unreachable() -> bool {
+    pub(super) fn take_log_unreachable() -> bool {
         LOG_UNREACHABLE.with(|cell| cell.replace(false))
     }
 }

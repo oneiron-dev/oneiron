@@ -38,13 +38,13 @@ pub(crate) fn counterparty_contact_index_key(
     Ok(key)
 }
 
-pub(crate) fn counterparty_contact_index_key_for_record(
+pub(super) fn counterparty_contact_index_key_for_record(
     record: &CounterpartyContactRecord,
 ) -> Result<Vec<u8>> {
     counterparty_contact_index_key(&record.identity_ref, &record.counterparty)
 }
 
-pub(crate) fn encode_counterparty_contact_index_value(id: &EntityId) -> [u8; ENTITY_ID_LEN] {
+pub(super) fn encode_counterparty_contact_index_value(id: &EntityId) -> [u8; ENTITY_ID_LEN] {
     *id.as_bytes()
 }
 
@@ -120,7 +120,7 @@ fn decode_party_channel_index_value(raw: &[u8]) -> Result<Vec<EntityId>> {
 }
 
 /// Appends `contact_ref` to the canonical de-duplicated set for this pair.
-pub(crate) fn put_counterparty_contact_party_channel_index(
+pub(super) fn put_counterparty_contact_party_channel_index(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     party_ref: &str,
@@ -167,7 +167,7 @@ pub(super) fn remove_counterparty_contact_party_channel_index(
 ///
 /// `None` means UNKNOWN, never "no class": see
 /// [`counterparty_contact_matches_channel_class`].
-pub(crate) fn counterparty_contact_channel_class(
+pub(super) fn counterparty_contact_channel_class(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &CounterpartyContactRecord,

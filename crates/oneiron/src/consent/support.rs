@@ -12,7 +12,7 @@ use super::effect::{EffectDigest, UndoFidelity};
 
 /// `vault_meta` key prefix for canonical standing consent-grant rows. Owned by
 /// this module; suffix is the 16-byte grant id.
-pub(crate) const CONSENT_GRANT_KEY_PREFIX: &[u8] = b"consent.grant.v1:";
+pub(super) const CONSENT_GRANT_KEY_PREFIX: &[u8] = b"consent.grant.v1:";
 
 /// `vault_meta` key prefix for approve-once state. Owned by this module;
 /// suffix is the 32-byte effect digest. Minting writes an available marker in
@@ -20,7 +20,7 @@ pub(crate) const CONSENT_GRANT_KEY_PREFIX: &[u8] = b"consent.grant.v1:";
 /// to spent in the transaction that authorizes the effect. Presence therefore
 /// rejects a duplicate mint, while the state distinguishes the one live tap
 /// from a replay (DEC-0006 invariant 2).
-pub(crate) const CONSENT_APPROVE_ONCE_KEY_PREFIX: &[u8] = b"consent.once.v1:";
+const CONSENT_APPROVE_ONCE_KEY_PREFIX: &[u8] = b"consent.once.v1:";
 
 const CONSENT_APPROVE_ONCE_MARKER_VERSION: u8 = 1;
 pub(super) const CONSENT_APPROVE_ONCE_AVAILABLE: u8 = 0;

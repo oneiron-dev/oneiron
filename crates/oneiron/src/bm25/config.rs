@@ -100,7 +100,7 @@ impl Bm25RecencyConfig {
 /// out-of-bounds index `Bm25Config::fields`; the const block below ties
 /// this constant to the highest-id channel so adding a variant without
 /// growing the array breaks the build.
-pub(crate) const BM25_FIELD_COUNT: usize = AnalyzerChannel::ALL_RESERVED.len();
+pub(super) const BM25_FIELD_COUNT: usize = AnalyzerChannel::ALL_RESERVED.len();
 
 const _: () = {
     // The reserved-channel set is `Surface, Stem, NormalizedOverlay,

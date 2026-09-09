@@ -40,7 +40,7 @@ pub fn authorize_sync_selector(
 ///
 /// Delegate expiry is a wall-clock edge, so the tests that pin the exact
 /// second it flips must not race the real clock to reach it.
-pub(crate) fn authorize_sync_selector_at(
+pub(super) fn authorize_sync_selector_at(
     vault: &Vault,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,

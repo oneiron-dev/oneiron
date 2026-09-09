@@ -30,7 +30,10 @@ impl SessionVault<'_> {
     /// round (one turn, one replay record, one raw output) through the
     /// bound storage; `GuestTurnRef` calls the session-side witness entry
     /// with a guest-supplied turn ref.
-    pub(crate) fn dispatch_executor_verb(&self, verb: &str) -> SeamResult<()> {
+    pub(in crate::branch_store_oracle) fn dispatch_executor_verb(
+        &self,
+        verb: &str,
+    ) -> SeamResult<()> {
         self.run_executor_verb(verb).map_err(map_executor_error)
     }
 
@@ -41,7 +44,10 @@ impl SessionVault<'_> {
     /// off-record concern and must not be folded into a [`SeamError`] that
     /// would blur it with one. The post-flip claim is about which check
     /// spoke, so the kind is exactly the right resolution.
-    pub(crate) fn executor_verb_error_kind(&self, verb: &str) -> Option<crate::error::ErrorKind> {
+    pub(in crate::branch_store_oracle) fn executor_verb_error_kind(
+        &self,
+        verb: &str,
+    ) -> Option<crate::error::ErrorKind> {
         self.run_executor_verb(verb).err().map(|error| error.kind())
     }
 
@@ -64,10 +70,7 @@ impl SessionVault<'_> {
     }
 
     /// The executor's session-bound `self.*` dispatcher.
-    pub(crate) fn session_dispatcher(
-        &self,
-        run_ref: &str,
-    ) -> Result<crate::code_run::HostSelfDispatcher<'_>> {
+    fn session_dispatcher(&self, run_ref: &str) -> Result<crate::code_run::HostSelfDispatcher<'_>> {
         crate::code_run::HostSelfDispatcher::for_off_record_session(
             &self.session,
             crate::WriteActor::new(
@@ -84,7 +87,7 @@ impl SessionVault<'_> {
     /// ONE-1729: the ungated fixture write, reporting the claim id it
     /// used so a caller can prove THAT row reached base rather than
     /// counting rows other verbs may also have moved.
-    pub(crate) fn dispatch_fixture_write(&self) -> Result<EntityId> {
+    pub(in crate::branch_store_oracle) fn dispatch_fixture_write(&self) -> Result<EntityId> {
         let id = EntityId::now();
         crate::code_run::SelfDispatcher::dispatch(
             &self.session_dispatcher("oracle-fixture-write")?,
@@ -186,7 +189,9 @@ impl SessionVault<'_> {
 
     /// ONE-1729: the session-owned conversation shell a bound run's turns
     /// ride, read back through the dispatcher the executor holds.
-    pub(crate) fn dispatcher_container_id(&self) -> Result<Option<EntityId>> {
+    pub(in crate::branch_store_oracle) fn dispatcher_container_id(
+        &self,
+    ) -> Result<Option<EntityId>> {
         Ok(self
             .session_dispatcher("oracle-container")?
             .session_container_id()
@@ -195,7 +200,7 @@ impl SessionVault<'_> {
 
     /// ONE-1729: the conversation every MESSAGE in the room belongs to.
     /// Exactly one, or the room shredded into a conversation per turn.
-    pub(crate) fn session_message_shells(&self) -> Result<Vec<EntityId>> {
+    pub(in crate::branch_store_oracle) fn session_message_shells(&self) -> Result<Vec<EntityId>> {
         let view = self.session.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         let mut shells = Vec::new();
@@ -224,7 +229,7 @@ impl SessionVault<'_> {
 /// script to a SessionOverlay keyspace over the given base rows and to a
 /// `BTreeMap` model, then returns both sides' full iteration for the
 /// requested window so tests can assert exact sequence equality.
-pub(crate) struct OverlayModelHarness {
+pub(in crate::branch_store_oracle) struct OverlayModelHarness {
     env: Env,
     _dir: tempfile::TempDir,
     rows: OverlayDb,
@@ -320,7 +325,7 @@ impl OverlayModelHarness {
             .collect()
     }
 
-    pub(crate) fn model_prefix_iter(&self, prefix: &[u8]) -> Vec<ModelRow> {
+    pub(in crate::branch_store_oracle) fn model_prefix_iter(&self, prefix: &[u8]) -> Vec<ModelRow> {
         self.model
             .iter()
             .filter(|(key, _)| key.starts_with(prefix))
@@ -328,7 +333,10 @@ impl OverlayModelHarness {
             .collect()
     }
 
-    pub(crate) fn model_rev_range(&self, bounds: (Bound<&[u8]>, Bound<&[u8]>)) -> Vec<ModelRow> {
+    pub(in crate::branch_store_oracle) fn model_rev_range(
+        &self,
+        bounds: (Bound<&[u8]>, Bound<&[u8]>),
+    ) -> Vec<ModelRow> {
         self.model
             .iter()
             .filter(|(key, _)| key_in_bounds(key, bounds))
@@ -338,7 +346,7 @@ impl OverlayModelHarness {
     }
 
     /// Merged DUP_SORT duplicate items for one `text_postings` term key.
-    pub(crate) fn dup_items(&self, term: &[u8]) -> Result<Vec<Vec<u8>>> {
+    pub(in crate::branch_store_oracle) fn dup_items(&self, term: &[u8]) -> Result<Vec<Vec<u8>>> {
         let rtxn = self.env.read_txn()?;
         let Some(iter) = self.duplicates.get_duplicates(&rtxn, term)? else {
             return Ok(Vec::new());
@@ -350,7 +358,7 @@ impl OverlayModelHarness {
 
 /// ONE-1726 overlay mutation script entries.
 #[derive(Clone)]
-pub(crate) enum OverlayOp {
+pub(in crate::branch_store_oracle) enum OverlayOp {
     Put(Vec<u8>, Vec<u8>),
     Delete(Vec<u8>),
     /// Append one DUP_SORT duplicate item under a term key.
@@ -360,7 +368,7 @@ pub(crate) enum OverlayOp {
 /// ONE-1726: run `script` inside ONE base write txn through the
 /// read-through txn segment; `probe` runs under the same live txn and
 /// must observe read-your-writes; returns what the probe read.
-pub(crate) fn with_txn_segment_read_back(
+pub(in crate::branch_store_oracle) fn with_txn_segment_read_back(
     vault: &Vault,
     session: &SessionVault<'_>,
     script: &[OverlayOp],
@@ -383,7 +391,7 @@ pub(crate) fn with_txn_segment_read_back(
 
 /// ONE-1726: abort the base txn after staging `script`; returns
 /// (overlay rows visible afterwards, typed-journal entries afterwards).
-pub(crate) fn stage_then_abort(
+pub(in crate::branch_store_oracle) fn stage_then_abort(
     vault: &Vault,
     session: &SessionVault<'_>,
     script: &[OverlayOp],
@@ -413,7 +421,7 @@ pub(crate) fn stage_then_abort(
 /// ONE-1727-native crash payload: populate multiple manifest slots and
 /// the typed journal through the substrate directly, without the
 /// ONE-1728 witness/retrieval surface.
-pub(crate) fn stage_direct_crash_payload(
+pub(in crate::branch_store_oracle) fn stage_direct_crash_payload(
     session: &SessionVault<'_>,
 ) -> Result<(usize, usize, usize, usize)> {
     let overlay = session.session.overlay();
@@ -457,7 +465,7 @@ pub(crate) fn stage_direct_crash_payload(
 
 /// ONE-1726: byte budget configured to `budget` bytes; returns the typed
 /// error produced by the first over-budget insert.
-pub(crate) fn overflow_budget(
+pub(in crate::branch_store_oracle) fn overflow_budget(
     vault: &Vault,
     session: &SessionVault<'_>,
     budget: usize,
@@ -488,7 +496,7 @@ pub(crate) fn overflow_budget(
 /// ONE-1726: take a read snapshot, apply `script` concurrently, then
 /// finish iterating the snapshot; returns (rows seen by the snapshot,
 /// rows a fresh read sees).
-pub(crate) fn snapshot_vs_concurrent_apply(
+pub(in crate::branch_store_oracle) fn snapshot_vs_concurrent_apply(
     vault: &Vault,
     session: &SessionVault<'_>,
     script: &[OverlayOp],
@@ -518,7 +526,10 @@ pub(crate) fn snapshot_vs_concurrent_apply(
 }
 
 /// ONE-1726: close the overlay, then attempt a lease-holding read.
-pub(crate) fn read_after_close(vault: &Vault, session_ref: &str) -> SeamError {
+pub(in crate::branch_store_oracle) fn read_after_close(
+    vault: &Vault,
+    session_ref: &str,
+) -> SeamError {
     let session = SessionVault::enter(vault, session_ref).expect("enter session");
     let overlay = session.session.overlay();
     session.close().expect("close session");

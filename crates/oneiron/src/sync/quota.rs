@@ -209,16 +209,16 @@ impl Default for MaintenanceIngestQuotaConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MaintenanceIngestPeerKey([u8; 32]);
+pub(super) struct MaintenanceIngestPeerKey([u8; 32]);
 
 /// A quota debit that can be restored when later replicated-write validation
 /// rejects the same remote op in a still-open Observer-B transaction.
-pub(crate) struct MaintenanceIngestQuotaDebit {
+pub(super) struct MaintenanceIngestQuotaDebit {
     key: Vec<u8>,
     previous_value: Option<[u8; MAINTENANCE_INGEST_QUOTA_VALUE_LEN]>,
 }
 
-pub(crate) fn try_accept_maintenance_ingest_peer_in_txn(
+pub(super) fn try_accept_maintenance_ingest_peer_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     peer_key: MaintenanceIngestPeerKey,
@@ -273,7 +273,7 @@ pub(crate) fn try_accept_maintenance_ingest_peer_in_txn(
     }))
 }
 
-pub(crate) fn rollback_maintenance_ingest_debit_in_txn(
+pub(super) fn rollback_maintenance_ingest_debit_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     debit: MaintenanceIngestQuotaDebit,
@@ -346,18 +346,18 @@ pub fn set_maintenance_ingest_quota_config(
     Ok(())
 }
 
-pub(crate) fn peer_key_from_authority_key(key: &AuthorityKey) -> MaintenanceIngestPeerKey {
+pub(super) fn peer_key_from_authority_key(key: &AuthorityKey) -> MaintenanceIngestPeerKey {
     match key {
         AuthorityKey::Ed25519(bytes) => peer_key_from_signature_key(b"ed25519", bytes),
         AuthorityKey::P256(bytes) => peer_key_from_signature_key(b"p256", bytes),
     }
 }
 
-pub(crate) fn peer_key_from_redaction_pubkey(pubkey: &[u8; 32]) -> MaintenanceIngestPeerKey {
+pub(super) fn peer_key_from_redaction_pubkey(pubkey: &[u8; 32]) -> MaintenanceIngestPeerKey {
     peer_key_from_signature_key(b"ed25519", pubkey)
 }
 
-pub(crate) fn peer_key_from_unknown_authority_signer(
+pub(super) fn peer_key_from_unknown_authority_signer(
     vault_id: AuthorityVaultId,
 ) -> MaintenanceIngestPeerKey {
     peer_key_from_signature_key(b"authority-unknown-vault", &vault_id)
@@ -367,7 +367,7 @@ pub(crate) fn peer_key_from_unknown_authority_signer(
 /// stream carries no per-record signature material yet (lease attestation
 /// is a flagged follow-up), so ingest is bounded per lease-scoped stream
 /// rather than per signer.
-pub(crate) fn peer_key_from_identity_topology_stream(
+pub(super) fn peer_key_from_identity_topology_stream(
     lease_vault_id: u64,
 ) -> MaintenanceIngestPeerKey {
     peer_key_from_signature_key(b"identity-topology-stream", &lease_vault_id.to_be_bytes())
@@ -375,7 +375,7 @@ pub(crate) fn peer_key_from_identity_topology_stream(
 
 /// Diagnostics carry no signer. Bound their aggregate ingest by the local
 /// lease-scoped stream, never by peer-controlled body fields or event ids.
-pub(crate) fn peer_key_from_diagnostic_stream(lease_vault_id: u64) -> MaintenanceIngestPeerKey {
+pub(super) fn peer_key_from_diagnostic_stream(lease_vault_id: u64) -> MaintenanceIngestPeerKey {
     peer_key_from_signature_key(b"diagnostic-stream", &lease_vault_id.to_be_bytes())
 }
 

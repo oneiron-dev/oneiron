@@ -64,7 +64,7 @@ impl<'de> serde::Deserialize<'de> for HexEntityId {
 /// escapes this module, and `AgentDefinition` stays the only public model.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SystemAgentDefinitionManifest {
+pub(super) struct SystemAgentDefinitionManifest {
     version: u8,
     pub(super) definitions: Vec<SystemAgentDefinitionSeed>,
 }
@@ -218,7 +218,7 @@ fn json_to_msgpack(value: &serde_json::Value) -> Value {
 
 /// Parses and fully validates a seeded-roster manifest. MALFORMED IS NOT
 /// MISSING: every rejection here aborts open before any row is staged.
-pub(crate) fn parse_system_agent_definition_manifest(
+pub(super) fn parse_system_agent_definition_manifest(
     json: &str,
 ) -> Result<SystemAgentDefinitionManifest> {
     let manifest: SystemAgentDefinitionManifest = serde_json::from_str(json).map_err(|_| {
@@ -334,7 +334,7 @@ pub(crate) fn seed_system_agent_definitions(
 /// never overwrite what exists, fail closed on a foreign occupant. LMDB write
 /// serialization plus deterministic ids makes concurrent opens converge — the
 /// later writer observes the first writer's committed row and writes nothing.
-pub(crate) fn reconcile_system_agent_definitions_in(
+pub(super) fn reconcile_system_agent_definitions_in(
     store: &crate::store::Store,
     config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,

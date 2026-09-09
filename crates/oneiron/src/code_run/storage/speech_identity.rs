@@ -49,7 +49,7 @@ fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
 /// The legacy standalone conversation identity. Runtime executor paths use
 /// [`canonical_speech_conversation_id_for_run`] with their durable run id.
 #[cfg(test)]
-pub(crate) fn canonical_speech_conversation_id(run_ref: &str) -> Result<EntityId> {
+pub(in crate::code_run) fn canonical_speech_conversation_id(run_ref: &str) -> Result<EntityId> {
     canonical_speech_conversation_id_for_run(run_ref, None)
 }
 

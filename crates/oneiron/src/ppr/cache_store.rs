@@ -28,7 +28,7 @@ pub(super) const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
 pub(super) const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 pub(super) const CACHE_TTL_ACTIVE_SECS: u64 = 86_400;
 pub(super) const CACHE_TTL_RECENT_SECS: u64 = 259_200;
-pub(crate) const CACHE_TTL_DORMANT_SECS: u64 = 604_800;
+pub(super) const CACHE_TTL_DORMANT_SECS: u64 = 604_800;
 /// Seed recency strictly below this bound is the Active tier (`< 7d`).
 const SEED_RECENCY_ACTIVE_LIMIT_SECS: u64 = 7 * 86_400;
 /// Seed recency strictly below this bound (and ≥ the Active limit) is the

@@ -14,10 +14,10 @@ use crate::error::{Error, Result};
 pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "core.lexical.query_hint";
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
-pub(crate) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
+pub(super) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
 
 /// Maximum UTF-8 byte length of one prospective query hint.
-pub(crate) const MAX_LEXICAL_QUERY_HINT_BYTES: usize = 256;
+pub(super) const MAX_LEXICAL_QUERY_HINT_BYTES: usize = 256;
 pub(crate) const LEXICAL_QUERY_HINT_ID_PREFIX: [u8; 2] = *b"LH";
 
 const LEXICAL_HINT_KIND: &str = "prospective_query";
