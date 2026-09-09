@@ -468,7 +468,7 @@ fn escape_receipt_stamp_label(label: &str) -> String {
 }
 
 /// Agent-visible disclosure block riding the context-pack response and the
-/// Eiri memory board. `clamped_out` counts scored candidates dropped by the
+/// MEMORIES board. `clamped_out` counts scored candidates dropped by the
 /// clamp's CANDIDATE SWEEP this assembly (the walk/edge/final enforcement
 /// points drop without counting — design §9); it is diagnostic and is NOT
 /// persisted on receipts.

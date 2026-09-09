@@ -7,7 +7,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
 pub const DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH: &str = "packages/prompts";
-pub const EIRI_V3_PROMPT_RELATIVE_PATH: &str = "eiri/v3.md";
+pub const SESSION_PROMPT_V3_RELATIVE_PATH: &str = "eiri/v3.md";
 pub const ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH: &str = "blocks/engine-executor-wire.md";
 pub const PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION: &str = "oneiron.prompt_recompile.v1";
 
@@ -71,10 +71,12 @@ pub fn workspace_prompt_package_root() -> Result<PathBuf, io::Error> {
     }
 }
 
-pub fn resolve_eiri_v3_prompt(package_root: impl AsRef<Path>) -> Result<ResolvedPrompt, io::Error> {
+pub fn resolve_session_prompt_v3(
+    package_root: impl AsRef<Path>,
+) -> Result<ResolvedPrompt, io::Error> {
     let package_root = package_root.as_ref();
     resolve_prompt(
-        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
         package_root,
     )
 }
@@ -103,11 +105,11 @@ pub fn resolve_prompt(
     Ok(ResolvedPrompt { text, stamp })
 }
 
-pub fn assemble_eiri_session_prompt(
+pub fn assemble_session_prompt(
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<SessionPromptAssembly, io::Error> {
-    let resolved = resolve_eiri_v3_prompt(package_root)?;
+    let resolved = resolve_session_prompt_v3(package_root)?;
     let system_prompt = assemble_system_prompt(
         &resolved.text,
         parts.off_record_marker.as_deref(),
@@ -129,12 +131,12 @@ pub fn assemble_eiri_session_prompt(
     })
 }
 
-pub fn build_eiri_session_request(
+pub fn build_session_request(
     mut request: LlmRequest,
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<StampedLlmRequest, io::Error> {
-    let assembly = assemble_eiri_session_prompt(package_root, parts)?;
+    let assembly = assemble_session_prompt(package_root, parts)?;
     request.messages = assembly.messages;
     Ok(StampedLlmRequest {
         request,

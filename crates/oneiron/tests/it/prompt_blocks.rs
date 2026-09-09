@@ -6,8 +6,8 @@ use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
     LlmMessageRole, LlmRequest, LlmToolSpec, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence, off_record::OffRecordBackendClass, off_record::OffRecordMode,
-    prompt::EIRI_V3_PROMPT_RELATIVE_PATH, prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION,
-    prompt::SessionPromptParts, prompt::build_eiri_session_request, prompt::resolve_prompt,
+    prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, prompt::SESSION_PROMPT_V3_RELATIVE_PATH,
+    prompt::SessionPromptParts, prompt::build_session_request, prompt::resolve_prompt,
     prompt::workspace_prompt_package_root,
 };
 
@@ -53,7 +53,7 @@ const REQUIRED_SELF_DISCLOSURE_LINES: [&str; 7] = [
 fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::Error>> {
     let package_root = workspace_prompt_package_root()?;
     let block_path = package_root.join("blocks/wellbeing-consent.md");
-    let prompt_path = package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH);
+    let prompt_path = package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH);
 
     let block = fs::read_to_string(block_path)?;
     for required_line in REQUIRED_WELLBEING_CONSENT_LINES {
@@ -78,7 +78,7 @@ fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::
 fn eiri_v3_resolves_self_disclosure_block() -> Result<(), Box<dyn std::error::Error>> {
     let package_root = workspace_prompt_package_root()?;
     let block_path = package_root.join("blocks/self-disclosure.md");
-    let prompt_path = package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH);
+    let prompt_path = package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH);
 
     let block = fs::read_to_string(block_path)?;
     for required_line in REQUIRED_SELF_DISCLOSURE_LINES {
@@ -147,7 +147,7 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
     fs::create_dir_all(package_root.join("eiri"))?;
     fs::create_dir_all(package_root.join("blocks"))?;
     fs::write(
-        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
         "# Eiri v3\n\n@include blocks/persona.md\n",
     )?;
     fs::write(
@@ -156,7 +156,7 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
     )?;
 
     let history = vec![user_message("hello")];
-    let first = build_eiri_session_request(
+    let first = build_session_request(
         sample_request(),
         &package_root,
         SessionPromptParts {
@@ -174,7 +174,7 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
         package_root.join("blocks/persona.md"),
         "updated persona line\n",
     )?;
-    let second = build_eiri_session_request(
+    let second = build_session_request(
         sample_request(),
         &package_root,
         SessionPromptParts {
@@ -202,7 +202,7 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
     fs::create_dir_all(package_root.join("eiri"))?;
     fs::create_dir_all(package_root.join("blocks"))?;
     fs::write(
-        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
         "# Eiri v3\n\n@include blocks/persona.md\n",
     )?;
     fs::write(
@@ -210,7 +210,7 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
         "soul persona line\n",
     )?;
 
-    let stamped = build_eiri_session_request(
+    let stamped = build_session_request(
         sample_request(),
         &package_root,
         SessionPromptParts {
@@ -231,10 +231,10 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
         stamped.stamp.schema_version,
         PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION
     );
-    assert_eq!(stamped.stamp.prompt_path, EIRI_V3_PROMPT_RELATIVE_PATH);
+    assert_eq!(stamped.stamp.prompt_path, SESSION_PROMPT_V3_RELATIVE_PATH);
     assert_eq!(
         stamped.stamp.source_paths,
-        vec!["blocks/persona.md", EIRI_V3_PROMPT_RELATIVE_PATH]
+        vec!["blocks/persona.md", SESSION_PROMPT_V3_RELATIVE_PATH]
     );
     assert!(!stamped.stamp.source_fingerprint.is_empty());
     assert!(!stamped.stamp.resolved_fingerprint.is_empty());
@@ -247,7 +247,7 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
     let package_root = temp.path().join("packages/prompts");
     fs::create_dir_all(package_root.join("eiri"))?;
     fs::write(
-        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
         "soul persona line\n",
     )?;
 
@@ -256,7 +256,7 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
         OffRecordBackendClass::RemoteProvider,
     )
     .expect("off-record mode requires a host marker");
-    let stamped = build_eiri_session_request(
+    let stamped = build_session_request(
         sample_request(),
         &package_root,
         SessionPromptParts {
@@ -277,7 +277,7 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
         "backend-relative disclosure line must ride the marker"
     );
 
-    let plain = build_eiri_session_request(
+    let plain = build_session_request(
         sample_request(),
         &package_root,
         SessionPromptParts {
