@@ -26,10 +26,7 @@ pub use self::types::{
     guest_response_with_budget,
 };
 #[cfg(test)]
-pub(crate) use self::wire::{
-    ExecutorWireRepairs, HealedExecutorReply, heal_executor_reply,
-    partition_top_level_console_blocks,
-};
+pub(crate) use self::wire::{ExecutorWireRepairs, HealedExecutorReply, heal_executor_reply};
 
 #[cfg(test)]
 mod tests;
@@ -39,7 +36,7 @@ mod tests;
 // bare. After the directory split the seam re-imports them so `tests.rs`
 // resolves exactly as it did before.
 #[cfg(test)]
-use self::{host::*, record::*, store::*, wire::*};
+use self::{host::*, record::*, store::*};
 // The flat module's own crate/std import header, restored for the same reason:
 // `tests.rs` names these bare through `use super::*`.
 #[cfg(test)]

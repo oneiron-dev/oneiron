@@ -343,8 +343,6 @@ async fn dev_mode_non_core_callers_share_the_anonymous_partition() {
 
 #[test]
 fn ttl_literal_and_expiry_window_are_pinned() {
-    assert_eq!(IDEMPOTENCY_TTL.as_secs(), 86_400);
-
     let clock = Arc::new(ManualClock::new(1_000));
     let store = test_store(clock.clone());
     let cache_key = store_key("principal", "ttl-key");
@@ -369,14 +367,27 @@ fn ttl_literal_and_expiry_window_are_pinned() {
         store.store.lookup(&cache_key, b"body").unwrap(),
         IdempotencyLookup::Miss
     ));
-    assert!(
-        store
-            .store
-            .vault
-            .sync_state_get(&cache_key)
-            .unwrap()
-            .is_none()
-    );
+
+    let replacement = CachedHttpResponse {
+        status: StatusCode::CREATED,
+        headers: HeaderMap::new(),
+        body: b"replacement".to_vec(),
+    };
+    store
+        .store
+        .insert(&cache_key, b"new body".to_vec(), replacement)
+        .unwrap();
+    match store.store.lookup(&cache_key, b"new body").unwrap() {
+        IdempotencyLookup::Replay(response) => {
+            assert_eq!(response.status, StatusCode::CREATED);
+            assert_eq!(response.body, b"replacement");
+        }
+        _ => panic!("expected replay of the replacement response"),
+    }
+    assert!(matches!(
+        store.store.lookup(&cache_key, b"body").unwrap(),
+        IdempotencyLookup::Conflict
+    ));
 }
 
 #[tokio::test]

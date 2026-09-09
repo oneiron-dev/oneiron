@@ -19,11 +19,6 @@ pub(super) fn reset_gate_receipt_pages_scanned() {
 }
 
 #[cfg(test)]
-pub(super) fn gate_receipt_pages_scanned() -> usize {
-    GATE_RECEIPT_PAGES_SCANNED.get()
-}
-
-#[cfg(test)]
 pub(super) fn gate_receipt_max_buffered() -> usize {
     GATE_RECEIPT_MAX_BUFFERED.get()
 }

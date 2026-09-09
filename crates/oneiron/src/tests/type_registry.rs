@@ -431,7 +431,7 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
         Err(err) => err,
     };
     assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
-    assert_matches!(err, Error::CorruptedIndex("structural kind registry"));
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 

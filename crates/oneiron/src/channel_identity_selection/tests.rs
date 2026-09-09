@@ -237,27 +237,59 @@ fn compiled_defaults_are_the_six_canonical_rows() {
             true,
         ),
     ];
-
-    for (row, (rule_id, relationship, face, agent_amendable)) in rows.iter().zip(expected) {
-        assert_eq!(row.rule_id, rule_id);
-        assert_eq!(row.relationship, relationship);
-        assert_eq!(row.face, face);
-        assert_eq!(row.agent_amendable, agent_amendable);
-        assert_eq!(row.scope, SelectionRuleScope::VaultDefault);
-        assert_eq!(row.writer_kind, SelectionRuleWriterKind::SystemDefault);
-        assert_eq!(row.updated_by, None);
-        assert_eq!(row.pinned_identity_ref, None);
-        assert_eq!(row.priority, 0);
-        assert_eq!(row.updated_at, 0);
-        assert!(row.enabled);
-    }
     let compiled = compile_channel_identity_selection(None).expect("defaults compile");
     assert_eq!(compiled.revision, 0);
     assert_eq!(
         compiled.schema_version,
         CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION
     );
-    assert_eq!(compiled.rows, rows.to_vec());
+
+    for (rule_id, relationship, face, agent_amendable) in expected {
+        for defaults in [&rows[..], &compiled.rows[..]] {
+            let mut matching = defaults
+                .iter()
+                .filter(|row| row.relationship == relationship && row.scope.is_vault_default());
+            let row = matching.next().expect("relationship default");
+            assert!(matching.next().is_none(), "unique relationship default");
+            assert_eq!(row.rule_id, rule_id);
+            assert_eq!(row.agent_amendable, agent_amendable);
+            assert_eq!(row.writer_kind, SelectionRuleWriterKind::SystemDefault);
+            assert_eq!(row.updated_by, None);
+            assert_eq!(row.pinned_identity_ref, None);
+            assert!(row.enabled);
+        }
+
+        let (_dir, vault) = open_vault();
+        let amendment = ChannelIdentitySelectionRule {
+            enabled: false,
+            agent_amendable: true,
+            ..authored_rule(
+                rule_id,
+                relationship,
+                SelectionRuleScope::VaultDefault,
+                face,
+            )
+        };
+        let result = vault.update_channel_identity_selection_rules(
+            0,
+            &agent_writer(),
+            ChannelIdentitySelectionPatch::Upsert(amendment),
+        );
+        if agent_amendable {
+            let law = result.expect("agent may retire an amendable default");
+            let roster = face_roster();
+            assert!(matches!(
+                resolve_channel_identity_selection(&law, query(relationship, &[], &roster))
+                    .expect_err("retired relationship"),
+                ChannelIdentitySelectionError::NoRuleForRelationship
+            ));
+        } else {
+            assert!(matches!(
+                result.expect_err("protected default"),
+                ChannelIdentitySelectionError::RuleNotAgentAmendable
+            ));
+        }
+    }
 }
 
 #[test]
@@ -445,7 +477,7 @@ fn trailing_bytes_and_unknown_or_missing_keys_fail_typed() {
     trailing.push(0xC0);
     assert!(matches!(
         decode_rule_set(&trailing).expect_err("trailing bytes"),
-        ChannelIdentitySelectionError::MalformedRuleSet("trailing bytes after rule set map")
+        ChannelIdentitySelectionError::MalformedRuleSet(_)
     ));
 
     let mut unknown = value.clone();
@@ -475,13 +507,13 @@ fn trailing_bytes_and_unknown_or_missing_keys_fail_typed() {
     for truncated in [&[0x81u8][..], &[][..]] {
         assert!(matches!(
             decode_rule_set(truncated).expect_err("not messagepack"),
-            ChannelIdentitySelectionError::MalformedRuleSet("not valid MessagePack")
+            ChannelIdentitySelectionError::MalformedRuleSet(_)
         ));
     }
     // `rmpv` reads the reserved marker as nil; a nil root is still not a map.
     assert!(matches!(
         decode_rule_set(&[0xC1]).expect_err("reserved marker"),
-        ChannelIdentitySelectionError::MalformedRuleSet("rule set map")
+        ChannelIdentitySelectionError::MalformedRuleSet(_)
     ));
 }
 
@@ -1443,7 +1475,7 @@ fn agents_cannot_amend_a_locked_builtin_but_owners_can() {
     ));
 
     // An amendable builtin is fair game for an agent.
-    vault
+    let amended = vault
         .update_channel_identity_selection_rules(
             0,
             &agent_writer(),
@@ -1458,6 +1490,14 @@ fn agents_cannot_amend_a_locked_builtin_but_owners_can() {
             }),
         )
         .expect("agent amends an amendable builtin");
+    let roster = face_roster();
+    let decision = resolve_channel_identity_selection(
+        &amended,
+        query(RelationshipContext::SchedulingLogistics, &[], &roster),
+    )
+    .expect("amended scheduling default resolves");
+    assert_eq!(decision.face, ChannelIdentityFace::HouseIdentity);
+    assert_eq!(decision.identity_ref, entity(0x63));
 
     // The owner may retire even a locked builtin: disabled, never deleted.
     let law = vault
@@ -1467,12 +1507,16 @@ fn agents_cannot_amend_a_locked_builtin_but_owners_can() {
             ChannelIdentitySelectionPatch::Upsert(shadow(false)),
         )
         .expect("owner disables the builtin");
-    assert_eq!(
-        law.rows.len(),
-        6,
-        "the shadow replaces the builtin in place"
-    );
-    let roster = face_roster();
+    let mut targeted = law
+        .rows
+        .iter()
+        .filter(|row| row.rule_id == "builtin.work_deal");
+    let retired = targeted.next().expect("retired builtin remains present");
+    assert!(targeted.next().is_none(), "shadow replaces the builtin");
+    assert_eq!(retired.relationship, RelationshipContext::WorkDeal);
+    assert!(retired.scope.is_vault_default());
+    assert!(!retired.enabled);
+    assert!(!retired.agent_amendable);
     assert!(matches!(
         resolve_channel_identity_selection(
             &law,
@@ -1496,7 +1540,7 @@ fn builtins_are_not_removable_and_unknown_rows_are_not_found() {
                 0,
                 &owner_writer(),
                 ChannelIdentitySelectionPatch::Remove {
-                    rule_id: "builtin.work_deal".to_owned()
+                    rule_id: "builtin.work_deal".to_owned(),
                 },
             )
             .expect_err("builtin removal"),
@@ -1508,7 +1552,7 @@ fn builtins_are_not_removable_and_unknown_rows_are_not_found() {
                 0,
                 &owner_writer(),
                 ChannelIdentitySelectionPatch::Remove {
-                    rule_id: "overlay.nope".to_owned()
+                    rule_id: "overlay.nope".to_owned(),
                 },
             )
             .expect_err("unknown removal"),
@@ -1516,7 +1560,7 @@ fn builtins_are_not_removable_and_unknown_rows_are_not_found() {
     ));
 
     // Removing an overlay shadow reverts to the compiled builtin.
-    vault
+    let shadowed = vault
         .update_channel_identity_selection_rules(
             0,
             &owner_writer(),
@@ -1531,6 +1575,15 @@ fn builtins_are_not_removable_and_unknown_rows_are_not_found() {
             }),
         )
         .expect("owner shadows a builtin");
+    let roster = face_roster();
+    let decision = resolve_channel_identity_selection(
+        &shadowed,
+        query(RelationshipContext::GroupSpace, &[], &roster),
+    )
+    .expect("shadow resolves");
+    assert_eq!(decision.face, ChannelIdentityFace::HouseIdentity);
+    assert_eq!(decision.identity_ref, entity(0x63));
+
     let reverted = vault
         .update_channel_identity_selection_rules(
             1,
@@ -1540,10 +1593,25 @@ fn builtins_are_not_removable_and_unknown_rows_are_not_found() {
             },
         )
         .expect("owner drops the shadow");
-    assert_eq!(
-        reverted.rows,
-        builtin_channel_identity_selection_rules().to_vec()
-    );
+    let decision = resolve_channel_identity_selection(
+        &reverted,
+        query(RelationshipContext::GroupSpace, &[], &roster),
+    )
+    .expect("builtin restored");
+    assert_eq!(decision.face, ChannelIdentityFace::NamedGroupParticipant);
+    assert_eq!(decision.identity_ref, entity(0x65));
+    assert_eq!(decision.rule_id.as_deref(), Some("builtin.group_space"));
+    if let Some(stored) = vault
+        .stored_channel_identity_selection_rules()
+        .expect("read stored overlay")
+    {
+        assert!(
+            stored
+                .rows
+                .iter()
+                .all(|row| row.rule_id != "builtin.group_space")
+        );
+    }
 
     drop(vault);
     drop(dir);

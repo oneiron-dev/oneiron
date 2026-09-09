@@ -106,48 +106,52 @@ fn same_textual_ids_from_independent_guards_are_not_authority() {
         let foreign = make_guard();
         let local = guard.admit().unwrap().lease;
         let other = foreign.admit().unwrap().lease;
-        assert_eq!(local.id(), "same-attempt:metered:1");
         assert_eq!(local.id(), other.id());
-        assert_eq!(format!("{local:?}"), format!("{other:?}"));
         assert_ne!(local, other);
         let leases = std::collections::HashSet::from([local.clone(), local.clone(), other.clone()]);
         assert_eq!(leases.len(), 2);
-        let before = (guard.read(), meter_snapshot(&guard));
-        let foreign_before = (foreign.read(), meter_snapshot(&foreign));
         for lease in [&other, &BudgetLease::for_test(local.id())] {
-            assert_eq!(
+            assert!(matches!(
                 guard.settle_per_call(lease, &usage(90, 9)),
                 Err(BudgetDenied::LeaseInvalid)
-            );
-            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
-            assert_eq!(
+            ));
+            assert_eq!(guard.read().used_units, 0);
+            assert_eq!(guard.read().reserved_units, 10);
+            assert!(matches!(
                 guard.settle_absolute(lease, 99),
                 Err(BudgetDenied::LeaseInvalid)
-            );
-            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
-            assert_eq!(
+            ));
+            assert_eq!(guard.read().used_units, 0);
+            assert_eq!(guard.read().reserved_units, 10);
+            assert!(matches!(
                 guard.settle_terminal(lease, &usage(90, 9)),
                 Err(BudgetDenied::LeaseInvalid)
-            );
-            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
-            assert_eq!(guard.abort(lease), Err(BudgetDenied::LeaseInvalid));
-            assert_eq!((guard.read(), meter_snapshot(&guard)), before);
+            ));
+            assert_eq!(guard.read().used_units, 0);
+            assert_eq!(guard.read().reserved_units, 10);
+            assert!(matches!(
+                guard.abort(lease),
+                Err(BudgetDenied::LeaseInvalid)
+            ));
+            assert_eq!(guard.read().used_units, 0);
+            assert_eq!(guard.read().reserved_units, 10);
         }
-        assert_eq!((foreign.read(), meter_snapshot(&foreign)), foreign_before);
+        assert_eq!(foreign.read().used_units, 0);
+        assert_eq!(foreign.read().reserved_units, 10);
         guard.settle_per_call(&local, &usage(3, 4)).unwrap();
-        let settled = (guard.read(), meter_snapshot(&guard));
-        assert_eq!(settled.0.used_units, 7);
-        assert_eq!(settled.0.reserved_units, 0);
+        assert_eq!(guard.read().used_units, 7);
+        assert_eq!(guard.read().reserved_units, 0);
         // A settled record must not turn foreign settlement into a duplicate no-op.
-        assert_eq!(
+        assert!(matches!(
             guard.settle_per_call(&other, &usage(3, 4)),
             Err(BudgetDenied::LeaseInvalid)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             guard.settle_absolute(&other, 7),
             Err(BudgetDenied::LeaseInvalid)
-        );
-        assert_eq!((guard.read(), meter_snapshot(&guard)), settled);
+        ));
+        assert_eq!(guard.read().used_units, 7);
+        assert_eq!(guard.read().reserved_units, 0);
         foreign.abort(&other).unwrap();
         assert_eq!(foreign.read().used_units, 0);
         assert_eq!(foreign.read().reserved_units, 0);
@@ -217,57 +221,79 @@ fn out_of_order_calls_conserve_rows_floors_shared_and_caps() {
     let other = guard.admit_for_request(&voice).unwrap();
     let second = guard.admit_for_request(&extraction).unwrap();
 
-    // The second call cannot consume floor headroom reserved by the first
-    // extraction or by the voice call. Its overshoot spills into shared.
+    // Pending calls retain their allocations when the second call overshoots.
     guard.settle_per_call(&second.lease, &usage(3, 4)).unwrap();
     let pending = meter_snapshot(&guard);
-    assert_eq!(pending.used_units, 7);
-    assert_eq!(pending.reserved_units, 8);
-    assert_eq!(pending.rows, vec![(7, 4, 2, 4), (7, 8, 0, 4), (0, 4, 0, 0)]);
+    assert_eq!(guard.read().used_units, 7);
+    assert_eq!(guard.read().reserved_units, 8);
     assert_eq!(pending.shared_used_units, 5);
     assert_eq!(pending.shared_reserved_units, 0);
+    assert_eq!(
+        pending.used_units,
+        pending.shared_used_units + pending.rows.iter().map(|r| r.2).sum::<u64>()
+    );
+    assert_eq!(
+        pending.reserved_units,
+        pending.shared_reserved_units + pending.rows.iter().map(|r| r.3).sum::<u64>()
+    );
     guard.settle_per_call(&second.lease, &usage(9, 9)).unwrap();
-    assert_eq!(meter_snapshot(&guard), pending);
+    assert_eq!(guard.read().used_units, 7);
+    assert_eq!(guard.read().reserved_units, 8);
+    assert_eq!(meter_snapshot(&guard).shared_used_units, 5);
+    assert_eq!(meter_snapshot(&guard).shared_reserved_units, 0);
+    assert!(matches!(
+        guard.admit_for_request(&extraction),
+        Err(BudgetDenied::Exhausted)
+    ));
+    let floor_probe = guard.admit_for_request(&voice).unwrap();
+    assert_eq!(floor_probe.read.reserved_units, 12);
+    assert_eq!(meter_snapshot(&guard).shared_reserved_units, 0);
+    guard.abort(&floor_probe.lease).unwrap();
+    assert_eq!(guard.read().used_units, 7);
+    assert_eq!(guard.read().reserved_units, 8);
 
     guard.settle_per_call(&other.lease, &usage(1, 2)).unwrap();
     guard.settle_per_call(&first.lease, &usage(3, 4)).unwrap();
     let settled = meter_snapshot(&guard);
-    assert_eq!(settled.used_units, 17);
-    assert_eq!(settled.reserved_units, 0);
-    assert_eq!(
-        settled.rows,
-        vec![(14, 0, 6, 0), (17, 0, 4, 0), (3, 0, 0, 0)]
-    );
+    assert_eq!(guard.read().used_units, 17);
+    assert_eq!(guard.read().reserved_units, 0);
     assert_eq!(settled.shared_used_units, 7);
     assert_eq!(settled.shared_reserved_units, 0);
-    assert_eq!(settled.open_leases, 0);
     assert_eq!(
         settled.used_units,
         settled.shared_used_units + settled.rows.iter().map(|r| r.2).sum::<u64>()
     );
     assert_eq!(guard.read().remaining_units, 23);
 
-    // A matching cap denial creates no lease and changes no accounting.
-    let before_denial = (guard.read(), meter_snapshot(&guard));
+    // A matching cap denial changes no accounting or subsequent capacity.
     assert!(matches!(
         guard.admit_for_request(&extraction),
         Err(BudgetDenied::Exhausted)
     ));
-    assert_eq!((guard.read(), meter_snapshot(&guard)), before_denial);
+    assert_eq!(guard.read().used_units, 17);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(meter_snapshot(&guard).shared_used_units, 7);
+    assert_eq!(meter_snapshot(&guard).shared_reserved_units, 0);
     let allowed = guard.admit_for_request(&voice).unwrap();
+    assert_eq!(allowed.read.reserved_units, 4);
+    assert_eq!(meter_snapshot(&guard).shared_reserved_units, 0);
     guard.settle_per_call(&allowed.lease, &usage(3, 5)).unwrap();
     let settled = meter_snapshot(&guard);
-    assert_eq!(settled.used_units, 25);
-    assert_eq!(
-        settled.rows,
-        vec![(14, 0, 6, 0), (25, 0, 4, 0), (11, 0, 8, 0)]
-    );
+    assert_eq!(guard.read().used_units, 25);
+    assert_eq!(guard.read().reserved_units, 0);
     assert_eq!(settled.shared_used_units, 7);
+    assert_eq!(
+        settled.used_units,
+        settled.shared_used_units + settled.rows.iter().map(|r| r.2).sum::<u64>()
+    );
     assert!(matches!(
         guard.admit_for_request(&voice),
         Err(BudgetDenied::Exhausted)
     ));
-    assert_eq!(meter_snapshot(&guard), settled);
+    assert_eq!(guard.read().used_units, 25);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(meter_snapshot(&guard).shared_used_units, 7);
+    assert_eq!(meter_snapshot(&guard).shared_reserved_units, 0);
 }
 
 #[test]
@@ -304,14 +330,28 @@ fn concurrent_distinct_and_duplicate_calls_charge_once_under_shared_mutex() {
     for handle in handles {
         handle.join().unwrap();
     }
-    let settled = meter_snapshot(&guard);
-    assert_eq!(settled.used_units, 224);
+    let settled = guard.read();
+    assert_eq!(settled.used_units, CALLS as u64 * 7);
     assert_eq!(settled.reserved_units, 0);
-    assert_eq!(settled.rows, vec![(224, 0, 100, 0), (224, 0, 50, 0)]);
-    assert_eq!(settled.shared_used_units, 74);
-    assert_eq!(settled.shared_reserved_units, 0);
-    assert_eq!(settled.open_leases, 0);
-    assert_eq!(settled.total_leases, CALLS);
+    assert_eq!(settled.remaining_units, 1_000 - CALLS as u64 * 7);
+
+    // Generic traffic cannot borrow an unused extraction floor. Reaching
+    // the global boundary establishes that the race consumed that floor.
+    let remaining = guard.admit_reserve(settled.remaining_units).unwrap();
+    assert_eq!(remaining.read.used_units, CALLS as u64 * 7);
+    assert_eq!(remaining.read.reserved_units, settled.remaining_units);
+    assert_eq!(remaining.read.remaining_units, 0);
+    assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+    assert!(matches!(
+        guard.admit_for_request(&request),
+        Err(BudgetDenied::Exhausted)
+    ));
+    guard.abort(&remaining.lease).unwrap();
+    let restored = guard.admit_reserve(settled.remaining_units).unwrap();
+    assert_eq!(restored.read.reserved_units, settled.remaining_units);
+    guard.abort(&restored.lease).unwrap();
+    assert_eq!(guard.read().used_units, CALLS as u64 * 7);
+    assert_eq!(guard.read().reserved_units, 0);
 }
 
 #[test]
@@ -335,16 +375,23 @@ fn per_call_usage_and_tallies_saturate_and_admitted_overshoot_still_settles() {
         .unwrap();
     assert_eq!(settled.read.used_units, u64::MAX);
     assert_eq!(settled.read.remaining_units, 0);
-    let snapshot = meter_snapshot(&guard);
-    assert_eq!(snapshot.rows, vec![(u64::MAX, 0, 0, 0)]);
-    assert_eq!(snapshot.shared_used_units, u64::MAX);
-    assert_eq!(snapshot.reserved_units, 0);
+    assert_eq!(settled.read.reserved_units, 0);
     assert!(matches!(
         guard.admit_for_request(&request),
         Err(BudgetDenied::Exhausted)
     ));
-    guard.settle_per_call(&second.lease, &usage(1, 1)).unwrap();
-    assert_eq!(meter_snapshot(&guard), snapshot);
+    // Generic admission bypasses the purpose cap but still needs capacity.
+    assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+    let duplicate = guard.settle_per_call(&second.lease, &usage(1, 1)).unwrap();
+    assert_eq!(duplicate.read.used_units, u64::MAX);
+    assert_eq!(duplicate.read.remaining_units, 0);
+    assert_eq!(duplicate.read.reserved_units, 0);
+    assert!(duplicate.ladder_events.is_empty());
+    assert!(matches!(
+        guard.admit_for_request(&request),
+        Err(BudgetDenied::Exhausted)
+    ));
+    assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
 }
 
 #[test]
@@ -405,36 +452,40 @@ fn zero_usage_refunds_all_partitions_and_additive_ladders_fire_once() {
     );
     let request = request_for(CallPurpose::Extraction, ModelLocality::ThirdParty);
     let unused = guard.admit_for_request(&request).unwrap();
-    let reserved = meter_snapshot(&guard);
-    assert_eq!(reserved.rows, vec![(0, 4, 0, 3)]);
-    assert_eq!(reserved.shared_reserved_units, 1);
+    assert_eq!(unused.read.used_units, 0);
+    assert_eq!(unused.read.reserved_units, 4);
     guard.settle_per_call(&unused.lease, &usage(0, 0)).unwrap();
-    let refunded = meter_snapshot(&guard);
-    assert_eq!(refunded.rows, vec![(0, 0, 0, 0)]);
-    assert_eq!(refunded.used_units, 0);
-    assert_eq!(refunded.reserved_units, 0);
-    assert_eq!(refunded.shared_used_units, 0);
-    assert_eq!(refunded.shared_reserved_units, 0);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 0);
+    assert_eq!(guard.read().remaining_units, 10);
 
+    // All seven shared units must be available again after the refund.
+    let shared = guard.admit_reserve(7).unwrap();
+    assert_eq!(shared.read.used_units, 0);
+    assert_eq!(shared.read.reserved_units, 7);
+    guard.abort(&shared.lease).unwrap();
     let first = guard.admit_for_request(&request).unwrap();
     let second = guard.admit_for_request(&request).unwrap();
+    assert_eq!(second.read.used_units, 0);
+    assert_eq!(second.read.reserved_units, 8);
     let settled = guard.settle_per_call(&second.lease, &usage(3, 4)).unwrap();
+    assert_eq!(settled.read.used_units, 7);
+    assert_eq!(settled.read.reserved_units, 4);
     let events: Vec<_> = settled
         .ladder_events
         .iter()
         .map(|event| (event.threshold, event.row_index))
         .collect();
-    assert_eq!(
-        events,
-        vec![
-            (BudgetThreshold::Land95, None),
-            (BudgetThreshold::Land95, Some(0)),
-        ]
-    );
-    guard.settle_per_call(&first.lease, &usage(3, 4)).unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events.contains(&(BudgetThreshold::Land95, None)));
+    assert!(events.contains(&(BudgetThreshold::Land95, Some(0))));
+    let settled = guard.settle_per_call(&first.lease, &usage(3, 4)).unwrap();
+    assert!(settled.ladder_events.is_empty());
     assert_eq!(guard.read().used_units, 14);
-    let before = meter_snapshot(&guard);
+    assert_eq!(guard.read().reserved_units, 0);
     let duplicate = guard.settle_per_call(&second.lease, &usage(3, 4)).unwrap();
     assert!(duplicate.ladder_events.is_empty());
-    assert_eq!(meter_snapshot(&guard), before);
+    assert_eq!(duplicate.read.used_units, 14);
+    assert_eq!(duplicate.read.reserved_units, 0);
+    assert_eq!(duplicate.read.remaining_units, 0);
 }

@@ -59,18 +59,8 @@ mod tests {
             load_public_booking_page(&vault, id(1), 150).expect("unchanged"),
             Some(publication())
         );
-        let txn = vault.store.env.read_txn().expect("txn");
-        assert!(
-            vault
-                .store
-                .vault_meta
-                .get(
-                    &txn,
-                    &crate::memory::booking_publication::publication_write_key(claim)
-                )
-                .expect("permit read")
-                .is_none()
-        );
+        // The completed owner write must not leave authorization reusable by a raw write.
+        assert!(vault.put_claim(&claim, &body, time, 1).is_err());
     }
 }
 

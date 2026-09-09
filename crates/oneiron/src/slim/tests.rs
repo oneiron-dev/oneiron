@@ -491,18 +491,30 @@ fn shed_failure_leaves_admission_residency() -> Result<()> {
         );
         assert_eq!(deps, rows(&vault, &vault.store.ppr_cache_deps)?);
         assert_eq!(graph, rows(&vault, &vault.store.hnsw_neighbors)?);
-        let expected = prior.clone().map_or(SlimState::Full, SlimState::Slim);
-        assert_eq!(*vault.slim.lock_state(), expected);
+        if already_slim {
+            assert!(matches!(vault.residency(), VaultResidency::Slim));
+        } else {
+            assert!(matches!(vault.residency(), VaultResidency::Full));
+        }
         vault.with_write_txn(|txn| {
             vault.store.hnsw_meta.delete(txn, DROPPED_REBUILDABLE_KEY)?;
             Ok(())
         })?;
         assert!(!ppr(&vault, ids[0])?.is_empty());
         assert!(!probes(&vault)?[0].is_empty());
-        assert!(matches!(
-            shed(&vault)?,
-            ShedOutcome::Entered { .. } | ShedOutcome::AlreadySlim { .. }
-        ));
+        match (prior, shed(&vault)?) {
+            (Some(prior), ShedOutcome::AlreadySlim { residue, .. }) => {
+                assert_eq!(residue.step.intent_id, prior.step.intent_id);
+                assert_eq!(residue.step.attempt_id, prior.step.attempt_id);
+                assert_eq!(residue.step.call_seq, prior.step.call_seq);
+            }
+            (None, ShedOutcome::Entered { residue, .. }) => {
+                assert_eq!(residue.step.intent_id, record.id);
+                assert_eq!(residue.step.attempt_id, record.attempt_id);
+                assert_eq!(residue.step.call_seq, record.call_seq);
+            }
+            _ => panic!("unexpected admission outcome after repair"),
+        }
     }
     Ok(())
 }
@@ -616,7 +628,7 @@ fn lazy_read_still_refuses_new_malformed_source_rows() -> Result<()> {
 fn malformed_ledger_selection_preserves_residency() -> Result<()> {
     for already_slim in [false, true] {
         let (_dir, vault) = fixture();
-        pending(&vault, 1);
+        let record = pending(&vault, 1);
         let prior = already_slim.then(|| entered(&vault).0);
         let original = rows(&vault, &vault.store.vault_meta)?;
         let (key, value) = original
@@ -630,15 +642,28 @@ fn malformed_ledger_selection_preserves_residency() -> Result<()> {
         let revision = vault.store.env.info().last_txn_id;
         assert!(matches!(shed(&vault), Err(Error::CorruptedIndex(_))));
         assert_eq!(vault.store.env.info().last_txn_id, revision);
-        assert_eq!(
-            *vault.slim.lock_state(),
-            prior.map_or(SlimState::Full, SlimState::Slim)
-        );
+        if already_slim {
+            assert!(matches!(vault.residency(), VaultResidency::Slim));
+        } else {
+            assert!(matches!(vault.residency(), VaultResidency::Full));
+        }
         vault.with_write_txn(|txn| {
             vault.store.vault_meta.put(txn, key, value)?;
             Ok(())
         })?;
-        assert!(shed(&vault).is_ok());
+        match (prior, shed(&vault)?) {
+            (Some(prior), ShedOutcome::AlreadySlim { residue, .. }) => {
+                assert_eq!(residue.step.intent_id, prior.step.intent_id);
+                assert_eq!(residue.step.attempt_id, prior.step.attempt_id);
+                assert_eq!(residue.step.call_seq, prior.step.call_seq);
+            }
+            (None, ShedOutcome::Entered { residue, .. }) => {
+                assert_eq!(residue.step.intent_id, record.id);
+                assert_eq!(residue.step.attempt_id, record.attempt_id);
+                assert_eq!(residue.step.call_seq, record.call_seq);
+            }
+            _ => panic!("unexpected admission outcome after ledger repair"),
+        }
     }
     Ok(())
 }
@@ -842,49 +867,41 @@ fn sync_drop_failure_preserves_admission_residue() -> Result<()> {
 
 #[test]
 fn stable_step_identity_and_report_merge_are_field_exact() {
-    let step = JournaledResumeStep {
-        intent_id: [1; 32],
-        attempt_id: AttemptId::from_bytes(&[2; 16]).unwrap(),
-        call_seq: 3,
-        updated_ms: 4,
-    };
-    assert!(step.same_step(&JournaledResumeStep {
-        updated_ms: 99,
-        ..step
-    }));
-    for changed in [
-        JournaledResumeStep {
-            intent_id: [8; 32],
-            ..step
-        },
-        JournaledResumeStep {
-            attempt_id: AttemptId::from_bytes(&[8; 16]).unwrap(),
-            ..step
-        },
-        JournaledResumeStep {
-            call_seq: 8,
-            ..step
-        },
-    ] {
-        assert!(!step.same_step(&changed));
-    }
-    let report = HeapDropReport {
-        sync_windows: 1,
-        ppr_cache_rows: 2,
-        ppr_dependency_rows: 3,
-        hnsw_nodes: 4,
-        estimated_reclaimed_bytes: 5,
-    };
-    assert_eq!(
-        report.merged(report),
-        HeapDropReport {
-            sync_windows: 2,
-            ppr_cache_rows: 4,
-            ppr_dependency_rows: 6,
-            hnsw_nodes: 8,
-            estimated_reclaimed_bytes: 10,
+    let (_dir, vault) = fixture();
+    let record = pending(&vault, 3);
+    let prior = entered(&vault).0;
+    ledger::record_definite_non_delivery(&vault, record.id, 99).unwrap();
+    match shed(&vault).expect("same-step re-shed") {
+        ShedOutcome::AlreadySlim { residue, .. } => {
+            assert_eq!(residue.step.intent_id, prior.step.intent_id);
+            assert_eq!(residue.step.attempt_id, prior.step.attempt_id);
+            assert_eq!(residue.step.call_seq, prior.step.call_seq);
         }
-    );
+        other => panic!("expected same-step re-shed, got {other:?}"),
+    }
+    for component in 0..3 {
+        let mut step = JournaledResumeStep {
+            intent_id: record.id,
+            attempt_id: record.attempt_id,
+            call_seq: record.call_seq,
+            updated_ms: 4,
+        };
+        match component {
+            0 => step.intent_id[0] ^= 1,
+            1 => step.attempt_id = AttemptId::from_bytes(&[2; 16]).unwrap(),
+            2 => step.call_seq = 8,
+            _ => unreachable!(),
+        }
+        *vault.slim.lock_state() = SlimState::Slim(SlimResidue {
+            step,
+            entered_at_ms: 20,
+        });
+        assert!(matches!(
+            shed(&vault).expect("different-step admission"),
+            ShedOutcome::Refused(ShedBlocker::AlreadySlimForDifferentStep)
+        ));
+        assert!(matches!(vault.residency(), VaultResidency::Slim));
+    }
 }
 
 #[test]

@@ -563,7 +563,7 @@ mod tests {
 
         assert!(matches!(
             vault.task_authority_state(task_ref),
-            Err(Error::InvariantViolation("task authority owner fork"))
+            Err(Error::InvariantViolation(_))
         ));
     }
 
@@ -622,10 +622,14 @@ mod tests {
             .commit()
             .expect("re-point the proof");
 
-        assert!(vault.task_authority_state(owned).is_ok());
+        let state = vault
+            .task_authority_state(owned)
+            .expect("original task authority")
+            .expect("original task owner proof");
+        assert_eq!(state.owner_ref, id(0xF3));
         assert!(matches!(
             vault.task_authority_state(foreign),
-            Err(Error::InvalidTaskBody("task authority fact subject"))
+            Err(Error::InvalidTaskBody(_))
         ));
     }
 

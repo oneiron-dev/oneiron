@@ -221,20 +221,67 @@ fn heavy_pivot_fixture_triggers_minimal_mutation_warn() {
 
 #[test]
 fn recalc_stage_updates_cached_values_via_seam() {
-    let input = xlsx_bytes(&base_parts());
+    struct FormulaSession;
+
+    impl EditSession for FormulaSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            FixtureSession::faithful().apply_edits(doc, plan)
+        }
+
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            let mut pkg = opc::read(&doc.bytes)?;
+            let sheet = String::from_utf8_lossy(pkg.part(SHEET_PART).unwrap()).replace(
+                "<c r=\"B1\"><f>A1*2</f><v>10</v></c>",
+                "<c r=\"B1\"><f>A1*2</f><v>20</v></c>",
+            );
+            pkg.upsert(SHEET_PART, sheet.into_bytes());
+            Ok(opc::write(&pkg))
+        }
+    }
+
+    let mut parts = base_parts();
+    for (name, data) in &mut parts {
+        if *name == SHEET_PART {
+            *data = b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><v>5</v></c><c r=\"B1\"><f>A1*2</f><v>10</v></c></row></sheetData></worksheet>";
+        }
+    }
+    let input = xlsx_bytes(&parts);
     let plan = EditPlan::new(vec![set_a1(10.0)]);
 
-    let proposal = propose(&FixtureSession::faithful(), &input, &plan, "run:recalc");
+    let proposal = match run_edit_roundtrip(
+        &FormulaSession,
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:recalc",
+    )
+    .expect("pipeline runs")
+    {
+        EditOutcome::Proposed(proposal) => proposal,
+        EditOutcome::Rejected { report, .. } => {
+            panic!("expected a proposal, got rejection: {report:?}")
+        }
+    };
     assert_eq!(proposal.recalc, RecalcStatus::Performed);
-    let sheet = opc::read(&proposal.new_bytes)
+    let package = opc::read(&proposal.new_bytes).unwrap();
+    let sheet = String::from_utf8_lossy(package.part(SHEET_PART).unwrap());
+    let cell = sheet
+        .split("<c r=\"B1\">")
+        .nth(1)
+        .expect("formula cell is present")
+        .split("</c>")
+        .next()
+        .unwrap();
+    let cached = cell
+        .split("<v>")
+        .nth(1)
+        .expect("formula has a cached value")
+        .split("</v>")
+        .next()
         .unwrap()
-        .part(SHEET_PART)
-        .unwrap()
-        .to_vec();
-    assert!(
-        String::from_utf8_lossy(&sheet).contains("recalc:cached=42"),
-        "recalc must refresh the cached value through the seam"
-    );
+        .parse::<f64>()
+        .expect("cached value is numeric");
+    assert_eq!(cached, 20.0);
 
     // A session image without a recalc backend must refuse a value-affecting
     // edit: proposing with stale cached formula values would be silent
@@ -546,19 +593,32 @@ fn cross_sheet_scan_resolves_names_via_workbook_rels() {
 
 #[test]
 fn resolve_part_path_collapses_relative_segments() {
-    assert_eq!(
-        resolve_part_path("xl/", "worksheets/sheet1.xml").as_deref(),
-        Some("xl/worksheets/sheet1.xml")
-    );
-    assert_eq!(
-        resolve_part_path("xl/worksheets/", "../drawings/drawing1.xml").as_deref(),
-        Some("xl/drawings/drawing1.xml")
-    );
-    assert_eq!(
-        resolve_part_path("xl/", "/docProps/core.xml").as_deref(),
-        Some("docProps/core.xml")
-    );
-    assert_eq!(resolve_part_path("xl/", "../../..").as_deref(), None);
+    for (rels_part, target, expected_ok) in [
+        ("xl/_rels/workbook.xml.rels", "worksheets/sheet1.xml", true),
+        (
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            "../drawings/drawing1.xml",
+            true,
+        ),
+        ("xl/_rels/workbook.xml.rels", "/docProps/core.xml", true),
+        ("xl/_rels/workbook.xml.rels", "../../..", false),
+    ] {
+        let mut package = opc::read(&xlsx_bytes(&base_parts())).unwrap();
+        package.upsert("xl/drawings/drawing1.xml", b"<drawing/>".to_vec());
+        package.upsert("docProps/core.xml", b"<coreProperties/>".to_vec());
+        package.upsert(
+            rels_part,
+            format!(
+                "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"{target}\"/></Relationships>",
+            )
+            .into_bytes(),
+        );
+
+        // Identical packages preserve every part; only the relationship's
+        // ability to resolve to an existing package part varies here.
+        let report = validate(&package, &package, OfficeFormat::Xlsx);
+        assert_eq!(report.ok, expected_ok, "relationship target: {target}");
+    }
 }
 
 #[test]

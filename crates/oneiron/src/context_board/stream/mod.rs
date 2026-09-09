@@ -40,6 +40,6 @@ use super::one_line_token;
 // directory split the seam re-imports both so the test children resolve
 // exactly as they did before.
 #[cfg(test)]
-use self::{provenance::*, wake::*};
+use self::provenance::*;
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};

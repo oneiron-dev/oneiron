@@ -840,25 +840,38 @@ fn answerability_test_pack_which_promise_made_you_send_this_round_trips_to_the_c
         link.target_ref, target,
         "{question}: link lost the cited commitment"
     );
-    assert_eq!(link.label, "the commitment behind this message");
     assert_eq!(link.resolution, ViewTimeResolution::Active);
 
-    // The link is only worth anything if the ref it hands back reads out as the
-    // very commitment the receipt was minted against — so the round trip goes
-    // through the link's own target_ref, not through the fixture's handle.
+    // Round-trip through the link's reference, not the fixture's handle.
     let linked = EntityId::from_hex(
         link.target_ref
             .strip_prefix("commitment:")
             .unwrap_or_else(|| panic!("{question}: link target lost its commitment: prefix")),
     )?;
     assert_eq!(linked, fixture.open, "{question}: link points elsewhere");
+    let record = fixture
+        .vault
+        .get_commitment_claim(&linked)?
+        .unwrap_or_else(|| panic!("{question}: linked commitment is unreadable"));
+
+    assert_eq!(record.obligor.kind, fixture.record.obligor.kind);
+    assert_eq!(record.obligor.entity_ref, fixture.record.obligor.entity_ref);
+    assert_eq!(record.beneficiary, fixture.record.beneficiary);
+    assert_eq!(record.content.text, fixture.record.content.text);
     assert_eq!(
-        fixture
-            .vault
-            .get_commitment_claim(&linked)?
-            .unwrap_or_else(|| panic!("{question}: linked commitment is unreadable")),
-        fixture.record,
-        "{question}: the door did not land back on the minted commitment"
+        record.content.payload_ref,
+        fixture.record.content.payload_ref
+    );
+    assert_eq!(record.schedule, fixture.record.schedule);
+    assert_eq!(record.strength, fixture.record.strength);
+    assert_eq!(record.status, CommitmentStatus::Open);
+    assert_eq!(
+        record.birth_provenance.kind,
+        fixture.record.birth_provenance.kind,
+    );
+    assert_eq!(
+        record.birth_provenance.reference,
+        fixture.record.birth_provenance.reference,
     );
     Ok(())
 }

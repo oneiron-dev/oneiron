@@ -411,22 +411,45 @@ mod tests {
 
     #[test]
     fn narrower_descends_the_ladder_in_both_argument_orders() {
-        assert_eq!(
-            DisclosureRung::Full.narrower(DisclosureRung::Slots),
-            DisclosureRung::Slots
-        );
-        assert_eq!(
-            DisclosureRung::Slots.narrower(DisclosureRung::Full),
-            DisclosureRung::Slots
-        );
-        assert_eq!(
-            DisclosureRung::Nothing.narrower(DisclosureRung::Full),
-            DisclosureRung::Nothing
-        );
-        assert_eq!(
+        let events = vec![event(1)];
+        let slot_mask = mask();
+        for (left, right) in [
+            (DisclosureRung::Full, DisclosureRung::Slots),
+            (DisclosureRung::Slots, DisclosureRung::Full),
+        ] {
+            let projection = project_at_rung(
+                &events,
+                left.narrower(right),
+                SurfaceClass::SameVault,
+                Some(&slot_mask),
+            )
+            .expect("slots projection");
+            assert!(matches!(projection, RungProjection::Slots(_)));
+        }
+        for (left, right) in [
+            (DisclosureRung::Nothing, DisclosureRung::Full),
+            (DisclosureRung::Full, DisclosureRung::Nothing),
+        ] {
+            let projection = project_at_rung(
+                &events,
+                left.narrower(right),
+                SurfaceClass::SameVault,
+                Some(&slot_mask),
+            )
+            .expect("nothing projection");
+            assert!(matches!(projection, RungProjection::Nothing));
+        }
+        let projection = project_at_rung(
+            &events,
             DisclosureRung::Busy.narrower(DisclosureRung::Busy),
-            DisclosureRung::Busy
-        );
+            SurfaceClass::SameVault,
+            Some(&slot_mask),
+        )
+        .expect("busy projection");
+        let RungProjection::Busy(rows) = projection else {
+            panic!("expected a busy projection");
+        };
+        assert_eq!(rows.len(), 1);
     }
 
     #[test]
@@ -458,13 +481,14 @@ mod tests {
         // The redacted row has no field that could carry a body, a location, or
         // an attendee: the serialized form is the proof.
         let json = serde_json::to_value(&rows[0]).expect("serialize titled row");
-        let keys: Vec<&str> = json
+        let mut keys: Vec<&str> = json
             .as_object()
             .expect("object")
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(keys, ["event_ref", "start_utc", "end_utc", "title"]);
+        keys.sort_unstable();
+        assert_eq!(keys, ["end_utc", "event_ref", "start_utc", "title"]);
     }
 
     #[test]
@@ -672,8 +696,13 @@ mod tests {
             None,
         )
         .expect("cross-vault projection");
+        let RungProjection::Busy(rows) = &projection else {
+            panic!("expected a busy projection");
+        };
+        assert_eq!(rows.len(), 1);
         let json = serde_json::to_string(&projection).expect("serialize projection");
-        assert!(json.contains("\"rung\":\"busy\""), "{json}");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse projection");
+        assert_eq!(parsed["rung"].as_str(), Some("busy"));
         for leak in ["Therapy", "weekly session", "Clinic", &id(0xAA).to_hex()] {
             assert!(
                 !json.contains(leak),

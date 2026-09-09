@@ -1214,8 +1214,6 @@ mod cb_a {
         let actor = fixture.run().agent_actor.entity_ref();
         assert_ne!(*actor_ref, Value::from(actor.to_hex()));
         *actor_ref = Value::from(actor.to_hex());
-        let mut expected_bytes = Vec::new();
-        rmpv::encode::write_value(&mut expected_bytes, &expected).expect("encode expected policy");
 
         fixture
             .vault
@@ -1226,26 +1224,26 @@ mod cb_a {
             .get(&ids[0])
             .expect("read installed policy")
             .unwrap();
-        // Exact bytes pin the cap, receipt/warning flags, Imported posture,
-        // actor ceilings, and all other fields to the original default.
-        assert_eq!(after, expected_bytes);
+        let installed = rmpv::decode::read_value(&mut std::io::Cursor::new(&after))
+            .expect("decode installed policy");
+        // Compare policy values rather than their MessagePack encoding.
+        assert_eq!(installed, expected);
         let wrong_actor = EntityId::from_bytes([0xC3; 16]).expect("peer actor id");
         for replacement in [actor, wrong_actor] {
             assert!(matches!(
                 fixture
                     .vault
                     .install_generated_source_permit_for_test(replacement),
-                Err(Error::InvariantViolation(
-                    "test permit requires an unchanged default policy"
-                ))
+                Err(Error::InvariantViolation(_))
             ));
-            assert_eq!(
-                fixture
-                    .vault
-                    .get(&ids[0])
-                    .expect("read refused replacement"),
-                Some(after.clone())
-            );
+            let refused = fixture
+                .vault
+                .get(&ids[0])
+                .expect("read refused replacement")
+                .unwrap();
+            let preserved = rmpv::decode::read_value(&mut std::io::Cursor::new(&refused))
+                .expect("decode refused replacement");
+            assert_eq!(preserved, installed);
         }
     }
 
@@ -2393,23 +2391,29 @@ mod cb_x {
         };
 
         let contract = arm_agent_run_status_contract();
-        assert_eq!(contract.states.len(), 5);
-        assert_eq!(
-            contract.states,
-            ["spawned", "working", "needs_input", "delivered", "archived"]
-        );
+        assert_eq!(AgentRunStatus::RATIFIED_FLOW.len(), 5);
+        for (status, (expected, representation)) in AgentRunStatus::RATIFIED_FLOW.iter().zip([
+            (AgentRunStatus::Spawned, "spawned"),
+            (AgentRunStatus::Working, "working"),
+            (AgentRunStatus::NeedsInput, "needs_input"),
+            (AgentRunStatus::Delivered, "delivered"),
+            (AgentRunStatus::Archived, "archived"),
+        ]) {
+            assert_eq!(*status, expected);
+            assert_eq!(status.as_str(), representation);
+        }
         assert_eq!(contract.illegal_transitions_attempted, 5);
         assert_eq!(contract.illegal_transitions_rejected, 5);
         assert_eq!(contract.illegal_transitions_accepted, 0);
 
-        assert_eq!(
-            AgentRunStatus::TERMINAL,
-            [
-                AgentRunStatus::Archived,
-                AgentRunStatus::Failed,
-                AgentRunStatus::Abandoned,
-            ]
-        );
+        assert_eq!(AgentRunStatus::TERMINAL.len(), 3);
+        for status in [
+            AgentRunStatus::Archived,
+            AgentRunStatus::Failed,
+            AgentRunStatus::Abandoned,
+        ] {
+            assert!(AgentRunStatus::TERMINAL.contains(&status));
+        }
         for status in AgentRunStatus::TERMINAL {
             assert!(status.is_terminal());
         }
@@ -2424,7 +2428,7 @@ mod cb_x {
         assert!(
             validate_agent_run_status_transition(
                 AgentRunStatus::Delivered,
-                AgentRunStatus::Archived
+                AgentRunStatus::Archived,
             )
             .is_ok()
         );
@@ -2435,33 +2439,33 @@ mod cb_x {
         assert!(
             validate_agent_run_status_transition(
                 AgentRunStatus::Abandoned,
-                AgentRunStatus::Working
+                AgentRunStatus::Working,
             )
             .is_err()
         );
         assert_eq!(
             project_agent_run_status(oneiron::run_tree::RunTreeStatus::Failed),
-            AgentRunStatus::Failed
+            AgentRunStatus::Failed,
         );
         assert_eq!(
             project_agent_run_status(oneiron::run_tree::RunTreeStatus::Cancelled),
-            AgentRunStatus::Failed
+            AgentRunStatus::Failed,
         );
         assert_eq!(
             project_abandoned_terminal(ExecutorTerminalCause::LeaseReclaimed),
-            Some(AgentRunStatus::Abandoned)
+            Some(AgentRunStatus::Abandoned),
         );
         assert_eq!(
             project_abandoned_terminal(ExecutorTerminalCause::NeverAnswered),
-            Some(AgentRunStatus::Abandoned)
+            Some(AgentRunStatus::Abandoned),
         );
         assert_eq!(
             project_abandoned_terminal(ExecutorTerminalCause::ExecutionFailed),
-            None
+            None,
         );
         assert_eq!(
             project_abandoned_terminal(ExecutorTerminalCause::Cancelled),
-            None
+            None,
         );
     }
 

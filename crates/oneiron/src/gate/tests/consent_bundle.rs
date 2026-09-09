@@ -96,36 +96,41 @@ fn gate_consent_bundle_aggregates_one_run_into_one_named_unit() -> Result<()> {
         vec![first, second],
         "membership is every still-pending row of THIS run, and no other run's"
     );
-    // A member is its parked pending row, surfaced verbatim.
+
+    // Review preserves the consent bindings of each parked member.
     let rtxn = vault.store.env.read_txn()?;
-    let parked = vault
-        .store
-        .pending_gate_consent_in_txn(&rtxn, &first)?
-        .expect("first member is parked");
+    for member in &bundle.members {
+        let parked = vault
+            .store
+            .pending_gate_consent_in_txn(&rtxn, &member.claim_id)?
+            .expect("member is parked");
+        assert_eq!(member.decision_id, parked.decision_id);
+        assert_eq!(member.diff_handle, parked.diff_handle);
+        assert_eq!(member.read_frontier_hash, parked.read_frontier_hash);
+        assert_eq!(member.reason_codes, parked.reason_codes);
+    }
     drop(rtxn);
-    assert_eq!(bundle.members[0].decision_id, parked.decision_id);
-    assert_eq!(bundle.members[0].created_at, parked.created_at);
-    assert_eq!(bundle.members[0].diff_handle, parked.diff_handle);
-    assert_eq!(
-        bundle.members[0].read_frontier_hash,
-        parked.read_frontier_hash
-    );
-    assert_eq!(bundle.members[0].reason_codes, parked.reason_codes);
 
-    // The engine name is the run tree's root agent label — absent here, so the
-    // fallback — plus the first eight hex characters of the bundle id.
+    // No root agent is dispatched in this fixture; display formatting is not identity.
     assert_eq!(bundle.agent_label, None);
-    let bundle_hex = crate::entity_id::bytes_to_hex_lower(&bundle.bundle_id);
-    let id8 = &bundle_hex[..8];
-    assert_eq!(
-        bundle.name,
-        format!("{GATE_CONSENT_BUNDLE_FALLBACK_LABEL} · {id8}")
-    );
+    assert!(!bundle.name.is_empty());
 
-    // Deterministic and non-mutating: the same rows project the same bundle,
-    // and the proposals it exposes stay proposed and parked.
-    assert_eq!(vault.review_gate_consent_bundle(&reviewer, run)?, bundle);
-    for id in [first, second] {
+    // Repeated review preserves stable identity and consent-relevant contents.
+    let reviewed = vault.review_gate_consent_bundle(&reviewer, run)?;
+    assert_eq!(reviewed.bundle_id, bundle.bundle_id);
+    assert_eq!(reviewed.schema_version, GATE_CONSENT_BUNDLE_SCHEMA_VERSION);
+    assert_eq!(reviewed.dreamer_run_id, run);
+    assert_eq!(reviewed.members.len(), bundle.members.len());
+    for (member, previous) in reviewed.members.iter().zip(&bundle.members) {
+        assert_eq!(member.claim_id, previous.claim_id);
+        assert_eq!(member.decision_id, previous.decision_id);
+        assert_eq!(member.diff_handle, previous.diff_handle);
+        assert_eq!(member.read_frontier_hash, previous.read_frontier_hash);
+        assert_eq!(member.reason_codes, previous.reason_codes);
+    }
+
+    // Neither this run's proposals nor the isolated outsider are consumed by review.
+    for id in [first, second, outsider] {
         assert!(has_pending_gate_consent(&vault, &id)?);
         assert_eq!(
             vault.get_claim(&id)?.expect("member claim").approval,

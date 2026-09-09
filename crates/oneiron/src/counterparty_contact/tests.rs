@@ -449,9 +449,16 @@ fn newest_covering_head_wins_when_every_head_predates_the_contact() -> Result<()
     // stamp stays inside the record's window.
     assert_eq!(opt_out.recorded_at, cached.created_at);
     cached.validate()?;
-    // And the choice is a property of the heads, not of one write: re-deriving
-    // the row reaches the same one.
-    assert_eq!(rematerialize_contact_cache(&vault, &late_contact)?, cached);
+    // Rebuilding must independently select STOP and apply the same clamp.
+    let rebuilt = rematerialize_contact_cache(&vault, &late_contact)?;
+    let rebuilt_opt_out = rebuilt.opt_out.expect("both heads cover the rebuilt row");
+    assert_eq!(rebuilt_opt_out.reason, CounterpartyOptOutReason::Stop);
+    assert_eq!(
+        rebuilt_opt_out.receipt_reason(),
+        "counterparty_opt_out_stop"
+    );
+    assert_eq!(rebuilt_opt_out.recorded_at, rebuilt.created_at);
+    rebuilt.validate()?;
     Ok(())
 }
 
@@ -506,24 +513,41 @@ fn revoke_after_inbound_stop_keeps_stop_out_of_contact_claims() -> Result<()> {
 /// round-trips exactly.
 #[test]
 fn opt_out_receipt_reason_round_trips() {
-    for reason in [
-        CounterpartyOptOutReason::Stop,
-        CounterpartyOptOutReason::Unsubscribe,
-        CounterpartyOptOutReason::BlockOrFriendRemoval,
+    for (reason, receipt_token) in [
+        (CounterpartyOptOutReason::Stop, "counterparty_opt_out_stop"),
+        (
+            CounterpartyOptOutReason::Unsubscribe,
+            "counterparty_opt_out_unsubscribe",
+        ),
+        (
+            CounterpartyOptOutReason::BlockOrFriendRemoval,
+            "counterparty_opt_out_block_or_friend_removal",
+        ),
     ] {
-        assert_eq!(
-            CounterpartyOptOutReason::from_receipt_reason(reason.receipt_reason()),
-            Some(reason)
-        );
+        assert_eq!(reason.receipt_reason(), receipt_token);
+        let decoded = CounterpartyOptOutReason::from_receipt_reason(receipt_token);
+        match reason {
+            CounterpartyOptOutReason::Stop => {
+                assert!(matches!(decoded, Some(CounterpartyOptOutReason::Stop)));
+            }
+            CounterpartyOptOutReason::Unsubscribe => {
+                assert!(matches!(
+                    decoded,
+                    Some(CounterpartyOptOutReason::Unsubscribe)
+                ));
+            }
+            CounterpartyOptOutReason::BlockOrFriendRemoval => {
+                assert!(matches!(
+                    decoded,
+                    Some(CounterpartyOptOutReason::BlockOrFriendRemoval),
+                ));
+            }
+        }
         // The `as_str()` spelling is a different vocabulary; it never decodes
         // as a receipt token.
-        assert_eq!(
-            CounterpartyOptOutReason::from_receipt_reason(reason.as_str()),
-            None
-        );
+        assert!(CounterpartyOptOutReason::from_receipt_reason(reason.as_str()).is_none(),);
     }
-    assert_eq!(
-        CounterpartyOptOutReason::from_receipt_reason("counterparty_opt_out_unknown"),
-        None
+    assert!(
+        CounterpartyOptOutReason::from_receipt_reason("counterparty_opt_out_unknown").is_none(),
     );
 }

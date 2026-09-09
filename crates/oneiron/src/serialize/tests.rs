@@ -390,7 +390,10 @@ fn toon_contains_group_header() {
     let pack = sample_pack();
     let bytes = serialize_pack(&pack, &config(PackFormat::Toon));
     let text = String::from_utf8(bytes).expect("utf8");
-    assert!(text.contains("claims"));
+    assert!(text.lines().any(|line| {
+        let line = line.trim_start();
+        line == "claims[1]:" || (line.starts_with("claims[1]{") && line.ends_with("}:"))
+    }));
 }
 
 #[test]
@@ -566,7 +569,42 @@ fn markdown_has_table_layout() {
     let bytes = serialize_pack(&pack, &config(PackFormat::Markdown));
     let text = String::from_utf8(bytes).expect("utf8");
     assert!(text.contains("## Claims"));
-    assert!(text.contains("|----|"));
+
+    let claims = text.split("## Claims").nth(1).expect("claims section");
+    let mut lines = claims
+        .lines()
+        .skip_while(|line| !line.trim().starts_with('|'));
+    let header = lines.next().expect("table header");
+    let separator = lines.next().expect("table separator");
+    let row = lines.next().expect("claim row");
+    let cells = |line: &str| -> Vec<String> {
+        let line = line.trim();
+        assert!(line.starts_with('|') && line.ends_with('|'));
+        line[1..line.len() - 1]
+            .split('|')
+            .map(|cell| cell.trim().to_owned())
+            .collect()
+    };
+    let columns = cells(header);
+    let separators = cells(separator);
+    let values = cells(row);
+    assert_eq!(separators.len(), columns.len());
+    assert_eq!(values.len(), columns.len());
+    assert!(separators.iter().all(|cell| {
+        let dashes = cell.trim_matches(':');
+        dashes.len() >= 3 && dashes.chars().all(|ch| ch == '-')
+    }));
+    for (column, expected) in [
+        ("id", "cl88:f2"),
+        ("pred", "goal.learning"),
+        ("val", "Learn Japanese by June"),
+    ] {
+        let index = columns
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(column))
+            .expect("expected claim column");
+        assert_eq!(values[index], expected);
+    }
 }
 
 #[test]
@@ -993,83 +1031,58 @@ fn max_item_tokens_preserves_claim_predicate_for_non_string_value() {
 #[test]
 fn max_item_tokens_strips_claim_to_safe_minimal_row_when_value_truncation_is_not_enough() {
     let predicate = "note.metadata_heavy";
-    let mut entity = PreparedEntity {
-        entity_type: ENTITY_TYPE_CLAIM,
-        score: 1.0,
-        source: PreparedEntitySource::Result,
-        source_id: [0x07; 16],
-        id: "cl01:01".to_owned(),
-        fields: vec![
-            ("pred".to_owned(), Value::String(predicate.to_owned())),
-            ("val".to_owned(), Value::String("v".repeat(120))),
-            ("src".to_owned(), Value::String("s".repeat(300))),
-            ("scope".to_owned(), Value::String("c".repeat(300))),
-        ],
-    };
-    let mut stats = empty_stats();
+    let mut entity = claim_entity(0x07, predicate, &"v".repeat(120), 1.0);
+    let fields = entity.fields.as_mut().expect("claim fields");
+    fields.insert("src".to_owned(), Value::String("s".repeat(300)));
+    fields.insert("scope".to_owned(), Value::String("c".repeat(300)));
+    let pack = pack_with_results(vec![entity]);
+    let mut cfg = config(PackFormat::Json);
+    cfg.profile = FieldProfile::Full;
+    cfg.max_field_chars = 0;
+    cfg.max_item_tokens = 32;
+    cfg.budget = 0;
 
-    assert!(apply_item_budget(&mut entity, 32, &mut stats));
+    let projected = project_pack_for_json_response(pack, &cfg);
 
-    assert!(
-        estimate_entity_tokens_with_depth_limit(&entity, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
-            <= 32
-    );
-    assert_eq!(
-        entity
-            .fields
-            .iter()
-            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
-        Some(predicate)
-    );
-    assert!(entity.fields.iter().any(|(key, _)| key == "val"));
-    assert!(!entity.fields.iter().any(|(key, _)| key == "src"));
-    assert!(!entity.fields.iter().any(|(key, _)| key == "scope"));
-    assert_eq!(stats.items_truncated.count, 1);
-    assert_eq!(stats.items_dropped.count, 0);
+    assert_eq!(projected.results.len(), 1);
+    let fields = projected.results[0].fields.as_ref().expect("claim fields");
+    assert_eq!(fields.get("pred").and_then(Value::as_str), Some(predicate));
+    assert!(matches!(fields.get("val"), Some(Value::String(_))));
+    assert!(!fields.contains_key("src"));
+    assert!(!fields.contains_key("scope"));
+    assert_eq!(projected.stats.tokens.items.len(), 1);
+    assert!(projected.stats.tokens.items[0].tokens <= cfg.max_item_tokens);
+    assert_eq!(projected.stats.items_truncated.count, 1);
+    assert_eq!(projected.stats.items_dropped.count, 0);
 }
 
 #[test]
 fn max_item_tokens_strips_claim_metadata_without_truncating_short_value() {
     let predicate = "note.metadata_heavy";
-    let mut entity = PreparedEntity {
-        entity_type: ENTITY_TYPE_CLAIM,
-        score: 1.0,
-        source: PreparedEntitySource::Result,
-        source_id: [0x08; 16],
-        id: "cl01:01".to_owned(),
-        fields: vec![
-            ("pred".to_owned(), Value::String(predicate.to_owned())),
-            ("val".to_owned(), Value::String("ok".to_owned())),
-            ("src".to_owned(), Value::String("s".repeat(300))),
-            ("scope".to_owned(), Value::String("c".repeat(300))),
-        ],
-    };
-    let mut stats = empty_stats();
+    let mut entity = claim_entity(0x08, predicate, "ok", 1.0);
+    let fields = entity.fields.as_mut().expect("claim fields");
+    fields.insert("src".to_owned(), Value::String("s".repeat(300)));
+    fields.insert("scope".to_owned(), Value::String("c".repeat(300)));
+    let pack = pack_with_results(vec![entity]);
+    let mut cfg = config(PackFormat::Json);
+    cfg.profile = FieldProfile::Full;
+    cfg.max_field_chars = 0;
+    cfg.max_item_tokens = 32;
+    cfg.budget = 0;
 
-    assert!(apply_item_budget(&mut entity, 32, &mut stats));
+    let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    let output = String::from_utf8(bytes).expect("JSON output");
+    let compact: String = output.chars().filter(|ch| !ch.is_whitespace()).collect();
 
-    assert!(
-        estimate_entity_tokens_with_depth_limit(&entity, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
-            <= 32
-    );
-    assert_eq!(
-        entity
-            .fields
-            .iter()
-            .find_map(|(key, value)| (key == "pred").then_some(value.as_str()).flatten()),
-        Some(predicate)
-    );
-    assert_eq!(
-        entity
-            .fields
-            .iter()
-            .find_map(|(key, value)| (key == "val").then_some(value.as_str()).flatten()),
-        Some("ok")
-    );
-    assert!(!entity.fields.iter().any(|(key, _)| key == "src"));
-    assert!(!entity.fields.iter().any(|(key, _)| key == "scope"));
-    assert_eq!(stats.items_truncated.count, 1);
-    assert_eq!(stats.items_dropped.count, 0);
+    assert_eq!(telemetry.result_ids, vec![[0x08; 16]]);
+    assert!(compact.contains(&format!("\"pred\":\"{predicate}\"")));
+    assert!(compact.contains("\"val\":\"ok\""));
+    assert!(!compact.contains("\"src\":"));
+    assert!(!compact.contains("\"scope\":"));
+    assert_eq!(telemetry.stats.tokens.items.len(), 1);
+    assert!(telemetry.stats.tokens.items[0].tokens <= cfg.max_item_tokens);
+    assert_eq!(telemetry.stats.items_truncated.count, 1);
+    assert_eq!(telemetry.stats.items_dropped.count, 0);
 }
 
 #[test]
@@ -1138,12 +1151,16 @@ fn max_item_tokens_drops_rows_when_tiny_budget_cannot_fit_suffix_or_minimal_row(
     cfg.max_item_tokens = 1;
     cfg.budget = 0;
 
-    let prepared = prepare_pack(&pack, &cfg, true);
+    let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    let output = String::from_utf8(bytes).expect("JSON output");
 
-    assert!(prepared.results.is_empty());
-    assert_eq!(prepared.stats.items_truncated.count, 0);
-    assert_eq!(prepared.stats.items_dropped.count, 1);
-    assert_eq!(prepared.stats.items_dropped.reason.as_str(), "item_budget");
+    assert!(!output.contains("\"cl01:01\""));
+    assert!(!output.contains("note.tiny"));
+    assert!(telemetry.result_ids.is_empty());
+    assert!(telemetry.stats.tokens.items.is_empty());
+    assert_eq!(telemetry.stats.items_truncated.count, 0);
+    assert_eq!(telemetry.stats.items_dropped.count, 1);
+    assert_eq!(telemetry.stats.items_dropped.reason.as_str(), "item_budget");
 }
 
 #[test]
@@ -1160,17 +1177,22 @@ fn item_and_token_budget_reasons_are_discriminated() {
     cfg.max_item_tokens = 64;
     cfg.budget = 80;
 
-    let prepared = prepare_pack(&pack, &cfg, false);
-    let kept_rows: usize = prepared.results.iter().map(|(_, rows)| rows.len()).sum();
+    let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    let output = String::from_utf8(bytes).expect("TOON output");
 
-    assert_eq!(kept_rows, 1);
-    assert_eq!(prepared.stats.items_truncated.count, 1);
+    assert_eq!(telemetry.result_ids, vec![[1; 16]]);
+    assert!(output.contains("note.over_item"));
+    assert!(!output.contains("note.budget_drop"));
+    assert_eq!(telemetry.stats.items_truncated.count, 1);
     assert_eq!(
-        prepared.stats.items_truncated.reason.as_str(),
+        telemetry.stats.items_truncated.reason.as_str(),
         "item_budget"
     );
-    assert_eq!(prepared.stats.items_dropped.count, 1);
-    assert_eq!(prepared.stats.items_dropped.reason.as_str(), "token_budget");
+    assert_eq!(telemetry.stats.items_dropped.count, 1);
+    assert_eq!(
+        telemetry.stats.items_dropped.reason.as_str(),
+        "token_budget"
+    );
 }
 
 #[test]
@@ -1188,21 +1210,14 @@ fn critical_predicate_claims_bypass_item_cap_when_serialized_budget_is_disabled(
     cfg.max_item_tokens = 8;
     cfg.budget = 0;
 
-    let prepared = prepare_pack(&pack, &cfg, false);
-    let kept = prepared
-        .results
-        .iter()
-        .find_map(|(key, rows)| (*key == GroupKey::Kind(ENTITY_TYPE_CLAIM)).then_some(rows))
-        .expect("critical claim group");
-    let rendered_value = kept[0]
-        .fields
-        .iter()
-        .find_map(|(key, value)| (key == "val").then_some(value.as_str()).flatten())
-        .expect("critical value");
+    let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    let output = String::from_utf8(bytes).expect("TOON output");
 
-    assert_eq!(rendered_value, critical_value);
-    assert_eq!(prepared.stats.items_truncated.count, 0);
-    assert_eq!(prepared.stats.items_dropped.count, 0);
+    assert_eq!(telemetry.result_ids, vec![[1; 16]]);
+    assert!(output.contains("preference.food"));
+    assert!(output.contains(&critical_value));
+    assert_eq!(telemetry.stats.items_truncated.count, 0);
+    assert_eq!(telemetry.stats.items_dropped.count, 0);
 }
 
 #[test]
@@ -1266,14 +1281,14 @@ fn over_cap_items_increment_truncated_once_each() {
     cfg.max_field_chars = 0;
     cfg.max_item_tokens = 64;
 
-    let prepared = prepare_pack(&pack, &cfg, true);
+    let (_, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
 
-    assert_eq!(prepared.stats.items_truncated.count, 2);
+    assert_eq!(telemetry.stats.items_truncated.count, 2);
     assert_eq!(
-        prepared.stats.items_truncated.reason.as_str(),
+        telemetry.stats.items_truncated.reason.as_str(),
         "item_budget"
     );
-    assert_eq!(prepared.stats.items_dropped.count, 0);
+    assert_eq!(telemetry.stats.items_dropped.count, 0);
 }
 
 #[test]
@@ -1295,19 +1310,15 @@ fn token_budget_zero_disables_budget_enforcement() {
         });
     }
 
-    let total_results = pack.results.len();
-    let total_neighbors = pack.neighbors.len();
-
     let mut cfg = config(PackFormat::Toon);
     cfg.budget = 0;
     cfg.merge_neighbors = false;
 
-    let prepared = prepare_pack(&pack, &cfg, false);
-    let kept_results: usize = prepared.results.iter().map(|(_, rows)| rows.len()).sum();
-    let kept_neighbors: usize = prepared.neighbors.iter().map(|(_, rows)| rows.len()).sum();
-
-    assert_eq!(kept_results, total_results);
-    assert_eq!(kept_neighbors, total_neighbors);
+    let text = String::from_utf8(serialize_pack(&pack, &cfg)).unwrap();
+    for entity in pack.results.iter().chain(pack.neighbors.iter()) {
+        let reference = format!("{}:{:02x}", entity.short_id, entity.content_hash);
+        assert!(text.contains(&reference), "missing reference {reference}");
+    }
 }
 
 #[test]
@@ -1371,15 +1382,22 @@ fn max_field_chars_zero_disables_and_one_emits_ellipsis() {
 #[test]
 fn zero_section_budget_drops_all_rows() {
     let allocation = TokenAllocation::default();
-    let source = vec![(
-        GroupKey::Kind(0),
-        vec![prepared_entity_for_test(18, Vec::new())],
-    )];
+    let pack = pack_with_results(vec![claim_entity(1, "note.first", "value", 1.0)]);
 
-    let (groups, used) = budget_groups(&source, &allocation, 0);
+    let mut cfg = config(PackFormat::Json);
+    cfg.allocation = allocation;
+    cfg.merge_neighbors = false;
+    cfg.budget = 1;
 
-    assert!(groups.is_empty());
-    assert_eq!(used, 0);
+    let (_, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+    assert!(telemetry.result_ids.is_empty());
+    assert!(telemetry.stats.tokens.items.is_empty());
+    assert_eq!(telemetry.stats.items_dropped.count, 1);
+
+    cfg.budget = 0;
+    let (_, unlimited) = serialize_pack_with_telemetry(&pack, &cfg);
+    assert_eq!(unlimited.result_ids, vec![[1; 16]]);
+    assert_eq!(unlimited.stats.items_dropped.count, 0);
 }
 
 #[test]
@@ -1598,14 +1616,11 @@ fn estimate_entity_chars_accounts_for_escaped_field_names() {
 
 #[test]
 fn surplus_budget_redistributes_to_hungry_types() {
-    // 1 tiny turn + 40 fat claims with a tight budget.
-    // The turn barely uses its allocation, so surplus should flow to claims.
-    // Verify claims gets more entities than its raw fraction would allow.
+    // One tiny turn leaves allocation available for 40 hungry claims.
     let mut pack = sample_pack();
     pack.results.clear();
     pack.neighbors.clear();
 
-    // Single turn — very small, won't fill its allocation.
     pack.results.push(ContextEntity {
         id: EntityId::from_bytes_unchecked([99; 16]),
         short_id: "tn01".to_owned(),
@@ -1620,7 +1635,6 @@ fn surplus_budget_redistributes_to_hungry_types() {
         vector: None,
     });
 
-    // 40 claims — will exceed claims budget at low token limits.
     for i in 0..40_u8 {
         pack.results.push(ContextEntity {
             id: EntityId::from_bytes_unchecked([50 + i; 16]),
@@ -1638,40 +1652,49 @@ fn surplus_budget_redistributes_to_hungry_types() {
     }
 
     let mut cfg = config(PackFormat::Toon);
-    cfg.budget = 200;
-    let prepared = prepare_pack(&pack, &cfg, false);
+    cfg.budget = 0;
+    let (_, unlimited) = serialize_pack_with_telemetry(&pack, &cfg);
+    let mut claim_costs: Vec<usize> = unlimited
+        .stats
+        .tokens
+        .items
+        .iter()
+        .filter(|item| item.entity_type == ENTITY_TYPE_CLAIM)
+        .map(|item| item.tokens)
+        .collect();
+    assert_eq!(claim_costs.len(), 40);
+    assert!(claim_costs.iter().all(|tokens| *tokens > 0));
+    claim_costs.sort_unstable();
 
-    let claims_count = prepared
+    cfg.budget = 200;
+    let raw_claim_token_budget = (cfg.budget as f32 * cfg.allocation.claims) as usize;
+    let mut used = 0;
+    let mut raw_baseline = 0;
+    for tokens in claim_costs {
+        if used + tokens > raw_claim_token_budget {
+            break;
+        }
+        used += tokens;
+        raw_baseline += 1;
+    }
+    assert!(raw_baseline < 40);
+
+    let text = String::from_utf8(serialize_pack(&pack, &cfg)).unwrap();
+    let claims_count = pack
         .results
         .iter()
-        .find_map(|(key, rows)| (*key == GroupKey::Kind(0)).then_some(rows.len()))
-        .unwrap_or(0);
-
-    let raw_claim_token_budget = (cfg.budget as f32 * 0.45) as usize;
-    let avg_claim_tokens = estimate_entity_tokens_with_depth_limit(
-        &prepared_entity_for_test(
-            5,
-            vec![
-                ("pred".to_owned(), Value::String("p".to_owned())),
-                ("val".to_owned(), Value::String("v".repeat(40))),
-            ],
-        ),
-        DEFAULT_CONTEXT_PACK_TOKENIZER,
-        None,
-    );
-    let raw_baseline = raw_claim_token_budget / avg_claim_tokens.max(1);
+        .filter(|entity| entity.entity_type == ENTITY_TYPE_CLAIM)
+        .filter(|entity| {
+            let reference = format!("{}:{:02x}", entity.short_id, entity.content_hash);
+            text.contains(&reference)
+        })
+        .count();
 
     assert!(
         claims_count > raw_baseline,
-        "redistribution should give claims more than raw {raw_baseline}: got {claims_count}"
+        "redistribution should give claims more than raw {raw_baseline}: got {claims_count}",
     );
-    // Turn should still be present (it fits easily).
-    let turns_count = prepared
-        .results
-        .iter()
-        .find_map(|(key, rows)| (*key == GroupKey::Kind(1)).then_some(rows.len()))
-        .unwrap_or(0);
-    assert!(turns_count > 0);
+    assert!(text.contains("tn01:01"));
 }
 
 // ── TaskList and Task productivity-band tests ──────────────────

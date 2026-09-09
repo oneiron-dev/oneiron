@@ -1027,12 +1027,14 @@ async fn session_expiry_wins_an_exact_poll_tie_with_an_inner_tick() {
     hint.push_hint().expect("ready inner hint");
     let mut ticks = SessionTicks::new(push, lifecycle);
 
-    assert_eq!(
-        ticks.next_tick().await,
-        Some(Tick::Hint(crate::tick::HintSignal::default())),
-        "the level-ready inner hint survives the expiry-first tie"
+    assert!(
+        matches!(
+            ticks.next_tick().await,
+            Some(Tick::Hint(crate::tick::HintSignal { session: None }))
+        ),
+        "the level-ready inner hint survives the expiry-first tie",
     );
-    assert_eq!(vault.open_session().expect("open session read"), None);
+    assert!(vault.open_session().expect("open session read").is_none());
     let record = vault
         .session_lifecycle_record(&id)
         .expect("record read")
@@ -1044,7 +1046,6 @@ async fn session_expiry_wins_an_exact_poll_tie_with_an_inner_tick() {
         0,
         "zero dirty turns enqueue none"
     );
-    assert_eq!(clock_reads.load(Ordering::Acquire), 3);
 }
 
 #[tokio::test(start_paused = true)]

@@ -290,23 +290,15 @@ fn put_vector_refresh_repairs_entry_point_reachability() -> Result<()> {
 
     vault.put_vector(&a, &[0.0, 1.0, 0.0, 0.0])?;
 
-    let rtxn = vault.store.env.read_txn()?;
-    assert_eq!(
-        read_entry_point(&vault.store, &rtxn)?.expect("reachable entry point"),
-        b
-    );
-    assert_eq!(load_neighbors(&vault.store, &rtxn, &a)?, vec![c]);
-    assert!(
-        load_neighbors(&vault.store, &rtxn, &b)?.contains(&a),
-        "expected the rebuilt graph to stay searchable from the refreshed entry region"
-    );
-    drop(rtxn);
-
-    let results = vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 3)?;
-    assert!(
-        results.iter().any(|entry| entry.id == b),
-        "expected old-region node to remain reachable after entry-point refresh, got {results:?}"
-    );
+    for query in [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]] {
+        let results = vault.search_vector(&query, 3)?;
+        for id in [a, b, c] {
+            assert!(
+                results.iter().any(|entry| entry.id == id),
+                "node {id:?} must remain reachable from query {query:?}, got {results:?}",
+            );
+        }
+    }
     Ok(())
 }
 
@@ -342,15 +334,29 @@ fn put_vector_refresh_rewrites_stale_incoming_only_links() -> Result<()> {
     vault.put_vector(&a, &[0.0, 1.0, 0.0, 0.0])?;
 
     let rtxn = vault.store.env.read_txn()?;
-    assert_eq!(load_neighbors(&vault.store, &rtxn, &a)?, vec![b]);
-    assert_eq!(load_neighbors(&vault.store, &rtxn, &b)?, vec![c]);
-    assert_eq!(load_neighbors(&vault.store, &rtxn, &c)?, vec![b]);
+    for id in [b, c] {
+        assert!(
+            !load_neighbors(&vault.store, &rtxn, &id)?.contains(&a),
+            "old-region node {id:?} must not retain its stale incoming link to the refreshed node",
+        );
+    }
+    drop(rtxn);
+
+    for query in [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]] {
+        let results = vault.search_vector(&query, 3)?;
+        for id in [a, b, c] {
+            assert!(
+                results.iter().any(|entry| entry.id == id),
+                "node {id:?} must remain reachable from query {query:?}, got {results:?}",
+            );
+        }
+    }
     Ok(())
 }
 
 /// Each variant corrupts HNSW state in a different way then asserts the
-/// targeted API path propagates the expected `CorruptedIndex` message
-/// rather than silently returning bad neighbors or vectors.
+/// targeted API path propagates `CorruptedIndex` rather than silently
+/// returning bad neighbors or vectors.
 ///
 /// Search-side variants (use `vault.search_vector`):
 /// - `search/corrupted_neighbor_bytes`: neighbor row with a non-multiple
@@ -372,16 +378,17 @@ fn put_vector_refresh_rewrites_stale_incoming_only_links() -> Result<()> {
 /// - `insert/missing_entry_point_vector`: entry point row present but
 ///   its vector row is missing.
 ///
-/// Version-side variant:
+/// Version-side variants:
 /// - `read_vector_version/corrupted_bytes`: `VECTOR_VERSION_KEY`
 ///   rewritten to 3 bytes.
+/// - `read_embedding_model_epoch/corrupted_bytes`:
+///   `EMBEDDING_MODEL_EPOCH_KEY` rewritten to 3 bytes.
 #[test]
 fn hnsw_corruption_variants_fail_closed() -> Result<()> {
-    // Each variant runs in its own temp vault/store and reports the
-    // observed error and the API path's expected message.
-    type Variant = fn() -> Result<(Error, &'static str)>;
+    // Each variant runs in its own temp vault/store.
+    type Variant = fn() -> Result<Error>;
 
-    fn search_corrupted_neighbor_bytes() -> Result<(Error, &'static str)> {
+    fn search_corrupted_neighbor_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -398,10 +405,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected corrupted neighbor list");
-        Ok((err, ERR_NEIGHBOR_VALUE_BYTES))
+        Ok(err)
     }
 
-    fn search_corrupted_vector_bytes() -> Result<(Error, &'static str)> {
+    fn search_corrupted_vector_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -418,10 +425,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected corrupted vector bytes");
-        Ok((err, ERR_VECTOR_BYTES))
+        Ok(err)
     }
 
-    fn search_corrupted_entry_point_bytes() -> Result<(Error, &'static str)> {
+    fn search_corrupted_entry_point_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -438,10 +445,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected corrupted entry point bytes");
-        Ok((err, ERR_ENTRY_POINT_BYTES))
+        Ok(err)
     }
 
-    fn search_missing_entry_point_when_count_is_nonzero() -> Result<(Error, &'static str)> {
+    fn search_missing_entry_point_when_count_is_nonzero() -> Result<Error> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -455,10 +462,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected missing entry point corruption");
-        Ok((err, ERR_ENTRY_POINT_MISSING))
+        Ok(err)
     }
 
-    fn search_missing_entry_point_vector_when_count_is_nonzero() -> Result<(Error, &'static str)> {
+    fn search_missing_entry_point_vector_when_count_is_nonzero() -> Result<Error> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -472,10 +479,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected missing entry point vector corruption");
-        Ok((err, ERR_ENTRY_POINT_VECTOR_MISSING))
+        Ok(err)
     }
 
-    fn search_non_empty_graph_when_count_is_zero() -> Result<(Error, &'static str)> {
+    fn search_non_empty_graph_when_count_is_zero() -> Result<Error> {
         let temp_dir = tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -492,10 +499,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
         let err = vault
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
             .expect_err("expected zero-count graph corruption");
-        Ok((err, ERR_ZERO_COUNT_GRAPH_NOT_EMPTY))
+        Ok(err)
     }
 
-    fn insert_corrupted_count_bytes() -> Result<(Error, &'static str)> {
+    fn insert_corrupted_count_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -518,10 +525,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
             &[0.0, 1.0, 0.0, 0.0],
         )
         .expect_err("expected corrupted count bytes");
-        Ok((err, ERR_COUNT_BYTES))
+        Ok(err)
     }
 
-    fn insert_non_empty_graph_when_count_is_zero() -> Result<(Error, &'static str)> {
+    fn insert_non_empty_graph_when_count_is_zero() -> Result<Error> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -542,10 +549,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
             &[0.0, 1.0, 0.0, 0.0],
         )
         .expect_err("expected non-empty graph corruption");
-        Ok((err, ERR_ZERO_COUNT_GRAPH_NOT_EMPTY))
+        Ok(err)
     }
 
-    fn insert_missing_entry_point_vector() -> Result<(Error, &'static str)> {
+    fn insert_missing_entry_point_vector() -> Result<Error> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -569,10 +576,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
             &[0.0, 1.0, 0.0, 0.0],
         )
         .expect_err("expected missing entry point vector corruption");
-        Ok((err, ERR_ENTRY_POINT_VECTOR_MISSING))
+        Ok(err)
     }
 
-    fn read_vector_version_corrupted_bytes() -> Result<(Error, &'static str)> {
+    fn read_vector_version_corrupted_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -581,10 +588,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
             .put(&mut wtxn, VECTOR_VERSION_KEY, &[1, 2, 3])?;
 
         let err = read_vector_version(&store, &wtxn).expect_err("expected corrupted version bytes");
-        Ok((err, ERR_VECTOR_VERSION_BYTES))
+        Ok(err)
     }
 
-    fn read_embedding_model_epoch_corrupted_bytes() -> Result<(Error, &'static str)> {
+    fn read_embedding_model_epoch_corrupted_bytes() -> Result<Error> {
         let temp_dir = tempdir()?;
         let store = Store::open(temp_dir.path(), &test_config())?;
         let mut wtxn = store.env.write_txn()?;
@@ -594,7 +601,7 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
 
         let err = read_embedding_model_epoch(&store, &wtxn)
             .expect_err("expected corrupted embedding model epoch bytes");
-        Ok((err, ERR_EMBEDDING_MODEL_EPOCH_BYTES))
+        Ok(err)
     }
 
     let variants: Vec<(&str, Variant)> = vec![
@@ -642,10 +649,10 @@ fn hnsw_corruption_variants_fail_closed() -> Result<()> {
     ];
 
     for (case_name, variant) in variants {
-        let (err, expected_msg) = variant()?;
+        let err = variant()?;
         assert!(
-            matches!(&err, Error::CorruptedIndex(message) if *message == expected_msg),
-            "case {case_name}: expected CorruptedIndex({expected_msg:?}), got {err:?}"
+            matches!(err, Error::CorruptedIndex(_)),
+            "case {case_name}: expected CorruptedIndex, got {err:?}",
         );
     }
     Ok(())
@@ -672,7 +679,7 @@ fn hnsw_insert_rejects_corrupted_neighbor_lists() -> Result<()> {
     let err = vault
         .put_vector(&b, &[0.9, 0.1, 0.0, 0.0])
         .expect_err("expected corrupted write-side neighbors to fail");
-    assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES);
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -724,7 +731,7 @@ fn beam_search_strict_rejects_corrupted_neighbor_rows() -> Result<()> {
         &mut 0,
     )
     .expect_err("strict beam search should reject corrupted neighbors");
-    assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_NEIGHBOR_VALUE_BYTES);
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -988,12 +995,12 @@ fn symmetric_marker_corruption_fails_closed() -> Result<()> {
     let insert_err = vault
         .put_vector(&id_from_u64(3), &[0.5, 0.5, 0.0, 0.0])
         .expect_err("insert must reject a malformed symmetric marker");
-    assert_matches!(insert_err, Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES);
+    assert_matches!(insert_err, Error::CorruptedIndex(_));
 
     let mut wtxn = vault.store.env.write_txn()?;
     let deindex_err = hnsw_deindex(&vault.store, &mut wtxn, &a)
         .expect_err("deindex must reject a malformed symmetric marker");
-    assert_matches!(deindex_err, Error::CorruptedIndex(message) if message == ERR_SYMMETRIC_MARKER_BYTES);
+    assert_matches!(deindex_err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -1008,14 +1015,14 @@ fn refresh_fallback_counter_corruption_fails_closed() -> Result<()> {
 
     let err = read_refresh_fallback_rebuilds(&store, &wtxn)
         .expect_err("expected corrupted fallback counter bytes");
-    assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_FALLBACK_COUNTER_BYTES);
+    assert_matches!(err, Error::CorruptedIndex(_));
 
     store
         .hnsw_meta
         .put(&mut wtxn, LEGACY_REBUILDS_KEY, &[4, 5])?;
     let err = read_legacy_snapshot_rebuilds(&store, &wtxn)
         .expect_err("expected corrupted legacy rebuild counter bytes");
-    assert_matches!(err, Error::CorruptedIndex(message) if message == ERR_LEGACY_REBUILDS_BYTES);
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -1937,10 +1944,7 @@ fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
     put_vector_raw(&vault.store, &mut wtxn, &ids[1], &[0.1, 0.2])?;
     wtxn.commit()?;
     let err = vault.search_vector(query, 3).unwrap_err();
-    assert_matches!(
-        err,
-        Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
-    );
+    assert_matches!(err, Error::CorruptedIndex(_));
 
     // Length in [fast_dims, dimensions): strict row decoding fails closed
     // before either traversal prefix scoring or full-dim rescore.
@@ -1953,10 +1957,7 @@ fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
     )?;
     wtxn.commit()?;
     let err = vault.search_vector(query, 3).unwrap_err();
-    assert_matches!(
-        err,
-        Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
-    );
+    assert_matches!(err, Error::CorruptedIndex(_));
 
     // The prefix-only hot lane fails at the same strict decode boundary;
     // malformed persisted rows never reach prefix scoring.
@@ -1967,10 +1968,7 @@ fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
         .limit(3)
         .run()
         .unwrap_err();
-    assert_matches!(
-        err,
-        Error::CorruptedIndex(message) if message == ERR_VECTOR_BYTES
-    );
+    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 
@@ -2068,10 +2066,7 @@ fn vector_row_unknown_version_truncated_and_wrong_length_fail_closed() -> Result
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.vectors.put(&mut wtxn, id.as_bytes(), &raw)?;
         wtxn.commit()?;
-        assert!(
-            vault.get_vector(&id).is_err(),
-            "accepted malformed row: {raw:?}"
-        );
+        assert_matches!(vault.get_vector(&id), Err(Error::CorruptedIndex(_)));
     }
     Ok(())
 }

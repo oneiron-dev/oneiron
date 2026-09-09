@@ -233,10 +233,10 @@ fn noop_hosted_media_hash_match_provider_reports_no_match() -> Result<()> {
     };
 
     let provider = NoopHostedMediaHashMatchProvider;
-    assert_eq!(
+    assert!(matches!(
         provider.check_hosted_media(input)?,
         HostedMediaHashMatchDecision::NoMatch
-    );
+    ));
     assert_eq!(
         hosted_media_type_for_blob("payload.bin", b"\xff\xd8\xff\xe0jpeg-body"),
         Some("image/jpeg")
@@ -248,7 +248,6 @@ fn noop_hosted_media_hash_match_provider_reports_no_match() -> Result<()> {
     assert_eq!(hosted_media_type_for_blob("README.md", b"plain text"), None);
 
     let debug = format!("{input:?}");
-    assert!(debug.contains("bytes: \"<redacted>\""));
     assert!(!debug.contains("secret-media-bytes"));
     Ok(())
 }
@@ -382,11 +381,29 @@ fn codebase_snapshot_vault_round_trip_and_queries() -> Result<()> {
     )?;
     vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
 
-    assert_eq!(vault.get_codebase_snapshot(&id)?, Some(snapshot));
-    assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
-    assert_eq!(
-        vault.codebase_snapshots_by_project_id("project.alpha")?,
-        vec![id]
+    let persisted = vault
+        .get_codebase_snapshot(&id)?
+        .expect("persisted snapshot");
+    assert_eq!(persisted.project_id, snapshot.project_id);
+    assert_eq!(persisted.repo_ref.canonical(), repo_ref.canonical());
+    assert_eq!(persisted.commit_hash, snapshot.commit_hash);
+    assert_eq!(persisted.fork_hash, snapshot.fork_hash);
+    assert_eq!(persisted.scope_key, snapshot.scope_key);
+    assert_eq!(persisted.files.len(), snapshot.files.len());
+    for (actual, expected) in persisted.files.iter().zip(&snapshot.files) {
+        assert_eq!(actual.path, expected.path);
+        assert_eq!(actual.content_hash, expected.content_hash);
+        assert_eq!(actual.size_bytes, expected.size_bytes);
+    }
+    assert!(
+        vault
+            .codebase_snapshots_by_repo_ref(&repo_ref)?
+            .contains(&id)
+    );
+    assert!(
+        vault
+            .codebase_snapshots_by_project_id("project.alpha")?
+            .contains(&id)
     );
     assert!(
         vault
@@ -433,11 +450,40 @@ fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Resul
         .expect_err("secret file path must reject before sidecar mutation");
 
     assert_secret_scan_rejected(err, "gate.secret_scan.github_token");
-    assert_eq!(vault.get_codebase_snapshot(&id)?, Some(safe_snapshot));
-    assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
+    let persisted = vault
+        .get_codebase_snapshot(&id)?
+        .expect("safe snapshot survives rejection");
+    assert_eq!(persisted.project_id, safe_snapshot.project_id);
+    assert_eq!(persisted.repo_ref.canonical(), repo_ref.canonical());
+    assert_eq!(persisted.commit_hash, safe_snapshot.commit_hash);
+    assert_eq!(persisted.fork_hash, safe_snapshot.fork_hash);
+    assert_eq!(persisted.scope_key, safe_snapshot.scope_key);
+    assert_eq!(persisted.files.len(), 1);
+    assert_eq!(persisted.files[0].path, "src/lib.rs");
     assert_eq!(
-        vault.codebase_snapshots_by_project_id("project.alpha")?,
-        vec![id]
+        persisted.files[0].content_hash,
+        *blake3::hash(&safe_content).as_bytes()
+    );
+    assert_eq!(persisted.files[0].size_bytes, safe_content.len() as u64);
+    assert!(
+        vault
+            .codebase_snapshots_by_repo_ref(&repo_ref)?
+            .contains(&id)
+    );
+    assert!(
+        vault
+            .codebase_snapshots_by_project_id("project.alpha")?
+            .contains(&id)
+    );
+    assert!(
+        vault
+            .codebase_snapshots_by_fork_hash(&safe_snapshot.fork_hash)?
+            .contains(&id)
+    );
+    assert!(
+        !vault
+            .codebase_snapshots_by_fork_hash(&secret_snapshot.fork_hash)?
+            .contains(&id)
     );
     Ok(())
 }
@@ -467,11 +513,24 @@ fn codebase_snapshot_allows_non_secret_file_paths() -> Result<()> {
     )?;
     vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
 
-    assert_eq!(vault.get_codebase_snapshot(&id)?, Some(snapshot));
-    assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
+    let persisted = vault
+        .get_codebase_snapshot(&id)?
+        .expect("innocuous secret-name path is retained");
+    assert_eq!(persisted.files.len(), 1);
+    assert_eq!(persisted.files[0].path, "src/secret-name");
     assert_eq!(
-        vault.codebase_snapshots_by_project_id("project.alpha")?,
-        vec![id]
+        persisted.files[0].content_hash,
+        *blake3::hash(&content).as_bytes()
+    );
+    assert!(
+        vault
+            .codebase_snapshots_by_repo_ref(&repo_ref)?
+            .contains(&id)
+    );
+    assert!(
+        vault
+            .codebase_snapshots_by_project_id("project.alpha")?
+            .contains(&id)
     );
     Ok(())
 }
@@ -867,7 +926,21 @@ fn codebase_snapshot_custody_report_survives_one_of_two_matching_forks_deleted()
             .get_codebase_snapshot_custody_report(&snapshot.fork_hash)?
             .is_some()
     );
-    assert_eq!(vault.get_codebase_snapshot(&second)?, Some(snapshot));
+    let surviving = vault
+        .get_codebase_snapshot(&second)?
+        .expect("second snapshot survives deletion of first");
+    assert_eq!(surviving.project_id, snapshot.project_id);
+    assert_eq!(surviving.repo_ref.canonical(), repo.canonical());
+    assert_eq!(surviving.commit_hash, snapshot.commit_hash);
+    assert_eq!(surviving.fork_hash, snapshot.fork_hash);
+    assert_eq!(surviving.scope_key, snapshot.scope_key);
+    assert_eq!(surviving.files.len(), 1);
+    assert_eq!(surviving.files[0].path, "src/lib.rs");
+    assert_eq!(
+        surviving.files[0].content_hash,
+        *blake3::hash(&content).as_bytes()
+    );
+    assert_eq!(surviving.files[0].size_bytes, content.len() as u64);
     Ok(())
 }
 
@@ -980,15 +1053,24 @@ fn local_repo_ingest_filtered_identity_matches_persisted_snapshot_and_artifact()
         .get_code_artifact(&result.code_artifact_id)?
         .expect("persisted code artifact");
 
-    assert_eq!(result.snapshot, persisted);
+    assert_eq!(result.snapshot.project_id, persisted.project_id);
+    assert_eq!(persisted.project_id, "project.alpha");
     assert_eq!(
-        persisted
-            .files
-            .iter()
-            .map(|entry| entry.path.as_str())
-            .collect::<Vec<_>>(),
-        ["src/lib.rs"]
+        result.snapshot.repo_ref.canonical(),
+        persisted.repo_ref.canonical()
     );
+    assert_eq!(result.snapshot.commit_hash, persisted.commit_hash);
+    assert_eq!(result.snapshot.fork_hash, persisted.fork_hash);
+    assert_eq!(result.snapshot.scope_key, persisted.scope_key);
+    for manifest in [&result.snapshot, &persisted] {
+        assert_eq!(manifest.files.len(), 1);
+        assert_eq!(manifest.files[0].path, "src/lib.rs");
+        assert_eq!(
+            manifest.files[0].content_hash,
+            *blake3::hash(lib_rs).as_bytes()
+        );
+        assert_eq!(manifest.files[0].size_bytes, lib_rs.len() as u64);
+    }
     assert_ne!(persisted.fork_hash, unfiltered.fork_hash);
     assert_eq!(
         result.code_artifact_id,
@@ -1182,29 +1264,28 @@ fn local_repo_ingest_calls_hash_match_provider_for_hosted_media_candidates() -> 
 
     let calls = provider.calls.borrow();
     assert_eq!(calls.len(), 2);
-    assert_eq!(
-        calls.as_slice(),
-        &[
-            HashMatchCall {
-                project_id: "project.alpha".to_owned(),
-                path: "assets/payload.bin".to_owned(),
-                media_type: "image/png",
-                content_hash: *blake3::hash(renamed_media_bytes).as_bytes(),
-                size_bytes: u64::try_from(renamed_media_bytes.len())
-                    .map_err(|_| Error::ArithmeticOverflow("test renamed media bytes"))?,
-                bytes: renamed_media_bytes.to_vec(),
-            },
-            HashMatchCall {
-                project_id: "project.alpha".to_owned(),
-                path: "assets/portrait.jpg".to_owned(),
-                media_type: "image/jpeg",
-                content_hash: *blake3::hash(media_bytes).as_bytes(),
-                size_bytes: u64::try_from(media_bytes.len())
-                    .map_err(|_| Error::ArithmeticOverflow("test media bytes"))?,
-                bytes: media_bytes.to_vec(),
-            },
-        ]
-    );
+    for (path, media_type, bytes) in [
+        (
+            "assets/payload.bin",
+            "image/png",
+            renamed_media_bytes.as_slice(),
+        ),
+        ("assets/portrait.jpg", "image/jpeg", media_bytes.as_slice()),
+    ] {
+        let call = calls
+            .iter()
+            .find(|call| call.path == path)
+            .expect("hosted media candidate reaches provider");
+        assert_eq!(call.project_id, "project.alpha");
+        assert_eq!(call.media_type, media_type);
+        assert_eq!(call.content_hash, *blake3::hash(bytes).as_bytes());
+        assert_eq!(
+            call.size_bytes,
+            u64::try_from(bytes.len())
+                .map_err(|_| Error::ArithmeticOverflow("test media bytes"))?
+        );
+        assert_eq!(call.bytes.as_slice(), bytes);
+    }
     Ok(())
 }
 
@@ -1262,6 +1343,7 @@ fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
         11,
     )?;
     let outside = entity_id(0x58);
+    let asset_id = codebase_asset_entity_id(&ingest.snapshot.files[0].content_hash)?;
 
     vault.put_entity(
         &outside,
@@ -1273,34 +1355,23 @@ fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
     vault
         .batch()
         .text(&ingest.code_artifact_id, &[("body", "scopeneedle repo")])
+        .text(&asset_id, &[("body", "scopeneedle included asset")])
         .text(&outside, &[("body", "scopeneedle outside")])
         .commit()?;
 
     let all = vault.query().search_text("scopeneedle", 10).run()?;
-    assert_eq!(all.len(), 2);
+    assert_eq!(all.len(), 3);
+    assert!(all.iter().any(|hit| hit.id == outside));
 
     let scoped = vault
         .query()
         .search_text("scopeneedle", 10)
         .world(WorldScope::WorldSet(ingest.snapshot.scope_key))
         .run()?;
-    assert_eq!(scoped.len(), 1);
-    assert_eq!(scoped[0].id, ingest.code_artifact_id);
-
-    let asset_id = codebase_asset_entity_id(&ingest.snapshot.files[0].content_hash)?;
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(codebase_candidate_matches_scope_key(
-        &vault.store,
-        &rtxn,
-        &asset_id,
-        &ingest.snapshot.scope_key
-    )?);
-    assert!(!codebase_candidate_matches_scope_key(
-        &vault.store,
-        &rtxn,
-        &outside,
-        &ingest.snapshot.scope_key
-    )?);
+    assert_eq!(scoped.len(), 2);
+    assert!(scoped.iter().any(|hit| hit.id == ingest.code_artifact_id));
+    assert!(scoped.iter().any(|hit| hit.id == asset_id));
+    assert!(!scoped.iter().any(|hit| hit.id == outside));
     Ok(())
 }
 

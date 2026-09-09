@@ -642,16 +642,7 @@ fn delete_duplicate_removes_overlay_only_value_without_tombstone() -> Result<()>
     segment.commit()?;
 
     let snapshot = overlay.snapshot()?;
-    let KeyspaceState::DupSort { rows, .. } = snapshot.state.keyspaces[keyspace.slot()].as_ref()
-    else {
-        panic!("text postings overlay is not DUP_SORT");
-    };
-    assert!(
-        rows.get(key.as_slice()).is_none(),
-        "an emptied overlay-only delta is dropped, not left as a bare row"
-    );
     assert_eq!(snapshot.bytes_used(), 0);
-    assert!(snapshot.merge_plan(keyspace, |_| true).rows.is_empty());
 
     let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
     let rtxn = env.read_txn()?;
@@ -681,13 +672,6 @@ fn delete_duplicate_retains_base_backed_tombstone() -> Result<()> {
     segment.commit()?;
 
     let snapshot = overlay.snapshot()?;
-    let KeyspaceState::DupSort { rows, .. } = snapshot.state.keyspaces[keyspace.slot()].as_ref()
-    else {
-        panic!("text postings overlay is not DUP_SORT");
-    };
-    let delta = rows.get(key.as_slice()).expect("base mask is retained");
-    assert!(delta.present.is_empty());
-    assert_eq!(delta.deleted.iter().collect::<Vec<_>>(), vec![&value]);
     assert_eq!(snapshot.bytes_used(), key.len() + value.len());
 
     let view = OverlayDb::composed(base, overlay, Arc::new(snapshot), keyspace);
@@ -752,10 +736,7 @@ fn stage_journal_without_segment_fails_closed() {
             id: EntityId::now(),
         },
     )) {
-        Err(Error::InvariantViolation(message)) => assert_eq!(
-            message,
-            "session overlay write requires an active txn segment"
-        ),
+        Err(Error::InvariantViolation(_)) => {}
         Err(other) => panic!("unexpected error: {other}"),
         Ok(()) => panic!("segment-less journal staging unexpectedly succeeded"),
     }

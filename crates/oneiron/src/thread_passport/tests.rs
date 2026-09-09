@@ -122,19 +122,42 @@ fn reference_lists_dedupe_without_reordering() {
         ["c@x", "a@x", "b@x"]
     );
 
-    // In-Reply-To normalizes through the same function and dedupes against
-    // References without disturbing provider order.
+    let (_dir, vault) = test_vault();
+    let identity = entity(0x61);
+    seed_identity(&vault, identity, "receiver@x");
+    let mut roots = Vec::new();
+    for message_id in ["c@x", "a@x", "b@x"] {
+        let resolution = vault
+            .record_thread_passport(input(identity, message_id, OBSERVED_AT))
+            .expect("record referenced message");
+        roots.push(resolution.canonical_thread_ref);
+    }
+
+    // The duplicate In-Reply-To must not prevent References from joining
+    // every referenced message into the inbound message's thread.
     let chain = input(entity(0x61), "<m@x>", OBSERVED_AT)
         .with_references(list)
         .with_in_reply_to(mid("<c@x>"));
-    assert_eq!(
-        chain
-            .reference_chain()
-            .into_iter()
-            .map(CanonicalMessageId::as_str)
-            .collect::<Vec<_>>(),
-        ["c@x", "a@x", "b@x"]
-    );
+    let resolution = vault
+        .record_thread_passport(chain)
+        .expect("record combined reference evidence");
+    for root in roots {
+        assert_eq!(
+            vault.canonical_thread_ref(&root).expect("resolve root"),
+            resolution.canonical_thread_ref,
+        );
+    }
+    let passports = vault
+        .thread_passports(&resolution.canonical_thread_ref)
+        .expect("read converged passports");
+    assert_eq!(passports.len(), 4);
+    for message_id in ["c@x", "a@x", "b@x", "m@x"] {
+        assert!(
+            passports
+                .iter()
+                .any(|passport| passport.message_id.as_str() == message_id)
+        );
+    }
 
     // A malformed entry fails the whole list rather than being dropped.
     assert_matches!(

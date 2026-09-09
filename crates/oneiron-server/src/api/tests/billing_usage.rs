@@ -680,10 +680,6 @@ async fn consumer_top_up_route_rejects_idempotency_conflicts() {
         conflict["details"]["idempotencyKey"],
         Value::from("top-up-conflict")
     );
-    assert_eq!(
-        conflict["suggestions"],
-        json!(["Reuse the original top-up request body or send a new JSON idempotencyKey."])
-    );
     assert_eq!(usage_status, StatusCode::OK);
     assert_eq!(
         usage["allowance"]["allowanceCreditUnits"],

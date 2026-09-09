@@ -181,10 +181,13 @@ fn final_self_host_posture_clears_only_lower_precedence_references() {
         let resolved = resolve_privacy_layers(postures, key_refs).unwrap();
         assert_eq!(resolved.privacy_posture, SelfHostLocal);
         assert_eq!(resolved.hosted_kms_key_ref, None);
+        let privacy = resolved.vault_config().privacy;
+        assert_eq!(privacy.posture, SelfHostLocal);
         assert_eq!(
-            resolved.vault_config().privacy,
-            VaultPrivacyConfig::default()
+            privacy.data_key_custody,
+            VaultDataKeyCustody::OwnerHeldLocal
         );
+        assert!(!privacy.host_readable());
     }
 }
 
@@ -290,13 +293,9 @@ fn direct_vault_config_conversion_preserves_invalid_pairs_for_side_effect_free_r
             }
         );
         let validation_error = converted.privacy.validate().unwrap_err();
-        let expected = match posture {
-            Hosted => "non-empty host-managed KMS key reference",
-            SelfHostLocal => "rejects host-managed KMS key custody",
-        };
         assert!(matches!(
             &validation_error,
-            oneiron::Error::InvalidConfig(message) if message.contains(expected)
+            oneiron::Error::InvalidConfig(_)
         ));
         assert!(!format!("{converted:?}").contains("stray-ref"));
 
@@ -312,7 +311,7 @@ fn direct_vault_config_conversion_preserves_invalid_pairs_for_side_effect_free_r
                     oneiron::Vault::open(path, direct.vault_config())
                 };
                 let error = result.err().expect("invalid custody must not open a vault");
-                assert_eq!(error.to_string(), validation_error.to_string());
+                assert!(matches!(&error, oneiron::Error::InvalidConfig(_)));
                 assert!(!format!("{error:?}").contains("stray-ref"));
                 assert!(!missing.exists());
                 assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());

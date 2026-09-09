@@ -256,9 +256,20 @@ fn writes_stamp_the_authenticated_writer() -> Result<()> {
     for claim_id in [anchor_claim, substrate_claim] {
         let body = vault.get_claim(&claim_id)?.expect("claim body");
         let evidence = body.evidence.expect("writer evidence stamped");
-        let rendered = format!("{evidence:?}");
-        assert!(rendered.contains(&entity(0x33).to_hex()), "{rendered}");
-        assert!(rendered.contains("human"), "{rendered}");
+        let Value::Map(entries) = evidence else {
+            panic!("writer evidence must be a map");
+        };
+        for (key, expected) in [
+            ("writer_ref", Value::from(author_ref.to_hex())),
+            ("writer_class", Value::from("human")),
+        ] {
+            let values: Vec<_> = entries
+                .iter()
+                .filter(|(entry_key, _)| entry_key == &Value::from(key))
+                .map(|(_, value)| value)
+                .collect();
+            assert_eq!(values, vec![&expected]);
+        }
         assert_eq!(body.source, Some(ClaimSource::Observed));
     }
     Ok(())

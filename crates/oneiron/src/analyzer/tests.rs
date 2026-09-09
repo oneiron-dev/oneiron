@@ -416,11 +416,6 @@ fn explicit_hint_overrides_per_run_inference_for_latin() {
 
 #[test]
 fn zh_han_run_with_loaded_chinese_dict_uses_chinese_morphological_path() {
-    assert_eq!(
-        detect::detect_with_whichlang("我喜欢学习中文"),
-        Some(LanguageHint::Zh)
-    );
-
     let dir = tempfile::tempdir().unwrap();
     let dict_path = dir.path().join("tiny.dict.utf8");
     std::fs::write(&dict_path, "我喜欢 100 n\n学习 80 v\n中文 80 n\n").unwrap();

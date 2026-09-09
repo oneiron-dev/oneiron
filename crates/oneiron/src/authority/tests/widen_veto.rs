@@ -31,15 +31,10 @@ fn software_tier_widen_waits_for_local_seen_time_window() {
         10 + delay - 1,
     );
     assert!(!before.roster.contains_key(&new_key));
-    assert_eq!(
-        before.pending_widens.get(&enroll_hash),
-        Some(&AuthorityPendingWiden {
-            entry_hash: enroll_hash,
-            first_seen_at_secs: Some(10),
-            eligible_at_secs: Some(10 + delay),
-            delay_secs: delay,
-        })
-    );
+    let pending = before.pending_widens.get(&enroll_hash).unwrap();
+    assert_eq!(pending.first_seen_at_secs, Some(10));
+    assert_eq!(pending.eligible_at_secs, Some(10 + delay));
+    assert_eq!(pending.delay_secs, delay);
 
     let after = fold_authority_log_with_seen_times(&[genesis, enroll], &first_seen, 10 + delay);
     assert!(after.roster.contains_key(&new_key));

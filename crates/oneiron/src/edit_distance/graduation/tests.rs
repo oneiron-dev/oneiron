@@ -108,12 +108,20 @@ fn guard_evidence_reads_the_streak_against_every_correction_ever_drawn() {
         .expect("amendment");
     record_history(&vault, &scope, 4, 0);
 
-    let stats = vault.scope_stats(&scope).expect("stats").expect("row");
-    assert_eq!(
-        guard_evidence(&stats),
-        (4, 3),
-        "the streak restarted at the amendment; the three corrections did not"
-    );
+    // Four current wins against three lifetime corrections fail this guard;
+    // forgetting even one correction or counting the old wins clears it.
+    let threshold = ThresholdRow::new(exact_pattern(&scope), 4, 0.33).expect("threshold");
+    set_graduation_policy(&vault, &threshold).expect("set threshold");
+
+    let rows = trust_table(&vault).expect("trust table");
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].offer_is_earned);
+
+    // More clean evidence eventually clears the same owner's guard.
+    record_history(&vault, &scope, 3, 0);
+    let rows = trust_table(&vault).expect("trust table");
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].offer_is_earned);
 }
 
 // ---------------------------------------------------------------------------

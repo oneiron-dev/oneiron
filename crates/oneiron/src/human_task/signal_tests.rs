@@ -74,16 +74,22 @@ fn ask_human_dispatch_binds_the_real_task_at_wait_mint_time() {
     };
 
     assert_eq!(wait.wait_id, task_ref);
-    assert_eq!(
-        human_wait_binding(&fixture.vault, task_ref).expect("read wait binding"),
-        Some(HumanTaskWaitBinding {
-            task_ref,
-            responder_ref: fixture.person,
-            trap_claim_id: trap.trap_claim_id,
-            step_hash: trap.step_hash,
-            is_active: true,
-        })
-    );
+    let binding = human_wait_binding(&fixture.vault, task_ref)
+        .expect("read wait binding")
+        .expect("the dispatched task has an active wait");
+    let signal_ref = signal_human_response(
+        &fixture.vault,
+        &binding,
+        fixture.person,
+        &response(&fixture, task_ref, 0x6C),
+    )
+    .expect("the bound person may answer the original task");
+    let (routed_signal_ref, _) =
+        super::storage::wait_signal_marker(&fixture.vault, trap.trap_claim_id)
+            .expect("read the intended trap's signal marker")
+            .expect("the answer produced a signal for the intended trap");
+
+    assert_eq!(routed_signal_ref, signal_ref);
 }
 
 /// The bound person's answer resumes the parked branch exactly once.

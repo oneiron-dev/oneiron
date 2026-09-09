@@ -11,83 +11,110 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
     let other = EntityId::from_bytes([0xE2; 16]).expect("other id");
     put_person(&vault, other);
     let facade = vault.memory(own, EdgeActorClass::Agent);
-    let own_create = facade.tasks_create(&spec(120)).expect("own task");
-    let mut other_spec = spec(120);
-    other_spec.owner_ref = Some(other);
-    let other_create = facade.tasks_create(&other_spec).expect("other task");
 
-    let decisions_before = vault.gate_decisions(512).expect("decisions before").len();
-    let own_cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(
-            own_create.task_ref.expect("own task ref"),
-        ))
-        .expect("own cancel");
-    let decisions_after_own = vault
-        .gate_decisions(512)
-        .expect("decisions after own")
-        .len();
-    let foreign_cancel = facade
-        .tasks_cancel(TaskCancelTarget::Task(
-            other_create.task_ref.expect("other task ref"),
-        ))
-        .expect("foreign cancel");
+    for mode in [
+        TaskCancelMode::Auto,
+        TaskCancelMode::FullAccess,
+        TaskCancelMode::Manual,
+    ] {
+        let manual = matches!(mode, TaskCancelMode::Manual);
+        let own_create = facade.tasks_create(&spec(120)).expect("own task");
+        let mut other_spec = spec(120);
+        other_spec.owner_ref = Some(other);
+        let other_create = facade.tasks_create(&other_spec).expect("other task");
+        let own_target = TaskCancelTarget::Task(own_create.task_ref.expect("own task ref"));
+        let other_target = TaskCancelTarget::Task(other_create.task_ref.expect("other task ref"));
 
-    assert_eq!(TaskCancelMode::ALL.map(TaskCancelMode::as_str).len(), 3);
-    assert_eq!(
-        TaskCancelMode::ALL.map(TaskCancelMode::as_str),
-        ["auto", "full-access", "manual"]
-    );
-    assert_eq!(DEFAULT_TASK_CANCEL_MODE.as_str(), "auto");
-    assert_eq!(TaskCancelMode::Auto.ceiling(), PolicyApprovalCeiling::Auto);
-    assert_eq!(
-        TaskCancelMode::FullAccess.ceiling(),
-        PolicyApprovalCeiling::Auto
-    );
-    assert_eq!(
-        TaskCancelMode::Manual.ceiling(),
-        PolicyApprovalCeiling::Proposed
-    );
-    assert_eq!(decisions_after_own - decisions_before, 1);
-    assert_eq!(usize::from(own_cancel.gate_decision_ref.is_some()), 1);
-    assert_eq!(
-        vault
-            .gate_decisions(512)
-            .expect("gate decisions")
+        let (own_cancel, foreign_cancel) = match mode {
+            TaskCancelMode::Auto => (
+                facade.tasks_cancel(own_target).expect("own cancel"),
+                facade.tasks_cancel(other_target).expect("foreign cancel"),
+            ),
+            TaskCancelMode::FullAccess => (
+                facade
+                    .tasks_cancel_with_mode(own_target, TaskCancelMode::FullAccess)
+                    .expect("own cancel"),
+                facade
+                    .tasks_cancel_with_mode(other_target, TaskCancelMode::FullAccess)
+                    .expect("foreign cancel"),
+            ),
+            TaskCancelMode::Manual => (
+                facade
+                    .tasks_cancel_with_mode(own_target, TaskCancelMode::Manual)
+                    .expect("own cancel"),
+                facade
+                    .tasks_cancel_with_mode(other_target, TaskCancelMode::Manual)
+                    .expect("foreign cancel"),
+            ),
+        };
+
+        if manual {
+            assert!(!own_cancel.effected);
+            assert_eq!(own_cancel.approval, ClaimApprovalStatus::Proposed);
+            assert!(own_cancel.proposal_ref.is_some());
+        } else {
+            assert!(own_cancel.effected);
+            assert_eq!(own_cancel.approval, ClaimApprovalStatus::Auto);
+            assert_eq!(own_cancel.status, Some(RunTreeStatus::Cancelled));
+        }
+        assert!(!foreign_cancel.effected);
+        assert_eq!(foreign_cancel.approval, ClaimApprovalStatus::Proposed);
+        assert!(foreign_cancel.proposal_ref.is_some());
+
+        let decisions = vault.gate_decisions(512).expect("gate decisions");
+        for (receipt, outcome) in [
+            (
+                &own_cancel,
+                if manual {
+                    GateOutcome::Pending
+                } else {
+                    GateOutcome::Allow
+                },
+            ),
+            (&foreign_cancel, GateOutcome::Pending),
+        ] {
+            let decision_ref = receipt
+                .gate_decision_ref
+                .as_deref()
+                .expect("cancellation links its durable gate decision");
+            assert_eq!(
+                decisions
+                    .iter()
+                    .filter(|decision| {
+                        decision_ref == format!("gate:{}", decision.decision_id.to_hex())
+                            && decision.outcome == outcome.as_str()
+                    })
+                    .count(),
+                1,
+            );
+        }
+
+        let queue = AttemptQueue::new(&vault);
+        let records = queue.list().expect("list attempts");
+        let own_task_hex = own_create.task_ref.expect("own task ref").to_hex();
+        let other_task_hex = other_create.task_ref.expect("other task ref").to_hex();
+        let own_attempts: Vec<_> = records
             .iter()
-            .filter(|decision| {
-                own_cancel.gate_decision_ref.as_deref()
-                    == Some(format!("gate:{}", decision.decision_id.to_hex()).as_str())
-                    && decision.outcome == GateOutcome::Allow.as_str()
-            })
-            .count(),
-        1
-    );
-    assert_eq!(usize::from(own_cancel.effected), 1);
-    assert_eq!(own_cancel.approval, ClaimApprovalStatus::Auto);
-    assert_eq!(own_cancel.status, Some(RunTreeStatus::Cancelled));
-    assert_eq!(usize::from(foreign_cancel.effected), 0);
-    assert_eq!(foreign_cancel.approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(usize::from(foreign_cancel.proposal_ref.is_some()), 1);
-    assert_eq!(usize::from(foreign_cancel.gate_decision_ref.is_some()), 1);
-
-    let queue = AttemptQueue::new(&vault);
-    let records = queue.list().expect("list attempts");
-    let own_task_hex = own_create.task_ref.expect("own task ref").to_hex();
-    let other_task_hex = other_create.task_ref.expect("other task ref").to_hex();
-    let own_attempts: Vec<_> = records
-        .iter()
-        .filter(|attempt| attempt.task_ref.as_deref() == Some(own_task_hex.as_str()))
-        .collect();
-    let other_attempts: Vec<_> = records
-        .iter()
-        .filter(|attempt| attempt.task_ref.as_deref() == Some(other_task_hex.as_str()))
-        .collect();
-    assert_eq!(own_attempts.len(), 1);
-    assert_eq!(other_attempts.len(), 1);
-    let own_attempt = own_attempts[0];
-    let other_attempt = other_attempts[0];
-    assert_eq!(own_attempt.state, AttemptState::Cancelled);
-    assert_eq!(other_attempt.state, AttemptState::Queued);
+            .filter(|attempt| attempt.task_ref.as_deref() == Some(own_task_hex.as_str()))
+            .collect();
+        let other_attempts: Vec<_> = records
+            .iter()
+            .filter(|attempt| attempt.task_ref.as_deref() == Some(other_task_hex.as_str()))
+            .collect();
+        assert_eq!(own_attempts.len(), 1);
+        assert_eq!(other_attempts.len(), 1);
+        let own_attempt = own_attempts[0];
+        let other_attempt = other_attempts[0];
+        assert_eq!(
+            own_attempt.state,
+            if manual {
+                AttemptState::Queued
+            } else {
+                AttemptState::Cancelled
+            },
+        );
+        assert_eq!(other_attempt.state, AttemptState::Queued);
+    }
 }
 
 #[test]
@@ -988,9 +1015,13 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
         Some("red + unpushed"),
         "the worker's own last word rides the signal"
     );
+    let signal = format!(
+        "cancel-refused={}/{}",
+        pathology.rejections, pathology.threshold,
+    );
     assert!(
-        row.line.contains("cancel-refused=3/3"),
-        "the rendered row carries the bounded token: {}",
+        row.line.contains(signal.as_str()),
+        "the rendered row carries the refusal count and threshold: {}",
         row.line
     );
     assert_eq!(
@@ -1004,10 +1035,8 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
     // owner surface where the refusal disappears.
     let expanded = facade.tasks_expand(task_ref).expect("expand");
     assert!(
-        expanded
-            .iter()
-            .any(|line| line.contains("cancel-refused=3/3")),
-        "the expanded owner view carries the same bounded token: {expanded:?}"
+        expanded.iter().any(|line| line.contains(signal.as_str())),
+        "the expanded owner view carries the same refusal signal: {expanded:?}"
     );
 
     // Settling the attempt retires the signal: an owner can no longer act on it.

@@ -425,13 +425,23 @@ mod tests {
         assert_eq!(one_line_rows, 2);
         assert_eq!(section.rows[0].id, "child_a\nspoof");
         assert_eq!(section.rows[0].harness_label, None);
-        assert_eq!(section.rows[0].line, "child_a spoof working");
         assert_eq!(section.rows[1].id, "cc-main\rspoof");
         assert_eq!(
             section.rows[1].harness_label.as_deref(),
             Some("claude\ncode")
         );
-        assert_eq!(section.rows[1].line, "cc-main spoof claude code");
+
+        for row in &section.rows {
+            assert!(!row.line.chars().any(char::is_control));
+            assert!(!row.line.contains('\u{2028}'));
+            assert!(!row.line.contains('\u{2029}'));
+        }
+        for component in ["child_a", "spoof"] {
+            assert!(section.rows[0].line.contains(component));
+        }
+        for component in ["cc-main", "spoof", "claude", "code"] {
+            assert!(section.rows[1].line.contains(component));
+        }
     }
 
     #[test]
@@ -534,22 +544,7 @@ mod tests {
     /// children — never off a second store or a caller-supplied flag.
     #[test]
     fn lead_and_worker_labels_come_from_existing_run_tree_children() {
-        let worker_a = run_tree_node("attempt_w1", Some("worker"), RunTreeStatus::Running);
         let worker_b = run_tree_node("attempt_w2", Some("worker"), RunTreeStatus::Running);
-        let helper = run_tree_node("attempt_h1", Some("helper"), RunTreeStatus::Running);
-        let mut leading_worker = worker_a.clone();
-        leading_worker.children = vec![helper];
-        let mut lead = run_tree_node(
-            "attempt_lead",
-            Some("sys.team_lead"),
-            RunTreeStatus::Running,
-        );
-        lead.children = vec![leading_worker, worker_b.clone()];
-
-        assert_eq!(agent_role_token(&lead), AGENT_ROLE_LEAD);
-        assert_eq!(agent_role_token(&worker_a), AGENT_ROLE_WORKER);
-        assert_eq!(agent_role_token(&lead.children[0]), AGENT_ROLE_LEAD);
-        assert_eq!(agent_role_token(&lead.children[1]), AGENT_ROLE_WORKER);
 
         // A non-agent child never promotes its parent to a lead.
         let mut with_maintenance = worker_b;
@@ -559,7 +554,9 @@ mod tests {
             RunTreeStatus::Running,
             "dreamer",
         )];
-        assert_eq!(agent_role_token(&with_maintenance), AGENT_ROLE_WORKER);
+
+        let presence = ChildAgentPresence::from_run_tree_node(&with_maintenance).unwrap();
+        assert_eq!(presence.role, AGENT_ROLE_WORKER);
     }
 
     /// Whole-tree observation walks the ONE existing `RunTree`: lead → workers

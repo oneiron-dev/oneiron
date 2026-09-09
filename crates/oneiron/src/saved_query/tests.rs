@@ -169,9 +169,20 @@ fn canonical_json_is_insertion_order_independent() {
         serde_json::to_vec(&second).expect("raw"),
         "the fixture must actually differ before canonicalization"
     );
+    let definition = sample_definition();
+    let evidence = |value| RelevantEvidence {
+        entity_ref: id(1),
+        claim_values: vec![("predicate".to_string(), value)],
+        edge_targets: Vec::new(),
+        semantic_inputs: Vec::new(),
+        scope_membership: QueryScope {
+            worlds: Vec::new(),
+            facets: Vec::new(),
+        },
+    };
     assert_eq!(
-        canonical_json_bytes(&first).expect("canonical"),
-        canonical_json_bytes(&second).expect("canonical")
+        compute_evidence_hash(&definition, &evidence(first)).expect("evidence hash"),
+        compute_evidence_hash(&definition, &evidence(second)).expect("evidence hash"),
     );
 }
 

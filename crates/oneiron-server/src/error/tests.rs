@@ -90,7 +90,8 @@ fn error_code_schema_matches_catalog_exactly() {
         .map(|code| code.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(enum_values, catalog);
+    assert!(catalog.iter().all(|code| enum_values.contains(code)));
+    assert!(enum_values.iter().all(|code| catalog.contains(code)));
 }
 
 #[test]

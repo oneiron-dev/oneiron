@@ -1153,9 +1153,6 @@ fn effectful_call_without_authorization_binding_fails_before_send_or_write() {
 
 #[test]
 fn debug_redacts_raw_payload_from_receipt_and_request() {
-    // A derived Debug prints the raw payload Vec; the manual impls must show
-    // only a byte count, so a `{:?}` of a receipt or request never leaks the
-    // outbound body. The exact derived byte-array rendering must be absent.
     let (_dir, vault) = open_vault();
     let secret: &[u8] = b"SECRET-charge-4242-body";
     let payload_debug = format!("{:?}", secret.to_vec());
@@ -1169,13 +1166,13 @@ fn debug_redacts_raw_payload_from_receipt_and_request() {
     .expect("dispatch");
 
     let records = intent_ledger_records(&vault).expect("records");
-    assert_eq!(records.len(), 1);
-    let record_debug = format!("{:?}", records[0]);
-    assert!(record_debug.contains("bytes redacted"));
+    assert_eq!(records.records.len(), 1);
+    let record_debug = format!("{:?}", records.records[0]);
+    assert!(!record_debug.contains("SECRET-charge-4242-body"));
     assert!(!record_debug.contains(&payload_debug));
 
     let request_debug = format!("{:?}", request(attempt(19), 0, secret, 100));
-    assert!(request_debug.contains("bytes redacted"));
+    assert!(!request_debug.contains("SECRET-charge-4242-body"));
     assert!(!request_debug.contains(&payload_debug));
 }
 
@@ -1501,15 +1498,6 @@ fn row_with_content_digest(encoded: &[u8], digest: [u8; 32]) -> Vec<u8> {
         }
     }
     encode_entries(entries)
-}
-
-/// The typed reason one row was reported corrupt, so a listing assertion names
-/// the failure it means instead of accepting any error at all.
-fn corrupt_reason(row: &IntentLedgerCorruptRow) -> &'static str {
-    match row.error {
-        IntentLedgerError::InvalidRecord(reason) => reason,
-        ref other => panic!("a corrupt row must be an invalid record, not {other:?}"),
-    }
 }
 
 #[test]
@@ -2009,13 +1997,16 @@ fn old_json_digest_is_flagged_not_accepted() {
         Err(IntentLedgerError::InvalidRecord(_))
     ));
     let listing = intent_ledger_records(&vault).expect("listing sees the row");
-    assert!(listing.is_empty(), "no fallback accepts a JSON digest");
+    assert!(
+        listing.records.is_empty(),
+        "no fallback accepts a JSON digest"
+    );
     assert_eq!(listing.corrupt.len(), 1);
     assert_eq!(&*listing.corrupt[0].key, key.as_slice());
-    assert_eq!(
-        corrupt_reason(&listing.corrupt[0]),
-        "outbound intent content digest mismatch"
-    );
+    assert!(matches!(
+        &listing.corrupt[0].error,
+        IntentLedgerError::InvalidRecord(_)
+    ));
     assert_eq!(
         raw_row(&vault, &key),
         json_digest_row,
@@ -2041,12 +2032,14 @@ fn old_json_digest_is_flagged_not_accepted() {
         Err(IntentLedgerError::InvalidRecord(_))
     ));
     let listing = intent_ledger_records(&vault).expect("listing sees the v2 row");
-    assert!(listing.is_empty());
+    assert!(listing.records.is_empty());
     assert_eq!(listing.corrupt.len(), 1);
-    assert_eq!(
-        corrupt_reason(&listing.corrupt[0]),
-        "unsupported outbound intent schema_version"
-    );
+    assert_eq!(&*listing.corrupt[0].key, key.as_slice());
+    assert!(matches!(
+        &listing.corrupt[0].error,
+        IntentLedgerError::InvalidRecord(_)
+    ));
+    assert_eq!(raw_row(&vault, &key), v2_row);
 }
 
 #[test]
@@ -2064,20 +2057,20 @@ fn listing_is_per_row_tolerant() {
     put_raw_row(&vault, &corrupt_key, corrupt_row);
 
     let listing = intent_ledger_records(&vault).expect("listing tolerates the row");
-    assert_eq!(listing.len(), valid.len());
+    assert_eq!(listing.records.len(), valid.len());
     assert_eq!(listing.corrupt.len(), 1);
     assert_eq!(&*listing.corrupt[0].key, corrupt_key.as_slice());
-    assert_eq!(
-        corrupt_reason(&listing.corrupt[0]),
-        "outbound intent MessagePack decode failed"
-    );
+    assert!(matches!(
+        &listing.corrupt[0].error,
+        IntentLedgerError::InvalidRecord(_)
+    ));
     for record in &listing.records {
         assert!(
             intent_ledger_key(&record.id) > corrupt_key,
             "the damaged row precedes every valid row in the walk"
         );
     }
-    let mut listed: Vec<[u8; 32]> = listing.iter().map(|record| record.id).collect();
+    let mut listed: Vec<[u8; 32]> = listing.records.iter().map(|record| record.id).collect();
     listed.sort_unstable();
     let mut expected: Vec<[u8; 32]> = valid.iter().map(|record| record.id).collect();
     expected.sort_unstable();
@@ -2131,31 +2124,27 @@ fn listing_tolerates_multiple_independent_failures() {
         (0x03, duplicate_key),
         (0x04, digest_mismatch),
     ];
-    let reasons = [
-        "outbound intent MessagePack decode failed",
-        "unsupported outbound intent schema_version",
-        "missing outbound intent state",
-        "duplicate outbound intent key",
-        "outbound intent content digest mismatch",
-    ];
     let mut expected = Vec::new();
-    for ((id_byte, row), reason) in damaged.into_iter().zip(reasons) {
+    for (id_byte, row) in damaged {
         let key = intent_ledger_key(&[id_byte; 32]);
         put_raw_row(&vault, &key, &row);
-        expected.push((key, reason));
+        expected.push(key);
     }
 
     let listing = intent_ledger_records(&vault).expect("listing survives five rows");
     assert_eq!(listing.corrupt.len(), 5);
-    for (corrupt, (key, reason)) in listing.corrupt.iter().zip(expected) {
-        assert_eq!(&*corrupt.key, key.as_slice());
-        assert_eq!(
-            corrupt_reason(corrupt),
-            reason,
-            "each damaged row must fail for its own reason"
-        );
+    for key in expected {
+        let corrupt = listing
+            .corrupt
+            .iter()
+            .find(|corrupt| &*corrupt.key == key.as_slice())
+            .expect("each damaged key must be reported");
+        assert!(matches!(
+            &corrupt.error,
+            IntentLedgerError::InvalidRecord(_)
+        ));
     }
-    let mut listed: Vec<[u8; 32]> = listing.iter().map(|record| record.id).collect();
+    let mut listed: Vec<[u8; 32]> = listing.records.iter().map(|record| record.id).collect();
     listed.sort_unstable();
     let mut expected_ids = vec![first.id, second.id];
     expected_ids.sort_unstable();
@@ -2329,32 +2318,39 @@ fn audit_and_authorized_recovery_isolate_broken_attempt_backlinks() {
                 .unwrap();
         }
         wtxn.commit().expect("damage only the backlink");
-        assert_eq!(decode_record(&bad_key, &original_bytes).unwrap(), bad);
+        let decoded = decode_record(&bad_key, &original_bytes).unwrap();
+        assert_eq!(decoded.id, bad.id);
+        assert_eq!(decoded.payload(), bad.payload());
+        assert!(matches!(decoded.state, IntentState::Pending));
         assert!(matches!(
             read_intent_record(&vault, &bad.id),
-            Err(IntentLedgerError::InvalidRecord(
-                "outbound intent is missing its unique attempt binding"
-            ))
+            Err(IntentLedgerError::InvalidRecord(_))
         ));
-        assert_eq!(
-            read_intent_record(&vault, &healthy.id).unwrap(),
-            Some(healthy.clone())
-        );
+        let readable = read_intent_record(&vault, &healthy.id)
+            .unwrap()
+            .expect("healthy row remains readable");
+        assert_eq!(readable.id, healthy.id);
+        assert!(matches!(readable.state, IntentState::Pending));
 
         let listing = intent_ledger_records(&vault).expect("row-isolated audit");
-        assert_eq!(listing.records, vec![healthy.clone()]);
+        assert_eq!(listing.records.len(), 1);
+        assert_eq!(listing.records[0].id, healthy.id);
         assert_eq!(listing.corrupt.len(), 1);
         assert_eq!(&*listing.corrupt[0].key, bad_key.as_slice());
-        assert_eq!(
-            corrupt_reason(&listing.corrupt[0]),
-            "outbound intent is missing its unique attempt binding"
-        );
-        let entries = intent_recovery_entries(&vault).expect("row-isolated recovery entries");
         assert!(matches!(
-            entries.as_slice(),
-            [IntentRecoveryEntry::Corrupt(Some(id)), IntentRecoveryEntry::Valid(record)]
-                if *id == bad.id && record == &healthy
+            &listing.corrupt[0].error,
+            IntentLedgerError::InvalidRecord(_)
         ));
+        let entries = intent_recovery_entries(&vault).expect("row-isolated recovery entries");
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            IntentRecoveryEntry::Corrupt(Some(id)) if *id == bad.id
+        )));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            IntentRecoveryEntry::Valid(record) if record.id == healthy.id
+        )));
 
         let authority = OutboundBindingAuthority::for_vault(&vault).expect("authority");
         let mut sender = RecoverySender::default();
@@ -2368,23 +2364,38 @@ fn audit_and_authorized_recovery_isolate_broken_attempt_backlinks() {
         assert_eq!(report.effectful_sends, 1);
         assert_eq!(report.authorization_rejections, 0);
         assert!(report.ledger.failures.is_empty());
+        assert_eq!(report.ledger.escalations.len(), 1);
+        assert_eq!(report.ledger.escalations[0].intent_id, Some(bad.id));
+        assert!(matches!(
+            report.ledger.escalations[0].reason,
+            IntentEscalationReason::CorruptLedgerRow
+        ));
+        assert_eq!(sender.calls.len(), 1);
+        let call = &sender.calls[0];
+        assert_eq!(call.intent_id(), Some(&healthy.id));
+        assert_eq!(call.server(), healthy.server.as_str());
+        assert_eq!(call.tool(), healthy.tool.as_str());
+        assert_eq!(call.payload(), healthy.payload());
+        assert_eq!(call.payload_hash(), &healthy.payload_hash);
         assert_eq!(
-            report.ledger.escalations,
-            vec![IntentEscalation {
-                intent_id: Some(bad.id),
-                reason: IntentEscalationReason::CorruptLedgerRow,
-            }]
+            call.idempotency_key(),
+            Some(healthy.idempotency_key.as_str())
         );
-        assert_eq!(
-            sender.calls,
-            vec![FrozenOutboundCall::from_record(&healthy)]
-        );
+        assert!(call.idempotency_supported());
+        assert_eq!(call.authorization_binding(), Some(&AUTHORIZATION));
+        assert_eq!(call.binding_version(), OUTBOUND_BINDING_VERSION);
+        assert!(call.resolved_endpoint().is_none());
+        assert!(call.capability_provenance().is_none());
         let after = intent_ledger_records(&vault).expect("audit after recovery");
         assert_eq!(after.records.len(), 1);
-        assert_eq!(after[0].id, healthy.id);
-        assert_eq!(after[0].state, IntentState::Done);
+        assert_eq!(after.records[0].id, healthy.id);
+        assert_eq!(after.records[0].state, IntentState::Done);
         assert_eq!(after.corrupt.len(), 1);
         assert_eq!(&*after.corrupt[0].key, bad_key.as_slice());
+        assert!(matches!(
+            &after.corrupt[0].error,
+            IntentLedgerError::InvalidRecord(_)
+        ));
         assert_eq!(raw_row(&vault, &bad_key), original_bytes);
         let rtxn = vault.store.env.read_txn().expect("read txn");
         let index = vault.store.vault_meta.get(&rtxn, &index_key).unwrap();

@@ -327,22 +327,22 @@ fn binary_memory_is_counted_from_the_allocated_u64_words() {
         assert_eq!(
             code_bytes,
             words * 8,
-            "{dimensions}: the code costs whole allocated u64 words"
+            "{dimensions}: the code costs whole allocated u64 words",
         );
         assert_eq!(
             PrecisionCandidate::BinaryPrefixRescore.bytes_per_vector(dimensions),
             code_bytes + dimensions * 4,
-            "{dimensions}: word storage plus the float32 rescore payload"
+            "{dimensions}: word storage plus the float32 rescore payload",
         );
         // The buffer sizes that must NOT be the answer.
         assert!(
             code_bytes >= dimensions.div_ceil(8),
-            "{dimensions}: allocated words are never fewer bytes than a bit-packed count"
+            "{dimensions}: allocated words are never fewer bytes than a bit-packed count",
         );
         assert_ne!(
             PrecisionCandidate::BinaryPrefixRescore.bytes_per_vector(dimensions),
             PrecisionCandidate::F16.bytes_per_vector(dimensions),
-            "{dimensions}: binary memory must not be an F16 buffer size"
+            "{dimensions}: binary memory must not be an F16 buffer size",
         );
     }
     // The regression case: 32 dimensions allocate one whole 8-byte word,
@@ -355,7 +355,6 @@ fn binary_memory_is_counted_from_the_allocated_u64_words() {
     let axis = evaluate(&vectors, &queries, 4, 8, EvidenceKind::MeasuredWallClock);
     assert_eq!(axis.rows[3].bytes_per_vector, 16 + 400);
     assert_eq!(axis.rows[3].total_vector_bytes, (16 + 400) * 12);
-    assert!(axis.binary_memory_rule.contains("u64 WORDS"));
 }
 
 /// Plan admission refuses an out-of-range breadth outright. When

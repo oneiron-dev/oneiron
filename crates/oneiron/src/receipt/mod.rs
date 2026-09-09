@@ -72,17 +72,13 @@ pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
 // through `use super::*`; after the directory split the seam re-imports them so
 // the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
-use self::family::{
-    SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
-    select_gate_system_notice_for_receipt,
-};
+use self::family::{SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY};
 #[cfg(test)]
 use self::kernel::{
     DEFAULT_RECEIPT_QUERY_LIMIT, FIELD_ACTIVATED_MEMORY_IDS, FIELD_BOARD_STATE_REF,
     FIELD_DISCLOSURE_STAMP, FIELD_MODEL, FIELD_PERSONA_COMPILE_STAMP, FIELD_PROMPT_INPUT_REF,
     FIELD_REASONING_EFFORT, FIELD_SUBSTRATE_REF, RECEIPT_VIEW_COMPONENT, attempt_pack_scan_capped,
-    gate_receipt_max_buffered, gate_receipt_pages_scanned, reset_attempt_pack_scan_capped,
-    reset_gate_receipt_pages_scanned,
+    gate_receipt_max_buffered, reset_attempt_pack_scan_capped, reset_gate_receipt_pages_scanned,
 };
 #[cfg(test)]
 use self::ledgers::{attempt_pack_receipts, decode_durable_send_receipt};

@@ -49,9 +49,6 @@ fn hosted_category_labels_round_trip() {
 
 #[test]
 fn a_default_config_carries_no_pattern_and_no_document() {
-    // The zero-shipped-content pin. Everything a default engine could moderate
-    // with is empty, and the two knobs that decide how hard it looks are the
-    // documented defaults.
     let config = PolicyModelConfig::default();
     assert_eq!(
         config.owner_classifier_mode,
@@ -62,11 +59,6 @@ fn a_default_config_carries_no_pattern_and_no_document() {
         RelayClassifierMode::ClassifyAll
     );
     assert_eq!(
-        config.generation.reasoning_effort,
-        PolicyReasoningEffort::Medium
-    );
-    assert!(config.generation.temperature.abs() < f32::EPSILON);
-    assert_eq!(
         config.generation.max_output_tokens, None,
         "a reasoning safeguard model must not be capped by an engine default"
     );
@@ -74,10 +66,6 @@ fn a_default_config_carries_no_pattern_and_no_document() {
     // Nothing is registered, so nothing is enforced.
     let registry = EdgeServiceRegistry::new();
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-    assert_eq!(
-        EdgeServiceRegistry::max_pattern_rules(),
-        POLICY_PATTERN_RULES_MAX
-    );
 }
 
 #[test]

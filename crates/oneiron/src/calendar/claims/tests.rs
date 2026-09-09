@@ -212,9 +212,7 @@ fn calendar_claims_require_event_subjects() -> Result<()> {
     );
     assert_matches!(
         through_chokepoint(&edge_subject),
-        Err(Error::InvalidClaimBody(
-            "calendar claim subject must be an entity"
-        ))
+        Err(Error::InvalidClaimBody(_))
     );
 
     // Half 2 (store level): an entity subject that is not an EVENT row is

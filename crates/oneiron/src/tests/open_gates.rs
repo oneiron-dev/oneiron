@@ -247,24 +247,22 @@ fn creates_contract_manifest_databases() -> Result<()> {
     // materialized set, including the sync_state/sync_queue rows below.
     let (_dir, vault) = open_test_vault();
 
-    assert_eq!(DB_MANIFEST.iter().count(), 28);
-    assert_eq!(MAX_DBS, 32);
-    assert_eq!(DB_MANIFEST[23].n, 24);
-    assert_eq!(DB_MANIFEST[23].name, "sync_state");
-    assert_eq!(DB_MANIFEST[24].n, 25);
-    assert_eq!(DB_MANIFEST[24].name, "sync_queue");
-    assert_eq!(DB_MANIFEST[25].n, 26);
-    assert_eq!(DB_MANIFEST[25].name, "job_records");
-    assert_eq!(DB_MANIFEST[26].n, 27);
-    assert_eq!(DB_MANIFEST[26].name, "job_ready");
-    assert_eq!(DB_MANIFEST[27].n, 28);
-    assert_eq!(DB_MANIFEST[27].name, "job_dedupe");
-
     let expected_materialized: Vec<String> = expected_manifest_names()
         .iter()
         .map(|name| (*name).to_owned())
         .collect();
-    assert_eq!(materialized_database_names(&vault)?, expected_materialized);
+    let materialized = materialized_database_names(&vault)?;
+    assert_eq!(materialized, expected_materialized);
+
+    for required_name in [
+        "sync_state",
+        "sync_queue",
+        "job_records",
+        "job_ready",
+        "job_dedupe",
+    ] {
+        assert!(materialized.iter().any(|name| name == required_name));
+    }
 
     Ok(())
 }

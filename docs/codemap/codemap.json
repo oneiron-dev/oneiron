@@ -5474,7 +5474,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/checkout/env_blueprint/tests.rs",
@@ -13455,7 +13455,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "re-export": 10
      }
     },
@@ -13554,7 +13554,7 @@
      "path": "src/identity_topology/shell_edge_reconcile.rs",
      "purpose": "Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -13788,7 +13788,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/tests.rs",
@@ -18448,7 +18448,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 90,
+      "crate-vis": 89,
       "enum": 1,
       "fn": 10,
       "struct": 6
@@ -21576,7 +21576,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "re-export": 3
      }
     },
@@ -21616,7 +21616,7 @@
      "path": "src/sync/bridge/tombstones.rs",
      "purpose": "Tombstone materialization, savepoint batching, and protected-header handling",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 3
      }
     },
     {
@@ -29440,7 +29440,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 66
+      "crate-vis": 64
      }
     },
     {
@@ -29709,7 +29709,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/config/tests.rs",

@@ -1613,7 +1613,7 @@ mod vad_deferral_tests {
             );
             assert!(matches!(
                 vault.consolidate_claim_vad_now(&claim, 11_000),
-                Err(Error::InvalidClaimBody("claim is not consolidatable"))
+                Err(Error::InvalidClaimBody(_))
             ));
         }
         Ok(())

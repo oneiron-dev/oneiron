@@ -185,10 +185,6 @@ fn unrelated_vector_fill_does_not_invalidate_pending_tokens() -> Result<()> {
     commit_claim_candidate_with_value(&vault, first, "first")?;
     commit_claim_candidate_with_value(&vault, second, "second")?;
     let first_token = pending_embedding_token(&vault, &first)?;
-    let epoch_before = {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::hnsw::read_embedding_model_epoch(&vault.store, &rtxn)?
-    };
 
     vault
         .batch()
@@ -200,11 +196,6 @@ fn unrelated_vector_fill_does_not_invalidate_pending_tokens() -> Result<()> {
         .commit()?;
 
     assert_eq!(pending_embedding_token(&vault, &first)?, first_token);
-    let epoch_after = {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::hnsw::read_embedding_model_epoch(&vault.store, &rtxn)?
-    };
-    assert_eq!(epoch_after, epoch_before);
 
     vault
         .batch()

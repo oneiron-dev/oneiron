@@ -521,7 +521,15 @@ mod tests {
         let digest = revision.digest.expect("the test executable can be hashed");
         assert_eq!(digest.len(), 64);
         assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
-        assert!(revision.source.contains("BLAKE3"));
+
+        let executable = PathBuf::from(
+            revision
+                .executable
+                .expect("the running executable has a reported location"),
+        );
+        let expected =
+            hash_file_blake3(&executable).expect("the reported executable can be hashed");
+        assert_eq!(digest, expected);
     }
 
     /// Source-checkout provenance comes from the build checkout before the

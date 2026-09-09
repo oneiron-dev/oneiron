@@ -650,15 +650,19 @@ fn missing_local_minute_rung_is_a_fail_closed_hold_with_evidence() {
 /// through its stable wire labels and nothing else parses.
 #[test]
 fn resolved_level_parses_only_its_frozen_labels() {
-    for level in [
-        DeliveryWindowResolvedLevel::PlainChat,
-        DeliveryWindowResolvedLevel::Push,
-    ] {
-        assert_eq!(
-            DeliveryWindowResolvedLevel::parse(level.as_str()),
-            Some(level)
-        );
-    }
+    assert_eq!(
+        DeliveryWindowResolvedLevel::parse("plain_chat"),
+        Some(DeliveryWindowResolvedLevel::PlainChat),
+    );
+    assert_eq!(
+        DeliveryWindowResolvedLevel::parse("push"),
+        Some(DeliveryWindowResolvedLevel::Push),
+    );
+    assert_eq!(
+        DeliveryWindowResolvedLevel::PlainChat.as_str(),
+        "plain_chat"
+    );
+    assert_eq!(DeliveryWindowResolvedLevel::Push.as_str(), "push");
     assert!(DeliveryWindowResolvedLevel::PlainChat.is_plain_chat());
     assert!(!DeliveryWindowResolvedLevel::Push.is_plain_chat());
     for unknown in ["", "chat", "ambient", "PLAIN_CHAT", "send"] {

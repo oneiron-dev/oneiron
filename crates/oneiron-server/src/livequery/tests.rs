@@ -91,7 +91,9 @@ fn empty_rpc_is_one_terminal_frame_and_ids_do_not_cross_talk() {
     assert_eq!(rpc.len(), 1);
     assert_eq!(rpc[0][0], TAG_RPC);
     let value = test_wire::reply(&rpc);
-    assert_eq!(value, json!({"requestId":7,"result":[],"last":true}));
+    assert_eq!(value["requestId"], json!(7));
+    assert_eq!(value["result"], json!([]));
+    assert_eq!(value["last"], json!(true));
     let sub = opened[0].encode().unwrap();
     assert_eq!(sub[0][0], TAG_SUB);
     let value: wire::Envelope<serde::de::IgnoredAny> = wire::decode(&sub[0][1..]).unwrap();
@@ -105,7 +107,7 @@ fn empty_rpc_is_one_terminal_frame_and_ids_do_not_cross_talk() {
             view(WORLD_A),
             Channel::View,
             Some(&opened[0].cursor),
-            None
+            None,
         )
         .unwrap()
         .is_empty()

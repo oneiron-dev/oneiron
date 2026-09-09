@@ -35,20 +35,44 @@ fn candidate_order_is_total_and_matches_derived_ord() {
         WakeAdapterKind::CodexStopHook,
         WakeAdapterKind::ClaudeCodeMonitor,
     ]);
-    let expected = vec![
+    let c = StreamConnectionId("order".into());
+    let mut r = wake_registry(&[(&c, "actor")]);
+    r.bind_instance(&c, HarnessInstanceKey::new("i"), full)
+        .unwrap();
+    push_wake(&mut r, "actor", "e1");
+    let expected = [
         WakeAdapterKind::ClaudeCodeMonitor,
         WakeAdapterKind::CodexStopHook,
         WakeAdapterKind::TmuxSendKeys,
         WakeAdapterKind::BootPromptSpawn,
     ];
-    assert_eq!(ordered_candidates(&full), expected);
-    // The derived order and the (layer, same_layer_order) rank must never
-    // drift into two silent sources of truth.
-    assert_eq!(full.into_iter().collect::<Vec<_>>(), expected);
-    assert_eq!(WakeAdapterKind::ClaudeCodeMonitor.layer(), 2);
-    assert_eq!(WakeAdapterKind::CodexStopHook.layer(), 2);
-    assert_eq!(WakeAdapterKind::TmuxSendKeys.layer(), 3);
-    assert_eq!(WakeAdapterKind::BootPromptSpawn.layer(), 3);
+    for (index, kind) in expected.iter().copied().enumerate() {
+        let dispatch = r.next_wake_dispatch(&c).unwrap();
+        assert_eq!(dispatch.chosen, Some(kind));
+        assert_eq!(dispatch.coalesced, 1);
+        assert_eq!(dispatch.envelopes.len(), 1);
+        assert_eq!(dispatch.envelopes[0].event_ref, "e1");
+        let disposition = r
+            .report_wake_delivery(&c, dispatch.dispatch_seq, kind, WakeDeliveryOutcome::Failed)
+            .unwrap();
+        if let Some(next) = expected.get(index + 1) {
+            assert_eq!(
+                disposition,
+                WakeReportDisposition::Reoffered {
+                    failed: kind,
+                    next: *next,
+                    envelopes: 1,
+                },
+            );
+        } else {
+            assert_eq!(
+                disposition,
+                WakeReportDisposition::Exhausted { envelopes: 1 }
+            );
+        }
+    }
+    assert!(r.next_wake_dispatch(&c).is_none());
+    assert!(r.next_wake(&c).is_none());
 }
 
 #[test]
@@ -101,23 +125,40 @@ fn next_wake_peeks_without_draining_and_unbound_never_dispatches() {
     let c = StreamConnectionId("peek".into());
     let mut r = wake_registry(&[(&c, "actor")]);
     push_wake(&mut r, "actor", "e1");
-    let peeked = r.next_wake(&c);
-    assert!(peeked.is_some());
-    assert_eq!(peeked, r.next_wake(&c));
-    assert_eq!(r.connection_state(&c).unwrap().wakes.len(), 1);
+    let peeked = r.next_wake(&c).unwrap();
+    assert_eq!(peeked.event_ref, "e1");
+    assert_eq!(peeked.task_ref, "task");
+    assert_eq!(peeked.actor_ref, "actor");
+    let repeated = r.next_wake(&c).unwrap();
+    assert_eq!(repeated.event_ref, peeked.event_ref);
+    assert_eq!(repeated.task_ref, peeked.task_ref);
+    assert_eq!(repeated.actor_ref, peeked.actor_ref);
     // An unbound connection has no dispatch path and still no drain path.
-    assert_eq!(r.next_wake_dispatch(&c), None);
-    assert_eq!(r.connection_state(&c).unwrap().wakes.len(), 1);
+    assert!(r.next_wake_dispatch(&c).is_none());
+    let after_poll = r.next_wake(&c).unwrap();
+    assert_eq!(after_poll.event_ref, peeked.event_ref);
+    assert_eq!(after_poll.task_ref, peeked.task_ref);
+    assert_eq!(after_poll.actor_ref, peeked.actor_ref);
     r.bind_instance(
         &c,
         HarnessInstanceKey::new("i"),
         BTreeSet::from([WakeAdapterKind::TmuxSendKeys]),
     )
     .unwrap();
-    assert_eq!(r.next_wake_dispatch(&c).unwrap().coalesced, 1);
+    let dispatch = r.next_wake_dispatch(&c).unwrap();
+    assert_eq!(dispatch.chosen, Some(WakeAdapterKind::TmuxSendKeys));
+    assert_eq!(dispatch.coalesced, 1);
+    assert_eq!(dispatch.envelopes.len(), 1);
+    assert_eq!(dispatch.envelopes[0].event_ref, peeked.event_ref);
+    assert_eq!(dispatch.envelopes[0].task_ref, peeked.task_ref);
+    assert_eq!(dispatch.envelopes[0].actor_ref, peeked.actor_ref);
     // In flight, the peek clones the bundle's first envelope instead.
-    assert_eq!(r.next_wake(&c), peeked);
-    assert_eq!(r.next_wake(&c), peeked);
+    for _ in 0..2 {
+        let in_flight = r.next_wake(&c).unwrap();
+        assert_eq!(in_flight.event_ref, peeked.event_ref);
+        assert_eq!(in_flight.task_ref, peeked.task_ref);
+        assert_eq!(in_flight.actor_ref, peeked.actor_ref);
+    }
 }
 
 #[test]
@@ -297,9 +338,8 @@ fn reattach_keeps_the_fence_against_a_delayed_pre_reattach_report() {
         1,
     );
     // Reattach still drops the ephemeral binding, queue, and in-flight unit.
-    assert!(r.connection_state(&c).unwrap().wake_dispatch.is_none());
-    assert!(r.connection_state(&c).unwrap().wakes.is_empty());
-    assert_eq!(r.next_wake(&c), None);
+    assert!(r.next_wake_dispatch(&c).is_none());
+    assert!(r.next_wake(&c).is_none());
     r.bind_instance(&c, instance, installed).unwrap();
     push_wake(&mut r, "actor", "after");
     let later = r.next_wake_dispatch(&c).unwrap();
@@ -315,14 +355,19 @@ fn reattach_keeps_the_fence_against_a_delayed_pre_reattach_report() {
             &c,
             old.dispatch_seq,
             WakeAdapterKind::TmuxSendKeys,
-            WakeDeliveryOutcome::Delivered
+            WakeDeliveryOutcome::Delivered,
         ),
         Err(WakeDeliveryReportError::StaleDispatch {
             expected: later.dispatch_seq,
             reported: old.dispatch_seq,
-        })
+        }),
     );
-    assert_eq!(r.next_wake_dispatch(&c), Some(later.clone()));
+    let retained = r.next_wake_dispatch(&c).unwrap();
+    assert_eq!(retained.dispatch_seq, later.dispatch_seq);
+    assert_eq!(retained.chosen, later.chosen);
+    assert_eq!(retained.coalesced, 1);
+    assert_eq!(retained.envelopes.len(), 1);
+    assert_eq!(retained.envelopes[0].event_ref, "after");
     assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 0);
     // A valid report for the current sequence still resolves it.
     assert_eq!(
@@ -330,11 +375,11 @@ fn reattach_keeps_the_fence_against_a_delayed_pre_reattach_report() {
             &c,
             later.dispatch_seq,
             WakeAdapterKind::TmuxSendKeys,
-            WakeDeliveryOutcome::Delivered
+            WakeDeliveryOutcome::Delivered,
         ),
-        Ok(WakeReportDisposition::Delivered { envelopes: 1 })
+        Ok(WakeReportDisposition::Delivered { envelopes: 1 }),
     );
-    assert_eq!(r.next_wake_dispatch(&c), None);
+    assert!(r.next_wake_dispatch(&c).is_none());
     assert_eq!(r.wake_dispatch_observations().delivered_dispatches, 1);
 }
 
@@ -440,24 +485,85 @@ fn teardown_clears_binding_and_wakes_without_decrementing_observations() {
     let dispatch = r.next_wake_dispatch(&held).unwrap();
     let before = r.wake_dispatch_observations();
     r.detach(&held);
-    assert_eq!(r.next_wake(&held), None);
+    assert!(r.next_wake(&held).is_none());
     assert_eq!(
         r.report_wake_delivery(
             &held,
             dispatch.dispatch_seq,
             WakeAdapterKind::TmuxSendKeys,
-            WakeDeliveryOutcome::Delivered
+            WakeDeliveryOutcome::Delivered,
         ),
-        Err(WakeDeliveryReportError::ConnectionMissing(held))
+        Err(WakeDeliveryReportError::ConnectionMissing(held)),
+    );
+    let after_detach = r.wake_dispatch_observations();
+    assert_eq!(
+        after_detach.dispatch_units_created,
+        before.dispatch_units_created
+    );
+    assert_eq!(after_detach.envelopes_coalesced, before.envelopes_coalesced);
+    assert_eq!(after_detach.delivery_failures, before.delivery_failures);
+    assert_eq!(
+        after_detach.delivered_dispatches,
+        before.delivered_dispatches
+    );
+    assert_eq!(
+        after_detach.exhausted_dispatches,
+        before.exhausted_dispatches
+    );
+    assert_eq!(after_detach.exhausted_envelopes, before.exhausted_envelopes);
+    assert_eq!(
+        after_detach.transport_only_dispatches,
+        before.transport_only_dispatches,
     );
     // One connection leaving cannot delete a still-referenced instance.
-    assert_eq!(r.instances.len(), 1);
-    assert_eq!(r.wake_dispatch_observations(), before);
+    let surviving = r.next_wake_dispatch(&idle).unwrap();
+    assert_eq!(surviving.chosen, Some(WakeAdapterKind::TmuxSendKeys));
+    assert_eq!(surviving.coalesced, 1);
+    assert_eq!(surviving.envelopes.len(), 1);
+    assert_eq!(surviving.envelopes[0].event_ref, "e1");
+    let before_prune = r.wake_dispatch_observations();
     // The idle prune takes the last reference, its binding, and its queue.
     assert_eq!(r.prune_idle_connections(11, 10), 1);
-    assert!(r.instances.is_empty());
-    assert_eq!(r.next_wake_dispatch(&idle), None);
-    assert_eq!(r.wake_dispatch_observations(), before);
+    assert!(r.next_wake_dispatch(&idle).is_none());
+    assert!(r.next_wake(&idle).is_none());
+    assert_eq!(
+        r.report_wake_delivery(
+            &idle,
+            surviving.dispatch_seq,
+            WakeAdapterKind::TmuxSendKeys,
+            WakeDeliveryOutcome::Delivered,
+        ),
+        Err(WakeDeliveryReportError::ConnectionMissing(idle)),
+    );
+    let after_prune = r.wake_dispatch_observations();
+    assert_eq!(
+        after_prune.dispatch_units_created,
+        before_prune.dispatch_units_created,
+    );
+    assert_eq!(
+        after_prune.envelopes_coalesced,
+        before_prune.envelopes_coalesced
+    );
+    assert_eq!(
+        after_prune.delivery_failures,
+        before_prune.delivery_failures
+    );
+    assert_eq!(
+        after_prune.delivered_dispatches,
+        before_prune.delivered_dispatches,
+    );
+    assert_eq!(
+        after_prune.exhausted_dispatches,
+        before_prune.exhausted_dispatches,
+    );
+    assert_eq!(
+        after_prune.exhausted_envelopes,
+        before_prune.exhausted_envelopes
+    );
+    assert_eq!(
+        after_prune.transport_only_dispatches,
+        before_prune.transport_only_dispatches,
+    );
 }
 
 #[test]

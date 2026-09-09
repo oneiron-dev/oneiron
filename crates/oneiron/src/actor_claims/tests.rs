@@ -952,30 +952,31 @@ fn a_pass_that_fails_midway_commits_no_partial_notes() -> Result<()> {
 /// yields three empty turns, which is what the chat lane used to do.
 #[test]
 fn the_brief_carries_the_witnessed_words_in_scan_order() -> Result<()> {
+    struct RecordingDistiller;
+
+    impl SessionActorDistiller for RecordingDistiller {
+        fn distill(&self, brief: &SessionDistillBrief) -> Result<Vec<ActorNote>> {
+            assert_eq!(brief.turns.len(), 3);
+            for (index, turn) in brief.turns.iter().enumerate() {
+                assert_eq!(turn.said.len(), 1, "one message, one utterance");
+                assert_eq!(turn.said[0].speaker.as_deref(), Some("user"));
+                assert_eq!(
+                    turn.said[0].text.as_deref(),
+                    Some(format!("turn {index}").as_str()),
+                );
+            }
+            // Record delivery in the returned outcome, so skipping the
+            // distiller cannot make the brief assertions pass vacuously.
+            Err(Error::InvariantViolation("brief delivery recorded"))
+        }
+    }
+
     let (_tmp, vault) = temp_vault();
     let session = witnessed_chat_session(&vault, 3, 300)?;
-    // The premise, pinned: production links a turn to a sitting by TIME, and by
-    // nothing else. A derivation that walked `ChildOf` edges into the SESSION
-    // would find an empty sitting here — and in every real one.
-    assert!(
-        vault
-            .edges_in(&session)?
-            .iter()
-            .all(|edge| edge.kind != EdgeKind::ChildOf),
-        "the witness door writes no SESSION child edge"
-    );
-    let turns = session_turns(
-        &vault,
-        SittingWindow {
-            started_at: 300,
-            ended_at: 400,
-        },
-    )?;
-    assert_eq!(turns.len(), 3);
-    assert_eq!(turns[0].said.len(), 1, "one message, one utterance");
-    assert_eq!(turns[0].said[0].speaker.as_deref(), Some("user"));
-    assert_eq!(turns[0].said[0].text.as_deref(), Some("turn 0"));
-    assert_eq!(turns[2].said[0].text.as_deref(), Some("turn 2"));
+    assert!(matches!(
+        run_session_end_actor_distill(&vault, &session, &RecordingDistiller),
+        Err(Error::InvariantViolation(_)),
+    ));
     Ok(())
 }
 

@@ -2,11 +2,8 @@
 
 use super::*;
 
-/// The hole this ticket closes. A human (and an agent) actor holds a perfectly
-/// valid actor binding — enough to be the target of an `AuthoredBy` edge — and
-/// that is exactly what the pre-ONE-1686 door checked. It is NOT enough to
-/// author a `system` row, which carries no `AuthoredBy` edge at all and so
-/// reads downstream as the engine's own voice.
+/// A valid human or agent binding does not authorize engine speech, and a
+/// refused mixed call leaves no legitimate prefix behind.
 #[test]
 fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
     for actor_class in [EdgeActorClass::Human, EdgeActorClass::Agent] {
@@ -26,11 +23,14 @@ fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
             })
             .expect_err("a human/agent actor may not author a system row");
         assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "class {actor_class:?}");
+        let denial = err.gate_denial.expect("typed gate denial");
+        assert_eq!(denial.outcome, "deny");
         assert!(
-            err.message
-                .contains("gate.deny.witness_message.author_not_authorized"),
-            "class {actor_class:?} got {:?}",
-            err.message
+            denial
+                .reason_codes
+                .iter()
+                .any(|code| code == "gate.deny.witness_message.author_not_authorized"),
+            "class {actor_class:?}",
         );
         // All-or-nothing: the LEGITIMATE user row in the same call is gone too.
         assert_witness_left_nothing(&vault, "the owner speaks");
@@ -95,10 +95,8 @@ fn witness_ceiling_is_not_satisfied_by_authorship_alone() {
     );
 }
 
-/// System authorship is available only through an explicit actor-bound auto
-/// ceiling. A store-verified MACHINE is necessary but not sufficient, and the
-/// class-wide `human: auto` row in the default manifest is a CLAIM ceiling, not
-/// consent to speak in the engine's voice.
+/// System authorship requires an explicit actor-bound auto ceiling rather
+/// than the default class-wide human claim ceiling.
 #[test]
 fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
     let (_dir, vault) = open_vault();
@@ -106,8 +104,6 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
     let human = put_person(&vault, 0x5E);
     let conversation_hex = EntityId::from_bytes([0x61; 16]).expect("conv").to_hex();
 
-    // The owner explicitly names the MACHINE actor before it may author the
-    // unattributed system bucket.
     append_actor_ceiling_rows(
         &vault,
         vec![("system".to_owned(), machine.to_hex(), "auto".to_owned())],
@@ -123,9 +119,15 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             occurred_at: 700,
         })
         .expect("an explicitly authorized machine actor may author engine rows");
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("message scan")
+            .len(),
+        2,
+    );
 
-    // Default class-wide HUMAN authority does not authorize an engine-voice
-    // row. Ordinary user speech remains allowed.
+    // Class-wide HUMAN authority still permits ordinary user speech.
     facade_for(&vault, human)
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
@@ -138,6 +140,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
         .entities_by_type(ENTITY_TYPE_MESSAGE)
         .expect("message scan")
         .len();
+    assert_eq!(message_count_before_refusal, 3);
     let err = facade_for(&vault, human)
         .witness(&WitnessTurn {
             conversation_ref: conversation_hex.clone(),
@@ -150,9 +153,13 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
         })
         .expect_err("the class-wide human ceiling is not consent to speak as the engine");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+    let denial = err.gate_denial.expect("typed gate denial");
+    assert_eq!(denial.outcome, "deny");
     assert!(
-        err.message
-            .contains("gate.deny.witness_message.author_not_authorized")
+        denial
+            .reason_codes
+            .iter()
+            .any(|code| code == "gate.deny.witness_message.author_not_authorized"),
     );
     assert_eq!(
         vault
@@ -160,10 +167,10 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             .expect("message scan")
             .len(),
         message_count_before_refusal,
-        "the refused human/system turn left a message behind"
+        "the refused human/system turn left a message behind",
     );
 
-    // The owner names THIS human actor explicitly; the same call now lands.
+    // Naming THIS human actor explicitly permits the engine-voice row.
     append_actor_ceiling_rows(
         &vault,
         vec![("human".to_owned(), human.to_hex(), "auto".to_owned())],
@@ -179,11 +186,17 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             occurred_at: 703,
         })
         .expect("an owner-authored actor-bound ceiling row authorizes this actor");
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("message scan")
+            .len(),
+        message_count_before_refusal + 2,
+    );
 }
 
-/// Even a verified MACHINE/system actor cannot inherit engine-voice authority
-/// from its entity type. This regression keeps the default system class
-/// default-deny and closes the no-row exception at the shared witness door.
+/// A verified MACHINE/system actor cannot inherit engine-voice authority
+/// from its entity type without an actor-bound policy grant.
 #[test]
 fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
     let (_dir, vault) = open_vault();
@@ -201,16 +214,19 @@ fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
         })
         .expect_err("a verified system actor without a named ceiling must be refused");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+    let denial = err.gate_denial.expect("typed gate denial");
+    assert_eq!(denial.outcome, "deny");
     assert!(
-        err.message
-            .contains("gate.deny.witness_message.author_not_authorized")
+        denial
+            .reason_codes
+            .iter()
+            .any(|code| code == "gate.deny.witness_message.author_not_authorized"),
     );
     assert_witness_left_nothing(&vault, "unapproved engine voice");
 }
 
-/// The owner's lever cuts both ways: an `actor_ceilings` row that clamps the
-/// machine actor to `proposed` refuses its rows outright, because a witnessed
-/// message has no proposed lane to park in.
+/// A proposed-only actor ceiling refuses witnessed messages because the
+/// transcript has no proposed lane in which to park them.
 #[test]
 fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
     let (_dir, vault) = open_vault();
@@ -233,10 +249,13 @@ fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
         })
         .expect_err("a clamped actor writes no transcript");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
+    let denial = err.gate_denial.expect("typed gate denial");
     assert!(
-        err.message.contains("gate.pending.actor_ceiling"),
-        "the clamp is the ordinary actor ceiling, got {:?}",
-        err.message
+        denial
+            .reason_codes
+            .iter()
+            .any(|code| code == "gate.pending.actor_ceiling"),
+        "the refusal must identify the actor ceiling",
     );
     assert_witness_left_nothing(&vault, "clamped answer");
 }
@@ -301,9 +320,8 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
     assert_witness_left_nothing(&vault, "cover story");
 }
 
-/// Every non-authority axis the envelope carries, refused at the write path:
-/// message type, metadata shape and depth, order range, and the author/
-/// visibility coherence rule. Each case also proves the whole call rolls back.
+/// Malformed envelope axes are refused at the write path, with the entire
+/// call rolled back even when a legitimate message precedes the malformed one.
 #[test]
 fn witness_refuses_every_malformed_envelope_axis_atomically() {
     let deep = {
@@ -394,8 +412,7 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
     for (label, hostile) in cases {
         let (_dir, vault) = open_vault();
         let facade = facade_for(&vault, put_person(&vault, 0xB5));
-        // The legitimate half shares the hostile row's speaker, so nothing but
-        // the envelope axis under test can be what refuses the call.
+        // Sharing the speaker isolates the envelope axis under test.
         let legitimate = witness_message(0, hostile.author, "legitimate half");
         let result = facade.witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0xB6; 16]).expect("conv").to_hex(),
@@ -407,11 +424,14 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
             panic!("{label} must be refused");
         };
         assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "{label}");
+        let denial = err.gate_denial.expect("typed gate denial");
+        assert_eq!(denial.outcome, "deny", "{label}");
         assert!(
-            err.message
-                .contains("gate.deny.witness_message.malformed_envelope"),
-            "{label} got {:?}",
-            err.message
+            denial
+                .reason_codes
+                .iter()
+                .any(|code| code == "gate.deny.witness_message.malformed_envelope"),
+            "{label}",
         );
         assert_witness_left_nothing(&vault, "legitimate half");
     }
@@ -454,22 +474,57 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
     assert_witness_left_nothing(&vault, "first claim");
 }
 
-/// The complete legal order domain validates in one pass. Appending one
-/// duplicate then fails without the quadratic prefix rescans that made this
-/// public input perform roughly two billion comparisons.
+/// The witness interface accepts the complete legal order domain and refuses
+/// a duplicate appended to it; this test makes no complexity guarantee.
 #[test]
 fn witness_message_order_validation_is_linear_over_the_complete_domain() {
+    let (_dir, vault) = open_vault();
+    let facade = facade_for(&vault, put_person(&vault, 0x31));
     let mut messages = (0..=crate::gate::MAX_WITNESS_MESSAGE_ORDER)
         .map(|order| witness_message(order, WitnessAuthor::User, "x"))
         .collect::<Vec<_>>();
-    distinct_message_orders(&messages).expect("all legal distinct orders pass");
+    let message_count = messages.len();
+    let mut turn = WitnessTurn {
+        conversation_ref: EntityId::from_bytes([0x32; 16]).expect("conv").to_hex(),
+        turn_ref: None,
+        messages,
+        occurred_at: 700,
+    };
+    facade
+        .witness(&turn)
+        .expect("all legal distinct orders pass through witness");
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("message scan")
+            .len(),
+        message_count,
+    );
+
+    messages = turn.messages;
     messages.push(witness_message(
         crate::gate::MAX_WITNESS_MESSAGE_ORDER,
         WitnessAuthor::User,
         "duplicate",
     ));
-    let error = distinct_message_orders(&messages).expect_err("duplicate order is refused");
+    turn.messages = messages;
+    let error = facade
+        .witness(&turn)
+        .expect_err("duplicate order is refused");
     assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("message scan after refusal")
+            .len(),
+        message_count,
+    );
+    assert!(
+        vault
+            .search_text("duplicate", 10)
+            .expect("text search")
+            .is_empty(),
+    );
 }
 
 /// An append shares the existing TURN's order domain. A new message may not
@@ -612,7 +667,14 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
         .edge(&bait_message_id, EdgeKind::BelongsTo, &conversation_id, 1.0)
         .commit()
         .expect("seed the unstamped turn and its bait child");
-    let turn_raw_before = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
+    let turn_before = facade
+        .get_entity(&turn_id.to_hex())
+        .expect("read turn")
+        .expect("turn");
+    let bait_before = facade
+        .get_entity(&bait_message_id.to_hex())
+        .expect("read bait child")
+        .expect("bait child");
 
     let err = facade
         .witness(&WitnessTurn {
@@ -628,23 +690,31 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
         .expect_err("an unstamped turn has no grouping speaker to match against");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 
-    // The refusal left everything alone: the bait child is still the ONLY
-    // message and the unstamped turn was never re-put.
-    assert_eq!(
-        vault
-            .get_raw(&turn_id)
-            .expect("turn raw after")
-            .expect("turn"),
-        turn_raw_before,
-        "the unstamped turn is untouched"
-    );
+    // Observe decoded content, not the storage envelope or its clocks.
+    let turn_after = facade
+        .get_entity(&turn_id.to_hex())
+        .expect("read turn after")
+        .expect("turn survives");
+    let body = turn_after.body.as_ref().expect("decoded turn body");
+    assert!(body.get("speaker").is_none(), "no speaker was synthesized");
+    assert_eq!(turn_after.kind, turn_before.kind);
+    assert_eq!(turn_after.body, turn_before.body);
+    let bait_after = facade
+        .get_entity(&bait_message_id.to_hex())
+        .expect("read bait child after")
+        .expect("bait child survives");
+    assert_eq!(bait_after.kind, bait_before.kind);
+    assert_eq!(bait_after.body, bait_before.body);
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_MESSAGE)
-            .expect("messages")
-            .len(),
-        1,
-        "the refused append landed no MESSAGE beside the bait child"
+            .expect("messages"),
+        vec![bait_message_id],
+        "the refused append landed no MESSAGE beside the bait child",
+    );
+    assert!(
+        vault.search_text("append", 10).expect("search").is_empty(),
+        "the refused append left no text postings",
     );
 }
 

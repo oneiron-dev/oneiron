@@ -3,8 +3,7 @@
 use rmpv::Value;
 
 use super::{
-    SeriesDtStart, SeriesExceptionKey, exception_identity, expand_master_window, expand_window,
-    mask_master_exceptions,
+    SeriesDtStart, exception_identity, expand_master_window, expand_window, mask_master_exceptions,
 };
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
@@ -595,19 +594,8 @@ fn series_exception_identity_is_view_of_claim_value() {
     };
     let key = exception_identity(&exception);
 
-    assert_eq!(
-        key,
-        SeriesExceptionKey {
-            uid: "uid-1@example.com",
-            original_start_utc: MAR_29_0900_LONDON,
-        }
-    );
-    // Borrowed, not re-sourced: the key points into the claim value's own
-    // string, so no second reader can supply a different UID for it.
-    assert!(
-        std::ptr::eq(key.uid.as_ptr(), exception.uid.as_ptr()),
-        "the key copied the UID instead of viewing it"
-    );
+    assert_eq!(key.uid, "uid-1@example.com");
+    assert_eq!(key.original_start_utc, MAR_29_0900_LONDON);
 }
 
 #[test]

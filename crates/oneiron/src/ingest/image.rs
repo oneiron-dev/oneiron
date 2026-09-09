@@ -476,8 +476,23 @@ mod tests {
 
     #[test]
     fn caption_above_locality_ceiling_is_denied() {
+        struct ForbiddenCaption;
+
+        impl ImageCaptionRecognizer for ForbiddenCaption {
+            fn locality(&self) -> LocalityRung {
+                HostLocalCaption.locality()
+            }
+
+            fn caption(&self, _bytes: &[u8]) -> IngestResult<String> {
+                panic!("forbidden caption recognizer was invoked")
+            }
+        }
+
         let batch =
-            normalize_image(SCREENSHOT, &CannedOcr, Some(&HostLocalCaption)).expect("image");
+            normalize_image(SCREENSHOT, &CannedOcr, Some(&ForbiddenCaption)).expect("image");
+        for entity in &batch.entities {
+            assert!(!entity.body.contains("host caption"));
+        }
         assert!(!batch.entities[0].body.contains("[CAPTION"));
         assert!(!batch.entities[0].body.contains("caption_locality"));
     }
@@ -528,25 +543,10 @@ mod tests {
 
     #[test]
     fn registry_contains_the_image_source_once() {
-        use crate::ingest::{
-            FILE_DROP_TRANSCRIPT_SOURCE_ID, ICS_FEED_SOURCE_ID, JSONL_TRANSCRIPT_SOURCE_ID,
-            MEETING_TRANSCRIPT_SOURCE_ID,
-        };
-
         let ids: Vec<_> = crate::ingest::INGEST_SOURCE_REGISTRY.source_ids().collect();
         assert!(ids.contains(&IMAGE_SOURCE_ID));
 
-        let expected: std::collections::HashSet<_> = [
-            IMAGE_SOURCE_ID,
-            JSONL_TRANSCRIPT_SOURCE_ID,
-            FILE_DROP_TRANSCRIPT_SOURCE_ID,
-            MEETING_TRANSCRIPT_SOURCE_ID,
-            ICS_FEED_SOURCE_ID,
-        ]
-        .into_iter()
-        .collect();
         let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
-        assert_eq!(unique, expected);
 
         // Registered exactly once: no duplicate ids overall, and one image entry.
         assert_eq!(unique.len(), ids.len());

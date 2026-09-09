@@ -74,7 +74,7 @@ pub(crate) use sweep_queue::{
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
 #[cfg(test)]
-pub(crate) use tombstone::{is_leap_year, pending_tombstone_key};
+pub(crate) use tombstone::pending_tombstone_key;
 
 // The flat deletion.rs module used to provide this name to the test module
 // through `use super::*`; after the directory split the seam re-imports it so

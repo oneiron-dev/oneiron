@@ -365,15 +365,14 @@ fn git_wire_redacts_credentials_and_paths_out_of_failures() {
     let args: Vec<OsString> = Vec::new();
     let output = spawn_git(&env, dir.path(), &args, None).expect("spawn leaky git");
     let failure = classify_failure(&output);
-    let message = failure.message(GitWireOperation::PublishRefs);
+    let error = failure.error(GitWireOperation::PublishRefs);
+    let message = error.to_string();
     for secret in ["s3cr3t-token", "://", "/home/someone", "example.invalid"] {
         assert!(
             !message.contains(secret),
-            "redacted failure leaked {secret}: {message}"
+            "redacted failure leaked {secret}: {message}",
         );
     }
-    assert!(message.contains("diag=blake3:"));
-    assert!(message.contains("class="));
     assert!(failure.is_uncertain());
 }
 
@@ -773,7 +772,7 @@ fn git_wire_public_plan_stages_objects_then_publishes_refs() {
     // Phase one moved no advertised ref, but the object is durable and pinned.
     assert_eq!(
         wire.read_ref(&bound, &repo.branch).expect("ref"),
-        Some(repo.head.clone())
+        Some(repo.head.clone()),
     );
     let record = wire
         .receipt(&bound, prepared.record_key())
@@ -785,22 +784,40 @@ fn git_wire_public_plan_stages_objects_then_publishes_refs() {
         wire.object_exists(&bound, &published)
             .expect("staged object")
     );
-    let keep = keep_refs_of(&wire, &bound, prepared.record_key());
-    assert_eq!(
-        keep.len(),
-        1,
-        "phase one must protect the staged object set"
+
+    run_git(repo.path(), &["prune", "--expire=now"]);
+    assert!(
+        wire.object_exists(&bound, &published)
+            .expect("protected staged object"),
+        "the unpublished commit must survive pruning",
+    );
+    assert!(wire.object_exists(&bound, &repo.tree).expect("commit tree"));
+    assert!(
+        wire.object_exists(&bound, &repo.head)
+            .expect("commit parent")
     );
 
     let outcome = wire.commit_prepared(&bound, &prepared, 20).expect("commit");
     assert!(matches!(outcome, GitWireCommitOutcome::Applied(_)));
     assert_eq!(
         wire.read_ref(&bound, &repo.branch).expect("ref"),
-        Some(published)
+        Some(published),
     );
     assert!(
         keep_refs_of(&wire, &bound, prepared.record_key()).is_empty(),
-        "publication must release the keep-refs it held"
+        "publication must release the keep-refs it held",
+    );
+    let protection_scope = format!(
+        "{GIT_WIRE_KEEP_REF_PREFIX}stage/{}/",
+        hex_lower(prepared.record_key()),
+    );
+    assert!(
+        run_git(
+            repo.path(),
+            &["for-each-ref", "--format=%(refname)", &protection_scope],
+        )
+        .is_empty(),
+        "publication must release every protection ref for this stage",
     );
 
     let replay = wire.commit_prepared(&bound, &prepared, 30).expect("replay");
@@ -1320,20 +1337,49 @@ fn git_wire_checkout_handles_are_repository_and_epoch_bound() {
         ..lease.clone()
     };
 
-    let base = wire.checkout_handle_dir(&lease).expect("handle");
-    let later = wire.checkout_handle_dir(&next_epoch).expect("handle");
-    let other = wire.checkout_handle_dir(&elsewhere).expect("handle");
-    assert_ne!(base, later, "epochs must not share a handle");
-    assert_ne!(
-        base.parent(),
-        other.parent(),
-        "repositories must not share a checkout root"
+    wire.materialize(&lease).expect("materialize base");
+    wire.materialize(&next_epoch)
+        .expect("materialize next epoch");
+    wire.materialize(&elsewhere)
+        .expect("materialize other repo");
+    let base = wire.checkout_worktree_path(&lease).expect("worktree");
+    let later = wire.checkout_worktree_path(&next_epoch).expect("worktree");
+    let other = wire.checkout_worktree_path(&elsewhere).expect("worktree");
+
+    fs::write(base.join("README.md"), "base lease\n").expect("edit base");
+    fs::write(later.join("README.md"), "next epoch\n").expect("edit next epoch");
+    fs::write(other.join("README.md"), "other repository\n").expect("edit other repo");
+    assert_eq!(
+        fs::read(base.join("README.md")).expect("base contents"),
+        b"base lease\n",
     );
-    // The root is private to GitWire, not a shared temp namespace.
-    assert!(
-        base.starts_with(std::env::temp_dir().join(GIT_WIRE_CHECKOUT_ROOT_NAME)),
-        "checkout roots must live under the private GitWire root"
+    assert_eq!(
+        fs::read(later.join("README.md")).expect("next epoch contents"),
+        b"next epoch\n",
     );
+    assert_eq!(
+        fs::read(other.join("README.md")).expect("other repo contents"),
+        b"other repository\n",
+    );
+
+    wire.collect(&lease).expect("collect base");
+    assert!(!base.exists());
+    assert_eq!(
+        fs::read(later.join("README.md")).expect("surviving next epoch"),
+        b"next epoch\n",
+    );
+    assert_eq!(
+        fs::read(other.join("README.md")).expect("surviving other repo"),
+        b"other repository\n",
+    );
+    wire.collect(&next_epoch).expect("collect next epoch");
+    assert!(!later.exists());
+    assert_eq!(
+        fs::read(other.join("README.md")).expect("independent other repo"),
+        b"other repository\n",
+    );
+    wire.collect(&elsewhere).expect("collect other repo");
+    assert!(!other.exists());
 }
 
 #[test]

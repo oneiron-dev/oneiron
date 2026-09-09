@@ -408,10 +408,8 @@ fn owner_grade_conjuncts_are_not_redundant() {
         "an implicit-all-scopes token carrying principal_ref must not exist",
     );
 
-    // Every credential the server DOES accept satisfies the implication the
-    // equivalence rests on: bound implies narrowed. An empty scope LIST is
-    // still a list — it narrows to zero capabilities rather than widening to
-    // all of them.
+    // An empty scope list narrows to zero capabilities, including when
+    // the credential is bound to a principal.
     for claims in [
         "",
         "scope=core:read",
@@ -419,15 +417,36 @@ fn owner_grade_conjuncts_are_not_redundant() {
         "principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;scope=",
     ] {
         let auth = auth_for_claims(claims).expect("accepted claims");
-        assert!(
-            !(auth.principal_ref.is_some() && auth.implicit_all_scopes),
-            "principal_ref without a scope list must be unreachable for {claims:?}"
-        );
         assert_eq!(
             auth.is_owner_grade(),
             claims.is_empty(),
             "only empty claims mint an owner-grade token: {claims:?}"
         );
+
+        if claims == "principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;scope=" {
+            for scope in [
+                CoreScope::Read,
+                CoreScope::Write,
+                CoreScope::Auth,
+                CoreScope::CompanionProfileRead,
+                CoreScope::CompanionAccessGrantWrite,
+                CoreScope::CompanionRegisterRead,
+                CoreScope::CompanionRegisterWrite,
+            ] {
+                assert!(
+                    auth.require(scope).is_err(),
+                    "a bound empty-scope token must deny every capability"
+                );
+            }
+            assert_unauthorized(
+                require_owner_auth(
+                    &bearer(&mint_core_token_v2(SECRET, claims)),
+                    &config(),
+                    &live(),
+                ),
+                "a bound empty-scope token must not authorize owner operations",
+            );
+        }
     }
 }
 
@@ -570,21 +589,33 @@ fn unrelated_scheme_headers() -> HeaderMap {
     headers
 }
 
-/// The MAC key is domain-separated: the same secret under a different
-/// derive_key context yields a different MAC, so the connector-registry key
-/// and the token key cannot be confused for one another.
+/// The MAC key is domain-separated: credentials signed under a different
+/// derive_key context or with a bare digest must not authenticate.
 #[test]
 fn token_mac_is_domain_separated_from_other_secret_uses() {
-    let token_mac = core_token_mac(SECRET, "scope=core:read");
     let other_context = blake3::derive_key("oneiron-server other context", SECRET.as_bytes());
     let other_mac = *blake3::keyed_hash(&other_context, b"scope=core:read").as_bytes();
 
-    assert_ne!(token_mac, other_mac);
-    assert_ne!(
-        token_mac,
-        *blake3::hash(b"scope=core:read").as_bytes(),
-        "the MAC must be keyed, not a bare digest of the claims"
-    );
+    for (mac, what) in [
+        (
+            other_mac,
+            "a token signed under another key-derivation context",
+        ),
+        (
+            *blake3::hash(b"scope=core:read").as_bytes(),
+            "a token signed with a bare digest of the claims",
+        ),
+    ] {
+        let mut mac_hex = String::new();
+        for byte in mac {
+            mac_hex = format!("{mac_hex}{byte:02x}");
+        }
+        let token = format!("v2.scope=core:read.{mac_hex}");
+        assert_unauthorized(
+            CoreAuth::from_headers(&bearer(&token), &config(), &live()),
+            what,
+        );
+    }
 }
 
 /// Idempotency partitions stay keyed to the effective grant, so a narrowed
