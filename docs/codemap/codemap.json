@@ -12060,7 +12060,7 @@
      "path": "src/gate/doors/peripheral.rs",
      "purpose": "Write mode types and the small standalone claim doors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {

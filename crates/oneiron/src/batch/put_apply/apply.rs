@@ -213,8 +213,7 @@ pub(in crate::batch) fn apply_put(
                     store,
                     wtxn,
                     &id,
-                    &body,
-                    Some(write_envelope),
+                    crate::gate::ClaimGateWrite::plain(&body, Some(write_envelope)),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,
@@ -230,8 +229,7 @@ pub(in crate::batch) fn apply_put(
                     store,
                     wtxn,
                     &id,
-                    &body,
-                    None,
+                    crate::gate::ClaimGateWrite::plain(&body, None),
                     policy,
                     crate::gate::GateWriteMode {
                         record_decision: record_gate_decisions,

@@ -45,6 +45,22 @@ pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) defer_metrics_until_commit: bool,
 }
 
+impl<'a> ClaimGateWrite<'a> {
+    /// The persisted-candidate shape every pre-check door uses.
+    ///
+    /// No auto checker and no deferral: a door that discards its receipt has
+    /// no commit to defer metrics until, and injection rides the write options
+    /// of the seams that actually materialize a body.
+    pub(crate) fn plain(body: &'a ClaimBody, envelope: Option<&'a WriteEnvelope>) -> Self {
+        Self {
+            body,
+            envelope,
+            auto_checker: None,
+            defer_metrics_until_commit: false,
+        }
+    }
+}
+
 pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
     if matches!(envelope.provenance().value(), &Value::Nil) {
         return Err(Error::InvalidClaimBody("write envelope missing provenance"));
