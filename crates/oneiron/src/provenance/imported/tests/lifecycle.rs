@@ -1,6 +1,7 @@
 //! Imported lifecycle regression through the private canonical writer.
 
 use super::*;
+use crate::provenance::writes::EdgeProvenanceWrite;
 use crate::write_envelope::WriteActor;
 
 #[test]
@@ -72,13 +73,19 @@ fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -
             .apply(wtxn)?;
         vault.write_edge_provenance_in_txn(
             wtxn,
-            &first,
-            &subject,
-            &EdgeProvenanceClaimBody::new(actor.entity_ref(), 1.0, SupersessionStatus::Proposed),
-            actor.actor_class(),
-            10,
-            None,
-            Some(Value::from("external record")),
+            EdgeProvenanceWrite {
+                claim_id: &first,
+                subject: &subject,
+                body: &EdgeProvenanceClaimBody::new(
+                    actor.entity_ref(),
+                    1.0,
+                    SupersessionStatus::Proposed,
+                ),
+                actor_class: actor.actor_class(),
+                learned_at: 10,
+                explicit_prior: None,
+                imported_evidence: Some(Value::from("external record")),
+            },
         )
     })?;
     let admitted = vault.get_claim(&first)?.expect("admitted");
@@ -116,13 +123,19 @@ fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -
             .apply(wtxn)?;
         vault.write_edge_provenance_in_txn(
             wtxn,
-            &third,
-            &other_subject,
-            &EdgeProvenanceClaimBody::new(actor.entity_ref(), 1.0, SupersessionStatus::Proposed),
-            actor.actor_class(),
-            10,
-            None,
-            Some(Value::from("other record")),
+            EdgeProvenanceWrite {
+                claim_id: &third,
+                subject: &other_subject,
+                body: &EdgeProvenanceClaimBody::new(
+                    actor.entity_ref(),
+                    1.0,
+                    SupersessionStatus::Proposed,
+                ),
+                actor_class: actor.actor_class(),
+                learned_at: 10,
+                explicit_prior: None,
+                imported_evidence: Some(Value::from("other record")),
+            },
         )
     })?;
     permit(entity(0x63), &[ClaimSource::Imported])?;

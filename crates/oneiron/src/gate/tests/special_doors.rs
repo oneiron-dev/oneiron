@@ -83,8 +83,7 @@ fn attempt_operation_effect_write(
         &vault.store,
         &mut wtxn,
         id,
-        body,
-        Some(envelope),
+        ClaimGateWrite::plain(body, Some(envelope)),
         &policy,
         GateWriteMode {
             record_decision: true,

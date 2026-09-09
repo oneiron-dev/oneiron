@@ -263,10 +263,10 @@ fn transient_chain(
 }
 
 fn healer_case(outcome: &FailureLadderOutcome) -> &HealerCase {
-    let FailureLadderOutcome::Healer { case, .. } = outcome else {
+    let FailureLadderOutcome::Healer(healer) = outcome else {
         panic!("expected a healer outcome, got {outcome:?}");
     };
-    case
+    &healer.case
 }
 
 fn human_surface(outcome: &FailureLadderOutcome) -> &SurfacedFailure {
@@ -485,16 +485,15 @@ fn permanent_fails_then_routes_healer_and_surface() -> Result<()> {
         auto_policy(agent_ref),
     )?;
 
-    let FailureLadderOutcome::Healer {
-        failed_attempt,
+    let FailureLadderOutcome::Healer(healer) = &outcome else {
+        panic!("expected a healer outcome");
+    };
+    let HealerOutcome {
         case,
         slot,
         surface,
-    } = &outcome
-    else {
-        panic!("expected a healer outcome");
-    };
-    assert_eq!(failed_attempt.state, AttemptState::Failed);
+    } = healer.as_ref();
+    assert_eq!(surface.failed_attempt.state, AttemptState::Failed);
     assert_eq!(case.failure_class, FailureClass::Permanent);
     assert_eq!(
         case.consecutive_transients, 0,
@@ -923,17 +922,16 @@ fn handle_attempt_failure_composes_queue_healer_and_surface() -> Result<()> {
     let outcome = FailureLadder::new(&vault)
         .handle_attempt_failure(failure_input(&rows[2], transient(), 60), policy)?;
 
-    let FailureLadderOutcome::Healer {
-        failed_attempt,
+    let FailureLadderOutcome::Healer(healer) = &outcome else {
+        panic!("expected the threshold healer outcome");
+    };
+    let HealerOutcome {
         case,
         slot,
         surface,
-    } = &outcome
-    else {
-        panic!("expected the threshold healer outcome");
-    };
-    assert_eq!(failed_attempt.id, rows[2].id);
-    assert_eq!(failed_attempt.state, AttemptState::Failed);
+    } = healer.as_ref();
+    assert_eq!(surface.failed_attempt.id, rows[2].id);
+    assert_eq!(surface.failed_attempt.state, AttemptState::Failed);
     assert_eq!(case.case_ref, failure_case_ref(rows[2].id));
     assert_ne!(case.case_ref, failure_card_ref(rows[2].id));
     assert_eq!(case.evidence_ref, test_id(0x53).to_hex());
@@ -984,15 +982,14 @@ fn healer_outcomes_carry_immediate_surface_data() -> Result<()> {
         failure_input(&leased, permanent(), 20),
         auto_policy(agent_ref),
     )?;
-    let FailureLadderOutcome::Healer {
+    let FailureLadderOutcome::Healer(healer) = &outcome else {
+        panic!("expected a healer outcome");
+    };
+    let HealerOutcome {
         case,
         slot,
         surface,
-        ..
-    } = &outcome
-    else {
-        panic!("expected a healer outcome");
-    };
+    } = healer.as_ref();
 
     // Every healer outcome carries card-input data immediately, with the
     // diagnosis still pending.

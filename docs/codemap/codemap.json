@@ -11589,6 +11589,7 @@
       "FailureLadderOutcome",
       "HandleAttemptFailure",
       "HealerCase",
+      "HealerOutcome",
       "HealerRepairRoute",
       "RetryLineagePathology",
       "RetryOrdinal",
@@ -11599,7 +11600,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -12145,7 +12146,7 @@
      "path": "src/gate/doors/peripheral.rs",
      "purpose": "Write mode types and the small standalone claim doors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -18190,7 +18191,7 @@
      "path": "src/provenance/writes.rs",
      "purpose": "Vault write doors: put, supersede, retract, model substrate, and the shared writer",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -21114,7 +21115,7 @@
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 1
      }
     },
@@ -21154,7 +21155,7 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 8,
       "struct": 13,
@@ -26094,7 +26095,7 @@
      "path": "src/interface_bench/eval_run.rs",
      "purpose": "Smoke, probe, and full execution plus resume validation",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {

@@ -21,6 +21,7 @@ pub(in crate::store) use self::run_store::{
     decode_retrieval_run, encode_retrieval_run, retrieval_outcome_key, retrieval_run_key,
     retrieval_trace_fork_key,
 };
+pub(crate) use self::types::RetrievalRunFinalize;
 #[cfg(test)]
 pub(in crate::store) use self::types::{
     RETRIEVAL_BLEND_TUNER_ALGORITHM, RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,

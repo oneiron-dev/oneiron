@@ -9,8 +9,8 @@ use crate::error::{Error, Result};
 use super::blocked_reports::BlockedReportRef;
 use super::classify::{FailureClass, classify_failure};
 use super::lineage::{
-    FailureLadderOutcome, HandleAttemptFailure, HealerCase, RetryLineagePathology, RetryOrdinal,
-    SurfacedFailure, retry_lineage_walk,
+    FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerOutcome, RetryLineagePathology,
+    RetryOrdinal, SurfacedFailure, retry_lineage_walk,
 };
 use super::scope::{FailureEscalationMode, FailureScopePolicy};
 use super::transitions::{
@@ -156,13 +156,13 @@ impl<'a> FailureLadder<'a> {
             // cannot be trusted. It surfaces as Ambiguous and never mints a
             // HealerCase.
             let failed_attempt = fail_once(&queue, &input)?;
-            return Ok(FailureLadderOutcome::Human(context.surface(
+            return Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                 failed_attempt,
                 FailureClass::Ambiguous,
                 0,
                 Some(pathology.clone()),
                 None,
-            )));
+            ))));
         }
 
         match class {
@@ -185,13 +185,13 @@ impl<'a> FailureLadder<'a> {
             }
             FailureClass::Ambiguous => {
                 let failed_attempt = fail_once(&queue, &input)?;
-                Ok(FailureLadderOutcome::Human(context.surface(
+                Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                     failed_attempt,
                     FailureClass::Ambiguous,
                     0,
                     None,
                     None,
-                )))
+                ))))
             }
         }
     }
@@ -221,13 +221,13 @@ impl<'a> FailureLadder<'a> {
                         },
                     ),
                     FailureEscalationMode::Human => {
-                        Ok(FailureLadderOutcome::Human(context.surface(
+                        Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                             failed_attempt,
                             FailureClass::Transient,
                             ordinal.get(),
                             None,
                             None,
-                        )))
+                        ))))
                     }
                 }
             }
@@ -266,30 +266,29 @@ impl<'a> FailureLadder<'a> {
         match dispatched {
             Ok(slot) => {
                 let surface = context.surface(
-                    failed_attempt.clone(),
+                    failed_attempt,
                     routing.failure_class,
                     routing.consecutive_transients,
                     None,
                     Some(slot.clone()),
                 );
-                Ok(FailureLadderOutcome::Healer {
-                    failed_attempt,
+                Ok(FailureLadderOutcome::Healer(Box::new(HealerOutcome {
                     case,
                     slot,
                     surface,
-                })
+                })))
             }
             // The failing row is ALREADY terminal here, so a slot that cannot
             // be dispatched must not leave the case in limbo: the same
             // failed-attempt data goes straight to the human surface, which
             // composes as an explicit reserved healer slot.
-            Err(_) => Ok(FailureLadderOutcome::Human(context.surface(
+            Err(_) => Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                 failed_attempt,
                 routing.failure_class,
                 routing.consecutive_transients,
                 None,
                 None,
-            ))),
+            )))),
         }
     }
 }

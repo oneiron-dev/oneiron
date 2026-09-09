@@ -66,35 +66,18 @@ impl SessionRetrievalTelemetry<'_> {
     /// whichever target the provisional registered through.
     pub(crate) fn finalize_run(
         &self,
-        run_id: crate::store::RetrievalRunId,
-        elapsed_us: u64,
-        total_in_scope: usize,
-        claims_suppressed: usize,
-        surfaced_result_ids: &[[u8; 16]],
-        empty_reason: Option<String>,
+        finalize: crate::store::RetrievalRunFinalize<'_>,
     ) -> Result<()> {
+        let run_id = finalize.run_id;
         if self.stages_in_overlay() {
-            return self.staged(|view, wtxn| {
-                view.finalize_context_pack_retrieval_run_in_txn(
-                    wtxn,
-                    run_id,
-                    elapsed_us,
-                    total_in_scope,
-                    claims_suppressed,
-                    surfaced_result_ids,
-                    empty_reason,
-                )
+            return self.staged(move |view, wtxn| {
+                view.finalize_context_pack_retrieval_run_in_txn(wtxn, finalize)
             });
         }
-        self.published(run_id, || {
-            self.vault.store.finalize_context_pack_retrieval_run(
-                run_id,
-                elapsed_us,
-                total_in_scope,
-                claims_suppressed,
-                surfaced_result_ids,
-                empty_reason,
-            )
+        self.published(run_id, move || {
+            self.vault
+                .store
+                .finalize_context_pack_retrieval_run(finalize)
         })
     }
 

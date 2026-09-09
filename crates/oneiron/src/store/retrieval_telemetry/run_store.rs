@@ -13,8 +13,8 @@ use crate::store::test_hooks;
 use crate::store::{ManifestDbs, SessionStoreView, Store, active_write_txn_depth};
 
 use super::types::{
-    RETRIEVAL_TELEMETRY_VERSION, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId,
-    RetrievalRunRecord, RetrievalTrace, RetrievalTraceForkHash,
+    RETRIEVAL_TELEMETRY_VERSION, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunFinalize,
+    RetrievalRunId, RetrievalRunRecord, RetrievalTrace, RetrievalTraceForkHash,
 };
 
 /// Crate-visible so the off-record close census can count the session's own
@@ -76,27 +76,12 @@ impl SessionStoreView<'_> {
     /// Finalizes the same overlay row the session registration created; the
     /// base finalizer never sees that row and this one never reaches a base
     /// row.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finalize_context_pack_retrieval_run_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
-        run_id: RetrievalRunId,
-        elapsed_us: u64,
-        total_in_scope: usize,
-        claims_suppressed: usize,
-        surfaced_result_ids: &[[u8; 16]],
-        empty_reason: Option<String>,
+        finalize: RetrievalRunFinalize<'_>,
     ) -> Result<()> {
-        stage_context_pack_retrieval_run_finalize(
-            self,
-            wtxn,
-            run_id,
-            elapsed_us,
-            total_in_scope,
-            claims_suppressed,
-            surfaced_result_ids,
-            empty_reason,
-        )
+        stage_context_pack_retrieval_run_finalize(self, wtxn, finalize)
     }
 
     /// Session sibling of `Store::delete_retrieval_run`, used to discard a
@@ -173,12 +158,7 @@ impl Store {
     /// the count from their filtered pack instead.
     pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
-        run_id: RetrievalRunId,
-        elapsed_us: u64,
-        total_in_scope: usize,
-        claims_suppressed: usize,
-        surfaced_result_ids: &[[u8; 16]],
-        empty_reason: Option<String>,
+        finalize: RetrievalRunFinalize<'_>,
     ) -> Result<()> {
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
@@ -187,16 +167,7 @@ impl Store {
         }
 
         let mut wtxn = self.env.write_txn()?;
-        stage_context_pack_retrieval_run_finalize(
-            self,
-            &mut wtxn,
-            run_id,
-            elapsed_us,
-            total_in_scope,
-            claims_suppressed,
-            surfaced_result_ids,
-            empty_reason,
-        )?;
+        stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -440,17 +411,19 @@ fn stage_retrieval_run_delete(
 /// A session run finalizes the SAME overlay row its registration created:
 /// the row is looked up through the composed accessor, so the base finalizer
 /// never sees it and this one never reaches a base row (ARCH-0052 §7).
-#[allow(clippy::too_many_arguments)]
 fn stage_context_pack_retrieval_run_finalize(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
-    run_id: RetrievalRunId,
-    elapsed_us: u64,
-    total_in_scope: usize,
-    claims_suppressed: usize,
-    surfaced_result_ids: &[[u8; 16]],
-    empty_reason: Option<String>,
+    finalize: RetrievalRunFinalize<'_>,
 ) -> Result<()> {
+    let RetrievalRunFinalize {
+        run_id,
+        elapsed_us,
+        total_in_scope,
+        claims_suppressed,
+        surfaced_result_ids,
+        empty_reason,
+    } = finalize;
     let key = retrieval_run_key(run_id);
     let provisional_key = retrieval_run_provisional_key(run_id);
     let Some(raw) = target.vault_meta().get(wtxn, &key)? else {

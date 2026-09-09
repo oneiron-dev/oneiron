@@ -140,14 +140,16 @@ pub fn serve_with_provenance(
     vault.reconcile_receive_pack_operations(&repo_dir)?;
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
-        vault,
-        request,
-        DoorWindowContext {
-            seam,
-            admission: admission.as_ref(),
+        &ExchangeSetup {
+            vault,
+            request,
+            context: DoorWindowContext {
+                seam,
+                admission: admission.as_ref(),
+            },
+            repo_dir: &repo_dir,
+            hooks: &hooks,
         },
-        &repo_dir,
-        &hooks,
         &mut child,
         body,
         sink,
@@ -262,17 +264,31 @@ pub(super) struct ServeExchange {
     pub(super) stderr: String,
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The immutable setup one exchange runs against: who is serving, what was
+/// asked, under which door window, out of which repository and hooks
+/// directory. Every field is fixed before the backend is spawned; the live
+/// handles the exchange consumes are the separate parameters beside it.
+struct ExchangeSetup<'a> {
+    vault: &'a Arc<Vault>,
+    request: &'a ServeRequest,
+    context: DoorWindowContext<'a>,
+    repo_dir: &'a Path,
+    hooks: &'a DoorHooksDir,
+}
+
 fn run_exchange(
-    vault: &Arc<Vault>,
-    request: &ServeRequest,
-    context: DoorWindowContext<'_>,
-    repo_dir: &Path,
-    hooks: &DoorHooksDir,
+    setup: &ExchangeSetup<'_>,
     child: &mut ServeChild,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeExchange> {
+    let &ExchangeSetup {
+        vault,
+        request,
+        context,
+        repo_dir,
+        hooks,
+    } = setup;
     let stdin = child.take_stdin()?;
     let stdout = child.take_stdout()?;
     let stderr = child.take_stderr()?;

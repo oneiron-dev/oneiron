@@ -4,7 +4,7 @@
 //! only the two terminal writes live here.
 
 use crate::error::Result;
-use crate::store::RetrievalRunId;
+use crate::store::{RetrievalRunFinalize, RetrievalRunId};
 
 use super::builder::ContextPackTelemetry;
 
@@ -20,14 +20,14 @@ pub(super) fn finalize_context_pack_telemetry(
     let Some(run_id) = telemetry_run_id else {
         return Ok(None);
     };
-    match telemetry.finalize(
+    match telemetry.finalize(RetrievalRunFinalize {
         run_id,
         elapsed_us,
         total_in_scope,
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
-    ) {
+    }) {
         Ok(()) => Ok(Some(run_id)),
         Err(error) => {
             discard_failed_context_pack_telemetry(telemetry, Some(run_id));

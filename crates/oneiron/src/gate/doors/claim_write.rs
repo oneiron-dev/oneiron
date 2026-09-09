@@ -13,9 +13,7 @@ use super::peripheral::{
     ClaimGateWrite, GateWriteMode, auto_check_value_preview, edge_actor_class_str,
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, claim_sensitivity_band, dreamer_isolation_class,
-};
+use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolation_class};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
@@ -47,13 +45,11 @@ use crate::write_envelope::{SourceLineage, WriteEnvelope};
 /// to say so, here, in its own call.
 // The synthetic-operation mode is spelled beside the axis tuple rather than
 // folded into it, for the reason the doc comment gives.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_claim_policy_for_write(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    body: &ClaimBody,
-    envelope: Option<&WriteEnvelope>,
+    write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     operation_effect_body: bool,
@@ -63,12 +59,7 @@ pub(crate) fn check_claim_policy_for_write(
         store,
         wtxn,
         id,
-        ClaimGateWrite {
-            body,
-            envelope,
-            auto_checker: None,
-            defer_metrics_until_commit: false,
-        },
+        write,
         policy,
         mode,
         &mut recorded_decision,
@@ -85,13 +76,11 @@ pub(crate) fn check_claim_policy_for_write(
 // The pending-bind seam threads the preflight receipt identity one parameter
 // further than the record seam; bundling the axis tuple would hide the
 // preflight decision binding this lane opened.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    body: &ClaimBody,
-    envelope: Option<&WriteEnvelope>,
+    write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     preflight_decision_id: Option<GateDecisionId>,
@@ -101,12 +90,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         store,
         wtxn,
         id,
-        ClaimGateWrite {
-            body,
-            envelope,
-            auto_checker: None,
-            defer_metrics_until_commit: false,
-        },
+        write,
         policy,
         mode,
         &mut recorded_decision,
