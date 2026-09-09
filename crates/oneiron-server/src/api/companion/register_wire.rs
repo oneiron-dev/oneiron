@@ -24,7 +24,7 @@ pub(crate) struct CompanionGoodbyeArtifactHookPayload {
     #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
     attempt_id: Option<String>,
     /// Optional run id stamped onto the durable attempt row.
-    #[schema(example = "eiri-goodbye-artifact-1700000600")]
+    #[schema(example = "companion-goodbye-artifact-1700000600")]
     run_id: Option<String>,
 }
 
