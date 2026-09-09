@@ -1,8 +1,10 @@
 //! Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE, text, phonetic, temporal, and PPR channels.
 
 mod admit;
+mod rerank;
 
 use self::admit::{AdmitSignal, ChannelAccumulator};
+use self::rerank::{RerankApplied, RerankLadderInputs};
 use super::super::blend::{
     AccessFactorApplication, RetrievalBlendConfig, RetrievalChannelIndexes,
     blended_retrieval_scores, boost_contiguity, filter_blended_scores_to_allowed_ids,
@@ -36,9 +38,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
-use crate::rerank::RerankCandidate;
 use crate::retrieval_quality::PprCacheOutcome;
-use crate::store::{RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceStage};
+use crate::store::{RetrievalSignal, RetrievalTrace, RetrievalTraceStage};
 use std::collections::{HashMap, HashSet};
 
 impl PipelineBuilder<'_> {
@@ -898,124 +899,21 @@ impl PipelineBuilder<'_> {
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
 
-            // RET-010 rerank hook: post-sort, pre-budget/pre-truncate, so the
-            // reranker sees the blended+filtered ordering over more than
-            // `result_limit` candidates and the budget/truncate operate on
-            // the final relevance order. Score-ladder reassignment: the block
-            // is permuted by (rerank score desc, id bytes asc) but position i
-            // keeps the i-th highest POST-BOOST, PRE-DECAY score of the block,
-            // multiplied by the RECEIVING entity's own access factor; raw
-            // reranker scores survive in the Rerank components.
-            //
-            // The factor is entity-bound on purpose. A ladder built from
-            // already-decayed scores hands position i whatever decay the
-            // entity that used to sit there carried: a zero-factor claim
-            // promoted to the top would be RESURRECTED with a live
-            // neighbor's score, and a live entity demoted into its slot
-            // would be punished for someone else's age. The shadow ladder
-            // starts from the pre-decay blend and receives the same contiguity
-            // and facet-Prefer multipliers as the live scores. Re-multiplying
-            // each rung by its receiving entity's factor keeps both those
-            // boosts and a single factor application. When every block factor
-            // is 1.0 this is the legacy ladder.
-            let mut rerank_merged_components = None;
-            let mut reranked_trace_scores = None;
-            // Empty block: reranking zero candidates is a semantic no-op —
-            // never invoke the host impl, so an otherwise-empty retrieval
-            // cannot fail on reranker behavior and no needless work happens
-            // under the held read txn. (The fail-closed top_n/query
-            // validation at the top of run_for_pack still applies.)
-            if let Some((reranker, options)) = self.rerank.as_ref()
-                && options.top_n.min(scores.len()) > 0
-            {
-                let query = rerank_query.unwrap_or_default();
-                let block_len = options.top_n.min(scores.len());
-                let block_ids: Vec<EntityId> =
-                    scores[..block_len].iter().map(|scored| scored.id).collect();
-                let mut ladder = Vec::with_capacity(block_len);
-                for id in &block_ids {
-                    let Some(base) = rerank_ladder_scores
-                        .as_ref()
-                        .and_then(|ladder_scores| ladder_scores.get(id))
-                        .copied()
-                    else {
-                        return Err(Error::InvariantViolation(
-                            "rerank block entity missing its blended base score",
-                        ));
-                    };
-                    ladder.push(base);
-                }
-                ladder.sort_unstable_by(|left, right| right.total_cmp(left));
-                let candidates: Vec<RerankCandidate<'_>> = scores[..block_len]
-                    .iter()
-                    .enumerate()
-                    .map(|(index, scored)| RerankCandidate {
-                        id: scored.id,
-                        score: scored.score,
-                        rank: (index + 1).min(u32::MAX as usize) as u32,
-                        claim: claim_gate
-                            .decisions
-                            .get(&scored.id)
-                            .and_then(|decision| decision.as_ref()),
-                    })
-                    .collect();
-                let rerank_scores = reranker.rerank(query, &candidates)?;
-                drop(candidates);
-                if rerank_scores.len() != block_len {
-                    return Err(Error::InvariantViolation(
-                        "reranker returned mismatched score count",
-                    ));
-                }
-                if rerank_scores.iter().any(|score| !score.is_finite()) {
-                    return Err(Error::InvariantViolation(
-                        "reranker returned non-finite score",
-                    ));
-                }
-
-                let mut order: Vec<usize> = (0..block_len).collect();
-                order.sort_by(|&left, &right| {
-                    rerank_scores[right]
-                        .partial_cmp(&rerank_scores[left])
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| block_ids[left].as_bytes().cmp(block_ids[right].as_bytes()))
-                });
-                let mut rerank_components =
-                    HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
-                for (new_pos, &old_pos) in order.iter().enumerate() {
-                    let Some(access_factor) =
-                        blend_access_factors.get(&block_ids[old_pos]).copied()
-                    else {
-                        return Err(Error::InvariantViolation(
-                            "rerank block entity missing its applied access factor",
-                        ));
-                    };
-                    scores[new_pos] = ScoredEntity {
-                        id: block_ids[old_pos],
-                        score: ladder[new_pos] * access_factor,
-                    };
-                    rerank_components
-                        .entry(block_ids[old_pos])
-                        .or_default()
-                        .push(RetrievalScoreComponent {
-                            signal: RetrievalSignal::Rerank,
-                            rank: (new_pos + 1).min(u32::MAX as usize) as u32,
-                            score: rerank_scores[old_pos],
-                        });
-                }
-
-                // Rerank components append AFTER the blend components in each
-                // entity's vector (pinned merge order; no dedup, no re-sort).
-                let mut merged = blend_components.clone();
-                for (id, components) in rerank_components {
-                    merged.entry(id).or_default().extend(components);
-                }
-                rerank_merged_components = Some(merged);
-
-                if capture_retrieval_trace {
-                    reranked_trace_scores =
-                        Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
-                }
-            }
+            let RerankApplied {
+                merged_components: rerank_merged_components,
+                reranked_trace_scores,
+            } = self.apply_rerank_ladder(
+                &mut scores,
+                RerankLadderInputs {
+                    ladder_scores: rerank_ladder_scores.as_ref(),
+                    blend_access_factors: &blend_access_factors,
+                    blend_components: &blend_components,
+                    claim_gate: &claim_gate,
+                    rerank_query,
+                    capture_retrieval_trace,
+                    trace_candidate_limit,
+                },
+            )?;
 
             if let Some((relationship, RelMode::Demote)) = self.relationship_filter {
                 apply_relationship_filter(
