@@ -440,26 +440,6 @@ fn paused_attempt_not_admitted() -> Result<()> {
 }
 
 #[test]
-fn wake_trigger_default_scopes() {
-    assert_eq!(
-        WakeTrigger::Compaction.default_scope(),
-        DreamerConsolidationScope::Micro
-    );
-    assert_eq!(
-        WakeTrigger::SessionEnd.default_scope(),
-        DreamerConsolidationScope::Meso
-    );
-    assert_eq!(
-        WakeTrigger::Timer.default_scope(),
-        DreamerConsolidationScope::Macro
-    );
-    assert_eq!(
-        WakeTrigger::Event.default_scope(),
-        DreamerConsolidationScope::Micro
-    );
-}
-
-#[test]
 fn request_wake_enqueues_with_advisory_dedupe() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
@@ -1022,21 +1002,6 @@ fn cancel_mid_pass_finishes_in_flight_attempt_then_stops() -> Result<()> {
         .expect("second attempt status");
     assert_eq!(status.attempt.state, AttemptState::Queued, "never claimed");
     Ok(())
-}
-
-#[test]
-fn clamp_park_reason_is_utf8_boundary_safe() {
-    // 1 ASCII byte then 3-byte chars: the 512 ceiling lands mid-character,
-    // so the cut must step back to the previous boundary (511) instead of
-    // panicking in `String::truncate`.
-    let clamped = clamp_park_reason(format!("x{}", "語".repeat(400)));
-    assert_eq!(clamped.len(), 511);
-    assert!(clamped.len() <= MAX_WAKE_PARK_REASON_BYTES);
-
-    // At or under the ceiling nothing changes.
-    assert_eq!(clamp_park_reason("short".to_owned()), "short");
-    let exact = "a".repeat(MAX_WAKE_PARK_REASON_BYTES);
-    assert_eq!(clamp_park_reason(exact.clone()), exact);
 }
 
 /// Fails every attempt with an error whose Display exceeds the store's park

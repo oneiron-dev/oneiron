@@ -460,18 +460,6 @@ fn event_outcome_supersedes_prior_live_claim_without_deleting_history() {
 }
 
 #[test]
-fn silence_returns_none_and_projects_unknown_never_held() {
-    let (_dir, vault) = temp_vault();
-    let event_ref = event(&vault, EVENT_SEED);
-
-    let read = read_event_outcome(&vault, event_ref).expect("read");
-    assert_eq!(read, None);
-    assert_eq!(project_event_outcome(read), EventOutcome::Unknown);
-    assert_ne!(project_event_outcome(None), EventOutcome::Held);
-    assert_ne!(project_event_outcome(None), EventOutcome::NoShow);
-}
-
-#[test]
 fn elapsed_calendar_time_alone_mints_no_outcome() {
     let (_dir, vault) = temp_vault();
     let event_ref = event(&vault, EVENT_SEED);

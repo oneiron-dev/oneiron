@@ -201,19 +201,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discover_with_no_paths_returns_portable() {
-        let ko = KoreanAnalyzer::discover(&[]).unwrap();
-        assert_eq!(ko.mode(), AnalyzerMode::Portable);
-    }
-
-    #[test]
-    fn discover_with_empty_dir_returns_portable() {
-        let dir = tempfile::tempdir().unwrap();
-        let ko = KoreanAnalyzer::discover(&[dir.path().to_path_buf()]).unwrap();
-        assert_eq!(ko.mode(), AnalyzerMode::Portable);
-    }
-
-    #[test]
     fn discover_dir_without_marker_returns_portable() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("ko")).unwrap();

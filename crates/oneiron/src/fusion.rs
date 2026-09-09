@@ -8,8 +8,6 @@ use rmpv::Value;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::pipeline::ScoredEntity;
-#[cfg(test)]
-use crate::store::RetrievalBlendSignal;
 use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, RetrievalSignal};
 
 pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
@@ -18,11 +16,6 @@ pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
             .total_cmp(&a.score)
             .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
     });
-}
-
-#[cfg(test)]
-pub(crate) fn retrieval_blend_weight(signal: RetrievalBlendSignal) -> f32 {
-    RetrievalBlendWeights::bootstrap().weight(signal)
 }
 
 #[derive(Debug, Clone, Copy)]

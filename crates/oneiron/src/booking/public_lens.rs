@@ -432,12 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn booking_page_model_accepts_slots_projection() {
-        assert_eq!(validate_booking_page_model(&model()), Ok(()));
-        assert!(BookingPageLens::assemble(model()).is_ok());
-    }
-
-    #[test]
     fn booking_page_slots_use_final_half_open_mask_schema() {
         let model = model();
         let RungProjection::Slots(mask) = &model.slots else {

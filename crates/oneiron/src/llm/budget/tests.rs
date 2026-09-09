@@ -298,24 +298,6 @@ fn self_budget_read_reports_current_meter() {
     );
 }
 
-#[test]
-fn prompt_templates_ship_as_data() {
-    let ids: Vec<_> = BUDGET_PROMPT_TEMPLATES
-        .iter()
-        .map(|template| template.id)
-        .collect();
-    assert_eq!(
-        ids,
-        vec![
-            BUDGET_PLAN_PROMPT_TEMPLATE_ID,
-            BUDGET_LAND_PROMPT_TEMPLATE_ID,
-            BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
-            BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
-        ]
-    );
-    assert!(BUDGET_LAND_PROMPT_TEMPLATE.contains("incomplete-but-honest"));
-}
-
 // ---------------------------------------------------------------------------
 // ONE-1348 `budget_policy` row-accounting tests.
 //

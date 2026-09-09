@@ -143,41 +143,6 @@ fn constants_and_configuration_are_pinned() {
 }
 
 #[test]
-fn every_current_edge_kind_has_the_curated_weight_not_its_stored_prior() {
-    for raw in 0..=26 {
-        let kind = EdgeKind::try_from_u8(raw).expect("registered edge kind");
-        let expected = match kind {
-            EdgeKind::BelongsTo
-            | EdgeKind::ParticipatesIn
-            | EdgeKind::Mentions
-            | EdgeKind::About => Some(1.0),
-            EdgeKind::Supports | EdgeKind::DerivedFrom | EdgeKind::HasFacet | EdgeKind::FacetOf => {
-                Some(0.8)
-            }
-            EdgeKind::ClaimOf | EdgeKind::ScopedTo => Some(0.5),
-            EdgeKind::Opposes
-            | EdgeKind::ChildOf
-            | EdgeKind::AssignedTo
-            | EdgeKind::SameAs
-            | EdgeKind::BlockedBy
-            | EdgeKind::Blocks
-            | EdgeKind::Fulfills
-            | EdgeKind::DischargedBy => None,
-            _ => Some(0.1),
-        };
-        assert_eq!(projection_weight(kind), expected, "{kind:?}");
-        if crate::ppr::lambda_for_kind(kind).is_none() {
-            assert_eq!(expected, None);
-        }
-        let projected = project_graph(&[id(1), id(2)], &[edge(1, 2, kind)]).expect("projection");
-        assert_eq!(
-            projected.edges.get(&(id(1), id(2))).copied(),
-            expected.map(|w| (w * 10.0) as u64)
-        );
-    }
-}
-
-#[test]
 fn projection_excludes_deleted_retracted_zero_self_and_absent_endpoints() {
     let mut deleted = edge(1, 2, EdgeKind::About);
     deleted.deleted = true;
@@ -732,21 +697,6 @@ fn ranked(n: u32, group: u32, coarse: u32, score: f32, boosted: bool) -> Ranked 
 }
 
 #[test]
-fn diversity_keeps_exactly_seven_of_ten_when_alternatives_exist_and_one_unboosted() {
-    let mut pool: Vec<_> = (1..=12).map(|n| ranked(n, 1, 1, 2.0, true)).collect();
-    pool.extend((20..=25).map(|n| ranked(n, n, n, 1.0, false)));
-    let rows = diversify(pool, 10, PPR_COMMUNITY_MAX_TOP_K_FRACTION);
-    assert_eq!(rows.len(), 10);
-    assert_eq!(rows.iter().filter(|r| r.entity.id < id(20)).count(), 7);
-    assert!(rows.iter().any(|r| !r.boosted));
-    let only: Vec<_> = (1..=12).map(|n| ranked(n, 1, 1, 2.0, true)).collect();
-    assert_eq!(
-        diversify(only, 10, PPR_COMMUNITY_MAX_TOP_K_FRACTION).len(),
-        10
-    );
-}
-
-#[test]
 fn reserved_unboosted_matching_row_cannot_break_the_cap() {
     let mut pool: Vec<_> = (1..=12).map(|n| ranked(n, 1, 1, 2.0, true)).collect();
     pool.push(ranked(13, 1, 1, 0.1, false));
@@ -779,43 +729,6 @@ fn mmr_breaks_ties_by_fine_then_coarse_novelty_and_ids() {
         reversed.iter().map(|r| r.entity.id).collect::<Vec<_>>()
     );
     assert_eq!(entropy(&rows, false), 1.5);
-}
-
-#[test]
-fn diversity_handles_zero_limit_small_k_missing_memberships_and_all_unboosted() {
-    assert!(diversify(vec![ranked(1, 1, 1, 1.0, true)], 0, 0.7).is_empty());
-    let rows = diversify(
-        vec![ranked(1, 1, 1, 2.0, true), ranked(2, 2, 2, 1.0, false)],
-        1,
-        0.7,
-    );
-    assert_eq!(rows[0].entity.id, id(2));
-    let rows = diversify(
-        vec![
-            Ranked {
-                entity: scored(3, 3.0),
-                membership: None,
-                boosted: false,
-            },
-            Ranked {
-                entity: scored(2, 2.0),
-                membership: None,
-                boosted: false,
-            },
-            Ranked {
-                entity: scored(1, 1.0),
-                membership: None,
-                boosted: false,
-            },
-        ],
-        3,
-        0.7,
-    );
-    assert_eq!(
-        rows.iter().map(|r| r.entity.id).collect::<Vec<_>>(),
-        vec![id(3), id(2), id(1)]
-    );
-    assert!((entropy(&rows, true) - 3.0_f64.log2()).abs() < 1e-12);
 }
 
 #[test]

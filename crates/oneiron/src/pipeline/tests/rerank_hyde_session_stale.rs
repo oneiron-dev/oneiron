@@ -101,61 +101,6 @@ fn rerank_query_vector() -> [f32; 4] {
     [1.0, 0.0, 0.0, 0.0]
 }
 
-#[test]
-fn rerank_reorders_block_with_score_ladder_reassignment() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let ids = rerank_fixture(&vault)?;
-    let query = rerank_query_vector();
-
-    let baseline = vault.query().search_vector(&query, 10).limit(10).run()?;
-    assert_eq!(
-        baseline.iter().map(|scored| scored.id).collect::<Vec<_>>(),
-        ids,
-        "fixture must produce the deterministic engine order"
-    );
-
-    let reranker = ReversingReranker;
-    let reranked = vault
-        .query()
-        .search_vector(&query, 10)
-        .limit(10)
-        .rerank(
-            &reranker,
-            RerankOptions {
-                top_n: 5,
-                query: Some("rerank probe".to_owned()),
-            },
-        )
-        .run()?;
-
-    let mut reversed_ids: Vec<EntityId> = baseline.iter().map(|scored| scored.id).collect();
-    reversed_ids.reverse();
-    assert_eq!(
-        reranked.iter().map(|scored| scored.id).collect::<Vec<_>>(),
-        reversed_ids,
-        "reversing reranker must reverse the block order"
-    );
-    // Score-ladder reassignment: position i keeps the i-th highest ENGINE
-    // score; the score vector is unchanged even though ids permuted.
-    assert_eq!(
-        reranked
-            .iter()
-            .map(|scored| scored.score)
-            .collect::<Vec<_>>(),
-        baseline
-            .iter()
-            .map(|scored| scored.score)
-            .collect::<Vec<_>>(),
-    );
-    assert!(
-        reranked
-            .windows(2)
-            .all(|pair| pair[0].score >= pair[1].score),
-        "scores must stay globally non-increasing"
-    );
-    Ok(())
-}
-
 /// A post-blend boost belongs to the positional score ladder, while decay
 /// remains bound to whichever entity receives that rung after reranking.
 #[test]

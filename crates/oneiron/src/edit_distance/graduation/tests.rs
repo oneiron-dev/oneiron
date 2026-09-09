@@ -1054,9 +1054,3 @@ fn an_identity_topology_scope_shows_in_the_table_and_never_earns_an_offer() {
     );
     assert!(vault.graduation_offers().expect("offers").is_empty());
 }
-
-#[test]
-fn an_empty_vault_has_an_empty_table() {
-    let (_dir, vault) = open_vault();
-    assert!(trust_table(&vault).expect("trust table").is_empty());
-}

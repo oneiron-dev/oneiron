@@ -239,16 +239,6 @@ fn scored(id: EntityId, score: f32) -> ScoredEntity {
     ScoredEntity { id, score }
 }
 
-fn count_entries(db: &crate::overlay_db::OverlayDb, vault: &Vault) -> Result<usize> {
-    let rtxn = vault.store.env.read_txn()?;
-    let mut count = 0;
-    for entry in db.iter(&rtxn)? {
-        entry?;
-        count += 1;
-    }
-    Ok(count)
-}
-
 pub(super) fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
     scores.iter().map(|entry| (entry.id, entry.score)).collect()
 }

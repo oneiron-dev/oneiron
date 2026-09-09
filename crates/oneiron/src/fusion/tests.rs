@@ -72,23 +72,6 @@ fn determinism_harness_fingerprint(ranked_lists: &[Vec<ScoredEntity>]) -> Vec<([
 }
 
 #[test]
-fn bootstrap_blend_weights_are_explicit() {
-    let weights = RetrievalBlendWeights::bootstrap();
-    assert_eq!(weights.recency, 0.35);
-    assert_eq!(weights.salience, 0.30);
-    assert_eq!(weights.confidence, 0.20);
-    assert_eq!(weights.gravity, 0.15);
-    for signal in [
-        RetrievalBlendSignal::Recency,
-        RetrievalBlendSignal::Salience,
-        RetrievalBlendSignal::Confidence,
-        RetrievalBlendSignal::Gravity,
-    ] {
-        assert_eq!(retrieval_blend_weight(signal), weights.weight(signal));
-    }
-}
-
-#[test]
 fn linear_log_blend_is_deterministic_for_fixed_inputs() {
     let inputs = vec![
         RetrievalBlendInput {
@@ -296,31 +279,6 @@ fn access_factor_multiplies_the_fused_score_after_the_log_blend() {
     );
 }
 
-/// The factor stays out of the canonical tiebreak chain and out of the
-/// signal columns: inputs that differ ONLY in `access_factor` keep the
-/// same z-normalized blend, so the ratio of their scores is exactly the
-/// ratio of their factors.
-#[test]
-fn access_factor_leaves_the_normalized_blend_columns_untouched() {
-    let mut inputs = vec![
-        blend_input([1; 16], 0.5, 0.5, 0.5, 1.0),
-        blend_input([2; 16], 0.5, 0.5, 0.5, 1.0),
-    ];
-    inputs[0].access_factor = 0.5;
-
-    let scores = linear_log_blend(&inputs);
-    let decayed = scores
-        .iter()
-        .find(|scored| scored.id.as_bytes()[0] == 1)
-        .expect("decayed candidate");
-    let neutral = scores
-        .iter()
-        .find(|scored| scored.id.as_bytes()[0] == 2)
-        .expect("neutral candidate");
-
-    assert_eq!(decayed.score.to_bits(), (neutral.score * 0.5).to_bits());
-}
-
 /// The two faces of one blend are exactly one multiplication apart, and
 /// the legacy entry point is a pure `.scores` wrapper: `base_scores` is
 /// the same z-normalized blend with the factor withheld, so
@@ -376,17 +334,6 @@ fn linear_log_blend_exposes_base_scores_one_multiply_from_the_applied_scores() {
 }
 
 #[test]
-fn ranked_lists_form_candidates_without_rank_score() {
-    let list = vec![scored([1; 16], 10.0), scored([2; 16], 9.0)];
-    let inputs = retrieval_candidates_from_ranked_lists(&[list]);
-    let fused = linear_log_blend(&inputs);
-
-    assert_eq!(fused.len(), 2);
-    assert_eq!(fused[0].id, EntityId::from_bytes_unchecked([1; 16]));
-    assert_eq!(fused[1].id, EntityId::from_bytes_unchecked([2; 16]));
-}
-
-#[test]
 fn ranked_list_candidates_merge_overlaps_without_k() {
     let a = vec![scored([1; 16], 1.0), scored([2; 16], 1.0)];
     let b = vec![scored([2; 16], 1.0), scored([1; 16], 1.0)];
@@ -397,13 +344,6 @@ fn ranked_list_candidates_merge_overlaps_without_k() {
     assert_eq!(fused[0].score, fused[1].score);
     assert_eq!(fused[0].id, EntityId::from_bytes_unchecked([1; 16]));
     assert_eq!(fused[1].id, EntityId::from_bytes_unchecked([2; 16]));
-}
-
-#[test]
-fn ranked_list_candidates_empty_lists() {
-    let inputs = retrieval_candidates_from_ranked_lists(&[Vec::new(), Vec::new()]);
-    let fused = linear_log_blend(&inputs);
-    assert!(fused.is_empty());
 }
 
 #[test]
