@@ -584,15 +584,13 @@ fn propose_mode_is_a_dial_not_a_gate() {
     let (id, body) = only_live_claim(&propose_vault, person, PREDICATE_CRM_STAGE);
     assert_eq!(id, proposed_claim_ref);
     assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(
-        body.value,
-        stage_value(
-            REPLIED,
-            StageEvidenceClass::MeaningfulReply,
-            vec![test_id(MESSAGE_SEED)],
-            REPLY_AT,
-        ),
-    );
+    // The dial moved the approval, not the payload: the proposed head is still
+    // the `replied` stage the same evidence earned under AUTO.
+    let stage = decode_crm_stage_value(&body.value).unwrap();
+    assert_eq!(stage.stage, key(REPLIED));
+    assert_eq!(stage.evidence_class, StageEvidenceClass::MeaningfulReply);
+    assert_eq!(stage.evidence_refs, vec![test_id(MESSAGE_SEED)]);
+    assert_eq!(stage.recorded_at, REPLY_AT);
 }
 
 // ---------------------------------------------------------------------------
