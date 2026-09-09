@@ -126,19 +126,22 @@ impl NodeIdentity {
         Self::resolve(
             read_trimmed("/proc/sys/kernel/hostname"),
             read_trimmed("/etc/machine-id"),
+            declared(NODE_ENV),
+            declared(NODE_LOCATION_ENV),
             COMPILE_TIME_TOKYO_ALLOWLIST,
         )
     }
 
-    /// The designation decision over one observed identity and one allowlist,
-    /// so every branch is reachable from a test without recompiling.
+    /// The designation decision over one observed identity, the operator's
+    /// declaration and one allowlist, so every branch is reachable from a test
+    /// without recompiling or touching this process's environment.
     fn resolve(
         hostname: Option<String>,
         machine_id: Option<String>,
+        declared_node: Option<String>,
+        declared_location: Option<String>,
         allowlist: Option<&str>,
     ) -> Self {
-        let declared_node = declared(NODE_ENV);
-        let declared_location = declared(NODE_LOCATION_ENV);
         let entries = allowlist_entries(allowlist);
         // The BINDING fact: the identity this process observed is one the
         // artifact was built to accept. A host that merely claims the node name
