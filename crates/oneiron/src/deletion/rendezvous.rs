@@ -4,41 +4,45 @@ use crate::store::GateDecisionId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 
-/// ONE-1149 race-test rendezvous seam. The deterministic raced-delete harness
-/// must order the deleter's lock-free `read_entity_header` read_txn (which does
-/// NOT take the single LMDB write lock) BEFORE the eraser's commit, so the
-/// headerful gate is forced to win the header read and the partial-residue leg
-/// is exercised every run instead of nondeterministically diverting to the
-/// headerless path. The only way to inject that ordering across the spawned
-/// production call is a `#[cfg(test)]` signal emitted from inside
-/// `delete_entity_with_reason` once the header is proven `Some`. It compiles
-/// out of production entirely (the `#[cfg(not(test))]` shim is a no-op),
-/// mirroring the established sweep-side fault-injection seam idiom.
+// ONE-1149 race-test rendezvous seam. The deterministic raced-delete harness
+// must order the deleter's lock-free `read_entity_header` read_txn (which does
+// NOT take the single LMDB write lock) BEFORE the eraser's commit, so the
+// headerful gate is forced to win the header read and the partial-residue leg
+// is exercised every run instead of nondeterministically diverting to the
+// headerless path. The only way to inject that ordering across the spawned
+// production call is a `#[cfg(test)]` signal emitted from inside
+// `delete_entity_with_reason` once the header is proven `Some`. It compiles
+// out of production entirely (the `#[cfg(not(test))]` shim is a no-op),
+// mirroring the established sweep-side fault-injection seam idiom.
+//
+// The slot is THREAD-LOCAL: the harness installs the sender on the deleter
+// thread itself, right before that thread calls into the delete, and the
+// delete fires it on that same thread. `cargo test --lib` runs the raced
+// tests as parallel threads of one process; a process-global slot let a
+// sibling test overwrite the sender (dropping it, so the eraser's `recv()`
+// failed with `RecvError`) or consume it with an unrelated headerful delete.
+// A per-thread slot is unreachable from every other test.
 #[cfg(test)]
-static AFTER_HEADER_READ: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<()>>> =
-    std::sync::Mutex::new(None);
-
-/// Installs the one-shot rendezvous sender consumed by
-/// [`signal_after_header_read`]. Called by the raced-delete harness before it
-/// releases the deleter; the matching receiver `recv()`s on the eraser side
-/// just before its commit.
-#[cfg(test)]
-pub(crate) fn install_after_header_read_signal(tx: std::sync::mpsc::SyncSender<()>) {
-    *AFTER_HEADER_READ
-        .lock()
-        .expect("AFTER_HEADER_READ poisoned") = Some(tx);
+thread_local! {
+    static AFTER_HEADER_READ: std::cell::RefCell<Option<std::sync::mpsc::SyncSender<()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-/// Fires the rendezvous signal exactly once if a sender is installed, then
-/// clears it so unrelated headerful deletes in the same serial run never block
-/// on a stale rendezvous. A no-op when no harness installed a sender.
+/// Installs the one-shot rendezvous sender consumed by
+/// [`signal_after_header_read`] for the CALLING thread. The raced-delete
+/// harness calls this inside the deleter thread before the delete; the
+/// matching receiver `recv()`s on the eraser side just before its commit.
+#[cfg(test)]
+pub(crate) fn install_after_header_read_signal(tx: std::sync::mpsc::SyncSender<()>) {
+    AFTER_HEADER_READ.set(Some(tx));
+}
+
+/// Fires the rendezvous signal exactly once if this thread installed a sender,
+/// then clears it so a later headerful delete on the same thread never blocks
+/// on a stale rendezvous. A no-op on every thread that installed nothing.
 #[cfg(test)]
 pub(super) fn signal_after_header_read() {
-    let sender = AFTER_HEADER_READ
-        .lock()
-        .expect("AFTER_HEADER_READ poisoned")
-        .take();
-    if let Some(sender) = sender {
+    if let Some(sender) = AFTER_HEADER_READ.take() {
         // The rendezvous (`sync_channel(0)`) blocks here until the eraser
         // `recv()`s; that recv is positioned immediately before its commit, so
         // the deleter's header read is provably ordered before the erase.
