@@ -2,8 +2,6 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::*;
-use crate::pipeline::ScoredEntity;
-use crate::test_util::entity;
 
 // Independent contract lists: new telemetry components must not expand the tier.
 const CHANNELS: [RetrievalSignal; 5] = [

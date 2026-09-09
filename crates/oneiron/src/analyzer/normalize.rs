@@ -202,7 +202,6 @@ pub fn normalize_with_offset_map<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::assert_matches;
 
     #[test]
     fn casefold_lowers_ascii_and_german_ss() {

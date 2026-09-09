@@ -19,7 +19,7 @@ mod process_env_tests;
 mod tests;
 
 #[cfg(test)]
-use crate::runtime::{RuntimeConfig, RuntimeMode, RuntimeProviderKind, RuntimeRole};
+use crate::runtime::{RuntimeMode, RuntimeProviderKind, RuntimeRole};
 #[cfg(test)]
 use crate::usage::UsageMode;
 #[cfg(test)]

@@ -33,9 +33,6 @@ const EMPTY_FIXTURE: &str = include_str!("fixtures/lens_golden/empty.json");
 const SINGLE_ENTITY_FIXTURE: &str = include_str!("fixtures/lens_golden/single_entity.json");
 const TIMELINE_FIXTURE: &str = include_str!("fixtures/lens_golden/timeline.json");
 
-/// The corpus is intentionally small: kilobytes of hand-written engine test data.
-const MAX_FIXTURE_BYTES: usize = 4096;
-
 /// The case `CandidateFlavor::DropCase` omits from the candidate corpus.
 const DROPPED_CASE_ID: &str = "empty-state";
 
@@ -60,7 +57,9 @@ const WHITESPACE_PROMPT: &str = "\n   summarize the open claims \t \n";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FixtureVault {
-    schema_version: u16,
+    /// Present only so `deny_unknown_fields` accepts the key; nothing reads it.
+    #[serde(rename = "schema_version")]
+    _schema_version: u16,
     case_id: String,
     entities: Vec<FixtureEntity>,
     claims: Vec<FixtureClaim>,

@@ -1,6 +1,5 @@
 //! Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping.
 
-use super::connector_schedule::delivered_send_idempotency_survives_attempt_completion;
 use super::*;
 
 /// ONE-1768 done-means `ambient_email_and_plain_chat_deliver_inside_window`.

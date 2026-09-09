@@ -1,8 +1,4 @@
 use super::super::super::corpus_filter::CorpusFilter;
-use super::super::super::filters::{
-    apply_claim_status_gate, claim_status_gate_allows, import_claim_gate_decisions_for_scores,
-    pipeline_candidate_matches_filters_and_gate,
-};
 use super::*;
 
 #[test]

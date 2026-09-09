@@ -34,14 +34,6 @@ impl RecordingBackend {
             .expect("recording backend lock")
             .len()
     }
-
-    fn last(&self) -> Option<VaultReadRequest> {
-        self.dispatched
-            .lock()
-            .expect("recording backend lock")
-            .last()
-            .cloned()
-    }
 }
 
 impl sealed::Backend for RecordingBackend {

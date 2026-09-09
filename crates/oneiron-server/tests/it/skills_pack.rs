@@ -5,36 +5,6 @@ const PACK: &str = include_str!("../../oneiron.skills.md");
 const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 
-const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
-    "/a/{artifact}",
-    "/a/{artifact}/",
-    "/a/{artifact}/{*path}",
-    "/api/openapi.json",
-    "/api/skills/oneiron.skills.md",
-    "/api/health",
-    "/mcp",
-    "/api/core/discover",
-    "/api/search/vector",
-    "/api/search/text",
-    "/api/entity/{id}",
-    "/api/edges/{id}",
-    "/v1/core/context-board",
-    "/v1/companion/register/records/{record_id}/end-relationship",
-    "/api/lease/revoke",
-    "/v1/core/outbound/capabilities",
-    "/v1/core/outbound/capabilities/{connector}",
-    "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
-    "/v1/core/run-tree",
-    "/v1/core/run-tree/observe",
-    "/v1/core/run-tree/intervene",
-    "/v1/core/turns/annotate",
-    "/v1/consumer/usage",
-    "/v1/consumer/usage/details",
-    "/v1/consumer/top-up",
-    "/v1/usage/events",
-    "/v1/usage/tenants/{tenant_id}/rollup",
-];
-
 #[test]
 fn crate_local_pack_matches_root_artifact() {
     let root_pack_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -141,11 +111,6 @@ const LANE_HEADINGS: [&str; 4] = [
     "## Lane: curl-cli",
     "## Lane: tool-first-mcp",
 ];
-
-/// The onramp's own budget. It is the first screen: an agent must be able to
-/// choose a carrier without ingesting the endpoint catalog first, so this
-/// section stays small enough to read whole.
-const ONRAMP_BYTE_BUDGET: usize = 6_144;
 
 /// Lane 1 is the host dispatcher, not an HTTP import. Code mode shares the
 /// wire with the other lanes; it does not share the HTTP client artifact.

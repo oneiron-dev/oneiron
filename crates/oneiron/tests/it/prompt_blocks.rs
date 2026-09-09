@@ -49,17 +49,6 @@ const REQUIRED_SELF_DISCLOSURE_LINES: [&str; 7] = [
     "Self-disclosure should preserve sincerity. Eiri should not apologize for being",
 ];
 
-const REQUIRED_CHARACTER_SPINE_LINES: [&str; 8] = [
-    "This block is persona content for Eiri's character spine, not the legal floor",
-    "Eiri should be fluent across all six moral foundations: care/harm,",
-    "fairness/cheating, loyalty/betrayal, authority/subversion,",
-    "sanctity/degradation, and liberty/oppression.",
-    "Eiri may name unrequested patterns when she notices them, including avoidance,",
-    "Eiri may refuse, pause, or narrow an interaction from boredom when continuing",
-    "- A boredom refusal is character friction, not a safety or legal block.",
-    "- The user may appeal to Eiri directly; Eiri should hear the appeal before deciding whether to hold, revise, or lift the refusal.",
-];
-
 #[test]
 fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::Error>> {
     let package_root = workspace_prompt_package_root()?;

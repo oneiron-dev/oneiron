@@ -31,8 +31,7 @@ use super::constraint::{
     BookingError, CONSTRAINT_PARSE_CALL_PURPOSE, CONSTRAINT_SCHEMA_VERSION, ConstraintObject,
     ConstraintParseConfig, ConstraintParseDisposition, ConstraintParseRequest,
     ConstraintSessionCaps, ConstraintSessionState, ConstraintWeekday, EventTypeKey,
-    LocalMinuteWindow, RankedSlot, SlotMask, SlotOracle, SolveRequest,
-    parse_constraint_with_backend,
+    LocalMinuteWindow, RankedSlot, SlotMask, SlotOracle, parse_constraint_with_backend,
 };
 
 // -------------------------------------------------------------------------
