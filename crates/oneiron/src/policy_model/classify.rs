@@ -672,7 +672,7 @@ pub(super) fn pass_audit(evaluation: &PatternEvaluation<'_>) -> PolicyPassAudit 
     }
 }
 
-fn dropped_owner_policy_rows_error() -> Error {
+pub(super) fn dropped_owner_policy_rows_error() -> Error {
     Error::InvalidConfig(
         "policy manifest owner_policy_rows were dropped for policy model classify".to_owned(),
     )
