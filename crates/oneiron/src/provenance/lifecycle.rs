@@ -64,7 +64,7 @@ pub(crate) fn winner_index(candidates: &[ProvenancePrecedence]) -> Option<usize>
 /// `None` when the cohort has no live member — every wrapper for the edge is
 /// closed. That is a legitimate end state (the retracted dampening stamp), not
 /// corruption, so the caller decides which head to name for it.
-pub(crate) fn active_cohort_winner_short_ref_in(
+pub(super) fn active_cohort_winner_short_ref_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     edge_ref: &EdgeRef,
@@ -87,7 +87,7 @@ pub(crate) fn active_cohort_winner_short_ref_in(
 /// Fails closed when the cohort holds nothing but `exclude`: a superseded
 /// wrapper that nothing replaced is a broken cohort, and the only other answer
 /// would be handing the caller back its own stale target.
-pub(crate) fn closed_cohort_head_short_ref_in(
+pub(super) fn closed_cohort_head_short_ref_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     edge_ref: &EdgeRef,
@@ -118,7 +118,7 @@ pub(crate) fn closed_cohort_head_short_ref_in(
 /// `supersession_status` is untouched (the enum has no "superseded" state;
 /// closure lives in the wrapper's `life` + the validity window). Fails typed
 /// when the effective window would be inverted.
-pub(crate) fn close_record_for_supersession(
+pub(super) fn close_record_for_supersession(
     record: &EdgeProvenanceClaimBody,
     close_at: u64,
 ) -> Result<EdgeProvenanceClaimBody> {
@@ -135,7 +135,7 @@ pub(crate) fn close_record_for_supersession(
 /// "set supersession_status = retracted (and typically valid_to = now)" —
 /// retraction is a deliberate withdrawal AT `now`, so an explicit prior
 /// `valid_to` is overwritten). Fails typed when `valid_from` exceeds `now`.
-pub(crate) fn retract_record(
+pub(super) fn retract_record(
     record: &EdgeProvenanceClaimBody,
     now: u64,
 ) -> Result<EdgeProvenanceClaimBody> {

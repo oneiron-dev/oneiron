@@ -76,7 +76,7 @@ impl ReviewContext {
             symbol_graph,
         })
     }
-    pub(crate) fn as_input(&self) -> Result<ReviewContextInput<'_>> {
+    pub(super) fn as_input(&self) -> Result<ReviewContextInput<'_>> {
         ReviewContextInput::new(
             &self.authoring_dreamer_run_id,
             &self.reviewer_run_id,

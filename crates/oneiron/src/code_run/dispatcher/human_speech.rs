@@ -12,7 +12,7 @@ use crate::llm::TrapRef;
 use super::HostSelfDispatcher;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct HumanWaitDispatchTarget {
+pub(in crate::code_run) struct HumanWaitDispatchTarget {
     pub(super) task_ref: EntityId,
     pub(super) trap: TrapRef,
 }

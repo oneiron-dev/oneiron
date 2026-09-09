@@ -851,7 +851,7 @@
      "path": "src/attempt_queue/cancel/terminal.rs",
      "purpose": "Landing completion, the hard cancel rung, and the runtime's warning doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -3505,7 +3505,7 @@
      "path": "src/branch_store_oracle/seam/session.rs",
      "purpose": "Seam: the session handle — `SessionVault` enter/bind/witness/stage/search/close/promote — and the typed…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 28
      }
     },
     {
@@ -3515,7 +3515,7 @@
      "path": "src/branch_store_oracle/seam/substrate.rs",
      "purpose": "Seam: executor verbs on the session handle, the overlay-vs-model harness, and the…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 20
      }
     },
     {
@@ -6192,7 +6192,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -7554,7 +7554,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 6
      }
@@ -7569,7 +7569,7 @@
      "path": "src/connector_key/charter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 2
      }
@@ -7664,7 +7664,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 18,
+      "crate-vis": 17,
       "struct": 5
      }
     },
@@ -7729,7 +7729,7 @@
      "path": "src/connector_key/record/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "re-export": 2
      }
     },
@@ -7761,7 +7761,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 16,
+      "crate-vis": 15,
       "struct": 1
      }
     },
@@ -9066,7 +9066,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "ARCH-0068 RC4 — the credential door (CSTDY-02)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -9213,7 +9213,7 @@
      "path": "src/deletion/receipt.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 15
      }
     },
     {
@@ -11104,7 +11104,7 @@
      "path": "src/edit_roundtrip/opc.rs",
      "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
@@ -16689,7 +16689,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -18078,7 +18078,7 @@
      "purpose": "Actor-class validation, legacy evidence transition, and model substrate codec",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -19519,7 +19519,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -20395,7 +20395,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 5,
       "struct": 1

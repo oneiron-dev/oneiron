@@ -106,7 +106,7 @@ pub(crate) fn task_create_owner(vault: &Vault, task_ref: EntityId) -> Result<Opt
 /// before it terminalizes anything (ONE-1896 §7): a pre-transaction check is a
 /// TOCTOU window, and the one door that cannot be refused is the last place to
 /// leave one open.
-pub(crate) fn task_create_owner_in(
+pub(super) fn task_create_owner_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,

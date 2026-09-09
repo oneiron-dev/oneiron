@@ -143,9 +143,10 @@ mod writes;
 pub(crate) use self::actor_substrate::encode_actor_class_evidence;
 pub(crate) use self::actor_substrate::{
     EVIDENCE_KEY_ACTOR_CLASS, decode_actor_class_evidence, decode_model_entity_body,
-    encode_model_entity_body, resolve_persisted_actor_class, validate_model_substrate_field,
+    resolve_persisted_actor_class,
 };
 pub use self::actor_substrate::{MODEL_SUBSTRATE_FIELD_MAX_BYTES, validate_actor_class};
+use self::actor_substrate::{encode_model_entity_body, validate_model_substrate_field};
 pub use self::codec::{
     EdgeProvenanceClaimBody, decode_edge_provenance_body, derive_confirmation_status,
 };
@@ -154,16 +155,18 @@ pub use self::edge_ref::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeRef, PREDICATE_EDGE_PROVENANCE,
     REASONING_EFFORT_MAX_BYTES, SupersessionStatus,
 };
-pub(crate) use self::edge_ref::{
-    KEY_ACTOR_CLASS, KEY_ACTOR_ENTITY_REF, KEY_BODY_SNAPSHOT_REF, KEY_CONFIDENCE,
-    KEY_REASONING_EFFORT, KEY_SOURCE_REVISION_REF, KEY_SUBSTRATE_REF, KEY_SUPERSESSION_STATUS,
-    KEY_VALID_FROM, KEY_VALID_TO,
+use self::edge_ref::{
+    KEY_ACTOR_CLASS, KEY_BODY_SNAPSHOT_REF, KEY_REASONING_EFFORT, KEY_SOURCE_REVISION_REF,
+    KEY_SUBSTRATE_REF, KEY_SUPERSESSION_STATUS, KEY_VALID_FROM,
 };
+pub(crate) use self::edge_ref::{KEY_ACTOR_ENTITY_REF, KEY_CONFIDENCE, KEY_VALID_TO};
 pub(crate) use self::lifecycle::{
-    ProvenanceMaterialization, ProvenancePrecedence, StoredProvenanceClaim,
+    ProvenanceMaterialization, ProvenancePrecedence, StoredProvenanceClaim, downgrade_edge_to_bare,
+    restamp_edge_flags, winner_index,
+};
+use self::lifecycle::{
     active_cohort_winner_short_ref_in, close_record_for_supersession,
-    closed_cohort_head_short_ref_in, downgrade_edge_to_bare, restamp_edge_flags, retract_record,
-    winner_index,
+    closed_cohort_head_short_ref_in, retract_record,
 };
 pub(crate) use imported::ImportedEdgeProvenance;
 

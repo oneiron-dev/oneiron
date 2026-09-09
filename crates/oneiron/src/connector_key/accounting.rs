@@ -29,7 +29,7 @@ pub const CONNECTOR_KEY_MAX_DISPATCH_BATCH: u64 = 4096;
 /// declared time between honest retries); a same-id replay with different
 /// content fails closed (a pre-claimed event_ref cannot force a silent
 /// no-op for a different settlement).
-pub(crate) const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
+const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
 
 const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
 
@@ -76,7 +76,7 @@ pub enum ConnectorKeySendAdmission {
     },
 }
 
-pub(crate) fn connector_key_send_admit_key(id: &EntityId, logical_send_ref: &str) -> Vec<u8> {
+pub(super) fn connector_key_send_admit_key(id: &EntityId, logical_send_ref: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(
         CONNECTOR_KEY_SEND_ADMIT_PREFIX.len() + ENTITY_ID_LEN + logical_send_ref.len(),
     );
@@ -112,7 +112,7 @@ fn settle_event_value(row_index: u16, minor_units: u64, cost_occurred_at: u64) -
     value
 }
 
-pub(crate) fn connector_key_settle_event_key(id: &EntityId, event_ref: &str) -> Vec<u8> {
+pub(super) fn connector_key_settle_event_key(id: &EntityId, event_ref: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(
         CONNECTOR_KEY_SETTLE_EVENT_PREFIX.len() + ENTITY_ID_LEN + event_ref.len(),
     );

@@ -18,9 +18,10 @@ use crate::store::Store;
 /// MessagePack keys this door reads out of POLICY_MANIFEST bodies.
 pub(super) mod door_policy_keys {
     /// Narrowed TTL ceiling, in seconds.
-    pub(crate) const MAX_LEASE_TTL_SECS: &str = "secret.door.max_lease_ttl_secs";
+    pub(in crate::credential_door) const MAX_LEASE_TTL_SECS: &str =
+        "secret.door.max_lease_ttl_secs";
     /// Narrowed effector set.
-    pub(crate) const ALLOWED_EFFECTORS: &str = "secret.door.allowed_effectors";
+    pub(in crate::credential_door) const ALLOWED_EFFECTORS: &str = "secret.door.allowed_effectors";
     /// What an error names when the malformed field is the BODY that would
     /// carry the door rows rather than one row inside it.
     pub(crate) const NAMESPACE: &str = "secret.door.*";
@@ -28,7 +29,7 @@ pub(super) mod door_policy_keys {
     /// PLANE itself — the type-index entry, the entity row it points at, or
     /// that row's metadata header — rather than in any body this door reads.
     /// A safe, constant label: no entity id, no key bytes, no body bytes.
-    pub(crate) const MANIFEST_PLANE: &str = "policy_manifest.index";
+    pub(super) const MANIFEST_PLANE: &str = "policy_manifest.index";
 }
 
 /// MessagePack key-map helpers local to this module (the per-module idiom the
@@ -94,7 +95,7 @@ fn manifest_refusal(err: PolicyManifestWalkError) -> CredentialDoorError {
 /// authority only by passing [`DoorEffector::parse`], and what comes out the
 /// other side carries the CONSTANT rather than the caller's bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct DoorEffector(&'static str);
+pub(super) struct DoorEffector(&'static str);
 
 impl DoorEffector {
     /// Every effector this door knows, as proved values. The one place a
@@ -177,7 +178,7 @@ impl EffectorDial {
 /// resolved snapshot is exactly the shape that would suggest some row could
 /// move them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct PolicyFloors {
+pub(super) struct PolicyFloors {
     pub(super) lease_ttl: TtlCeiling,
 }
 
@@ -198,7 +199,7 @@ impl PolicyFloors {
     }
 
     /// The resolved lease-TTL ceiling.
-    pub(crate) fn lease_ttl(self) -> TtlCeiling {
+    pub(super) fn lease_ttl(self) -> TtlCeiling {
         self.lease_ttl
     }
 }
@@ -227,7 +228,7 @@ impl DoorPolicy {
 
     /// The resolved lease-TTL ceiling in seconds, for the refusals and
     /// assertions that have to report a number.
-    pub(crate) fn lease_ttl_ceiling_secs(&self) -> u64 {
+    pub(super) fn lease_ttl_ceiling_secs(&self) -> u64 {
         self.floors.lease_ttl.secs()
     }
 
@@ -239,7 +240,7 @@ impl DoorPolicy {
     }
 
     /// The same effective ceiling, in seconds.
-    pub(crate) fn effective_lease_ttl_ceiling(
+    pub(super) fn effective_lease_ttl_ceiling(
         &self,
         credential: &DoorCredential,
         now: VaultInstant,
@@ -313,7 +314,7 @@ impl DoorPolicy {
 /// the gate. A body that does not canonically decode at all fails closed
 /// instead (see [`policy_manifest_body_map`], the shared canonical-body
 /// boundary this door and the custody floor both read through).
-pub(crate) fn decode_door_policy_keys(body: &[u8]) -> DoorResult<Option<DoorPolicy>> {
+pub(super) fn decode_door_policy_keys(body: &[u8]) -> DoorResult<Option<DoorPolicy>> {
     let Some(entries) = policy_manifest_body_map(body).map_err(manifest_refusal)? else {
         return Ok(None);
     };
