@@ -1,0 +1,7 @@
+error[E0277]: the trait bound `AuthenticatedOwner: From<ConsentProposal>` is not satisfied
+ --> tests/consent_guard_compilefail/b_no_proposal_to_owner_conversion.rs:7:14
+  |
+7 |     proposal.into()
+  |              ^^^^ the trait `From<ConsentProposal>` is not implemented for `AuthenticatedOwner`
+  |
+  = note: required for `ConsentProposal` to implement `Into<AuthenticatedOwner>`
