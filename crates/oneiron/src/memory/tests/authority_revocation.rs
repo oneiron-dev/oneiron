@@ -255,14 +255,15 @@ fn revocation_racing_a_gated_delete_refuses_and_tears_nothing() {
         let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
         // The rendezvous fires from inside the delete AFTER its header read
         // proves the target exists and BEFORE it takes any write lock — i.e.
-        // squarely inside the gate-to-purge window this test is about.
+        // squarely inside the gate-to-purge window this test is about. The
+        // seam is thread-local, so the deleter thread installs it itself.
         let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-        crate::deletion::install_after_header_read_signal(tx);
 
         let err = std::thread::scope(|scope| {
             let deleter_gate = std::sync::Arc::clone(&gate);
             let vault_ref = &vault;
             let deleter = scope.spawn(move || {
+                crate::deletion::install_after_header_read_signal(tx);
                 deleter_gate.wait();
                 facade_for(vault_ref, owner).safe_delete(&subject.to_hex(), reason)
             });
